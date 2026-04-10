@@ -497,8 +497,7 @@ fn check_merge_bases(
         if no_checkout {
             refs::write_ref(git_dir, "BISECT_HEAD", &mb)?;
         } else {
-            detach_head(repo, &mb, false, None)
-                .with_context(|| format!("checkout {}", mb.to_hex()))?;
+            detach_head(repo, &mb, false).with_context(|| format!("checkout {}", mb.to_hex()))?;
         }
         bisect_checkout_show_commit(repo, mb)?;
         return Ok(Some(()));
@@ -756,7 +755,7 @@ fn bisect_next_all(repo: &Repository, git_dir: &Path, terms: &BisectTerms) -> Re
     if no_checkout {
         refs::write_ref(git_dir, "BISECT_HEAD", &mid_oid)?;
     } else {
-        detach_head(repo, &mid_oid, false, None)
+        detach_head(repo, &mid_oid, false)
             .with_context(|| format!("checkout {}", mid_oid.to_hex()))?;
     }
     bisect_checkout_show_commit(repo, mid_oid)?;
@@ -1535,7 +1534,7 @@ fn verify_good_revision(
     if no_checkout {
         refs::write_ref(git_dir, "BISECT_HEAD", &good)?;
     } else {
-        detach_head(repo, &good, false, None)?;
+        detach_head(repo, &good, false)?;
     }
     let mut sh_cmd = std::process::Command::new("sh");
     sh_cmd.arg("-c").arg(cmd_line).current_dir(work_dir);
@@ -1547,7 +1546,7 @@ fn verify_good_revision(
     if no_checkout {
         refs::write_ref(git_dir, "BISECT_HEAD", &current)?;
     } else {
-        detach_head(repo, &current, false, None)?;
+        detach_head(repo, &current, false)?;
     }
     Ok(rc)
 }

@@ -736,7 +736,7 @@ fn read_blob_content_for_blame(
 
     let attrs = get_file_attrs(&ctx.attrs, path, false, &ctx.config);
     let oid_hex = oid.to_string();
-    let worktree_data = grit_lib::crlf::convert_to_worktree(
+    let worktree_data = grit_lib::crlf::convert_to_worktree_eager(
         &obj.data,
         path,
         &ctx.conversion,

@@ -1291,6 +1291,14 @@ fn reset_commit(
             }
             return Err(e);
         }
+        let work_units = new_index
+            .entries
+            .iter()
+            .filter(|e| e.stage() == 0 && e.mode != 0o160000)
+            .count();
+        crate::commands::checkout::trace2_emit_checkout_parallel_workers(
+            crate::commands::checkout::checkout_parallel_worker_spawns(repo, work_units),
+        );
         if let Some(ref wt) = repo.work_tree {
             for entry in &mut new_index.entries {
                 if entry.stage() != 0 {
@@ -2096,7 +2104,7 @@ fn checkout_merge_reset_worktree(
             let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, cfg);
                 let oid_hex = format!("{}", entry.oid);
-                grit_lib::crlf::convert_to_worktree(
+                grit_lib::crlf::convert_to_worktree_eager(
                     &obj.data,
                     &path_str,
                     cv,
@@ -2420,7 +2428,7 @@ fn checkout_index_to_worktree(
                         grit_lib::filter_process::smudge_meta_for_reset(repo, spec, tip, &oid_hex)
                     }
                 };
-                grit_lib::crlf::convert_to_worktree(
+                grit_lib::crlf::convert_to_worktree_eager(
                     &obj.data,
                     &path_str,
                     cv,

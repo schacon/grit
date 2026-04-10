@@ -2,10 +2,10 @@
 //!
 //! See Git's `convert.c` (`apply_multi_file_filter`) and `sub-process.c` (handshake).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::objects::ObjectId;
 use crate::refs;
@@ -17,15 +17,6 @@ const LARGE_PACKET_DATA_MAX: usize = 65520 - 4;
 const CAP_CLEAN: u32 = 1 << 0;
 const CAP_SMUDGE: u32 = 1 << 1;
 const CAP_DELAY: u32 = 1 << 2;
-
-/// Result of a process-filter smudge: either output bytes or a deferred (`delayed`) response.
-#[derive(Debug)]
-pub enum ProcessSmudgeOutput {
-    /// Smudged blob bytes to write to the working tree.
-    Data(Vec<u8>),
-    /// Filter chose to defer this path (Git parallel checkout / delay protocol; t2080).
-    Delayed,
-}
 
 /// Optional metadata sent with smudge (ref, treeish, blob hex).
 #[derive(Debug, Clone, Default)]
@@ -167,8 +158,8 @@ struct RunningFilter {
     caps: u32,
 }
 
-fn process_registry() -> &'static Mutex<HashMap<String, Mutex<RunningFilter>>> {
-    static REG: OnceLock<Mutex<HashMap<String, Mutex<RunningFilter>>>> = OnceLock::new();
+fn process_registry() -> &'static Mutex<HashMap<String, Arc<Mutex<RunningFilter>>>> {
+    static REG: OnceLock<Mutex<HashMap<String, Arc<Mutex<RunningFilter>>>>> = OnceLock::new();
     REG.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -364,6 +355,11 @@ fn spawn_running(cmd: &str) -> std::io::Result<RunningFilter> {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
+        // Upstream tests isolate `HOME` to the trash dir; if the parent shell exports
+        // `GIT_CONFIG_GLOBAL` to a host file, nested `git`/`grit` inside long-running
+        // filters would ignore `$HOME/.gitconfig` and miss `test_config_global` entries
+        // (t2082 delayed checkout).
+        .env_remove("GIT_CONFIG_GLOBAL")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -388,16 +384,24 @@ fn spawn_running(cmd: &str) -> std::io::Result<RunningFilter> {
     })
 }
 
+/// Ensure the long-running filter for `cmd` is running (handshake complete).
+pub fn ensure_process_filter_started(cmd: &str) -> Result<(), String> {
+    ensure_started(cmd)
+}
+
 fn ensure_started(cmd: &str) -> Result<(), String> {
     let mut reg = process_registry()
         .lock()
         .map_err(|_| "filter registry poisoned".to_string())?;
-    if reg.contains_key(cmd) {
-        return Ok(());
+    use std::collections::hash_map::Entry;
+    match reg.entry(cmd.to_string()) {
+        Entry::Occupied(_) => Ok(()),
+        Entry::Vacant(v) => {
+            let rf = spawn_running(cmd).map_err(|e| e.to_string())?;
+            v.insert(Arc::new(Mutex::new(rf)));
+            Ok(())
+        }
     }
-    let rf = spawn_running(cmd).map_err(|e| e.to_string())?;
-    reg.insert(cmd.to_string(), Mutex::new(rf));
-    Ok(())
 }
 
 fn write_packetized(stdin: &mut ChildStdin, data: &[u8]) -> std::io::Result<()> {
@@ -413,19 +417,20 @@ fn write_packetized(stdin: &mut ChildStdin, data: &[u8]) -> std::io::Result<()> 
 /// Run clean via long-running filter `cmd` for `path` and `input`.
 pub fn apply_process_clean(cmd: &str, path: &str, input: &[u8]) -> Result<Vec<u8>, String> {
     ensure_started(cmd)?;
-    let reg = process_registry()
-        .lock()
-        .map_err(|_| "filter registry poisoned".to_string())?;
-    let proc_mutex = reg
-        .get(cmd)
-        .ok_or_else(|| "filter process not registered".to_string())?;
-    let mut rf = proc_mutex
+    let arc = {
+        let reg = process_registry()
+            .lock()
+            .map_err(|_| "filter registry poisoned".to_string())?;
+        reg.get(cmd)
+            .cloned()
+            .ok_or_else(|| "filter process not registered".to_string())?
+    };
+    let mut rf = arc
         .lock()
         .map_err(|_| "filter process mutex poisoned".to_string())?;
     if rf.caps & CAP_CLEAN == 0 {
         return Err("filter process does not support clean".to_string());
     }
-
     let mut stdin = rf
         .stdin
         .take()
@@ -460,43 +465,111 @@ pub fn apply_process_clean(cmd: &str, path: &str, input: &[u8]) -> Result<Vec<u8
     result
 }
 
-/// Run smudge via long-running filter.
-pub fn apply_process_smudge(
-    cmd: &str,
-    path: &str,
-    input: &[u8],
-    meta: Option<&FilterSmudgeMeta>,
-) -> Result<Vec<u8>, String> {
-    match apply_process_smudge_extended(cmd, path, input, meta, false)? {
-        ProcessSmudgeOutput::Data(d) => Ok(d),
-        ProcessSmudgeOutput::Delayed => {
-            Err("delayed checkout not supported by grit process filter".to_string())
+/// One path deferred by a process filter that returned `status=delayed` (Git `delayed_checkout`).
+#[derive(Debug, Clone)]
+pub struct DelayedProcessCheckoutEntry {
+    /// `filter.<name>.process` command line.
+    pub filter_cmd: String,
+    pub path: String,
+    pub smudge_meta: FilterSmudgeMeta,
+}
+
+/// Paths waiting for `list_available_blobs` / retry smudge (Git `finish_delayed_checkout`).
+#[derive(Debug, Default)]
+pub struct DelayedProcessCheckout {
+    pub entries: Vec<DelayedProcessCheckoutEntry>,
+}
+
+impl DelayedProcessCheckout {
+    /// Record a delayed smudge; the file must be written after [`Self::finish`].
+    pub fn push_delayed(
+        &mut self,
+        filter_cmd: String,
+        path: String,
+        smudge_meta: FilterSmudgeMeta,
+    ) {
+        self.entries.push(DelayedProcessCheckoutEntry {
+            filter_cmd,
+            path,
+            smudge_meta,
+        });
+    }
+
+    /// Complete delayed checkouts: query filters for available paths and materialize each file.
+    ///
+    /// `convert_retry` matches Git `CE_RETRY`: empty blob through ident/encoding/eol then a
+    /// second smudge without `can-delay` (filter returns cached output).
+    pub fn finish(
+        &mut self,
+        mut convert_retry: impl FnMut(&str, &FilterSmudgeMeta) -> Result<Vec<u8>, String>,
+        mut write_out: impl FnMut(&str, &[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        while !self.entries.is_empty() {
+            let mut made_progress = false;
+            let cmds: HashSet<String> = self.entries.iter().map(|e| e.filter_cmd.clone()).collect();
+            for cmd in cmds {
+                let available = list_available_blobs(&cmd)?;
+                for path in available {
+                    let Some(pos) = self
+                        .entries
+                        .iter()
+                        .position(|e| e.filter_cmd == cmd && e.path == path)
+                    else {
+                        continue;
+                    };
+                    let entry = self.entries.swap_remove(pos);
+                    let data = convert_retry(&entry.path, &entry.smudge_meta)?;
+                    write_out(&entry.path, &data)?;
+                    made_progress = true;
+                }
+            }
+            if !made_progress {
+                return Err(format!(
+                    "delayed process filter checkout stalled with {} pending path(s)",
+                    self.entries.len()
+                ));
+            }
         }
+        Ok(())
     }
 }
 
-/// Like [`apply_process_smudge`] but surfaces `delayed` for callers that skip writing the path.
-///
-/// When `send_can_delay` is true and the filter advertised the delay capability, sends
-/// `can-delay=1` after the metadata lines (matches Git `convert.c`; required for
-/// `test-tool rot13-filter --always-delay` in t2080).
-pub fn apply_process_smudge_extended(
-    cmd: &str,
-    path: &str,
-    input: &[u8],
-    meta: Option<&FilterSmudgeMeta>,
-    send_can_delay: bool,
-) -> Result<ProcessSmudgeOutput, String> {
+/// True when `cmd` is running (or can be started) and advertises the `delay` capability.
+pub fn process_filter_supports_delay(cmd: &str) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+    if ensure_process_filter_started(cmd).is_err() {
+        return false;
+    }
+    let Ok(reg) = process_registry().lock() else {
+        return false;
+    };
+    let Some(arc) = reg.get(cmd) else {
+        return false;
+    };
+    let Ok(rf) = arc.lock() else {
+        return false;
+    };
+    (rf.caps & CAP_DELAY) != 0
+}
+
+fn list_available_blobs(cmd: &str) -> Result<Vec<String>, String> {
     ensure_started(cmd)?;
-    let reg = process_registry()
-        .lock()
-        .map_err(|_| "filter registry poisoned".to_string())?;
-    let proc_mutex = reg
-        .get(cmd)
-        .ok_or_else(|| "filter process not registered".to_string())?;
-    let mut rf = proc_mutex
+    let arc = {
+        let reg = process_registry()
+            .lock()
+            .map_err(|_| "filter registry poisoned".to_string())?;
+        reg.get(cmd)
+            .cloned()
+            .ok_or_else(|| "filter process not registered".to_string())?
+    };
+    let mut rf = arc
         .lock()
         .map_err(|_| "filter process mutex poisoned".to_string())?;
+    if rf.caps & CAP_DELAY == 0 {
+        return Err("filter does not support delay".to_string());
+    }
     let mut stdin = rf
         .stdin
         .take()
@@ -507,8 +580,67 @@ pub fn apply_process_smudge_extended(
         .ok_or_else(|| "filter stdout missing".to_string())?;
 
     let result = (|| {
-        if rf.caps & CAP_SMUDGE == 0 {
-            return Ok(ProcessSmudgeOutput::Data(input.to_vec()));
+        write_packet_line(&mut stdin, "command=list_available_blobs").map_err(|e| e.to_string())?;
+        write_flush(&mut stdin).map_err(|e| e.to_string())?;
+        let mut paths = Vec::new();
+        loop {
+            let line = read_packet_line(&mut stdout).map_err(|e| e.to_string())?;
+            let Some(line) = line else {
+                break;
+            };
+            if let Some(p) = line.strip_prefix("pathname=") {
+                paths.push(p.to_string());
+            }
+        }
+        let mut st = String::new();
+        read_status(&mut stdout, &mut st).map_err(|e| e.to_string())?;
+        if st != "success" {
+            return Err(format!("list_available_blobs status: {st}"));
+        }
+        Ok(paths)
+    })();
+
+    rf.stdin = Some(stdin);
+    rf.stdout = Some(stdout);
+    result
+}
+
+/// Run smudge via long-running filter.
+///
+/// When `can_delay` is true and the filter returns `status=delayed`, returns `Ok(None)` after
+/// recording is left to the caller ([`DelayedProcessCheckout`]).
+pub fn apply_process_smudge(
+    cmd: &str,
+    path: &str,
+    input: &[u8],
+    meta: Option<&FilterSmudgeMeta>,
+    can_delay: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    ensure_started(cmd)?;
+    let arc = {
+        let reg = process_registry()
+            .lock()
+            .map_err(|_| "filter registry poisoned".to_string())?;
+        reg.get(cmd)
+            .cloned()
+            .ok_or_else(|| "filter process not registered".to_string())?
+    };
+    let mut rf = arc
+        .lock()
+        .map_err(|_| "filter process mutex poisoned".to_string())?;
+    let caps = rf.caps;
+    let mut stdin = rf
+        .stdin
+        .take()
+        .ok_or_else(|| "filter stdin missing".to_string())?;
+    let mut stdout = rf
+        .stdout
+        .take()
+        .ok_or_else(|| "filter stdout missing".to_string())?;
+
+    let result = (|| {
+        if caps & CAP_SMUDGE == 0 {
+            return Ok(Some(input.to_vec()));
         }
         write_packet_line(&mut stdin, "command=smudge").map_err(|e| e.to_string())?;
         write_packet_line(&mut stdin, &format!("pathname={path}")).map_err(|e| e.to_string())?;
@@ -524,7 +656,7 @@ pub fn apply_process_smudge_extended(
                 write_packet_line(&mut stdin, &format!("blob={b}")).map_err(|e| e.to_string())?;
             }
         }
-        if send_can_delay && (rf.caps & CAP_DELAY) != 0 {
+        if can_delay && (caps & CAP_DELAY) != 0 {
             write_packet_line(&mut stdin, "can-delay=1").map_err(|e| e.to_string())?;
         }
         write_flush(&mut stdin).map_err(|e| e.to_string())?;
@@ -534,7 +666,10 @@ pub fn apply_process_smudge_extended(
         let mut st = String::new();
         read_status(&mut stdout, &mut st).map_err(|e| e.to_string())?;
         if st == "delayed" {
-            return Ok(ProcessSmudgeOutput::Delayed);
+            if !can_delay {
+                return Err("unexpected delayed status from filter".to_string());
+            }
+            return Ok(None);
         }
         if st != "success" {
             return Err(format!("filter status: {st}"));
@@ -544,7 +679,7 @@ pub fn apply_process_smudge_extended(
         if st != "success" {
             return Err(format!("filter tail status: {st}"));
         }
-        Ok(ProcessSmudgeOutput::Data(out))
+        Ok(Some(out))
     })();
 
     rf.stdin = Some(stdin);

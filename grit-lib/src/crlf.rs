@@ -17,11 +17,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use encoding_rs::UTF_8;
+
 use crate::config::ConfigSet;
-use crate::filter_process::{
-    apply_process_clean, apply_process_smudge, apply_process_smudge_extended, FilterSmudgeMeta,
-    ProcessSmudgeOutput,
-};
+use crate::filter_process::{apply_process_clean, apply_process_smudge, FilterSmudgeMeta};
 
 /// What `core.autocrlf` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,23 +220,6 @@ pub struct AttrRule {
 }
 
 impl AttrRule {
-    /// Build a rule for callers that assemble attributes outside this module (e.g. from
-    /// [`crate::attributes::ParsedGitAttributes`]).
-    #[must_use]
-    pub fn new(
-        pattern: String,
-        must_be_dir: bool,
-        basename_only: bool,
-        attrs: Vec<(String, String)>,
-    ) -> Self {
-        Self {
-            pattern,
-            must_be_dir,
-            basename_only,
-            attrs,
-        }
-    }
-
     /// Diff driver names assigned by this rule (`diff=<driver>`), excluding `set`/`unset`.
     pub fn diff_drivers(&self) -> impl Iterator<Item = &str> + '_ {
         self.attrs.iter().filter_map(|(name, value)| {
@@ -938,6 +920,201 @@ impl Default for ConvertToGitOpts<'_> {
 }
 
 // ---------------------------------------------------------------------------
+// working-tree-encoding (Git `convert.c` `encode_to_git` / `encode_to_worktree`)
+// ---------------------------------------------------------------------------
+
+fn utf16_scalar_iter_to_le_bytes(chars: impl Iterator<Item = u16>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for u in chars {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    out
+}
+
+fn utf16_scalar_iter_to_be_bytes(chars: impl Iterator<Item = u16>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for u in chars {
+        out.extend_from_slice(&u.to_be_bytes());
+    }
+    out
+}
+
+fn utf32_chars_to_be_bytes(s: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for ch in s.chars() {
+        out.extend_from_slice(&(ch as u32).to_be_bytes());
+    }
+    out
+}
+
+fn utf32_chars_to_le_bytes(s: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for ch in s.chars() {
+        out.extend_from_slice(&(ch as u32).to_le_bytes());
+    }
+    out
+}
+
+fn decode_utf32_body_to_utf8_bytes(
+    body: &[u8],
+    rel_path: &str,
+    big_endian: bool,
+) -> Result<Vec<u8>, String> {
+    if !body.len().is_multiple_of(4) {
+        return Err(format!(
+            "invalid UTF-32 length for working tree file '{rel_path}'"
+        ));
+    }
+    let mut s = String::new();
+    for chunk in body.chunks_exact(4) {
+        let cp = if big_endian {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        };
+        let Some(ch) = char::from_u32(cp) else {
+            return Err(format!(
+                "invalid UTF-32 scalar U+{cp:X} in working tree file '{rel_path}'"
+            ));
+        };
+        s.push(ch);
+    }
+    Ok(s.into_bytes())
+}
+
+fn decode_working_tree_bytes_to_utf8(
+    src: &[u8],
+    rel_path: &str,
+    enc_label: &str,
+) -> Result<Vec<u8>, String> {
+    let label = enc_label.trim();
+    if label.is_empty() {
+        return Ok(src.to_vec());
+    }
+    let lower = label.replace('_', "-").to_ascii_lowercase();
+
+    let (cow, _used_enc, had_errors) = match lower.as_str() {
+        "utf-16le-bom" => {
+            let body = if src.len() >= 2 && src.starts_with(&[0xFF, 0xFE]) {
+                &src[2..]
+            } else {
+                src
+            };
+            encoding_rs::UTF_16LE.decode(body)
+        }
+        // Git `UTF-16` requires a BOM; `UTF-16BE` / `UTF-16LE` are raw (BOM prohibited on add).
+        "utf-16" => {
+            if src.len() >= 2 && src.starts_with(&[0xFE, 0xFF]) {
+                encoding_rs::UTF_16BE.decode(&src[2..])
+            } else if src.len() >= 2 && src.starts_with(&[0xFF, 0xFE]) {
+                encoding_rs::UTF_16LE.decode(&src[2..])
+            } else {
+                return Err(format!(
+                    "missing byte order mark for UTF-16 working tree file '{rel_path}'"
+                ));
+            }
+        }
+        "utf-16be" => encoding_rs::UTF_16BE.decode(src),
+        "utf-16le" => encoding_rs::UTF_16LE.decode(src),
+        "utf-32" => {
+            let (body, big_endian) = if src.len() >= 4 && src.starts_with(&[0, 0, 0xFE, 0xFF]) {
+                (&src[4..], true)
+            } else if src.len() >= 4 && src.starts_with(&[0xFF, 0xFE, 0, 0]) {
+                (&src[4..], false)
+            } else {
+                return Err(format!(
+                    "missing byte order mark for UTF-32 working tree file '{rel_path}'"
+                ));
+            };
+            return decode_utf32_body_to_utf8_bytes(body, rel_path, big_endian);
+        }
+        "utf-32be" => return decode_utf32_body_to_utf8_bytes(src, rel_path, true),
+        "utf-32le" => return decode_utf32_body_to_utf8_bytes(src, rel_path, false),
+        _ => {
+            let Some(enc) = crate::commit_encoding::resolve(label) else {
+                return Err(format!(
+                    "unknown working-tree-encoding '{label}' for '{rel_path}'"
+                ));
+            };
+            if enc == UTF_8 {
+                return Ok(src.to_vec());
+            }
+            enc.decode(src)
+        }
+    };
+
+    if had_errors {
+        return Err(format!(
+            "failed to decode '{rel_path}' from working-tree-encoding {label}"
+        ));
+    }
+    Ok(cow.into_owned().into_bytes())
+}
+
+fn encode_utf8_blob_to_working_tree_bytes(
+    src: &[u8],
+    rel_path: &str,
+    enc_label: &str,
+) -> Result<Vec<u8>, String> {
+    let label = enc_label.trim();
+    if label.is_empty() {
+        return Ok(src.to_vec());
+    }
+    let s = std::str::from_utf8(src).map_err(|_| {
+        format!("failed to encode '{rel_path}' from UTF-8: blob is not valid UTF-8")
+    })?;
+    let lower = label.replace('_', "-").to_ascii_lowercase();
+
+    match lower.as_str() {
+        "utf-16le-bom" => {
+            let mut out = vec![0xFF_u8, 0xFE_u8];
+            out.extend(utf16_scalar_iter_to_le_bytes(s.encode_utf16()));
+            Ok(out)
+        }
+        // Bare `UTF-16` in Git is BOM + UTF-16; GNU iconv `-t UTF-16` emits UTF-16LE + LE BOM
+        // (`FF FE`), which upstream tests expect (t0028 / t2082).
+        "utf-16" => {
+            let mut out = vec![0xFF_u8, 0xFE_u8];
+            out.extend(utf16_scalar_iter_to_le_bytes(s.encode_utf16()));
+            Ok(out)
+        }
+        "utf-16be" => {
+            let mut out = vec![0xFE_u8, 0xFF_u8];
+            out.extend(utf16_scalar_iter_to_be_bytes(s.encode_utf16()));
+            Ok(out)
+        }
+        "utf-16le" => Ok(utf16_scalar_iter_to_le_bytes(s.encode_utf16())),
+        "utf-32" | "utf-32be" => {
+            let mut out = vec![0_u8, 0_u8, 0xFE_u8, 0xFF_u8];
+            out.extend(utf32_chars_to_be_bytes(s));
+            Ok(out)
+        }
+        "utf-32le" => {
+            let mut out = vec![0xFF_u8, 0xFE_u8, 0_u8, 0_u8];
+            out.extend(utf32_chars_to_le_bytes(s));
+            Ok(out)
+        }
+        _ => {
+            let Some(enc) = crate::commit_encoding::resolve(label) else {
+                return Err(format!(
+                    "unknown working-tree-encoding '{label}' for '{rel_path}'"
+                ));
+            };
+            if enc == UTF_8 {
+                return Ok(src.to_vec());
+            }
+            let (cow, _, had_errors) = enc.encode(s);
+            if had_errors {
+                return Err(format!(
+                    "failed to encode '{rel_path}' from UTF-8 to {label}"
+                ));
+            }
+            Ok(cow.into_owned())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Input (add / clean) direction
 // ---------------------------------------------------------------------------
 
@@ -1005,7 +1182,12 @@ pub fn convert_to_git_with_opts(
         }
     }
 
-    // 2. Determine if we should do CRLF→LF conversion
+    // 2. working-tree-encoding: working tree bytes → UTF-8 for the object DB (Git `encode_to_git`).
+    if let Some(ref enc) = file_attrs.working_tree_encoding {
+        buf = decode_working_tree_bytes_to_utf8(&buf, rel_path, enc)?;
+    }
+
+    // 3. Determine if we should do CRLF→LF conversion
     let would_convert = would_convert_on_input(conv, file_attrs, &buf);
 
     let mut convert_crlf_into_lf = would_convert && has_crlf(&buf);
@@ -1017,12 +1199,12 @@ pub fn convert_to_git_with_opts(
         convert_crlf_into_lf = false;
     }
 
-    // 3. safecrlf check — Git simulates clean then smudge (`check_global_conv_flags_eol`).
+    // 4. safecrlf check — Git simulates clean then smudge (`check_global_conv_flags_eol`).
     if would_convert && opts.check_safecrlf {
         check_safecrlf_roundtrip(conv, file_attrs, &buf, rel_path, convert_crlf_into_lf)?;
     }
 
-    // 4. Actually convert CRLF → LF if the file has CRLFs
+    // 5. Actually convert CRLF → LF if the file has CRLFs
     if convert_crlf_into_lf {
         buf = crlf_to_lf(&buf);
     }
@@ -1185,10 +1367,14 @@ pub fn lf_to_crlf(data: &[u8]) -> Vec<u8> {
 /// Convert data from the object database for writing to the working tree
 /// (the "smudge" direction).
 ///
-/// This handles:
-/// 1. LF → CRLF conversion based on config + attributes
-/// 2. Smudge filter execution
-/// 3. Ident keyword expansion
+/// This handles (Git `convert_to_working_tree_ca_internal` order):
+/// 1. Ident keyword expansion
+/// 2. LF → CRLF conversion based on config + attributes
+/// 3. `working-tree-encoding` (UTF-8 blob → working tree bytes)
+/// 4. Smudge filter execution
+///
+/// Returns `Ok(None)` when the process filter returned `status=delayed` and `delayed_checkout` was
+/// provided (Git `delayed_checkout`); the path is queued for [`crate::filter_process::DelayedProcessCheckout::finish`].
 pub fn convert_to_worktree(
     data: &[u8],
     rel_path: &str,
@@ -1196,7 +1382,8 @@ pub fn convert_to_worktree(
     file_attrs: &FileAttrs,
     oid_hex: Option<&str>,
     smudge_meta: Option<&FilterSmudgeMeta>,
-) -> Result<Vec<u8>, String> {
+    delayed_checkout: Option<&mut crate::filter_process::DelayedProcessCheckout>,
+) -> Result<Option<Vec<u8>>, String> {
     let mut buf = data.to_vec();
 
     // 1. Ident expansion
@@ -1206,16 +1393,57 @@ pub fn convert_to_worktree(
         }
     }
 
-    // 2. Smudge filter (before EOL conversion) — process driver overrides shell smudge
+    let can_delay_smudge = delayed_checkout.is_some()
+        && file_attrs.working_tree_encoding.is_none()
+        && !file_attrs.ident
+        && file_attrs
+            .filter_process
+            .as_deref()
+            .is_some_and(|c| !c.is_empty())
+        && !should_convert_to_crlf(conv, file_attrs, &buf)
+        && file_attrs
+            .filter_process
+            .as_deref()
+            .is_some_and(crate::filter_process::process_filter_supports_delay);
+
+    // 2. LF→CRLF for working tree
+    let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
+    if should_convert {
+        buf = lf_to_crlf(&buf);
+    }
+
+    // 3. working-tree-encoding (Git `encode_to_worktree`)
+    if let Some(ref enc) = file_attrs.working_tree_encoding {
+        buf = encode_utf8_blob_to_working_tree_bytes(&buf, rel_path, enc)?;
+    }
+
+    // 4. Smudge filter — process driver overrides shell smudge
     let driver = file_attrs.filter_driver_name.as_deref().unwrap_or("");
     if let Some(ref proc_cmd) = file_attrs.filter_process {
-        buf = apply_process_smudge(proc_cmd, rel_path, &buf, smudge_meta).map_err(|_e| {
-            if file_attrs.filter_smudge_required {
-                format!("fatal: {rel_path}: smudge filter {driver} failed")
-            } else {
-                _e
-            }
-        })?;
+        let smudge_out =
+            apply_process_smudge(proc_cmd, rel_path, &buf, smudge_meta, can_delay_smudge).map_err(
+                |_e| {
+                    if file_attrs.filter_smudge_required {
+                        format!("fatal: {rel_path}: smudge filter {driver} failed")
+                    } else {
+                        _e
+                    }
+                },
+            )?;
+        let Some(out) = smudge_out else {
+            let Some(q) = delayed_checkout else {
+                return Err(format!(
+                    "internal error: delayed smudge without checkout queue for {rel_path}"
+                ));
+            };
+            q.push_delayed(
+                proc_cmd.clone(),
+                rel_path.to_string(),
+                smudge_meta.cloned().unwrap_or_default(),
+            );
+            return Ok(None);
+        };
+        buf = out;
     } else {
         match file_attrs.filter_smudge.as_ref() {
             Some(smudge_cmd) => match run_filter(smudge_cmd, &buf, rel_path) {
@@ -1234,102 +1462,30 @@ pub fn convert_to_worktree(
         }
     }
 
-    // 3. LF→CRLF for working tree
-    let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
-    if should_convert {
-        buf = lf_to_crlf(&buf);
-    }
-
-    Ok(buf)
+    Ok(Some(buf))
 }
 
-/// Whether `convert_to_worktree` would apply LF→CRLF smudge for this blob and attributes.
+/// Like [`convert_to_worktree`] without delayed-checkout queueing (always materializes or errors).
 #[must_use]
-pub fn would_smudge_lf_to_crlf(data: &[u8], conv: &ConversionConfig, attrs: &FileAttrs) -> bool {
-    should_convert_to_crlf(conv, attrs, data)
-}
-
-/// Like [`convert_to_worktree`], but when the process filter responds with `delayed`, returns
-/// `Ok(None)` so checkout can omit the path from the "updated" count (t2080).
-pub fn convert_to_worktree_allow_delayed(
+pub fn convert_to_worktree_eager(
     data: &[u8],
     rel_path: &str,
     conv: &ConversionConfig,
     file_attrs: &FileAttrs,
     oid_hex: Option<&str>,
     smudge_meta: Option<&FilterSmudgeMeta>,
-    send_can_delay: bool,
-) -> Result<Option<Vec<u8>>, String> {
-    let mut buf = data.to_vec();
-
-    if file_attrs.ident {
-        if let Some(oid) = oid_hex {
-            buf = expand_ident(&buf, oid);
-        }
+) -> Result<Vec<u8>, String> {
+    match convert_to_worktree(data, rel_path, conv, file_attrs, oid_hex, smudge_meta, None)? {
+        Some(v) => Ok(v),
+        None => Err(format!(
+            "internal error: unexpected delayed smudge for {rel_path}"
+        )),
     }
-
-    let driver = file_attrs.filter_driver_name.as_deref().unwrap_or("");
-    if let Some(ref proc_cmd) = file_attrs.filter_process {
-        let smudge_out =
-            apply_process_smudge_extended(proc_cmd, rel_path, &buf, smudge_meta, send_can_delay)
-                .map_err(|_e| {
-                    if file_attrs.filter_smudge_required {
-                        format!("fatal: {rel_path}: smudge filter {driver} failed")
-                    } else {
-                        _e
-                    }
-                })?;
-        buf = match smudge_out {
-            ProcessSmudgeOutput::Delayed => {
-                // `missing-delay.a` is never completed in Git's parallel checkout (dropped from
-                // `list_available_blobs`); a second smudge would incorrectly materialize it (t2080).
-                if rel_path == "missing-delay.a" {
-                    return Ok(None);
-                }
-                // Other delayed paths: approximate Git's flush by re-smudging without `can-delay`
-                // so `test-tool rot13-filter --always-delay` emits output on the second pass.
-                match apply_process_smudge_extended(proc_cmd, rel_path, &buf, smudge_meta, false)
-                    .map_err(|_e| {
-                        if file_attrs.filter_smudge_required {
-                            format!("fatal: {rel_path}: smudge filter {driver} failed")
-                        } else {
-                            _e
-                        }
-                    })? {
-                    ProcessSmudgeOutput::Delayed => return Ok(None),
-                    ProcessSmudgeOutput::Data(d) => d,
-                }
-            }
-            ProcessSmudgeOutput::Data(d) => d,
-        };
-    } else {
-        match file_attrs.filter_smudge.as_ref() {
-            Some(smudge_cmd) => match run_filter(smudge_cmd, &buf, rel_path) {
-                Ok(filtered) => buf = filtered,
-                Err(_e) => {
-                    if file_attrs.filter_smudge_required {
-                        return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
-                    }
-                }
-            },
-            None => {
-                if file_attrs.filter_smudge_required {
-                    return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
-                }
-            }
-        }
-    }
-
-    let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
-    if should_convert {
-        buf = lf_to_crlf(&buf);
-    }
-
-    Ok(Some(buf))
 }
 
-/// Decide whether to convert LF→CRLF on output.
-fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8]) -> bool {
+/// Decide whether to convert LF→CRLF on output (working tree / smudge direction).
+#[must_use]
+pub fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8]) -> bool {
     match attrs.crlf_legacy {
         CrlfLegacyAttr::Unset | CrlfLegacyAttr::Input => return false,
         CrlfLegacyAttr::Crlf => {
@@ -1667,7 +1823,7 @@ mod tests {
             safecrlf: SafeCrlf::False,
         };
         let attrs = FileAttrs::default();
-        let out = convert_to_worktree(&blob, "mixed", &conv, &attrs, None, None).unwrap();
+        let out = convert_to_worktree_eager(&blob, "mixed", &conv, &attrs, None, None).unwrap();
         assert_eq!(out, blob);
     }
 
@@ -1680,7 +1836,7 @@ mod tests {
             safecrlf: SafeCrlf::False,
         };
         let attrs = FileAttrs::default();
-        let out = convert_to_worktree(blob, "x", &conv, &attrs, None, None).unwrap();
+        let out = convert_to_worktree_eager(blob, "x", &conv, &attrs, None, None).unwrap();
         assert_eq!(out, b"a\r\nb\r\n");
     }
 

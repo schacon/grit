@@ -282,7 +282,10 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             }
             let mut path_items: Vec<String> = Vec::new();
             for (path, entry) in delay.iter_mut() {
-                if entry.requested != 1 {
+                // Match C `test-rot13-filter.c`: skip only when `requested` is unset (0).
+                // After `status=delayed`, `requested` is 2 but the path must still appear in
+                // `list_available_blobs` once `count` reaches 0.
+                if entry.requested == 0 {
                     continue;
                 }
                 entry.count -= 1;
@@ -322,19 +325,25 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                 break;
             };
             if buf == "can-delay=1" {
-                if let Some(entry) = delay.get_mut(&pathname) {
-                    if entry.requested == 0 {
-                        entry.requested = 1;
-                    }
-                } else if always_delay {
-                    delay.insert(
-                        pathname.clone(),
-                        DelayEntry {
+                if always_delay {
+                    // Match C `test-rot13-filter.c`: `always_delay` calls `add_delay_entry` for any
+                    // path that receives `can-delay=1`, so `list_available_blobs` can see it.
+                    delay
+                        .entry(pathname.clone())
+                        .and_modify(|e| {
+                            if e.requested == 0 {
+                                e.requested = 1;
+                            }
+                        })
+                        .or_insert(DelayEntry {
                             count: 1,
                             requested: 1,
                             output: None,
-                        },
-                    );
+                        });
+                } else if let Some(entry) = delay.get_mut(&pathname) {
+                    if entry.requested == 0 {
+                        entry.requested = 1;
+                    }
                 }
             } else if buf.starts_with("ref=")
                 || buf.starts_with("treeish=")

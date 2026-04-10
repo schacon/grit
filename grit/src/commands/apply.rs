@@ -4372,7 +4372,7 @@ fn write_worktree_path(
             &ctx.repo.odb,
         );
         let file_attrs = crlf::get_file_attrs(&rules, rel_path, false, &ctx.config);
-        let mut out = crlf::convert_to_worktree(
+        let mut out = crlf::convert_to_worktree_eager(
             content.as_bytes(),
             rel_path,
             &ctx.conv,
@@ -4384,7 +4384,7 @@ fn write_worktree_path(
         // If the preimage on disk used CRLF but smudge would not add it (e.g. no `text=auto`
         // / autocrlf), Git `apply` still writes CRLF back (`t4124-apply-ws-rule.sh`).
         if raw_on_disk_had_crlf
-            && !crlf::would_smudge_lf_to_crlf(content.as_bytes(), &ctx.conv, &file_attrs)
+            && !crlf::should_convert_to_crlf(&ctx.conv, &file_attrs, content.as_bytes())
         {
             out = crlf::lf_to_crlf(&out);
         }

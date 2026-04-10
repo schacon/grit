@@ -379,7 +379,7 @@ pub fn convert_blob_to_worktree_for_path(
         None => crate::crlf::load_gitattributes(work_tree),
     };
     let file_attrs = crate::crlf::get_file_attrs(&rules, path, false, &config);
-    crate::crlf::convert_to_worktree(blob, path, &conv, &file_attrs, oid_hex, None)
+    crate::crlf::convert_to_worktree_eager(blob, path, &conv, &file_attrs, oid_hex, None)
         .map_err(std::io::Error::other)
 }
 
