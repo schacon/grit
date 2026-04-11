@@ -3770,21 +3770,20 @@ fn oid_reaches_shallow_boundary(
     reaches
 }
 
-fn refs_requiring_update_shallow(remote_git_dir: &Path, local_git_dir: &Path) -> Result<HashSet<String>> {
+fn refs_requiring_update_shallow(
+    remote_git_dir: &Path,
+    local_git_dir: &Path,
+) -> Result<HashSet<String>> {
     let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
     if boundary_oids.is_empty() {
         return Ok(HashSet::new());
     }
 
     let local_boundary_oids = read_shallow_boundary_oids(local_git_dir)?;
-    let required_new_boundaries: HashSet<ObjectId> = if local_boundary_oids.is_empty() {
-        boundary_oids.clone()
-    } else {
-        boundary_oids
-            .difference(&local_boundary_oids)
-            .copied()
-            .collect()
-    };
+    let required_new_boundaries: HashSet<ObjectId> = boundary_oids
+        .difference(&local_boundary_oids)
+        .copied()
+        .collect();
     if required_new_boundaries.is_empty() {
         return Ok(HashSet::new());
     }
@@ -3794,6 +3793,9 @@ fn refs_requiring_update_shallow(remote_git_dir: &Path, local_git_dir: &Path) ->
     let mut blocked = HashSet::new();
     let mut memo = HashMap::new();
     for (refname, oid) in refs::list_refs(remote_git_dir, "refs/")? {
+        if refname.starts_with("refs/tags/") {
+            continue;
+        }
         if oid_reaches_shallow_boundary(&repo, oid, &required_new_boundaries, &mut memo) {
             blocked.insert(refname);
         }

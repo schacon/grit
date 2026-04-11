@@ -113,6 +113,9 @@ pub struct Args {
     /// Clone only the history leading to the tip of a single branch.
     #[arg(long)]
     pub single_branch: bool,
+    /// Clone history for all branches, even with depth options.
+    #[arg(long = "no-single-branch")]
+    pub no_single_branch: bool,
 
     /// Don't clone any tags.
     #[arg(long)]
@@ -450,6 +453,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if args.ipv4 && args.ipv6 {
         bail!("options '-4' and '-6' cannot be used together");
+    }
+    if args.single_branch && args.no_single_branch {
+        bail!("options '--single-branch' and '--no-single-branch' cannot be used together");
+    }
+    if args.no_single_branch {
+        args.single_branch = false;
     }
 
     let deepen =
