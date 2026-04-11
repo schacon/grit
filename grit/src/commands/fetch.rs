@@ -1356,7 +1356,7 @@ fn fetch_remote(
                 let mut wants =
                     crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)?;
                 if should_fetch_tags {
-                    append_tag_wants_for_cli_fetch(&local_git, adv, &mut wants);
+                    append_follow_tags_for_wants(&local_git, &remote_gd, &mut wants)?;
                 }
                 Ok(wants)
             } else {
@@ -1379,6 +1379,7 @@ fn fetch_remote(
                 has_cli_refspecs,
                 include_head_ref_prefix,
                 filter_active,
+                should_fetch_tags,
                 if regular_negotiation_tips.is_empty() {
                     None
                 } else {
@@ -1508,15 +1509,53 @@ fn fetch_remote(
         }
     }
 
-    // Handle --depth / --deepen: write shallow graft info
-    let effective_depth = args.depth.or(args.deepen);
+    // Handle --depth / --deepen: write shallow graft info.
+    // `--deepen=<n>` is relative to current shallow depth; include fetched tip advancement.
+    let effective_depth = if let Some(depth) = args.depth {
+        Some(depth)
+    } else if let Some(deepen) = args.deepen {
+        let mut target_depth = deepen;
+        if let Ok(local_repo) = Repository::open(git_dir, None) {
+            let shallow_boundaries = read_shallow_boundaries(git_dir);
+            for (remote_ref, new_tip) in &remote_heads {
+                let Some(branch) = remote_ref.strip_prefix("refs/heads/") else {
+                    continue;
+                };
+                let local_tracking = format!("refs/remotes/{tracking_remote_name}/{branch}");
+                let Some(old_tip) = read_ref_oid(git_dir, &local_tracking) else {
+                    continue;
+                };
+                let current_depth =
+                    shallow_depth_from_tip(&local_repo, old_tip, &shallow_boundaries).unwrap_or(1);
+                let advance = commit_distance(&local_repo, *new_tip, old_tip).unwrap_or(0);
+                let candidate = current_depth.saturating_add(deepen).saturating_add(advance);
+                target_depth = target_depth.max(candidate);
+            }
+        }
+        Some(target_depth)
+    } else {
+        None
+    };
     if let Some(depth) = effective_depth {
+        let replace_ancestor_boundaries = args.deepen.is_some() && args.depth.is_none();
         if let Some(ref remote_repo) = remote_repo {
-            write_shallow_info(git_dir, &remote_heads, remote_repo, depth)?;
+            write_shallow_info(
+                git_dir,
+                &remote_heads,
+                remote_repo,
+                depth,
+                replace_ancestor_boundaries,
+            )?;
         } else if is_http_url {
             let local_repo = Repository::open(git_dir, None)
                 .context("open repository for shallow metadata after HTTP fetch")?;
-            write_shallow_info(git_dir, &remote_heads, &local_repo, depth)?;
+            write_shallow_info(
+                git_dir,
+                &remote_heads,
+                &local_repo,
+                depth,
+                replace_ancestor_boundaries,
+            )?;
         }
     } else if args.update_shallow {
         if let Some(ref rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
@@ -3784,17 +3823,19 @@ fn write_shallow_info(
     remote_heads: &[(String, ObjectId)],
     remote_repo: &Repository,
     depth: usize,
+    replace_ancestor_boundaries: bool,
 ) -> Result<()> {
     use grit_lib::objects::{parse_commit, ObjectKind};
     use grit_lib::odb::Odb;
 
     let shallow_path = git_dir.join("shallow");
-    // Collect existing shallow commits
+    // Start from existing shallow boundaries; each fetched tip rewrites only its own boundary.
     let mut shallow_set: std::collections::HashSet<String> = if shallow_path.exists() {
         fs::read_to_string(&shallow_path)?
             .lines()
+            .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+            .map(ToOwned::to_owned)
             .collect()
     } else {
         std::collections::HashSet::new()
@@ -3802,8 +3843,23 @@ fn write_shallow_info(
 
     let odb = Odb::new(&remote_repo.git_dir.join("objects"));
 
-    // For each remote head, walk `depth` commits and mark the boundary
+    // For each remote head, walk `depth` commits and mark the boundary.
     for (_refname, tip_oid) in remote_heads {
+        if replace_ancestor_boundaries {
+            let mut to_remove = Vec::new();
+            for existing in &shallow_set {
+                if let Ok(existing_oid) = ObjectId::from_hex(existing) {
+                    let superseded = merge_base::is_ancestor(remote_repo, existing_oid, *tip_oid)
+                        .unwrap_or(false);
+                    if superseded {
+                        to_remove.push(existing.clone());
+                    }
+                }
+            }
+            for old in to_remove {
+                shallow_set.remove(&old);
+            }
+        }
         let mut oid = *tip_oid;
         for _ in 0..depth.saturating_sub(1) {
             match odb.read(&oid) {
@@ -3827,6 +3883,67 @@ fn write_shallow_info(
     let content = entries.join("\n") + "\n";
     fs::write(&shallow_path, content).context("writing shallow file")?;
     Ok(())
+}
+
+fn read_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
+    let mut out = HashSet::new();
+    let Ok(content) = fs::read_to_string(git_dir.join("shallow")) else {
+        return out;
+    };
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.insert(oid);
+        }
+    }
+    out
+}
+
+fn shallow_depth_from_tip(
+    repo: &Repository,
+    tip: ObjectId,
+    boundaries: &HashSet<ObjectId>,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut current = tip;
+    loop {
+        if boundaries.contains(&current) {
+            return Some(depth);
+        }
+        let obj = repo.odb.read(&current).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            return Some(depth);
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        let parent = *commit.parents.first()?;
+        current = parent;
+        depth += 1;
+    }
+}
+
+fn commit_distance(repo: &Repository, from: ObjectId, target: ObjectId) -> Option<usize> {
+    if from == target {
+        return Some(0);
+    }
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    queue.push_back((from, 0usize));
+    while let Some((oid, dist)) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = repo.odb.read(&oid).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        for parent in commit.parents {
+            if parent == target {
+                return Some(dist + 1);
+            }
+            queue.push_back((parent, dist + 1));
+        }
+    }
+    None
 }
 
 fn read_shallow_boundary_oids(remote_git_dir: &Path) -> Result<HashSet<ObjectId>> {

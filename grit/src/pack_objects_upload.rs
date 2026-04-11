@@ -156,6 +156,58 @@ pub fn compute_depth_exclude_commits(
     Ok(out)
 }
 
+/// Compute exclusion commits for `--deepen=<n>` when the client is already shallow.
+///
+/// The client advertises shallow boundary commits via `shallow <oid>` lines. Relative deepening
+/// should extend history by `deepen` commits beyond the nearest advertised boundary, rather than
+/// applying `deepen` as an absolute depth from the new tip.
+pub fn compute_relative_deepen_exclude_commits(
+    repo: &Repository,
+    wants: &[ObjectId],
+    shallow_boundaries: &HashSet<ObjectId>,
+    deepen: usize,
+) -> Result<Vec<ObjectId>> {
+    if deepen == 0 || wants.is_empty() || shallow_boundaries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut min_boundary_distance: Option<usize> = None;
+    for want in wants {
+        let Some(commit_oid) = peel_commit_oid(repo, *want)? else {
+            continue;
+        };
+        let mut queue: VecDeque<(ObjectId, usize)> = VecDeque::from([(commit_oid, 0)]);
+        let mut seen: HashSet<ObjectId> = HashSet::new();
+        while let Some((oid, dist)) = queue.pop_front() {
+            if !seen.insert(oid) {
+                continue;
+            }
+            if shallow_boundaries.contains(&oid) {
+                min_boundary_distance = Some(match min_boundary_distance {
+                    Some(cur) => cur.min(dist),
+                    None => dist,
+                });
+                continue;
+            }
+            let Ok(obj) = repo.odb.read(&oid) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = parse_commit(&obj.data)?;
+            for parent in commit.parents {
+                queue.push_back((parent, dist + 1));
+            }
+        }
+    }
+
+    let effective_depth = min_boundary_distance
+        .map(|d| d + 1 + deepen)
+        .unwrap_or(deepen);
+    compute_depth_exclude_commits(repo, wants, effective_depth)
+}
+
 fn peel_commit_oid(repo: &Repository, mut oid: ObjectId) -> Result<Option<ObjectId>> {
     loop {
         let obj = match repo.odb.read(&oid) {

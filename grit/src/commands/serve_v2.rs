@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::merge_base;
-use grit_lib::objects::{self, ObjectId, ObjectKind};
+use grit_lib::objects::{self, parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
@@ -35,6 +35,7 @@ pub struct ServerCaps {
     agent: String,
     object_format: String,
     advertise_filter: bool,
+    advertise_packfile_uris: bool,
     advertise_object_info: bool,
     advertise_bundle_uri: bool,
     advertise_session_id: bool,
@@ -50,6 +51,7 @@ impl ServerCaps {
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");
         let advertise_filter = read_config_bool(git_dir, "uploadpack.allowfilter");
+        let advertise_packfile_uris = read_config_nonempty(git_dir, "uploadpack.blobpackfileuri");
         let advertise_session_id = read_config_bool(git_dir, "transfer.advertiseSID")
             || read_config_bool(git_dir, "transfer.advertisesid")
             || read_config_bool(git_dir, "transfer.advertiseSid");
@@ -63,6 +65,7 @@ impl ServerCaps {
             agent,
             object_format: "sha1".to_owned(),
             advertise_filter,
+            advertise_packfile_uris,
             advertise_object_info,
             advertise_bundle_uri,
             advertise_session_id,
@@ -78,6 +81,9 @@ impl ServerCaps {
         let mut fetch_features = String::from("fetch=shallow wait-for-done");
         if self.advertise_filter {
             fetch_features.push_str(" filter");
+        }
+        if self.advertise_packfile_uris {
+            fetch_features.push_str(" packfile-uris");
         }
         pkt_line::write_line(w, &fetch_features)?;
         pkt_line::write_line(w, "server-option")?;
@@ -354,7 +360,9 @@ fn cmd_fetch(
 
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut have_oids: Vec<ObjectId> = Vec::new();
+    let mut client_shallow_oids: HashSet<ObjectId> = HashSet::new();
     let mut depth_request: Option<usize> = None;
+    let mut deepen_relative = false;
     let mut filter_spec: Option<String> = None;
     let mut wait_for_done = false;
     let mut seen_done = false;
@@ -364,7 +372,7 @@ fn cmd_fetch(
             "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" => {}
             "wait-for-done" => wait_for_done = true,
             "done" => seen_done = true,
-            "deepen-relative" => {}
+            "deepen-relative" => deepen_relative = true,
             s if s.starts_with("want ") => {
                 let rest = s.strip_prefix("want ").unwrap_or("").trim();
                 let hex = rest.split_whitespace().next().unwrap_or(rest);
@@ -392,9 +400,13 @@ fn cmd_fetch(
                     }
                 }
             }
-            s if s.starts_with("shallow ")
-                || s.starts_with("deepen-since ")
-                || s.starts_with("deepen-not ") => {}
+            s if s.starts_with("shallow ") => {
+                let hex = s.strip_prefix("shallow ").unwrap_or("").trim();
+                if let Ok(oid) = ObjectId::from_hex(hex) {
+                    client_shallow_oids.insert(oid);
+                }
+            }
+            s if s.starts_with("deepen-since ") || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
             s if s.starts_with("filter ") => {
                 if !caps.advertise_filter {
@@ -406,7 +418,11 @@ fn cmd_fetch(
                 }
                 filter_spec = Some(spec.to_owned());
             }
-            s if s.starts_with("packfile-uris ") => {}
+            s if s.starts_with("packfile-uris ") => {
+                if !caps.advertise_packfile_uris {
+                    bail!("unexpected line: '{s}'");
+                }
+            }
             s if s.starts_with("sideband-all") => {}
             other => bail!("unexpected line: '{other}'"),
         }
@@ -452,7 +468,12 @@ fn cmd_fetch(
             .take()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
         let mut exclude_commits = have_commits.clone();
-        if let Some(depth) = depth_request {
+        if let Some(mut depth) = depth_request {
+            if deepen_relative && !client_shallow_oids.is_empty() {
+                let base =
+                    relative_depth_base_from_client_shallows(&repo, &wants, &client_shallow_oids);
+                depth = depth.saturating_add(base);
+            }
             let depth_excludes =
                 crate::pack_objects_upload::compute_depth_exclude_commits(&repo, &wants, depth)?;
             exclude_commits.extend(depth_excludes);
@@ -500,6 +521,45 @@ fn merge_ancestors_into_v2(
     let anc = merge_base::ancestor_closure(repo, tip)?;
     into.extend(anc);
     Ok(())
+}
+
+fn relative_depth_base_from_client_shallows(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow_oids: &HashSet<ObjectId>,
+) -> usize {
+    wants
+        .iter()
+        .filter_map(|want| shortest_depth_to_boundary(repo, *want, client_shallow_oids))
+        .max()
+        .unwrap_or(0)
+}
+
+fn shortest_depth_to_boundary(
+    repo: &Repository,
+    start: ObjectId,
+    boundaries: &HashSet<ObjectId>,
+) -> Option<usize> {
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    queue.push_back((start, 1usize));
+    while let Some((oid, depth)) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if boundaries.contains(&oid) {
+            return Some(depth);
+        }
+        let obj = repo.odb.read(&oid).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        for parent in commit.parents {
+            queue.push_back((parent, depth + 1));
+        }
+    }
+    None
 }
 
 /// Handle the `object-info` command.
@@ -565,11 +625,30 @@ fn read_config_bool(git_dir: &Path, key: &str) -> bool {
     if let Some(val) = check_env_config(key) {
         return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
     }
+    if let Some(val) = check_git_config_parameters(key) {
+        return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
+    }
     // Check repo config
     let config_path = git_dir.join("config");
     if let Ok(contents) = std::fs::read_to_string(&config_path) {
         if let Some(val) = parse_config_value(&contents, key) {
             return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
+        }
+    }
+    false
+}
+
+fn read_config_nonempty(git_dir: &Path, key: &str) -> bool {
+    if let Some(val) = check_env_config(key) {
+        return !val.trim().is_empty();
+    }
+    if let Some(val) = check_git_config_parameters(key) {
+        return !val.trim().is_empty();
+    }
+    let config_path = git_dir.join("config");
+    if let Ok(contents) = std::fs::read_to_string(&config_path) {
+        if let Some(val) = parse_config_value(&contents, key) {
+            return !val.trim().is_empty();
         }
     }
     false
@@ -582,6 +661,26 @@ fn check_env_config(key: &str) -> Option<String> {
         let k = std::env::var(format!("GIT_CONFIG_KEY_{i}")).ok()?;
         if k.eq_ignore_ascii_case(key) {
             return std::env::var(format!("GIT_CONFIG_VALUE_{i}")).ok();
+        }
+    }
+    None
+}
+
+fn check_git_config_parameters(key: &str) -> Option<String> {
+    let payload = std::env::var("GIT_CONFIG_PARAMETERS").ok()?;
+    // Entries are shell-quoted by `apply_globals` as: `'key=value' 'k=v'`.
+    // Split on single quotes and inspect odd chunks.
+    for entry in payload.split('\'').skip(1).step_by(2) {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            if k.eq_ignore_ascii_case(key) {
+                return Some(v.to_owned());
+            }
+        } else if trimmed.eq_ignore_ascii_case(key) {
+            return Some(String::new());
         }
     }
     None

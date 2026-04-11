@@ -362,6 +362,8 @@ pub(crate) fn write_v2_fetch_request(
     object_format: &str,
     wants: &[ObjectId],
     sideband_all: bool,
+    include_tag: bool,
+    deepen_relative: bool,
     session_id_on_wire: Option<&str>,
     server_options: &[String],
     filter_spec: Option<&str>,
@@ -397,6 +399,10 @@ pub(crate) fn write_v2_fetch_request(
         trace_packet_git('>', "sideband-all");
         pkt_line::write_line(stdin, "sideband-all")?;
     }
+    if include_tag {
+        trace_packet_git('>', "include-tag");
+        pkt_line::write_line(stdin, "include-tag")?;
+    }
 
     if let Some(sid) = session_id_on_wire {
         let esc = crate::trace2_transfer::json_escape_trace_value(sid);
@@ -413,6 +419,10 @@ pub(crate) fn write_v2_fetch_request(
         let line = format!("filter {spec}");
         trace_packet_git('>', &line);
         pkt_line::write_line(stdin, &line)?;
+    }
+    if deepen_relative {
+        trace_packet_git('>', "deepen-relative");
+        pkt_line::write_line(stdin, "deepen-relative")?;
     }
     for oid in shallow_oids {
         let line = format!("shallow {}", oid.to_hex());
@@ -658,6 +668,8 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         &default_hash,
         &wants,
         fetch_supports_sideband_all,
+        true,
+        false,
         None,
         server_options,
         None,

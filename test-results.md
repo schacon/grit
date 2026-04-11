@@ -1,5 +1,57 @@
 # Test results
 
+**2026-04-11 (protocol-v2 cluster: exact-oid/cli-prefix/tag-follow + deepen-relative + custom-path packfile-uris)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=44-49 -v`: **pass**
+    - fixed `47` (exact-oid fetch avoids pointless `ls-refs`),
+    - fixed `48` (CLI ref-prefix/have-line/tag-following filtering parity),
+    - fixed `49` (`include-tag` request shaping for tag-following parity).
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=50-52 -v`: **pass**
+    - fixed `52` (`--deepen` relative behavior in local protocol-v2 path).
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=55-60 -v`: **pass**
+    - fixed `57` (custom `--receive-pack` no protocol-v2 env),
+    - fixed `58` (custom `--upload-pack` requests protocol-v2 env),
+    - fixed `59` (remote archive custom exec path no protocol-v2 env),
+    - fixed `60` (packfile-uris rejected unless advertised by config).
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=1-52 -v`: **pass** (confirms no regression in earlier v2 slices).
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **70/85** (improved from 62/85)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `fetch_transport`:
+    - skip v2 `ls-refs` when all CLI sources are explicit OIDs,
+    - broaden v2 ref-prefix emission for unqualified names (`dwim` + `refs/heads/dwim`),
+    - thread `include_tag` and `deepen-relative` request shaping.
+  - `file_upload_pack_v2`:
+    - emit `include-tag` and `deepen-relative` lines in v2 fetch requests.
+  - `fetch`:
+    - local CLI wants now use selective follow-tag expansion instead of fetching all tag refs,
+    - refined shallow metadata updates:
+      - depth fetches preserve existing boundaries,
+      - deepen fetches replace ancestor boundaries for fetched tips.
+  - `pack_objects_upload`:
+    - depth-limited pack generation now avoids stdin `--not` arguments to prevent under-fetch in relative deepen scenarios.
+  - `send_pack`:
+    - stop forwarding protocol-v2 env for custom `--receive-pack` commands.
+  - `archive`:
+    - resolve remote names via `remote.<name>.url` in remote archive mode,
+    - rewrite shell custom exec `git-upload-archive` to current grit upload-archive binary while preserving wrappers and clearing protocol env.
+  - `serve_v2`:
+    - advertise/accept `packfile-uris` only when `uploadpack.blobpackfileuri` is configured with a non-empty value,
+    - parse valueless config keys as empty string for proper gate semantics.
+
 **2026-04-11 (protocol-v2 filter cluster 37/39/40/42 parity + promisor hydrate fallback)**
 
 - `cargo fmt`: pass

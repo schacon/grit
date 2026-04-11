@@ -242,6 +242,9 @@ fn v2_ref_prefixes_from_refspecs(refspecs: &[String]) -> Vec<String> {
         if src.starts_with("refs/") {
             push_unique_string(&mut out, src);
         } else {
+            // Match Git fetch-pack traces for unqualified names: request both the raw token and
+            // the heads namespace (`dwim` + `refs/heads/dwim` in t5702.48).
+            push_unique_string(&mut out, src);
             push_unique_string(&mut out, &format!("refs/heads/{src}"));
         }
     }
@@ -251,6 +254,17 @@ fn v2_ref_prefixes_from_refspecs(refspecs: &[String]) -> Vec<String> {
     // updates later in the fetch pipeline.
     push_unique_string(&mut out, "refs/tags/");
     out
+}
+
+fn refspecs_are_explicit_oid_sources(refspecs: &[String]) -> bool {
+    if refspecs.is_empty() {
+        return false;
+    }
+    refspecs.iter().all(|spec| {
+        let raw = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let src = raw.split_once(':').map(|(s, _)| s).unwrap_or(raw).trim();
+        !src.is_empty() && src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit())
+    })
 }
 
 fn push_unique_string(out: &mut Vec<String>, value: &str) {
@@ -708,24 +722,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
     };
 
-    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
-    if after_env.contains("git-upload-pack") {
-        let mut c = Command::new(grit_executable());
-        strip_trace2_env(&mut c);
-        for (k, v) in leading_env {
-            c.env(k, v);
-        }
-        c.arg("upload-pack")
-            .arg(rp.as_ref())
-            .env_remove("GIT_TRACE_PACKET")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        apply_proto_env(&mut c);
-        return c
-            .spawn()
-            .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
-    }
+    let (_leading_env, _after_env) = parse_leading_shell_env_assignments(cmd_template);
 
     let trimmed = cmd_template.trim();
     if trimmed == "grit-upload-pack" || trimmed.ends_with("/grit-upload-pack") {
@@ -990,6 +987,7 @@ pub fn fetch_via_upload_pack_skipping(
     has_cli_refspecs: bool,
     include_head_ref_prefix: bool,
     filter_active: bool,
+    include_tag: bool,
     negotiation_tip_oids: Option<&[ObjectId]>,
     shallow_options: Option<&UploadPackShallowOptions>,
     filter_spec: Option<&str>,
@@ -1017,14 +1015,18 @@ pub fn fetch_via_upload_pack_skipping(
             write_bundle_uri_command(&mut stdin, &cap_send)?;
             drain_bundle_uri_response(&mut stdout)?;
         }
-        let pair = v2_ls_refs_for_fetch(
-            &mut stdin,
-            &mut stdout,
-            include_head_ref_prefix,
-            refspecs,
-            server_options,
-        )?;
-        (pair.0, pair.1, Some(caps))
+        if has_cli_refspecs && refspecs_are_explicit_oid_sources(refspecs) {
+            (Vec::new(), None, Some(caps))
+        } else {
+            let pair = v2_ls_refs_for_fetch(
+                &mut stdin,
+                &mut stdout,
+                include_head_ref_prefix,
+                refspecs,
+                server_options,
+            )?;
+            (pair.0, pair.1, Some(caps))
+        }
     } else {
         let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
         trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
@@ -1097,23 +1099,26 @@ pub fn fetch_via_upload_pack_skipping(
         let sideband_all = v2_fetch_supports_sideband_all(&caps);
         let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
             .then(trace2_transfer::trace2_session_id_wire_once);
-        let (shallow_oids, depth, shallow_since, shallow_exclude, unshallow) =
+        let (shallow_oids, depth, deepen_relative, shallow_since, shallow_exclude, unshallow) =
             if let Some(opts) = shallow_options {
                 (
                     read_local_shallow_oids(local_git_dir)?,
                     opts.depth.or(opts.deepen),
+                    opts.depth.is_none() && opts.deepen.is_some(),
                     opts.shallow_since.as_deref(),
                     opts.shallow_exclude.as_slice(),
                     opts.unshallow,
                 )
             } else {
-                (Vec::new(), None, None, &[][..], false)
+                (Vec::new(), None, false, None, &[][..], false)
             };
         write_v2_fetch_request(
             &mut stdin,
             &default_hash,
             &wants,
             sideband_all,
+            include_tag,
+            deepen_relative,
             client_sid.as_deref(),
             &[],
             filter_spec,
@@ -1289,6 +1294,8 @@ fn fetch_upload_pack_negotiate_pack_bytes(
             &default_hash,
             wants,
             sideband_all,
+            false,
+            false,
             client_sid.as_deref(),
             &[],
             filter_spec,
@@ -1808,6 +1815,8 @@ pub fn fetch_via_git_protocol_skipping(
             &mut stream_w,
             &default_hash,
             &wants,
+            false,
+            true,
             false,
             None,
             &[],
