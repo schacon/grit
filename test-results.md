@@ -1,5 +1,26 @@
 # Test results
 
+**2026-04-11 (bundle-uri HTTP completion: t5558 now 37/37)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5558-clone-bundle-uri.sh -v`: pass (**37/37**)
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37** (improved from 30/37)
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - smart HTTP transport no longer emits extra trace2 remote-helper child events for standard `info/refs` and `git-upload-pack` RPC calls, keeping `test_remote_https_urls` output limited to expected bundle-list and bundle download URLs.
+  - HTTP clone now short-circuits malformed `--bundle-uri` values (space/newline/CR) with Git-like `error: bundle-uri: URI is malformed: ...` output and a successful command exit, matching malformed URI rejection expectations.
+
 **2026-04-11 (bundle negotiation trace parity: t5558 +3 cases)**
 
 - `cargo fmt`: pass

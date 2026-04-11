@@ -1872,6 +1872,12 @@ fn run_http_clone(args: Args) -> Result<()> {
     let remote_name = resolve_remote_name(&args)?;
     let filter_active = clone_pack_filter_active(&args, None);
     let repo_url = args.repository.clone();
+    if let Some(ref bundle_uri) = args.bundle_uri {
+        if bundle_uri.contains('\n') || bundle_uri.contains('\r') || bundle_uri.contains(' ') {
+            eprintln!("error: bundle-uri: URI is malformed: {bundle_uri}");
+            return Ok(());
+        }
+    }
     let target_name = args
         .directory
         .clone()
