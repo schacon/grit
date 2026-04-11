@@ -1,5 +1,41 @@
 # Test results
 
+**2026-04-11 (shallow v2 deepen wire + upload-pack shallow boundary handling)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated clippy edit in `grit-lib/src/repo.rs`)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused trace validation:
+  - `GIT_TRACE_PACKET=1 GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh --run=1-2 -v`
+  - clone/fetch v2 request now includes `deepen 2` during `--depth=2` setup clone.
+- Focused shallow validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh --run=1-8 -v`
+  - passing: `1..7`
+  - remaining failure in this subset: `8`
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **12/16** (improved from 11/16)
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Current remaining `t5537` failures in verbose run:
+  - `8`, `14`, `15`, `16`
+- Implemented in this increment:
+  - local upload-pack v2 fetch request writer now emits shallow/deepen fields (`shallow`, `deepen`, `deepen-since`, `deepen-not`, unshallow sentinel) from caller options.
+  - local fetch transport v2 path now forwards fetch shallow options into v2 request writer.
+  - upload-pack v0 path now:
+    - tracks client-advertised shallow boundaries,
+    - avoids excluding unseen ancestors when client is shallow,
+    - applies depth boundary exclusions via explicit `--not` parents for depth-limited fetches.
+  - protocol v2 server fetch handler (`serve_v2`) now accepts `deepen <n>` and applies matching depth exclusion commits when generating packs.
+  - local `fetch --unshallow` object copy now respects source shallow boundaries when traversing commit parents.
+  - `sync_shallow_boundaries_for_unshallow` now resets local boundary set from remote-reachable boundaries (no stale local carryover).
+
 **2026-04-11 (fetch --unshallow local boundary sync attempt)**n
 
 - `cargo fmt`: pass

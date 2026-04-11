@@ -2,10 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
+use grit_lib::repo::Repository;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::{collections::HashSet, collections::VecDeque};
 
 use crate::grit_exe::grit_executable;
 
@@ -69,22 +71,96 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         })
 }
 
-/// Write the stdin Git's `pack-objects --revs` expects (`--not` + have commit OIDs).
+/// Write the stdin Git's `pack-objects --revs` expects (`--not` + exclusion commit OIDs).
 pub fn write_pack_objects_revs_stdin(
     pin: &mut impl Write,
     wants: &[ObjectId],
-    have_commits: &[ObjectId],
+    exclude_commits: &[ObjectId],
 ) -> Result<()> {
     for w in wants {
         writeln!(pin, "{}", w.to_hex())?;
     }
     writeln!(pin, "--not")?;
-    for h in have_commits {
+    for h in exclude_commits {
         writeln!(pin, "{}", h.to_hex())?;
     }
     writeln!(pin)?;
     pin.flush()?;
     Ok(())
+}
+
+/// Compute commit OIDs to exclude for a depth-limited upload-pack response.
+///
+/// The returned OIDs are parent commits just beyond the requested depth from the wanted tips.
+/// Passing these OIDs after `--not` to `pack-objects --revs` keeps history at or above the depth
+/// boundary while allowing boundary commits themselves to be included.
+pub fn compute_depth_exclude_commits(
+    repo: &Repository,
+    wants: &[ObjectId],
+    depth: usize,
+) -> Result<Vec<ObjectId>> {
+    if depth == 0 || wants.is_empty() || depth >= i32::MAX as usize {
+        return Ok(Vec::new());
+    }
+
+    let mut queue: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    let mut seen: std::collections::HashMap<ObjectId, usize> = std::collections::HashMap::new();
+
+    for want in wants {
+        if let Some(commit_oid) = peel_commit_oid(repo, *want)? {
+            if seen.insert(commit_oid, 0).is_none() {
+                queue.push_back((commit_oid, 0));
+            }
+        }
+    }
+
+    let mut excludes: HashSet<ObjectId> = HashSet::new();
+    while let Some((oid, dist)) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        if dist + 1 >= depth {
+            excludes.extend(commit.parents.iter().copied());
+            continue;
+        }
+        for parent in commit.parents {
+            let next_dist = dist + 1;
+            if seen
+                .get(&parent)
+                .is_some_and(|existing| *existing <= next_dist)
+            {
+                continue;
+            }
+            seen.insert(parent, next_dist);
+            queue.push_back((parent, next_dist));
+        }
+    }
+
+    let mut out: Vec<ObjectId> = excludes.into_iter().collect();
+    out.sort_by_key(|oid| oid.to_hex());
+    Ok(out)
+}
+
+fn peel_commit_oid(repo: &Repository, mut oid: ObjectId) -> Result<Option<ObjectId>> {
+    loop {
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => return Ok(None),
+        };
+        match obj.kind {
+            ObjectKind::Commit => return Ok(Some(oid)),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 pub(crate) fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {

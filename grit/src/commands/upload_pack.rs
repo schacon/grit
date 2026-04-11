@@ -9,7 +9,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::merge_base;
-use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -91,6 +91,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut stdin = io::stdin();
     let mut wants: Vec<ObjectId> = Vec::new();
+    let mut client_shallow_boundaries: HashSet<ObjectId> = HashSet::new();
+    let mut requested_depth: Option<usize> = None;
     let mut multi_ack_detailed = false;
     loop {
         match pkt_line::read_packet(&mut stdin)? {
@@ -110,6 +112,21 @@ pub fn run(args: Args) -> Result<()> {
                     }
                     if let Ok(oid) = ObjectId::from_hex(hex) {
                         wants.push(oid);
+                    }
+                } else if let Some(rest) = line.strip_prefix("shallow ") {
+                    let hex = rest.trim();
+                    if let Ok(oid) = ObjectId::from_hex(hex) {
+                        client_shallow_boundaries.insert(oid);
+                    }
+                } else if let Some(rest) = line.strip_prefix("deepen ") {
+                    let depth = rest.trim().parse::<usize>().unwrap_or(0);
+                    // `fetch --unshallow` uses a sentinel depth (`2147483647`) that should not
+                    // impose an artificial depth limit.
+                    if depth > 0 && depth < i32::MAX as usize {
+                        requested_depth = Some(match requested_depth {
+                            Some(current) => current.min(depth),
+                            None => depth,
+                        });
                     }
                 }
             }
@@ -183,7 +200,12 @@ pub fn run(args: Args) -> Result<()> {
                             got_common = true;
                             last_hex = oid.to_hex();
                             client_have_commits.push(oid);
-                            merge_ancestors_into(&repo, oid, &mut client_known)?;
+                            merge_ancestors_into(
+                                &repo,
+                                oid,
+                                &mut client_known,
+                                Some(&client_shallow_boundaries),
+                            )?;
                             if multi_ack_detailed {
                                 pkt_line::write_line(&mut out, &format!("ACK {last_hex} common"))?;
                             } else {
@@ -208,18 +230,35 @@ pub fn run(args: Args) -> Result<()> {
         let pack = crate::pack_objects_upload::empty_packfile_v2_bytes();
         crate::pack_objects_upload::write_sideband_64k(&mut out, &pack)?;
     } else {
+        let mut exclusion_commits: Vec<ObjectId> = if client_shallow_boundaries.is_empty() {
+            client_have_commits.clone()
+        } else {
+            // With shallow clients, `have` commit closure past a shallow boundary is incomplete.
+            // Avoid excluding those unseen ancestors from the generated pack.
+            Vec::new()
+        };
+        if let Some(depth) = requested_depth {
+            exclusion_commits.extend(crate::pack_objects_upload::compute_depth_exclude_commits(
+                &repo,
+                &want_unique,
+                depth,
+            )?);
+        }
+        exclusion_commits.sort_by_key(|oid| oid.to_hex());
+        exclusion_commits.dedup();
         // Thin packs subtract the full closure of `have` commits. That is only safe when every
         // `want` is a commit OID; blob/tree lazy-fetch wants must use a self-contained pack
         // (t0410 partial-clone explicit wants).
-        let thin =
-            !client_have_commits.is_empty() && wants_include_only_commits(&repo, &want_unique);
+        let thin = client_shallow_boundaries.is_empty()
+            && !exclusion_commits.is_empty()
+            && wants_include_only_commits(&repo, &want_unique);
         let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;
             crate::pack_objects_upload::write_pack_objects_revs_stdin(
                 &mut pin,
                 &want_unique,
-                &client_have_commits,
+                &exclusion_commits,
             )?;
         }
         crate::pack_objects_upload::drain_pack_objects_child(child, &mut out, true)?;
@@ -247,9 +286,34 @@ fn merge_ancestors_into(
     repo: &Repository,
     tip: ObjectId,
     into: &mut HashSet<ObjectId>,
+    shallow_boundaries: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
-    let anc = merge_base::ancestor_closure(repo, tip)?;
-    into.extend(anc);
+    if shallow_boundaries.is_none() || shallow_boundaries.is_some_and(HashSet::is_empty) {
+        let anc = merge_base::ancestor_closure(repo, tip)?;
+        into.extend(anc);
+        return Ok(());
+    }
+
+    let boundaries = shallow_boundaries.expect("checked above");
+    let mut stack = vec![tip];
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        into.insert(oid);
+        if boundaries.contains(&oid) {
+            continue;
+        }
+        let Ok(obj) = repo.odb.read(&oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        stack.extend(commit.parents);
+    }
     Ok(())
 }
 

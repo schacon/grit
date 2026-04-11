@@ -1440,7 +1440,7 @@ fn fetch_remote(
             // For local/ext transports, mirror Git's `--unshallow` behavior by importing all
             // reachable objects and then syncing local shallow boundaries to the remote's
             // remaining boundaries (or removing the file when the remote is complete).
-            copy_reachable_objects(&rr.git_dir, git_dir, &tip_oids)
+            copy_reachable_objects_respecting_source_shallow(&rr.git_dir, git_dir, &tip_oids)
                 .context("copying objects for --unshallow")?;
             sync_shallow_boundaries_for_unshallow(git_dir, &rr.git_dir, &tip_oids)?;
         } else {
@@ -3472,8 +3472,28 @@ pub(crate) fn copy_reachable_objects(
     dst_git_dir: &Path,
     roots: &[ObjectId],
 ) -> Result<()> {
+    copy_reachable_objects_internal(src_git_dir, dst_git_dir, roots, false)
+}
+
+/// Copy objects reachable from `roots`, optionally stopping parent traversal at remote shallow
+/// boundaries found in `<src_git_dir>/shallow`.
+///
+/// When `respect_remote_shallow_boundaries` is true, commits listed in the source shallow file are
+/// treated as traversal boundaries: the commit object and its tree are copied, but parent commits
+/// beyond that boundary are not copied.
+fn copy_reachable_objects_internal(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    roots: &[ObjectId],
+    respect_remote_shallow_boundaries: bool,
+) -> Result<()> {
     let src_odb = Odb::new(&src_git_dir.join("objects"));
     let dst_odb = Odb::new(&dst_git_dir.join("objects"));
+    let remote_shallow_boundaries = if respect_remote_shallow_boundaries {
+        read_shallow_boundary_oids(src_git_dir)?
+    } else {
+        HashSet::new()
+    };
     let mut stack: Vec<ObjectId> = roots.to_vec();
     let mut seen = HashSet::new();
 
@@ -3493,7 +3513,9 @@ pub(crate) fn copy_reachable_objects(
             ObjectKind::Commit => {
                 let c = parse_commit(&obj.data)?;
                 stack.push(c.tree);
-                stack.extend_from_slice(&c.parents);
+                if !remote_shallow_boundaries.contains(&oid) {
+                    stack.extend_from_slice(&c.parents);
+                }
             }
             ObjectKind::Tree => {
                 for e in parse_tree(&obj.data)? {
@@ -3507,6 +3529,16 @@ pub(crate) fn copy_reachable_objects(
         }
     }
     Ok(())
+}
+
+/// Copy objects reachable from `roots`, but do not traverse parent commits past source shallow
+/// boundaries.
+fn copy_reachable_objects_respecting_source_shallow(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    roots: &[ObjectId],
+) -> Result<()> {
+    copy_reachable_objects_internal(src_git_dir, dst_git_dir, roots, true)
 }
 
 fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {
@@ -3902,16 +3934,9 @@ fn sync_shallow_boundaries_for_unshallow(
     let remote_repo = Repository::open(remote_git_dir, None)
         .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
 
-    let mut local_boundaries: HashSet<ObjectId> = if shallow_path.exists() {
-        fs::read_to_string(&shallow_path)?
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .filter_map(|l| ObjectId::from_hex(l).ok())
-            .collect()
-    } else {
-        HashSet::new()
-    };
+    // `--unshallow` should align local shallow boundaries to the remote's current boundaries,
+    // not keep previous local deepen markers that may be superseded.
+    let mut local_boundaries: HashSet<ObjectId> = HashSet::new();
 
     let mut stack: Vec<ObjectId> = tip_oids.to_vec();
     let mut seen = HashSet::new();

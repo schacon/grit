@@ -1025,12 +1025,29 @@ pub fn fetch_via_upload_pack_skipping(
         let sideband_all = v2_fetch_supports_sideband_all(&caps);
         let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
             .then(trace2_transfer::trace2_session_id_wire_once);
+        let (shallow_oids, depth, shallow_since, shallow_exclude, unshallow) =
+            if let Some(opts) = shallow_options {
+                (
+                    read_local_shallow_oids(local_git_dir)?,
+                    opts.depth.or(opts.deepen),
+                    opts.shallow_since.as_deref(),
+                    opts.shallow_exclude.as_slice(),
+                    opts.unshallow,
+                )
+            } else {
+                (Vec::new(), None, None, &[][..], false)
+            };
         write_v2_fetch_request(
             &mut stdin,
             &default_hash,
             &wants,
             sideband_all,
             client_sid.as_deref(),
+            &shallow_oids,
+            depth,
+            shallow_since,
+            shallow_exclude,
+            unshallow,
         )?;
         // Close stdin so `upload-pack` v2 sees EOF after this fetch; otherwise `serve_loop`
         // blocks for the next command while we block reading the pack response (deadlock).

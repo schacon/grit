@@ -277,6 +277,11 @@ pub(crate) fn write_v2_fetch_request(
     wants: &[ObjectId],
     sideband_all: bool,
     session_id_on_wire: Option<&str>,
+    shallow_oids: &[ObjectId],
+    depth: Option<usize>,
+    shallow_since: Option<&str>,
+    shallow_exclude: &[String],
+    unshallow: bool,
 ) -> Result<()> {
     trace_packet_git('>', "command=fetch");
     pkt_line::write_line(stdin, "command=fetch")?;
@@ -309,6 +314,29 @@ pub(crate) fn write_v2_fetch_request(
     for w in wants {
         let line = format!("want {}{}", w.to_hex(), caps);
         trace_packet_git('>', line.trim_end());
+        pkt_line::write_line(stdin, &line)?;
+    }
+    for oid in shallow_oids {
+        let line = format!("shallow {}", oid.to_hex());
+        trace_packet_git('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
+    if unshallow {
+        trace_packet_git('>', "deepen 2147483647");
+        pkt_line::write_line(stdin, "deepen 2147483647")?;
+    } else if let Some(depth) = depth.filter(|d| *d > 0) {
+        let line = format!("deepen {depth}");
+        trace_packet_git('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
+    if let Some(since) = shallow_since {
+        let line = format!("deepen-since {since}");
+        trace_packet_git('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
+    for exclude in shallow_exclude {
+        let line = format!("deepen-not {exclude}");
+        trace_packet_git('>', &line);
         pkt_line::write_line(stdin, &line)?;
     }
     trace_packet_git('>', "done");
@@ -555,6 +583,11 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         &wants,
         fetch_supports_sideband_all,
         None,
+        &[],
+        None,
+        None,
+        &[],
+        false,
     )?;
     drop(stdin);
     drain_v2_fetch_response(&mut stdout, fetch_supports_sideband_all)?;

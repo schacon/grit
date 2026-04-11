@@ -342,6 +342,7 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
 
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut have_oids: Vec<ObjectId> = Vec::new();
+    let mut depth_request: Option<usize> = None;
     let mut wait_for_done = false;
     let mut seen_done = false;
 
@@ -368,8 +369,17 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                     have_oids.push(oid);
                 }
             }
+            s if s.starts_with("deepen ") => {
+                let depth_text = s.strip_prefix("deepen ").unwrap_or("").trim();
+                if !depth_text.is_empty() {
+                    if let Ok(depth) = depth_text.parse::<usize>() {
+                        if depth > 0 && depth < i32::MAX as usize {
+                            depth_request = Some(depth);
+                        }
+                    }
+                }
+            }
             s if s.starts_with("shallow ")
-                || s.starts_with("deepen ")
                 || s.starts_with("deepen-since ")
                 || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
@@ -415,7 +425,19 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
             .stdin
             .take()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
-        crate::pack_objects_upload::write_pack_objects_revs_stdin(&mut pin, &wants, &have_commits)?;
+        let mut exclude_commits = have_commits.clone();
+        if let Some(depth) = depth_request {
+            let depth_excludes =
+                crate::pack_objects_upload::compute_depth_exclude_commits(&repo, &wants, depth)?;
+            exclude_commits.extend(depth_excludes);
+            exclude_commits.sort_by_key(|oid| oid.to_hex());
+            exclude_commits.dedup();
+        }
+        crate::pack_objects_upload::write_pack_objects_revs_stdin(
+            &mut pin,
+            &wants,
+            &exclude_commits,
+        )?;
     }
     // Protocol v2 fetch streams the pack inside side-band-64k (matches `git upload-pack`).
     crate::pack_objects_upload::drain_pack_objects_child(child, out, true)?;
