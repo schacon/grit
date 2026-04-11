@@ -32,6 +32,21 @@ use crate::protocol_wire;
 use crate::trace2_transfer;
 use crate::wire_trace;
 
+/// Shallow/deepen options forwarded to local `upload-pack` negotiation.
+#[derive(Debug, Clone, Default)]
+pub struct UploadPackShallowOptions {
+    /// Absolute depth (`--depth`).
+    pub depth: Option<usize>,
+    /// Relative deepen amount (`--deepen`).
+    pub deepen: Option<usize>,
+    /// Date cutoff for deepening (`--shallow-since`).
+    pub shallow_since: Option<String>,
+    /// Excluded refs for deepening (`--shallow-exclude`).
+    pub shallow_exclude: Vec<String>,
+    /// Convert a shallow clone into a complete clone relative to the remote.
+    pub unshallow: bool,
+}
+
 thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
 }
@@ -913,6 +928,7 @@ pub fn fetch_via_upload_pack_skipping(
     include_head_ref_prefix: bool,
     filter_active: bool,
     negotiation_tip_oids: Option<&[ObjectId]>,
+    shallow_options: Option<&UploadPackShallowOptions>,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -1030,6 +1046,7 @@ pub fn fetch_via_upload_pack_skipping(
             &mut stdout,
             &wants,
             negotiation_tip_oids,
+            shallow_options,
         )?;
         drop(stdin);
         buf
@@ -1131,6 +1148,24 @@ fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn read_local_shallow_oids(local_git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let shallow_path = local_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.push(oid);
+        }
+    }
+    Ok(out)
+}
+
 fn fetch_upload_pack_negotiate_pack_bytes(
     local_git_dir: &Path,
     remote_repo_path: &Path,
@@ -1157,6 +1192,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         &mut stdout,
         wants,
         None,
+        None,
     )?;
     drop(stdin);
 
@@ -1181,6 +1217,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdout: &mut impl Read,
     wants: &[ObjectId],
     negotiation_tip_oids: Option<&[ObjectId]>,
+    shallow_options: Option<&UploadPackShallowOptions>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -1224,6 +1261,32 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
         let line = format!("want {}", first_want.to_hex());
         trace_packet_fetch('>', line.as_str());
         pkt_line::write_line_to_vec(&mut req, &line)?;
+    }
+    if let Some(opts) = shallow_options {
+        for shallow_oid in read_local_shallow_oids(local_git_dir)? {
+            let line = format!("shallow {}", shallow_oid.to_hex());
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        if opts.unshallow {
+            // Match fetch-pack's sentinel deepen value for --unshallow.
+            trace_packet_fetch('>', "deepen 2147483647");
+            pkt_line::write_line_to_vec(&mut req, "deepen 2147483647")?;
+        } else if let Some(depth) = opts.depth.or(opts.deepen) {
+            let line = format!("deepen {depth}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        if let Some(since) = opts.shallow_since.as_deref() {
+            let line = format!("deepen-since {since}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        for exclude in &opts.shallow_exclude {
+            let line = format!("deepen-not {exclude}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
     }
     req.extend_from_slice(b"0000");
     stdin.write_all(&req).context("write wants")?;
@@ -1588,6 +1651,7 @@ pub fn fetch_via_git_protocol_skipping(
         &mut stream_w,
         &mut stream,
         &wants,
+        None,
         None,
     )?;
 

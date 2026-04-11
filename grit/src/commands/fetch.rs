@@ -1191,6 +1191,13 @@ fn fetch_remote(
         filter_spec: args.filter.clone(),
         refetch: args.refetch,
     };
+    let upload_pack_shallow_options = crate::fetch_transport::UploadPackShallowOptions {
+        depth: args.depth,
+        deepen: args.deepen,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
+        unshallow: args.unshallow,
+    };
     let remote_head_advertised_oid: Option<ObjectId>;
     let remote_head_symbolic_branch_from_transport: Option<String>;
     let (mut remote_heads, mut remote_tags, remote_advertised) = if is_ext_url {
@@ -1331,6 +1338,7 @@ fn fetch_remote(
                 } else {
                     Some(regular_negotiation_tips.as_slice())
                 },
+                Some(&upload_pack_shallow_options),
             )?;
         remote_head_advertised_oid = head_oid;
         remote_head_symbolic_branch_from_transport = head_symref

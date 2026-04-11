@@ -784,6 +784,13 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let mut head_branch = head_branch;
+    let upload_pack_shallow_options = crate::fetch_transport::UploadPackShallowOptions {
+        depth: args.depth,
+        deepen: None,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.clone(),
+        unshallow: false,
+    };
 
     if let Some(ref bu) = args.bundle_uri {
         crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
@@ -802,6 +809,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 true,
                 pack_filter_active,
                 None,
+                Some(&upload_pack_shallow_options),
             )
         });
         match fetch_res {
@@ -960,6 +968,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 true,
                 pack_filter_active,
                 None,
+                Some(&upload_pack_shallow_options),
             )
         }) {
             Ok(_) => {
@@ -2474,6 +2483,13 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     };
 
     let mut head_branch = head_branch;
+    let upload_pack_shallow_options = crate::fetch_transport::UploadPackShallowOptions {
+        depth: args.depth,
+        deepen: None,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.clone(),
+        unshallow: false,
+    };
 
     if let Some(ref bu) = args.bundle_uri {
         crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
@@ -2491,6 +2507,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 true,
                 pack_filter_active,
                 None,
+                Some(&upload_pack_shallow_options),
             )
         });
         match fetch_res {
@@ -2642,6 +2659,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             true,
             pack_filter_active,
             None,
+            Some(&upload_pack_shallow_options),
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
