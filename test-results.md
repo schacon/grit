@@ -45,6 +45,26 @@
   - Added protocol-v2 fetch response tolerance for section delimiter packets:
     - treat `Packet::Delim` as section boundary separator in both HTTP and file upload-pack v2 parsers.
 
+**2026-04-11 (shallow local unshallow/ref-filtering follow-up)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **11/16** (improved from 10/16)
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37** (baseline held)
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16** (baseline held)
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `fetch --unshallow` now removes local `.git/shallow` only when the resolved local/ext remote has no shallow boundary entries.
+  - CLI refspec mapping path now applies the same blocked shallow-ref filter used by configured mapping path, preventing shallow-forbidden refs from being updated via explicit CLI patterns.
+  - Added helper `repository_has_shallow_boundary(...)` to centralize remote shallow-boundary presence check.
+
 **2026-04-10 (fetch tail completion + full t5510 green)**
 
 - `cargo fmt`: pass
