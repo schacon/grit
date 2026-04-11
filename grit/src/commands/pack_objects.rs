@@ -25,9 +25,10 @@ use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::fs;
@@ -1254,11 +1255,104 @@ fn collect_pack_objects_from_rev_stdin_lines(
         }
         ordered.retain(|o| !have_closure.contains(o));
     }
+    if is_shallow_repo(repo) && !ordered.is_empty() {
+        ordered = prune_hidden_objects_for_shallow_repo(repo, &ordered)?;
+    }
+
     Ok(PackObjectList {
         oids: ordered,
         thin_blob_deltas: Vec::new(),
         rev_list_stdin: true,
     })
+}
+
+fn is_shallow_repo(repo: &Repository) -> bool {
+    repo.git_dir.join("shallow").is_file()
+}
+
+fn prune_hidden_objects_for_shallow_repo(
+    repo: &Repository,
+    oids: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let mut keep: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut queue: VecDeque<ObjectId> = VecDeque::new();
+    let mut seen_commits: HashSet<ObjectId> = HashSet::new();
+    let mut seen_trees: HashSet<ObjectId> = HashSet::new();
+    let mut seen_tags: HashSet<ObjectId> = HashSet::new();
+    let mut shallow_boundaries: HashSet<ObjectId> = HashSet::new();
+
+    if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        queue.push_back(head_oid);
+    }
+    if let Ok(all_refs) = refs::list_refs(&repo.git_dir, "refs/") {
+        for (_, oid) in all_refs {
+            queue.push_back(oid);
+        }
+    }
+    if let Ok(content) = fs::read_to_string(repo.git_dir.join("shallow")) {
+        for line in content.lines() {
+            let hex = line.trim();
+            if hex.is_empty() {
+                continue;
+            }
+            if let Ok(oid) = ObjectId::from_hex(hex) {
+                shallow_boundaries.insert(oid);
+                queue.push_back(oid);
+            }
+        }
+    }
+
+    while let Some(oid) = queue.pop_front() {
+        if !keep.insert(oid) {
+            continue;
+        }
+        let Ok(obj) = read_object_from_repo(repo, &oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if !seen_commits.insert(oid) {
+                    continue;
+                }
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    queue.push_back(commit.tree);
+                    if !shallow_boundaries.contains(&oid) {
+                        for parent in commit.parents {
+                            queue.push_back(parent);
+                        }
+                    }
+                }
+            }
+            ObjectKind::Tree => {
+                if !seen_trees.insert(oid) {
+                    continue;
+                }
+                if let Ok(entries) = parse_tree(&obj.data) {
+                    for entry in entries {
+                        if entry.mode == 0o160000 {
+                            continue;
+                        }
+                        queue.push_back(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                if !seen_tags.insert(oid) {
+                    continue;
+                }
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+
+    Ok(oids
+        .iter()
+        .copied()
+        .filter(|oid| keep.contains(oid))
+        .collect())
 }
 
 /// Collect object IDs from stdin or `--all`.

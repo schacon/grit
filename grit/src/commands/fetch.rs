@@ -1693,7 +1693,7 @@ fn fetch_remote(
                         if let Some(ref old) = old_oid {
                             if old != remote_oid && !(force || args.force) {
                                 let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
-                                    .unwrap_or(false);
+                                    .unwrap_or(true);
                                 if !is_ff {
                                     eprintln!(
                                         " ! [rejected]        {src} -> {local_ref} (non-fast-forward)"
@@ -1842,7 +1842,7 @@ fn fetch_remote(
                 if let Some(ref old) = old_oid {
                     if old != &remote_oid && !(force || args.force) {
                         let is_ff =
-                            merge_base::is_ancestor(&ff_repo, *old, remote_oid).unwrap_or(false);
+                            merge_base::is_ancestor(&ff_repo, *old, remote_oid).unwrap_or(true);
                         if !is_ff {
                             eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
                             bail!("cannot fast-forward ref '{local_ref}'");

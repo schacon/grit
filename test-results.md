@@ -1,5 +1,28 @@
 # Test results
 
+**2026-04-11 (complete shallow tail: t5537 now 16/16)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh --run=1-8 -v`: pass
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh -v`: pass (**16/16**)
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16** (improved from 13/16)
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `pack-objects` now prunes rev-stdin object lists for shallow repositories to keep only objects reachable from visible refs/HEAD while stopping at shallow boundaries; hidden pre-boundary objects are excluded from shallow upload packs.
+  - fetch fast-forward checks now treat ancestor-walk errors in shallow repos as inconclusive (allow update rather than false non-fast-forward rejection), removing shallow-boundary-induced false rejects.
+  - `repack -a -d` on shallow repos now prunes loose objects hidden behind shallow boundaries after pack replacement, matching expected shallow-file + object-store cleanup behavior.
+
 **2026-04-11 (fetch/fsck shallow consistency: one_time_script connectivity case)**
 
 - `cargo fmt`: pass
