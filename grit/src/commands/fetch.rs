@@ -1191,7 +1191,6 @@ fn fetch_remote(
         filter_spec: args.filter.clone(),
         refetch: args.refetch,
     };
-
     let remote_head_advertised_oid: Option<ObjectId>;
     let remote_head_symbolic_branch_from_transport: Option<String>;
     let (mut remote_heads, mut remote_tags, remote_advertised) = if is_ext_url {
@@ -1417,9 +1416,19 @@ fn fetch_remote(
     }
 
     if !args.negotiate_only && args.unshallow {
-        let shallow_path = git_dir.join("shallow");
-        if shallow_path.exists() {
-            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        let should_remove_local_shallow =
+            if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+                !repository_has_shallow_boundary(&rr.git_dir)?
+            } else {
+                // For non-local transports we cannot reliably inspect remote shallow state here.
+                true
+            };
+        if should_remove_local_shallow {
+            let shallow_path = git_dir.join("shallow");
+            if shallow_path.exists() {
+                fs::remove_file(&shallow_path)
+                    .context("removing shallow grafts for --unshallow")?;
+            }
         }
     }
 
@@ -1512,6 +1521,10 @@ fn fetch_remote(
                 "refs/",
             )?
         };
+        let remote_all_refs: Vec<(String, ObjectId)> = remote_all_refs
+            .into_iter()
+            .filter(|(refname, _)| !blocked_shallow_remote_refs.contains(refname))
+            .collect();
         let find_remote_ref_oid = |name: &str| -> Option<ObjectId> {
             remote_all_refs
                 .iter()
@@ -3736,6 +3749,10 @@ fn read_shallow_boundary_oids(remote_git_dir: &Path) -> Result<HashSet<ObjectId>
         }
     }
     Ok(set)
+}
+
+fn repository_has_shallow_boundary(remote_git_dir: &Path) -> Result<bool> {
+    Ok(!read_shallow_boundary_oids(remote_git_dir)?.is_empty())
 }
 
 fn oid_reaches_shallow_boundary(
