@@ -1,5 +1,29 @@
 # Test results
 
+**2026-04-11 (fetch --unshallow local boundary sync attempt)**n
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **11/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Focused shallow run:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh --run=1-8`
+  - still failing `6`, `8`; unshallow behavior remains incomplete for this shallow source scenario.
+- Implemented in this increment:
+  - `fetch --unshallow` for local/ext remotes now:
+    - copies reachable objects from remote for current fetched tips,
+    - calls `sync_shallow_boundaries_for_unshallow(...)` to either rewrite local `.git/shallow` to remaining remote boundaries or remove it when remote is complete.
+  - removed old `should_remove_local_shallow` gate in favor of boundary-sync helper path for local remotes.
+
 **2026-04-11 (local upload-pack shallow wire options)**
 
 - `cargo fmt`: pass
