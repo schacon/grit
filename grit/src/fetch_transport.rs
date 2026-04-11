@@ -100,7 +100,7 @@ pub fn with_packet_trace_identity<T>(
     let prev = PACKET_TRACE_IDENTITY.get();
     PACKET_TRACE_IDENTITY.set(identity);
     let _guard = Reset(prev);
-    f()
+    crate::trace_packet::with_packet_trace_label(identity, f)
 }
 
 const INITIAL_FLUSH: usize = 16;

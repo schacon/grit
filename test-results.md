@@ -1,5 +1,26 @@
 # Test results
 
+**2026-04-11 (bundle negotiation trace parity: t5558 +3 cases)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5558-clone-bundle-uri.sh --run=1-20 -v`: pass
+  - verifies bundle negotiation trace expectations in early bundle-uri negotiation cases.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **30/37** (improved from 27/37)
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - packet trace identity wrapper now also propagates negotiation label context (`fetch`/`clone`) to `trace_fetch_tip_availability`, so trace lines emitted for negotiation candidates in clone flows are labeled `clone>` (matching bundle-uri negotiation harness expectations).
+
 **2026-04-11 (complete shallow tail: t5537 now 16/16)**
 
 - `cargo fmt`: pass
