@@ -289,6 +289,7 @@ pub fn run(args: Args) -> Result<()> {
         output: None,
         quiet: args.quiet,
         jobs: None,
+        server_options: Vec::new(),
         porcelain: false,
         no_show_forced_updates: false,
         show_forced_updates: false,

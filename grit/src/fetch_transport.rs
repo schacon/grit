@@ -135,6 +135,8 @@ fn v2_ls_refs_for_fetch(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
     include_head_ref_prefix: bool,
+    refspecs: &[String],
+    server_options: &[String],
 ) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
     let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
     let agent = format!("agent=git/{}-", crate::version_string());
@@ -146,6 +148,11 @@ fn v2_ls_refs_for_fetch(
     let of = format!("object-format={default_hash}");
     trace_packet_fetch('>', &of);
     pkt_line::write_line(stdin, &of)?;
+    for opt in server_options {
+        let line = format!("server-option={opt}");
+        trace_packet_fetch('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
     pkt_line::write_delim(stdin)?;
     trace_packet_fetch('>', "0001");
     trace_packet_fetch('>', "symrefs");
@@ -156,10 +163,19 @@ fn v2_ls_refs_for_fetch(
         trace_packet_fetch('>', "ref-prefix HEAD");
         pkt_line::write_line(stdin, "ref-prefix HEAD")?;
     }
-    trace_packet_fetch('>', "ref-prefix refs/heads/");
-    pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
-    trace_packet_fetch('>', "ref-prefix refs/tags/");
-    pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    let derived_prefixes = v2_ref_prefixes_from_refspecs(refspecs);
+    if derived_prefixes.is_empty() {
+        trace_packet_fetch('>', "ref-prefix refs/heads/");
+        pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
+        trace_packet_fetch('>', "ref-prefix refs/tags/");
+        pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    } else {
+        for prefix in derived_prefixes {
+            let line = format!("ref-prefix {prefix}");
+            trace_packet_fetch('>', &line);
+            pkt_line::write_line(stdin, &line)?;
+        }
+    }
     pkt_line::write_flush(stdin)?;
     trace_packet_fetch('>', "0000");
     stdin.flush().context("flush ls-refs request")?;
@@ -194,6 +210,53 @@ fn v2_ls_refs_for_fetch(
     }
 
     Ok((advertised, head_symref))
+}
+
+fn v2_ref_prefixes_from_refspecs(refspecs: &[String]) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    for spec in refspecs {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let raw = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let src = raw.split_once(':').map(|(s, _)| s).unwrap_or(raw).trim();
+        if src.is_empty() {
+            continue;
+        }
+        if src == "HEAD" {
+            push_unique_string(&mut out, "HEAD");
+            continue;
+        }
+        if let Some(star) = src.find('*') {
+            let prefix = &src[..star];
+            if prefix.is_empty() {
+                continue;
+            }
+            if prefix.starts_with("refs/") {
+                push_unique_string(&mut out, prefix);
+            } else {
+                push_unique_string(&mut out, &format!("refs/heads/{prefix}"));
+            }
+            continue;
+        }
+        if src.starts_with("refs/") {
+            push_unique_string(&mut out, src);
+        } else {
+            push_unique_string(&mut out, &format!("refs/heads/{src}"));
+        }
+    }
+    // Fetch can still need tag refs for tag-following behavior even when branch-specific
+    // refspecs are used (e.g. `refs/heads/*:refs/remotes/<name>/*` in shallow/update-shallow
+    // scenarios). Keep the tags namespace available unless the caller explicitly disables tag
+    // updates later in the fetch pipeline.
+    push_unique_string(&mut out, "refs/tags/");
+    out
+}
+
+fn push_unique_string(out: &mut Vec<String>, value: &str) {
+    if !out.iter().any(|e| e == value) {
+        out.push(value.to_owned());
+    }
 }
 
 fn extract_server_sid_from_caps(caps: &str) -> Option<&str> {
@@ -929,6 +992,8 @@ pub fn fetch_via_upload_pack_skipping(
     filter_active: bool,
     negotiation_tip_oids: Option<&[ObjectId]>,
     shallow_options: Option<&UploadPackShallowOptions>,
+    refspecs: &[String],
+    server_options: &[String],
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -951,7 +1016,13 @@ pub fn fetch_via_upload_pack_skipping(
             write_bundle_uri_command(&mut stdin, &cap_send)?;
             drain_bundle_uri_response(&mut stdout)?;
         }
-        let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout, include_head_ref_prefix)?;
+        let pair = v2_ls_refs_for_fetch(
+            &mut stdin,
+            &mut stdout,
+            include_head_ref_prefix,
+            refspecs,
+            server_options,
+        )?;
         (pair.0, pair.1, Some(caps))
     } else {
         let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
@@ -1043,6 +1114,7 @@ pub fn fetch_via_upload_pack_skipping(
             &wants,
             sideband_all,
             client_sid.as_deref(),
+            &[],
             &shallow_oids,
             depth,
             shallow_since,
@@ -1633,7 +1705,7 @@ pub fn fetch_via_git_protocol_skipping(
         trace2_transfer::emit_server_sid(sid);
     }
     if advertised.is_empty() {
-        bail!("nothing to fetch (advertised 0 ref(s))");
+        return Ok((Vec::new(), Vec::new(), head_symref, None));
     }
     let wants = collect_wants(&advertised, refspecs)?;
     let remote_heads: Vec<_> = advertised
@@ -1653,12 +1725,6 @@ pub fn fetch_via_git_protocol_skipping(
         .map(|(_, o)| *o);
 
     if wants.is_empty() {
-        if !refspecs.is_empty() {
-            bail!(
-                "nothing to fetch (advertised {} ref(s), empty want list)",
-                advertised.len()
-            );
-        }
         return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
     }
 
@@ -1726,7 +1792,8 @@ pub fn ls_remote_via_git_protocol(
     let (mut advertised, mut head_symref, saw_v1, saw_v2, _server_sid) =
         read_advertisement(&mut stream)?;
     if saw_v2 {
-        let (v2_refs, v2_head_symref) = v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true)?;
+        let (v2_refs, v2_head_symref) =
+            v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true, &[], &[])?;
         if !v2_refs.is_empty() {
             advertised = v2_refs;
         }

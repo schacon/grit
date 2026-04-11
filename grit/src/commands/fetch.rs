@@ -147,6 +147,10 @@ pub struct Args {
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
 
+    /// Transmit the given string as a protocol v2 server option.
+    #[arg(short = 'o', long = "server-option", action = clap::ArgAction::Append)]
+    pub server_options: Vec<String>,
+
     /// Machine-readable porcelain output.
     #[arg(long)]
     pub porcelain: bool,
@@ -282,7 +286,8 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         Ok(())
     } else if args.all {
-        let remotes = collect_remote_names(&config);
+        let remotes =
+            collect_local_remote_names(&git_dir).unwrap_or_else(|| collect_remote_names(&config));
         if remotes.is_empty() {
             bail!("no remotes configured");
         }
@@ -473,6 +478,42 @@ fn parse_protocol_version(value: &str) -> Option<u8> {
         "2" => Some(2),
         _ => None,
     }
+}
+
+fn effective_fetch_server_options(
+    args: &Args,
+    config: &ConfigSet,
+    remote_name: &str,
+    protocol_version: u8,
+) -> Result<Vec<String>> {
+    if !args.server_options.is_empty() {
+        if protocol_version < 2 {
+            bail!(
+                "server options require protocol version 2 or later\nsee protocol.version in 'git help config'"
+            );
+        }
+        return Ok(args.server_options.clone());
+    }
+    if protocol_version < 2 {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in config.entries() {
+        if !entry.key.starts_with("remote.") || !entry.key.ends_with(".serveroption") {
+            continue;
+        }
+        let suffix_len = ".serveroption".len();
+        let configured = &entry.key["remote.".len()..entry.key.len() - suffix_len];
+        if configured != remote_name {
+            continue;
+        }
+        match entry.value.as_deref() {
+            Some("") => out.clear(),
+            Some(v) => out.push(v.to_owned()),
+            None => bail!("error: missing value for 'remote.{remote_name}.serveroption'"),
+        }
+    }
+    Ok(out)
 }
 
 fn parse_oid_prefix(repo: &Repository, value: &str) -> Result<Option<ObjectId>> {
@@ -796,6 +837,14 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
+    let protocol_version = config
+        .get("protocol.version")
+        .as_deref()
+        .and_then(parse_protocol_version)
+        .unwrap_or_else(crate::protocol_wire::effective_client_protocol_version);
+    let server_options =
+        effective_fetch_server_options(args, config, remote_name, protocol_version)?;
+
     let is_bare_repo = Repository::open(git_dir, None)
         .map(|repo| repo.is_bare())
         .unwrap_or(false);
@@ -1107,7 +1156,8 @@ fn fetch_remote(
         && cli_refspecs.is_empty()
         && refspecs.is_empty();
 
-    let coalesced_remotes = if url_override.is_none()
+    let coalesced_remotes = if server_options.is_empty()
+        && url_override.is_none()
         && legacy_remote.is_none()
         && branches_remote.is_none()
         && cli_refspecs.is_empty()
@@ -1150,16 +1200,11 @@ fn fetch_remote(
     // Local (non-SSH) non-URL fetches use the upload-pack protocol like upstream Git. This keeps
     // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
     // tests such as t5503-tagfollow. CLI refspecs are applied after the pack is received.
-    //
-    // When several remotes share the same repository URL, skip upload-pack: the negotiator can
-    // stall when all wanted objects already exist locally (t5505 `git fetch second`).
-    let coalesced_multi = coalesced_remotes.len() > 1;
     let ssh_url_with_local_repo =
         crate::ssh_transport::is_configured_ssh_url(&url) && remote_repo.is_some();
     let use_upload_pack_negotiation = !is_ext_url
         && !is_http_url
-        && (!crate::ssh_transport::is_configured_ssh_url(&url) || ssh_url_with_local_repo)
-        && !coalesced_multi;
+        && (!crate::ssh_transport::is_configured_ssh_url(&url) || ssh_url_with_local_repo);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -1339,6 +1384,8 @@ fn fetch_remote(
                     Some(regular_negotiation_tips.as_slice())
                 },
                 Some(&upload_pack_shallow_options),
+                upload_pack_refspecs,
+                &server_options,
             )?;
         remote_head_advertised_oid = head_oid;
         remote_head_symbolic_branch_from_transport = head_symref
@@ -4600,6 +4647,24 @@ pub fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
         }
     }
     names
+}
+
+/// Collect remote names from the repository-local config only.
+fn collect_local_remote_names(git_dir: &Path) -> Option<Vec<String>> {
+    let cfg = ConfigFile::from_path(&git_dir.join("config"), ConfigScope::Local)
+        .ok()
+        .flatten()?;
+    let mut names = Vec::new();
+    for entry in cfg.entries {
+        let parts: Vec<&str> = entry.key.splitn(3, '.').collect();
+        if parts.len() == 3 && parts[0] == "remote" && parts[2] == "url" {
+            let name = parts[1].to_string();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    Some(names)
 }
 
 /// True when `path` is a regular file starting with the v2 git bundle header.

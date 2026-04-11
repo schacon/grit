@@ -148,6 +148,13 @@ pub struct Args {
     /// Use a custom upload-pack command on the remote side.
     #[arg(short = 'u', long = "upload-pack", value_name = "UPLOAD_PACK")]
     pub upload_pack: Option<String>,
+    /// Transmit the given string to the server when speaking protocol v2.
+    #[arg(
+        short = 'o',
+        long = "server-option",
+        action = clap::ArgAction::Append
+    )]
+    pub server_options: Vec<String>,
 
     /// Force local clone (default for local paths, accepted for compatibility).
     #[arg(short = 'l', long = "local")]
@@ -454,13 +461,17 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.ipv4 && args.ipv6 {
         bail!("options '-4' and '-6' cannot be used together");
     }
+    if !args.server_options.is_empty() && protocol_wire::effective_client_protocol_version() < 2 {
+        bail!(
+            "server options require protocol version 2 or later\nsee protocol.version in 'git help config'"
+        );
+    }
     if args.single_branch && args.no_single_branch {
         bail!("options '--single-branch' and '--no-single-branch' cannot be used together");
     }
     if args.no_single_branch {
         args.single_branch = false;
     }
-
     let deepen =
         args.depth.is_some() || args.shallow_since.is_some() || !args.shallow_exclude.is_empty();
     if args.bundle_uri.is_some() && deepen {
@@ -620,6 +631,9 @@ pub fn run(mut args: Args) -> Result<()> {
         || inherited_partial_clone_filter_spec(&source.git_dir).as_deref() == Some("blob:none");
     let pack_filter_active = clone_pack_filter_active(&args, Some(&source.git_dir));
 
+    let remote_name = resolve_remote_name(&args)?;
+    let server_options = effective_clone_server_options(&args, &remote_name)?;
+
     // `repo_path_str` strips `file://`; use the original URL for transport detection.
     if args.repository.starts_with("file://")
         && crate::file_upload_pack_v2::client_wants_protocol_v2()
@@ -633,12 +647,12 @@ pub fn run(mut args: Args) -> Result<()> {
                 upload_cmd,
                 request_bundle,
                 bundle_cli,
+                &server_options,
             )
         })
         .context("file:// protocol v2 clone preflight")?;
     }
 
-    let remote_name = resolve_remote_name(&args)?;
     if let Some(branch) = args.branch.as_deref() {
         let remote_branch = format!("refs/heads/{branch}");
         if !clone_ref_file_exists(&source.git_dir, &remote_branch) {
@@ -815,6 +829,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                &[],
+                &server_options,
             )
         });
         match fetch_res {
@@ -974,6 +990,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                &[],
+                &server_options,
             )
         }) {
             Ok(_) => {
@@ -2393,6 +2411,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     }
     maybe_warn_shallow_options_ignored(&args.repository, &args);
     let remote_name = resolve_remote_name(&args)?;
+    let server_options = effective_clone_server_options(&args, &remote_name)?;
     let ref_storage = resolved_clone_ref_storage(&args)?;
 
     let path_for_basename = PathBuf::from(&spec.path);
@@ -2543,6 +2562,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                &[],
+                &server_options,
             )
         });
         match fetch_res {
@@ -2695,6 +2716,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             pack_filter_active,
             None,
             Some(&upload_pack_shallow_options),
+            &[],
+            &server_options,
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
@@ -4297,6 +4320,59 @@ fn apply_clone_config(git_dir: &Path, configs: &[String]) -> Result<()> {
 
     config.write().context("writing config")?;
     Ok(())
+}
+
+fn effective_clone_server_options(args: &Args, remote_name: &str) -> Result<Vec<String>> {
+    if !args.server_options.is_empty() {
+        return Ok(args.server_options.clone());
+    }
+    if protocol_wire::effective_client_protocol_version() < 2 {
+        return Ok(Vec::new());
+    }
+    let want_key = format!("remote.{remote_name}.serveroption");
+    let mut saw_command_line_override = false;
+    let mut out = Vec::new();
+    if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
+        for token in params.split('\'') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            if let Some((key, value)) = token.split_once('=') {
+                if key.trim().eq_ignore_ascii_case(&want_key) {
+                    saw_command_line_override = true;
+                    if value.is_empty() {
+                        out.clear();
+                    } else {
+                        out.push(value.to_owned());
+                    }
+                }
+            } else if token.eq_ignore_ascii_case(&want_key) {
+                bail!("error: missing value for '{}'", want_key);
+            }
+        }
+    }
+    for entry in &args.config {
+        let Some((key, value)) = entry.split_once('=') else {
+            if entry.trim().eq_ignore_ascii_case(&want_key) {
+                bail!("error: missing value for '{}'", want_key);
+            }
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case(&want_key) {
+            continue;
+        }
+        saw_command_line_override = true;
+        if value.is_empty() {
+            out.clear();
+        } else {
+            out.push(value.to_owned());
+        }
+    }
+    if saw_command_line_override {
+        return Ok(out);
+    }
+    Ok(Vec::new())
 }
 
 /// Set up branch tracking configuration (branch.<name>.remote and branch.<name>.merge).

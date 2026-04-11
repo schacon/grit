@@ -332,6 +332,7 @@ pub(crate) fn write_v2_fetch_request(
     wants: &[ObjectId],
     sideband_all: bool,
     session_id_on_wire: Option<&str>,
+    server_options: &[String],
     shallow_oids: &[ObjectId],
     depth: Option<usize>,
     shallow_since: Option<&str>,
@@ -347,6 +348,11 @@ pub(crate) fn write_v2_fetch_request(
     let of = format!("object-format={object_format}");
     trace_packet_git('>', &of);
     pkt_line::write_line(stdin, &of)?;
+    for opt in server_options {
+        let line = format!("server-option={opt}");
+        trace_packet_git('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
     pkt_line::write_delim(stdin)?;
     trace_packet_git('>', "0001");
 
@@ -560,6 +566,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
     upload_pack_cmd: Option<&str>,
     request_bundle_uri: bool,
     bundle_uri_cli_override: bool,
+    server_options: &[String],
 ) -> Result<()> {
     if !client_wants_protocol_v2() {
         return Ok(());
@@ -613,6 +620,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         &wants,
         fetch_supports_sideband_all,
         None,
+        server_options,
         &[],
         None,
         None,

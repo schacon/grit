@@ -1,5 +1,46 @@
 # Test results
 
+**2026-04-11 (protocol-v2 fetch/clone server-option parity and v2 ref-prefix stabilization)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=9-33 -v`
+    - server-option parity now passes end-to-end in file:// v2 block:
+      - `25`: `fetch -o hello -o world` sends `fetch> server-option=...`
+      - `26`: `fetch -o hello --all` sends exactly one `server-option=hello` per remote (2 lines)
+      - `27`: config-driven `remote.origin.serverOption` for fetch (`foo/bar`, reset+`tar`, CLI override)
+      - `29`: clone CLI `--server-option`
+      - `30`: clone config-driven `remote.origin.serverOption` chain + CLI override
+      - `33`: invalid `-c remote.origin.serverOption` now fails with expected message
+    - note: remaining failures in this focused run (`17`, `19`) are pre-existing unborn-HEAD clone semantics outside this increment’s scope.
+  - `GUST_BIN=/workspace/target/release/grit bash t5537-fetch-shallow.sh -v`: **16/16**
+    - confirms no shallow regressions; `--update-shallow` + `fetch.writeCommitGraph` path restored.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **52/85** (improved from 42/85)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `fetch`:
+    - added `-o/--server-option` CLI argument and config resolution for `remote.<name>.serverOption` with protocol-v2 gating and missing-value error parity.
+    - propagated server options through file:// upload-pack v2 `fetch` requests.
+    - disabled coalesced multi-remote optimization when server options are active and threaded `--all` source refspecs into v2 `ls-refs` filtering to avoid redundant/duplicate server-option emissions.
+  - `clone`:
+    - added `-o/--server-option` CLI argument (alias of `--server-option`) for parity.
+    - merged CLI `--server-option` with `-c remote.<remote>.serverOption=...` resolution (supports empty-value reset and command-line override semantics).
+    - added explicit missing-value failure for bare `-c remote.origin.serverOption` form.
+    - threaded clone server options into file:// v2 preflight fetch command.
+  - `fetch_transport` / `file_upload_pack_v2`:
+    - v2 `ls-refs` request builder now derives prefixes from wildcard/glob and non-head namespaces (`refs/tags/*`, `refs/remotes/...`, `refs/*`) while preserving `HEAD` behavior.
+    - v2 fetch writer supports optional `server-option` lines and optional `ls-refs` server-option emission (used to match `t5702.26` line-count expectations).
+
 **2026-04-11 (protocol-v2 file:// ls-remote config-serverOption parity + matrix refresh)**
 
 - `cargo fmt`: pass
