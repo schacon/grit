@@ -1,5 +1,34 @@
 # Test results
 
+**2026-04-11 (http smart auth/cookie/GIT_SMART_HTTP parity: t5551 full pass in direct run)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5551-http-fetch-smart.sh --run=1-13 -v`: pass
+    - verifies auth-only-for-objects flow and no-op v0 fetch behavior.
+- Full direct suite validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5551-http-fetch-smart.sh -v`: pass (all non-`test_expect_failure` cases)
+  - remaining expected TODO breakages only: 7, 8, 9, 14, 20, 22.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - HTTP client now respects `GIT_SMART_HTTP=0` by using non-smart discovery endpoint shape (`.../info/refs` without `?service=...`) for request line and trace output.
+  - Added `http.cookieFile` request support and trace parity:
+    - sends `Cookie:` header from configured cookie file entries,
+    - redacts cookie values in `GIT_TRACE_CURL`/`GIT_CURL_VERBOSE` unless `GIT_TRACE_REDACT=0`.
+  - HTTP fetch refspec source resolution now supports literal object IDs over HTTP advertisements and broader short-name ref resolution.
+  - Added no-op short-circuit for HTTP fetch (v0/v1 and v2) when all wanted OIDs already exist locally and no deepen/filter extensions are requested, avoiding unnecessary authenticated POSTs.
+
 **2026-04-11 (http-backend content-length parity: t5562 now 16/16)**
 
 - `cargo fmt`: pass

@@ -520,6 +520,10 @@ fn collect_wants_from_advertised(
             .split_once(':')
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
+        if let Ok(oid) = ObjectId::from_hex(src) {
+            wants.push(oid);
+            continue;
+        }
         if src.contains('*') {
             for e in advertised {
                 if is_excluded(&e.name) {
@@ -531,11 +535,14 @@ fn collect_wants_from_advertised(
             }
             continue;
         }
-        let remote_ref = if src.starts_with("refs/") {
-            src.to_string()
-        } else {
-            format!("refs/heads/{src}")
-        };
+        let remote_ref =
+            resolve_advertised_ref_for_fetch_src(src, advertised).unwrap_or_else(|| {
+                if src.starts_with("refs/") {
+                    src.to_string()
+                } else {
+                    format!("refs/heads/{src}")
+                }
+            });
         if is_excluded(&remote_ref) {
             continue;
         }
@@ -556,6 +563,38 @@ fn collect_wants_from_advertised(
     wants.sort_by_key(|o| o.to_hex());
     wants.dedup();
     Ok(wants)
+}
+
+fn resolve_advertised_ref_for_fetch_src(src: &str, advertised: &[LsRefEntry]) -> Option<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Some("HEAD".to_string());
+    }
+    if src.starts_with("refs/") {
+        return Some(src.to_string());
+    }
+    let candidates = [
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    candidates
+        .into_iter()
+        .find(|cand| advertised.iter().any(|e| e.name == *cand))
+}
+
+fn has_fetch_request_extensions(options: &HttpFetchOptions) -> bool {
+    requested_depth(options).is_some()
+        || options
+            .shallow_since
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+        || options.shallow_exclude.iter().any(|v| !v.trim().is_empty())
+        || options
+            .filter_spec
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
 }
 
 fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
@@ -624,6 +663,14 @@ fn fetch_pack_v0_v1_stateless_http(
         .cloned()
         .collect();
     let all_advertised = advertised.to_vec();
+    if !options.refetch && !has_fetch_request_extensions(options) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let all_wants_local = wants.iter().all(|oid| repo.odb.read(oid).is_ok());
+        if all_wants_local {
+            return Ok((remote_heads, remote_tags, all_advertised));
+        }
+    }
 
     let fetch_caps = build_fetch_caps_v0(caps);
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
@@ -971,6 +1018,14 @@ pub fn http_fetch_pack(
         .filter(|e| e.name.starts_with("refs/tags/"))
         .cloned()
         .collect();
+    if !options.refetch && !has_fetch_request_extensions(options) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let all_wants_local = wants.iter().all(|oid| repo.odb.read(oid).is_ok());
+        if all_wants_local {
+            return Ok((remote_heads, remote_tags, all_advertised));
+        }
+    }
 
     let mut negotiator = if options.refetch {
         None
