@@ -822,6 +822,7 @@ pub fn run(mut args: Args) -> Result<()> {
         shallow_exclude: args.shallow_exclude.clone(),
         unshallow: false,
     };
+    let pack_filter_spec = args.filter.as_deref().filter(|s| !s.trim().is_empty());
 
     if let Some(ref bu) = args.bundle_uri {
         crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
@@ -841,6 +842,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                pack_filter_spec,
                 &[],
                 &server_options,
             )
@@ -1002,6 +1004,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                pack_filter_spec,
                 &[],
                 &server_options,
             )
@@ -2563,6 +2566,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         shallow_exclude: args.shallow_exclude.clone(),
         unshallow: false,
     };
+    let pack_filter_spec = args.filter.as_deref().filter(|s| !s.trim().is_empty());
 
     if let Some(ref bu) = args.bundle_uri {
         crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
@@ -2581,6 +2585,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 pack_filter_active,
                 None,
                 Some(&upload_pack_shallow_options),
+                pack_filter_spec,
                 &[],
                 &server_options,
             )
@@ -2735,6 +2740,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             pack_filter_active,
             None,
             Some(&upload_pack_shallow_options),
+            pack_filter_spec,
             &[],
             &server_options,
         ) {

@@ -736,7 +736,7 @@ pub fn run(args: Args) -> Result<()> {
         Ok(())
     };
 
-    if !options.quiet {
+    if !options.quiet || options.objects {
         let interleaved_objects = options.objects
             && options.use_bitmap_index
             && result.per_commit_object_counts.is_empty()
@@ -753,7 +753,7 @@ pub fn run(args: Args) -> Result<()> {
             }
             for &ci in &commit_order {
                 let oid = &result.commits[ci];
-                if result.objects_print_commit.get(ci).copied().unwrap_or(true) {
+                if !options.quiet && result.objects_print_commit.get(ci).copied().unwrap_or(true) {
                     print_commit_line(oid)?;
                 }
                 if let Some(seg) = result.object_segments.get(ci) {
@@ -770,7 +770,9 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             let mut obj_offset = 0usize;
             for (ci, oid) in result.commits.iter().enumerate() {
-                if !options.objects || result.objects_print_commit.get(ci).copied().unwrap_or(true)
+                if !options.quiet
+                    && (!options.objects
+                        || result.objects_print_commit.get(ci).copied().unwrap_or(true))
                 {
                     print_commit_line(oid)?;
                 }

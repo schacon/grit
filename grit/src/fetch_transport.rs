@@ -960,11 +960,18 @@ pub fn fetch_upload_pack_explicit_wants(
     remote_repo_path: &Path,
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
     if wants.is_empty() {
         bail!("nothing to fetch (empty want list)");
     }
-    fetch_upload_pack_negotiate_pack_bytes(local_git_dir, remote_repo_path, upload_pack_cmd, wants)
+    fetch_upload_pack_negotiate_pack_bytes(
+        local_git_dir,
+        remote_repo_path,
+        upload_pack_cmd,
+        wants,
+        filter_spec,
+    )
 }
 
 /// Fetch via `upload-pack` using skipping negotiation; unpack pack into `local_git_dir`.
@@ -985,6 +992,7 @@ pub fn fetch_via_upload_pack_skipping(
     filter_active: bool,
     negotiation_tip_oids: Option<&[ObjectId]>,
     shallow_options: Option<&UploadPackShallowOptions>,
+    filter_spec: Option<&str>,
     refspecs: &[String],
     server_options: &[String],
 ) -> Result<(
@@ -1108,6 +1116,7 @@ pub fn fetch_via_upload_pack_skipping(
             sideband_all,
             client_sid.as_deref(),
             &[],
+            filter_spec,
             &shallow_oids,
             depth,
             shallow_since,
@@ -1129,6 +1138,7 @@ pub fn fetch_via_upload_pack_skipping(
             &wants,
             negotiation_tip_oids,
             shallow_options,
+            filter_spec,
         )?;
         drop(stdin);
         buf
@@ -1253,30 +1263,69 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     remote_repo_path: &Path,
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 1)?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
-
-    let (advertised, _head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(&mut stdout)?;
-    if saw_v2 {
+    let pack_buf = if client_proto == 2 {
+        let caps = read_v2_capability_block(&mut stdout).context("read v2 capabilities")?;
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
+        if let Some(rest) = caps.iter().find_map(|l| l.strip_prefix("session-id=")) {
+            trace2_transfer::emit_server_sid(rest);
+        }
+        if server_advertises_bundle_uri(&caps) && transfer_bundle_uri_enabled() {
+            let cap_send = cap_lines_for_bundle_request(&caps);
+            write_bundle_uri_command(&mut stdin, &cap_send)?;
+            drain_bundle_uri_response(&mut stdout)?;
+        }
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        let sideband_all = v2_fetch_supports_sideband_all(&caps);
+        let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
+            .then(trace2_transfer::trace2_session_id_wire_once);
+        write_v2_fetch_request(
+            &mut stdin,
+            &default_hash,
+            wants,
+            sideband_all,
+            client_sid.as_deref(),
+            &[],
+            filter_spec,
+            &[],
+            None,
+            None,
+            &[],
+            false,
+        )?;
+        drop(stdin);
+        let mut out = Vec::new();
+        read_v2_fetch_pack_response(&mut stdout, &mut out)?;
+        out
     } else {
-        trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
-    }
-    if let Some(ref sid) = server_sid {
-        trace2_transfer::emit_server_sid(sid);
-    }
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stdin,
-        &mut stdout,
-        wants,
-        None,
-        None,
-    )?;
-    drop(stdin);
+        let (advertised, _head_symref, saw_v1, saw_v2, server_sid) =
+            read_advertisement(&mut stdout)?;
+        if saw_v2 {
+            trace2_transfer::emit_negotiated_version_client_fetch_v2();
+        } else {
+            trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+        }
+        if let Some(ref sid) = server_sid {
+            trace2_transfer::emit_server_sid(sid);
+        }
+        let out = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stdin,
+            &mut stdout,
+            wants,
+            None,
+            None,
+            filter_spec,
+        )?;
+        drop(stdin);
+        out
+    };
 
     let status = child.wait()?;
     if !status.success() {
@@ -1300,6 +1349,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     wants: &[ObjectId],
     negotiation_tip_oids: Option<&[ObjectId]>,
     shallow_options: Option<&UploadPackShallowOptions>,
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -1312,6 +1362,9 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     let mut caps = format!(
         " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}"
     );
+    if filter_spec.is_some_and(|s| !s.trim().is_empty()) {
+        caps.push_str(" filter");
+    }
     if trace2_transfer::transfer_advertise_sid_enabled(local_git_dir) {
         caps.push_str(" session-id=");
         caps.push_str(&trace2_transfer::trace2_session_id_wire_once());
@@ -1369,6 +1422,11 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             trace_packet_fetch('>', line.as_str());
             pkt_line::write_line_to_vec(&mut req, &line)?;
         }
+    }
+    if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+        let line = format!("filter {spec}");
+        trace_packet_fetch('>', line.as_str());
+        pkt_line::write_line_to_vec(&mut req, &line)?;
     }
     req.extend_from_slice(b"0000");
     stdin.write_all(&req).context("write wants")?;
@@ -1753,6 +1811,7 @@ pub fn fetch_via_git_protocol_skipping(
             false,
             None,
             &[],
+            None,
             &[],
             None,
             None,
@@ -1769,6 +1828,7 @@ pub fn fetch_via_git_protocol_skipping(
             &mut stream_w,
             &mut stream,
             &wants,
+            None,
             None,
             None,
         )?

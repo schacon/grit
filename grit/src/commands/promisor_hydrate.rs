@@ -189,6 +189,7 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
                     &remote_git_dir,
                     upload_pack.as_deref(),
                     &[oid],
+                    None,
                 ) {
                     Ok(p) => p,
                     Err(_) => continue,

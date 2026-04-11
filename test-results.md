@@ -1,5 +1,46 @@
 # Test results
 
+**2026-04-11 (protocol-v2 filter cluster 37/39/40/42 parity + promisor hydrate fallback)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=35-42 -v`: **pass (85/85 in run subset)**
+    - `37` dynamically fetch missing object now uses protocol v2 and succeeds.
+    - `39` partial fetch over file:// protocol v2 now honors `--filter=blob:none`.
+    - `40` filter capability advertisement follows `uploadpack.allowfilter`.
+    - `42` handcrafted `filter blob:none` request is rejected when filter is not advertised.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **62/85** (improved from 58/85)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `fetch_transport`:
+    - explicit-wants path now negotiates protocol v2 when configured and sends v2 `command=fetch` payloads.
+    - threaded optional filter spec into v2 fetch request writing and low-level negotiation helpers.
+  - `file_upload_pack_v2`:
+    - `write_v2_fetch_request` now supports optional `filter <spec>` line emission.
+  - `serve_v2`:
+    - `fetch=` capability advertisement now includes `filter` only when `uploadpack.allowfilter` is enabled.
+    - v2 fetch command now rejects `filter ...` lines when filter is not advertised.
+    - v2 fetch now passes the parsed filter spec down into pack generation.
+  - `upload_pack` / `pack_objects_upload`:
+    - local upload-pack now forwards optional filter spec to `pack-objects --filter`.
+  - `promisor_hydrate`:
+    - lazy promisor object hydration now has a robust fallback:
+      - first attempt honors configured `remote.<name>.partialclonefilter`,
+      - on failure, retries without filter to fetch explicitly requested missing objects.
+  - `rev_list`:
+    - `--quiet --objects --missing=print` now still emits object/missing lines (suppresses commit lines only), matching the `t5702.39` expectation.
+
 **2026-04-11 (protocol-v2 git:// EAGAIN fix + file:// unborn HEAD clone parity)**
 
 - `cargo fmt`: pass

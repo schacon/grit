@@ -1243,6 +1243,7 @@ fn fetch_remote(
         shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
         unshallow: args.unshallow,
     };
+    let pack_filter_spec = args.filter.as_deref().filter(|s| !s.trim().is_empty());
     let remote_head_advertised_oid: Option<ObjectId>;
     let remote_head_symbolic_branch_from_transport: Option<String>;
     let (mut remote_heads, mut remote_tags, remote_advertised) = if is_ext_url {
@@ -1384,6 +1385,7 @@ fn fetch_remote(
                     Some(regular_negotiation_tips.as_slice())
                 },
                 Some(&upload_pack_shallow_options),
+                pack_filter_spec,
                 upload_pack_refspecs,
                 &server_options,
             )?;

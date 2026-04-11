@@ -364,6 +364,7 @@ pub(crate) fn write_v2_fetch_request(
     sideband_all: bool,
     session_id_on_wire: Option<&str>,
     server_options: &[String],
+    filter_spec: Option<&str>,
     shallow_oids: &[ObjectId],
     depth: Option<usize>,
     shallow_since: Option<&str>,
@@ -406,6 +407,11 @@ pub(crate) fn write_v2_fetch_request(
     for w in wants {
         let line = format!("want {}", w.to_hex());
         trace_packet_git('>', line.trim_end());
+        pkt_line::write_line(stdin, &line)?;
+    }
+    if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+        let line = format!("filter {spec}");
+        trace_packet_git('>', &line);
         pkt_line::write_line(stdin, &line)?;
     }
     for oid in shallow_oids {
@@ -654,6 +660,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         fetch_supports_sideband_all,
         None,
         server_options,
+        None,
         &[],
         None,
         None,

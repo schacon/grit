@@ -34,6 +34,7 @@ pub struct Args {
 pub struct ServerCaps {
     agent: String,
     object_format: String,
+    advertise_filter: bool,
     advertise_object_info: bool,
     advertise_bundle_uri: bool,
     advertise_session_id: bool,
@@ -48,6 +49,7 @@ impl ServerCaps {
 
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");
+        let advertise_filter = read_config_bool(git_dir, "uploadpack.allowfilter");
         let advertise_session_id = read_config_bool(git_dir, "transfer.advertiseSID")
             || read_config_bool(git_dir, "transfer.advertisesid")
             || read_config_bool(git_dir, "transfer.advertiseSid");
@@ -60,6 +62,7 @@ impl ServerCaps {
         Self {
             agent,
             object_format: "sha1".to_owned(),
+            advertise_filter,
             advertise_object_info,
             advertise_bundle_uri,
             advertise_session_id,
@@ -72,7 +75,11 @@ impl ServerCaps {
         pkt_line::write_line(w, "version 2")?;
         pkt_line::write_line(w, &self.agent)?;
         pkt_line::write_line(w, "ls-refs=unborn")?;
-        pkt_line::write_line(w, "fetch=shallow wait-for-done")?;
+        let mut fetch_features = String::from("fetch=shallow wait-for-done");
+        if self.advertise_filter {
+            fetch_features.push_str(" filter");
+        }
+        pkt_line::write_line(w, &fetch_features)?;
         pkt_line::write_line(w, "server-option")?;
         pkt_line::write_line(w, &format!("object-format={}", self.object_format))?;
         if self.advertise_object_info {
@@ -218,7 +225,7 @@ pub fn process_one_v2_request(
 
     match cmd.as_str() {
         "ls-refs" => cmd_ls_refs(git_dir, &args, &mut out)?,
-        "fetch" => cmd_fetch(git_dir, &args, &mut out)?,
+        "fetch" => cmd_fetch(git_dir, &args, &mut out, caps)?,
         "object-info" => cmd_object_info(git_dir, &args, &mut out)?,
         "bundle-uri" => cmd_bundle_uri(git_dir, &args, &mut out)?,
         _ => bail!("invalid command '{cmd}'"),
@@ -336,13 +343,19 @@ fn peel_to_commit(
 }
 
 /// Handle the `fetch` command (protocol v2): negotiation + `packfile` section with raw pack bytes.
-fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
+fn cmd_fetch(
+    git_dir: &Path,
+    args: &[String],
+    out: &mut impl Write,
+    caps: &ServerCaps,
+) -> Result<()> {
     let repo = Repository::open(git_dir, None)
         .with_context(|| format!("could not open repository at '{}'", git_dir.display()))?;
 
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut have_oids: Vec<ObjectId> = Vec::new();
     let mut depth_request: Option<usize> = None;
+    let mut filter_spec: Option<String> = None;
     let mut wait_for_done = false;
     let mut seen_done = false;
 
@@ -383,7 +396,16 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                 || s.starts_with("deepen-since ")
                 || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
-            s if s.starts_with("filter ") => {}
+            s if s.starts_with("filter ") => {
+                if !caps.advertise_filter {
+                    bail!("unexpected line: '{s}'");
+                }
+                let spec = s.strip_prefix("filter ").unwrap_or("").trim();
+                if spec.is_empty() {
+                    bail!("unexpected line: '{s}'");
+                }
+                filter_spec = Some(spec.to_owned());
+            }
             s if s.starts_with("packfile-uris ") => {}
             s if s.starts_with("sideband-all") => {}
             other => bail!("unexpected line: '{other}'"),
@@ -419,7 +441,11 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
 
     pkt_line::write_line(out, "packfile")?;
     let thin = !have_oids.is_empty();
-    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin)?;
+    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
+        git_dir,
+        thin,
+        filter_spec.as_deref(),
+    )?;
     {
         let mut pin = child
             .stdin

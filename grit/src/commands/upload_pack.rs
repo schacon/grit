@@ -252,7 +252,8 @@ pub fn run(args: Args) -> Result<()> {
         let thin = client_shallow_boundaries.is_empty()
             && !exclusion_commits.is_empty()
             && wants_include_only_commits(&repo, &want_unique);
-        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
+        let mut child =
+            crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin, None)?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;
             crate::pack_objects_upload::write_pack_objects_revs_stdin(

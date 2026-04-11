@@ -24,7 +24,11 @@ fn resolve_hook_path(git_dir: &Path, hook: &str) -> PathBuf {
 ///
 /// When `thin` is true, omit objects the client already has (requires matching `have` lines).
 /// For a fetch/clone with no common objects, pass `false` so the pack is self-contained.
-pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
+pub fn spawn_pack_objects_upload(
+    git_dir: &Path,
+    thin: bool,
+    filter_spec: Option<&str>,
+) -> Result<Child> {
     let protected = ConfigSet::load_protected(true).unwrap_or_default();
     let hook_raw = protected.get("uploadpack.packobjectshook");
     let grit = grit_executable();
@@ -41,6 +45,9 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         if thin {
             c.arg("--thin");
         }
+        if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+            c.arg("--filter").arg(spec);
+        }
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
@@ -50,6 +57,9 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         c.arg("pack-objects").arg("--revs");
         if thin {
             c.arg("--thin");
+        }
+        if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+            c.arg("--filter").arg(spec);
         }
         c.arg("--stdout")
             .arg("--progress")
