@@ -1,5 +1,34 @@
 # Test results
 
+**2026-04-11 (protocol-v2 file:// ls-remote config-serverOption parity + matrix refresh)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=9-15 -v`: pass except broader suite dependencies
+    - critical parity checks now pass:
+      - `11` filtered `ls-remote ... main`,
+      - `12` CLI `-o` server options,
+      - `13` config-driven `remote.origin.serverOption` chain (`foo/bar`, reset+`tar`, CLI override),
+      - `15` clone trace checks for `version 2` + `ref-prefix HEAD/refs/heads/refs/tags`.
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=1-2,16,84 -v`: pass
+    - keeps earlier git:// v2 request trace, empty file clone, and one-time-script negotiate-only checks green.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **42/85** (improved from 41/85 in prior increment)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `ls-remote` server-option config lookup now uses merged config with repository context (`ConfigSet::load(Some(repo.git_dir), true)`), enabling `remote.<name>.serverOption` for remote-name invocations (`ls-remote origin ...`).
+  - file:// v2 `ls-refs` request builder keeps protocol-v2 argument parity (`peel`, `symrefs`, `unborn`) and client-side pattern filtering behavior used by upstream for simple pattern names.
+  - clone URL persistence for file clones remains `file://...` so remote-name operations continue through file transport, preserving protocol-v2 path behavior.
+
 **2026-04-11 (protocol-v2 file:// ls-remote server-option + clone preflight stabilization)**
 
 - `cargo fmt`: pass

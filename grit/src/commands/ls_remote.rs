@@ -277,7 +277,11 @@ fn effective_server_options(args: &Args, remote_name: Option<&str>) -> Vec<Strin
     let Some(remote_name) = remote_name else {
         return Vec::new();
     };
-    let set = ConfigSet::load(None, true).unwrap_or_default();
+    let set = if let Ok(repo) = Repository::discover(None) {
+        ConfigSet::load(Some(repo.git_dir.as_path()), true).unwrap_or_default()
+    } else {
+        ConfigSet::load(None, true).unwrap_or_default()
+    };
     let mut out = Vec::new();
     for entry in set.entries() {
         if !entry.key.starts_with("remote.") || !entry.key.ends_with(".serveroption") {
