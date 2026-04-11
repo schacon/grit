@@ -413,6 +413,35 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         );
         return r;
     }
+    // Route parity with upstream apache test CGI shims:
+    // - /smart/incomplete_length/.../git-upload-pack -> truncated pkt-line length header
+    // - /smart/incomplete_body/.../git-upload-pack   -> truncated pkt-line body
+    if req.method == "POST"
+        && req.path.ends_with("/git-upload-pack")
+        && req.path.starts_with("/smart/incomplete_length/")
+    {
+        log_access(config, &req.method, &req.path, &req.query, 200);
+        return send_response(
+            &mut stream,
+            200,
+            "OK",
+            &[("Content-Type", "application/x-git-upload-pack-result")],
+            b"00",
+        );
+    }
+    if req.method == "POST"
+        && req.path.ends_with("/git-upload-pack")
+        && req.path.starts_with("/smart/incomplete_body/")
+    {
+        log_access(config, &req.method, &req.path, &req.query, 200);
+        return send_response(
+            &mut stream,
+            200,
+            "OK",
+            &[("Content-Type", "application/x-git-upload-pack-result")],
+            b"007945",
+        );
+    }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);

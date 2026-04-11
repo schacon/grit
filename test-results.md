@@ -1,5 +1,23 @@
 # Test results
 
+**2026-04-11 (protocol-v2 HTTP malformed pkt-line clone parity: t5702.63/.64)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- `cargo build -p grit-rs --bin test-httpd`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=61-64 -v`: **pass**
+    - `63` now fails with expected malformed-length error (`bytes of length header were received`).
+    - `64` now fails with expected malformed-body error (`bytes of body are still expected`).
+- Regression checks:
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `test-httpd` now serves deterministic malformed smart-HTTP upload-pack POST responses for:
+    - `/smart/incomplete_length/<repo>/git-upload-pack` → body `00`
+    - `/smart/incomplete_body/<repo>/git-upload-pack` → body `007945`
+  - This mirrors upstream one-time-script malformed pkt-line scenarios for HTTP protocol-v2 clone error handling.
+
 **2026-04-11 (protocol-v2 cluster: exact-oid/cli-prefix/tag-follow + deepen-relative + custom-path packfile-uris)**
 
 - `cargo fmt`: pass
