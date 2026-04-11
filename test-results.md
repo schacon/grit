@@ -1,5 +1,24 @@
 # Test results
 
+**2026-04-11 (shallow/clone follow-up: no-single-branch + shallow ref filtering refinement)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **10/16** (unchanged baseline count; focused failures remain `6`, `8`, `9`, `14`, `15`, `16`)
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37** (unchanged baseline)
+- `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16** (unchanged baseline)
+- Focused verbose check:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh -v`
+  - verified `--update-shallow` cluster (`10`-`13`) remains green
+  - remaining shallow failures still concentrated in boundary/unshallow/http one-time-script edge cases.
+- Implemented in this increment:
+  - Added `clone --no-single-branch` option and conflict validation with `--single-branch`.
+  - `--no-single-branch` now explicitly disables single-branch clone behavior (needed by shallow repack scenario setup).
+  - Refined shallow boundary blocking in fetch:
+    - only block refs when remote shallow boundaries are **new** relative to local `.git/shallow`,
+    - skip blocking `refs/tags/*` so depth fetch tag parity is preserved while still gating branch updates.
+
 **2026-04-10 (fetch shallow follow-up: update-shallow wiring + v2 delim tolerance)**
 
 - `cargo fmt`: pass
