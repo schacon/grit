@@ -686,7 +686,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let remote_url_for_config = if is_file_url {
+    let remote_url_for_config = if is_file_url
+        || args.repository.starts_with("http://")
+        || args.repository.starts_with("https://")
+    {
         if let Ok(abs) = source_path.canonicalize() {
             format!("file://{}", abs.display())
         } else {
@@ -1059,12 +1062,26 @@ pub fn run(mut args: Args) -> Result<()> {
                     .unwrap_or_else(|_| source_path.clone())
                     .to_string_lossy()
                     .to_string();
-                setup_remote_mirror_fetch_and_url(&dest.git_dir, &url, &remote_name)
+                let mirror_url = if is_file_url {
+                    remote_url_for_config.clone()
+                } else {
+                    url
+                };
+                setup_remote_mirror_fetch_and_url(&dest.git_dir, &mirror_url, &remote_name)
                     .context("setting up mirror remote")?;
             } else {
                 copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-                setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
+                if is_file_url {
+                    setup_origin_remote_bare_url(
+                        &dest.git_dir,
+                        remote_url_for_config.as_str(),
+                        &remote_name,
+                    )
                     .context("setting up origin remote")?;
+                } else {
+                    setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
+                        .context("setting up origin remote")?;
+                }
                 if let Some(ref branch) = head_branch {
                     fs::write(
                         dest.git_dir.join("HEAD"),
@@ -1086,8 +1103,18 @@ pub fn run(mut args: Args) -> Result<()> {
             } else {
                 format!("+refs/heads/*:refs/remotes/{remote_name}/*")
             };
-            setup_origin_remote(&dest.git_dir, &source_path, &remote_name, &refspec)
+            if is_file_url {
+                setup_origin_remote_url(
+                    &dest.git_dir,
+                    remote_url_for_config.as_str(),
+                    &remote_name,
+                    &refspec,
+                )
                 .context("setting up origin remote")?;
+            } else {
+                setup_origin_remote(&dest.git_dir, &source_path, &remote_name, &refspec)
+                    .context("setting up origin remote")?;
+            }
 
             setup_remote_tracking_head(
                 &dest.git_dir,

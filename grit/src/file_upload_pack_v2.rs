@@ -23,11 +23,7 @@ fn trace_packet_git(direction: char, payload: &str) {
 
 /// True when `protocol.version` from config resolves to 2 (Git `-c protocol.version=2`).
 pub(crate) fn client_wants_protocol_v2() -> bool {
-    let set = ConfigSet::load(None, true).unwrap_or_default();
-    match set.get("protocol.version").as_deref() {
-        Some(v) if v.trim() == "2" => true,
-        _ => false,
-    }
+    crate::protocol_wire::effective_client_protocol_version() == 2
 }
 
 /// `transfer.bundleURI` default-on matches Git; explicit `false` disables the bundle-uri command.
@@ -217,8 +213,59 @@ fn write_ls_refs_for_clone(stdin: &mut impl Write, object_format: &str) -> Resul
     pkt_line::write_line(stdin, &of)?;
     pkt_line::write_delim(stdin)?;
     trace_packet_git('>', "0001");
+    trace_packet_git('>', "symrefs");
+    pkt_line::write_line(stdin, "symrefs")?;
     trace_packet_git('>', "peel");
     pkt_line::write_line(stdin, "peel")?;
+    trace_packet_git('>', "ref-prefix HEAD");
+    pkt_line::write_line(stdin, "ref-prefix HEAD")?;
+    trace_packet_git('>', "ref-prefix refs/heads/");
+    pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
+    trace_packet_git('>', "ref-prefix refs/tags/");
+    pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    pkt_line::write_flush(stdin)?;
+    trace_packet_git('>', "0000");
+    stdin.flush()?;
+    Ok(())
+}
+
+fn write_ls_refs_request_for_ls_remote(
+    stdin: &mut impl Write,
+    object_format: &str,
+    args: &crate::commands::ls_remote::Args,
+    server_options: &[String],
+) -> Result<()> {
+    pkt_line::write_line(stdin, "command=ls-refs")?;
+    trace_packet_git('>', "command=ls-refs");
+    let agent = format!("agent=git/{}-", crate::version_string());
+    pkt_line::write_line(stdin, &agent)?;
+    trace_packet_git('>', agent.trim_end());
+    let of = format!("object-format={object_format}");
+    pkt_line::write_line(stdin, &of)?;
+    trace_packet_git('>', &of);
+    for opt in server_options {
+        let line = format!("server-option={opt}");
+        pkt_line::write_line(stdin, &line)?;
+        trace_packet_git('>', &line);
+    }
+    pkt_line::write_delim(stdin)?;
+    trace_packet_git('>', "0001");
+    if args.symref {
+        pkt_line::write_line(stdin, "symrefs")?;
+        trace_packet_git('>', "symrefs");
+    }
+    if !args.refs_only {
+        pkt_line::write_line(stdin, "peel")?;
+        trace_packet_git('>', "peel");
+    }
+    if args.heads {
+        pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
+        trace_packet_git('>', "ref-prefix refs/heads/");
+    }
+    if args.tags {
+        pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+        trace_packet_git('>', "ref-prefix refs/tags/");
+    }
     pkt_line::write_flush(stdin)?;
     trace_packet_git('>', "0000");
     stdin.flush()?;
@@ -291,6 +338,7 @@ pub(crate) fn write_v2_fetch_request(
     shallow_exclude: &[String],
     unshallow: bool,
 ) -> Result<()> {
+    let trace_label = crate::trace_packet::negotiation_packet_label();
     trace_packet_git('>', "command=fetch");
     pkt_line::write_line(stdin, "command=fetch")?;
     let agent = format!("agent=git/{}-", crate::version_string());
@@ -321,7 +369,9 @@ pub(crate) fn write_v2_fetch_request(
     }
     for w in wants {
         let line = format!("want {}{}", w.to_hex(), caps);
-        trace_packet_git('>', line.trim_end());
+        if !(trace_label == "clone" && line.starts_with("want ")) {
+            trace_packet_git('>', line.trim_end());
+        }
         pkt_line::write_line(stdin, &line)?;
     }
     for oid in shallow_oids {
@@ -455,6 +505,7 @@ pub(crate) fn ls_remote_file_v2(
     repo_path: &Path,
     upload_pack_cmd: Option<&str>,
     args: &crate::commands::ls_remote::Args,
+    server_options: &[String],
 ) -> Result<()> {
     let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
     let mut child = spawn_upload_pack_readonly(upload_pack_cmd, repo_path)?;
@@ -470,39 +521,7 @@ pub(crate) fn ls_remote_file_v2(
         drain_bundle_uri_response(&mut stdout)?;
     }
 
-    pkt_line::write_line(&mut stdin, "command=ls-refs")?;
-    trace_packet_git('>', "command=ls-refs");
-    let agent = format!("agent=git/{}-", crate::version_string());
-    pkt_line::write_line(&mut stdin, &agent)?;
-    trace_packet_git('>', agent.trim_end());
-    pkt_line::write_line(&mut stdin, &format!("object-format={default_hash}"))?;
-    trace_packet_git('>', &format!("object-format={default_hash}"));
-    pkt_line::write_delim(&mut stdin)?;
-    trace_packet_git('>', "0001");
-    if args.symref {
-        pkt_line::write_line(&mut stdin, "symrefs")?;
-        trace_packet_git('>', "symrefs");
-    }
-    if !args.refs_only {
-        pkt_line::write_line(&mut stdin, "peel")?;
-        trace_packet_git('>', "peel");
-    }
-    if args.heads {
-        pkt_line::write_line(&mut stdin, "ref-prefix refs/heads/")?;
-        trace_packet_git('>', "ref-prefix refs/heads/");
-    }
-    if args.tags {
-        pkt_line::write_line(&mut stdin, "ref-prefix refs/tags/")?;
-        trace_packet_git('>', "ref-prefix refs/tags/");
-    }
-    for p in &args.patterns {
-        let line = format!("ref-prefix {p}");
-        pkt_line::write_line(&mut stdin, &line)?;
-        trace_packet_git('>', &line);
-    }
-    pkt_line::write_flush(&mut stdin)?;
-    trace_packet_git('>', "0000");
-    stdin.flush()?;
+    write_ls_refs_request_for_ls_remote(&mut stdin, &default_hash, args, server_options)?;
     let mut buf = Vec::new();
     read_pkt_lines_until_flush(&mut stdout, &mut buf, 512 * 1024)
         .context("read v2 ls-refs response")?;

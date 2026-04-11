@@ -40,6 +40,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Transmit the given string as a protocol-v2 server option.
+    #[arg(short = 'o', long = "server-option", action = clap::ArgAction::Append)]
+    pub server_options: Vec<String>,
+
     /// Path to the local repository (bare or non-bare).
     #[arg(value_name = "REPOSITORY")]
     pub repository: PathBuf,
@@ -60,6 +64,13 @@ pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
     let repo_path_str = effective_path.to_string_lossy().to_string();
+    let remote_name = maybe_remote_name(&args.repository);
+    let server_options = effective_server_options(&args, remote_name.as_deref());
+    if !server_options.is_empty() && crate::protocol_wire::effective_client_protocol_version() < 2 {
+        bail!(
+            "server options require protocol version 2 or later\nsee protocol.version in 'git help config'"
+        );
+    }
 
     if repo_path_str.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", None)?;
@@ -88,7 +99,7 @@ pub fn run(args: Args) -> Result<()> {
         );
         let upload = args.upload_pack.as_deref().filter(|s| !s.is_empty());
         return crate::trace_packet::with_packet_trace_label("ls-remote", || {
-            crate::file_upload_pack_v2::ls_remote_file_v2(&path, upload, &args)
+            crate::file_upload_pack_v2::ls_remote_file_v2(&path, upload, &args, &server_options)
         });
     }
 
@@ -246,6 +257,43 @@ fn print_advertised_refs_for_ls_remote(
         println!("{}\t{}", entry.oid, entry.name);
     }
     Ok(())
+}
+
+fn maybe_remote_name(path: &Path) -> Option<String> {
+    let name = path.to_string_lossy().to_string();
+    if name.contains("://") || Path::new(&name).exists() {
+        return None;
+    }
+    let repo = Repository::discover(None).ok()?;
+    let config_path = repo.git_dir.join("config");
+    let content = std::fs::read_to_string(config_path).ok()?;
+    parse_remote_url(&content, &name).map(|_| name)
+}
+
+fn effective_server_options(args: &Args, remote_name: Option<&str>) -> Vec<String> {
+    if !args.server_options.is_empty() {
+        return args.server_options.clone();
+    }
+    let Some(remote_name) = remote_name else {
+        return Vec::new();
+    };
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    let mut out = Vec::new();
+    for entry in set.entries() {
+        if !entry.key.starts_with("remote.") || !entry.key.ends_with(".serveroption") {
+            continue;
+        }
+        let suffix_len = ".serveroption".len();
+        let name = &entry.key["remote.".len()..entry.key.len() - suffix_len];
+        if name != remote_name {
+            continue;
+        }
+        match entry.value.as_deref() {
+            Some("") | None => out.clear(),
+            Some(v) => out.push(v.to_owned()),
+        }
+    }
+    out
 }
 
 fn run_ls_remote_via_upload_pack(repo_path: &Path, upload_pack: &str, args: &Args) -> Result<()> {

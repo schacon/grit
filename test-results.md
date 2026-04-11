@@ -1,5 +1,43 @@
 # Test results
 
+**2026-04-11 (protocol-v2 file:// ls-remote server-option + clone preflight stabilization)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=9-15 -v`
+    - pass: `10`, `11`, `12`, `14`, `15`
+    - remaining fail: `13` (`server-options from configuration are used by ls-remote`) in this focused harness mode.
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=1-2,16,84 -v`: pass
+    - validates:
+      - git:// protocol-v2 ls-remote request tracing (`ls-remote> ... \0\0version=2\0`)
+      - empty `file://` clone default-branch propagation (`16`)
+      - one-time-script negotiate-only wait-for-done rejection path (`84`)
+- Implemented in this increment:
+  - `ls-remote`:
+    - added protocol-v2 `-o/--server-option` CLI parsing and config-driven `remote.<name>.serverOption` resolution.
+    - wired `server-option=` lines into file:// v2 `ls-refs` requests.
+    - added protocol-version gate/error for server options under v0/v1 (`see protocol.version ...`).
+  - `file://` v2 `ls-remote`:
+    - switched pattern handling from `ref-prefix <pattern>` filtering to protocol-parity request args (`peel`, `symrefs`, `unborn`) and rely on client-side pattern filtering.
+  - `file://` clone preflight:
+    - ensure v2 preflight `ls-refs` includes `symrefs` + `ref-prefix HEAD/refs/heads/refs/tags` for trace parity.
+    - fixed empty-repo preflight hang by closing stdin before waiting for upload-pack.
+  - clone remote URL handling:
+    - restored canonical local-path URL storage for local path clones where expected.
+    - preserved explicit `file://...` URL form in remote config for file-URL clones.
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **41/85**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+  - Note: `t5702` remains partially passing in this environment; this increment addresses high-signal file:// v2 parity items while keeping full fetch matrix green.
+
 **2026-04-11 (protocol v2 transport parity: fix empty-clone preflight hang + git:// ls-remote routing)**
 
 - `cargo fmt`: pass
