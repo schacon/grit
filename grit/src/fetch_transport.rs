@@ -1680,3 +1680,60 @@ pub fn fetch_via_git_protocol_skipping(
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
 }
+
+/// Query refs from a `git://` remote using upload-pack negotiation.
+///
+/// Returns advertised refs, optional `symref=HEAD:` target, and whether protocol v1/v2 was seen.
+pub fn ls_remote_via_git_protocol(
+    url: &str,
+) -> Result<(Vec<(String, ObjectId)>, Option<String>, bool, bool)> {
+    let parsed = parse_git_url(url)?;
+    let addr = format!("{}:{}", parsed.host, parsed.port)
+        .to_socket_addrs()
+        .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
+        .next()
+        .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(30))
+        .with_context(|| format!("could not connect to git://{}:{}", parsed.host, parsed.port))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
+
+    let mut stream_w = stream
+        .try_clone()
+        .context("dup git:// socket for simultaneous read/write")?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
+        .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
+    let mut inner: Vec<u8> = Vec::new();
+    inner.extend_from_slice(b"git-upload-pack ");
+    inner.extend_from_slice(parsed.path.as_bytes());
+    inner.push(0);
+    inner.extend_from_slice(b"host=");
+    inner.extend_from_slice(virtual_host.as_bytes());
+    inner.push(0);
+    if client_proto > 0 {
+        inner.push(0);
+        inner.extend_from_slice(format!("version={client_proto}\0").as_bytes());
+    }
+    pkt_line::write_packet_raw(&mut stream_w, &inner).context("write git:// request")?;
+    stream_w.flush().ok();
+
+    let trace_show = String::from_utf8_lossy(&inner)
+        .replace('\0', "\\0")
+        .replace('\n', "");
+    trace_packet_fetch('>', &trace_show);
+
+    let (mut advertised, mut head_symref, saw_v1, saw_v2, _server_sid) =
+        read_advertisement(&mut stream)?;
+    if saw_v2 {
+        let (v2_refs, v2_head_symref) = v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true)?;
+        if !v2_refs.is_empty() {
+            advertised = v2_refs;
+        }
+        if head_symref.is_none() {
+            head_symref = v2_head_symref;
+        }
+    }
+
+    Ok((advertised, head_symref, saw_v1, saw_v2))
+}

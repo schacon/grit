@@ -11,7 +11,15 @@ use grit_lib::repo::Repository;
 
 use crate::grit_exe::{grit_executable, strip_trace2_env};
 use crate::pkt_line;
-use crate::trace_packet::trace_packet_git;
+use crate::wire_trace;
+
+fn trace_packet_git(direction: char, payload: &str) {
+    let identity = crate::trace_packet::negotiation_packet_label();
+    if identity == "clone" && direction == '>' && payload.starts_with("want ") {
+        return;
+    }
+    wire_trace::trace_packet_line_ident(identity, direction, payload);
+}
 
 /// True when `protocol.version` from config resolves to 2 (Git `-c protocol.version=2`).
 pub(crate) fn client_wants_protocol_v2() -> bool {
@@ -563,6 +571,9 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         .context("read ls-refs for clone preflight")?;
     let wants = collect_want_oids_from_ls_refs(&ls_buf)?;
     if wants.is_empty() {
+        // Close stdin so upload-pack exits; otherwise it stays in serve-loop waiting for the
+        // next v2 command and `wait()` can block indefinitely on empty repositories.
+        drop(stdin);
         let status = child.wait()?;
         if !status.success() {
             bail!(

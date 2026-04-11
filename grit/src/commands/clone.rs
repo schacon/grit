@@ -524,10 +524,10 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_ssh_clone(args);
     }
 
-    // Detect git:// protocol (delegate to system git until native transport exists)
+    // Detect git:// protocol (native transport in fetch transport layer)
     if args.repository.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", None)?;
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        return run_git_clone(args);
     }
 
     // Detect http(s):// protocol
@@ -627,12 +627,14 @@ pub fn run(mut args: Args) -> Result<()> {
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
         let bundle_cli = args.bundle_uri.is_some();
         let request_bundle = crate::file_upload_pack_v2::transfer_bundle_uri_enabled();
-        crate::file_upload_pack_v2::clone_preflight_file_v2_if_needed(
-            &source.git_dir,
-            upload_cmd,
-            request_bundle,
-            bundle_cli,
-        )
+        crate::fetch_transport::with_packet_trace_identity("clone", || {
+            crate::file_upload_pack_v2::clone_preflight_file_v2_if_needed(
+                &source.git_dir,
+                upload_cmd,
+                request_bundle,
+                bundle_cli,
+            )
+        })
         .context("file:// protocol v2 clone preflight")?;
     }
 

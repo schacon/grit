@@ -61,6 +61,15 @@ pub fn run(args: Args) -> Result<()> {
     let effective_path = resolve_remote_or_path(&args.repository);
     let repo_path_str = effective_path.to_string_lossy().to_string();
 
+    if repo_path_str.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", None)?;
+        let (advertised, head_symref, _saw_v1, _saw_v2) =
+            crate::fetch_transport::with_packet_trace_identity("ls-remote", || {
+                crate::fetch_transport::ls_remote_via_git_protocol(&repo_path_str)
+            })?;
+        return print_advertised_refs_for_ls_remote(&args, advertised, head_symref);
+    }
+
     if repo_path_str.starts_with("http://") || repo_path_str.starts_with("https://") {
         return run_http_ls_remote(&repo_path_str, &args);
     }
@@ -78,7 +87,9 @@ pub fn run(args: Args) -> Result<()> {
                 .unwrap_or(repo_path_str.as_ref()),
         );
         let upload = args.upload_pack.as_deref().filter(|s| !s.is_empty());
-        return crate::file_upload_pack_v2::ls_remote_file_v2(&path, upload, &args);
+        return crate::trace_packet::with_packet_trace_label("ls-remote", || {
+            crate::file_upload_pack_v2::ls_remote_file_v2(&path, upload, &args)
+        });
     }
 
     if let Some(upload_pack) = args.upload_pack.as_deref() {
@@ -179,6 +190,55 @@ fn run_http_ls_remote(repo_url: &str, args: &Args) -> Result<()> {
         }
     });
 
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
+    Ok(())
+}
+
+fn print_advertised_refs_for_ls_remote(
+    args: &Args,
+    advertised: Vec<(String, ObjectId)>,
+    head_symref: Option<String>,
+) -> Result<()> {
+    let mut entries: Vec<RefEntry> = Vec::new();
+    for (name, oid) in advertised {
+        if args.heads && name != "HEAD" && !name.starts_with("refs/heads/") {
+            continue;
+        }
+        if args.tags && !name.starts_with("refs/tags/") {
+            continue;
+        }
+        if args.refs_only && (name == "HEAD" || name.ends_with("^{}")) {
+            continue;
+        }
+        if !grit_lib::ls_remote::ref_matches_ls_remote_patterns(&name, &args.patterns) {
+            continue;
+        }
+        let symref_target = if args.symref && name == "HEAD" {
+            head_symref.clone()
+        } else {
+            None
+        };
+        entries.push(RefEntry {
+            name,
+            oid,
+            symref_target,
+        });
+    }
+    if entries.is_empty() || args.quiet {
+        return Ok(());
+    }
+    entries.sort_by(|a, b| {
+        let rank = |n: &str| if n == "HEAD" { 0 } else { 1 };
+        match rank(&a.name).cmp(&rank(&b.name)) {
+            std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+            o => o,
+        }
+    });
     for entry in &entries {
         if let Some(target) = &entry.symref_target {
             println!("ref: {target}\t{}", entry.name);

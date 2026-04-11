@@ -1,5 +1,33 @@
 # Test results
 
+**2026-04-11 (protocol v2 transport parity: fix empty-clone preflight hang + git:// ls-remote routing)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=1-2,16,84 -v`: pass
+    - validates:
+      - `git://` v2 ls-remote request/response traces (`ls-remote> ... version=2`, `ls-remote< version 2`),
+      - file:// empty repository clone no longer hangs (`t5702.16`),
+      - HTTP one-time-script negotiate-only wait-for-done failure path still correct (`t5702.84`).
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **37/85** (improved from prior 0/0 timeout profile; remaining failures are broader pre-existing v2 parity gaps)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `file_upload_pack_v2` clone preflight now closes upload-pack stdin before waiting when ls-refs yields no wants, preventing indefinite waits on empty repos.
+  - packet tracing in `file_upload_pack_v2` now uses dynamic identity from trace context (`clone`/`fetch`/`ls-remote`) via `wire_trace::trace_packet_line_ident`, restoring expected `clone>`/`ls-remote>` labels.
+  - added native `git://` `ls-remote` path through `fetch_transport::ls_remote_via_git_protocol` and wired it in `commands/ls_remote`, including correct trace identity wrapping.
+  - clone `file://` protocol-v2 preflight now runs under `clone` trace identity to keep bundle negotiation trace assertions stable.
+
 **2026-04-11 (test-httpd one_time_script path parity + t5551 harness enablement)**
 
 - `cargo fmt`: pass
