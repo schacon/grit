@@ -164,7 +164,7 @@ fn v2_ls_refs_for_fetch(
         pkt_line::write_line(stdin, "ref-prefix HEAD")?;
     }
     let derived_prefixes = v2_ref_prefixes_from_refspecs(refspecs);
-    if derived_prefixes.is_empty() {
+    if refspecs.is_empty() || derived_prefixes.is_empty() {
         trace_packet_fetch('>', "ref-prefix refs/heads/");
         pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
         trace_packet_fetch('>', "ref-prefix refs/tags/");
@@ -939,18 +939,11 @@ fn read_v2_fetch_pack_response(stdout: &mut impl Read, out: &mut Vec<u8>) -> Res
             }
             "packfile" => {
                 read_sideband_pack_until_done(stdout, out)?;
-                // Match `file_upload_pack_v2::drain_v2_fetch_response`: consume trailing pkt-line
-                // after the pack so `upload-pack` can finish the v2 response and exit.
-                let _ = pkt_line::read_packet(stdout)?;
-                loop {
-                    match pkt_line::read_packet(stdout)? {
-                        None | Some(pkt_line::Packet::Flush) => return Ok(()),
-                        Some(pkt_line::Packet::Data(line)) => {
-                            trace_packet_fetch('<', line.trim_end());
-                        }
-                        Some(other) => bail!("unexpected v2 tail packet: {other:?}"),
-                    }
-                }
+                // For `git://` v2, servers can keep the connection open for additional commands.
+                // `read_sideband_pack_until_done` already consumes the packfile section terminator
+                // (flush/delim). Reading another pkt-line unconditionally here can block until the
+                // socket read timeout and fail clone/fetch with EAGAIN.
+                return Ok(());
             }
             other => bail!("unexpected v2 fetch section: {other}"),
         }
@@ -1695,7 +1688,8 @@ pub fn fetch_via_git_protocol_skipping(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(&mut stream)?;
+    let (mut advertised, mut head_symref, saw_v1, saw_v2, server_sid) =
+        read_advertisement(&mut stream)?;
     if saw_v2 {
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
     } else {
@@ -1704,6 +1698,28 @@ pub fn fetch_via_git_protocol_skipping(
     if let Some(ref sid) = server_sid {
         trace2_transfer::emit_server_sid(sid);
     }
+    let mut use_v2_fetch = saw_v2;
+    let try_v2_ls_refs = saw_v2 || (client_proto == 2 && advertised.is_empty());
+    if try_v2_ls_refs {
+        match v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true, refspecs, &[]) {
+            Ok((v2_refs, v2_head_symref)) => {
+                use_v2_fetch = true;
+                if !v2_refs.is_empty() {
+                    advertised = v2_refs;
+                }
+                if head_symref.is_none() {
+                    head_symref = v2_head_symref;
+                }
+            }
+            Err(_) if !saw_v2 => {
+                // Some `git://` servers still answer with a v0/v1 ref advertisement even when
+                // the client requests protocol v2. In that mixed mode we should continue with the
+                // already-parsed v0/v1 refs instead of failing the fetch/clone.
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     if advertised.is_empty() {
         return Ok((Vec::new(), Vec::new(), head_symref, None));
     }
@@ -1728,15 +1744,35 @@ pub fn fetch_via_git_protocol_skipping(
         return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
     }
 
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stream_w,
-        &mut stream,
-        &wants,
-        None,
-        None,
-    )?;
+    let pack_buf = if use_v2_fetch {
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        write_v2_fetch_request(
+            &mut stream_w,
+            &default_hash,
+            &wants,
+            false,
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &[],
+            false,
+        )?;
+        let mut buf = Vec::new();
+        read_v2_fetch_pack_response(&mut stream, &mut buf)?;
+        buf
+    } else {
+        fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stream_w,
+            &mut stream,
+            &wants,
+            None,
+            None,
+        )?
+    };
 
     if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");

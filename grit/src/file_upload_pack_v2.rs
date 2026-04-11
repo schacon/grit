@@ -217,6 +217,8 @@ fn write_ls_refs_for_clone(stdin: &mut impl Write, object_format: &str) -> Resul
     pkt_line::write_line(stdin, "symrefs")?;
     trace_packet_git('>', "peel");
     pkt_line::write_line(stdin, "peel")?;
+    trace_packet_git('>', "unborn");
+    pkt_line::write_line(stdin, "unborn")?;
     trace_packet_git('>', "ref-prefix HEAD");
     pkt_line::write_line(stdin, "ref-prefix HEAD")?;
     trace_packet_git('>', "ref-prefix refs/heads/");
@@ -286,9 +288,23 @@ fn skip_ls_refs_response(stdout: &mut impl Read) -> Result<()> {
     Ok(())
 }
 
-fn collect_want_oids_from_ls_refs(buf: &[u8]) -> Result<Vec<ObjectId>> {
+fn source_head_oid_from_repo_head_file(source_git_dir: &Path) -> Option<String> {
+    let head_path = source_git_dir.join("HEAD");
+    let content = std::fs::read_to_string(head_path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.len() == 40 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Some(trimmed.to_owned());
+    }
+    None
+}
+
+fn collect_clone_ls_refs_metadata(
+    buf: &[u8],
+) -> Result<(Vec<ObjectId>, Option<String>, Option<String>)> {
     let mut cursor = Cursor::new(buf);
     let mut wants: Vec<ObjectId> = Vec::new();
+    let mut head_symref: Option<String> = None;
+    let mut head_oid: Option<String> = None;
     loop {
         let pkt = match pkt_line::read_packet(&mut cursor)? {
             None => break,
@@ -297,25 +313,40 @@ fn collect_want_oids_from_ls_refs(buf: &[u8]) -> Result<Vec<ObjectId>> {
             Some(other) => bail!("unexpected ls-refs data: {other:?}"),
         };
         trace_packet_git('<', &pkt);
-        let (oid_hex, after_oid) = pkt
-            .split_once(' ')
-            .ok_or_else(|| anyhow::anyhow!("bad ls-refs line: {pkt}"))?;
-        let name = after_oid.split_once(" peeled:").map(|(n, _)| n).unwrap_or(
-            after_oid
-                .split_once(" symref-target:")
-                .map(|(n, _)| n)
-                .unwrap_or(after_oid),
-        );
-        let name = name.trim();
+        let (name, oid, _peeled, symref_target) =
+            crate::commands::ls_remote::parse_ls_refs_v2_line(&pkt)?;
+        let name = name.trim().to_owned();
+        if name == "HEAD" {
+            head_oid = Some(oid.to_hex());
+            if let Some(target) = symref_target {
+                head_symref = Some(target);
+            }
+            continue;
+        }
         if name.starts_with("refs/heads/") || name.starts_with("refs/tags/") {
-            let oid = ObjectId::from_hex(oid_hex.trim())
-                .with_context(|| format!("bad oid in ls-refs: {oid_hex}"))?;
             wants.push(oid);
         }
     }
     wants.sort_by_key(|o| o.to_hex());
     wants.dedup();
-    Ok(wants)
+    Ok((wants, head_symref, head_oid))
+}
+
+fn source_head_symref_from_repo_head_file(source_git_dir: &Path) -> Option<String> {
+    let head_path = source_git_dir.join("HEAD");
+    let content = std::fs::read_to_string(head_path).ok()?;
+    content
+        .trim()
+        .strip_prefix("ref: ")
+        .map(|s| s.trim().to_owned())
+}
+
+fn should_use_source_head_symref_fallback(source_git_dir: &Path) -> bool {
+    let set = ConfigSet::load(Some(source_git_dir), true).unwrap_or_default();
+    let unborn = set
+        .get("lsrefs.unborn")
+        .unwrap_or_else(|| "advertise".to_owned());
+    !unborn.eq_ignore_ascii_case("ignore")
 }
 
 /// True when the server's `fetch=` capability advertises `sideband-all`.
@@ -339,7 +370,6 @@ pub(crate) fn write_v2_fetch_request(
     shallow_exclude: &[String],
     unshallow: bool,
 ) -> Result<()> {
-    let trace_label = crate::trace_packet::negotiation_packet_label();
     trace_packet_git('>', "command=fetch");
     pkt_line::write_line(stdin, "command=fetch")?;
     let agent = format!("agent=git/{}-", crate::version_string());
@@ -367,17 +397,15 @@ pub(crate) fn write_v2_fetch_request(
         pkt_line::write_line(stdin, "sideband-all")?;
     }
 
-    let mut caps = " multi_ack_detailed thin-pack ofs-delta side-band-64k no-progress".to_owned();
     if let Some(sid) = session_id_on_wire {
         let esc = crate::trace2_transfer::json_escape_trace_value(sid);
-        caps.push_str(" session-id=");
-        caps.push_str(&esc);
+        let line = format!("session-id={esc}");
+        trace_packet_git('>', &line);
+        pkt_line::write_line(stdin, &line)?;
     }
     for w in wants {
-        let line = format!("want {}{}", w.to_hex(), caps);
-        if !(trace_label == "clone" && line.starts_with("want ")) {
-            trace_packet_git('>', line.trim_end());
-        }
+        let line = format!("want {}", w.to_hex());
+        trace_packet_git('>', line.trim_end());
         pkt_line::write_line(stdin, &line)?;
     }
     for oid in shallow_oids {
@@ -567,9 +595,9 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
     request_bundle_uri: bool,
     bundle_uri_cli_override: bool,
     server_options: &[String],
-) -> Result<()> {
+) -> Result<(Option<String>, Option<String>)> {
     if !client_wants_protocol_v2() {
-        return Ok(());
+        return Ok((None, None));
     }
 
     let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
@@ -595,7 +623,12 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
     let mut ls_buf = Vec::new();
     read_pkt_lines_until_flush(&mut stdout, &mut ls_buf, 512 * 1024)
         .context("read ls-refs for clone preflight")?;
-    let wants = collect_want_oids_from_ls_refs(&ls_buf)?;
+    let (wants, mut head_symref, head_oid) = collect_clone_ls_refs_metadata(&ls_buf)?;
+    if head_symref.is_none() && should_use_source_head_symref_fallback(source_git_dir) {
+        // `serve-v2 ls-refs` can omit unborn HEAD metadata. For file:// clone parity, preserve
+        // source HEAD's symbolic target unless the repository explicitly disables unborn ads.
+        head_symref = source_head_symref_from_repo_head_file(source_git_dir);
+    }
     if wants.is_empty() {
         // Close stdin so upload-pack exits; otherwise it stays in serve-loop waiting for the
         // next v2 command and `wait()` can block indefinitely on empty repositories.
@@ -607,7 +640,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
                 status.code().unwrap_or(-1)
             );
         }
-        return Ok(());
+        return Ok((head_symref, head_oid));
     }
 
     let fetch_supports_sideband_all = caps.iter().any(|c| {
@@ -637,7 +670,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
             status.code().unwrap_or(-1)
         );
     }
-    Ok(())
+    Ok((head_symref, head_oid))
 }
 
 /// Fetch `bundle.*` lines from a `file://` remote via upload-pack v2.

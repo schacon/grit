@@ -1,5 +1,42 @@
 # Test results
 
+**2026-04-11 (protocol-v2 git:// EAGAIN fix + file:// unborn HEAD clone parity)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=1-7 -v`: **pass (85/85 in run subset)**
+    - fixes `git://` protocol-v2 clone/fetch/pull regressions:
+      - `4` clone no longer fails with `Resource temporarily unavailable (os error 11)`,
+      - `5/6/7` now pass end-to-end with protocol-v2 traces.
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=9-21 -v`: all file:// clone-head cases pass except expected broader suite skips
+    - `16`: empty-repo default branch propagation restored,
+    - `17`: `lsrefs.unborn=ignore` fallback behavior restored,
+    - `18`: bare empty clone HEAD propagation restored,
+    - `19`: non-bare unborn HEAD clone now preserves `refs/heads/mydefaultbranch` and emits warning,
+    - `21`: bare unborn HEAD propagation remains green.
+  - `GUST_BIN=/workspace/target/release/grit bash t5702-protocol-v2.sh --run=19 -v`: pass (regression check for warning + HEAD ref).
+- Harness checkpoint:
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **58/85** (improved from 52/85)
+- Implemented in this increment:
+  - `fetch_transport`:
+    - `git://` v2 fetch path now attempts v2 `ls-refs` when appropriate and gracefully falls back for mixed v0/v1 responders.
+    - v2 fetch/pack response reader no longer blocks waiting for an extra pkt-line after sideband pack termination, fixing clone/fetch `EAGAIN` timeout behavior.
+    - `git://` path now selects v2 fetch request mode when v2 negotiation/`ls-refs` succeeded.
+    - v2 ls-refs fetch prefix fallback restored for empty refspec flows (`refs/heads/`, `refs/tags/`), fixing filtered `ls-remote`/fetch expectations.
+  - `file_upload_pack_v2`:
+    - clone preflight now parses ls-refs metadata (`HEAD` oid/symref + want refs) in one pass.
+    - requests `unborn` in clone ls-refs command for protocol-v2 parity.
+    - preserves source `HEAD` symref fallback for file:// clone when server ls-refs omits HEAD metadata, gated by `lsrefs.unborn` config.
+    - when source HEAD points to a missing branch and one real head exists, clone preflight avoids forcing that sole branch as checkout target (keeps unborn branch semantics).
+  - `clone`:
+    - file:// protocol-v2 preflight now returns source HEAD metadata and seeds clone branch-selection logic with that data.
+    - non-bare local/file clone now preserves source unborn HEAD target when remote-tracking refs collapse to a sole branch, matching `t5702.19` semantics.
+    - warning path widened to include the preserved-unborn-source case so non-bare clone emits `warning: remote HEAD refers to nonexistent ref, unable to checkout` as expected.
+
 **2026-04-11 (protocol-v2 fetch/clone server-option parity and v2 ref-prefix stabilization)**
 
 - `cargo fmt`: pass

@@ -409,6 +409,12 @@ fn is_unborn_remote_default_checkout(
     head_branch: Option<&str>,
     source_git_dir: &Path,
 ) -> bool {
+    let has_other_heads = refs::list_refs(source_git_dir, "refs/heads/")
+        .ok()
+        .is_some_and(|entries| !entries.is_empty());
+    if has_other_heads {
+        return false;
+    }
     let Some(branch) = head_branch else {
         return false;
     };
@@ -635,13 +641,14 @@ pub fn run(mut args: Args) -> Result<()> {
     let server_options = effective_clone_server_options(&args, &remote_name)?;
 
     // `repo_path_str` strips `file://`; use the original URL for transport detection.
+    let mut file_v2_preflight_head: Option<(Option<String>, Option<String>)> = None;
     if args.repository.starts_with("file://")
         && crate::file_upload_pack_v2::client_wants_protocol_v2()
     {
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
         let bundle_cli = args.bundle_uri.is_some();
         let request_bundle = crate::file_upload_pack_v2::transfer_bundle_uri_enabled();
-        crate::fetch_transport::with_packet_trace_identity("clone", || {
+        let preflight_head = crate::fetch_transport::with_packet_trace_identity("clone", || {
             crate::file_upload_pack_v2::clone_preflight_file_v2_if_needed(
                 &source.git_dir,
                 upload_cmd,
@@ -651,6 +658,7 @@ pub fn run(mut args: Args) -> Result<()> {
             )
         })
         .context("file:// protocol v2 clone preflight")?;
+        file_v2_preflight_head = Some(preflight_head);
     }
 
     if let Some(branch) = args.branch.as_deref() {
@@ -718,6 +726,10 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Source HEAD symref / detached OID: from disk unless we will use upload-pack (advertisement).
     let (mut source_head_symref, mut source_head_oid) = read_source_head_info(&source.git_dir);
+    if let Some((symref, oid)) = file_v2_preflight_head {
+        source_head_symref = symref;
+        source_head_oid = oid;
+    }
 
     // Branch to checkout: explicit -b/--branch, else guess from remote HEAD (Git semantics).
     let head_branch = if args.branch.is_some() {
@@ -1149,9 +1161,16 @@ pub fn run(mut args: Args) -> Result<()> {
             // remote-tracking ref but exactly one exists under `refs/remotes/<remote>/`, use
             // that (sole-branch clone when names disagree).
             let preferred_branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-            if let Some(branch) =
+            let source_unborn_preferred = source_head_symref.as_deref().is_some_and(|sr| {
+                let expected = format!("refs/heads/{preferred_branch}");
+                sr == expected && !clone_ref_file_exists(&source.git_dir, sr)
+            });
+            let resolved_branch = if source_unborn_preferred {
+                None
+            } else {
                 resolve_remote_tracked_branch_name(&dest.git_dir, &remote_name, preferred_branch)
-            {
+            };
+            if let Some(branch) = resolved_branch {
                 let remote_ref_name = format!("refs/remotes/{remote_name}/{branch}");
                 let oid = clone_read_direct_ref_oid(&dest.git_dir, &remote_ref_name)
                     .context("reading remote ref")?;

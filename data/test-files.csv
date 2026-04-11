@@ -1019,7 +1019,7 @@ t5620-backfill	t5	yes	10	8	2	false	ok	0
 t5621-clone-revision	t5	yes	12	12	0	true	ok	0
 t5700-protocol-v1	t5	yes	24	24	0	true	ok	0
 t5701-git-serve	t5	yes	25	23	2	false	ok	0
-t5702-protocol-v2	t5	yes	85	52	33	false	ok	0
+t5702-protocol-v2	t5	yes	85	58	27	false	ok	0
 t5703-upload-pack-ref-in-want	t5	yes	26	3	23	false	ok	0
 t5704-protocol-violations	t5	yes	3	3	0	true	ok	0
 t5705-session-id-in-capabilities	t5	yes	17	17	0	true	ok	0
