@@ -1,5 +1,30 @@
 # Test results
 
+**2026-04-11 (http-backend content-length parity: t5562 now 16/16)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated clippy edit in `grit-lib/src/repo.rs`)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16** (improved from 10/16)
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - replaced `http-backend` stub with CGI-compatible smart HTTP server flow:
+    - request parsing (method/query/path/content-length/content-type/content-encoding),
+    - `upload-pack`/`receive-pack` POST dispatch with body validation and optional gzip decoding,
+    - `info/refs` GET advertisement support,
+    - Git-like CGI response formatting with omitted explicit `Status: 200 OK`.
+
 **2026-04-11 (bundle-uri HTTP completion: t5558 now 37/37)**
 
 - `cargo fmt`: pass
