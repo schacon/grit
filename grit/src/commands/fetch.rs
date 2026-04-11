@@ -1422,6 +1422,12 @@ fn fetch_remote(
         remote_heads.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
         remote_tags.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
     }
+    // Remote advertisements may list tag refs whose tag objects were not sent in a shallow/depth
+    // response. Do not update local tag refs to missing objects; this keeps the repo fsck-clean
+    // after partial/failed shallow exchanges (e.g. manipulated one-time-script responses).
+    let local_repo_for_tag_filter = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    remote_tags.retain(|(_, oid)| local_repo_for_tag_filter.odb.read(oid).is_ok());
 
     let tip_oids: Vec<ObjectId> = remote_heads
         .iter()

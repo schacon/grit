@@ -1,5 +1,28 @@
 # Test results
 
+**2026-04-11 (fetch/fsck shallow consistency: one_time_script connectivity case)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh -v`
+  - `t5537.16` now passes (`shallow fetches check connectivity before writing shallow file`)
+  - remaining failures in this file: `8`, `14`, `15`
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0**
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: no-match warning in current harness selection
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **13/16** (improved from 12/16)
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `fetch`: ignore advertised tag refs whose tag objects are missing locally after shallow/depth fetch negotiation, preventing invalid ref updates during partial transfers.
+  - `fsck`: honor local shallow boundaries while traversing commit parents so connectivity checks stop at `.git/shallow` cut points (Git-like shallow traversal).
+
 **2026-04-11 (shallow v2 deepen wire + upload-pack shallow boundary handling)**
 
 - `cargo fmt`: pass

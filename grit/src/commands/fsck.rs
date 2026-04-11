@@ -156,6 +156,19 @@ fn check_tag_trailer_fsck(
     }
 }
 
+fn read_shallow_boundary_oids(git_dir: &Path) -> HashSet<ObjectId> {
+    let shallow_path = git_dir.join("shallow");
+    let Ok(content) = fs::read_to_string(&shallow_path) else {
+        return HashSet::new();
+    };
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| ObjectId::from_hex(line).ok())
+        .collect()
+}
+
 /// A problem found during fsck.
 #[derive(Debug)]
 enum Issue {
@@ -526,6 +539,7 @@ fn walk_reachable(
     let mut reachable = HashSet::new();
     let mut validated = HashSet::new();
     let mut queue: VecDeque<(ObjectId, Option<ObjectId>)> = VecDeque::new();
+    let shallow_boundaries = read_shallow_boundary_oids(&repo.git_dir);
 
     // Seed from HEAD.
     if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
@@ -627,8 +641,10 @@ fn walk_reachable(
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     queue.push_back((commit.tree, Some(oid)));
-                    for parent in commit.parents {
-                        queue.push_back((parent, Some(oid)));
+                    if !shallow_boundaries.contains(&oid) {
+                        for parent in commit.parents {
+                            queue.push_back((parent, Some(oid)));
+                        }
                     }
                 }
             }
