@@ -1436,14 +1436,15 @@ fn fetch_remote(
     crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &trace_tips);
 
     if !args.negotiate_only && args.unshallow {
-        let should_remove_local_shallow =
-            if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
-                !repository_has_shallow_boundary(&rr.git_dir)?
-            } else {
-                // For non-local transports we cannot reliably inspect remote shallow state here.
-                true
-            };
-        if should_remove_local_shallow {
+        if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+            // For local/ext transports, mirror Git's `--unshallow` behavior by importing all
+            // reachable objects and then syncing local shallow boundaries to the remote's
+            // remaining boundaries (or removing the file when the remote is complete).
+            copy_reachable_objects(&rr.git_dir, git_dir, &tip_oids)
+                .context("copying objects for --unshallow")?;
+            sync_shallow_boundaries_for_unshallow(git_dir, &rr.git_dir, &tip_oids)?;
+        } else {
+            // For non-local transports we cannot inspect remote shallow boundary state here.
             let shallow_path = git_dir.join("shallow");
             if shallow_path.exists() {
                 fs::remove_file(&shallow_path)
@@ -3757,10 +3758,6 @@ fn read_shallow_boundary_oids(remote_git_dir: &Path) -> Result<HashSet<ObjectId>
         }
     }
     Ok(set)
-}
-
-fn repository_has_shallow_boundary(remote_git_dir: &Path) -> Result<bool> {
-    Ok(!read_shallow_boundary_oids(remote_git_dir)?.is_empty())
 }
 
 fn oid_reaches_shallow_boundary(
