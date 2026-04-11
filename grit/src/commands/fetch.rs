@@ -1415,6 +1415,18 @@ fn fetch_remote(
         remote_tags.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
     }
 
+    let tip_oids: Vec<ObjectId> = remote_heads
+        .iter()
+        .chain(remote_tags.iter())
+        .map(|(_, oid)| *oid)
+        .collect();
+    let trace_tips: Vec<ObjectId> = if regular_negotiation_tips.is_empty() {
+        tip_oids.clone()
+    } else {
+        regular_negotiation_tips.clone()
+    };
+    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &trace_tips);
+
     if !args.negotiate_only && args.unshallow {
         let should_remove_local_shallow =
             if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
@@ -1431,18 +1443,6 @@ fn fetch_remote(
             }
         }
     }
-
-    let tip_oids: Vec<ObjectId> = remote_heads
-        .iter()
-        .chain(remote_tags.iter())
-        .map(|(_, oid)| *oid)
-        .collect();
-    let trace_tips: Vec<ObjectId> = if regular_negotiation_tips.is_empty() {
-        tip_oids.clone()
-    } else {
-        regular_negotiation_tips.clone()
-    };
-    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &trace_tips);
 
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
@@ -3872,6 +3872,75 @@ fn write_remote_shallow_info_for_tips(
     }
 
     if !local_boundaries.is_empty() {
+        let mut entries: Vec<String> = local_boundaries.iter().map(ObjectId::to_hex).collect();
+        entries.sort();
+        fs::write(&shallow_path, entries.join("\n") + "\n").context("writing shallow file")?;
+    }
+    Ok(())
+}
+
+fn sync_shallow_boundaries_for_unshallow(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    let shallow_path = local_git_dir.join("shallow");
+
+    if boundary_oids.is_empty() {
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+        return Ok(());
+    }
+
+    let remote_repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+
+    let mut local_boundaries: HashSet<ObjectId> = if shallow_path.exists() {
+        fs::read_to_string(&shallow_path)?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| ObjectId::from_hex(l).ok())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    let mut stack: Vec<ObjectId> = tip_oids.to_vec();
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if boundary_oids.contains(&oid) {
+            local_boundaries.insert(oid);
+            continue;
+        }
+        let Ok(obj) = remote_repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.extend(commit.parents);
+                }
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    stack.push(tag.object);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if local_boundaries.is_empty() {
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+    } else {
         let mut entries: Vec<String> = local_boundaries.iter().map(ObjectId::to_hex).collect();
         entries.sort();
         fs::write(&shallow_path, entries.join("\n") + "\n").context("writing shallow file")?;
