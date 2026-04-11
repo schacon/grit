@@ -1,5 +1,29 @@
 # Test results
 
+**2026-04-11 (test-httpd one_time_script path parity + t5551 harness enablement)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- Focused validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=84 -v`: pass
+    - `http:// --negotiate-only without wait-for-done support` now reaches one-time-script route and fails with expected `server does not support wait-for-done`.
+  - `./scripts/run-tests.sh --timeout 240 t5551-http-fetch-smart.sh`: **31/37** (harness-visible; all non-`test_expect_failure` green)
+- Matrix checkpoint (ordered):
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: **0/0** (timeout mode at default 30s in this environment)
+  - `./scripts/run-tests.sh t5551-http-fetch-smart.sh`: **31/37**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **16/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **37/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **16/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- Implemented in this increment:
+  - `test-httpd` one-time-script CGI routing now falls back from docroot to the enclosing test trash directory when the target repository is intentionally outside `httpd/www`, matching `t5702` one-time-script negotiate-only setup.
+  - Enabled `t5551-http-fetch-smart` in harness catalog (`in_scope=yes`), and refreshed dashboards with current pass state.
+
 **2026-04-11 (http smart auth/cookie/GIT_SMART_HTTP parity: t5551 full pass in direct run)**
 
 - `cargo fmt`: pass

@@ -807,14 +807,31 @@ fn run_smart_http_cgi_output(
     prefix: &str,
 ) -> Result<Vec<u8>, String> {
     let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
-
-    let path_translated = format!("{}{}", config.root.display(), smart_path);
+    let mut git_project_root = config.root.clone();
+    // Upstream's one_time_script tests may create repositories in the test's cwd
+    // (outside HTTPD document root). Allow that route to resolve against the
+    // parent of `httpd/` when the target repository is not under docroot.
+    if prefix == "/one_time_script" && !repo_exists_under_root(&git_project_root, smart_path) {
+        if let Some(test_root) = config
+            .root
+            .parent()
+            .and_then(|httpd_root| httpd_root.parent())
+        {
+            if repo_exists_under_root(test_root, smart_path) {
+                git_project_root = test_root.to_path_buf();
+            }
+        }
+    }
+    let path_translated = format!("{}{}", git_project_root.display(), smart_path);
 
     let mut cmd = Command::new(&config.git_http_backend);
     cmd.env("REQUEST_METHOD", &req.method)
         .env("QUERY_STRING", &req.query)
         .env("PATH_TRANSLATED", &path_translated)
-        .env("GIT_PROJECT_ROOT", config.root.to_string_lossy().as_ref())
+        .env(
+            "GIT_PROJECT_ROOT",
+            git_project_root.to_string_lossy().as_ref(),
+        )
         .env("GIT_HTTP_EXPORT_ALL", "1")
         .env("PATH_INFO", smart_path)
         .env("SERVER_PROTOCOL", "HTTP/1.1")
@@ -856,6 +873,18 @@ fn run_smart_http_cgi_output(
         .wait_with_output()
         .map_err(|e| format!("Failed to wait for git-http-backend: {e}"))?;
     Ok(output.stdout)
+}
+
+fn repo_exists_under_root(root: &Path, smart_path: &str) -> bool {
+    let trimmed = smart_path.trim_start_matches('/');
+    let mut parts = trimmed.split('/');
+    let Some(repo_component) = parts.next() else {
+        return false;
+    };
+    if repo_component.is_empty() {
+        return false;
+    }
+    root.join(repo_component).is_dir()
 }
 
 fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {
