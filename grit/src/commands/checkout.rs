@@ -2338,7 +2338,7 @@ fn create_orphan_branch(
             .ok_or_else(|| anyhow::anyhow!("not a work tree"))?;
         let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
         let new_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
-        let mut new_index = Index::new();
+        let mut new_index = old_index.clone();
         new_index.entries = new_entries;
         new_index.sort();
         checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true, true, true)?;
@@ -2366,7 +2366,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
 
     let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
     let new_entries = tree_to_flat_entries(repo, target_tree, "")?;
-    let mut new_index = Index::new();
+    let mut new_index = old_index.clone();
     new_index.entries = new_entries;
     new_index.sort();
 
@@ -2416,7 +2416,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 
     // Build index from the target tree and force-write all entries
     let new_entries = tree_to_flat_entries(repo, &target_tree, "")?;
-    let mut new_index = Index::new();
+    let mut new_index = old_index.clone();
     new_index.entries = new_entries;
     new_index.sort();
 
@@ -2510,7 +2510,9 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     }
 
     // Write the new index
-    let index_path = repo.index_path();
+    let index_path = repo
+        .index_path_for_env()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
 
@@ -2651,12 +2653,14 @@ fn switch_to_tree(
         }
     }
 
-    let index_path = repo.index_path();
+    let index_path = repo
+        .index_path_for_env()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let old_index = repo.load_index_at(&index_path).context("loading index")?;
 
     // Build the new index from the target tree
     let new_entries = tree_to_flat_entries(repo, target_tree_oid, "")?;
-    let mut new_index = Index::new();
+    let mut new_index = old_index.clone();
     new_index.entries = new_entries;
     new_index.sort();
 

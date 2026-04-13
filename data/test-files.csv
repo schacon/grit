@@ -190,7 +190,7 @@ t10880-reset-hard-soft-path	t1	yes	31	31	0	true	ok	0
 t10890-cherry-pick-message	t1	yes	30	7	23	false	ok	0
 t1090-sparse-checkout-scope	t1	yes	7	6	1	false	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	34	0	true	ok	0
-t1091-sparse-checkout-builtin	t1	yes	77	24	52	false	ok	1
+t1091-sparse-checkout-builtin	t1	yes	76	24	52	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
 t1092-sparse-checkout-compatibility	t1	yes	106	38	68	false	ok	0
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
@@ -1162,14 +1162,14 @@ t7030-verify-tag	t7	skip	16	0	0	false	ok	0
 t7031-verify-tag-signed-ssh	t7	skip	14	0	0	false	ok	0
 t7040-log-formatting	t7	yes	36	36	0	true	ok	0
 t7060-status-output	t7	yes	25	25	0	true	ok	0
-t7060-wtstatus	t7	yes	17	7	10	false	ok	0
+t7060-wtstatus	t7	yes	17	12	5	false	ok	0
 t7061-status-staged	t7	yes	26	26	0	true	ok	0
 t7061-wtstatus-ignore	t7	yes	25	0	25	false	ok	0
 t7062-status-worktree	t7	yes	26	26	0	true	ok	0
 t7062-wtstatus-ignorecase	t7	yes	1	1	0	true	ok	0
-t7063-status-untracked-cache	t7	yes	58	9	49	false	ok	0
+t7063-status-untracked-cache	t7	yes	58	58	0	true	ok	0
 t7064-wtstatus-pv2	t7	yes	28	28	0	true	ok	0
-t7065-status-rename	t7	yes	28	25	3	false	ok	0
+t7065-status-rename	t7	yes	28	28	0	true	ok	0
 t7066-status-ignored	t7	yes	32	30	2	false	ok	0
 t7067-status-untracked-dir	t7	yes	33	33	0	true	ok	0
 t7068-commit-amend	t7	yes	28	26	2	false	ok	0
@@ -1230,7 +1230,7 @@ t7505-prepare-commit-msg	t7	yes	30	29	1	false	ok	0
 t7505-prepare-commit-msg-hook	t7	yes	23	7	16	false	ok	0
 t7506-status-submodule	t7	yes	40	6	34	false	ok	0
 t7507-commit-verbose	t7	yes	45	45	0	true	ok	0
-t7508-status	t7	yes	126	81	45	false	ok	0
+t7508-status	t7	yes	126	96	30	false	ok	0
 t7509-commit-authorship	t7	yes	12	4	8	false	ok	0
 t7510-signed-commit	t7	skip	28	0	0	false	ok	0
 t7511-status-index	t7	yes	24	24	0	true	ok	0
@@ -1242,7 +1242,7 @@ t7515-status-symlinks	t7	yes	3	1	2	false	ok	0
 t7516-commit-races	t7	yes	2	0	2	false	ok	0
 t7517-per-repo-email	t7	yes	16	16	0	true	ok	0
 t7518-ident-corner-cases	t7	yes	5	5	0	true	ok	0
-t7519-status-fsmonitor	t7	yes	33	14	19	false	ok	0
+t7519-status-fsmonitor	t7	yes	33	27	6	false	ok	0
 t7520-ignored-hook-warning	t7	yes	5	5	0	true	ok	0
 t7521-ignored-mode	t7	yes	12	12	0	true	ok	0
 t7524-commit-summary	t7	yes	2	2	0	true	ok	0

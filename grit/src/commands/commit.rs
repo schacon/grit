@@ -13,7 +13,6 @@ use grit_lib::diff::{
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
-use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::mailmap::load_mailmap_table;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -26,6 +25,7 @@ use grit_lib::shared_repo::refresh_repository_shared_tree;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 use regex::RegexBuilder;
 
+use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
 use crate::commands::cherry_pick::try_resume_pick_sequence_after_commit;
 use crate::commands::revert::try_resume_revert_sequence_after_commit;
 use grit_lib::write_tree::{
@@ -618,7 +618,8 @@ pub fn run(mut args: Args) -> Result<()> {
         idx
     };
 
-    if index.entries.iter().any(|e| e.stage() != 0) {
+    let has_unmerged_entries = index.entries.iter().any(|e| e.stage() != 0);
+    if has_unmerged_entries && !args.dry_run {
         eprintln!("error: Committing is not possible because you have unmerged files.");
         eprintln!("hint: Fix them up in the work tree, and then use 'git add/rm <file>'");
         eprintln!("hint: as appropriate to mark resolution and make a commit.");
@@ -762,10 +763,22 @@ pub fn run(mut args: Args) -> Result<()> {
         .get("i18n.commitEncoding")
         .or_else(|| config.get("i18n.commitencoding"));
 
-    let mut staged = if dry_run_pathspec_status {
-        diff_trees(&repo.odb, head_tree.as_ref(), Some(&tree_oid), "")?
+    let status_base_tree = if args.amend {
+        if let Some(parent_oid) = parents.first() {
+            let parent_obj = repo.odb.read(parent_oid)?;
+            let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+            Some(parent_commit.tree)
+        } else {
+            None
+        }
     } else {
-        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?
+        head_tree
+    };
+
+    let mut staged = if dry_run_pathspec_status {
+        diff_trees(&repo.odb, status_base_tree.as_ref(), Some(&tree_oid), "")?
+    } else {
+        diff_index_to_tree(&repo.odb, &index, status_base_tree.as_ref(), false)?
     };
     let unstaged_raw = if dry_run_pathspec_status {
         Vec::new()
@@ -791,7 +804,7 @@ pub fn run(mut args: Args) -> Result<()> {
     staged.retain(|e| !unmerged_keys.contains(e.path()));
     unstaged.retain(|e| !unmerged_keys.contains(e.path()));
     let untracked = if let Some(wt) = work_tree {
-        find_untracked_files(&repo, wt, &index)?
+        find_untracked_files(&repo, wt, &index, None)?
     } else {
         Vec::new()
     };
@@ -827,12 +840,16 @@ pub fn run(mut args: Args) -> Result<()> {
             &index_path,
             &index,
         )?;
+        if has_unmerged_entries {
+            std::process::exit(1);
+        }
         // Match Git: `commit --dry-run` exits 1 when there is nothing to commit (after printing status).
         // Merge commits are allowed even when the index matches `HEAD^{tree}` (e.g. resolving
         // modify/delete by keeping our version — tree unchanged but we still record the merge).
         if !args.allow_empty
             && !args.amend
             && !skip_index_tree_vs_parent
+            && !has_unmerged_entries
             && staged.is_empty()
             && !parents.is_empty()
             && parents.len() == 1
@@ -1474,6 +1491,20 @@ fn print_dry_run(
     } else {
         None
     };
+    let ab_mode = if no_ahead_behind {
+        AheadBehindMode::Quick
+    } else {
+        AheadBehindMode::Full
+    };
+    let header_ends_with_blank = match head {
+        HeadState::Branch {
+            short_name,
+            oid: Some(_),
+            ..
+        } => !format_tracking_info(repo, short_name, ab_mode, show_hints)?.is_empty(),
+        HeadState::Branch { oid: None, .. } => true,
+        HeadState::Detached { .. } | HeadState::Invalid => false,
+    };
     crate::commands::status::write_status_branch_header(
         &mut out,
         head,
@@ -1501,6 +1532,14 @@ fn print_dry_run(
         }
         writeln!(out)?;
     }
+    let mut printed_body_section = merge_active;
+    let mut begin_section = |out: &mut std::io::StdoutLock<'_>| -> Result<()> {
+        if printed_body_section || !header_ends_with_blank {
+            writeln!(out)?;
+        }
+        printed_body_section = true;
+        Ok(())
+    };
 
     let (staged_show, unstaged_show, extra_untracked) = if let Some(matched) = pathspec_matched {
         let mut staged_in = Vec::new();
@@ -1535,7 +1574,7 @@ fn print_dry_run(
     };
 
     if !staged_show.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Changes to be committed:")?;
         if amend {
             writeln!(
@@ -1548,23 +1587,6 @@ fn print_dry_run(
         for entry in &staged_show {
             let label = status_label_staged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
-        }
-    }
-
-    if let Some(limit) = crate::commands::status::parse_submodule_summary_limit(config) {
-        let head_spec = if amend { "HEAD^" } else { "HEAD" };
-        let txt = crate::commands::status::run_submodule_summary_text(
-            repo,
-            index_path,
-            limit,
-            true,
-            Some(head_spec),
-        )?;
-        if !txt.trim().is_empty() {
-            writeln!(out)?;
-            writeln!(out, "Submodule changes to be committed:")?;
-            writeln!(out)?;
-            write!(out, "{txt}")?;
         }
     }
 
@@ -1581,7 +1603,7 @@ fn print_dry_run(
     }
 
     if !unstaged_show.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Changes not staged for commit:")?;
         writeln!(
             out,
@@ -1594,6 +1616,24 @@ fn print_dry_run(
         for entry in &unstaged_show {
             let label = status_label_unstaged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
+        }
+    }
+
+    if let Some(limit) = crate::commands::status::parse_submodule_summary_limit(config) {
+        let head_spec = if amend { "HEAD^" } else { "HEAD" };
+        let txt = crate::commands::status::run_submodule_summary_text(
+            repo,
+            index_path,
+            limit,
+            true,
+            Some(head_spec),
+        )?;
+        let txt = txt.trim_end_matches('\n');
+        if !txt.trim().is_empty() {
+            begin_section(&mut out)?;
+            writeln!(out, "Submodule changes to be committed:")?;
+            writeln!(out)?;
+            writeln!(out, "{txt}")?;
         }
     }
 
@@ -1619,9 +1659,19 @@ fn print_dry_run(
                 else {
                     continue;
                 };
-                if !parent.is_empty() {
-                    suppressed_roots.insert(parent);
+                if parent.is_empty() {
+                    continue;
                 }
+                let prefix = format!("{parent}/");
+                let parent_has_matched_path = matched.iter().any(|m| {
+                    std::str::from_utf8(m)
+                        .map(|ms| ms == parent || ms.starts_with(&prefix))
+                        .unwrap_or(false)
+                });
+                if parent_has_matched_path {
+                    continue;
+                }
+                suppressed_roots.insert(parent);
             }
         }
         for p in &extra_untracked {
@@ -1665,7 +1715,7 @@ fn print_dry_run(
     }
 
     if !all_untracked.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Untracked files:")?;
         writeln!(
             out,
@@ -1674,6 +1724,9 @@ fn print_dry_run(
         for path in &all_untracked {
             writeln!(out, "\t{path}")?;
         }
+    }
+    if printed_body_section && unmerged.is_empty() {
+        writeln!(out)?;
     }
 
     if !unmerged.is_empty() && staged_show.is_empty() {
@@ -1719,88 +1772,13 @@ fn status_label_unstaged(status: DiffStatus) -> &'static str {
 ///
 /// Respects `.gitignore` / exclude rules so `commit --dry-run` matches Git when test output is
 /// redirected to a path listed in `.gitignore` (t7506).
-fn find_untracked_files(repo: &Repository, work_tree: &Path, index: &Index) -> Result<Vec<String>> {
-    let tracked: BTreeSet<String> = index
-        .entries
-        .iter()
-        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
-        .collect();
-
-    let gitlinks: BTreeSet<String> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
-        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
-        .collect();
-
-    let mut matcher = IgnoreMatcher::from_repository(repo)?;
-    let mut untracked = Vec::new();
-    walk_untracked(
-        repo,
-        work_tree,
-        work_tree,
-        index,
-        &tracked,
-        &gitlinks,
-        &mut matcher,
-        &mut untracked,
-    )?;
-    untracked.sort();
-    Ok(untracked)
-}
-
-fn walk_untracked(
+fn find_untracked_files(
     repo: &Repository,
-    dir: &Path,
     work_tree: &Path,
     index: &Index,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
-    matcher: &mut IgnoreMatcher,
-    out: &mut Vec<String>,
-) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-    sorted.sort_by_key(|e| e.file_name());
-    for entry in sorted {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" {
-            continue;
-        }
-        let rel = path
-            .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name);
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-        if is_dir && gitlinks.contains(&rel) {
-            // Submodule checkout: only the gitlink path is tracked in the superproject index.
-            continue;
-        }
-        if is_dir {
-            let prefix = format!("{rel}/");
-            let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
-            if has_tracked {
-                walk_untracked(
-                    repo, &path, work_tree, index, tracked, gitlinks, matcher, out,
-                )?;
-            } else {
-                let (ignored, _) = matcher.check_path(repo, Some(index), &rel, true)?;
-                if !ignored {
-                    out.push(format!("{rel}/"));
-                }
-            }
-        } else if !tracked.contains(&rel) {
-            let (ignored, _) = matcher.check_path(repo, Some(index), &rel, false)?;
-            if !ignored {
-                out.push(rel);
-            }
-        }
-    }
-    Ok(())
+    pathspecs: Option<&[String]>,
+) -> Result<Vec<String>> {
+    crate::commands::status::collect_untracked_normal_for_status(repo, index, work_tree, pathspecs)
 }
 
 /// Paths named by `commit -p` pathspec arguments (repository-relative), for partial-tree commits.
@@ -1959,7 +1937,7 @@ fn run_commit_patch_mode(
         } else {
             unstaged_raw
         };
-        let untracked = find_untracked_files(repo, work_tree, &disk_index)?;
+        let untracked = find_untracked_files(repo, work_tree, &disk_index, None)?;
         let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
         let in_progress = detect_in_progress(&repo.git_dir);
         print_dry_run(
@@ -2160,7 +2138,7 @@ fn run_commit_patch_mode(
         } else {
             unstaged_raw
         };
-        let untracked = find_untracked_files(repo, work_tree, &disk_index)?;
+        let untracked = find_untracked_files(repo, work_tree, &disk_index, None)?;
         let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
         let in_progress = detect_in_progress(&repo.git_dir);
         print_dry_run(

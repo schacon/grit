@@ -5168,8 +5168,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "mergesort" => run_test_tool_mergesort(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
                 "chmtime" => run_test_tool_chmtime(&rest[1..]),
+                "read-cache" => run_test_tool_read_cache(rest),
                 "dump-untracked-cache" => run_test_tool_dump_untracked_cache(),
                 "dump-split-index" => run_test_tool_dump_split_index(&rest[1..]),
+                "dump-fsmonitor" => run_test_tool_dump_fsmonitor(),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "partial-clone" => run_test_tool_partial_clone(rest),
@@ -6164,6 +6166,59 @@ fn run_test_tool_dump_untracked_cache() -> Result<()> {
         dump(root, &mut base);
     }
 
+    Ok(())
+}
+
+/// `test-tool dump-fsmonitor` — minimal helper used by status/fsmonitor tests.
+fn run_test_tool_dump_fsmonitor() -> Result<()> {
+    use grit_lib::index::Index;
+    use grit_lib::repo::Repository;
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index = Index::load(&repo.index_path()).context("read index")?;
+    if let Some(token) = index.fsmonitor_last_update.as_deref() {
+        println!("fsmonitor last update {token}");
+    } else {
+        println!("no fsmonitor");
+    }
+    Ok(())
+}
+
+/// `test-tool read-cache` — minimal helper for fsmonitor/read-cache tests.
+fn run_test_tool_read_cache(rest: &[String]) -> Result<()> {
+    use grit_lib::index::Index;
+    use grit_lib::repo::Repository;
+
+    let mut count: usize = 1;
+    let mut print_and_refresh: Option<String> = None;
+
+    for arg in &rest[1..] {
+        if let Some(v) = arg.strip_prefix("--print-and-refresh=") {
+            print_and_refresh = Some(v.to_string());
+            continue;
+        }
+        if let Ok(n) = arg.parse::<usize>() {
+            count = n;
+        }
+    }
+
+    for i in 0..count {
+        let repo = Repository::discover(None).context("not a git repository")?;
+        if let Some(path) = print_and_refresh.as_deref() {
+            let _ = crate::commands::update_index::run_refresh_quiet(&repo);
+            let index = Index::load(&repo.index_path()).context("read index")?;
+            let rel = path.as_bytes();
+            let is_up_to_date = index
+                .get(rel, 0)
+                .is_some_and(|entry| entry.fsmonitor_valid());
+            println!(
+                "{path} is{} up to date",
+                if is_up_to_date { "" } else { " not" }
+            );
+            std::fs::write(path, format!("{i}\n"))
+                .with_context(|| format!("write '{path}' for test-tool read-cache"))?;
+        }
+    }
     Ok(())
 }
 

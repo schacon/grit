@@ -46,6 +46,8 @@ pub const MODE_TREE: u32 = 0o040000;
 const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 /// Git index extension signature `UNTR` (untracked cache).
 const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
+/// Git index extension signature `FSMN` (fsmonitor).
+const INDEX_EXT_FSMONITOR: u32 = u32::from_be_bytes(*b"FSMN");
 /// Git index extension signature `REUC` (resolve undo).
 const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
 /// Git index extension signature `link` (split index).
@@ -162,6 +164,8 @@ impl IndexEntry {
 
     /// In-memory only: `ls-files --with-tree` hides stage-1 overlay rows that duplicate stage 0.
     const FLAG_EXT_OVERLAY_TREE_SKIP: u16 = 0x8000;
+    /// In-memory and on-disk compatibility bit for fsmonitor validity (`git ls-files -f`).
+    const FLAG_EXT_FSMONITOR_VALID: u16 = 0x1000;
 
     #[must_use]
     pub fn overlay_tree_skip_output(&self) -> bool {
@@ -180,6 +184,26 @@ impl IndexEntry {
             }
         }
     }
+
+    /// Whether the fsmonitor-valid bit is set.
+    #[must_use]
+    pub fn fsmonitor_valid(&self) -> bool {
+        self.flags_extended
+            .is_some_and(|fe| fe & Self::FLAG_EXT_FSMONITOR_VALID != 0)
+    }
+
+    /// Set or clear the fsmonitor-valid bit.
+    pub fn set_fsmonitor_valid(&mut self, value: bool) {
+        let fe = self.flags_extended.get_or_insert(0);
+        if value {
+            *fe |= Self::FLAG_EXT_FSMONITOR_VALID;
+        } else {
+            *fe &= !Self::FLAG_EXT_FSMONITOR_VALID;
+            if *fe == 0 {
+                self.flags_extended = None;
+            }
+        }
+    }
 }
 
 /// The in-memory representation of the Git index file.
@@ -193,6 +217,8 @@ pub struct Index {
     pub sparse_directories: bool,
     /// Optional untracked-cache extension (`UNTR`), matching Git's `istate->untracked`.
     pub untracked_cache: Option<untracked_cache::UntrackedCache>,
+    /// Optional fsmonitor token extension (`FSMN`).
+    pub fsmonitor_last_update: Option<String>,
     /// Optional `REUC` resolve-undo extension (paths that were unmerged before a resolution).
     pub resolve_undo: Option<BTreeMap<Vec<u8>, ResolveUndoRecord>>,
     /// Split index `link` extension (bitmaps cleared after load merge).
@@ -312,6 +338,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            fsmonitor_last_update: None,
             resolve_undo: None,
             split_link: None,
             cache_tree_root: None,
@@ -332,6 +359,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                fsmonitor_last_update: None,
                 resolve_undo: None,
                 split_link: None,
                 cache_tree_root: None,
@@ -364,6 +392,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            fsmonitor_last_update: None,
             resolve_undo: None,
             split_link: None,
             cache_tree_root: None,
@@ -382,6 +411,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                fsmonitor_last_update: None,
                 resolve_undo: None,
                 split_link: None,
                 cache_tree_root: None,
@@ -417,6 +447,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            fsmonitor_last_update: None,
             resolve_undo: None,
             split_link: None,
             cache_tree_root: None,
@@ -667,6 +698,7 @@ impl Index {
 
         let mut sparse_directories = false;
         let mut untracked_cache = None;
+        let mut fsmonitor_last_update = None;
         let mut resolve_undo = None;
         let mut split_link = None;
         let mut cache_tree_root = None;
@@ -692,6 +724,14 @@ impl Index {
             } else if sig == INDEX_EXT_UNTRACKED {
                 let ext_data = &body[pos..pos + ext_sz];
                 untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
+            } else if sig == INDEX_EXT_FSMONITOR {
+                let ext_data = &body[pos..pos + ext_sz];
+                let token_bytes = if let Some(nul) = ext_data.iter().position(|&b| b == 0) {
+                    &ext_data[..nul]
+                } else {
+                    ext_data
+                };
+                fsmonitor_last_update = Some(String::from_utf8_lossy(token_bytes).into_owned());
             } else if sig == INDEX_EXT_RESOLVE_UNDO {
                 let ext_data = &body[pos..pos + ext_sz];
                 resolve_undo = Some(resolve_undo::parse_resolve_undo_payload(ext_data)?);
@@ -713,6 +753,7 @@ impl Index {
             entries,
             sparse_directories,
             untracked_cache,
+            fsmonitor_last_update,
             resolve_undo,
             split_link,
             cache_tree_root,
@@ -845,6 +886,13 @@ impl Index {
             out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
             out.extend_from_slice(&payload);
         }
+        if let Some(token) = &self.fsmonitor_last_update {
+            let mut payload = token.as_bytes().to_vec();
+            payload.push(0);
+            out.extend_from_slice(&INDEX_EXT_FSMONITOR.to_be_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            out.extend_from_slice(&payload);
+        }
         if let Some(ru) = &self.resolve_undo {
             let payload = write_resolve_undo_payload(ru);
             if !payload.is_empty() {
@@ -878,6 +926,7 @@ impl Index {
     pub fn add_or_replace(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
         let stage = entry.stage();
+        let mut inserted_stage0 = false;
         // Binary search for the insertion point by (path, stage)
         let result = self.entries.binary_search_by(|e| {
             e.path
@@ -895,9 +944,10 @@ impl Index {
             Err(pos) => {
                 // Not found — insert at sorted position
                 self.entries.insert(pos, entry);
+                inserted_stage0 = stage == 0;
             }
         }
-        if stage == 0 {
+        if inserted_stage0 {
             if let Ok(p) = std::str::from_utf8(&path) {
                 self.invalidate_untracked_cache_for_path(p);
             }

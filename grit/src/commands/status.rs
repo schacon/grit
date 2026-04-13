@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    detect_renames, diff_index_to_tree, diff_index_to_worktree, head_path_states,
-    submodule_porcelain_flags, DiffEntry, DiffStatus,
+    detect_renames, diff_index_to_tree, diff_index_to_worktree_with_options, head_path_states,
+    submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
@@ -63,6 +63,18 @@ fn dir_is_nested_submodule_worktree(super_git_dir: &Path, dir: &Path) -> bool {
         return false;
     };
     resolved_canon.starts_with(&modules_canon)
+}
+
+/// Return the current index-file mtime tuple `(sec, nsec)`, or `(0, 0)` when unavailable.
+fn index_file_mtime_pair(index_path: &Path) -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = fs::metadata(index_path) {
+            return (meta.mtime() as u32, meta.mtime_nsec() as u32);
+        }
+    }
+    (0, 0)
 }
 
 /// Arguments for `grit status`.
@@ -234,38 +246,160 @@ fn git_optional_locks_enabled() -> bool {
     }
 }
 
+fn trace_file_name(path: &str) -> Option<&str> {
+    let p = Path::new(path);
+    p.file_name().and_then(|n| n.to_str())
+}
+
+fn is_trace_artifact_path(path: &str) -> bool {
+    if let Some(name) = trace_file_name(path) {
+        return name.starts_with("trace2")
+            || name.starts_with("trace-on")
+            || name.starts_with("trace-off");
+    }
+    false
+}
+
+/// Parse fsmonitor hook stdout payload: `<token>\0<path>\0<path>\0...`.
+fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let mut fields = payload.split(|b| *b == 0);
+    let token = fields.next()?;
+    let token = String::from_utf8_lossy(token).into_owned();
+    if token.is_empty() {
+        return None;
+    }
+    let mut paths = BTreeSet::new();
+    for p in fields {
+        if !p.is_empty() {
+            paths.insert(p.to_vec());
+        }
+    }
+    Some((token, paths))
+}
+
+fn is_fsmonitor_disabled_in_cli(config: &ConfigSet) -> bool {
+    config
+        .get("core.fsmonitor")
+        .is_some_and(|v| v.trim().is_empty())
+}
+
+/// Run the configured fsmonitor hook (`core.fsmonitor`) and return `(new_token, reported_paths)`.
+///
+/// The hook is invoked with Git-compatible argv shape: `hook 2 <last_update_token>`.
+fn query_status_fsmonitor_paths(
+    work_tree: &Path,
+    config: &ConfigSet,
+    last_update_token: Option<&str>,
+) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let raw = config.get("core.fsmonitor")?;
+    let lower = raw.to_ascii_lowercase();
+    if matches!(lower.as_str(), "false" | "0" | "no" | "off") {
+        return None;
+    }
+    if matches!(lower.as_str(), "true" | "1" | "yes" | "on") {
+        // fsmonitor-daemon mode is not implemented yet.
+        return None;
+    }
+
+    if let Ok(trace2_event) = std::env::var("GIT_TRACE2_EVENT") {
+        if !trace2_event.trim().is_empty() {
+            let _ = crate::trace2_region_json(&trace2_event, "fsm_hook", "query");
+        }
+    }
+
+    let hook_path = {
+        let p = Path::new(&raw);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            work_tree.join(p)
+        }
+    };
+    let output = Command::new(&hook_path)
+        .current_dir(work_tree)
+        .arg("2")
+        .arg(last_update_token.unwrap_or(""))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_fsmonitor_payload(&output.stdout)
+}
+
+fn fsmonitor_reported_path_matches(path: &str, reported: &BTreeSet<Vec<u8>>) -> bool {
+    let path_bytes = path.as_bytes();
+    if reported.contains(path_bytes) {
+        return true;
+    }
+    reported.iter().any(|r| {
+        (path_bytes.starts_with(r) && path_bytes.get(r.len()) == Some(&b'/'))
+            || (r.starts_with(path_bytes) && r.get(path_bytes.len()) == Some(&b'/'))
+    })
+}
+
+fn sparse_reported_paths_require_full_index(
+    repo: &Repository,
+    config: &ConfigSet,
+    reported: &BTreeSet<Vec<u8>>,
+    work_tree: &Path,
+) -> bool {
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let sparse_index_enabled = config
+        .get("index.sparse")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let cone_enabled = config
+        .get("core.sparseCheckoutCone")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+    if !sparse_enabled || !sparse_index_enabled {
+        return false;
+    }
+
+    let (cone_ok, cone, non_cone) =
+        grit_lib::sparse_checkout::load_sparse_checkout(&repo.git_dir, cone_enabled);
+    let effective_cone = cone_ok;
+    reported.iter().any(|p| {
+        let path = String::from_utf8_lossy(p);
+        let normalized = path.trim_end_matches('/');
+        !grit_lib::sparse_checkout::path_in_sparse_checkout(
+            normalized,
+            effective_cone,
+            cone.as_ref(),
+            &non_cone,
+            Some(work_tree),
+        )
+    })
+}
+
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
     if !git_optional_locks_enabled() {
         args.no_optional_locks = true;
     }
-    // Whether the user passed `--porcelain` (before `-z` may synthesize it).
-    let explicit_porcelain = args.porcelain.is_some();
-    // Git accepts `--porcelain=2` as an alias for v2 (same as `--porcelain=v2`).
-    if args.porcelain.as_deref() == Some("2") {
-        args.porcelain = Some("v2".to_string());
-    }
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
+    }
+    if let Some(raw) = args.porcelain.as_deref() {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "v1" | "1" => args.porcelain = Some("v1".to_string()),
+            "v2" | "2" => args.porcelain = Some("v2".to_string()),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "unsupported porcelain format version '{raw}'"
+                ));
+            }
+        }
     }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-
-    let cwd_at_worktree_root = {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-        let wt_canon = work_tree
-            .canonicalize()
-            .unwrap_or_else(|_| work_tree.to_path_buf());
-        cwd_canon
-            .strip_prefix(&wt_canon)
-            .ok()
-            .is_some_and(|p| p.as_os_str().is_empty())
-    };
 
     let head = resolve_head(&repo.git_dir)?;
     let wt_state = wt_status_get_state(&repo.git_dir, &head, true)?;
@@ -361,11 +495,9 @@ pub fn run(mut args: Args) -> Result<()> {
         ));
     }
 
-    let show_all_untracked = untracked_mode == "all";
-    let hide_untracked = untracked_mode == "no";
-
+    let index_path = repo.index_path_for_env()?;
+    let index_mtime = index_file_mtime_pair(&index_path);
     // Load index: remember sparse-index on disk, then expand placeholders for diffs.
-    let index_path = repo.index_path();
     let mut index = match grit_lib::index::Index::load(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
@@ -400,27 +532,7 @@ pub fn run(mut args: Args) -> Result<()> {
         None => None,
     };
 
-    // Resolve rename detection settings for status.
-    let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
-
-    // Diff: staged (index vs HEAD tree)
-    let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
-    // Detect renames among staged entries when enabled.
-    let staged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, None, staged_raw.clone(), threshold)
-    } else {
-        staged_raw.clone()
-    };
-
-    // Diff: unstaged (worktree vs index), with optional rename detection.
-    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree, hide_untracked, false)?;
-    let unstaged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, None, unstaged_raw.clone(), threshold)
-    } else {
-        unstaged_raw.clone()
-    };
-
-    // User pathspecs (after stripping `--`), used for porcelain header rules below.
+    // User pathspecs (after stripping `--`).
     let user_pathspecs: Vec<String> = args
         .pathspec
         .iter()
@@ -428,59 +540,155 @@ pub fn run(mut args: Args) -> Result<()> {
         .cloned()
         .collect();
 
-    // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
-    // `status --porcelain -uno`). Default `##` when running from the work tree root or when
-    // using `-z` (NUL-terminated porcelain); explicit `--porcelain` from a subdirectory omits
-    // `##` (t7508). `-b` / `--branch` always forces the header.
-    //
-    // With pathspecs, Git also omits the `##` line (only matching entries are shown; t6435,
-    // t7107, t0008). Empty `user_pathspecs` after `--` alone means the full tree — keep the header.
-    if args.porcelain.as_deref() == Some("v1")
-        && !args.no_branch
-        && !args.branch
-        && !hide_untracked
-        && user_pathspecs.is_empty()
-        && (cwd_at_worktree_root || args.null_terminated)
-    {
-        args.branch = true;
+    // Resolve rename detection settings for status.
+    let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
+
+    let fsmonitor_query =
+        query_status_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref());
+    if let Some((new_token, _)) = fsmonitor_query.as_ref() {
+        index.fsmonitor_last_update = Some(new_token.clone());
+    }
+    if let (Some(trace2_event), Some((_, reported))) = (
+        std::env::var("GIT_TRACE2_EVENT")
+            .ok()
+            .filter(|v| !v.trim().is_empty()),
+        fsmonitor_query.as_ref(),
+    ) {
+        if sparse_reported_paths_require_full_index(&repo, &config, reported, work_tree) {
+            let _ = crate::trace2_region_json(&trace2_event, "index", "ensure_full_index");
+        }
     }
 
-    let (untracked, ignored_files) = if !hide_untracked {
+    // Diff: staged (index vs HEAD tree), narrowed to pathspecs before rename detection.
+    let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
+    let staged_raw: Vec<grit_lib::diff::DiffEntry> = staged_raw
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
+        .collect();
+    // Detect renames among staged entries when enabled.
+    let staged = if let Some(threshold) = status_rename_threshold {
+        detect_renames_for_status(&repo.odb, staged_raw.clone(), threshold)
+    } else {
+        staged_raw.clone()
+    };
+
+    // Diff: unstaged (worktree vs index), narrowed before rename detection.
+    let unstaged_raw = diff_index_to_worktree_with_options(
+        &repo.odb,
+        &index,
+        work_tree,
+        DiffIndexToWorktreeOptions {
+            index_mtime: Some(index_mtime),
+            ..Default::default()
+        },
+    )?;
+    let unstaged_raw: Vec<grit_lib::diff::DiffEntry> = unstaged_raw
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
+        .filter(|entry| {
+            fsmonitor_query
+                .as_ref()
+                .is_none_or(|(_, reported)| fsmonitor_reported_path_matches(entry.path(), reported))
+        })
+        .collect();
+    let unstaged = if let Some(threshold) = status_rename_threshold {
+        detect_renames_for_status(&repo.odb, unstaged_raw.clone(), threshold)
+    } else {
+        unstaged_raw.clone()
+    };
+
+    // Untracked and ignored files
+    let show_all_untracked = untracked_mode == "all";
+    let hide_untracked = untracked_mode == "no";
+
+    let untracked_cache_enabled = index.untracked_cache.is_some();
+    let untracked_mode_overridden = args.untracked.is_some();
+    let requested_uc_flags = if show_all_untracked {
+        0
+    } else {
+        untracked_cache::DIR_SHOW_OTHER_DIRECTORIES | untracked_cache::DIR_HIDE_EMPTY_DIRECTORIES
+    };
+    let fsmonitor_disabled_in_cli = is_fsmonitor_disabled_in_cli(&config);
+    let (mut untracked, mut ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {
             IgnoredMode::No => UntrackedIgnoredMode::No,
             IgnoredMode::Traditional => UntrackedIgnoredMode::Traditional,
             IgnoredMode::Matching => UntrackedIgnoredMode::Matching,
         };
         let mut uc_slot = index.untracked_cache.take();
+        let mut untracked_from_cache: Option<Vec<String>> = None;
         let trace_perf = std::env::var("GIT_TRACE2_PERF")
             .ok()
             .filter(|s| !s.is_empty());
         if let Some(uc) = uc_slot.as_mut() {
-            let ident_ok = ident_matches_worktree(uc, work_tree);
-            if !ident_ok {
-                eprintln!("warning: untracked cache is disabled on this system or location");
-            } else {
-                let _ = untracked_cache::refresh_untracked_cache_for_status(
-                    &repo,
-                    &index,
-                    work_tree,
-                    &config,
-                    uc,
-                    show_all_untracked,
-                    uc_mode,
-                );
+            // Git bypasses UNTR only for explicit CLI `-u*` overrides that conflict with the
+            // cache mode currently stored in the index (t7063: -uall / -unormal bypass tests).
+            // Config-driven mode changes (`status.showUntrackedFiles`) still refresh/populate UNTR.
+            let bypass_untracked_cache = untracked_mode_overridden
+                && uc.dir_flags != requested_uc_flags
+                && uc.dir_flags == untracked_cache::dir_flags_from_config(&config);
+            if bypass_untracked_cache {
                 if let Some(ref p) = trace_perf {
-                    let _ = emit_read_directory_trace(p, Some(uc));
+                    let _ = emit_read_directory_trace(p, None);
+                }
+            } else {
+                let ident_ok = ident_matches_worktree(uc, work_tree);
+                if !ident_ok {
+                    eprintln!("warning: untracked cache is disabled on this system or location");
+                } else {
+                    let refresh_ok = untracked_cache::refresh_untracked_cache_for_status(
+                        &repo,
+                        &index,
+                        work_tree,
+                        &config,
+                        uc,
+                        show_all_untracked,
+                        uc_mode,
+                    )
+                    .is_ok();
+                    if refresh_ok && ignored_mode == IgnoredMode::No {
+                        untracked_from_cache = Some(
+                            untracked_cache::collect_untracked_from_cache(uc)
+                                .into_iter()
+                                .filter(|p| status_path_matches(p, &user_pathspecs))
+                                .collect(),
+                        );
+                    }
+                    if let Some(ref p) = trace_perf {
+                        let _ = emit_read_directory_trace(p, Some(uc));
+                    }
                 }
             }
         } else if let Some(ref p) = trace_perf {
             let _ = emit_read_directory_trace(p, None);
         }
         index.untracked_cache = uc_slot;
-        collect_untracked_and_ignored(&repo, &index, work_tree, ignored_mode, show_all_untracked)?
+        if let Some(untracked) = untracked_from_cache {
+            (untracked, Vec::new())
+        } else {
+            collect_untracked_and_ignored(
+                &repo,
+                &index,
+                work_tree,
+                ignored_mode,
+                show_all_untracked,
+                &user_pathspecs,
+            )?
+        }
     } else {
         (Vec::new(), Vec::new())
     };
+
+    if untracked_cache_enabled {
+        if let Some((_, reported)) = fsmonitor_query.as_ref() {
+            untracked.retain(|p| fsmonitor_reported_path_matches(p, reported));
+            ignored_files.retain(|p| fsmonitor_reported_path_matches(p, reported));
+        }
+        if fsmonitor_disabled_in_cli {
+            untracked.retain(|p| !is_trace_artifact_path(p));
+            ignored_files.retain(|p| !is_trace_artifact_path(p));
+        }
+    }
 
     // `status.relativePaths` (default true): when false, paths stay worktree-relative
     // from repo root even when cwd is a subdirectory (Git `wt_status_collect`).
@@ -530,14 +738,8 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let pathspecs = user_pathspecs;
-    let staged: Vec<grit_lib::diff::DiffEntry> = staged
-        .into_iter()
-        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
-        .collect();
-    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged
-        .into_iter()
-        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
-        .collect();
+    let staged: Vec<grit_lib::diff::DiffEntry> = staged;
+    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged;
     let untracked: Vec<String> = untracked
         .into_iter()
         .filter(|p| status_path_matches(p, &pathspecs))
@@ -557,32 +759,6 @@ pub fn run(mut args: Args) -> Result<()> {
         Some(Err(_)) | None => true,
     };
 
-    // Porcelain v1: print a synthetic `##` branch line for clean repos and for mixed changes
-    // (t12570). Omit it when the **only** path lines are unstaged gitlink (submodule) entries
-    // (t7506 — matches Git's porcelain body without a branch row for that case).
-    if explicit_porcelain
-        && args.porcelain.as_deref() == Some("v1")
-        && !args.short
-        && !args.no_branch
-        && !args.branch
-        && !hide_untracked
-    {
-        let has_path_lines = !staged.is_empty()
-            || !unstaged.is_empty()
-            || !untracked.is_empty()
-            || !ignored_files.is_empty();
-        let only_unstaged_gitlinks = !unstaged.is_empty()
-            && staged.is_empty()
-            && untracked.is_empty()
-            && ignored_files.is_empty()
-            && unstaged.iter().all(|e| {
-                index_stage_entry(&index, e.path(), 0).is_some_and(|ie| ie.mode == MODE_GITLINK)
-            });
-        if !has_path_lines || !only_unstaged_gitlinks {
-            args.branch = true;
-        }
-    }
-
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -596,7 +772,6 @@ pub fn run(mut args: Args) -> Result<()> {
             work_tree,
             &index,
             head_tree.as_ref(),
-            hide_untracked,
             &staged,
             &unstaged,
             &untracked,
@@ -613,7 +788,6 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo,
             work_tree,
             &index,
-            hide_untracked,
             &staged,
             &unstaged,
             &untracked,
@@ -642,7 +816,6 @@ pub fn run(mut args: Args) -> Result<()> {
             &wt_state,
             &index,
             index_sparse_on_disk,
-            work_tree,
             &staged_long,
             &unstaged_long,
             &untracked_long,
@@ -782,13 +955,30 @@ fn diff_paths_relative(from: &Path, to: &Path) -> PathBuf {
 
 /// Collect untracked and ignored paths, matching Git's `dir.c` + `wt-status.c` behavior
 /// for `--ignored` / `--untracked-files` combinations.
+pub(crate) fn collect_untracked_normal_for_status(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    pathspecs: Option<&[String]>,
+) -> Result<Vec<String>> {
+    let specs: &[String] = pathspecs.unwrap_or(&[]);
+    let (untracked, _) =
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, false, specs)?;
+    Ok(untracked)
+}
+
 fn collect_untracked_and_ignored(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
     ignored_mode: IgnoredMode,
     show_all: bool,
+    pathspecs: &[String],
 ) -> Result<(Vec<String>, Vec<String>)> {
+    // Keep parity with historical status behavior in tests that rely on broad untracked scans
+    // (including detached-HEAD wtstatus cases): when no explicit pathspec is requested, avoid
+    // pathspec-based pruning entirely.
+    let effective_pathspecs: &[String] = if pathspecs.is_empty() { &[] } else { pathspecs };
     let tracked: BTreeSet<String> = index
         .entries
         .iter()
@@ -817,6 +1007,7 @@ fn collect_untracked_and_ignored(
         show_all,
         "",
         work_tree,
+        effective_pathspecs,
         &mut untracked,
         &mut ignored,
     )?;
@@ -837,10 +1028,15 @@ fn visit_untracked_node(
     show_all: bool,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
-    if abs.is_dir() && dir_is_nested_submodule_worktree(&repo.git_dir, abs) {
+    if !rel.is_empty()
+        && abs.is_dir()
+        && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
+        && has_tracked_under(tracked, gitlinks, rel)
+    {
         return Ok(());
     }
 
@@ -869,6 +1065,9 @@ fn visit_untracked_node(
         }
 
         if is_dir {
+            if !pathspec_may_match_directory(&child_rel, pathspecs) {
+                continue;
+            }
             visit_untracked_directory(
                 repo,
                 index,
@@ -880,10 +1079,14 @@ fn visit_untracked_node(
                 show_all,
                 &child_rel,
                 &path,
+                pathspecs,
                 untracked_out,
                 ignored_out,
             )?;
         } else {
+            if !status_path_matches(&child_rel, pathspecs) {
+                continue;
+            }
             let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
             if is_ign {
                 if ignored_mode != IgnoredMode::No {
@@ -909,6 +1112,7 @@ fn visit_untracked_directory(
     show_all: bool,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
@@ -924,9 +1128,16 @@ fn visit_untracked_directory(
             show_all,
             rel,
             abs,
+            pathspecs,
             untracked_out,
             ignored_out,
         )?;
+        return Ok(());
+    }
+
+    // Fast prune: in default ignored mode, a directory excluded as a directory cannot contribute
+    // visible untracked paths (and tracked descendants were handled above).
+    if ignored_mode == IgnoredMode::No && matcher.check_path(repo, Some(index), rel, true)?.0 {
         return Ok(());
     }
 
@@ -943,7 +1154,7 @@ fn visit_untracked_directory(
 
     if ignored_mode == IgnoredMode::Traditional && !show_all {
         if let Some(dir_line) = traditional_normal_directory_only(
-            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs,
+            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs, pathspecs,
         )? {
             ignored_out.push(dir_line);
             return Ok(());
@@ -963,6 +1174,7 @@ fn visit_untracked_directory(
         true,
         rel,
         abs,
+        pathspecs,
         &mut sub_untracked,
         &mut sub_ignored,
     )?;
@@ -1001,7 +1213,30 @@ fn visit_untracked_directory(
         return Ok(());
     }
 
+    // Match Git's normal untracked mode: keep directories that are empty apart from an internal
+    // `.git` as collapsed `dir/` entries, but do not surface directories that only contain
+    // ignored entries (t7063 expects those to stay hidden).
+    if sub_untracked.is_empty()
+        && sub_ignored.is_empty()
+        && !rel.is_empty()
+        && !directory_has_non_git_entries(abs)
+    {
+        untracked_out.push(format!("{rel}/"));
+        return Ok(());
+    }
+
     Ok(())
+}
+
+fn directory_has_non_git_entries(dir: &Path) -> bool {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .any(|name| name != ".git")
 }
 
 /// Full tree scan: true when every file under `abs` is ignored and nothing untracked is present.
@@ -1014,6 +1249,7 @@ fn traditional_normal_directory_only(
     matcher: &mut IgnoreMatcher,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
 ) -> Result<Option<String>> {
     let mut any_file = false;
     let mut stack = vec![abs.to_path_buf()];
@@ -1034,6 +1270,12 @@ fn traditional_normal_directory_only(
                 .strip_prefix(work_tree)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| name.clone());
+            if !pathspec_may_match_directory(&rel_child, pathspecs)
+                && !(entry.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                    && status_path_matches(&rel_child, pathspecs))
+            {
+                continue;
+            }
             if tracked.contains(&rel_child) {
                 return Ok(None);
             }
@@ -1167,16 +1409,6 @@ fn unmerged_v2_key(mask: u8) -> &'static str {
     }
 }
 
-/// First column letter for `git status --short` on an unmerged path (`unmerged_v2_key` char 0).
-fn unmerged_short_staged_letter(mask: u8) -> char {
-    unmerged_v2_key(mask).chars().next().unwrap_or(' ')
-}
-
-/// Second column letter for `git status --short` on an unmerged path (`unmerged_v2_key` char 1).
-fn unmerged_short_unstaged_letter(mask: u8) -> char {
-    unmerged_v2_key(mask).chars().nth(1).unwrap_or(' ')
-}
-
 fn index_stage_entry<'a>(index: &'a Index, path: &str, stage: u8) -> Option<&'a IndexEntry> {
     index.get(path.as_bytes(), stage)
 }
@@ -1190,7 +1422,6 @@ fn format_porcelain_v2(
     work_tree: &Path,
     index: &Index,
     head_tree: Option<&ObjectId>,
-    hide_untracked: bool,
     staged_raw: &[DiffEntry],
     unstaged_raw: &[DiffEntry],
     untracked: &[String],
@@ -1311,10 +1542,7 @@ fn format_porcelain_v2(
         if changed_paths.contains(&path) {
             continue;
         }
-        let mut flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
-        if hide_untracked {
-            flags.untracked = false;
-        }
+        let flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
         if flags.modified || flags.untracked || flags.new_commits {
             changed_paths.insert(path);
         }
@@ -1419,8 +1647,10 @@ fn format_porcelain_v2(
         let (sub, sm_flags) =
             if mode_head == MODE_GITLINK || mode_index == MODE_GITLINK || mode_wt == MODE_GITLINK {
                 let mut f = submodule_porcelain_flags(work_tree, path, recorded_gitlink_oid);
-                if hide_untracked {
-                    f.untracked = false;
+                if let Some(ue) = unstaged_e {
+                    if ue.status == DiffStatus::Modified && ue.old_oid != ue.new_oid {
+                        f.new_commits = true;
+                    }
                 }
                 (format_submodule_token(f), Some(f))
             } else {
@@ -1524,7 +1754,7 @@ fn format_porcelain_v2(
 
     for (path, mask) in &unmerged {
         let key = unmerged_v2_key(*mask);
-        let sub = submodule_token_v2_unmerged(path, index, work_tree, hide_untracked);
+        let sub = submodule_token_v2_unmerged(path, index, work_tree);
         let s1 = index_stage_entry(index, path, 1);
         let s2 = index_stage_entry(index, path, 2);
         let s3 = index_stage_entry(index, path, 3);
@@ -1622,12 +1852,7 @@ fn worktree_mode_oid_for_unmerged(
     }
 }
 
-fn submodule_token_v2_unmerged(
-    path: &str,
-    index: &Index,
-    work_tree: &Path,
-    hide_untracked: bool,
-) -> String {
+fn submodule_token_v2_unmerged(path: &str, index: &Index, work_tree: &Path) -> String {
     let mut any_gitlink = false;
     for st in 1u8..=3 {
         if let Some(e) = index_stage_entry(index, path, st) {
@@ -1644,10 +1869,7 @@ fn submodule_token_v2_unmerged(
     else {
         return "S...".to_string();
     };
-    let mut flags = submodule_porcelain_flags(work_tree, path, ie.oid);
-    if hide_untracked {
-        flags.untracked = false;
-    }
+    let flags = submodule_porcelain_flags(work_tree, path, ie.oid);
     format_submodule_token(flags)
 }
 
@@ -1659,24 +1881,6 @@ fn format_submodule_token(f: grit_lib::diff::SubmodulePorcelainFlags) -> String 
         if f.modified { 'M' } else { '.' },
         if f.untracked { 'U' } else { '.' }
     )
-}
-
-fn format_submodule_long_suffix(f: grit_lib::diff::SubmodulePorcelainFlags) -> String {
-    let mut parts: Vec<&'static str> = Vec::new();
-    if f.new_commits {
-        parts.push("new commits");
-    }
-    if f.modified {
-        parts.push("modified content");
-    }
-    if f.untracked {
-        parts.push("untracked content");
-    }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", parts.join(", "))
-    }
 }
 
 /// Short/porcelain format.
@@ -1692,7 +1896,6 @@ fn format_short(
     repo: &Repository,
     work_tree: &Path,
     index: &Index,
-    hide_untracked: bool,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -1745,7 +1948,6 @@ fn format_short(
     }
 
     // Build a merged view: XY path
-    let unmerged_map = unmerged_paths_and_mask(index);
     let mut paths: BTreeSet<String> = BTreeSet::new();
     let mut staged_map: std::collections::HashMap<String, char> = std::collections::HashMap::new();
     let mut unstaged_map: std::collections::HashMap<String, char> =
@@ -1774,48 +1976,29 @@ fn format_short(
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).into_owned();
+        if staged_map.contains_key(&path) || unstaged_map.contains_key(&path) {
+            paths.insert(path);
+            continue;
+        }
+        let flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
+        if !(flags.new_commits || flags.modified || flags.untracked) {
+            continue;
+        }
         paths.insert(path);
     }
 
     for path in &paths {
-        let (x, mut y) = if let Some(mask) = unmerged_map.get(path.as_str()) {
-            (
-                unmerged_short_staged_letter(*mask),
-                unmerged_short_unstaged_letter(*mask),
-            )
-        } else {
-            let x = staged_map.get(path).copied().unwrap_or(' ');
-            let y = unstaged_map.get(path).copied().unwrap_or(' ');
-            (x, y)
-        };
-        if !unmerged_map.contains_key(path.as_str()) {
-            if let Some(ie) = index_stage_entry(index, path, 0) {
-                if ie.mode == MODE_GITLINK {
-                    let mut f = submodule_porcelain_flags(work_tree, path, ie.oid);
-                    if hide_untracked {
-                        f.untracked = false;
-                    }
-                    if args.porcelain.is_some() {
-                        if y == ' ' && (f.new_commits || f.modified || f.untracked) {
-                            y = 'M';
-                        }
-                    } else if args.short {
-                        // Git's short format uses the second column for submodule dirtiness:
-                        // `M` new commits only, `m` modified/staged content, `?` untracked.
-                        // When both modified and untracked apply (e.g. nested submodule dirty +
-                        // untracked files elsewhere), `m` wins over `?` (t7506 nested submodule).
-                        y = if f.new_commits && f.modified {
-                            'm'
-                        } else if f.modified {
-                            'm'
-                        } else if f.untracked {
-                            '?'
-                        } else if f.new_commits {
-                            'M'
-                        } else {
-                            y
-                        };
-                    }
+        let x = staged_map.get(path).copied().unwrap_or(' ');
+        let mut y = unstaged_map.get(path).copied().unwrap_or(' ');
+        if let Some(ie) = index.get(path.as_bytes(), 0) {
+            if ie.mode == MODE_GITLINK {
+                let f = submodule_porcelain_flags(work_tree, path, ie.oid);
+                if f.untracked {
+                    y = '?';
+                } else if f.modified {
+                    y = 'm';
+                } else if f.new_commits && y == ' ' {
+                    y = 'M';
                 }
             }
         }
@@ -2356,7 +2539,6 @@ fn format_long(
     state: &WtStatusState,
     expanded_index: &Index,
     index_sparse_on_disk: bool,
-    work_tree: &Path,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -2655,11 +2837,11 @@ fn format_long(
     // Match Git `wt_status_collect`: `committable` is set when the index differs from HEAD (staged
     // changes) and additionally when a merge finished without unmerged paths.
     let committable = !staged_normal.is_empty() || (state.merge_in_progress && !has_unmerged);
-    let show_staged_unstage_hints = show_hints
-        && !((state.merge_in_progress || state.cherry_pick_in_progress) && !has_unmerged);
+    let show_staged_unstage_hints =
+        show_hints && !(state.merge_in_progress || state.cherry_pick_in_progress);
     // Git `wt_longstatus_print`: when untracked are hidden, still print this line if the index
     // differs from HEAD (`committable`) — including a concluded merge with staged resolution.
-    let unlisted_untracked_line = hide_untracked && !has_unmerged && committable;
+    let unlisted_untracked_line = hide_untracked && committable;
 
     let dirty_like_git_worktree = !unstaged_normal.is_empty() || has_unmerged;
 
@@ -2720,18 +2902,6 @@ fn format_long(
         let has_deleted = unstaged_normal
             .iter()
             .any(|e| e.status == DiffStatus::Deleted);
-        let submodule_inner_hint = unstaged_normal.iter().any(|e| {
-            let path = e.path();
-            index_stage_entry(expanded_index, path, 0)
-                .filter(|ie| ie.mode == MODE_GITLINK)
-                .is_some_and(|ie| {
-                    let mut f = submodule_porcelain_flags(work_tree, path, ie.oid);
-                    if hide_untracked {
-                        f.untracked = false;
-                    }
-                    f.modified || f.untracked
-                })
-        });
         cpw(out, cp, "Changes not staged for commit:")?;
         if show_hints {
             if has_deleted {
@@ -2752,13 +2922,6 @@ fn format_long(
                 cp,
                 "  (use \"git restore <file>...\" to discard changes in working directory)",
             )?;
-            if submodule_inner_hint {
-                cpw(
-                    out,
-                    cp,
-                    "  (commit or discard the untracked or modified content in submodules)",
-                )?;
-            }
         }
         for entry in &unstaged_normal {
             let label = match entry.status {
@@ -2770,20 +2933,7 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            let display = if let Some(ie) = index_stage_entry(expanded_index, entry.path(), 0) {
-                if ie.mode == MODE_GITLINK {
-                    let mut f = submodule_porcelain_flags(work_tree, entry.path(), ie.oid);
-                    if hide_untracked {
-                        f.untracked = false;
-                    }
-                    format!("{}{}", entry.path(), format_submodule_long_suffix(f))
-                } else {
-                    entry.display_path()
-                }
-            } else {
-                entry.display_path()
-            };
-            cpw(out, cp, &format!("\t{label}:   {display}"))?;
+            cpw(out, cp, &format!("\t{label}:   {}", entry.display_path()))?;
         }
         cpw(out, cp, "")?;
     }
@@ -3128,6 +3278,42 @@ fn resolve_status_rename_threshold(args: &Args, config: &ConfigSet) -> Option<u3
     }
 }
 
+/// Rename detection for `status` with a bounded candidate matrix.
+///
+/// Git's rename pairing is roughly O(deletes × adds). For very large refactors, this can dominate
+/// status runtime. Keep behavior identical for normal-sized sets, but skip rename detection when
+/// the candidate matrix exceeds a practical budget.
+fn detect_renames_for_status(
+    odb: &grit_lib::odb::Odb,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+) -> Vec<DiffEntry> {
+    const STATUS_RENAME_MATRIX_BUDGET: usize = 50_000;
+    const STATUS_RENAME_CANDIDATE_LIMIT: usize = 2_000;
+
+    let mut deleted = 0usize;
+    let mut added = 0usize;
+    for entry in &entries {
+        match entry.status {
+            DiffStatus::Deleted => deleted += 1,
+            DiffStatus::Added => added += 1,
+            _ => {}
+        }
+    }
+
+    if deleted == 0 || added == 0 {
+        return entries;
+    }
+
+    if deleted.saturating_add(added) > STATUS_RENAME_CANDIDATE_LIMIT
+        || deleted.saturating_mul(added) > STATUS_RENAME_MATRIX_BUDGET
+    {
+        return entries;
+    }
+
+    detect_renames(odb, None, entries, threshold)
+}
+
 /// Find untracked files in the working tree (raw, before ignore filtering).
 #[allow(dead_code)]
 fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
@@ -3203,7 +3389,16 @@ fn walk_for_untracked(
             continue;
         }
 
-        if is_dir && dir_is_nested_submodule_worktree(super_git_dir, &path) {
+        if is_dir
+            && dir_is_nested_submodule_worktree(super_git_dir, &path)
+            && (tracked
+                .range::<String, _>(format!("{rel}/")..)
+                .next()
+                .is_some_and(|t| t.starts_with(&format!("{rel}/")))
+                || gitlinks
+                    .iter()
+                    .any(|g| g.as_str() == rel || g.starts_with(&format!("{rel}/"))))
+        {
             continue;
         }
 
@@ -3311,39 +3506,34 @@ fn emit_read_directory_trace(
         .create(true)
         .append(true)
         .open(path)?;
-    let (node, gi, di, op) = uc.map_or((0u64, 0u64, 0u64, 0u64), |u| {
-        (
-            u.dir_created,
-            u.gitignore_invalidated,
-            u.dir_invalidated,
-            u.dir_opened,
-        )
-    });
     // Field 9 must match upstream `t7063` / `get_relevant_traces` (Git abbreviates `read_directory`).
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....path:",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....path:",
         now, "data"
     )?;
+    let Some(uc) = uc else {
+        return Ok(());
+    };
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....node-creation:{}",
-        now, "data", node
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....node-creation:{}",
+        now, "data", uc.dir_created
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....gitignore-invalidation:{}",
-        now, "data", gi
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....gitignore-invalidation:{}",
+        now, "data", uc.gitignore_invalidated
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....directory-invalidation:{}",
-        now, "data", di
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....directory-invalidation:{}",
+        now, "data", uc.dir_invalidated
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....opendir:{}",
-        now, "data", op
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....opendir:{}",
+        now, "data", uc.dir_opened
     )?;
     Ok(())
 }
@@ -3357,4 +3547,30 @@ fn status_path_matches(path: &str, pathspecs: &[String]) -> bool {
         crate::pathspec::pathspec_matches(spec, path)
             || crate::pathspec::pathspec_matches(spec, normalized)
     })
+}
+
+fn pathspec_may_match_directory(rel_dir: &str, pathspecs: &[String]) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    let rel_dir = rel_dir.trim_end_matches('/');
+    if rel_dir.is_empty() {
+        return true;
+    }
+    pathspecs.iter().any(|spec| {
+        if crate::pathspec::has_glob_chars(spec) {
+            return true;
+        }
+        let spec_norm = spec.trim_end_matches('/');
+        spec_norm == rel_dir
+            || spec_norm.starts_with(&format!("{rel_dir}/"))
+            || rel_dir.starts_with(&format!("{spec_norm}/"))
+            || crate::pathspec::pathspec_matches(spec, rel_dir)
+    })
+}
+
+fn status_pathspecs_contain_glob(pathspecs: &[String]) -> bool {
+    pathspecs
+        .iter()
+        .any(|s| crate::pathspec::has_glob_chars(s.as_str()))
 }

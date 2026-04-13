@@ -228,6 +228,22 @@ pub struct Args {
     #[arg(long = "force-untracked-cache", hide = true)]
     pub force_untracked_cache: bool,
 
+    /// Enable fsmonitor index extension metadata.
+    #[arg(long = "fsmonitor")]
+    pub fsmonitor: bool,
+
+    /// Disable fsmonitor index extension metadata.
+    #[arg(long = "no-fsmonitor")]
+    pub no_fsmonitor: bool,
+
+    /// Mark listed tracked paths as fsmonitor-valid.
+    #[arg(long = "fsmonitor-valid", value_name = "PATH")]
+    pub fsmonitor_valid: Vec<PathBuf>,
+
+    /// Mark listed tracked paths as not fsmonitor-valid.
+    #[arg(long = "no-fsmonitor-valid", value_name = "PATH")]
+    pub no_fsmonitor_valid: Vec<PathBuf>,
+
     /// Record index in split shared-base form (`link` extension + `sharedindex.<sha1>`).
     #[arg(long = "split-index")]
     pub split_index: bool,
@@ -425,10 +441,20 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let symlinks_enabled = core_symlinks_enabled(&repo);
 
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
+    if repo.work_tree.is_none() {
+        if args.fsmonitor
+            || args.no_fsmonitor
+            || !args.fsmonitor_valid.is_empty()
+            || !args.no_fsmonitor_valid.is_empty()
+        {
+            bail!(
+                "bare repository '{}' is incompatible with fsmonitor",
+                repo.git_dir.display()
+            );
+        }
+        bail!("cannot update-index in bare repository");
+    }
+    let work_tree = repo.work_tree.as_deref().expect("checked work tree");
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -451,6 +477,10 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         WriteSplitIndexRequest::default()
     };
 
+    if args.split_index && args.no_split_index {
+        bail!("cannot both enable and disable split index");
+    }
+
     if args.test_untracked_cache {
         // Grit always supports UNTR on POSIX; return success like Git on capable systems.
         return Ok(());
@@ -459,7 +489,12 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     if args.force_untracked_cache {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
-        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        if let Some(uc) = index.untracked_cache.as_mut() {
+            uc.dir_flags = flags;
+            uc.ident = ident;
+        } else {
+            index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        }
         repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
         return Ok(());
@@ -472,7 +507,64 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     } else if args.untracked_cache {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
-        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        if let Some(uc) = index.untracked_cache.as_mut() {
+            uc.dir_flags = flags;
+            uc.ident = ident;
+        } else {
+            index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        }
+        repo.write_index_at_split(&index_path, &mut index, split_write)
+            .context("writing index")?;
+    }
+
+    if args.fsmonitor && args.no_fsmonitor {
+        bail!("cannot both enable and disable fsmonitor");
+    }
+    if args.fsmonitor {
+        if config
+            .get_bool("core.virtualfilesystem")
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+        {
+            bail!(
+                "virtual repository '{}' is incompatible with fsmonitor",
+                repo.git_dir.display()
+            );
+        }
+        if index.fsmonitor_last_update.is_none() {
+            index.fsmonitor_last_update = Some("builtin:fake".to_string());
+        }
+        repo.write_index_at_split(&index_path, &mut index, split_write)
+            .context("writing index")?;
+    } else if args.no_fsmonitor {
+        index.fsmonitor_last_update = None;
+        for entry in &mut index.entries {
+            if entry.stage() == 0 {
+                entry.set_fsmonitor_valid(false);
+            }
+        }
+        repo.write_index_at_split(&index_path, &mut index, split_write)
+            .context("writing index")?;
+    }
+
+    if !args.fsmonitor_valid.is_empty() || !args.no_fsmonitor_valid.is_empty() {
+        if index.fsmonitor_last_update.is_none() {
+            index.fsmonitor_last_update = Some("builtin:fake".to_string());
+        }
+        for p in &args.fsmonitor_valid {
+            let (rel_path, _abs_path) = resolve_repo_path(work_tree, &cwd, p)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_fsmonitor_valid(true);
+            }
+        }
+        for p in &args.no_fsmonitor_valid {
+            let (rel_path, _abs_path) = resolve_repo_path(work_tree, &cwd, p)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_fsmonitor_valid(false);
+            }
+        }
         repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
     }
