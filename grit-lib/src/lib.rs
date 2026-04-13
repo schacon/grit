@@ -117,6 +117,7 @@ pub mod stripspace;
 pub mod submodule_active;
 pub mod submodule_config_cache;
 pub mod submodule_gitdir;
+pub mod tab_expand;
 pub mod test_tool_progress;
 pub mod textconv_cache;
 pub mod tree_path_follow;

@@ -93,6 +93,18 @@ pub struct Args {
     #[arg(long = "no-use-mailmap")]
     pub no_use_mailmap: bool,
 
+    /// Expand tabs in commit log message to spaces (`--expand-tabs` is normalized to `=8` in main).
+    #[arg(long = "expand-tabs", value_name = "N", require_equals = true)]
+    pub expand_tabs: Option<String>,
+
+    /// Do not expand tabs in commit log output (same as `--expand-tabs=0`).
+    #[arg(long = "no-expand-tabs")]
+    pub no_expand_tabs: bool,
+
+    /// Effective tab width for message lines (resolved after parsing; see `grit_lib::tab_expand`).
+    #[arg(skip)]
+    pub(crate) expand_tabs_in_log: usize,
+
     /// Show in reverse order.
     #[arg(long = "reverse")]
     pub reverse: bool,
@@ -2857,6 +2869,11 @@ fn render_graph_commit_text(
     let hex = node.oid.to_hex();
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
+        let first_line = if args.expand_tabs_in_log > 0 {
+            grit_lib::tab_expand::expand_tabs_in_line(first_line, args.expand_tabs_in_log)
+        } else {
+            first_line.to_owned()
+        };
         let oid_color = if use_color {
             decoration_paint
                 .map(|p| p.commit.as_str())
@@ -2912,6 +2929,7 @@ fn render_graph_commit_text(
                 None,
                 mailmap,
                 use_mailmap,
+                args.expand_tabs_in_log,
             );
         }
         if fmt.contains('%') {
@@ -2930,11 +2948,17 @@ fn render_graph_commit_text(
                 None,
                 mailmap,
                 use_mailmap,
+                args.expand_tabs_in_log,
             );
         }
     }
 
-    info.message.lines().next().unwrap_or("").to_owned()
+    let subj = info.message.lines().next().unwrap_or("");
+    if args.expand_tabs_in_log > 0 {
+        grit_lib::tab_expand::expand_tabs_in_line(subj, args.expand_tabs_in_log)
+    } else {
+        subj.to_owned()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3593,6 +3617,26 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     normalize_log_merge_diff_args(&mut args, &repo.git_dir)?;
     validate_log_pickaxe_options(&repo, &args)?;
+
+    if let Some(ref fmt) = args.format {
+        let resolved = resolve_pretty_alias_with_config(fmt, &repo);
+        if resolved != *fmt {
+            args.format = Some(resolved);
+        }
+    }
+    let expand_tabs_parsed = match &args.expand_tabs {
+        None => None,
+        Some(s) => Some(
+            s.parse::<usize>()
+                .map_err(|_| anyhow::anyhow!("'{s}': not a non-negative integer"))?,
+        ),
+    };
+    args.expand_tabs_in_log = grit_lib::tab_expand::resolve_expand_tabs_in_log(
+        args.no_expand_tabs,
+        expand_tabs_parsed,
+        args.format.as_deref(),
+        args.oneline,
+    );
 
     for raw in std::env::args() {
         if let Some(rest) = raw.strip_prefix("--ancestry-path=") {
@@ -5175,6 +5219,7 @@ fn run_reflog_walk(
             last_reflog_suffix,
             cli_date_for_reflog,
         );
+        let et = args.expand_tabs_in_log;
 
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
         if args.null_terminator && shown > 0 && !is_oneline_fmt {
@@ -5186,6 +5231,11 @@ fn run_reflog_walk(
                 "oneline" => {
                     let abbrev = &entry.new_oid.to_hex()[..7];
                     let subject = commit_data.message.lines().next().unwrap_or("");
+                    let subject = if et > 0 {
+                        grit_lib::tab_expand::expand_tabs_in_line(subject, et)
+                    } else {
+                        subject.to_owned()
+                    };
                     if args.null_terminator {
                         write!(out, "{} {}\0", abbrev, subject)?;
                     } else {
@@ -5214,7 +5264,11 @@ fn run_reflog_walk(
                     writeln!(out, "Author: {author_name}")?;
                     writeln!(out)?;
                     for line in commit_data.message.lines().take(1) {
-                        writeln!(out, "    {line}")?;
+                        writeln!(
+                            out,
+                            "{}",
+                            grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                        )?;
                     }
                 }
                 "medium" => {
@@ -5228,7 +5282,11 @@ fn run_reflog_walk(
                     writeln!(out, "Date:   {}", date)?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
-                        writeln!(out, "    {}", line)?;
+                        writeln!(
+                            out,
+                            "{}",
+                            grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                        )?;
                     }
                     writeln!(out)?;
                 }
@@ -5250,7 +5308,11 @@ fn run_reflog_walk(
                     )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
-                        writeln!(out, "    {}", line)?;
+                        writeln!(
+                            out,
+                            "{}",
+                            grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                        )?;
                     }
                     writeln!(out)?;
                 }
@@ -5282,7 +5344,11 @@ fn run_reflog_walk(
                     )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
-                        writeln!(out, "    {}", line)?;
+                        writeln!(
+                            out,
+                            "{}",
+                            grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                        )?;
                     }
                     writeln!(out)?;
                 }
@@ -5300,10 +5366,20 @@ fn run_reflog_walk(
                     let date = format_date_for_header(&commit_data.author);
                     writeln!(out, "Date: {}", date)?;
                     let subject = commit_data.message.lines().next().unwrap_or("");
+                    let subject = if et > 0 {
+                        grit_lib::tab_expand::expand_tabs_in_line(subject, et)
+                    } else {
+                        subject.to_owned()
+                    };
                     writeln!(out, "Subject: [PATCH] {}", subject)?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
-                        writeln!(out, "{}", line)?;
+                        let line_out = if et > 0 {
+                            grit_lib::tab_expand::expand_tabs_in_line(line, et)
+                        } else {
+                            line.to_owned()
+                        };
+                        writeln!(out, "{line_out}")?;
                     }
                     writeln!(out)?;
                 }
@@ -5317,7 +5393,11 @@ fn run_reflog_walk(
                     writeln!(out, "committer {}", commit_data.committer)?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
-                        writeln!(out, "    {}", line)?;
+                        writeln!(
+                            out,
+                            "{}",
+                            grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                        )?;
                     }
                     writeln!(out)?;
                 }
@@ -5338,6 +5418,7 @@ fn run_reflog_walk(
                         &entry.identity,
                         mailmap,
                         use_mailmap,
+                        et,
                     );
                     writeln!(out, "{}", line)?;
                 }
@@ -5374,7 +5455,11 @@ fn run_reflog_walk(
             writeln!(out, "Date:   {}", date)?;
             writeln!(out)?;
             for line in commit_data.message.lines() {
-                writeln!(out, "    {}", line)?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
         }
 
@@ -5435,6 +5520,7 @@ fn apply_reflog_format_string(
     reflog_identity: &str,
     mailmap: &MailmapTable,
     use_mailmap: bool,
+    expand_tabs_in_log: usize,
 ) -> String {
     let hex = oid.to_hex();
     let short = &hex[..7.min(hex.len())];
@@ -5459,22 +5545,44 @@ fn apply_reflog_format_string(
                 }
                 Some('s') => {
                     chars.next();
-                    result.push_str(subject);
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_line(
+                            subject,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(subject);
+                    }
                 }
                 Some('B') => {
                     chars.next();
                     // Entire commit message (matches Git `%B`). Parsed commits omit the final
                     // newline in memory; Git's `%B` still ends with `\n` when non-empty.
                     if !commit.message.is_empty() {
-                        result.push_str(&commit.message);
-                        if !commit.message.ends_with('\n') {
+                        let msg = if expand_tabs_in_log > 0 {
+                            grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                                &commit.message,
+                                expand_tabs_in_log,
+                            )
+                        } else {
+                            commit.message.to_owned()
+                        };
+                        result.push_str(&msg);
+                        if !msg.ends_with('\n') {
                             result.push('\n');
                         }
                     }
                 }
                 Some('b') => {
                     chars.next();
-                    result.push_str(&body);
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                            &body,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(&body);
+                    }
                 }
                 Some('n') => {
                     chars.next();
@@ -7146,9 +7254,15 @@ fn format_commit(
             format!(" (from {})", &h[..abbrev_len.min(h.len())])
         })
         .unwrap_or_default();
+    let et = args.expand_tabs_in_log;
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
+        let first_line = if et > 0 {
+            grit_lib::tab_expand::expand_tabs_in_line(first_line, et)
+        } else {
+            first_line.to_owned()
+        };
         let abbrev = &hex[..abbrev_len.min(hex.len())];
         if let Some(src) = source_for_oneline {
             writeln!(out, "{abbrev}\t{src} {first_line}")?;
@@ -7214,6 +7328,7 @@ fn format_commit(
                 log_marker,
                 mailmap,
                 use_mailmap,
+                et,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -7235,7 +7350,11 @@ fn format_commit(
             writeln!(out, "committer {}", info.committer)?;
             writeln!(out)?;
             for line in info.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
             writeln!(out)?;
             // `git log --pretty=raw` omits notes unless `--notes` / `--show-notes` is given.
@@ -7269,7 +7388,11 @@ fn format_commit(
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
             for line in info.message.lines().take(1) {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
             writeln!(out)?;
         }
@@ -7314,7 +7437,11 @@ fn format_commit(
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
             write_notes(out, oid, notes_cache, args, odb)?;
         }
@@ -7349,7 +7476,11 @@ fn format_commit(
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
             write_notes(out, oid, notes_cache, args, odb)?;
         }
@@ -7394,7 +7525,11 @@ fn format_commit(
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, et)
+                )?;
             }
             write_notes(out, oid, notes_cache, args, odb)?;
         }
@@ -7426,6 +7561,7 @@ fn format_commit(
                 log_marker,
                 mailmap,
                 use_mailmap,
+                et,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -7450,6 +7586,7 @@ fn apply_format_string(
     log_marker: Option<char>,
     mailmap: &MailmapTable,
     use_mailmap: bool,
+    expand_tabs_in_log: usize,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -7833,19 +7970,42 @@ fn apply_format_string(
                 }
                 Some('s') => {
                     chars.next();
-                    result.push_str(info.message.lines().next().unwrap_or(""));
+                    let subj = info.message.lines().next().unwrap_or("");
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_line(
+                            subj,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(subj);
+                    }
                 }
                 Some('b') => {
                     chars.next();
                     // Body: everything after the first paragraph separator (blank line)
                     let body = extract_body(&info.message);
-                    result.push_str(&body);
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                            &body,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(&body);
+                    }
                 }
                 Some('B') => {
                     chars.next();
                     if !info.message.is_empty() {
-                        result.push_str(&info.message);
-                        if !info.message.ends_with('\n') {
+                        let msg = if expand_tabs_in_log > 0 {
+                            grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                                &info.message,
+                                expand_tabs_in_log,
+                            )
+                        } else {
+                            info.message.to_owned()
+                        };
+                        result.push_str(&msg);
+                        if !msg.ends_with('\n') {
                             result.push('\n');
                         }
                     }
@@ -9918,7 +10078,7 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
 
 /// Resolve a pretty format alias by looking up `pretty.<name>` in git config.
 /// Returns the resolved format string, or the input unchanged.
-fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
+pub(crate) fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
     // Known built-in formats — no resolution needed
     match fmt {
         "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw"

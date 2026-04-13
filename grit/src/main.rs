@@ -4118,7 +4118,7 @@ fn preprocess_git_notes_display_argv(
 
 /// Preprocess `git log` argv fragments (before clap) for spawning a child `grit log` process.
 pub(crate) fn preprocess_log_argv_for_spawn(rest: &[String]) -> Vec<String> {
-    preprocess_log_pickaxe_args(preprocess_log_args(rest))
+    preprocess_expand_tabs_for_rev_cmd(&preprocess_log_pickaxe_args(preprocess_log_args(rest)))
 }
 
 /// Remove revision pseudo-options that must not reach clap (unknown flags) but are still needed
@@ -4148,6 +4148,27 @@ fn strip_log_revision_pseudo_for_clap(rest: &[String]) -> Vec<String> {
             continue;
         }
         out.push(rest[i].clone());
+        i += 1;
+    }
+    out
+}
+
+/// Normalize `--expand-tabs` without `=` to `--expand-tabs=8` (Git revision.c).
+fn preprocess_expand_tabs_for_rev_cmd(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if arg == "--expand-tabs" {
+            out.push("--expand-tabs=8".to_string());
+            i += 1;
+            continue;
+        }
+        out.push(arg.clone());
         i += 1;
     }
     out
@@ -4890,7 +4911,9 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             let raw_tail = rest.to_vec();
             let rest = preprocess_log_remotes(rest);
             let for_clap = strip_log_revision_pseudo_for_clap(&rest);
-            let rest = preprocess_log_pickaxe_args(preprocess_log_args(&for_clap));
+            let rest = preprocess_expand_tabs_for_rev_cmd(&preprocess_log_pickaxe_args(
+                preprocess_log_args(&for_clap),
+            ));
             let mut parsed: commands::log::Args = parse_cmd_args(subcmd, &rest);
             parsed.raw_argv_tail = raw_tail;
             commands::log::run(parsed)
@@ -4997,7 +5020,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         )),
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
-            let rest = preprocess_log_args(rest);
+            let rest = preprocess_expand_tabs_for_rev_cmd(&preprocess_log_args(rest));
             commands::reflog::run(parse_cmd_args(subcmd, &rest))
         }
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
@@ -5030,7 +5053,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
         "show" => {
-            let rest = preprocess_show_argv(rest);
+            let rest = preprocess_expand_tabs_for_rev_cmd(rest);
+            let rest = preprocess_show_argv(&rest);
             let mut saw_bare_pretty = false;
             let mut explicit_pretty = false;
             let mut i = 0usize;
