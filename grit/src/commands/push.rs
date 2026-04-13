@@ -1,7 +1,8 @@
 //! `grit push` — update remote refs and associated objects.
 //!
-//! Only **local (file://)** transports are supported.  Sends missing objects
-//! to the remote (thin pack + receive-style ingest) and updates remote refs.
+//! Native push support currently targets **local (file://)** transports.
+//! HTTP(S) and other non-local transports are delegated to system Git for
+//! protocol compatibility.
 
 use crate::commands::pack_objects;
 use crate::protocol_wire;
@@ -739,6 +740,21 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--all and --mirror cannot be used together");
     }
 
+    if urls.iter().any(|u| is_http_transport_url(u)) {
+        for url in &urls {
+            if !is_http_transport_url(url) {
+                continue;
+            }
+            let proto = if url.starts_with("https://") {
+                "https"
+            } else {
+                "http"
+            };
+            crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
+        }
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     if args.receive_pack.as_ref().map_or(false, |s| !s.is_empty()) {
         return run_push_via_system_git(&repo, &args, effective_mirror);
     }
@@ -875,6 +891,14 @@ fn push_to_url(
     }
     let remote_path = if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    } else if is_http_transport_url(url) {
+        let proto = if url.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
+        crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
     } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
@@ -3154,6 +3178,10 @@ fn url_looks_like_local_path(url: &str) -> bool {
     }
     let p = Path::new(url);
     p.is_absolute() || url.starts_with('.') || p.exists()
+}
+
+fn is_http_transport_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
 }
 
 fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
