@@ -17,7 +17,7 @@ use grit_lib::ref_namespace;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::unpack_objects::{pack_bytes_to_object_map, unpack_objects, UnpackOptions};
+use grit_lib::unpack_objects::pack_bytes_to_object_map;
 use std::collections::HashSet;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -207,15 +207,13 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut unpack_to_odb_err: Option<String> = None;
     if should_unpack_to_odb {
-        let mut rd = Cursor::new(pack_data.clone());
-        let opts = UnpackOptions {
-            dry_run: false,
-            quiet: true,
-            // Thin packs may reference bases the receiver does not have; Git skips the
-            // connectivity walk with `--skip-connectivity-check` and still stores objects.
-            strict: !args.skip_connectivity_check,
-        };
-        if let Err(e) = unpack_objects(&mut rd, &repo.odb, &opts) {
+        let remote_for_ingest = ConfigSet::load(Some(&repo.git_dir), false)?;
+        if let Err(e) = crate::receive_ingest::ingest_received_pack(
+            &repo.git_dir,
+            &pack_data,
+            &remote_for_ingest,
+            !args.skip_connectivity_check,
+        ) {
             unpack_to_odb_err = Some(format!("{e:#}"));
         }
     }

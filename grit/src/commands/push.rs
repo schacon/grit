@@ -1,15 +1,16 @@
 //! `grit push` — update remote refs and associated objects.
 //!
-//! Only **local (file://)** transports are supported.  Copies objects from
-//! the local repository to the remote and updates remote refs.
+//! Only **local (file://)** transports are supported.  Sends missing objects
+//! to the remote (thin pack + receive-style ingest) and updates remote refs.
 
+use crate::commands::pack_objects;
 use crate::protocol_wire;
 use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
+use grit_lib::gitmodules::verify_gitmodules_for_commit;
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
@@ -25,6 +26,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
 use grit_lib::state::{resolve_head, HeadState};
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -1797,25 +1799,56 @@ fn push_to_url(
         fs::write(&push_opts_path, content).context("writing push options")?;
     }
 
-    // Copy objects to remote, tracking what was added for rollback
+    // Send objects to the remote like `receive-pack` (thin pack + unpack/index), tracking new
+    // files for rollback on hook failure.
     let mut copied_objects: Vec<PathBuf> = Vec::new();
     if !args.dry_run {
-        copied_objects =
-            copy_objects_recursive_with_submodules(&repo.git_dir, &remote_repo.git_dir)
-                .context("copying objects to remote")?;
+        let mut push_tips: Vec<ObjectId> = Vec::new();
+        for (i, u) in updates.iter().enumerate() {
+            if pre_reject[i].is_some() {
+                continue;
+            }
+            if let Some(oid) = u.new_oid {
+                push_tips.push(oid);
+            }
+        }
+
+        let thin_pack = pack_objects::build_thin_push_pack(repo, &push_tips, &remote_repo.git_dir)
+            .context("building push pack")?;
+
+        if !thin_pack.is_empty() {
+            let pre_ingest = list_remote_object_files(&remote_repo.git_dir);
+            crate::receive_ingest::ingest_received_pack(
+                &remote_repo.git_dir,
+                &thin_pack,
+                &receive_remote_config,
+                true,
+            )
+            .context("remote unpack failed")?;
+            let post_ingest = list_remote_object_files(&remote_repo.git_dir);
+            for p in post_ingest {
+                if !pre_ingest.contains(&p) {
+                    copied_objects.push(p);
+                }
+            }
+        }
+
+        copied_objects.extend(
+            copy_submodule_object_stores_only(&repo.git_dir, &remote_repo.git_dir)
+                .context("copying submodule objects to remote")?,
+        );
         if push_show_object_progress(args) && !copied_objects.is_empty() {
             let enumerated_objects =
                 estimate_push_progress_enumerated_objects(repo, remote_name, &updates);
             maybe_print_push_object_progress(true, enumerated_objects);
         }
 
-        let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
-        let fsck_receive = remote_config
+        let fsck_receive = receive_remote_config
             .get_bool("receive.fsckobjects")
-            .or_else(|| remote_config.get_bool("receive.fsckObjects"));
-        let fsck_transfer = remote_config
+            .or_else(|| receive_remote_config.get_bool("receive.fsckObjects"));
+        let fsck_transfer = receive_remote_config
             .get_bool("transfer.fsckobjects")
-            .or_else(|| remote_config.get_bool("transfer.fsckObjects"));
+            .or_else(|| receive_remote_config.get_bool("transfer.fsckObjects"));
         let fsck_enabled = match (fsck_receive, fsck_transfer) {
             (Some(Ok(true)), _) => true,
             (Some(Ok(false)), _) => false,
@@ -1826,15 +1859,13 @@ fn push_to_url(
         if fsck_enabled {
             let remote_objects = remote_repo.git_dir.join("objects");
             let remote_odb = grit_lib::odb::Odb::new(&remote_objects);
-            let copied_oids = oids_from_copied_object_paths(&copied_objects)
-                .context("collecting pushed object ids")?;
-            for update in &updates {
+            for (i, update) in updates.iter().enumerate() {
+                if pre_reject[i].is_some() {
+                    continue;
+                }
                 let Some(new_oid) = update.new_oid else {
                     continue;
                 };
-                if !copied_oids.contains(&new_oid) {
-                    continue;
-                }
                 if let Some(rest) = verify_gitmodules_for_commit(&remote_odb, new_oid)? {
                     for path in &copied_objects {
                         let _ = fs::remove_file(path);
@@ -3729,49 +3760,6 @@ fn estimate_push_progress_enumerated_objects(
     }
 }
 
-/// Copy loose objects and packs from `src_git_dir` and every nested `modules/*` git directory
-/// into the matching path under `dst_git_root` (so submodule ODBs are pushed for local transport).
-fn copy_objects_recursive_with_submodules(
-    src_git_root: &Path,
-    dst_git_root: &Path,
-) -> Result<Vec<PathBuf>> {
-    let src_root = fs::canonicalize(src_git_root).unwrap_or_else(|_| src_git_root.to_path_buf());
-    let dst_root = fs::canonicalize(dst_git_root).unwrap_or_else(|_| dst_git_root.to_path_buf());
-
-    fn walk(
-        src_base: &Path,
-        dst_base: &Path,
-        current_src: &Path,
-        out: &mut Vec<PathBuf>,
-    ) -> Result<()> {
-        let rel = current_src
-            .strip_prefix(src_base)
-            .unwrap_or_else(|_| Path::new(""));
-        let current_dst = if rel.as_os_str().is_empty() {
-            dst_base.to_path_buf()
-        } else {
-            dst_base.join(rel)
-        };
-        fs::create_dir_all(&current_dst)?;
-        out.extend(copy_objects_tracked(current_src, &current_dst)?);
-
-        let modules = current_src.join("modules");
-        if modules.is_dir() {
-            for e in fs::read_dir(&modules)? {
-                let p = e?.path();
-                if p.is_dir() {
-                    walk(src_base, dst_base, &p, out)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    let mut copied = Vec::new();
-    walk(&src_root, &dst_root, &src_root, &mut copied)?;
-    Ok(copied)
-}
-
 /// Copy all objects (loose + packs) from src to dst, skipping existing.
 /// Copy objects and return the list of newly created files (for rollback).
 fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<PathBuf>> {
@@ -3826,6 +3814,96 @@ fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<Pa
     }
 
     Ok(copied)
+}
+
+/// Walk a git dir tree (including nested `modules/*`) and copy loose objects + packs into the
+/// parallel layout under `dst_base`.
+fn copy_git_dir_tree_with_nested_modules(
+    src_base: &Path,
+    dst_base: &Path,
+    current_src: &Path,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let rel = current_src
+        .strip_prefix(src_base)
+        .unwrap_or_else(|_| Path::new(""));
+    let current_dst = if rel.as_os_str().is_empty() {
+        dst_base.to_path_buf()
+    } else {
+        dst_base.join(rel)
+    };
+    fs::create_dir_all(&current_dst)?;
+    out.extend(copy_objects_tracked(current_src, &current_dst)?);
+
+    let modules = current_src.join("modules");
+    if modules.is_dir() {
+        for e in fs::read_dir(&modules)? {
+            let p = e?.path();
+            if p.is_dir() {
+                copy_git_dir_tree_with_nested_modules(src_base, dst_base, &p, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Copy only nested `modules/*` git directory trees (not the superproject git dir).
+fn copy_submodule_object_stores_only(
+    src_git_root: &Path,
+    dst_git_root: &Path,
+) -> Result<Vec<PathBuf>> {
+    let src_root = fs::canonicalize(src_git_root).unwrap_or_else(|_| src_git_root.to_path_buf());
+    let dst_root = fs::canonicalize(dst_git_root).unwrap_or_else(|_| dst_git_root.to_path_buf());
+    let modules = src_root.join("modules");
+    if !modules.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut copied = Vec::new();
+    for e in fs::read_dir(&modules)? {
+        let p = e?.path();
+        if p.is_dir() {
+            copy_git_dir_tree_with_nested_modules(&src_root, &dst_root, &p, &mut copied)?;
+        }
+    }
+    Ok(copied)
+}
+
+/// List loose object files and pack files under the remote `objects/` tree (for rollback tracking).
+fn list_remote_object_files(dst_git_dir: &Path) -> HashSet<PathBuf> {
+    let mut out = HashSet::new();
+    let dst_objects = dst_git_dir.join("objects");
+    if !dst_objects.is_dir() {
+        return out;
+    }
+    if let Ok(entries) = fs::read_dir(&dst_objects) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str == "info" {
+                continue;
+            }
+            if name_str == "pack" {
+                if let Ok(pack_entries) = fs::read_dir(entry.path()) {
+                    for pe in pack_entries.flatten() {
+                        if pe.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                            out.insert(pe.path());
+                        }
+                    }
+                }
+                continue;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) && name_str.len() == 2 {
+                if let Ok(inner) = fs::read_dir(entry.path()) {
+                    for ie in inner.flatten() {
+                        if ie.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                            out.insert(ie.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Open a repository (bare or non-bare).

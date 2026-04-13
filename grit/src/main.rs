@@ -44,6 +44,7 @@ pub mod pkt_line;
 mod precompose;
 pub mod protocol;
 mod protocol_wire;
+mod receive_ingest;
 mod ref_transaction_hooks;
 mod ssh_transport;
 mod test_tool_pack_deltas;
