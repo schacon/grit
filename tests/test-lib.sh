@@ -381,32 +381,6 @@ test_declared_prereq () {
 	return 1
 }
 
-test_grep () {
-	local negate=""
-	local invert=""
-	local fixed=""
-	while test $# -gt 0; do
-		case "$1" in
-		-e) shift; break ;;
-		!) negate=1; shift ;;
-		-v) invert="-v"; shift ;;
-		-F) fixed="-F"; shift ;;
-		--) shift; break ;;
-		-*) shift ;;
-		*) break ;;
-		esac
-	done
-	local pattern="$1"
-	shift
-	# Always pass the pattern via -e so values like "--quiet" are not parsed as grep options.
-	if test -n "$negate"
-	then
-		! command grep $fixed $invert -e "$pattern" "$@"
-	else
-		command grep $fixed $invert -e "$pattern" "$@"
-	fi
-}
-
 # GIT_TRACE2_EVENT helpers (upstream test-lib-functions.sh); use `command grep` so PATH cannot
 # shadow with a directory named `grep` (t6500-gc).
 test_subcommand () {

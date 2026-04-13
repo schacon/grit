@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   359 |
+| Completed   |   360 |
 | In progress |     6 |
-| Remaining   |   407 |
+| Remaining   |   406 |
 | **Total**   |   772 |
 
-Task lines in `PLAN.md`: 359 completed (`[x]`), 6 in progress (`[~]`), 407 remaining (`[ ]`).
+Task lines in `PLAN.md`: 360 completed (`[x]`), 6 in progress (`[~]`), 406 remaining (`[ ]`).
 
 ## In progress
 
@@ -64,6 +64,7 @@ Task lines in `PLAN.md`: 359 completed (`[x]`), 6 in progress (`[~]`), 407 remai
 - `t3000-ls-files-others` — 15/15 tests pass (`ls-files --others --directory`: pathspec-aware directory short-circuit like Git `treat_directory`, preserve trailing `/` through cwd-relative display, `--no-empty-directory` still recurses to find files under collapsed dirs, smarter `--directory` aggregation for mixed depths)
 - `t1005-read-tree-reset` — 7/7 tests pass (`read-tree -u --reset` / two-tree reset: remove worktree files for paths that only had unmerged index stages; `checkout -f` loads old index and runs `checkout_index_to_worktree` before rewriting from HEAD so conflict remnants are removed like `reset --hard`)
 - `t5810-proto-disable-local` — 54/54 tests pass (reject local `fetch`/`clone` URLs whose path component starts with `-` before upload-pack, matching Git `looks_like_command_line_option` / `strange pathname` blocked; `transport_path` helper wired from `fetch` + `clone`)
+- `t5812-proto-disable-http` — 29/29 tests pass (`test-httpd`: Apache-equivalent redirect routes for ftp/smart/loop redirs; `test-lib.sh`: drop duplicate `test_grep` that shadowed upstream and stripped `-E`; harness CSV/dashboards refreshed)
 - `t3309-notes-merge-auto-resolve` — 31/31 tests pass (`notes merge`: `union` / `cat_sort_uniq` blob combine like Git; successful merge commits use two parents; `notes.mergeStrategy` config errors match upstream expectations)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
