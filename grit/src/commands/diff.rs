@@ -3126,9 +3126,10 @@ pub fn run(mut args: Args) -> Result<()> {
             if need_blank_before_patch && wrote_output {
                 writeln!(out)?;
             }
-            // `git diff --stat -p` prints the stat summary and the unified patch (Git last-flag-wins
-            // for `-p` vs `-s`; combined `-sp` is different).
-            let show_unified_after_stat = emit_unified_patch && !args.no_patch;
+            // `git diff --stat -p` prints stat then patch only when `-p`/`-u`/etc. appear on argv;
+            // plain `--stat` must not append hunks (matches Git).
+            let show_unified_after_stat =
+                diff_cli_requests_unified_patch_alongside_stat(&raw_args) && !args.no_patch;
             if show_unified_after_stat {
                 for patch in &conflict_combined_patches {
                     write!(out, "{patch}")?;
@@ -4449,6 +4450,54 @@ fn apply_diff_filter(entries: Vec<DiffEntry>, filter: &str) -> Vec<DiffEntry> {
             true
         })
         .collect()
+}
+
+/// Whether the user asked for a unified patch in addition to another format (e.g. `--stat`).
+///
+/// Unlike [`diff_emit_unified_patch_from_argv`], this starts from **no** patch: plain
+/// `git diff --stat` must not append hunks, while `git diff --stat -p` must (matches Git).
+fn diff_cli_requests_unified_patch_alongside_stat(argv: &[String]) -> bool {
+    let Some(diff_pos) = argv.iter().position(|a| a == "diff") else {
+        return false;
+    };
+    let mut emit = false;
+    for arg in argv.iter().skip(diff_pos + 1) {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-s" || arg == "--no-patch" {
+            emit = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--patch" || arg == "-u" {
+            emit = true;
+            continue;
+        }
+        if arg == "--submodule" || arg.starts_with("--submodule=") {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with("-U") || arg.starts_with("--unified") {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+            const COMBINABLE: &[u8] = b"spuwqRb";
+            let bytes = arg.as_bytes();
+            let tail = &bytes[1..];
+            if !tail.is_empty() && tail.iter().all(|b| COMBINABLE.contains(b)) {
+                for &b in tail {
+                    match b {
+                        b's' => emit = false,
+                        b'p' | b'u' => emit = true,
+                        b'w' | b'b' | b'q' | b'R' => {}
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    emit
 }
 
 /// Last-flag-wins patch emission after a plumbing subcommand (`diff-files`, `diff-index`, …).

@@ -23,9 +23,11 @@ use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
 use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    diff_index_to_tree, diff_index_to_worktree, read_submodule_head_oid, unified_diff,
-    unified_diff_with_prefix_and_funcname_and_algorithm,
+    count_changes, diff_index_to_tree, diff_index_to_worktree, diff_trees, read_submodule_head_oid,
+    unified_diff, unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry,
+    DiffStatus,
 };
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
 use grit_lib::ignore::{normalize_repo_relative, IgnoreMatcher};
 use grit_lib::index::{
@@ -379,22 +381,15 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::List { args: list_args }) => do_list(list_args),
         Some(StashCommand::Show { args: show_args }) => {
             let repo = Repository::discover(None).context("not a git repository")?;
-            let parsed =
+            let mut parsed =
                 parse_stash_show_args(&repo, args.include_untracked, args.patch, &show_args)?;
             // `git -p stash show` passes `-p` at the top level (clap `global = true`); default
             // `stash show` is `--stat`, so honor global patch like upstream Git.
-            let mode = if args.patch && matches!(parsed.mode, ShowMode::Stat) {
-                ShowMode::Patch
-            } else {
-                parsed.mode
-            };
-            do_show(
-                &repo,
-                parsed.stash_ref,
-                mode,
-                parsed.untracked,
-                parsed.patience,
-            )
+            if args.patch {
+                parsed.explicit_patch = true;
+                parsed.cli_specified_format = true;
+            }
+            do_show(&repo, parsed)
         }
         Some(StashCommand::Pop {
             index,
@@ -648,10 +643,21 @@ enum StashUntrackedFlag {
     No,
 }
 
+/// Parsed `git stash show` argv after dispatch.
+///
+/// When `cli_specified_format` is false, Git applies `stash.showStat` / `stash.showPatch` only
+/// (untracked-related flags alone do not disable that). Otherwise Git defaults to patch if no
+/// output format was requested and honors combined `--stat` + `-p`.
 struct ParsedStashShow {
     stash_ref: Option<String>,
-    mode: ShowMode,
     untracked: StashUntrackedShow,
+    /// `ShowMode::NameStatus` / `NameOnly` / `Numstat` when explicitly requested.
+    other_mode: Option<ShowMode>,
+    /// True if any argument could change diff output (anything Git would pass as a revision flag),
+    /// except `-u` / `--include-untracked` / `--only-untracked` alone.
+    cli_specified_format: bool,
+    explicit_stat: bool,
+    explicit_patch: bool,
     patience: bool,
 }
 
@@ -672,11 +678,14 @@ fn parse_stash_show_args(
         })
         .unwrap_or(false);
 
-    let mut mode = if global_patch {
-        ShowMode::Patch
-    } else {
-        ShowMode::Stat
-    };
+    let mut cli_specified_format = false;
+    let mut explicit_stat = false;
+    let mut explicit_patch = false;
+    let mut other_mode: Option<ShowMode> = None;
+    if global_patch {
+        cli_specified_format = true;
+        explicit_patch = true;
+    }
     let mut patience = false;
     let mut pos: Vec<String> = Vec::new();
     let mut ut_flags: Vec<StashUntrackedFlag> = Vec::new();
@@ -692,17 +701,35 @@ fn parse_stash_show_args(
         }
         if a.starts_with('-') && a.len() > 1 {
             match a.as_str() {
-                "-p" | "--patch" => mode = ShowMode::Patch,
-                "--stat" => mode = ShowMode::Stat,
-                "--name-status" => mode = ShowMode::NameStatus,
-                "--name-only" => mode = ShowMode::NameOnly,
-                "--numstat" => mode = ShowMode::Numstat,
-                "--patience" => patience = true,
+                "-p" | "--patch" => {
+                    cli_specified_format = true;
+                    explicit_patch = true;
+                }
+                "--stat" => {
+                    cli_specified_format = true;
+                    explicit_stat = true;
+                }
+                "--name-status" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::NameStatus);
+                }
+                "--name-only" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::NameOnly);
+                }
+                "--numstat" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::Numstat);
+                }
+                "--patience" => {
+                    cli_specified_format = true;
+                    patience = true;
+                }
                 "-u" | "--include-untracked" => ut_flags.push(StashUntrackedFlag::Include),
                 "--only-untracked" => ut_flags.push(StashUntrackedFlag::Only),
                 "--no-include-untracked" => ut_flags.push(StashUntrackedFlag::No),
                 _ if a.starts_with("--no-") => {
-                    // ignore for forward-compat
+                    cli_specified_format = true;
                 }
                 _ => {
                     eprintln!("usage: git stash show [-u | --include-untracked | --only-untracked] [<diff-options>] [<stash>]");
@@ -734,8 +761,11 @@ fn parse_stash_show_args(
 
     Ok(ParsedStashShow {
         stash_ref: pos.into_iter().next(),
-        mode,
         untracked,
+        other_mode,
+        cli_specified_format,
+        explicit_stat,
+        explicit_patch,
         patience,
     })
 }
@@ -2410,19 +2440,21 @@ enum ShowMode {
     Numstat,
 }
 
-fn do_show(
-    repo: &Repository,
-    stash_ref: Option<String>,
-    mode: ShowMode,
-    untracked: StashUntrackedShow,
-    patience: bool,
-) -> Result<()> {
-    let stash_oid = resolve_stash_ref(repo, stash_ref.as_deref())?;
+fn stash_show_config_bool(config: &ConfigSet, key: &str, default: bool) -> Result<bool> {
+    match config.get_bool(key) {
+        None => Ok(default),
+        Some(Ok(b)) => Ok(b),
+        Some(Err(msg)) => bail!("bad boolean config value for '{key}': {msg}"),
+    }
+}
+
+fn do_show(repo: &Repository, parsed: ParsedStashShow) -> Result<()> {
+    let stash_oid = resolve_stash_ref(repo, parsed.stash_ref.as_deref())?;
     let obj = repo.odb.read(&stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
 
     let wants_ut = matches!(
-        untracked,
+        parsed.untracked,
         StashUntrackedShow::IncludeUntracked | StashUntrackedShow::OnlyUntracked
     );
     if wants_ut && stash_commit.parents.len() >= 3 {
@@ -2431,31 +2463,168 @@ fn do_show(
 
     let has_ut_parent = stash_commit.parents.len() >= 3;
     let include_ut = wants_ut && has_ut_parent;
-    let only_ut = untracked == StashUntrackedShow::OnlyUntracked;
+    let only_ut = parsed.untracked == StashUntrackedShow::OnlyUntracked;
 
-    match mode {
-        ShowMode::Patch => {
-            if only_ut {
-                if include_ut {
-                    show_stash_untracked_patch_only(repo, &stash_commit)?;
-                }
-            } else {
-                show_stash_tracked_patch(repo, &stash_commit, patience)?;
-                if include_ut {
-                    show_stash_untracked_patch_extra(repo, &stash_commit)?;
-                }
+    if let Some(mode) = parsed.other_mode {
+        match mode {
+            ShowMode::NameStatus => {
+                show_stash_name_status_extended(repo, &stash_commit, true, only_ut, include_ut)?;
             }
+            ShowMode::NameOnly => {
+                show_stash_name_status_extended(repo, &stash_commit, false, only_ut, include_ut)?;
+            }
+            ShowMode::Numstat => {
+                show_stash_numstat_extended(repo, &stash_commit, only_ut, include_ut)?;
+            }
+            ShowMode::Stat | ShowMode::Patch => {}
         }
-        ShowMode::NameStatus => {
-            show_stash_name_status_extended(repo, &stash_commit, true, only_ut, include_ut)?;
-        }
-        ShowMode::NameOnly => {
-            show_stash_name_status_extended(repo, &stash_commit, false, only_ut, include_ut)?;
-        }
-        ShowMode::Stat => show_stash_stat_extended(repo, &stash_commit, only_ut, include_ut)?,
-        ShowMode::Numstat => show_stash_numstat_extended(repo, &stash_commit, only_ut, include_ut)?,
+        return Ok(());
     }
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let cfg_show_stat = stash_show_config_bool(&config, "stash.showStat", true)?;
+    let cfg_show_patch = stash_show_config_bool(&config, "stash.showPatch", false)?;
+
+    let (show_stat, show_patch) = if parsed.cli_specified_format {
+        let stat = parsed.explicit_stat;
+        let mut patch = parsed.explicit_patch;
+        if !stat && !patch {
+            patch = true;
+        }
+        (stat, patch)
+    } else {
+        if !cfg_show_stat && !cfg_show_patch {
+            return Ok(());
+        }
+        (cfg_show_stat, cfg_show_patch)
+    };
+
+    if show_stat {
+        match parsed.untracked {
+            StashUntrackedShow::TrackedOnly => {
+                show_stash_stat_git_diffstat(repo, &stash_oid, &config)?;
+            }
+            _ => {
+                show_stash_stat_extended(repo, &stash_commit, only_ut, include_ut)?;
+            }
+        }
+    }
+
+    if show_patch {
+        if show_stat {
+            println!();
+        }
+        if only_ut {
+            if include_ut {
+                show_stash_untracked_patch_only(repo, &stash_commit)?;
+            }
+        } else {
+            show_stash_tracked_patch(repo, &stash_commit, parsed.patience)?;
+            if include_ut {
+                show_stash_untracked_patch_extra(repo, &stash_commit)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn stash_stat_path_display(entry: &DiffEntry) -> String {
+    let old_path = entry.old_path.as_deref().unwrap_or("");
+    let new_path = entry.new_path.as_deref().unwrap_or("");
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            grit_lib::diff::format_rename_path(old_path, new_path)
+        }
+        _ => new_path.to_string(),
+    }
+}
+
+fn show_stash_stat_git_diffstat(
+    repo: &Repository,
+    stash_oid: &ObjectId,
+    config: &ConfigSet,
+) -> Result<()> {
+    let obj = repo.odb.read(stash_oid)?;
+    let stash_commit = parse_commit(&obj.data)?;
+    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let entries = diff_trees(&repo.odb, Some(&old_tree), Some(&stash_commit.tree), "")?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let eff_name_width = config
+        .get("diff.statNameWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let eff_graph_width = config
+        .get("diff.statGraphWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let path_display = stash_stat_path_display(entry);
+        let old_raw = if entry.old_oid == zero_oid() {
+            Vec::new()
+        } else {
+            repo.odb
+                .read(&entry.old_oid)
+                .map(|o| o.data)
+                .unwrap_or_default()
+        };
+        let new_raw = if entry.new_oid == zero_oid() {
+            Vec::new()
+        } else {
+            repo.odb
+                .read(&entry.new_oid)
+                .map(|o| o.data)
+                .unwrap_or_default()
+        };
+        let binary = blob_is_binary(&old_raw) || blob_is_binary(&new_raw);
+        if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display,
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_changes(&old_content, &new_content);
+            files.push(FileStatInput {
+                path_display,
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
+        }
+    }
+
+    let opts = DiffstatOptions {
+        total_width: terminal_columns(),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width: eff_name_width,
+        stat_graph_width: eff_graph_width,
+        stat_count: None,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
+    };
+    let mut out = std::io::stdout().lock();
+    write_diffstat_block(&mut out, &files, &opts)?;
     Ok(())
 }
 
