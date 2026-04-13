@@ -14,6 +14,8 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name,
 };
+
+use crate::porcelain_rev::{resolve_porcelain_commitish_filter, resolve_porcelain_merged_commit};
 use grit_lib::state::{resolve_head, wt_status_get_state, HeadState};
 use grit_lib::stripspace::{process as stripspace_process, Mode as StripspaceMode};
 use std::cmp::Ordering;
@@ -538,7 +540,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                     .oid()
                     .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
             } else {
-                resolve_revision_must_be_commit(repo, merged_val)?
+                resolve_porcelain_merged_commit(repo, merged_val)?
             };
             for b in &branches {
                 if is_ancestor(repo, b.oid, target_oid).unwrap_or(false) {
@@ -555,7 +557,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_revision_must_be_commit(repo, no_merged_val)?
+            resolve_porcelain_merged_commit(repo, no_merged_val)?
         };
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
@@ -564,7 +566,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         let contain_oids: Vec<ObjectId> = args
             .contains
             .iter()
-            .map(|r| resolve_revision_must_be_commit(repo, r))
+            .map(|r| resolve_porcelain_commitish_filter(repo, r))
             .collect::<Result<_>>()?;
         branches.retain(|b| {
             contain_oids
@@ -574,7 +576,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     for no_contains_rev in &args.no_contains {
-        let no_contains_oid = resolve_revision_must_be_commit(repo, no_contains_rev)?;
+        let no_contains_oid = resolve_porcelain_commitish_filter(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
@@ -899,6 +901,7 @@ fn resolve_revision_must_be_commit(repo: &Repository, spec: &str) -> Result<Obje
     std::process::exit(129);
 }
 
+/// Sort branches by the given key.
 fn sort_branches(
     repo: &Repository,
     head: &HeadState,
