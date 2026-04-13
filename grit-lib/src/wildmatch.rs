@@ -22,7 +22,9 @@ fn is_glob_special(c: u8) -> bool {
     matches!(c, b'*' | b'?' | b'[' | b'\\')
 }
 
-/// Core recursive matching function — closely follows the C dowild().
+/// Core recursive matching function — closely follows the C `dowild()` for-loop
+/// (`for (; *p; text++, p++)`), including advancing `text` only once per iteration
+/// after `[` / `?` / literals (not inside `do_bracket` before the pattern `]` is consumed).
 fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
     let mut pi = 0;
     let mut ti = 0;
@@ -56,17 +58,14 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                 if t_ch_fold != lit {
                     return WM_NOMATCH;
                 }
-                ti += 1;
-                pi += 1;
             }
             b'?' => {
                 if (flags & WM_PATHNAME) != 0 && t_ch == b'/' {
                     return WM_NOMATCH;
                 }
-                ti += 1;
-                pi += 1;
             }
             b'*' => {
+                let star_start = pi;
                 // Determine if this is ** and whether it matches slashes.
                 let prev_p = pi; // position of first *
                 pi += 1;
@@ -114,14 +113,9 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                 if !match_slash && p[pi] == b'/' {
                     if let Some(pos) = text[ti..].iter().position(|&b| b == b'/') {
                         ti += pos;
-                        // The slash is consumed by continuing the outer loop
-                        // (pi already points at '/', ti at '/')
-                        // Actually, follow C: text points at slash, then the
-                        // top-level for loop increments both. We need to match
-                        // the / explicitly:
-                        // In C: text = slash, then break to continue the for loop
-                        // which does text++, p++. So both advance past '/'.
-                        // We can just continue the outer loop from here.
+                        // Git: leave `text` at `/`, then the for-loop does `text++, p++`.
+                        ti += 1;
+                        pi = star_start + 2;
                         continue;
                     } else {
                         return WM_ABORT_ALL;
@@ -188,7 +182,6 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                 if result != WM_MATCH {
                     return result;
                 }
-                ti += 1;
             }
             _ => {
                 let mut p_fold = p_ch;
@@ -198,9 +191,14 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                 if t_ch_fold != p_fold {
                     return WM_NOMATCH;
                 }
-                ti += 1;
-                pi += 1;
             }
+        }
+
+        // C `for` increment: `text++, p++` after each iteration. `do_bracket` leaves `pi`
+        // past `]`; other branches leave `pi` on the byte that was matched.
+        ti += 1;
+        if p_ch != b'[' {
+            pi += 1;
         }
     }
 
@@ -390,6 +388,8 @@ mod tests {
     fn bracket() {
         assert!(wildmatch(b"*[al]?", b"ball", 0));
         assert!(!wildmatch(b"[ten]", b"ten", 0));
+        assert!(wildmatch(b"[o][o]", b"oo", 0));
+        assert!(!wildmatch(b"[o][o]", b"[o][o]", 0));
     }
 
     #[test]
