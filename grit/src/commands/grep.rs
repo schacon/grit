@@ -32,7 +32,11 @@ fn grep_output_path(repo: &Repository, path_prefix: &str, path_str: &str, args: 
 }
 
 /// Arguments for `grit grep`.
+///
+/// Git uses `-h` for `--no-filename`, not for short help (see `main` dispatch). Clap's default
+/// `-h`/`--help` would steal `-h` and break `git grep -h` / t0014-alias.
 #[derive(Debug, ClapArgs)]
+#[command(disable_help_flag = true)]
 pub struct Args {
     /// Show line numbers.
     #[arg(short = 'n', long = "line-number")]

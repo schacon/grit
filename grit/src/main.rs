@@ -4905,7 +4905,16 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             commands::index_pack::run(parse_cmd_args(subcmd, &argv))
         }
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
-        "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
+        "interpret-trailers" => {
+            if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+                if let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin(subcmd) {
+                    commands::upstream_synopsis_help::print_upstream_synopsis_stdout_and_exit(
+                        subcmd, syn, 129,
+                    );
+                }
+            }
+            commands::interpret_trailers::run_from_argv(rest)
+        }
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let raw_tail = rest.to_vec();
