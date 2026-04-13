@@ -429,6 +429,10 @@ impl Repository {
     /// Like [`Repository::load_index`], but reads from an explicit index file path
     /// (e.g. `GIT_INDEX_FILE` or a worktree-specific index).
     pub fn load_index_at(&self, path: &std::path::Path) -> Result<Index> {
+        let cfg = ConfigSet::load(Some(&self.git_dir), true).unwrap_or_default();
+        if let Some(res) = cfg.get_bool("index.sparse") {
+            res.map_err(Error::ConfigError)?;
+        }
         let mut idx = Index::load_expand_sparse_optional(path, &self.odb)?;
         crate::split_index::resolve_split_index_if_needed(&mut idx, &self.git_dir, path)?;
         if let Some(ref wt) = self.work_tree {

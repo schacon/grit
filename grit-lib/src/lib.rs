@@ -115,6 +115,7 @@ pub mod simple_ipc {
 pub mod state;
 pub mod stripspace;
 pub mod submodule_active;
+pub mod submodule_config;
 pub mod submodule_config_cache;
 pub mod submodule_gitdir;
 pub mod tab_expand;

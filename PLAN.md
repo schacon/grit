@@ -340,7 +340,7 @@ commit → check it off → move on.
 - [x] `t3511-cherry-pick-x` ████████████████████ 22/22 (0 left) — Test cherry-pick -x and -s
 - [ ] `t3202-show-branch` ██░░░░░░░░░░░░░░░░░░ 4/27 (23 left) — test show-branch
 - [ ] `t3431-rebase-fork-point` ██░░░░░░░░░░░░░░░░░░ 3/26 (23 left) — git rebase --fork-point test
-- [ ] `t3007-ls-files-recurse-submodules` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test ls-files recurse-submodules feature
+- [x] `t3007-ls-files-recurse-submodules` — Test ls-files recurse-submodules feature
 
 - [ ] `t3311-notes-merge-fanout` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test notes merging at various fanout levels
 - [ ] `t3418-rebase-continue` ████░░░░░░░░░░░░░░░░ 6/30 (24 left) — git rebase --continue tests
