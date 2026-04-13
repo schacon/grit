@@ -1314,6 +1314,10 @@ pub struct Args {
     )]
     pub unified: Option<usize>,
 
+    /// Show whole surrounding functions as context (same as Git `-W`).
+    #[arg(short = 'W', long = "function-context")]
+    pub function_context: bool,
+
     /// Detect renames.
     #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_renames: Option<String>,
@@ -1627,6 +1631,7 @@ pub(crate) fn unstaged_patch_for_add_edit(
         None,
         &diff_algo_ctx,
         diff_algo_cli,
+        false,
         false,
         true,
         None,
@@ -2117,6 +2122,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 "--cumulative" => {
                     args.dirstat_cumulative_flag = true;
+                }
+                "-W" | "--function-context" => {
+                    args.function_context = true;
                 }
                 _ => {
                     extra_revs.push(r.clone());
@@ -3166,6 +3174,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     &diff_algo_ctx,
                     diff_algo_cli,
                     args.cached,
+                    args.function_context,
                     args.no_ext_diff,
                     external_diff_cmd.as_deref(),
                     relative_prefix_for_paths.as_deref(),
@@ -3393,6 +3402,7 @@ fn run_diff_blob_vs_file(
             &diff_algo_ctx,
             diff_algo_cli,
             false,
+            args.function_context,
             args.no_ext_diff,
             external_diff_cmd.as_deref(),
             relative_prefix_for_paths.as_deref(),
@@ -4148,6 +4158,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             "b/",
             func_matcher.as_ref(),
             algo,
+            args.function_context,
             use_git_histogram,
             indent_heuristic,
             quote_path_fully,
@@ -6238,6 +6249,7 @@ fn write_blob_to_blob_patch_fragment(
         dst_prefix,
         func_matcher.as_ref(),
         algo,
+        false,
         use_git_histogram,
         indent_heuristic,
         quote_path_fully,
@@ -6286,6 +6298,7 @@ fn write_patch_with_prefix(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<CliDiffAlgo>,
     cached: bool,
+    function_context: bool,
     no_ext_diff: bool,
     external_diff_cmd: Option<&str>,
     relative_prefix: Option<&str>,
@@ -6747,6 +6760,7 @@ fn write_patch_with_prefix(
                 dst_prefix,
                 func_matcher.as_ref(),
                 algo,
+                function_context,
                 use_git_histogram,
                 indent_heuristic,
                 quote_path_fully,
@@ -7559,6 +7573,7 @@ fn word_diff_generate_patch(
         dst_prefix,
         func_matcher.as_ref(),
         algo,
+        false,
         use_git_histogram,
         indent_heuristic,
         quote_path_fully,
@@ -8597,6 +8612,7 @@ pub(crate) fn check_whitespace_errors(
             "",
             None,
             similar::Algorithm::Myers,
+            false,
             false,
             indent_heuristic,
             quote_path_fully,

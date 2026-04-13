@@ -4306,6 +4306,7 @@ fn show_tree_diff(
                         false,
                         false,
                         false,
+                        false,
                     );
                     print!("{patch}");
                 }
@@ -4336,6 +4337,7 @@ fn show_tree_diff(
                     false,
                     false,
                     false,
+                    false,
                 );
                 print!("{patch}");
             }
@@ -4362,6 +4364,7 @@ fn show_tree_diff(
                     "b/",
                     None,
                     algorithm,
+                    false,
                     false,
                     false,
                     false,
