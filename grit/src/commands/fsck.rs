@@ -168,6 +168,19 @@ fn check_tag_trailer_fsck(
     }
 }
 
+fn read_shallow_boundary_oids(git_dir: &Path) -> HashSet<ObjectId> {
+    let shallow_path = git_dir.join("shallow");
+    let Ok(content) = fs::read_to_string(&shallow_path) else {
+        return HashSet::new();
+    };
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| ObjectId::from_hex(line).ok())
+        .collect()
+}
+
 /// A problem found during fsck.
 #[derive(Debug)]
 enum Issue {

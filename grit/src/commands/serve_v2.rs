@@ -8,11 +8,10 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::merge_base;
-use grit_lib::objects::{self, ObjectId, ObjectKind};
+use grit_lib::objects::{self, parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{shallow_borders_reachable_from_wants, shallow_boundary_oids};
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -35,6 +34,8 @@ pub struct Args {
 pub struct ServerCaps {
     agent: String,
     object_format: String,
+    advertise_filter: bool,
+    advertise_packfile_uris: bool,
     advertise_object_info: bool,
     advertise_bundle_uri: bool,
     advertise_session_id: bool,
@@ -49,6 +50,8 @@ impl ServerCaps {
 
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");
+        let advertise_filter = read_config_bool(git_dir, "uploadpack.allowfilter");
+        let advertise_packfile_uris = read_config_nonempty(git_dir, "uploadpack.blobpackfileuri");
         let advertise_session_id = read_config_bool(git_dir, "transfer.advertiseSID")
             || read_config_bool(git_dir, "transfer.advertisesid")
             || read_config_bool(git_dir, "transfer.advertiseSid");
@@ -61,6 +64,8 @@ impl ServerCaps {
         Self {
             agent,
             object_format: "sha1".to_owned(),
+            advertise_filter,
+            advertise_packfile_uris,
             advertise_object_info,
             advertise_bundle_uri,
             advertise_session_id,
@@ -73,7 +78,14 @@ impl ServerCaps {
         pkt_line::write_line(w, "version 2")?;
         pkt_line::write_line(w, &self.agent)?;
         pkt_line::write_line(w, "ls-refs=unborn")?;
-        pkt_line::write_line(w, "fetch=shallow wait-for-done")?;
+        let mut fetch_features = String::from("fetch=shallow wait-for-done");
+        if self.advertise_filter {
+            fetch_features.push_str(" filter");
+        }
+        if self.advertise_packfile_uris {
+            fetch_features.push_str(" packfile-uris");
+        }
+        pkt_line::write_line(w, &fetch_features)?;
         pkt_line::write_line(w, "server-option")?;
         pkt_line::write_line(w, &format!("object-format={}", self.object_format))?;
         if self.advertise_object_info {
@@ -219,7 +231,7 @@ pub fn process_one_v2_request(
 
     match cmd.as_str() {
         "ls-refs" => cmd_ls_refs(git_dir, &args, &mut out)?,
-        "fetch" => cmd_fetch(git_dir, &args, &mut out)?,
+        "fetch" => cmd_fetch(git_dir, &args, &mut out, caps)?,
         "object-info" => cmd_object_info(git_dir, &args, &mut out)?,
         "bundle-uri" => cmd_bundle_uri(git_dir, &args, &mut out)?,
         _ => bail!("invalid command '{cmd}'"),
@@ -337,23 +349,30 @@ fn peel_to_commit(
 }
 
 /// Handle the `fetch` command (protocol v2): negotiation + `packfile` section with raw pack bytes.
-fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
+fn cmd_fetch(
+    git_dir: &Path,
+    args: &[String],
+    out: &mut impl Write,
+    caps: &ServerCaps,
+) -> Result<()> {
     let repo = Repository::open(git_dir, None)
         .with_context(|| format!("could not open repository at '{}'", git_dir.display()))?;
 
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut have_oids: Vec<ObjectId> = Vec::new();
-    let mut client_shallow: Vec<ObjectId> = Vec::new();
+    let mut client_shallow_oids: HashSet<ObjectId> = HashSet::new();
+    let mut depth_request: Option<usize> = None;
+    let mut deepen_relative = false;
+    let mut filter_spec: Option<String> = None;
     let mut wait_for_done = false;
     let mut seen_done = false;
-    let mut list_objects_filter: Option<String> = None;
 
     for arg in args {
         match arg.as_str() {
             "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" => {}
             "wait-for-done" => wait_for_done = true,
             "done" => seen_done = true,
-            "deepen-relative" => {}
+            "deepen-relative" => deepen_relative = true,
             s if s.starts_with("want ") => {
                 let rest = s.strip_prefix("want ").unwrap_or("").trim();
                 let hex = rest.split_whitespace().next().unwrap_or(rest);
@@ -371,31 +390,39 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                     have_oids.push(oid);
                 }
             }
-            s if s.starts_with("shallow ") => {
-                let hex = s
-                    .strip_prefix("shallow ")
-                    .unwrap_or("")
-                    .trim()
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
-                if let Ok(oid) = ObjectId::from_hex(hex) {
-                    if !client_shallow.contains(&oid) {
-                        client_shallow.push(oid);
+            s if s.starts_with("deepen ") => {
+                let depth_text = s.strip_prefix("deepen ").unwrap_or("").trim();
+                if !depth_text.is_empty() {
+                    if let Ok(depth) = depth_text.parse::<usize>() {
+                        if depth > 0 && depth < i32::MAX as usize {
+                            depth_request = Some(depth);
+                        }
                     }
                 }
             }
-            s if s.starts_with("deepen ")
-                || s.starts_with("deepen-since ")
-                || s.starts_with("deepen-not ") => {}
-            s if s.starts_with("want-ref ") => {}
-            s if s.starts_with("filter ") => {
-                let spec = s.strip_prefix("filter ").unwrap_or("").trim();
-                if !spec.is_empty() {
-                    list_objects_filter = Some(spec.to_owned());
+            s if s.starts_with("shallow ") => {
+                let hex = s.strip_prefix("shallow ").unwrap_or("").trim();
+                if let Ok(oid) = ObjectId::from_hex(hex) {
+                    client_shallow_oids.insert(oid);
                 }
             }
-            s if s.starts_with("packfile-uris ") => {}
+            s if s.starts_with("deepen-since ") || s.starts_with("deepen-not ") => {}
+            s if s.starts_with("want-ref ") => {}
+            s if s.starts_with("filter ") => {
+                if !caps.advertise_filter {
+                    bail!("unexpected line: '{s}'");
+                }
+                let spec = s.strip_prefix("filter ").unwrap_or("").trim();
+                if spec.is_empty() {
+                    bail!("unexpected line: '{s}'");
+                }
+                filter_spec = Some(spec.to_owned());
+            }
+            s if s.starts_with("packfile-uris ") => {
+                if !caps.advertise_packfile_uris {
+                    bail!("unexpected line: '{s}'");
+                }
+            }
             s if s.starts_with("sideband-all") => {}
             other => bail!("unexpected line: '{other}'"),
         }
@@ -428,45 +455,35 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
         return Ok(());
     }
 
-    let server_shallow: Vec<ObjectId> = shallow_boundary_oids(&repo.git_dir).into_iter().collect();
-    let server_repo_shallow = !server_shallow.is_empty();
-    if server_repo_shallow || !client_shallow.is_empty() {
-        pkt_line::write_line(out, "shallow-info")?;
-        if server_repo_shallow {
-            for oid in shallow_borders_reachable_from_wants(&repo, &wants) {
-                pkt_line::write_line(out, &format!("shallow {}", oid.to_hex()))?;
-            }
-        }
-        pkt_line::write_delim(out)?;
-    }
-
-    let mut stdin_shallow = server_shallow;
-    for oid in &client_shallow {
-        if !stdin_shallow.contains(oid) {
-            stdin_shallow.push(*oid);
-        }
-    }
-    let shallow_pack = !stdin_shallow.is_empty();
-
     pkt_line::write_line(out, "packfile")?;
     let thin = !have_oids.is_empty();
     let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
         git_dir,
         thin,
-        shallow_pack,
-        list_objects_filter.as_deref(),
+        filter_spec.as_deref(),
     )?;
     {
         let mut pin = child
             .stdin
             .take()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
+        let mut exclude_commits = have_commits.clone();
+        if let Some(mut depth) = depth_request {
+            if deepen_relative && !client_shallow_oids.is_empty() {
+                let base =
+                    relative_depth_base_from_client_shallows(&repo, &wants, &client_shallow_oids);
+                depth = depth.saturating_add(base);
+            }
+            let depth_excludes =
+                crate::pack_objects_upload::compute_depth_exclude_commits(&repo, &wants, depth)?;
+            exclude_commits.extend(depth_excludes);
+            exclude_commits.sort_by_key(|oid| oid.to_hex());
+            exclude_commits.dedup();
+        }
         crate::pack_objects_upload::write_pack_objects_revs_stdin(
             &mut pin,
             &wants,
-            &have_commits,
-            &stdin_shallow,
-            shallow_pack,
+            &exclude_commits,
         )?;
     }
     // Protocol v2 fetch streams the pack inside side-band-64k (matches `git upload-pack`).
@@ -501,37 +518,48 @@ fn merge_ancestors_into_v2(
     tip: ObjectId,
     into: &mut HashSet<ObjectId>,
 ) -> anyhow::Result<()> {
-    let boundaries = shallow_boundary_oids(&repo.git_dir);
-    let anc = ancestor_closure_respecting_shallow_v2(repo, tip, &boundaries)?;
+    let anc = merge_base::ancestor_closure(repo, tip)?;
     into.extend(anc);
     Ok(())
 }
 
-fn ancestor_closure_respecting_shallow_v2(
+fn relative_depth_base_from_client_shallows(
     repo: &Repository,
-    tip: ObjectId,
-    shallow_boundaries: &HashSet<ObjectId>,
-) -> anyhow::Result<HashSet<ObjectId>> {
-    let mut visited = HashSet::new();
-    let mut q = VecDeque::new();
-    q.push_back(tip);
-    while let Some(oid) = q.pop_front() {
-        if !visited.insert(oid) {
+    wants: &[ObjectId],
+    client_shallow_oids: &HashSet<ObjectId>,
+) -> usize {
+    wants
+        .iter()
+        .filter_map(|want| shortest_depth_to_boundary(repo, *want, client_shallow_oids))
+        .max()
+        .unwrap_or(0)
+}
+
+fn shortest_depth_to_boundary(
+    repo: &Repository,
+    start: ObjectId,
+    boundaries: &HashSet<ObjectId>,
+) -> Option<usize> {
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    queue.push_back((start, 1usize));
+    while let Some((oid, depth)) = queue.pop_front() {
+        if !seen.insert(oid) {
             continue;
         }
-        if shallow_boundaries.contains(&oid) {
-            continue;
+        if boundaries.contains(&oid) {
+            return Some(depth);
         }
-        let obj = repo.odb.read(&oid).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let obj = repo.odb.read(&oid).ok()?;
         if obj.kind != ObjectKind::Commit {
             continue;
         }
-        let commit = objects::parse_commit(&obj.data).map_err(|e| anyhow::anyhow!("{e}"))?;
-        for p in commit.parents {
-            q.push_back(p);
+        let commit = parse_commit(&obj.data).ok()?;
+        for parent in commit.parents {
+            queue.push_back((parent, depth + 1));
         }
     }
-    Ok(visited)
+    None
 }
 
 /// Handle the `object-info` command.
@@ -597,11 +625,30 @@ fn read_config_bool(git_dir: &Path, key: &str) -> bool {
     if let Some(val) = check_env_config(key) {
         return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
     }
+    if let Some(val) = check_git_config_parameters(key) {
+        return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
+    }
     // Check repo config
     let config_path = git_dir.join("config");
     if let Ok(contents) = std::fs::read_to_string(&config_path) {
         if let Some(val) = parse_config_value(&contents, key) {
             return matches!(val.to_lowercase().as_str(), "true" | "yes" | "1");
+        }
+    }
+    false
+}
+
+fn read_config_nonempty(git_dir: &Path, key: &str) -> bool {
+    if let Some(val) = check_env_config(key) {
+        return !val.trim().is_empty();
+    }
+    if let Some(val) = check_git_config_parameters(key) {
+        return !val.trim().is_empty();
+    }
+    let config_path = git_dir.join("config");
+    if let Ok(contents) = std::fs::read_to_string(&config_path) {
+        if let Some(val) = parse_config_value(&contents, key) {
+            return !val.trim().is_empty();
         }
     }
     false
@@ -614,6 +661,26 @@ fn check_env_config(key: &str) -> Option<String> {
         let k = std::env::var(format!("GIT_CONFIG_KEY_{i}")).ok()?;
         if k.eq_ignore_ascii_case(key) {
             return std::env::var(format!("GIT_CONFIG_VALUE_{i}")).ok();
+        }
+    }
+    None
+}
+
+fn check_git_config_parameters(key: &str) -> Option<String> {
+    let payload = std::env::var("GIT_CONFIG_PARAMETERS").ok()?;
+    // Entries are shell-quoted by `apply_globals` as: `'key=value' 'k=v'`.
+    // Split on single quotes and inspect odd chunks.
+    for entry in payload.split('\'').skip(1).step_by(2) {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            if k.eq_ignore_ascii_case(key) {
+                return Some(v.to_owned());
+            }
+        } else if trimmed.eq_ignore_ascii_case(key) {
+            return Some(String::new());
         }
     }
     None

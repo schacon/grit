@@ -116,7 +116,7 @@ pub fn run(args: Args) -> Result<()> {
         if !hook_ok {
             return Ok(());
         }
-        if !quiet {
+        if !args.quiet {
             eprintln!("Auto packing the repository for optimum performance.");
             eprintln!("See \"git help gc\" for manual housekeeping.");
         }
@@ -280,7 +280,7 @@ fn too_many_packs_for_gc(repo: &Repository, cfg: &ConfigSet) -> bool {
         return false;
     }
     let pack_dir = repo.git_dir.join("objects").join("pack");
-    count_local_pack_files(&pack_dir) > pack_limit as usize
+    count_local_pack_files(&pack_dir) >= pack_limit as usize
 }
 
 /// Packs to keep when auto-gc does a full repack due to `gc.autoPackLimit` (Git `need_to_gc`).

@@ -15,7 +15,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::midx::{
     clear_pack_midx_state, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
 };
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::pack::read_pack_index;
 use grit_lib::pack_geometry::{
     collect_geometry_packs, collect_promisor_geometry_packs, compute_geometry_split,
@@ -693,6 +693,7 @@ pub fn run(args: Args) -> Result<()> {
             )?;
             prune_packed_objects(&repo.git_dir.join("objects"), PrunePackedOptions::default())
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            prune_hidden_loose_objects_for_shallow_repo(&repo)?;
         } else {
             let new_pack_name = new_pack_names.first().cloned().context("no pack written")?;
             remove_superseded_packs_incremental(&pack_dir_abs, &new_pack_name, &args.keep_pack)?;
@@ -895,6 +896,115 @@ fn run_geometric(
     }
 
     let _ = grit_lib::shared_repo::refresh_repository_shared_tree(&repo.git_dir);
+
+    Ok(())
+}
+
+fn prune_hidden_loose_objects_for_shallow_repo(repo: &Repository) -> Result<()> {
+    let shallow_path = repo.git_dir.join("shallow");
+    if !shallow_path.is_file() {
+        return Ok(());
+    }
+
+    let mut keep: HashSet<ObjectId> = HashSet::new();
+    let mut queue: std::collections::VecDeque<ObjectId> = std::collections::VecDeque::new();
+    let mut shallow_boundaries: HashSet<ObjectId> = HashSet::new();
+
+    if let Ok(head_oid) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        queue.push_back(head_oid);
+    }
+    if let Ok(all_refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
+        for (_, oid) in all_refs {
+            queue.push_back(oid);
+        }
+    }
+    if let Ok(content) = fs::read_to_string(&shallow_path) {
+        for line in content.lines() {
+            let hex = line.trim();
+            if hex.is_empty() {
+                continue;
+            }
+            if let Ok(oid) = ObjectId::from_hex(hex) {
+                shallow_boundaries.insert(oid);
+                queue.push_back(oid);
+            }
+        }
+    }
+
+    while let Some(oid) = queue.pop_front() {
+        if !keep.insert(oid) {
+            continue;
+        }
+        let Ok(obj) = repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                let Ok(commit) = parse_commit(&obj.data) else {
+                    continue;
+                };
+                queue.push_back(commit.tree);
+                if !shallow_boundaries.contains(&oid) {
+                    for parent in commit.parents {
+                        queue.push_back(parent);
+                    }
+                }
+            }
+            ObjectKind::Tree => {
+                let Ok(entries) = parse_tree(&obj.data) else {
+                    continue;
+                };
+                for entry in entries {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    queue.push_back(entry.oid);
+                }
+            }
+            ObjectKind::Tag => {
+                let Ok(tag) = parse_tag(&obj.data) else {
+                    continue;
+                };
+                queue.push_back(tag.object);
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+
+    let objects_dir = repo.git_dir.join("objects");
+    if !objects_dir.is_dir() {
+        return Ok(());
+    }
+    for fanout in fs::read_dir(&objects_dir)? {
+        let fanout = fanout?;
+        let name = fanout.file_name().to_string_lossy().to_string();
+        if name == "info" || name == "pack" {
+            continue;
+        }
+        if name.len() != 2
+            || !name.chars().all(|c| c.is_ascii_hexdigit())
+            || !fanout.path().is_dir()
+        {
+            continue;
+        }
+        for entry in fs::read_dir(fanout.path())? {
+            let entry = entry?;
+            if !entry.path().is_file() {
+                continue;
+            }
+            let tail = entry.file_name().to_string_lossy().to_string();
+            if tail.len() != 38 || !tail.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let hex = format!("{name}{tail}");
+            let Ok(oid) = ObjectId::from_hex(&hex) else {
+                continue;
+            };
+            if !keep.contains(&oid) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 
     Ok(())
 }

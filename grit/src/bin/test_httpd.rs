@@ -23,9 +23,6 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use time::format_description;
-use time::OffsetDateTime;
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
@@ -218,23 +215,6 @@ struct Request {
     body: Vec<u8>,
 }
 
-/// Strips the upstream test harness prefix `/error_git_upload_pack` so routes match `/smart/...`.
-///
-/// Apache maps `ScriptAliasMatch /error_git_upload_pack/(.*)/git-upload-pack` to `error.sh` only for
-/// that CGI path; other requests under the same URL prefix still use `git-http-backend` via the
-/// `/smart_*` rule. We emulate that by stripping the prefix for routing only.
-fn routing_path(raw_path: &str) -> &str {
-    const PREFIX: &str = "/error_git_upload_pack";
-    let Some(rest) = raw_path.strip_prefix(PREFIX) else {
-        return raw_path;
-    };
-    match rest {
-        "" | "/" => "/",
-        s if s.starts_with('/') => s,
-        _ => raw_path,
-    }
-}
-
 fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
 
@@ -323,60 +303,13 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
-/// Apache `%b` field for combined logs. Upstream `strip_access_log` strips a trailing
-/// ` [1-9][0-9]+` but leaves ` -`, which becomes the ` -` suffix on some t5561 lines.
-fn apache_response_bytes_field(method: &str, path: &str, status: u16) -> &'static str {
-    if status == 404 || status == 403 {
-        return "-";
-    }
-    if method.eq_ignore_ascii_case("POST") {
-        return "-";
-    }
-    if status == 200
-        && (path.contains("/objects/info/alternates")
-            || path.contains("/objects/info/http-alternates"))
-    {
-        return "-";
-    }
-    "1"
-}
-
-fn format_httpd_access_timestamp() -> String {
-    static FMT: std::sync::OnceLock<
-        Option<Vec<time::format_description::BorrowedFormatItem<'static>>>,
-    > = std::sync::OnceLock::new();
-    let fmt = FMT.get_or_init(|| {
-        format_description::parse("[day]/[month repr:short]/[year]:[hour]:[minute]:[second]").ok()
-    });
-    let dt = OffsetDateTime::now_utc();
-    if let Some(f) = fmt {
-        if let Ok(s) = dt.format(f) {
-            return format!("{s} +0000");
-        }
-    }
-    "01/Jan/1970:00:00:00 +0000".to_string()
-}
-
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
-
-    let uri = if query.is_empty() {
-        path.to_string()
+    let line = if query.is_empty() {
+        format!("{} {} HTTP/1.1 {}", method, path, status)
     } else {
-        format!("{path}?{query}")
+        format!("{} {}?{} HTTP/1.1 {}", method, path, query, status)
     };
-    let bytes_field = apache_response_bytes_field(method, path, status);
-    let ts = format_httpd_access_timestamp();
-    // One space after the method in the quoted request line; `strip_access_log` adds a second
-    // space after `GET` only (matches Apache + upstream t5561/t5551 expectations).
-    let line = format!(
-        "127.0.0.1 - - [{ts}] \"{method} {uri} HTTP/1.1\" {status} {bytes_field}",
-        ts = ts,
-        method = method,
-        uri = uri,
-        status = status,
-        bytes_field = bytes_field
-    );
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -390,7 +323,6 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let req = read_request(&mut stream)?;
-    let path = routing_path(&req.path);
 
     if config.proxy_mode {
         let raw_lc = req.raw_target.to_ascii_lowercase();
@@ -433,12 +365,12 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     );
 
-    let needs_auth = if path.starts_with("/auth-push/") {
-        path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
-    } else if path.starts_with("/auth-fetch/") {
-        path.contains("git-upload-pack") && req.method == "POST"
+    let needs_auth = if req.path.starts_with("/auth-push/") {
+        req.path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
+    } else if req.path.starts_with("/auth-fetch/") {
+        req.path.contains("git-upload-pack") && req.method == "POST"
     } else {
-        path.starts_with("/auth/")
+        req.path.starts_with("/auth/")
     };
     if needs_auth {
         if let (Some(ref user), Some(ref pass)) = (&config.auth_user, &config.auth_pass) {
@@ -455,59 +387,88 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     }
 
-    // Matches Apache `ScriptAliasMatch /error_git_upload_pack/(.*)/git-upload-pack error.sh/`.
-    if req.path.starts_with("/error_git_upload_pack/")
-        && path.ends_with("/git-upload-pack")
-        && req.method == "POST"
-    {
-        log_access(config, &req.method, &req.path, &req.query, 500);
-        return send_response(
-            &mut stream,
-            500,
-            "Intentional Breakage",
-            &[("Content-Type", "text/plain")],
-            b"this is the error message\n",
-        );
-    }
-
     // Route: /auth/smart/, /auth-push/smart/, /auth-fetch/smart/
     for pfx in &["/auth/smart", "/auth-push/smart", "/auth-fetch/smart"] {
-        if path.starts_with(&format!("{}/", pfx)) {
-            let r = handle_smart_http_with_path(&mut stream, &req, config, pfx, true);
-            let status = r.as_ref().map_or(500, |&s| s);
-            log_access(config, &req.method, &req.path, &req.query, status);
-            return r.map(|_| ());
+        if req.path.starts_with(&format!("{}/", pfx)) {
+            let r = handle_smart_http_with_path(&mut stream, &req, config, pfx);
+            log_access(
+                config,
+                &req.method,
+                &req.path,
+                &req.query,
+                if r.is_ok() { 200 } else { 500 },
+            );
+            return r;
         }
     }
-    // Route: /smart_noexport/<repo> — same as Apache: no GIT_HTTP_EXPORT_ALL (t5561)
-    if path.starts_with("/smart_noexport/") {
-        let r = handle_smart_http_with_path(&mut stream, &req, config, "/smart_noexport", false);
-        let status = r.as_ref().map_or(500, |&s| s);
-        log_access(config, &req.method, &req.path, &req.query, status);
-        return r.map(|_| ());
+    // Route: /one_time_script/<repo> -> git-http-backend CGI output transformed once.
+    if req.path.starts_with("/one_time_script/") {
+        let r = handle_one_time_script_smart(&mut stream, &req, config);
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
+        return r;
+    }
+    // Route parity with upstream apache test CGI shims:
+    // - /smart/incomplete_length/.../git-upload-pack -> truncated pkt-line length header
+    // - /smart/incomplete_body/.../git-upload-pack   -> truncated pkt-line body
+    if req.method == "POST"
+        && req.path.ends_with("/git-upload-pack")
+        && req.path.starts_with("/smart/incomplete_length/")
+    {
+        log_access(config, &req.method, &req.path, &req.query, 200);
+        return send_response(
+            &mut stream,
+            200,
+            "OK",
+            &[("Content-Type", "application/x-git-upload-pack-result")],
+            b"00",
+        );
+    }
+    if req.method == "POST"
+        && req.path.ends_with("/git-upload-pack")
+        && req.path.starts_with("/smart/incomplete_body/")
+    {
+        log_access(config, &req.method, &req.path, &req.query, 200);
+        return send_response(
+            &mut stream,
+            200,
+            "OK",
+            &[("Content-Type", "application/x-git-upload-pack-result")],
+            b"007945",
+        );
     }
     // Route: /smart/<repo> → git-http-backend CGI
-    if path.starts_with("/smart/") {
+    if req.path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);
-        let status = r.as_ref().map_or(500, |&s| s);
-        log_access(config, &req.method, &req.path, &req.query, status);
-        return r.map(|_| ());
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
+        return r;
     }
 
     // Route: /dumb/<path> → static file serving
-    if path.starts_with("/dumb/") {
-        let rel_path = &path["/dumb/".len()..];
+    if req.path.starts_with("/dumb/") {
+        let rel_path = &req.path["/dumb/".len()..];
         return serve_static_file(&mut stream, config, rel_path);
     }
 
     // Route: /auth/dumb/<path> → auth + static file (already checked auth above)
-    if path.starts_with("/auth/dumb/") {
-        let rel_path = &path["/auth/dumb/".len()..];
+    if req.path.starts_with("/auth/dumb/") {
+        let rel_path = &req.path["/auth/dumb/".len()..];
         return serve_static_file(&mut stream, config, rel_path);
     }
 
     // Fallback: try serving from document root directly
-    let rel_path = path.trim_start_matches('/');
+    let rel_path = req.path.trim_start_matches('/');
     if !rel_path.is_empty() {
         let full_path = config.root.join(rel_path);
         if full_path.exists() && full_path.is_file() {
@@ -805,12 +766,8 @@ fn guess_content_type(path: &str) -> String {
     }
 }
 
-fn handle_smart_http(
-    stream: &mut TcpStream,
-    req: &Request,
-    config: &Config,
-) -> Result<u16, String> {
-    handle_smart_http_with_path(stream, req, config, "/smart", true)
+fn handle_smart_http(stream: &mut TcpStream, req: &Request, config: &Config) -> Result<(), String> {
+    handle_smart_http_with_path(stream, req, config, "/smart")
 }
 
 fn handle_smart_http_with_path(
@@ -818,29 +775,98 @@ fn handle_smart_http_with_path(
     req: &Request,
     config: &Config,
     prefix: &str,
-    export_all: bool,
-) -> Result<u16, String> {
-    let path = routing_path(&req.path);
-    let smart_path = &path[prefix.len()..]; // e.g., /repo.git/info/refs
+) -> Result<(), String> {
+    let output = run_smart_http_cgi_output(req, config, prefix)?;
+    parse_and_send_cgi_response(stream, &output)
+}
 
-    let path_translated = format!("{}{}", config.root.display(), smart_path);
+fn one_time_script_path(config: &Config) -> std::path::PathBuf {
+    config.root.parent().map_or_else(
+        || config.root.join("one-time-script"),
+        |p| p.join("one-time-script"),
+    )
+}
+
+fn handle_one_time_script_smart(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let script_path = one_time_script_path(config);
+    let cgi_output = run_smart_http_cgi_output(req, config, "/one_time_script")?;
+    if !script_path.exists() {
+        return parse_and_send_cgi_response(stream, &cgi_output);
+    }
+    let transformed = apply_one_time_script(&script_path, &cgi_output)?;
+    parse_and_send_cgi_response(stream, &transformed)
+}
+
+fn apply_one_time_script(script_path: &Path, input: &[u8]) -> Result<Vec<u8>, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp_path = std::env::temp_dir().join(format!(
+        "test-httpd-one-time-script-{}-{stamp}.pkt",
+        std::process::id()
+    ));
+    fs::write(&tmp_path, input).map_err(|e| e.to_string())?;
+    let output = Command::new(script_path)
+        .arg(&tmp_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("Failed to execute one-time-script: {e}"))?;
+    let _ = fs::remove_file(&tmp_path);
+    let _ = fs::remove_file(script_path);
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "one-time-script exited with status {}: {}",
+            output.status.code().unwrap_or(-1),
+            err.trim()
+        ));
+    }
+    Ok(output.stdout)
+}
+
+fn run_smart_http_cgi_output(
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<Vec<u8>, String> {
+    let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
+    let mut git_project_root = config.root.clone();
+    // Upstream's one_time_script tests may create repositories in the test's cwd
+    // (outside HTTPD document root). Allow that route to resolve against the
+    // parent of `httpd/` when the target repository is not under docroot.
+    if prefix == "/one_time_script" && !repo_exists_under_root(&git_project_root, smart_path) {
+        if let Some(test_root) = config
+            .root
+            .parent()
+            .and_then(|httpd_root| httpd_root.parent())
+        {
+            if repo_exists_under_root(test_root, smart_path) {
+                git_project_root = test_root.to_path_buf();
+            }
+        }
+    }
+    let path_translated = format!("{}{}", git_project_root.display(), smart_path);
 
     let mut cmd = Command::new(&config.git_http_backend);
     cmd.env("REQUEST_METHOD", &req.method)
         .env("QUERY_STRING", &req.query)
         .env("PATH_TRANSLATED", &path_translated)
-        .env("GIT_PROJECT_ROOT", config.root.to_string_lossy().as_ref())
+        .env(
+            "GIT_PROJECT_ROOT",
+            git_project_root.to_string_lossy().as_ref(),
+        )
+        .env("GIT_HTTP_EXPORT_ALL", "1")
         .env("PATH_INFO", smart_path)
         .env("SERVER_PROTOCOL", "HTTP/1.1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    if export_all {
-        cmd.env("GIT_HTTP_EXPORT_ALL", "1");
-    } else {
-        cmd.env_remove("GIT_HTTP_EXPORT_ALL");
-    }
 
     if let Some(ct) = req.headers.get("content-type") {
         cmd.env("CONTENT_TYPE", ct);
@@ -875,17 +901,22 @@ fn handle_smart_http_with_path(
     let output = child
         .wait_with_output()
         .map_err(|e| format!("Failed to wait for git-http-backend: {e}"))?;
-
-    if !output.status.success() || !output.stderr.is_empty() {
-        let _ = std::io::stderr().write_all(&output.stderr);
-    }
-
-    // Parse CGI response (headers + body separated by blank line)
-    let stdout = output.stdout;
-    parse_and_send_cgi_response(stream, &stdout)
+    Ok(output.stdout)
 }
 
-fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<u16, String> {
+fn repo_exists_under_root(root: &Path, smart_path: &str) -> bool {
+    let trimmed = smart_path.trim_start_matches('/');
+    let mut parts = trimmed.split('/');
+    let Some(repo_component) = parts.next() else {
+        return false;
+    };
+    if repo_component.is_empty() {
+        return false;
+    }
+    root.join(repo_component).is_dir()
+}
+
+fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {
     // Find the header/body separator (blank line: \r\n\r\n or \n\n)
     let mut header_end = None;
     let mut body_start = None;
@@ -912,8 +943,7 @@ fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Res
         (Some(he), Some(bs)) => (&cgi_output[..he], &cgi_output[bs..]),
         _ => {
             // No headers found, treat everything as body
-            send_response(stream, 200, "OK", &[], cgi_output)?;
-            return Ok(200);
+            return send_response(stream, 200, "OK", &[], cgi_output);
         }
     };
 
@@ -956,7 +986,7 @@ fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Res
         .map_err(|e| e.to_string())?;
     stream.write_all(body).map_err(|e| e.to_string())?;
     stream.flush().map_err(|e| e.to_string())?;
-    Ok(status_code)
+    Ok(())
 }
 
 fn send_response(

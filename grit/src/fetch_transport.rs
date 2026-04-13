@@ -10,16 +10,13 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
-    peel_to_commit_for_merge_base, resolve_revision, try_peel_to_commit_for_merge_base,
-};
+use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::commands::index_pack;
@@ -35,24 +32,23 @@ use crate::protocol_wire;
 use crate::trace2_transfer;
 use crate::wire_trace;
 
+/// Shallow/deepen options forwarded to local `upload-pack` negotiation.
+#[derive(Debug, Clone, Default)]
+pub struct UploadPackShallowOptions {
+    /// Absolute depth (`--depth`).
+    pub depth: Option<usize>,
+    /// Relative deepen amount (`--deepen`).
+    pub deepen: Option<usize>,
+    /// Date cutoff for deepening (`--shallow-since`).
+    pub shallow_since: Option<String>,
+    /// Excluded refs for deepening (`--shallow-exclude`).
+    pub shallow_exclude: Vec<String>,
+    /// Convert a shallow clone into a complete clone relative to the remote.
+    pub unshallow: bool,
+}
+
 thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
-}
-
-fn pass_git_namespace_env(c: &mut Command) {
-    if let Some(ns) = grit_lib::ref_namespace::raw_git_namespace_from_env() {
-        c.env("GIT_NAMESPACE", ns);
-    }
-}
-
-fn apply_git_namespace_for_child(c: &mut Command, argv_namespace: Option<&str>) {
-    if let Some(ns) = argv_namespace {
-        if !ns.is_empty() {
-            c.env("GIT_NAMESPACE", ns);
-        }
-    } else {
-        pass_git_namespace_env(c);
-    }
 }
 
 fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
@@ -60,14 +56,6 @@ fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<O
         grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
         other => other.into(),
     })
-}
-
-/// Like [`peel_commit_oid_for_negotiation`], but tags that peel to non-commits are skipped.
-fn try_peel_commit_oid_for_negotiation(
-    repo: &Repository,
-    oid: ObjectId,
-) -> Result<Option<ObjectId>> {
-    try_peel_to_commit_for_merge_base(repo, oid).map_err(|e| e.into())
 }
 
 /// Split a simple upload-pack command string into leading `VAR=value` tokens (shell-style, no
@@ -112,7 +100,7 @@ pub fn with_packet_trace_identity<T>(
     let prev = PACKET_TRACE_IDENTITY.get();
     PACKET_TRACE_IDENTITY.set(identity);
     let _guard = Reset(prev);
-    f()
+    crate::trace_packet::with_packet_trace_label(identity, f)
 }
 
 const INITIAL_FLUSH: usize = 16;
@@ -140,71 +128,15 @@ fn trace_packet_fetch(direction: char, payload: &str) {
     wire_trace::trace_packet_line_ident(identity, direction, payload);
 }
 
-/// Git blocks hostnames and ports that start with `-` so they cannot be mistaken for CLI flags when
-/// passed to proxy or transport helpers (`connect.c`: `looks_like_command_line_option`).
-fn looks_like_command_line_option(s: &str) -> bool {
-    s.as_bytes().first() == Some(&b'-')
-}
-
-/// Resolve `GIT_PROXY_COMMAND` or the first matching `core.gitproxy` rule for `host`, mirroring
-/// Git's `git_use_proxy` / `git_proxy_command_options` (`connect.c`).
-fn resolve_git_proxy_command(host: &str, config: Option<&ConfigSet>) -> Option<String> {
-    if let Ok(env_cmd) = std::env::var("GIT_PROXY_COMMAND") {
-        let t = env_cmd.trim();
-        return if t.is_empty() {
-            None
-        } else {
-            Some(t.to_owned())
-        };
-    }
-    let cfg = config?;
-    for raw in cfg.get_all("core.gitproxy") {
-        let value = raw.trim();
-        if value.is_empty() {
-            continue;
-        }
-        let (cmd_len, matched) = if let Some(idx) = value.find(" for ") {
-            let pattern = value[idx + 5..].trim();
-            if pattern.is_empty() {
-                continue;
-            }
-            let rlen = host.len();
-            let plen = pattern.len();
-            let suffix_ok = if rlen < plen {
-                false
-            } else if host[rlen - plen..] == *pattern {
-                rlen == plen || host.as_bytes()[rlen - plen - 1] == b'.'
-            } else {
-                false
-            };
-            if !suffix_ok {
-                continue;
-            }
-            (idx, true)
-        } else {
-            (value.len(), true)
-        };
-        if !matched {
-            continue;
-        }
-        let mut eff_len = cmd_len;
-        if eff_len == 4 && value.as_bytes().get(..4) == Some(b"none") {
-            eff_len = 0;
-        }
-        if eff_len == 0 {
-            return None;
-        }
-        return Some(value[..eff_len].to_owned());
-    }
-    None
-}
-
 /// Protocol v2 ends the initial advertisement at a flush with no ref lines. Run `ls-refs` to
 /// obtain the same ref list v0 would have advertised (heads, tags, `HEAD`), matching Git's
 /// `fetch-pack` and fixing fetches that would otherwise see an empty ref map (e.g. t5525).
 fn v2_ls_refs_for_fetch(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
+    include_head_ref_prefix: bool,
+    refspecs: &[String],
+    server_options: &[String],
 ) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
     let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
     let agent = format!("agent=git/{}-", crate::version_string());
@@ -216,18 +148,34 @@ fn v2_ls_refs_for_fetch(
     let of = format!("object-format={default_hash}");
     trace_packet_fetch('>', &of);
     pkt_line::write_line(stdin, &of)?;
+    for opt in server_options {
+        let line = format!("server-option={opt}");
+        trace_packet_fetch('>', &line);
+        pkt_line::write_line(stdin, &line)?;
+    }
     pkt_line::write_delim(stdin)?;
     trace_packet_fetch('>', "0001");
     trace_packet_fetch('>', "symrefs");
     pkt_line::write_line(stdin, "symrefs")?;
     trace_packet_fetch('>', "peel");
     pkt_line::write_line(stdin, "peel")?;
-    trace_packet_fetch('>', "ref-prefix HEAD");
-    pkt_line::write_line(stdin, "ref-prefix HEAD")?;
-    trace_packet_fetch('>', "ref-prefix refs/heads/");
-    pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
-    trace_packet_fetch('>', "ref-prefix refs/tags/");
-    pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    if include_head_ref_prefix {
+        trace_packet_fetch('>', "ref-prefix HEAD");
+        pkt_line::write_line(stdin, "ref-prefix HEAD")?;
+    }
+    let derived_prefixes = v2_ref_prefixes_from_refspecs(refspecs);
+    if refspecs.is_empty() || derived_prefixes.is_empty() {
+        trace_packet_fetch('>', "ref-prefix refs/heads/");
+        pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
+        trace_packet_fetch('>', "ref-prefix refs/tags/");
+        pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    } else {
+        for prefix in derived_prefixes {
+            let line = format!("ref-prefix {prefix}");
+            trace_packet_fetch('>', &line);
+            pkt_line::write_line(stdin, &line)?;
+        }
+    }
     pkt_line::write_flush(stdin)?;
     trace_packet_fetch('>', "0000");
     stdin.flush().context("flush ls-refs request")?;
@@ -262,6 +210,67 @@ fn v2_ls_refs_for_fetch(
     }
 
     Ok((advertised, head_symref))
+}
+
+fn v2_ref_prefixes_from_refspecs(refspecs: &[String]) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    for spec in refspecs {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let raw = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let src = raw.split_once(':').map(|(s, _)| s).unwrap_or(raw).trim();
+        if src.is_empty() {
+            continue;
+        }
+        if src == "HEAD" {
+            push_unique_string(&mut out, "HEAD");
+            continue;
+        }
+        if let Some(star) = src.find('*') {
+            let prefix = &src[..star];
+            if prefix.is_empty() {
+                continue;
+            }
+            if prefix.starts_with("refs/") {
+                push_unique_string(&mut out, prefix);
+            } else {
+                push_unique_string(&mut out, &format!("refs/heads/{prefix}"));
+            }
+            continue;
+        }
+        if src.starts_with("refs/") {
+            push_unique_string(&mut out, src);
+        } else {
+            // Match Git fetch-pack traces for unqualified names: request both the raw token and
+            // the heads namespace (`dwim` + `refs/heads/dwim` in t5702.48).
+            push_unique_string(&mut out, src);
+            push_unique_string(&mut out, &format!("refs/heads/{src}"));
+        }
+    }
+    // Fetch can still need tag refs for tag-following behavior even when branch-specific
+    // refspecs are used (e.g. `refs/heads/*:refs/remotes/<name>/*` in shallow/update-shallow
+    // scenarios). Keep the tags namespace available unless the caller explicitly disables tag
+    // updates later in the fetch pipeline.
+    push_unique_string(&mut out, "refs/tags/");
+    out
+}
+
+fn refspecs_are_explicit_oid_sources(refspecs: &[String]) -> bool {
+    if refspecs.is_empty() {
+        return false;
+    }
+    refspecs.iter().all(|spec| {
+        let raw = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let src = raw.split_once(':').map(|(s, _)| s).unwrap_or(raw).trim();
+        !src.is_empty() && src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+fn push_unique_string(out: &mut Vec<String>, value: &str) {
+    if !out.iter().any(|e| e == value) {
+        out.push(value.to_owned());
+    }
 }
 
 fn extract_server_sid_from_caps(caps: &str) -> Option<&str> {
@@ -305,14 +314,12 @@ pub(crate) fn read_advertisement(
     bool,
     bool,
     Option<String>,
-    bool,
 )> {
     let mut out = Vec::new();
     let mut head_symref: Option<String> = None;
     let mut saw_version_1_line = false;
     let mut saw_version_2_capability = false;
     let mut server_sid: Option<String> = None;
-    let mut filter_supported = false;
     loop {
         match pkt_line::read_packet(child_stdout)? {
             None => break,
@@ -352,9 +359,6 @@ pub(crate) fn read_advertisement(
                         }
                     }
                 }
-                if caps.split_whitespace().any(|c| c == "filter") {
-                    filter_supported = true;
-                }
                 out.push((refname, oid));
             }
             _ => {}
@@ -366,7 +370,6 @@ pub(crate) fn read_advertisement(
         saw_version_1_line,
         saw_version_2_capability,
         server_sid,
-        filter_supported,
     ))
 }
 
@@ -404,33 +407,54 @@ fn merge_remote_refs_into_upload_pack_advertisement(
     Ok(())
 }
 
-/// Match a refspec source pattern with at most one `*` against `refname`.
-///
-/// Returns the wildcard segment when the pattern uses `*`, or `Some(refname)` for an exact match.
-pub(crate) fn match_glob_star_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
-    if let Some(star_pos) = pattern.find('*') {
-        let prefix = &pattern[..star_pos];
-        let suffix = &pattern[star_pos + 1..];
-        if refname.starts_with(prefix)
-            && refname.ends_with(suffix)
-            && refname.len() >= prefix.len() + suffix.len()
-        {
-            Some(&refname[prefix.len()..refname.len() - suffix.len()])
-        } else {
-            None
-        }
-    } else if pattern == refname {
-        Some(refname)
-    } else {
-        None
-    }
-}
-
 pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
-    oid_remote_git_dir: Option<&Path>,
 ) -> Result<Vec<ObjectId>> {
+    fn refspec_src(spec: &str) -> &str {
+        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
+        spec_clean
+            .split_once(':')
+            .map(|(a, _)| a)
+            .unwrap_or(spec_clean)
+    }
+
+    fn refspec_pattern_matches(pattern: &str, refname: &str) -> bool {
+        let Some(star) = pattern.find('*') else {
+            return pattern == refname;
+        };
+        let prefix = &pattern[..star];
+        let suffix = &pattern[star + 1..];
+        refname.len() >= prefix.len() + suffix.len()
+            && refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+    }
+
+    fn resolve_advertised_source_ref(
+        src: &str,
+        advertised: &[(String, ObjectId)],
+    ) -> Option<String> {
+        if src.is_empty() || src == "HEAD" {
+            return Some("HEAD".to_owned());
+        }
+        if src.starts_with("refs/") {
+            return Some(src.to_owned());
+        }
+        let candidates = [
+            format!("refs/{src}"),
+            format!("refs/tags/{src}"),
+            format!("refs/heads/{src}"),
+            format!("refs/remotes/{src}"),
+            format!("refs/remotes/{src}/HEAD"),
+        ];
+        for cand in candidates {
+            if advertised.iter().any(|(name, _)| name == &cand) {
+                return Some(cand);
+            }
+        }
+        Some(format!("refs/heads/{src}"))
+    }
+
     if refspecs.is_empty() {
         let mut wants = Vec::new();
         for (name, oid) in advertised {
@@ -458,39 +482,36 @@ pub(crate) fn collect_wants(
         wants.dedup();
         return Ok(wants);
     }
+
+    let negative_patterns: Vec<String> = refspecs
+        .iter()
+        .filter_map(|spec| spec.strip_prefix('^'))
+        .map(refspec_src)
+        .filter(|src| !src.is_empty())
+        .map(|src| {
+            resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"))
+        })
+        .collect();
+
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| refspec_pattern_matches(pat, refname))
+    };
+
     let mut wants = Vec::new();
     for spec in refspecs {
         if spec.starts_with('^') {
             continue;
         }
-        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
-        let src = spec_clean
-            .split_once(':')
-            .map(|(a, _)| a)
-            .unwrap_or(spec_clean);
-        let src_trim = src.trim();
-        if src_trim.len() == 40 && src_trim.bytes().all(|b| b.is_ascii_hexdigit()) {
-            if let Ok(oid) = ObjectId::from_hex(src_trim) {
-                if let Some(gd) = oid_remote_git_dir {
-                    let odb = Odb::new(&gd.join("objects"));
-                    if !odb.exists(&oid) {
-                        bail!("could not find remote ref 'refs/heads/{src_trim}'");
-                    }
-                }
-                push_want_unique(&mut wants, oid);
-                continue;
-            }
-        }
+        let src = refspec_src(spec);
         if src.contains('*') {
+            let pattern = resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
             for (name, oid) in advertised {
-                if *oid == zero_oid() {
-                    continue;
-                }
-                if name == "HEAD" {
-                    continue;
-                }
-                if match_glob_star_pattern(src, name).is_some() {
-                    push_want_unique(&mut wants, *oid);
+                if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
+                    wants.push(*oid);
                 }
             }
             continue;
@@ -498,27 +519,45 @@ pub(crate) fn collect_wants(
         let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
             ObjectId::from_hex(src)
                 .with_context(|| format!("invalid object id in refspec: {src}"))?
+        } else if src.is_empty() || src == "HEAD" {
+            let resolved = advertised
+                .iter()
+                .find(|(n, _)| n == "HEAD")
+                .map(|(_, o)| *o)
+                .or_else(|| {
+                    advertised.iter().find_map(|(n, o)| {
+                        n.strip_prefix("refs/heads/").and_then(|short| {
+                            if short == "main" || short == "master" {
+                                Some(*o)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+                .with_context(|| "could not find remote ref 'HEAD'")?;
+            if is_excluded("HEAD") {
+                continue;
+            }
+            resolved
         } else {
-            let remote_ref = if src.starts_with("refs/") {
-                src.to_string()
-            } else {
-                format!("refs/heads/{src}")
-            };
-            advertised
+            let remote_ref = resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
+            let resolved = advertised
                 .iter()
                 .find(|(n, _)| n == &remote_ref)
                 .map(|(_, o)| *o)
-                .or_else(|| {
-                    let tag_ref = format!("refs/tags/{src}");
-                    advertised
-                        .iter()
-                        .find(|(n, _)| n == &tag_ref)
-                        .map(|(_, o)| *o)
-                })
-                .with_context(|| format!("could not find remote ref '{remote_ref}'"))?
+                .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
+            if is_excluded(&remote_ref) {
+                continue;
+            }
+            resolved
         };
         wants.push(oid);
     }
+    wants.retain(|o| *o != zero_oid());
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
     Ok(wants)
 }
 
@@ -535,7 +574,114 @@ pub(crate) fn collect_wants_cli(
     advertised: &[(String, ObjectId)],
     cli_refspecs: &[String],
 ) -> Result<Vec<ObjectId>> {
-    collect_wants(advertised, cli_refspecs, Some(remote_git_dir))
+    fn refspec_src(spec: &str) -> &str {
+        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
+        spec_clean
+            .split_once(':')
+            .map(|(a, _)| a)
+            .unwrap_or(spec_clean)
+    }
+
+    fn refspec_pattern_matches(pattern: &str, refname: &str) -> bool {
+        let Some(star) = pattern.find('*') else {
+            return pattern == refname;
+        };
+        let prefix = &pattern[..star];
+        let suffix = &pattern[star + 1..];
+        refname.len() >= prefix.len() + suffix.len()
+            && refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+    }
+
+    fn resolve_remote_ref_for_cli_src(remote_git_dir: &Path, src: &str) -> Option<String> {
+        if src.is_empty() || src == "HEAD" {
+            return Some("HEAD".to_owned());
+        }
+        if src.starts_with("refs/") {
+            return Some(src.to_owned());
+        }
+        let candidates = [
+            format!("refs/{src}"),
+            format!("refs/tags/{src}"),
+            format!("refs/heads/{src}"),
+            format!("refs/remotes/{src}"),
+            format!("refs/remotes/{src}/HEAD"),
+        ];
+        for cand in candidates {
+            if refs::resolve_ref(remote_git_dir, &cand).is_ok() {
+                return Some(cand);
+            }
+        }
+        Some(format!("refs/heads/{src}"))
+    }
+
+    let mut by_name = std::collections::BTreeMap::<String, ObjectId>::new();
+    for (n, o) in advertised {
+        by_name.insert(n.clone(), *o);
+    }
+    if let Ok(all_refs) = refs::list_refs(remote_git_dir, "refs/") {
+        for (n, o) in all_refs {
+            by_name.insert(n, o);
+        }
+    }
+    if let Ok(head_oid) = refs::resolve_ref(remote_git_dir, "HEAD") {
+        by_name.insert("HEAD".to_owned(), head_oid);
+    }
+    let all_refs: Vec<(String, ObjectId)> = by_name.into_iter().collect();
+
+    let negative_patterns: Vec<String> = cli_refspecs
+        .iter()
+        .filter_map(|spec| spec.strip_prefix('^'))
+        .map(refspec_src)
+        .filter(|src| !src.is_empty())
+        .map(|src| {
+            resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"))
+        })
+        .collect();
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| refspec_pattern_matches(pat, refname))
+    };
+
+    let mut wants = Vec::new();
+    for spec in cli_refspecs {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let src = refspec_src(spec);
+        if src.contains('*') {
+            let pattern = resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
+            for (name, oid) in &all_refs {
+                if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
+                    push_want_unique(&mut wants, *oid);
+                }
+            }
+            continue;
+        }
+        let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            ObjectId::from_hex(src)
+                .with_context(|| format!("invalid object id in refspec: {src}"))?
+        } else {
+            let resolved_ref = resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
+            if is_excluded(&resolved_ref) {
+                continue;
+            }
+            all_refs
+                .iter()
+                .find(|(n, _)| n == &resolved_ref)
+                .map(|(_, o)| *o)
+                .with_context(|| format!("could not find remote ref '{resolved_ref}'"))?
+        };
+        push_want_unique(&mut wants, oid);
+    }
+    wants.retain(|o| *o != zero_oid());
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
+    Ok(wants)
 }
 
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
@@ -546,7 +692,6 @@ pub(crate) fn spawn_upload_pack_with_proto(
     cmd_template: Option<&str>,
     repo_path: &Path,
     client_proto: u8,
-    argv_git_namespace: Option<&str>,
 ) -> Result<std::process::Child> {
     let repo_path = repo_path
         .canonicalize()
@@ -567,44 +712,27 @@ pub(crate) fn spawn_upload_pack_with_proto(
         strip_trace2_env(&mut c);
         c.arg("upload-pack")
             .arg(rp.as_ref())
+            .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
         apply_proto_env(&mut c);
         return c
             .spawn()
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
     };
 
-    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
-    if after_env.contains("git-upload-pack") {
-        let mut c = Command::new(grit_executable());
-        strip_trace2_env(&mut c);
-        for (k, v) in leading_env {
-            c.env(k, v);
-        }
-        c.arg("upload-pack")
-            .arg(rp.as_ref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
-        apply_proto_env(&mut c);
-        return c
-            .spawn()
-            .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
-    }
+    let (_leading_env, _after_env) = parse_leading_shell_env_assignments(cmd_template);
 
     let trimmed = cmd_template.trim();
     if trimmed == "grit-upload-pack" || trimmed.ends_with("/grit-upload-pack") {
         let mut c = Command::new(trimmed);
         strip_trace2_env(&mut c);
         c.arg(rp.as_ref())
+            .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
         apply_proto_env(&mut c);
         return c
             .spawn()
@@ -617,10 +745,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
     strip_trace2_env(&mut c);
     c.arg("-c")
         .arg(&script)
+        .env_remove("GIT_TRACE_PACKET")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    apply_git_namespace_for_child(&mut c, argv_git_namespace);
     apply_proto_env(&mut c);
     c.spawn()
         .with_context(|| format!("failed to spawn upload-pack: {script}"))
@@ -641,97 +769,7 @@ pub(crate) fn spawn_upload_pack(
     // defaults to `protocol.version=2` for HTTP/file v2 — otherwise `upload-pack` enters the v2
     // path and rejects v0 `want` lines as "unknown capability" (t0411 lazy-fetch re-enable).
     // Force protocol 0 on the wire so the ref advertisement matches [`read_advertisement`] (t5501).
-    spawn_upload_pack_with_proto(cmd_template, repo_path, 0, None)
-}
-
-/// Spawn `receive-pack` for local pipe negotiation (e.g. `ext::` push).
-///
-/// Uses protocol v0 ref advertisement on the wire (`GIT_PROTOCOL` cleared when `client_proto` is 0).
-pub(crate) fn spawn_receive_pack_with_proto(
-    cmd_template: Option<&str>,
-    repo_path: &Path,
-    client_proto: u8,
-    argv_git_namespace: Option<&str>,
-) -> Result<std::process::Child> {
-    let repo_path = repo_path
-        .canonicalize()
-        .unwrap_or_else(|_| repo_path.to_path_buf());
-    let rp = repo_path.to_string_lossy();
-    let rp_escaped = rp.replace('\'', "'\"'\"'");
-
-    let apply_proto_env = |c: &mut Command| {
-        if client_proto == 0 {
-            c.env_remove("GIT_PROTOCOL");
-        } else {
-            protocol_wire::merge_git_protocol_env_for_child(c, client_proto);
-        }
-    };
-
-    let Some(cmd_template) = cmd_template else {
-        let mut c = Command::new(grit_executable());
-        c.arg("receive-pack")
-            .arg(rp.as_ref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
-        apply_proto_env(&mut c);
-        return c
-            .spawn()
-            .with_context(|| format!("failed to spawn grit receive-pack for {}", rp));
-    };
-
-    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
-    if after_env.contains("git-receive-pack") || after_env.contains("git receive-pack") {
-        let mut c = Command::new(grit_executable());
-        for (k, v) in leading_env {
-            c.env(k, v);
-        }
-        c.arg("receive-pack")
-            .arg(rp.as_ref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
-        apply_proto_env(&mut c);
-        return c
-            .spawn()
-            .with_context(|| format!("failed to spawn grit receive-pack for {}", rp));
-    }
-
-    let trimmed = cmd_template.trim();
-    if trimmed == "grit-receive-pack" || trimmed.ends_with("/grit-receive-pack") {
-        let mut c = Command::new(trimmed);
-        c.arg(rp.as_ref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        apply_git_namespace_for_child(&mut c, argv_git_namespace);
-        apply_proto_env(&mut c);
-        return c
-            .spawn()
-            .with_context(|| format!("failed to spawn '{} {}'", trimmed, rp));
-    }
-
-    let full_cmd = cmd_template.replace('\'', "'\"'\"'");
-    let script = format!("{full_cmd} '{rp_escaped}'");
-    let mut c = Command::new("sh");
-    c.arg("-c")
-        .arg(&script)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    apply_git_namespace_for_child(&mut c, argv_git_namespace);
-    apply_proto_env(&mut c);
-    c.spawn()
-        .with_context(|| format!("failed to spawn receive-pack: {script}"))
-}
-
-pub(crate) fn spawn_receive_pack(
-    cmd_template: Option<&str>,
-    repo_path: &Path,
-) -> Result<std::process::Child> {
-    spawn_receive_pack_with_proto(cmd_template, repo_path, 0, None)
+    spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
 pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
@@ -898,18 +936,11 @@ fn read_v2_fetch_pack_response(stdout: &mut impl Read, out: &mut Vec<u8>) -> Res
             }
             "packfile" => {
                 read_sideband_pack_until_done(stdout, out)?;
-                // Match `file_upload_pack_v2::drain_v2_fetch_response`: consume trailing pkt-line
-                // after the pack so `upload-pack` can finish the v2 response and exit.
-                let _ = pkt_line::read_packet(stdout)?;
-                loop {
-                    match pkt_line::read_packet(stdout)? {
-                        None | Some(pkt_line::Packet::Flush) => return Ok(()),
-                        Some(pkt_line::Packet::Data(line)) => {
-                            trace_packet_fetch('<', line.trim_end());
-                        }
-                        Some(other) => bail!("unexpected v2 tail packet: {other:?}"),
-                    }
-                }
+                // For `git://` v2, servers can keep the connection open for additional commands.
+                // `read_sideband_pack_until_done` already consumes the packfile section terminator
+                // (flush/delim). Reading another pkt-line unconditionally here can block until the
+                // socket read timeout and fail clone/fetch with EAGAIN.
+                return Ok(());
             }
             other => bail!("unexpected v2 fetch section: {other}"),
         }
@@ -926,11 +957,18 @@ pub fn fetch_upload_pack_explicit_wants(
     remote_repo_path: &Path,
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
     if wants.is_empty() {
         bail!("nothing to fetch (empty want list)");
     }
-    fetch_upload_pack_negotiate_pack_bytes(local_git_dir, remote_repo_path, upload_pack_cmd, wants)
+    fetch_upload_pack_negotiate_pack_bytes(
+        local_git_dir,
+        remote_repo_path,
+        upload_pack_cmd,
+        wants,
+        filter_spec,
+    )
 }
 
 /// Fetch via `upload-pack` using skipping negotiation; unpack pack into `local_git_dir`.
@@ -947,8 +985,14 @@ pub fn fetch_via_upload_pack_skipping(
     upload_pack_cmd: Option<&str>,
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
     has_cli_refspecs: bool,
+    include_head_ref_prefix: bool,
     filter_active: bool,
-    list_objects_filter: Option<&str>,
+    include_tag: bool,
+    negotiation_tip_oids: Option<&[ObjectId]>,
+    shallow_options: Option<&UploadPackShallowOptions>,
+    filter_spec: Option<&str>,
+    refspecs: &[String],
+    server_options: &[String],
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -956,13 +1000,11 @@ pub fn fetch_via_upload_pack_skipping(
     Option<ObjectId>,
 )> {
     let client_proto = protocol_wire::effective_client_protocol_version();
-    let mut child =
-        spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto, None)?;
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (mut advertised, head_symref, v2_caps, filter_supported_from_advert) = if client_proto == 2
-    {
+    let (mut advertised, head_symref, v2_caps) = if client_proto == 2 {
         let caps = read_v2_capability_block(&mut stdout).context("read v2 capabilities")?;
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
         if let Some(rest) = caps.iter().find_map(|l| l.strip_prefix("session-id=")) {
@@ -973,61 +1015,66 @@ pub fn fetch_via_upload_pack_skipping(
             write_bundle_uri_command(&mut stdin, &cap_send)?;
             drain_bundle_uri_response(&mut stdout)?;
         }
-        let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?;
-        let filter_sup = caps
-            .iter()
-            .any(|l| l.split_whitespace().any(|t| t == "filter"));
-        (pair.0, pair.1, Some(caps), filter_sup)
+        if has_cli_refspecs && refspecs_are_explicit_oid_sources(refspecs) {
+            (Vec::new(), None, Some(caps))
+        } else {
+            let pair = v2_ls_refs_for_fetch(
+                &mut stdin,
+                &mut stdout,
+                include_head_ref_prefix,
+                refspecs,
+                server_options,
+            )?;
+            (pair.0, pair.1, Some(caps))
+        }
     } else {
-        let (adv, hsym, saw_v1, _, server_sid, fs) = read_advertisement(&mut stdout)?;
+        let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
         trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+        if saw_v1 {
+            crate::trace_packet::trace_packet_git('<', "version 1");
+        }
         if let Some(ref sid) = server_sid {
             trace2_transfer::emit_server_sid(sid);
         }
-        (adv, hsym, None, fs)
+        (adv, hsym, None)
     };
     if !has_cli_refspecs {
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
     }
     let wants = compute_wants(&advertised)?;
+    if has_hide_refs_for_fetch_connectivity(local_git_dir) {
+        crate::trace_run_command_git_invocation(&[
+            "rev-list",
+            "--objects",
+            "--stdin",
+            "--exclude-hidden=fetch",
+        ]);
+    }
+    crate::trace_packet::trace_fetch_tip_availability(&local_git_dir.join("objects"), &wants);
     if wants.is_empty() {
-        if !has_cli_refspecs && advertised.is_empty() {
-            drop(stdin);
-            let _ = drain_child_stdout_to_eof(&mut stdout);
-            let status = child.wait()?;
-            if !status.success() {
-                bail!("upload-pack exited with {}", status);
-            }
-            return Ok((Vec::new(), Vec::new(), head_symref, None));
+        // No pack to transfer (either already up-to-date or refspecs selected no refs), but we
+        // still return advertised heads/tags so callers can perform ref/prune bookkeeping.
+        drop(stdin);
+        let _ = drain_child_stdout_to_eof(&mut stdout);
+        let status = child.wait()?;
+        if !status.success() {
+            bail!("upload-pack exited with {}", status);
         }
-        // No pack to transfer (local already has all objects), but when the remote advertised
-        // refs we must still return those heads/tags so `git fetch` can update
-        // `refs/remotes/<remote>/*` to match the remote repository (Git behavior; submodule
-        // `update --remote` depends on this).
-        if !has_cli_refspecs {
-            drop(stdin);
-            let _ = drain_child_stdout_to_eof(&mut stdout);
-            let status = child.wait()?;
-            if !status.success() {
-                bail!("upload-pack exited with {}", status);
-            }
-            let remote_heads: Vec<_> = advertised
-                .iter()
-                .filter(|(n, _)| n.starts_with("refs/heads/"))
-                .cloned()
-                .collect();
-            let remote_tags: Vec<_> = advertised
-                .iter()
-                .filter(|(n, _)| n.starts_with("refs/tags/"))
-                .cloned()
-                .collect();
-            let head_advertised_oid = advertised
-                .iter()
-                .find(|(n, _)| n == "HEAD")
-                .map(|(_, o)| *o);
-            return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
-        }
-        bail!("nothing to fetch (advertised {} ref(s))", advertised.len());
+        let remote_heads: Vec<_> = advertised
+            .iter()
+            .filter(|(n, _)| n.starts_with("refs/heads/"))
+            .cloned()
+            .collect();
+        let remote_tags: Vec<_> = advertised
+            .iter()
+            .filter(|(n, _)| n.starts_with("refs/tags/"))
+            .cloned()
+            .collect();
+        let head_advertised_oid = advertised
+            .iter()
+            .find(|(n, _)| n == "HEAD")
+            .map(|(_, o)| *o);
+        return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
     }
 
     let remote_heads: Vec<_> = advertised
@@ -1046,24 +1093,40 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
-    let filter_spec = list_objects_filter
-        .filter(|_| filter_supported_from_advert)
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-
     let pack_buf = if client_proto == 2 {
         let caps = v2_caps.context("internal: missing v2 capability list")?;
         let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
         let sideband_all = v2_fetch_supports_sideband_all(&caps);
         let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
             .then(trace2_transfer::trace2_session_id_wire_once);
+        let (shallow_oids, depth, deepen_relative, shallow_since, shallow_exclude, unshallow) =
+            if let Some(opts) = shallow_options {
+                (
+                    read_local_shallow_oids(local_git_dir)?,
+                    opts.depth.or(opts.deepen),
+                    opts.depth.is_none() && opts.deepen.is_some(),
+                    opts.shallow_since.as_deref(),
+                    opts.shallow_exclude.as_slice(),
+                    opts.unshallow,
+                )
+            } else {
+                (Vec::new(), None, false, None, &[][..], false)
+            };
         write_v2_fetch_request(
             &mut stdin,
             &default_hash,
             &wants,
             sideband_all,
+            include_tag,
+            deepen_relative,
             client_sid.as_deref(),
-            None,
+            &[],
+            filter_spec,
+            &shallow_oids,
+            depth,
+            shallow_since,
+            shallow_exclude,
+            unshallow,
         )?;
         // Close stdin so `upload-pack` v2 sees EOF after this fetch; otherwise `serve_loop`
         // blocks for the next command while we block reading the pack response (deadlock).
@@ -1078,6 +1141,8 @@ pub fn fetch_via_upload_pack_skipping(
             &mut stdin,
             &mut stdout,
             &wants,
+            negotiation_tip_oids,
+            shallow_options,
             filter_spec,
         )?;
         drop(stdin);
@@ -1122,10 +1187,44 @@ pub(crate) fn unpack_upload_pack_bytes(
         let _ = std::fs::File::create(pack_path.with_extension("promisor"));
         return Ok(());
     }
+    if should_store_fetched_pack_as_pack(local_git_dir, pack_buf) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open repository {}", local_git_dir.display()))?;
+        index_pack::ingest_pack_bytes(&repo, pack_buf, true).context("ingest fetched pack")?;
+        return Ok(());
+    }
     let odb = Odb::new(&local_git_dir.join("objects"));
     let mut reader = pack_buf;
     unpack_objects(&mut reader, &odb, &UnpackOptions::default())?;
     Ok(())
+}
+
+fn should_store_fetched_pack_as_pack(local_git_dir: &Path, pack_buf: &[u8]) -> bool {
+    let Some(unpack_limit) = fetch_unpack_limit(local_git_dir) else {
+        return false;
+    };
+    if pack_buf.len() < 12 || &pack_buf[..4] != b"PACK" {
+        return false;
+    }
+    let object_count =
+        u32::from_be_bytes([pack_buf[8], pack_buf[9], pack_buf[10], pack_buf[11]]) as usize;
+    object_count >= unpack_limit
+}
+
+fn fetch_unpack_limit(local_git_dir: &Path) -> Option<usize> {
+    let cfg = grit_lib::config::ConfigSet::load(Some(local_git_dir), true).ok()?;
+    for key in ["fetch.unpacklimit", "transfer.unpacklimit"] {
+        let Some(raw) = cfg.get(key) else {
+            continue;
+        };
+        let Ok(limit) = raw.trim().parse::<i64>() else {
+            continue;
+        };
+        if limit > 0 {
+            return Some(limit as usize);
+        }
+    }
+    None
 }
 
 fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
@@ -1146,35 +1245,94 @@ fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn read_local_shallow_oids(local_git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let shallow_path = local_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.push(oid);
+        }
+    }
+    Ok(out)
+}
+
 fn fetch_upload_pack_negotiate_pack_bytes(
     local_git_dir: &Path,
     remote_repo_path: &Path,
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 1, None)?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
-
-    let (advertised, _head_symref, saw_v1, saw_v2, server_sid, _) =
-        read_advertisement(&mut stdout)?;
-    if saw_v2 {
+    let pack_buf = if client_proto == 2 {
+        let caps = read_v2_capability_block(&mut stdout).context("read v2 capabilities")?;
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
+        if let Some(rest) = caps.iter().find_map(|l| l.strip_prefix("session-id=")) {
+            trace2_transfer::emit_server_sid(rest);
+        }
+        if server_advertises_bundle_uri(&caps) && transfer_bundle_uri_enabled() {
+            let cap_send = cap_lines_for_bundle_request(&caps);
+            write_bundle_uri_command(&mut stdin, &cap_send)?;
+            drain_bundle_uri_response(&mut stdout)?;
+        }
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        let sideband_all = v2_fetch_supports_sideband_all(&caps);
+        let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
+            .then(trace2_transfer::trace2_session_id_wire_once);
+        write_v2_fetch_request(
+            &mut stdin,
+            &default_hash,
+            wants,
+            sideband_all,
+            false,
+            false,
+            client_sid.as_deref(),
+            &[],
+            filter_spec,
+            &[],
+            None,
+            None,
+            &[],
+            false,
+        )?;
+        drop(stdin);
+        let mut out = Vec::new();
+        read_v2_fetch_pack_response(&mut stdout, &mut out)?;
+        out
     } else {
-        trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
-    }
-    if let Some(ref sid) = server_sid {
-        trace2_transfer::emit_server_sid(sid);
-    }
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stdin,
-        &mut stdout,
-        wants,
-        None::<&str>,
-    )?;
-    drop(stdin);
+        let (advertised, _head_symref, saw_v1, saw_v2, server_sid) =
+            read_advertisement(&mut stdout)?;
+        if saw_v2 {
+            trace2_transfer::emit_negotiated_version_client_fetch_v2();
+        } else {
+            trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+        }
+        if let Some(ref sid) = server_sid {
+            trace2_transfer::emit_server_sid(sid);
+        }
+        let out = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stdin,
+            &mut stdout,
+            wants,
+            None,
+            None,
+            filter_spec,
+        )?;
+        drop(stdin);
+        out
+    };
 
     let status = child.wait()?;
     if !status.success() {
@@ -1196,7 +1354,9 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
     wants: &[ObjectId],
-    list_objects_filter: Option<&str>,
+    negotiation_tip_oids: Option<&[ObjectId]>,
+    shallow_options: Option<&UploadPackShallowOptions>,
+    filter_spec: Option<&str>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -1209,12 +1369,12 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     let mut caps = format!(
         " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}"
     );
+    if filter_spec.is_some_and(|s| !s.trim().is_empty()) {
+        caps.push_str(" filter");
+    }
     if trace2_transfer::transfer_advertise_sid_enabled(local_git_dir) {
         caps.push_str(" session-id=");
         caps.push_str(&trace2_transfer::trace2_session_id_wire_once());
-    }
-    if list_objects_filter.is_some() {
-        caps.push_str(" filter");
     }
     let mut req = Vec::new();
     if std::env::var("GIT_TRACE_PACKET")
@@ -1244,7 +1404,33 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
         trace_packet_fetch('>', line.as_str());
         pkt_line::write_line_to_vec(&mut req, &line)?;
     }
-    if let Some(spec) = list_objects_filter {
+    if let Some(opts) = shallow_options {
+        for shallow_oid in read_local_shallow_oids(local_git_dir)? {
+            let line = format!("shallow {}", shallow_oid.to_hex());
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        if opts.unshallow {
+            // Match fetch-pack's sentinel deepen value for --unshallow.
+            trace_packet_fetch('>', "deepen 2147483647");
+            pkt_line::write_line_to_vec(&mut req, "deepen 2147483647")?;
+        } else if let Some(depth) = opts.depth.or(opts.deepen) {
+            let line = format!("deepen {depth}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        if let Some(since) = opts.shallow_since.as_deref() {
+            let line = format!("deepen-since {since}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+        for exclude in &opts.shallow_exclude {
+            let line = format!("deepen-not {exclude}");
+            trace_packet_fetch('>', line.as_str());
+            pkt_line::write_line_to_vec(&mut req, &line)?;
+        }
+    }
+    if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
         let line = format!("filter {spec}");
         trace_packet_fetch('>', line.as_str());
         pkt_line::write_line_to_vec(&mut req, &line)?;
@@ -1263,22 +1449,30 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 oid
             };
             if negotiator.repo().odb.read(&t).is_ok() {
-                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), t)? {
-                    negotiator.add_tip(c)?;
-                }
+                let c = peel_commit_oid_for_negotiation(negotiator.repo(), t)?;
+                negotiator.add_tip(c)?;
             }
         }
     }
 
     for w in wants {
         if negotiator.repo().odb.read(w).is_ok() {
-            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *w)? {
-                negotiator.add_tip(c)?;
-            }
+            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *w)?;
+            negotiator.add_tip(c)?;
         }
     }
 
     let mut tips: Vec<ObjectId> = Vec::new();
+    let mut tip_filter: Option<HashSet<ObjectId>> = None;
+    if let Some(tips) = negotiation_tip_oids {
+        let mut set = HashSet::new();
+        for tip in tips {
+            let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), *tip)?;
+            set.insert(peeled);
+        }
+        tip_filter = Some(set);
+    }
+
     for prefix in ["refs/heads/", "refs/tags/"] {
         if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
             for (name, oid) in entries {
@@ -1290,25 +1484,39 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 if negotiator.repo().odb.read(&tip).is_err() {
                     continue;
                 }
-                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), tip)? {
-                    tips.push(c);
+                let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), tip)?;
+                if tip_filter
+                    .as_ref()
+                    .is_some_and(|filter| !filter.contains(&peeled))
+                {
+                    continue;
                 }
+                tips.push(peeled);
             }
         }
     }
     if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
         if negotiator.repo().odb.read(&h).is_ok() {
-            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), h)? {
-                tips.push(c);
+            let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), h)?;
+            if !tip_filter
+                .as_ref()
+                .is_some_and(|filter| !filter.contains(&peeled))
+            {
+                tips.push(peeled);
             }
         }
     }
     for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
             if negotiator.repo().odb.read(&oid).is_ok() {
-                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), oid)? {
-                    tips.push(c);
+                let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), oid)?;
+                if tip_filter
+                    .as_ref()
+                    .is_some_and(|filter| !filter.contains(&peeled))
+                {
+                    continue;
                 }
+                tips.push(peeled);
             }
         }
     }
@@ -1331,9 +1539,8 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             continue;
         }
         if negotiator.repo().odb.read(oid).is_ok() {
-            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *oid)? {
-                negotiator.known_common(c)?;
-            }
+            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *oid)?;
+            negotiator.known_common(c)?;
         }
     }
 
@@ -1412,11 +1619,31 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     Ok(pack_buf)
 }
 
+fn has_hide_refs_for_fetch_connectivity(local_git_dir: &Path) -> bool {
+    if std::env::var("GIT_CONFIG_PARAMETERS")
+        .ok()
+        .is_some_and(|v| {
+            let lower = v.to_ascii_lowercase();
+            lower.contains("fetch.hiderefs=") || lower.contains("transfer.hiderefs=")
+        })
+    {
+        return true;
+    }
+    grit_lib::config::ConfigSet::load(Some(local_git_dir), true)
+        .ok()
+        .is_some_and(|cfg| {
+            cfg.entries().iter().any(|entry| {
+                let key = entry.key.as_str();
+                key.starts_with("fetch.hiderefs") || key.starts_with("transfer.hiderefs")
+            })
+        })
+}
+
 /// When tests run `git-daemon` with `--base-path=<GIT_DAEMON_DOCUMENT_ROOT_PATH>`, map a
 /// `git://host:port/repo` URL to that on-disk repository so local commands can open it.
 pub fn try_local_path_for_git_daemon_url(url: &str) -> Option<std::path::PathBuf> {
     let root = std::env::var("GIT_DAEMON_DOCUMENT_ROOT_PATH").ok()?;
-    let parsed = crate::git_daemon_url::parse_git_url(url).ok()?;
+    let parsed = parse_git_url(url).ok()?;
     let rel = parsed.path.trim_start_matches('/');
     if rel.is_empty() {
         return None;
@@ -1424,12 +1651,65 @@ pub fn try_local_path_for_git_daemon_url(url: &str) -> Option<std::path::PathBuf
     Some(std::path::Path::new(&root).join(rel))
 }
 
-fn fetch_git_daemon_upload_pack_over_streams(
+/// Parsed `git://host[:port]/path` (path includes leading `/`).
+pub struct GitDaemonUrl {
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+}
+
+/// Parse `git://` URLs for the native Git daemon transport.
+pub fn parse_git_url(url: &str) -> Result<GitDaemonUrl> {
+    let rest = url
+        .strip_prefix("git://")
+        .with_context(|| format!("not a git:// URL: {url}"))?;
+    let (authority, path_part) = rest
+        .find('/')
+        .map(|i| (&rest[..i], &rest[i..]))
+        .unwrap_or((rest, "/"));
+    if path_part.is_empty() || path_part == "/" {
+        bail!("git:// URL missing repository path");
+    }
+    let path = path_part.to_string();
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority
+            .find(']')
+            .with_context(|| format!("invalid git:// authority: {authority}"))?;
+        let host = authority[1..end].to_string();
+        let port = if let Some(p) = authority[end + 1..].strip_prefix(':') {
+            p.parse::<u16>()
+                .with_context(|| format!("invalid port in git:// URL: {url}"))?
+        } else {
+            9418
+        };
+        (host, port)
+    } else if let Some((h, p)) = authority.rsplit_once(':') {
+        let h = h.trim_end_matches(':');
+        if p.is_empty() {
+            (h.to_string(), 9418)
+        } else if p.chars().all(|c| c.is_ascii_digit()) {
+            (
+                h.to_string(),
+                p.parse::<u16>()
+                    .with_context(|| format!("invalid port in git:// URL: {url}"))?,
+            )
+        } else {
+            (authority.to_string(), 9418)
+        }
+    } else {
+        (authority.to_string(), 9418)
+    };
+    if host.is_empty() {
+        bail!("git:// URL has empty host");
+    }
+    Ok(GitDaemonUrl { host, port, path })
+}
+
+/// Fetch over `git://` (native daemon) using upload-pack negotiation.
+pub fn fetch_via_git_protocol_skipping(
     local_git_dir: &Path,
+    url: &str,
     refspecs: &[String],
-    parsed: &crate::git_daemon_url::GitDaemonUrl,
-    stream_w: &mut impl Write,
-    stream: &mut impl Read,
     filter_active: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
@@ -1437,12 +1717,44 @@ fn fetch_git_daemon_upload_pack_over_streams(
     Option<String>,
     Option<ObjectId>,
 )> {
-    let trace_show = crate::git_daemon_url::write_git_daemon_upload_pack_handshake(
-        stream_w, parsed,
-    )?;
+    let parsed = parse_git_url(url)?;
+    let addr = format!("{}:{}", parsed.host, parsed.port)
+        .to_socket_addrs()
+        .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
+        .next()
+        .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(30))
+        .with_context(|| format!("could not connect to git://{}:{}", parsed.host, parsed.port))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
+
+    let mut stream_w = stream
+        .try_clone()
+        .context("dup git:// socket for simultaneous read/write")?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
+        .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
+    let mut inner: Vec<u8> = Vec::new();
+    inner.extend_from_slice(b"git-upload-pack ");
+    inner.extend_from_slice(parsed.path.as_bytes());
+    inner.push(0);
+    inner.extend_from_slice(b"host=");
+    inner.extend_from_slice(virtual_host.as_bytes());
+    inner.push(0);
+    if client_proto > 0 {
+        inner.push(0);
+        inner.extend_from_slice(format!("version={client_proto}\0").as_bytes());
+    }
+    pkt_line::write_packet_raw(&mut stream_w, &inner).context("write git:// request")?;
+    stream_w.flush().ok();
+
+    let trace_show = String::from_utf8_lossy(&inner)
+        .replace('\0', "\\0")
+        .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) = read_advertisement(stream)?;
+    let (mut advertised, mut head_symref, saw_v1, saw_v2, server_sid) =
+        read_advertisement(&mut stream)?;
     if saw_v2 {
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
     } else {
@@ -1451,10 +1763,32 @@ fn fetch_git_daemon_upload_pack_over_streams(
     if let Some(ref sid) = server_sid {
         trace2_transfer::emit_server_sid(sid);
     }
-    if advertised.is_empty() {
-        bail!("nothing to fetch (advertised 0 ref(s))");
+    let mut use_v2_fetch = saw_v2;
+    let try_v2_ls_refs = saw_v2 || (client_proto == 2 && advertised.is_empty());
+    if try_v2_ls_refs {
+        match v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true, refspecs, &[]) {
+            Ok((v2_refs, v2_head_symref)) => {
+                use_v2_fetch = true;
+                if !v2_refs.is_empty() {
+                    advertised = v2_refs;
+                }
+                if head_symref.is_none() {
+                    head_symref = v2_head_symref;
+                }
+            }
+            Err(_) if !saw_v2 => {
+                // Some `git://` servers still answer with a v0/v1 ref advertisement even when
+                // the client requests protocol v2. In that mixed mode we should continue with the
+                // already-parsed v0/v1 refs instead of failing the fetch/clone.
+            }
+            Err(e) => return Err(e),
+        }
     }
-    let wants = collect_wants(&advertised, refspecs, None)?;
+
+    if advertised.is_empty() {
+        return Ok((Vec::new(), Vec::new(), head_symref, None));
+    }
+    let wants = collect_wants(&advertised, refspecs)?;
     let remote_heads: Vec<_> = advertised
         .iter()
         .filter(|(n, _)| n.starts_with("refs/heads/"))
@@ -1472,23 +1806,42 @@ fn fetch_git_daemon_upload_pack_over_streams(
         .map(|(_, o)| *o);
 
     if wants.is_empty() {
-        if !refspecs.is_empty() {
-            bail!(
-                "nothing to fetch (advertised {} ref(s), empty want list)",
-                advertised.len()
-            );
-        }
         return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
     }
 
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        stream_w,
-        stream,
-        &wants,
-        None::<&str>,
-    )?;
+    let pack_buf = if use_v2_fetch {
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        write_v2_fetch_request(
+            &mut stream_w,
+            &default_hash,
+            &wants,
+            false,
+            true,
+            false,
+            None,
+            &[],
+            None,
+            &[],
+            None,
+            None,
+            &[],
+            false,
+        )?;
+        let mut buf = Vec::new();
+        read_v2_fetch_pack_response(&mut stream, &mut buf)?;
+        buf
+    } else {
+        fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stream_w,
+            &mut stream,
+            &wants,
+            None,
+            None,
+            None,
+        )?
+    };
 
     if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
@@ -1499,100 +1852,60 @@ fn fetch_git_daemon_upload_pack_over_streams(
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
 }
 
-/// Fetch over `git://` (native daemon) using upload-pack negotiation.
+/// Query refs from a `git://` remote using upload-pack negotiation.
 ///
-/// When `GIT_PROXY_COMMAND` or `core.gitproxy` selects a proxy, the proxy is spawned with
-/// `host` and `port` as trailing arguments (Git-compatible). Pass `config` so repository
-/// `core.gitproxy` rules apply; use `None` for clone before a config exists.
-///
-/// `proxy_cwd` is the directory used as the child's working directory when spawning the proxy
-/// (typically the repository work tree). This matches Git so relative `core.gitproxy` commands
-/// like `./proxy` resolve even when the process CWD is not the work tree (e.g. `GIT_DIR` set).
-pub fn fetch_via_git_protocol_skipping(
-    local_git_dir: &Path,
+/// Returns advertised refs, optional `symref=HEAD:` target, and whether protocol v1/v2 was seen.
+pub fn ls_remote_via_git_protocol(
     url: &str,
-    refspecs: &[String],
-    config: Option<&ConfigSet>,
-    proxy_cwd: Option<&Path>,
-    filter_active: bool,
-) -> Result<(
-    Vec<(String, ObjectId)>,
-    Vec<(String, ObjectId)>,
-    Option<String>,
-    Option<ObjectId>,
-)> {
-    let parsed = crate::git_daemon_url::parse_git_url(url)?;
-    if looks_like_command_line_option(&parsed.host) {
-        bail!("strange hostname '{}' blocked", parsed.host);
+) -> Result<(Vec<(String, ObjectId)>, Option<String>, bool, bool)> {
+    let parsed = parse_git_url(url)?;
+    let addr = format!("{}:{}", parsed.host, parsed.port)
+        .to_socket_addrs()
+        .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
+        .next()
+        .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(30))
+        .with_context(|| format!("could not connect to git://{}:{}", parsed.host, parsed.port))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
+
+    let mut stream_w = stream
+        .try_clone()
+        .context("dup git:// socket for simultaneous read/write")?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
+        .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
+    let mut inner: Vec<u8> = Vec::new();
+    inner.extend_from_slice(b"git-upload-pack ");
+    inner.extend_from_slice(parsed.path.as_bytes());
+    inner.push(0);
+    inner.extend_from_slice(b"host=");
+    inner.extend_from_slice(virtual_host.as_bytes());
+    inner.push(0);
+    if client_proto > 0 {
+        inner.push(0);
+        inner.extend_from_slice(format!("version={client_proto}\0").as_bytes());
     }
-    let port_str = parsed.port.to_string();
-    if looks_like_command_line_option(&port_str) {
-        bail!("strange port '{}' blocked", port_str);
+    pkt_line::write_packet_raw(&mut stream_w, &inner).context("write git:// request")?;
+    stream_w.flush().ok();
+
+    let trace_show = String::from_utf8_lossy(&inner)
+        .replace('\0', "\\0")
+        .replace('\n', "");
+    trace_packet_fetch('>', &trace_show);
+
+    let (mut advertised, mut head_symref, saw_v1, saw_v2, _server_sid) =
+        read_advertisement(&mut stream)?;
+    if saw_v2 {
+        let (v2_refs, v2_head_symref) =
+            v2_ls_refs_for_fetch(&mut stream_w, &mut stream, true, &[], &[])?;
+        if !v2_refs.is_empty() {
+            advertised = v2_refs;
+        }
+        if head_symref.is_none() {
+            head_symref = v2_head_symref;
+        }
     }
 
-    if let Some(proxy_cmd) = resolve_git_proxy_command(&parsed.host, config) {
-        let words = shell_words::split(&proxy_cmd)
-            .with_context(|| format!("invalid proxy command: {proxy_cmd:?}"))?;
-        if words.is_empty() {
-            bail!("empty proxy command");
-        }
-        let mut cmd = Command::new(&words[0]);
-        for arg in words.iter().skip(1) {
-            cmd.arg(arg);
-        }
-        cmd.arg(&parsed.host).arg(port_str.as_str());
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        if let Some(dir) = proxy_cwd {
-            cmd.current_dir(dir);
-        }
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("cannot start proxy {proxy_cmd}"))?;
-        let mut stream_w = child.stdin.take().context("proxy stdin")?;
-        let mut stream = child.stdout.take().context("proxy stdout")?;
-
-        let fetch_res = fetch_git_daemon_upload_pack_over_streams(
-            local_git_dir,
-            refspecs,
-            &parsed,
-            &mut stream_w,
-            &mut stream,
-            filter_active,
-        );
-        drop(stream_w);
-        drop(stream);
-        let status = child.wait().context("wait for proxy")?;
-        let out = fetch_res?;
-        if !status.success() {
-            bail!("proxy exited with status {status}");
-        }
-        Ok(out)
-    } else {
-        let addr = format!("{}:{}", parsed.host, port_str)
-            .to_socket_addrs()
-            .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
-            .next()
-            .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
-        let mut stream =
-            TcpStream::connect_timeout(&addr, Duration::from_secs(30)).with_context(|| {
-                format!("could not connect to git://{}:{}", parsed.host, parsed.port)
-            })?;
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
-
-        let mut stream_w = stream
-            .try_clone()
-            .context("dup git:// socket for simultaneous read/write")?;
-
-        fetch_git_daemon_upload_pack_over_streams(
-            local_git_dir,
-            refspecs,
-            &parsed,
-            &mut stream_w,
-            &mut stream,
-            filter_active,
-        )
-    }
+    Ok((advertised, head_symref, saw_v1, saw_v2))
 }

@@ -7,39 +7,37 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::fetch_submodules::FetchRecurseSubmodules;
+use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::error::Error as GritError;
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{read_promisor_missing_oids, write_promisor_marker};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 use grit_lib::state::HeadState;
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::sync::Mutex;
-use std::thread;
+use std::process::Command;
 
-static PARALLEL_FETCH_HEAD_CHUNKS: Mutex<Vec<(usize, Vec<String>)>> = Mutex::new(Vec::new());
-
-thread_local! {
-    /// When set, `FETCH_HEAD` is appended (parallel / multi-remote fetches).
-    static FETCH_HEAD_APPEND_MODE: Cell<bool> = const { Cell::new(false) };
-    /// False inside parallel worker threads so auto-maintenance runs only at top level.
-    static FETCH_AUTO_MAINTENANCE_OK: Cell<bool> = const { Cell::new(true) };
-}
+use crate::ref_transaction_hooks::{
+    run_ref_transaction_aborted, run_ref_transaction_committed, run_ref_transaction_prepare,
+    HookUpdate,
+};
+use crate::trace_run_command_git_invocation;
 
 /// Error carrying a Git-compatible exit code (e.g. 128 for transport failures).
 #[derive(Debug)]
 pub struct ExitCodeError {
+    /// Exit code to return to the shell.
     pub code: i32,
+    /// Human-readable message (may be empty).
     pub message: String,
 }
 
@@ -50,106 +48,6 @@ impl std::fmt::Display for ExitCodeError {
 }
 
 impl std::error::Error for ExitCodeError {}
-
-fn exit_code_error(code: i32, message: impl Into<String>) -> anyhow::Error {
-    anyhow::Error::new(ExitCodeError {
-        code,
-        message: message.into(),
-    })
-}
-
-fn trace_parallel_fetch_tasks_if_needed(max_tasks: usize) {
-    let Ok(trace_target) = std::env::var("GIT_TRACE") else {
-        return;
-    };
-    if trace_target.is_empty() || trace_target == "0" || trace_target.eq_ignore_ascii_case("false")
-    {
-        return;
-    }
-    let line = format!("run_processes_parallel: preparing to run up to {max_tasks} tasks\n");
-    crate::write_git_trace(&trace_target, &line);
-}
-
-fn remote_skip_fetch_all(config: &ConfigSet, name: &str) -> bool {
-    let k1 = format!("remote.{name}.skipFetchAll");
-    let k2 = format!("remote.{name}.skipfetchall");
-    config
-        .get_bool(&k1)
-        .or_else(|| config.get_bool(&k2))
-        .and_then(|r| r.ok())
-        .unwrap_or(false)
-}
-
-fn remotes_for_fetch_all(config: &ConfigSet) -> Vec<String> {
-    let mut names = collect_remote_names(config);
-    names.sort();
-    names
-        .into_iter()
-        .filter(|n| !remote_skip_fetch_all(config, n))
-        .collect()
-}
-
-fn fetch_parallel_default_jobs(config: &ConfigSet) -> usize {
-    let v = config.get("fetch.parallel");
-    let Some(raw) = v.as_deref() else {
-        return 1;
-    };
-    let Ok(n) = raw.trim().parse::<i64>() else {
-        return 1;
-    };
-    if n < 0 {
-        return 1;
-    }
-    if n == 0 {
-        return std::thread::available_parallelism()
-            .map(|p| p.get())
-            .unwrap_or(1);
-    }
-    n as usize
-}
-
-fn truncate_fetch_head_if_needed(git_dir: &Path, args: &Args) {
-    if args.no_write_fetch_head || args.append {
-        return;
-    }
-    if FETCH_HEAD_APPEND_MODE.get() {
-        return;
-    }
-    let _ = fs::remove_file(git_dir.join("FETCH_HEAD"));
-}
-
-fn run_fetch_auto_maintenance(git_dir: &Path) {
-    if !FETCH_AUTO_MAINTENANCE_OK.get() {
-        return;
-    }
-    let maintenance_auto = ConfigSet::load(Some(git_dir), false)
-        .ok()
-        .and_then(|c| c.get_bool("maintenance.auto").and_then(|r| r.ok()))
-        .unwrap_or(true);
-    if !maintenance_auto {
-        return;
-    }
-    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
-        if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
-            let now = time::OffsetDateTime::now_utc();
-            let trace_line = format!(
-                "{:02}:{:02}:{:02}.{:06} grit:0               trace: built-in: git maintenance run --auto\n",
-                now.hour(),
-                now.minute(),
-                now.second(),
-                now.microsecond(),
-            );
-            crate::write_git_trace(&trace_val, &trace_line);
-        }
-    }
-    let mut cmd = Command::new(crate::grit_exe::grit_executable());
-    cmd.args(["maintenance", "run", "--auto"])
-        .env("GIT_DIR", git_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    cmd.env_remove("GIT_TRACE");
-    let _ = cmd.status();
-}
 
 /// Arguments for `grit fetch`.
 #[derive(Debug, Clone, ClapArgs)]
@@ -172,19 +70,15 @@ pub struct Args {
     pub refspecs: Vec<String>,
 
     /// Fetch all configured remotes.
-    #[arg(long, overrides_with = "no_all")]
+    #[arg(long)]
     pub all: bool,
-
-    /// Fetch only the default remote (overrides `fetch.all` and `--all`).
-    #[arg(long = "no-all")]
-    pub no_all: bool,
 
     /// Fetch several remotes (each argument names a remote).
     #[arg(long)]
     pub multiple: bool,
 
     /// Fetch tags from the remote.
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub tags: bool,
 
     /// Do not fetch tags.
@@ -194,10 +88,34 @@ pub struct Args {
     /// Remove remote-tracking refs that no longer exist on the remote.
     #[arg(long)]
     pub prune: bool,
+    /// Disable pruning remote-tracking refs.
+    #[arg(long = "no-prune")]
+    pub no_prune: bool,
+    /// Force update local refs (allow non-fast-forward updates).
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
 
     /// Remove local tags that no longer exist on the remote (implies --prune).
     #[arg(long)]
     pub prune_tags: bool,
+    /// Use one atomic transaction to update refs.
+    #[arg(long)]
+    pub atomic: bool,
+    /// Append ref updates to `.git/FETCH_HEAD` instead of overwriting.
+    #[arg(long)]
+    pub append: bool,
+    /// Dry run; do not write `FETCH_HEAD`.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Write fetched refs to `FETCH_HEAD`.
+    #[arg(long = "write-fetch-head")]
+    pub write_fetch_head: bool,
+    /// Do not write fetched refs to `FETCH_HEAD`.
+    #[arg(long = "no-write-fetch-head")]
+    pub no_write_fetch_head: bool,
+    /// Override configured `remote.<name>.fetch` refspec mapping.
+    #[arg(long = "refmap", value_name = "REFSPEC")]
+    pub refmap: Vec<String>,
 
     /// Deepen a shallow clone by N commits.
     #[arg(long, value_name = "N")]
@@ -211,10 +129,6 @@ pub struct Args {
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
 
-    /// Do not apply a list-objects filter (overrides `--filter` and inherited partial-clone filter).
-    #[arg(long = "no-filter")]
-    pub no_filter: bool,
-
     /// Deepen history of a shallow clone back to a date.
     #[arg(long, value_name = "DATE")]
     pub shallow_since: Option<String>,
@@ -226,6 +140,9 @@ pub struct Args {
     /// Convert a shallow repository to a complete one (remove shallow boundaries).
     #[arg(long)]
     pub unshallow: bool,
+    /// Accept and record shallow boundary updates from the remote.
+    #[arg(long = "update-shallow")]
+    pub update_shallow: bool,
 
     /// Re-fetch all objects even if they already exist locally.
     #[arg(long)]
@@ -243,37 +160,13 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Number of parallel submodule fetches (`submodule.fetchJobs` / `fetch.parallel` when unset).
+    /// Number of parallel children for fetching (accepted but ignored).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
 
-    /// Append to `.git/FETCH_HEAD` instead of overwriting.
-    #[arg(short = 'a', long = "append")]
-    pub append: bool,
-
-    /// Do not update `.git/FETCH_HEAD` (also used when submodule recursion spawns nested fetch).
-    #[arg(long = "no-write-fetch-head")]
-    pub no_write_fetch_head: bool,
-
-    /// Skip `maintenance --auto` after fetch.
-    #[arg(long = "no-auto-maintenance")]
-    pub no_auto_maintenance: bool,
-
-    /// Synonym for `--no-auto-maintenance` (Git compatibility).
-    #[arg(long = "no-auto-gc")]
-    pub no_auto_gc: bool,
-
-    /// Delimiter before remote names (hidden; parallel fetch subprocesses).
-    #[arg(long = "end-of-options", hide = true)]
-    pub end_of_options: bool,
-
-    /// Collect FETCH_HEAD lines for the parent (parallel `--multiple` workers).
-    #[arg(skip)]
-    pub parallel_fetch_collect_fetch_head: bool,
-
-    /// Order key when merging parallel FETCH_HEAD chunks.
-    #[arg(skip)]
-    pub parallel_fetch_order: Option<usize>,
+    /// Transmit the given string as a protocol v2 server option.
+    #[arg(short = 'o', long = "server-option", action = clap::ArgAction::Append)]
+    pub server_options: Vec<String>,
 
     /// Machine-readable porcelain output.
     #[arg(long)]
@@ -290,10 +183,12 @@ pub struct Args {
     /// Only negotiate, do not fetch objects.
     #[arg(long)]
     pub negotiate_only: bool,
-
-    /// Do not update refs or FETCH_HEAD; still report what would be fetched.
-    #[arg(long)]
-    pub dry_run: bool,
+    /// Restrict negotiation to commits reachable from these tips.
+    #[arg(long = "negotiation-tip", value_name = "COMMIT|GLOB")]
+    pub negotiation_tip: Vec<String>,
+    /// Set upstream tracking information for fetched branches.
+    #[arg(long = "set-upstream")]
+    pub set_upstream: bool,
 
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
@@ -331,15 +226,43 @@ pub struct Args {
     pub submodule_prefix: Option<String>,
 }
 
-pub fn run(args: Args) -> Result<()> {
-    if args.negotiate_only {
-        // Negotiate-only mode: just exit successfully without fetching.
-        return Ok(());
-    }
+#[derive(Clone)]
+enum PendingRefOp {
+    Write {
+        refname: String,
+        old_oid: Option<ObjectId>,
+        new_oid: ObjectId,
+    },
+    Delete {
+        refname: String,
+        old_oid: Option<ObjectId>,
+    },
+}
 
-    let mut args = args;
-    if args.dry_run {
-        args.no_write_fetch_head = true;
+pub fn run(mut args: Args) -> Result<()> {
+    if args.no_prune {
+        args.prune = false;
+    }
+    if args.negotiate_only {
+        let recurse_requested = args
+            .recurse_submodules
+            .as_deref()
+            .map(|v| {
+                let l = v.to_ascii_lowercase();
+                l != "no" && l != "false"
+            })
+            .unwrap_or(false);
+        if recurse_requested {
+            exit_fatal(
+                "options '--negotiate-only' and '--recurse-submodules' cannot be used together",
+            );
+        }
+        if args.negotiation_tip.is_empty() {
+            exit_fatal("--negotiate-only needs one or more --negotiation-tip=*");
+        }
+    }
+    if !args.refmap.is_empty() && args.refspecs.is_empty() {
+        bail!("--refmap option is only meaningful with command-line refspecs");
     }
 
     // `git fetch tag <name>` is parsed as remote=`tag` unless we lift the magic keyword.
@@ -358,8 +281,16 @@ pub fn run(args: Args) -> Result<()> {
 
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
-
-    crate::fetch_submodule_record::begin_fetch_submodule_record(&git_dir);
+    if args.negotiate_only {
+        let protocol_version = config
+            .get("protocol.version")
+            .as_deref()
+            .and_then(parse_protocol_version)
+            .unwrap_or_else(crate::protocol_wire::effective_client_protocol_version);
+        if protocol_version != 2 {
+            exit_fatal("negotiate-only requires protocol v2");
+        }
+    }
 
     // Validate fetch.output config if set
     if let Some(val) = config.get("fetch.output") {
@@ -369,220 +300,31 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let fetch_all_cfg = config
-        .get_bool("fetch.all")
-        .and_then(|r| r.ok())
-        .unwrap_or(false);
-
-    let want_all_remotes = if args.no_all {
-        false
-    } else if args.all {
-        true
-    } else {
-        fetch_all_cfg
-    };
-
-    let explicit_remote_arg = args.remote.is_some();
-    let effective_fetch_all = want_all_remotes && !explicit_remote_arg;
-
     let result = if args.multiple {
         if args.all {
             bail!("--multiple and --all are incompatible");
         }
-        // Clap puts the first positional in `remote` and the rest in `refspecs`; Git treats every
-        // positional after `--multiple` as a remote name (`git fetch --multiple three`).
-        let mut names = Vec::new();
-        if let Some(r) = args.remote.clone() {
-            names.push(r);
-        }
-        names.extend(args.refspecs.clone());
+        let names = args.refspecs.clone();
         if names.is_empty() {
-            // Git accepts `git fetch --multiple` with no remotes as a no-op (t5514).
-            Ok(())
-        } else {
-            let mut max_jobs = args
-                .jobs
-                .unwrap_or_else(|| fetch_parallel_default_jobs(&config));
-            if max_jobs == 0 {
-                max_jobs = std::thread::available_parallelism()
-                    .map(|p| p.get())
-                    .unwrap_or(1);
-            }
-            let parallel = max_jobs > 1 && names.len() > 1;
-            if parallel {
-                trace_parallel_fetch_tasks_if_needed(max_jobs);
-            }
-            let mut inner_base = args.clone();
-            inner_base.multiple = false;
-            inner_base.remote = None;
-            inner_base.refspecs.clear();
-            inner_base.jobs = None;
-            inner_base.end_of_options = false;
-            inner_base.append = true;
-            inner_base.no_auto_maintenance = true;
-            inner_base.no_auto_gc = true;
-
-            truncate_fetch_head_if_needed(&git_dir, &args);
-
-            let mut any_err = false;
-            if parallel {
-                if let Ok(mut g) = PARALLEL_FETCH_HEAD_CHUNKS.lock() {
-                    g.clear();
-                }
-                FETCH_HEAD_APPEND_MODE.set(true);
-                let (tx, rx) = mpsc::channel::<(String, Result<()>)>();
-                let mut pending = 0usize;
-                let mut idx = 0usize;
-                while idx < names.len() || pending > 0 {
-                    while pending < max_jobs && idx < names.len() {
-                        let name = names[idx].clone();
-                        let order = idx;
-                        idx += 1;
-                        pending += 1;
-                        let git_dir_c = git_dir.clone();
-                        let mut inner = inner_base.clone();
-                        inner.parallel_fetch_collect_fetch_head = true;
-                        inner.parallel_fetch_order = Some(order);
-                        let tx_c = tx.clone();
-                        if !inner.quiet {
-                            println!("Fetching {name}");
-                        }
-                        thread::spawn(move || {
-                            FETCH_AUTO_MAINTENANCE_OK.set(false);
-                            let r = (|| {
-                                let cfg = ConfigSet::load(Some(&git_dir_c), true)?;
-                                fetch_remote(&git_dir_c, &cfg, &name, None, &inner)
-                            })();
-                            let _ = tx_c.send((name, r));
-                        });
-                    }
-                    let (name, r) = rx.recv().expect("parallel fetch worker");
-                    pending -= 1;
-                    if let Err(e) = r {
-                        any_err = true;
-                        eprintln!("{e}");
-                        let code = e
-                            .downcast_ref::<ExitCodeError>()
-                            .map(|x| x.code)
-                            .unwrap_or(1);
-                        eprintln!("could not fetch '{name}' (exit code: {code})");
-                    }
-                }
-                if !args.no_write_fetch_head {
-                    if let Ok(mut chunks) = PARALLEL_FETCH_HEAD_CHUNKS.lock() {
-                        chunks.sort_by_key(|(o, _)| *o);
-                        let mut out = String::new();
-                        for (ci, (_ord, lines)) in chunks.iter().enumerate() {
-                            if ci > 0 {
-                                out.push('\n');
-                            }
-                            out.push_str(&lines.join("\n"));
-                        }
-                        if !out.is_empty() {
-                            out.push('\n');
-                            let fetch_head_path = git_dir.join("FETCH_HEAD");
-                            let _ = fs::write(&fetch_head_path, out);
-                        }
-                        chunks.clear();
-                    }
-                }
-            } else {
-                FETCH_HEAD_APPEND_MODE.set(true);
-                for name in &names {
-                    if !inner_base.quiet {
-                        println!("Fetching {name}");
-                    }
-                    if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner_base) {
-                        any_err = true;
-                        eprintln!("{e}");
-                        let code = e
-                            .downcast_ref::<ExitCodeError>()
-                            .map(|x| x.code)
-                            .unwrap_or(1);
-                        eprintln!("could not fetch '{name}' (exit code: {code})");
-                    }
-                }
-            }
-            FETCH_HEAD_APPEND_MODE.set(false);
-
-            if any_err {
-                Err(exit_code_error(1, "fetch failed for one or more remotes"))
-            } else {
-                Ok(())
-            }
+            bail!("fetch --multiple requires at least one remote");
         }
+        for name in &names {
+            let mut inner = args.clone();
+            inner.multiple = false;
+            inner.refspecs.clear();
+            fetch_remote(&git_dir, &config, name, None, &inner)?;
+        }
+        Ok(())
     } else if args.all {
-        if args.remote.is_some() {
-            bail!("fetch --all does not take a repository argument");
-        }
-        if !args.refspecs.is_empty() {
-            bail!("fetch --all does not make sense with refspecs");
-        }
-        let remotes = remotes_for_fetch_all(&config);
+        let remotes =
+            collect_local_remote_names(&git_dir).unwrap_or_else(|| collect_remote_names(&config));
         if remotes.is_empty() {
             bail!("no remotes configured");
         }
-        truncate_fetch_head_if_needed(&git_dir, &args);
-        FETCH_HEAD_APPEND_MODE.set(true);
-        let mut any_err = false;
         for name in &remotes {
-            let mut inner = args.clone();
-            inner.all = false;
-            inner.no_all = false;
-            inner.append = true;
-            inner.no_auto_maintenance = true;
-            inner.no_auto_gc = true;
-            if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner) {
-                any_err = true;
-                eprintln!("{e}");
-                let code = e
-                    .downcast_ref::<ExitCodeError>()
-                    .map(|x| x.code)
-                    .unwrap_or(1);
-                eprintln!("could not fetch '{name}' (exit code: {code})");
-            }
+            fetch_remote(&git_dir, &config, name, None, &args)?;
         }
-        FETCH_HEAD_APPEND_MODE.set(false);
-        if any_err {
-            Err(exit_code_error(
-                1,
-                "fetch --all: one or more remotes failed",
-            ))
-        } else {
-            Ok(())
-        }
-    } else if effective_fetch_all {
-        let remotes = remotes_for_fetch_all(&config);
-        if remotes.is_empty() {
-            bail!("no remotes configured");
-        }
-        truncate_fetch_head_if_needed(&git_dir, &args);
-        FETCH_HEAD_APPEND_MODE.set(true);
-        let mut any_err = false;
-        for name in &remotes {
-            let mut inner = args.clone();
-            inner.remote = None;
-            inner.all = false;
-            inner.no_all = false;
-            inner.append = true;
-            inner.no_auto_maintenance = true;
-            inner.no_auto_gc = true;
-            if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner) {
-                any_err = true;
-                eprintln!("{e}");
-                let code = e
-                    .downcast_ref::<ExitCodeError>()
-                    .map(|x| x.code)
-                    .unwrap_or(1);
-                eprintln!("could not fetch '{name}' (exit code: {code})");
-            }
-        }
-        FETCH_HEAD_APPEND_MODE.set(false);
-        if any_err {
-            Err(exit_code_error(1, "fetch: one or more remotes failed"))
-        } else {
-            Ok(())
-        }
+        Ok(())
     } else {
         let remote_resolved = args
             .remote
@@ -593,7 +335,7 @@ pub fn run(args: Args) -> Result<()> {
         // remote name contains '/' or matches an existing directory.
         let url_key = format!("remote.{remote_name}.url");
         if config.get(&url_key).is_some() {
-            fetch_remote(&git_dir, &config, remote_name, None, &args)
+            fetch_remote(&git_dir, &config, &remote_name, None, &args)
         } else {
             let group_key = format!("remotes.{remote_name}");
             let group_lines = config.get_all(&group_key);
@@ -607,53 +349,23 @@ pub fn run(args: Args) -> Result<()> {
                         }
                     }
                 }
-                truncate_fetch_head_if_needed(&git_dir, &args);
-                FETCH_HEAD_APPEND_MODE.set(true);
                 for m in members {
-                    let mut inner = args.clone();
-                    inner.append = true;
-                    inner.no_auto_maintenance = true;
-                    inner.no_auto_gc = true;
-                    fetch_remote(&git_dir, &config, &m, None, &inner)?;
+                    fetch_remote(&git_dir, &config, &m, None, &args)?;
                 }
-                FETCH_HEAD_APPEND_MODE.set(false);
                 Ok(())
             } else if remote_name.starts_with('.')
                 || remote_name.contains('/')
-                || std::path::Path::new(remote_name).is_dir()
+                || std::path::Path::new(&remote_name).is_dir()
             {
-                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
+                fetch_remote(&git_dir, &config, &remote_name, Some(remote_name), &args)
             } else {
-                fetch_remote(&git_dir, &config, remote_name, None, &args)
+                fetch_remote(&git_dir, &config, &remote_name, None, &args)
             }
         }
     };
 
-    let result = result.and_then(|()| {
-        if args.porcelain {
-            return Ok(());
-        }
-        let recurse = effective_fetch_recurse_submodules(&git_dir, &config, &args)?;
-        if recurse != FetchRecurseSubmodules::Off
-            && matches!(
-                recurse,
-                FetchRecurseSubmodules::On | FetchRecurseSubmodules::OnDemand
-            )
-        {
-            crate::fetch_submodule_recurse::recursive_fetch_submodules_after_fetch(
-                &git_dir, &config, &args, recurse,
-            )?;
-        }
-        Ok(())
-    });
-
-    if result.is_ok() && !args.no_auto_maintenance && !args.no_auto_gc {
-        run_fetch_auto_maintenance(&git_dir);
-    }
-    if result.is_ok() && args.no_filter {
-        if let Ok(repo) = Repository::open(&git_dir, None) {
-            let _ = crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&repo);
-        }
+    if result.is_ok() && should_recurse_fetch_submodules(&config, &args) {
+        super::submodule::recursive_fetch_submodules(true)?;
     }
     result
 }
@@ -667,6 +379,10 @@ fn current_branch_from_head(git_dir: &Path) -> Option<String> {
     let target = head.strip_prefix("ref: ")?.trim();
     let branch = target.strip_prefix("refs/heads/")?;
     Some(branch.to_string())
+}
+
+fn parse_git_bool(value: &str) -> Option<bool> {
+    parse_bool(value.trim()).ok()
 }
 
 /// FETCH_HEAD "for merge" when the current branch tracks this remote and the remote ref
@@ -707,31 +423,6 @@ fn fetch_head_is_for_merge_first_refspec_only(
         return false;
     };
     !first.src.contains('*')
-}
-
-/// True when every positive fetch refspec uses a glob in its source (e.g. `refs/heads/*`).
-/// For such refspecs Git does not use "first listed ref is for-merge"; it ties FETCH_HEAD to the
-/// current branch when present on the remote (same as having no explicit refspecs).
-fn fetch_positive_refspecs_are_all_globs(refspecs: &[FetchRefspec]) -> bool {
-    let positives: Vec<&FetchRefspec> = refspecs.iter().filter(|r| !r.negative).collect();
-    if positives.is_empty() {
-        return false;
-    }
-    positives
-        .iter()
-        .all(|r| !r.src.is_empty() && r.src.contains('*'))
-}
-
-/// True when the first non-negative configured fetch refspec is a glob (e.g. `refs/heads/*`).
-///
-/// Git's `get_ref_map` only uses [`fetch_head_is_for_merge_first_refspec_only`] for **non-pattern**
-/// refspecs. With a glob refspec, detached `HEAD` still gets a for-merge line on the first
-/// advertised branch (t7422-submodule-output: `git -C X pull` in a submodule checkout).
-fn fetch_head_default_uses_first_advertised_branch(refspecs: &[FetchRefspec]) -> bool {
-    let Some(first) = refspecs.iter().find(|r| !r.negative && !r.src.is_empty()) else {
-        return true;
-    };
-    first.src.contains('*')
 }
 
 /// True when `HEAD` names `refs/heads/<b>`, `branch.<b>.remote` matches `remote_name`, and
@@ -783,109 +474,192 @@ fn default_fetch_remote_name(git_dir: &Path, config: &ConfigSet) -> String {
     }
 }
 
-fn config_bool_truthy(v: &str) -> bool {
-    let l = v.trim().to_ascii_lowercase();
-    matches!(l.as_str(), "true" | "yes" | "on" | "1")
-}
-
-fn config_bool_falsey(v: &str) -> bool {
-    let l = v.trim().to_ascii_lowercase();
-    matches!(l.as_str(), "false" | "no" | "off" | "0")
-}
-
-/// Effective `fetch --recurse-submodules` mode after config / `.gitmodules` (Git `fetch_config` + `fetch_config_from_gitmodules`).
-fn effective_fetch_recurse_submodules(
-    git_dir: &Path,
-    config: &ConfigSet,
-    args: &Args,
-) -> Result<FetchRecurseSubmodules> {
+fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
     if args.no_recurse_submodules {
-        return Ok(FetchRecurseSubmodules::Off);
+        return false;
     }
-    if let Some(ref v) = args.recurse_submodules {
-        let t = v.trim();
-        if t.eq_ignore_ascii_case("no") || t.eq_ignore_ascii_case("false") {
-            return Ok(FetchRecurseSubmodules::Off);
-        }
-        return grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(
-            "--recurse-submodules",
-            t,
-        )
-        .map_err(|e| anyhow::anyhow!(e));
+    if args.recurse_submodules.as_deref() == Some("no")
+        || args.recurse_submodules.as_deref() == Some("false")
+    {
+        return false;
     }
-    if let Some(v) = config.get("submodule.recurse") {
-        if config_bool_truthy(&v) {
-            return Ok(FetchRecurseSubmodules::On);
-        }
-        if config_bool_falsey(&v) {
-            return Ok(FetchRecurseSubmodules::Off);
-        }
+    if args.recurse_submodules.is_some() {
+        return true;
     }
-    let mut mode = if let Some(v) = config
+    config
         .get("fetch.recursesubmodules")
         .or_else(|| config.get("fetch.recurseSubmodules"))
-    {
-        grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(
-            "fetch.recurseSubmodules",
-            &v,
-        )
-        .map_err(|e| anyhow::anyhow!(e))?
-    } else {
-        FetchRecurseSubmodules::Default
-    };
-
-    if mode == FetchRecurseSubmodules::Default {
-        if let Some(m) = fetch_recurse_from_gitmodules_file(git_dir, config)? {
-            mode = m;
-        }
-    }
-    Ok(mode)
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "true" || l == "yes" || l == "on" || l == "1"
+        })
+        .unwrap_or(false)
 }
 
-fn fetch_recurse_from_gitmodules_file(
-    git_dir: &Path,
+fn exit_fatal(msg: &str) -> ! {
+    eprintln!("fatal: {msg}");
+    std::process::exit(128);
+}
+
+fn parse_protocol_version(value: &str) -> Option<u8> {
+    match value.trim() {
+        "0" => Some(0),
+        "1" => Some(1),
+        "2" => Some(2),
+        _ => None,
+    }
+}
+
+fn effective_fetch_server_options(
+    args: &Args,
     config: &ConfigSet,
-) -> Result<Option<FetchRecurseSubmodules>> {
-    let repo = Repository::open(git_dir, None).ok();
-    let work_tree = repo.as_ref().and_then(|r| r.work_tree.clone());
-    let Some(wt) = work_tree else {
-        return Ok(None);
-    };
-    let path = wt.join(".gitmodules");
-    if !path.exists() {
-        return Ok(None);
+    remote_name: &str,
+    protocol_version: u8,
+) -> Result<Vec<String>> {
+    if !args.server_options.is_empty() {
+        if protocol_version < 2 {
+            bail!(
+                "server options require protocol version 2 or later\nsee protocol.version in 'git help config'"
+            );
+        }
+        return Ok(args.server_options.clone());
     }
-    let content = fs::read_to_string(&path).unwrap_or_default();
-    let gm =
-        grit_lib::config::ConfigFile::parse(&path, &content, grit_lib::config::ConfigScope::Local)
-            .ok();
-    let Some(gm) = gm else {
-        return Ok(None);
-    };
-    let mut found: Option<FetchRecurseSubmodules> = None;
-    for e in &gm.entries {
-        if !e.key.starts_with("submodule.") {
+    if protocol_version < 2 {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in config.entries() {
+        if !entry.key.starts_with("remote.") || !entry.key.ends_with(".serveroption") {
             continue;
         }
-        if !e.key.ends_with(".fetchrecursesubmodules") {
+        let suffix_len = ".serveroption".len();
+        let configured = &entry.key["remote.".len()..entry.key.len() - suffix_len];
+        if configured != remote_name {
             continue;
         }
-        let raw = config
-            .get(&e.key)
-            .or_else(|| e.value.clone())
-            .unwrap_or_default();
-        let m = grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(&e.key, &raw)
-            .map_err(|err| anyhow::anyhow!(err))?;
-        found = Some(m);
+        match entry.value.as_deref() {
+            Some("") => out.clear(),
+            Some(v) => out.push(v.to_owned()),
+            None => bail!("error: missing value for 'remote.{remote_name}.serveroption'"),
+        }
     }
-    Ok(found)
+    Ok(out)
 }
 
-fn note_submodule_fetch_tip(old_oid: Option<&ObjectId>, new_oid: &ObjectId) {
-    if old_oid == Some(new_oid) {
-        return;
+fn parse_oid_prefix(repo: &Repository, value: &str) -> Result<Option<ObjectId>> {
+    if value.len() < 4 || value.len() > 40 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(None);
     }
-    crate::fetch_submodule_record::record_submodule_tip(new_oid);
+    let needle = value.to_ascii_lowercase();
+    let mut matches: Vec<ObjectId> = Vec::new();
+    let mut push_if_match = |oid: ObjectId| {
+        let hex = oid.to_hex();
+        if hex.starts_with(&needle) && !matches.contains(&oid) {
+            matches.push(oid);
+        }
+    };
+
+    for (name, oid) in refs::list_refs(&repo.git_dir, "refs/").unwrap_or_default() {
+        push_if_match(oid);
+        if let Ok(resolved) = resolve_revision(repo, &name) {
+            push_if_match(resolved);
+        }
+    }
+    if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        push_if_match(head_oid);
+    }
+    for pseudo in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+        if let Ok(oid) = resolve_revision(repo, pseudo) {
+            push_if_match(oid);
+        }
+    }
+    if let Ok(entries) = refs::list_refs(&repo.git_dir, "refs/tags/") {
+        for (_, oid) in entries {
+            push_if_match(oid);
+        }
+    }
+    if matches.len() > 1 {
+        bail!("short object ID {value} is ambiguous");
+    }
+    Ok(matches.into_iter().next())
+}
+
+fn resolve_negotiation_tip_oids(git_dir: &Path, tips: &[String]) -> Result<Vec<ObjectId>> {
+    let repo = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    let local_refs = refs::list_refs(git_dir, "refs/").unwrap_or_default();
+    let mut out = Vec::new();
+    for tip in tips {
+        let tip = tip.trim();
+        if tip.is_empty() {
+            continue;
+        }
+        if tip.contains('*') {
+            for (refname, oid) in &local_refs {
+                if match_glob_pattern(tip, refname).is_some() {
+                    out.push(*oid);
+                }
+            }
+            continue;
+        }
+        if let Ok(oid) = ObjectId::from_hex(tip) {
+            if repo.odb.read(&oid).is_err() {
+                exit_fatal(&format!("the object {tip} does not exist"));
+            }
+            out.push(oid);
+            continue;
+        }
+        let oid = resolve_revision(&repo, tip)
+            .with_context(|| format!("could not resolve negotiation tip '{tip}'"))?;
+        if repo.odb.read(&oid).is_err() {
+            exit_fatal(&format!("the object {tip} does not exist"));
+        }
+        out.push(oid);
+    }
+    out.sort_by_key(|o| o.to_hex());
+    out.dedup();
+    if out.is_empty() {
+        exit_fatal("--negotiate-only needs one or more --negotiation-tip=*");
+    }
+    Ok(out)
+}
+
+fn negotiate_only_common_with_remote_repo(
+    git_dir: &Path,
+    remote_repo: &Repository,
+    negotiation_tips: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let local_repo = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    let mut remote_oids: Vec<ObjectId> = refs::list_refs(&remote_repo.git_dir, "refs/")?
+        .into_iter()
+        .map(|(_, oid)| oid)
+        .collect();
+    if let Ok(head_oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
+        remote_oids.push(head_oid);
+    }
+    remote_oids.sort_by_key(|o| o.to_hex());
+    remote_oids.dedup();
+
+    let mut commons = Vec::new();
+    for tip in negotiation_tips {
+        if local_repo.odb.read(tip).is_err() {
+            continue;
+        }
+        for remote_oid in &remote_oids {
+            if local_repo.odb.read(remote_oid).is_err() {
+                continue;
+            }
+            if let Ok(mut bases) =
+                merge_base::merge_bases_first_vs_rest(&local_repo, *tip, &[*remote_oid])
+            {
+                commons.append(&mut bases);
+            }
+        }
+    }
+    commons.sort_by_key(|o| o.to_hex());
+    commons.dedup();
+    Ok(commons)
 }
 
 /// Build the upload-pack `want` list for a configured (non-CLI) fetch: only refs matched by
@@ -1011,6 +785,77 @@ fn collect_wants_for_upload_pack(
     Ok(wants)
 }
 
+fn append_follow_tags_for_wants(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    wants: &mut Vec<ObjectId>,
+) -> Result<()> {
+    let local_odb = Odb::new(&local_git_dir.join("objects"));
+    let remote_odb = Odb::new(&remote_git_dir.join("objects"));
+    let remote_repo = open_repo(remote_git_dir)?;
+    let local_tag_tips: HashSet<ObjectId> = refs::list_refs(local_git_dir, "refs/tags/")?
+        .into_iter()
+        .map(|(_, oid)| oid)
+        .collect();
+    let wanted_commit_tips: Vec<ObjectId> = wants
+        .iter()
+        .copied()
+        .filter(|oid| {
+            remote_odb
+                .read(oid)
+                .map(|o| o.kind == ObjectKind::Commit)
+                .unwrap_or(false)
+        })
+        .collect();
+    if wanted_commit_tips.is_empty() {
+        return Ok(());
+    }
+
+    let tag_refs = refs::list_refs(remote_git_dir, "refs/tags/")?;
+    for (_tag_refname, tag_ref_oid) in tag_refs {
+        if local_tag_tips.contains(&tag_ref_oid) || local_odb.exists(&tag_ref_oid) {
+            continue;
+        }
+        let Ok(tag_obj) = remote_odb.read(&tag_ref_oid) else {
+            continue;
+        };
+        if tag_obj.kind != ObjectKind::Tag {
+            continue;
+        }
+        let Ok(tag) = parse_tag(&tag_obj.data) else {
+            continue;
+        };
+        let follows_wanted_tip = wanted_commit_tips
+            .iter()
+            .any(|tip| merge_base::is_ancestor(&remote_repo, tag.object, *tip).unwrap_or(false));
+        if !follows_wanted_tip {
+            continue;
+        }
+        crate::fetch_transport::push_want_unique(wants, tag_ref_oid);
+    }
+
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
+    Ok(())
+}
+
+fn append_tag_wants_for_cli_fetch(
+    local_git_dir: &Path,
+    advertised: &[(String, ObjectId)],
+    wants: &mut Vec<ObjectId>,
+) {
+    let local_odb = Odb::new(&local_git_dir.join("objects"));
+    for (refname, oid) in advertised {
+        if !refname.starts_with("refs/tags/") {
+            continue;
+        }
+        if local_odb.exists(oid) {
+            continue;
+        }
+        crate::fetch_transport::push_want_unique(wants, *oid);
+    }
+}
+
 /// Fetch from a single remote.
 ///
 /// If `url_override` is Some, use it directly as the remote URL instead of
@@ -1022,12 +867,17 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    if args.unshallow {
-        let shallow_path = git_dir.join("shallow");
-        if shallow_path.exists() {
-            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
-        }
-    }
+    let protocol_version = config
+        .get("protocol.version")
+        .as_deref()
+        .and_then(parse_protocol_version)
+        .unwrap_or_else(crate::protocol_wire::effective_client_protocol_version);
+    let server_options =
+        effective_fetch_server_options(args, config, remote_name, protocol_version)?;
+
+    let is_bare_repo = Repository::open(git_dir, None)
+        .map(|repo| repo.is_bare())
+        .unwrap_or(false);
 
     let url_key = format!("remote.{remote_name}.url");
     let legacy_remote = if url_override.is_none() && config.get(&url_key).is_none() {
@@ -1045,6 +895,12 @@ fn fetch_remote(
     // Determine remote URL: CLI path, config, `.git/remotes/<name>`, or `.git/branches/<name>`.
     let url = if let Some(u) = url_override {
         u.to_owned()
+    } else if let Some(u) = config
+        .get_all(&url_key)
+        .into_iter()
+        .find(|v| !v.trim().is_empty())
+    {
+        u
     } else if let Some(u) = config.get(&url_key) {
         u
     } else if let Some(leg) = &legacy_remote {
@@ -1052,10 +908,8 @@ fn fetch_remote(
     } else if let Some(br) = &branches_remote {
         br.url.clone()
     } else {
-        bail!("remote '{remote_name}' not found; no such remote");
+        bail!("fatal: '{remote_name}' does not appear to be a git repository");
     };
-
-    crate::transport_path::check_local_url_path_not_option_like(&url)?;
 
     let is_ext_url = url.starts_with("ext::");
     if is_ext_url {
@@ -1076,7 +930,7 @@ fn fetch_remote(
         PathBuf::new()
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
-        PathBuf::new()
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
     } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
@@ -1120,30 +974,61 @@ fn fetch_remote(
     }
 
     // `git clone` from a bundle records the bundle path as `remote.origin.url`. A no-op `fetch`
-    // must succeed (`t5605` bundle clone + fetch).
+    // must succeed (`t5605` bundle clone + fetch). For explicit path fetches against a bundle
+    // file (`git fetch ../bundle main:main`), unbundle objects/refs into the current repository.
     if !is_ext_url && !is_http_url && remote_path_is_git_bundle_file(&remote_path) {
+        if url_override.is_none() {
+            return Ok(());
+        }
+        crate::commands::bundle::run(crate::commands::bundle::Args {
+            action: crate::commands::bundle::BundleAction::Unbundle(
+                crate::commands::bundle::UnbundleArgs {
+                    file: remote_path.to_string_lossy().to_string(),
+                },
+            ),
+        })?;
         return Ok(());
     }
 
     let remote_repo = if is_ext_url || is_http_url {
         None
     } else {
-        let r = match open_repo(&remote_path) {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(exit_code_error(
-                    128,
-                    format!(
-                        "could not open remote repository at '{}': {e}",
-                        remote_path.display()
-                    ),
-                ));
-            }
-        };
+        let r = open_repo(&remote_path).with_context(|| {
+            format!(
+                "could not open remote repository at '{}'",
+                remote_path.display()
+            )
+        })?;
         if url_override.is_some() && url.starts_with("file://") {
             r.enforce_safe_directory_git_dir()?;
         }
         Some(r)
+    };
+
+    if args.negotiate_only {
+        let negotiation_tips = resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?;
+        let common: Vec<ObjectId> = if is_http_url {
+            let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
+            crate::http_smart::http_negotiate_only_common(
+                git_dir,
+                &url,
+                &negotiation_tips,
+                &http_ctx,
+            )?
+        } else if let Some(rr) = remote_repo.as_ref() {
+            negotiate_only_common_with_remote_repo(git_dir, rr, &negotiation_tips)?
+        } else {
+            bail!("--negotiate-only is not supported for this transport");
+        };
+        for oid in common {
+            println!("{}", oid.to_hex());
+        }
+        return Ok(());
+    }
+    let regular_negotiation_tips = if args.negotiation_tip.is_empty() {
+        Vec::new()
+    } else {
+        resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?
     };
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {
@@ -1157,6 +1042,10 @@ fn fetch_remote(
     }
 
     let display_url = resolve_fetch_display_url(git_dir, &url, url_override, remote_repo.as_ref())?;
+    let from_display_url =
+        resolve_fetch_from_line_url(&url, url_override, remote_repo.as_ref(), &display_url);
+    let follow_remote_head = parse_follow_remote_head(config, remote_name);
+    let include_head_ref_prefix = follow_remote_head.mode != FollowRemoteHead::Never;
     // Only remap tracking namespace for path/URL fetches (`git fetch ./repo`). When the user
     // names a configured remote (`git fetch second`), always store under that remote even if
     // its URL points at the same repository as `origin` (t5505 `remote add -f second`).
@@ -1186,6 +1075,31 @@ fn fetch_remote(
     let mut configured_refspecs = collect_refspecs(config, &fetch_key);
     let had_configured_fetch = !configured_refspecs.is_empty();
     let user_passed_cli_refspecs = !args.refspecs.is_empty();
+    let explicit_refmap = !args.refmap.is_empty();
+    let cli_tracking_refspecs: Vec<FetchRefspec> = if explicit_refmap {
+        let non_empty: Vec<String> = args
+            .refmap
+            .iter()
+            .filter_map(|v| {
+                let t = v.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_owned())
+                }
+            })
+            .collect();
+        let mut parsed = parse_cli_fetch_refspecs(&non_empty);
+        for spec in &mut parsed {
+            if spec.negative || spec.dst.is_empty() {
+                continue;
+            }
+            spec.dst = normalize_fetch_refspec_dst(&spec.dst);
+        }
+        parsed
+    } else {
+        remote_fetch_refspecs(config, remote_name)
+    };
 
     if args.prefetch {
         if user_passed_cli_refspecs {
@@ -1222,6 +1136,46 @@ fn fetch_remote(
     } else {
         configured_refspecs.clone()
     };
+    let remote_prune_key = format!("remote.{remote_name}.prune");
+    let remote_prune_tags_key = format!("remote.{remote_name}.pruneTags");
+    let configured_prune = config
+        .get(&remote_prune_key)
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .or_else(|| {
+            config
+                .get("fetch.prune")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    let configured_prune_tags = config
+        .get(&remote_prune_tags_key)
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .or_else(|| {
+            config
+                .get("fetch.pruneTags")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    let should_prune = if args.no_prune {
+        false
+    } else if args.prune {
+        true
+    } else {
+        configured_prune
+    };
+    // Like Git, prune-tags only takes effect when pruning is enabled.
+    // When any CLI refspec is explicitly provided, --prune-tags and pruneTags config are ignored.
+    let should_prune_tags = should_prune
+        && !user_passed_cli_refspecs
+        && (if args.prune_tags {
+            true
+        } else {
+            configured_prune_tags
+        });
     let prefetch_left_no_positive = args.prefetch
         && cli_refspecs_owned.is_empty()
         && (user_passed_cli_refspecs || had_configured_fetch);
@@ -1232,7 +1186,8 @@ fn fetch_remote(
         && cli_refspecs.is_empty()
         && refspecs.is_empty();
 
-    let coalesced_remotes = if url_override.is_none()
+    let coalesced_remotes = if server_options.is_empty()
+        && url_override.is_none()
         && legacy_remote.is_none()
         && branches_remote.is_none()
         && cli_refspecs.is_empty()
@@ -1275,14 +1230,11 @@ fn fetch_remote(
     // Local (non-SSH) non-URL fetches use the upload-pack protocol like upstream Git. This keeps
     // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
     // tests such as t5503-tagfollow. CLI refspecs are applied after the pack is received.
-    //
-    // When several remotes share the same repository URL, skip upload-pack: the negotiator can
-    // stall when all wanted objects already exist locally (t5505 `git fetch second`).
-    let coalesced_multi = coalesced_remotes.len() > 1;
+    let ssh_url_with_local_repo =
+        crate::ssh_transport::is_configured_ssh_url(&url) && remote_repo.is_some();
     let use_upload_pack_negotiation = !is_ext_url
         && !is_http_url
-        && !crate::ssh_transport::is_configured_ssh_url(&url)
-        && !coalesced_multi;
+        && (!crate::ssh_transport::is_configured_ssh_url(&url) || ssh_url_with_local_repo);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -1306,13 +1258,25 @@ fn fetch_remote(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .is_some();
-    let list_objects_filter = args
-        .filter
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-
-    let (remote_heads, remote_tags) = if is_ext_url {
+    let http_fetch_options = crate::http_smart::HttpFetchOptions {
+        depth: args.depth,
+        deepen: args.deepen,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
+        filter_spec: args.filter.clone(),
+        refetch: args.refetch,
+    };
+    let upload_pack_shallow_options = crate::fetch_transport::UploadPackShallowOptions {
+        depth: args.depth,
+        deepen: args.deepen,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
+        unshallow: args.unshallow,
+    };
+    let pack_filter_spec = args.filter.as_deref().filter(|s| !s.trim().is_empty());
+    let remote_head_advertised_oid: Option<ObjectId>;
+    let remote_head_symbolic_branch_from_transport: Option<String>;
+    let (mut remote_heads, mut remote_tags, remote_advertised) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
         let refspec_owned_ext = refspecs.clone();
         let remote_nm_ext = remote_name.to_owned();
@@ -1324,15 +1288,13 @@ fn fetch_remote(
             cli_refspecs_owned.clone()
         };
         let remote_gd_ext = ext_upload_pack_git_dir.clone();
-        let (heads, tags, _, _, _) = crate::fetch_transport::with_packet_trace_identity(
-            "fetch",
-            || {
+        let (heads, tags, head_symref, head_oid) =
+            crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::ext_transport::fetch_via_ext_skipping(
                     git_dir,
                     &url,
                     "git-upload-pack",
                     upload_pack_refspecs,
-                    false,
                     move |adv| {
                         if has_cli_ext {
                             let Some(ref gd) = remote_gd_ext else {
@@ -1340,7 +1302,12 @@ fn fetch_remote(
                                     "ext:: fetch with refspecs requires a resolvable local upload-pack path"
                                 );
                             };
-                            crate::fetch_transport::collect_wants_cli(gd, adv, &cli_owned_ext)
+                            let mut wants =
+                                crate::fetch_transport::collect_wants_cli(gd, adv, &cli_owned_ext)?;
+                            if should_tags_ext {
+                                append_tag_wants_for_cli_fetch(&local_git_for_ext, adv, &mut wants);
+                            }
+                            Ok(wants)
                         } else if let Some(ref gd) = remote_gd_ext {
                             collect_wants_for_upload_pack(
                                 &local_git_for_ext,
@@ -1351,44 +1318,54 @@ fn fetch_remote(
                                 &remote_nm_ext,
                             )
                         } else {
-                            crate::fetch_transport::collect_wants(adv, &[], None)
+                            crate::fetch_transport::collect_wants(adv, &[])
                         }
                     },
                     filter_active,
                 )
-            },
-        )?;
-        (heads, tags)
+            })?;
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
+        (heads, tags, Vec::new())
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
-        let proxy_cwd = configured_remote_base(git_dir);
-        let (heads, tags, _, _) =
+        let (heads, tags, head_symref, head_oid) =
             crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::fetch_transport::fetch_via_git_protocol_skipping(
                     git_dir,
                     &url,
                     cli_refspecs,
-                    Some(config),
-                    Some(&proxy_cwd),
                     filter_active,
                 )
             })?;
-        (heads, tags)
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
+        (heads, tags, Vec::new())
     } else if is_http_url {
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
         // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
-        let (heads, tags, _adv) = crate::http_smart::http_fetch_pack(
+        let (heads, tags, adv) = crate::http_smart::http_fetch_pack(
             git_dir,
             &url,
             upload_pack_refspecs,
             filter_active,
+            &http_fetch_options,
             &http_ctx,
         )?;
+        remote_head_advertised_oid = adv.iter().find(|e| e.name == "HEAD").map(|e| e.oid);
+        remote_head_symbolic_branch_from_transport = None;
+        let adv: Vec<(String, ObjectId)> = adv.into_iter().map(|e| (e.name, e.oid)).collect();
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
-        (heads, tags)
+        (heads, tags, adv)
     } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
         let remote_repo_upload = remote_repo
@@ -1406,7 +1383,12 @@ fn fetch_remote(
         let has_cli_refspecs = !cli_owned.is_empty();
         let compute_wants = move |adv: &[(String, ObjectId)]| -> Result<Vec<ObjectId>> {
             if !cli_owned.is_empty() {
-                crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)
+                let mut wants =
+                    crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)?;
+                if should_fetch_tags {
+                    append_follow_tags_for_wants(&local_git, &remote_gd, &mut wants)?;
+                }
+                Ok(wants)
             } else {
                 collect_wants_for_upload_pack(
                     &local_git,
@@ -1418,15 +1400,31 @@ fn fetch_remote(
                 )
             }
         };
-        let (mut heads, mut tags, _, _) = crate::fetch_transport::fetch_via_upload_pack_skipping(
-            git_dir,
-            &remote_path,
-            upload_pack_cmd.as_deref(),
-            compute_wants,
-            has_cli_refspecs,
-            filter_active,
-            list_objects_filter,
-        )?;
+        let (mut heads, mut tags, head_symref, head_oid) =
+            crate::fetch_transport::fetch_via_upload_pack_skipping(
+                git_dir,
+                &remote_path,
+                upload_pack_cmd.as_deref(),
+                compute_wants,
+                has_cli_refspecs,
+                include_head_ref_prefix,
+                filter_active,
+                should_fetch_tags,
+                if regular_negotiation_tips.is_empty() {
+                    None
+                } else {
+                    Some(regular_negotiation_tips.as_slice())
+                },
+                Some(&upload_pack_shallow_options),
+                pack_filter_spec,
+                upload_pack_refspecs,
+                &server_options,
+            )?;
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
         // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
         // match Git's local fetch behavior (needed for submodule `origin/main` after `git fetch`).
@@ -1439,7 +1437,7 @@ fn fetch_remote(
         if tags.is_empty() {
             tags = refs::list_refs(&remote_repo_upload.git_dir, "refs/tags/")?;
         }
-        (heads, tags)
+        (heads, tags, Vec::new())
     } else {
         let remote_repo = remote_repo
             .as_ref()
@@ -1473,6 +1471,9 @@ fn fetch_remote(
             merged.dedup();
             merged
         };
+        remote_head_advertised_oid = refs::resolve_ref(&remote_repo.git_dir, "HEAD").ok();
+        remote_head_symbolic_branch_from_transport =
+            remote_symbolic_head_branch(&remote_repo.git_dir);
         if args.refetch {
             copy_objects(&remote_repo.git_dir, git_dir, true)
                 .context("copying objects from remote")?;
@@ -1481,25 +1482,114 @@ fn fetch_remote(
                 .context("copying reachable objects from remote")?;
         }
         check_connectivity(git_dir, &object_copy_roots)?;
-        (heads, tags)
+        (heads, tags, Vec::new())
     };
+
+    let allow_remote_shallow_updates = args.update_shallow
+        || args.depth.is_some()
+        || args.deepen.is_some()
+        || args.unshallow
+        || args.shallow_since.is_some()
+        || args.shallow_exclude.is_some();
+    let blocked_shallow_remote_refs = if allow_remote_shallow_updates {
+        HashSet::new()
+    } else if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+        refs_requiring_update_shallow(&rr.git_dir, git_dir)?
+    } else {
+        HashSet::new()
+    };
+    if !blocked_shallow_remote_refs.is_empty() {
+        remote_heads.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
+        remote_tags.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
+    }
+    // Remote advertisements may list tag refs whose tag objects were not sent in a shallow/depth
+    // response. Do not update local tag refs to missing objects; this keeps the repo fsck-clean
+    // after partial/failed shallow exchanges (e.g. manipulated one-time-script responses).
+    let local_repo_for_tag_filter = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    remote_tags.retain(|(_, oid)| local_repo_for_tag_filter.odb.read(oid).is_ok());
 
     let tip_oids: Vec<ObjectId> = remote_heads
         .iter()
         .chain(remote_tags.iter())
         .map(|(_, oid)| *oid)
         .collect();
-    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &tip_oids);
+    let trace_tips: Vec<ObjectId> = if regular_negotiation_tips.is_empty() {
+        tip_oids.clone()
+    } else {
+        regular_negotiation_tips.clone()
+    };
+    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &trace_tips);
 
-    // Handle --depth / --deepen: write shallow graft info
-    let effective_depth = args.depth.or(args.deepen);
+    if !args.negotiate_only && args.unshallow {
+        if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+            // For local/ext transports, mirror Git's `--unshallow` behavior by importing all
+            // reachable objects and then syncing local shallow boundaries to the remote's
+            // remaining boundaries (or removing the file when the remote is complete).
+            copy_reachable_objects_respecting_source_shallow(&rr.git_dir, git_dir, &tip_oids)
+                .context("copying objects for --unshallow")?;
+            sync_shallow_boundaries_for_unshallow(git_dir, &rr.git_dir, &tip_oids)?;
+        } else {
+            // For non-local transports we cannot inspect remote shallow boundary state here.
+            let shallow_path = git_dir.join("shallow");
+            if shallow_path.exists() {
+                fs::remove_file(&shallow_path)
+                    .context("removing shallow grafts for --unshallow")?;
+            }
+        }
+    }
+
+    // Handle --depth / --deepen: write shallow graft info.
+    // `--deepen=<n>` is relative to current shallow depth; include fetched tip advancement.
+    let effective_depth = if let Some(depth) = args.depth {
+        Some(depth)
+    } else if let Some(deepen) = args.deepen {
+        let mut target_depth = deepen;
+        if let Ok(local_repo) = Repository::open(git_dir, None) {
+            let shallow_boundaries = read_shallow_boundaries(git_dir);
+            for (remote_ref, new_tip) in &remote_heads {
+                let Some(branch) = remote_ref.strip_prefix("refs/heads/") else {
+                    continue;
+                };
+                let local_tracking = format!("refs/remotes/{tracking_remote_name}/{branch}");
+                let Some(old_tip) = read_ref_oid(git_dir, &local_tracking) else {
+                    continue;
+                };
+                let current_depth =
+                    shallow_depth_from_tip(&local_repo, old_tip, &shallow_boundaries).unwrap_or(1);
+                let advance = commit_distance(&local_repo, *new_tip, old_tip).unwrap_or(0);
+                let candidate = current_depth.saturating_add(deepen).saturating_add(advance);
+                target_depth = target_depth.max(candidate);
+            }
+        }
+        Some(target_depth)
+    } else {
+        None
+    };
     if let Some(depth) = effective_depth {
+        let replace_ancestor_boundaries = args.deepen.is_some() && args.depth.is_none();
         if let Some(ref remote_repo) = remote_repo {
-            write_shallow_info(git_dir, &remote_heads, remote_repo, depth)?;
+            write_shallow_info(
+                git_dir,
+                &remote_heads,
+                remote_repo,
+                depth,
+                replace_ancestor_boundaries,
+            )?;
         } else if is_http_url {
             let local_repo = Repository::open(git_dir, None)
                 .context("open repository for shallow metadata after HTTP fetch")?;
-            write_shallow_info(git_dir, &remote_heads, &local_repo, depth)?;
+            write_shallow_info(
+                git_dir,
+                &remote_heads,
+                &local_repo,
+                depth,
+                replace_ancestor_boundaries,
+            )?;
+        }
+    } else if args.update_shallow {
+        if let Some(ref rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+            write_remote_shallow_info_for_tips(git_dir, &rr.git_dir, &tip_oids)?;
         }
     }
 
@@ -1507,7 +1597,7 @@ fn fetch_remote(
     // refs/remotes/<name>/; prune must cover those destinations (Git behavior).
     let is_url_remote = url_override.is_some();
     let prune_namespace =
-        (args.prune || args.prune_tags) && is_url_remote && user_passed_cli_refspecs;
+        (should_prune || should_prune_tags) && is_url_remote && user_passed_cli_refspecs;
     let _dst_prefix = if prune_namespace {
         longest_common_ref_prefix_from_cli_positive(cli_refspecs)
             .unwrap_or_else(|| "refs/".to_string())
@@ -1517,11 +1607,20 @@ fn fetch_remote(
 
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
+    let mut ref_update_failures: Vec<String> = Vec::new();
+    let mut tag_clobber_failures: Vec<String> = Vec::new();
+    let mut pending_atomic_ref_ops: Vec<PendingRefOp> = Vec::new();
+    let mut pending_atomic_noop_head_hook: Option<(String, String, String)> = None;
     let mut has_updates = false;
 
-    let remote_symbolic_head_branch = remote_repo
-        .as_ref()
-        .and_then(|r| remote_symbolic_head_branch(&r.git_dir));
+    let remote_symbolic_head_branch =
+        remote_head_symbolic_branch_from_transport
+            .clone()
+            .or_else(|| {
+                remote_repo
+                    .as_ref()
+                    .and_then(|r| remote_symbolic_head_branch(&r.git_dir))
+            });
     let _remote_default_branch_fetch = remote_repo
         .as_ref()
         .and_then(|r| remote_default_branch_for_fetch_merge(&r.git_dir));
@@ -1534,14 +1633,39 @@ fn fetch_remote(
     // path. `collect_wants_cli` only drives the pack request; ref writes happen here.
     if user_passed_cli_refspecs
         && !prefetch_left_no_positive
-        && !is_http_url
         && (!is_ext_url || ext_resolved_remote.is_some())
     {
-        let remote_repo = ext_resolved_remote.as_ref().unwrap_or_else(|| {
-            remote_repo
-                .as_ref()
-                .expect("CLI refspec fetch requires a local remote repository")
-        });
+        let remote_repo = if is_http_url {
+            None
+        } else {
+            Some(ext_resolved_remote.as_ref().unwrap_or_else(|| {
+                remote_repo
+                    .as_ref()
+                    .expect("CLI refspec fetch requires a local remote repository")
+            }))
+        };
+        let remote_all_refs: Vec<(String, ObjectId)> = if is_http_url {
+            remote_advertised.clone()
+        } else {
+            refs::list_refs(
+                &remote_repo
+                    .expect("non-HTTP CLI refspec fetch requires local remote repository")
+                    .git_dir,
+                "refs/",
+            )?
+        };
+        let remote_all_refs: Vec<(String, ObjectId)> = remote_all_refs
+            .into_iter()
+            .filter(|(refname, _)| !blocked_shallow_remote_refs.contains(refname))
+            .collect();
+        let find_remote_ref_oid = |name: &str| -> Option<ObjectId> {
+            remote_all_refs
+                .iter()
+                .find(|(refname, _)| refname == name)
+                .map(|(_, oid)| *oid)
+        };
+        let ff_repo = Repository::open(git_dir, None)
+            .context("open repository for CLI refspec fast-forward checks")?;
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -1566,7 +1690,6 @@ fn fetch_remote(
         {
             let mut dst_to_src: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
             for spec in cli_refspecs {
                 if spec.starts_with('^') {
                     continue;
@@ -1606,11 +1729,18 @@ fn fetch_remote(
                         }
                     }
                 } else {
-                    let remote_ref = if src.starts_with("refs/") {
-                        src.clone()
-                    } else {
-                        format!("refs/heads/{src}")
-                    };
+                    let remote_ref = resolve_advertised_ref_for_fetch_src(
+                        &src,
+                        &remote_all_refs,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .unwrap_or_else(|| {
+                        if src.starts_with("refs/") {
+                            src.clone()
+                        } else {
+                            format!("refs/heads/{src}")
+                        }
+                    });
                     let local_ref = normalize_fetch_refspec_dst(&dst);
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != &remote_ref {
@@ -1652,26 +1782,18 @@ fn fetch_remote(
 
             // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
             if src.contains('*') {
-                let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
                 for (refname, remote_oid) in &remote_all_refs {
                     if is_excluded(refname) {
                         continue;
                     }
                     if let Some(matched) = match_glob_pattern(&src, refname) {
                         let local_ref = dst.replacen('*', matched, 1);
+                        updated_refs.push(local_ref.clone());
                         let old_oid = read_ref_oid(git_dir, &local_ref);
-                        if old_oid.as_ref() == Some(remote_oid) {
-                            continue;
-                        }
-
-                        if !has_updates && !args.quiet {
-                            eprintln!("From {display_url}");
-                            has_updates = true;
-                        }
-
-                        // Refuse to update a ref that's checked out in a worktree (unless
-                        // `--update-head-ok`, matching Git's fetch safety valve).
-                        if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
+                        if local_ref.starts_with("refs/heads/")
+                            && !args.update_head_ok
+                            && !is_bare_repo
+                        {
                             if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                                 bail!(
                                     "refusing to fetch into branch '{}' checked out at '{}'",
@@ -1680,18 +1802,45 @@ fn fetch_remote(
                                 );
                             }
                         }
-                        note_submodule_fetch_tip(old_oid.as_ref(), remote_oid);
-                        if !args.dry_run {
-                            refs::write_ref(git_dir, &local_ref, remote_oid)
-                                .with_context(|| format!("updating ref {local_ref}"))?;
+                        if old_oid.as_ref() == Some(remote_oid) {
+                            continue;
                         }
+
+                        // Check fast-forward for wildcard updates; `--atomic` expects any
+                        // non-fast-forward to abort the entire fetch.
+                        if let Some(ref old) = old_oid {
+                            if old != remote_oid && !(force || args.force) {
+                                let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
+                                    .unwrap_or(true);
+                                if !is_ff {
+                                    eprintln!(
+                                        " ! [rejected]        {src} -> {local_ref} (non-fast-forward)"
+                                    );
+                                    bail!("cannot fast-forward ref '{local_ref}'");
+                                }
+                            }
+                        }
+
+                        if !has_updates && !args.quiet {
+                            eprintln!("From {from_display_url}");
+                            has_updates = true;
+                        }
+                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                        apply_single_ref_update(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &local_ref,
+                            old_oid,
+                            *remote_oid,
+                            &mut ref_update_failures,
+                        )?;
 
                         if !args.quiet {
                             let short = local_ref
                                 .strip_prefix("refs/heads/")
                                 .or_else(|| local_ref.strip_prefix("refs/tags/"))
                                 .unwrap_or(&local_ref);
-                            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                             match old_oid {
                                 None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
                                 Some(old) => eprintln!(
@@ -1703,7 +1852,6 @@ fn fetch_remote(
                         }
 
                         // Build FETCH_HEAD entry
-                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                         fetch_head_entries.push(fetch_head_branch_line(
                             remote_oid,
                             branch,
@@ -1713,34 +1861,37 @@ fn fetch_remote(
                     }
                 }
                 // Also copy symbolic refs for the matched pattern
-                copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                if let Some(remote_repo) = remote_repo {
+                    copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                }
                 continue;
             }
 
             // Resolve source: full OID, ref name, or short branch/tag (match `collect_wants_cli`).
-            let remote_oid = if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
-                oid
-            } else {
-                let remote_ref = if src.starts_with("refs/") {
-                    src.clone()
+            let (remote_oid, resolved_remote_ref): (ObjectId, Option<String>) =
+                if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
+                    (oid, None)
                 } else {
-                    format!("refs/heads/{src}")
+                    let resolved_ref = resolve_advertised_ref_for_fetch_src(
+                        &src,
+                        &remote_all_refs,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .with_context(|| format!("couldn't find remote ref '{src}'"))?;
+                    let oid = remote_oid_for_resolved_ref(
+                        &resolved_ref,
+                        &find_remote_ref_oid,
+                        remote_head_advertised_oid,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .with_context(|| format!("couldn't find remote ref '{src}'"))?;
+                    (oid, Some(resolved_ref))
                 };
-                match refs::resolve_ref(&remote_repo.git_dir, &remote_ref) {
-                    Ok(oid) => oid,
-                    Err(_) if !src.starts_with("refs/") => {
-                        let tag_ref = format!("refs/tags/{src}");
-                        refs::resolve_ref(&remote_repo.git_dir, &tag_ref)
-                            .with_context(|| format!("couldn't find remote ref '{}'", src))?
-                    }
-                    Err(e) => {
-                        bail!("couldn't find remote ref '{src}': {e}");
-                    }
-                }
-            };
 
             let branch_label = if ObjectId::from_hex(src.as_str()).is_ok() {
                 src.as_str()
+            } else if src.is_empty() {
+                "HEAD"
             } else if let Some(rest) = src.strip_prefix("refs/heads/") {
                 rest
             } else if let Some(rest) = src.strip_prefix("refs/tags/") {
@@ -1754,18 +1905,62 @@ fn fetch_remote(
                 &display_url,
                 dst.is_empty(),
             ));
+            if args.set_upstream {
+                if let Some(remote_ref_name) = resolved_remote_ref.as_deref() {
+                    if remote_ref_name.starts_with("refs/heads/") {
+                        let local_branch = if !dst.is_empty() {
+                            normalize_fetch_refspec_dst(&dst)
+                                .strip_prefix("refs/heads/")
+                                .map(ToOwned::to_owned)
+                        } else {
+                            remote_ref_name
+                                .strip_prefix("refs/heads/")
+                                .map(ToOwned::to_owned)
+                        };
+                        if let Some(local_branch) = local_branch {
+                            set_fetch_upstream_config(
+                                git_dir,
+                                &local_branch,
+                                remote_name,
+                                remote_ref_name,
+                            )?;
+                        }
+                    }
+                }
+            }
 
             // If a destination is specified, write the ref there
             if !dst.is_empty() {
                 let local_ref = normalize_fetch_refspec_dst(&dst);
+                ensure_head_ref_target_is_commit(
+                    remote_repo,
+                    &local_ref,
+                    remote_oid,
+                    src.as_str(),
+                    &resolved_remote_ref,
+                )?;
+                updated_refs.push(local_ref.clone());
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
+                if local_ref.starts_with("refs/heads/")
+                    && !src.is_empty()
+                    && !args.update_head_ok
+                    && !is_bare_repo
+                {
+                    if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                        bail!(
+                            "refusing to fetch into branch '{}' checked out at '{}'",
+                            local_ref,
+                            wt_path
+                        );
+                    }
+                }
 
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
-                    if old != &remote_oid && !force {
-                        let is_ff = merge_base::is_ancestor(&remote_repo, *old, remote_oid)
-                            .unwrap_or(false);
+                    if old != &remote_oid && !(force || args.force) {
+                        let is_ff =
+                            merge_base::is_ancestor(&ff_repo, *old, remote_oid).unwrap_or(true);
                         if !is_ff {
                             eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
                             bail!("cannot fast-forward ref '{local_ref}'");
@@ -1775,25 +1970,18 @@ fn fetch_remote(
 
                 if old_oid.as_ref() != Some(&remote_oid) {
                     if !has_updates && !args.quiet {
-                        eprintln!("From {display_url}");
+                        eprintln!("From {from_display_url}");
                         has_updates = true;
                     }
-
-                    // Check if branch is checked out in a worktree before updating.
-                    if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
-                        if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
-                            bail!(
-                                "refusing to fetch into branch '{}' checked out at '{}'",
-                                local_ref,
-                                wt_path
-                            );
-                        }
-                    }
-                    note_submodule_fetch_tip(old_oid.as_ref(), &remote_oid);
-                    if !args.dry_run {
-                        refs::write_ref(git_dir, &local_ref, &remote_oid)
-                            .with_context(|| format!("updating ref {local_ref}"))?;
-                    }
+                    apply_single_ref_update(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        &local_ref,
+                        old_oid,
+                        remote_oid,
+                        &mut ref_update_failures,
+                    )?;
 
                     if !args.quiet {
                         let short = local_ref
@@ -1812,6 +2000,41 @@ fn fetch_remote(
                                 );
                             }
                         }
+                    }
+                }
+            } else if let Some(remote_ref_name) = resolved_remote_ref.as_deref() {
+                if let Some(local_ref) =
+                    map_ref_through_refspecs(remote_ref_name, &cli_tracking_refspecs)
+                {
+                    updated_refs.push(local_ref.clone());
+                    let old_oid = read_ref_oid(git_dir, &local_ref);
+                    if old_oid.as_ref() != Some(&remote_oid) {
+                        if !has_updates && !args.quiet {
+                            eprintln!("From {from_display_url}");
+                            has_updates = true;
+                        }
+
+                        if local_ref.starts_with("refs/heads/")
+                            && !args.update_head_ok
+                            && !is_bare_repo
+                        {
+                            if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                                bail!(
+                                    "refusing to fetch into branch '{}' checked out at '{}'",
+                                    local_ref,
+                                    wt_path
+                                );
+                            }
+                        }
+                        apply_single_ref_update(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &local_ref,
+                            old_oid,
+                            remote_oid,
+                            &mut ref_update_failures,
+                        )?;
                     }
                 }
             }
@@ -1877,10 +2100,21 @@ fn fetch_remote(
             union_refspecs.extend(rs);
         }
 
+        let refs_for_mapping: Vec<(String, ObjectId)> =
+            if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+                refs::list_refs(&rr.git_dir, "refs/")?
+            } else if remote_advertised.is_empty() {
+                let mut refs = remote_heads.clone();
+                refs.extend(remote_tags.clone());
+                refs
+            } else {
+                remote_advertised.clone()
+            };
+
         if !union_refspecs.is_empty() {
             let mut dst_to_src: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            for (refname, _) in &remote_heads {
+            for (refname, _) in &refs_for_mapping {
                 if let Some(local_ref) = map_ref_through_refspecs(refname, &union_refspecs) {
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != refname {
@@ -1896,16 +2130,12 @@ fn fetch_remote(
                 }
             }
         }
+        let prune_updated_refs = updated_refs.clone();
 
-        // Standard path: update remote-tracking refs from remote heads
-        // Git's `branch_get(NULL)` only represents a branch when `HEAD` is a symbolic ref to
-        // `refs/heads/*`. When detached, `branch_has_merge_config` is false even if
-        // `branch.<name>.{remote,merge}` exists (leftover from a prior checkout), so the first
-        // default fetch ref is marked for-merge — see `get_ref_map` in fetch.c (t7422-submodule).
-        let has_merge_cfg = current_branch_from_head(git_dir).is_some()
-            && branch_has_merge_config_for_remote(git_dir, config, remote_name);
+        // Standard path: update refs according to configured fetch refspecs.
+        let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
 
-        for (idx, (refname, advertised_oid)) in remote_heads.iter().enumerate() {
+        for (idx, (refname, advertised_oid)) in refs_for_mapping.iter().enumerate() {
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
             let Some(local_ref) = map_ref_through_refspecs(refname, &union_refspecs) else {
                 continue;
@@ -1920,51 +2150,98 @@ fn fetch_remote(
             };
             updated_refs.push(local_ref.clone());
 
-            let for_merge = if has_merge_cfg {
-                fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
-            } else if refspecs.is_empty() || fetch_positive_refspecs_are_all_globs(&refspecs) {
-                // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
-                // checked out locally when it exists on the remote. If HEAD is on a branch but the
-                // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
-                // since advertised order can put another branch first and break `FETCH_HEAD` tests).
-                //
-                // Default `remote.*.fetch` is `refs/heads/*:refs/remotes/<name>/*` (glob). Git still
-                // uses the checked-out branch for FETCH_HEAD for-merge in that case (t5532-fetch-proxy).
-                match current_branch_from_head(git_dir) {
-                    Some(b) => refname == &format!("refs/heads/{b}"),
-                    None => idx == 0,
-                }
-            } else if fetch_head_default_uses_first_advertised_branch(&refspecs) {
-                // Glob refspec (`refs/heads/*`): same rule as an empty refspec list — match symbolic
-                // HEAD's branch when present, else first advertised head (detached submodule).
-                match current_branch_from_head(git_dir) {
-                    Some(b) => refname == &format!("refs/heads/{b}"),
-                    None => idx == 0,
-                }
-            } else {
-                fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
-            };
-            fetch_head_entries.push(fetch_head_branch_line(
-                &remote_oid,
-                branch,
-                &display_url,
-                for_merge,
-            ));
+            if refname.starts_with("refs/heads/") {
+                let for_merge = if has_merge_cfg {
+                    fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
+                } else if refspecs.is_empty() {
+                    // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
+                    // checked out locally when it exists on the remote. If HEAD is on a branch but the
+                    // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
+                    // since advertised order can put another branch first and break `FETCH_HEAD` tests).
+                    match current_branch_from_head(git_dir) {
+                        Some(b) => refname == &format!("refs/heads/{b}"),
+                        None => idx == 0,
+                    }
+                } else {
+                    fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
+                };
+                fetch_head_entries.push(fetch_head_branch_line(
+                    &remote_oid,
+                    branch,
+                    &display_url,
+                    for_merge,
+                ));
+            }
 
             let old_oid = read_ref_oid(git_dir, &local_ref);
             if old_oid.as_ref() == Some(&remote_oid) {
                 continue;
             }
 
+            if should_prune && local_ref.starts_with("refs/remotes/") {
+                let local_ref_path = git_dir.join(&local_ref);
+                if local_ref_path.is_dir() {
+                    let conflict_prefix = format!("{local_ref}/");
+                    let stale_refs = refs::list_refs(git_dir, &conflict_prefix)?;
+                    if !stale_refs.is_empty() && !has_updates && !args.quiet {
+                        eprintln!("From {from_display_url}");
+                        has_updates = true;
+                    }
+                    for (stale_ref, stale_oid) in stale_refs {
+                        apply_single_ref_delete(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &stale_ref,
+                            Some(stale_oid),
+                            &mut ref_update_failures,
+                        )?;
+                        if !args.quiet {
+                            let short = stale_ref
+                                .strip_prefix("refs/remotes/")
+                                .or_else(|| stale_ref.strip_prefix("refs/heads/"))
+                                .or_else(|| stale_ref.strip_prefix("refs/tags/"))
+                                .unwrap_or(&stale_ref);
+                            eprintln!(" - [deleted]         (none)     -> {short}");
+                        }
+                    }
+                    // If we removed all child refs, clear now-empty directories so the
+                    // incoming flat ref can be created (D/F conflict during `--prune`).
+                    let mut dir = local_ref_path.clone();
+                    while dir.starts_with(git_dir) && dir.is_dir() {
+                        let is_empty = fs::read_dir(&dir)
+                            .ok()
+                            .map(|mut it| it.next().is_none())
+                            .unwrap_or(false);
+                        if !is_empty {
+                            break;
+                        }
+                        if fs::remove_dir(&dir).is_err() {
+                            break;
+                        }
+                        let Some(parent) = dir.parent() else {
+                            break;
+                        };
+                        dir = parent.to_path_buf();
+                    }
+                }
+            }
+
             if !has_updates && !args.quiet {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
                 has_updates = true;
             }
 
-            note_submodule_fetch_tip(old_oid.as_ref(), &remote_oid);
-            if !args.dry_run {
-                refs::write_ref(git_dir, &local_ref, &remote_oid)
-                    .with_context(|| format!("updating ref {local_ref}"))?;
+            apply_single_ref_update(
+                args,
+                git_dir,
+                &mut pending_atomic_ref_ops,
+                &local_ref,
+                old_oid,
+                remote_oid,
+                &mut ref_update_failures,
+            )?;
+            if !args.atomic {
                 let _ = append_fetch_reflog(
                     git_dir,
                     &local_ref,
@@ -1975,11 +2252,6 @@ fn fetch_remote(
                 );
             }
 
-            let tracking_print = local_ref
-                .strip_prefix("refs/remotes/")
-                .and_then(|s| s.find('/').map(|i| &s[..i]))
-                .unwrap_or("origin");
-
             if args.porcelain {
                 let zero = "0".repeat(40);
                 let old_hex = old_oid
@@ -1989,8 +2261,48 @@ fn fetch_remote(
                 let flag = if old_oid.is_none() { "*" } else { " " };
                 println!("{flag} {old_hex} {remote_oid} {local_ref}");
             } else if !args.quiet {
-                print_update(&old_oid, &remote_oid, branch, tracking_print);
+                let dst_display = local_ref
+                    .strip_prefix("refs/remotes/")
+                    .or_else(|| local_ref.strip_prefix("refs/heads/"))
+                    .or_else(|| local_ref.strip_prefix("refs/tags/"))
+                    .unwrap_or(local_ref.as_str());
+                if refname.starts_with("refs/heads/") {
+                    let src_branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                    if old_oid.is_none() {
+                        if local_ref.starts_with("refs/remotes/") {
+                            let tracking_print = local_ref
+                                .strip_prefix("refs/remotes/")
+                                .and_then(|s| s.find('/').map(|i| &s[..i]))
+                                .unwrap_or(remote_name);
+                            eprintln!(
+                                " * [new branch]      {src_branch:<17} -> {tracking_print}/{src_branch}"
+                            );
+                        } else {
+                            eprintln!(" * [new branch]      {src_branch:<17} -> {dst_display}");
+                        }
+                    } else if let Some(old) = old_oid.as_ref() {
+                        eprintln!(
+                            "   {}..{}  {src_branch:<17} -> {dst_display}",
+                            &old.to_string()[..7],
+                            &remote_oid.to_string()[..7],
+                        );
+                    }
+                } else {
+                    let src_display = refname.strip_prefix("refs/").unwrap_or(refname);
+                    if let Some(old) = old_oid.as_ref() {
+                        eprintln!(
+                            "   {}..{}  {src_display:<17} -> {dst_display}",
+                            &old.to_string()[..7],
+                            &remote_oid.to_string()[..7],
+                        );
+                    } else {
+                        eprintln!(" * [new ref]         {src_display:<17} -> {dst_display}");
+                    }
+                }
             }
+        }
+        if user_passed_cli_refspecs {
+            updated_refs = prune_updated_refs;
         }
 
         if implicit_path_fetch {
@@ -2014,14 +2326,29 @@ fn fetch_remote(
             }
 
             if !has_updates && !args.quiet {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
                 has_updates = true;
             }
 
-            note_submodule_fetch_tip(old_oid.as_ref(), remote_oid);
-            if !args.dry_run {
-                refs::write_ref(git_dir, refname, remote_oid)
-                    .with_context(|| format!("updating tag {refname}"))?;
+            if let Some(old) = old_oid {
+                if old != *remote_oid && !should_force_tag_update(config, remote_name, args) {
+                    let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
+                    eprintln!(" ! [rejected]        {tag_name}  (would clobber existing tag)");
+                    tag_clobber_failures.push(tag_name.to_owned());
+                    continue;
+                }
+            }
+
+            apply_single_ref_update(
+                args,
+                git_dir,
+                &mut pending_atomic_ref_ops,
+                refname,
+                old_oid,
+                *remote_oid,
+                &mut ref_update_failures,
+            )?;
+            if !args.atomic {
                 let _ =
                     append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
             }
@@ -2094,17 +2421,23 @@ fn fetch_remote(
     }
 
     // Prune tags that no longer exist on the remote
-    if args.prune_tags {
+    if should_prune_tags {
         let local_tags = refs::list_refs(git_dir, "refs/tags/")?;
         for (local_tag_ref, _oid) in &local_tags {
             let exists_on_remote = remote_tags.iter().any(|(r, _)| r == local_tag_ref);
             if !exists_on_remote {
                 if !has_updates && !args.quiet {
-                    eprintln!("From {display_url}");
+                    eprintln!("From {from_display_url}");
                     has_updates = true;
                 }
-                refs::delete_ref(git_dir, local_tag_ref)
-                    .with_context(|| format!("pruning tag {local_tag_ref}"))?;
+                apply_single_ref_delete(
+                    args,
+                    git_dir,
+                    &mut pending_atomic_ref_ops,
+                    local_tag_ref,
+                    Some(*_oid),
+                    &mut ref_update_failures,
+                )?;
                 if !args.quiet {
                     let tag_name = local_tag_ref
                         .strip_prefix("refs/tags/")
@@ -2115,30 +2448,91 @@ fn fetch_remote(
         }
     }
 
-    // Prune stale remote-tracking refs
-    if args.prune || args.prune_tags {
-        if !has_updates && !args.quiet {
+    // Prune stale remote-tracking refs.
+    if should_prune || should_prune_tags {
+        let prune_prefixes: Vec<String> = if user_passed_cli_refspecs {
+            // For explicit CLI refspecs, prune only namespaces implied by explicit `<src>:<dst>`
+            // mappings. Source-only CLI refspecs (e.g. `main`) do not define prune destinations.
+            prune_prefixes_from_cli_refspecs(cli_refspecs)
+        } else if explicit_refmap {
+            // With `--refmap`, pruning scope follows the explicit refmap destinations.
+            prune_prefixes_from_fetch_refspecs(&cli_tracking_refspecs)
+        } else {
+            // Otherwise, pruning scope follows the configured fetch refspecs in this repository.
+            prune_prefixes_from_fetch_refspecs(&refspecs)
+        };
+
+        let has_tracking_prune_scope = refspecs.iter().any(|s| {
+            !s.negative
+                && !s.dst.is_empty()
+                && normalize_fetch_refspec_dst(&s.dst).starts_with("refs/remotes/")
+        });
+        let skip_remote_tracking_prune =
+            prune_prefixes.is_empty() && (user_passed_cli_refspecs || !has_tracking_prune_scope);
+
+        if !skip_remote_tracking_prune && !has_updates && !args.quiet {
             let mut will_prune = false;
-            for rn in &coalesced_remotes {
-                let prefix = format!("refs/remotes/{rn}/");
-                let existing = refs::list_refs(git_dir, &prefix)?;
-                if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
-                    will_prune = true;
-                    break;
+            if prune_prefixes.is_empty() {
+                for rn in &coalesced_remotes {
+                    let prefix = format!("refs/remotes/{rn}/");
+                    let existing = refs::list_refs(git_dir, &prefix)?;
+                    if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
+                        will_prune = true;
+                        break;
+                    }
+                }
+            } else {
+                for prefix in &prune_prefixes {
+                    let existing = refs::list_refs(git_dir, prefix)?;
+                    if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
+                        will_prune = true;
+                        break;
+                    }
                 }
             }
             if will_prune {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
             }
         }
-        for rn in &coalesced_remotes {
-            let prefix = format!("refs/remotes/{rn}/");
-            prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
+
+        if !skip_remote_tracking_prune {
+            if prune_prefixes.is_empty() {
+                for rn in &coalesced_remotes {
+                    let prefix = format!("refs/remotes/{rn}/");
+                    prune_stale_refs(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        &prefix,
+                        &updated_refs,
+                        rn,
+                        args.quiet,
+                        &mut ref_update_failures,
+                    )?;
+                }
+            } else {
+                for prefix in &prune_prefixes {
+                    let remote_hint = prefix
+                        .strip_prefix("refs/remotes/")
+                        .and_then(|s| s.split('/').next())
+                        .unwrap_or(remote_name);
+                    prune_stale_refs(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        prefix,
+                        &updated_refs,
+                        remote_hint,
+                        args.quiet,
+                        &mut ref_update_failures,
+                    )?;
+                }
+            }
         }
     }
 
     // Update `refs/remotes/<remote>/HEAD` to match the remote's default branch (Git `set_head`).
-    let follow = parse_follow_remote_head(config, remote_name);
+    let follow = follow_remote_head;
     let do_set_head =
         cli_refspecs.is_empty() && !refspecs.is_empty() && follow.mode != FollowRemoteHead::Never;
     if do_set_head {
@@ -2153,7 +2547,9 @@ fn fetch_remote(
                 map_ref_through_refspecs(&head_source, &refspecs)
             };
             if let Some(mapped_default_ref) = mapped_default {
-                if refs::resolve_ref(git_dir, &mapped_default_ref).is_ok() {
+                let mapped_ref_available = refs::resolve_ref(git_dir, &mapped_default_ref).is_ok()
+                    || pending_writes_ref(&pending_atomic_ref_ops, &mapped_default_ref);
+                if mapped_ref_available {
                     let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
                     let previous = read_remote_head_previous(git_dir, remote_name);
                     let head_missing = matches!(previous, RemoteHeadPrevious::Missing);
@@ -2165,7 +2561,13 @@ fn fetch_remote(
                     if should_write {
                         refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
                             .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
-                        updated_refs.push(remote_head_ref);
+                        updated_refs.push(remote_head_ref.clone());
+                    } else if args.atomic {
+                        pending_atomic_noop_head_hook = Some((
+                            remote_head_ref.clone(),
+                            "0".repeat(40),
+                            mapped_default_ref.clone(),
+                        ));
                     }
                     maybe_warn_follow_remote_head(
                         &follow,
@@ -2209,64 +2611,68 @@ fn fetch_remote(
         }
     }
 
-    if !fetch_head_entries.is_empty() && !args.no_write_fetch_head {
+    if !fetch_head_entries.is_empty() {
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
-        if args.parallel_fetch_collect_fetch_head {
-            if let Some(ord) = args.parallel_fetch_order {
-                let mut g = PARALLEL_FETCH_HEAD_CHUNKS
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("FETCH_HEAD chunk lock: {e}"))?;
-                g.push((ord, fetch_head_entries));
+        if args.atomic {
+            if let Err(err) = apply_pending_ref_ops_atomic(git_dir, &pending_atomic_ref_ops) {
+                fetch_head_entries.clear();
+                return Err(err);
             }
+            if let Some((remote_head_ref, old_value, mapped_default_ref)) =
+                pending_atomic_noop_head_hook.take()
+            {
+                let repo_for_symref_hook = repository_for_ref_hooks(git_dir)?;
+                run_prepare_only_symref_hook(
+                    &repo_for_symref_hook,
+                    &remote_head_ref,
+                    &old_value,
+                    &mapped_default_ref,
+                )?;
+            }
+        }
+        let fetch_head_path = git_dir.join("FETCH_HEAD");
+        let content = fetch_head_entries.join("\n") + "\n";
+        let should_write_fetch_head = if args.dry_run {
+            false
+        } else if args.no_write_fetch_head {
+            false
+        } else if args.write_fetch_head {
+            true
         } else {
-            let fetch_head_path = git_dir.join("FETCH_HEAD");
-            let mut combined = String::new();
-            if (FETCH_HEAD_APPEND_MODE.get() || args.append) && fetch_head_path.is_file() {
-                let existing = fs::read_to_string(&fetch_head_path).unwrap_or_default();
-                if !existing.is_empty() {
-                    combined.push_str(existing.trim_end());
-                    combined.push('\n');
-                }
+            true
+        };
+        if should_write_fetch_head {
+            if args.append {
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&fetch_head_path)
+                    .context("opening FETCH_HEAD for append")?;
+                file.write_all(content.as_bytes())
+                    .context("appending FETCH_HEAD")?;
+            } else {
+                fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
             }
-            for (i, line) in fetch_head_entries.iter().enumerate() {
-                if i > 0 {
-                    combined.push('\n');
-                }
-                combined.push_str(line);
-            }
-            combined.push('\n');
-            fs::write(&fetch_head_path, combined).context("writing FETCH_HEAD")?;
+        } else if args.dry_run && !args.no_write_fetch_head {
+            eprintln!("would write to .git/FETCH_HEAD");
         }
     }
-
-    if user_passed_cli_refspecs && !prefetch_left_no_positive {
-        for spec in cli_refspecs {
-            if spec.starts_with('^') {
-                continue;
-            }
-            let sc = spec.strip_prefix('+').unwrap_or(spec.as_str());
-            let src = sc.split_once(':').map(|(a, _)| a).unwrap_or(sc);
-            if src.len() == 40 {
-                if let Ok(oid) = ObjectId::from_hex(src) {
-                    note_submodule_fetch_tip(None, &oid);
-                }
-            }
-        }
+    if !tag_clobber_failures.is_empty() {
+        bail!("some local refs could not be updated");
+    }
+    if !args.atomic && !ref_update_failures.is_empty() {
+        eprintln!("error: some local refs could not be updated; try running");
+        eprintln!(" 'git remote prune {remote_name}' to remove any old, conflicting branches");
+        bail!("some local refs could not be updated");
     }
 
-    crate::fetch_submodule_record::finish_record_tips_after(git_dir);
-
-    let inherited_blob_none = !args.no_filter
-        && args.filter.is_none()
-        && config
-            .get(&format!("remote.{tracking_remote_name}.partialclonefilter"))
-            .as_deref()
-            == Some("blob:none")
-        && grit_lib::promisor::repo_treats_promisor_packs(git_dir, &config);
-    if !args.no_filter && (args.filter.as_deref() == Some("blob:none") || inherited_blob_none) {
+    if args.filter.as_deref() == Some("blob:none") {
         apply_blob_none_filter(git_dir, remote_repo.as_ref(), &remote_heads)
             .context("applying blob:none filter")?;
     }
+
+    maybe_write_commit_graph_after_fetch(git_dir, args)?;
+    maybe_run_auto_gc_after_fetch(git_dir, args)?;
 
     // Write machine-readable output if --output is given
     if let Some(ref output_path) = args.output {
@@ -2296,6 +2702,72 @@ fn fetch_remote(
         apply_partial_clone_fetch_config(git_dir, remote_name, args.filter.as_deref())?;
     }
 
+    Ok(())
+}
+
+fn maybe_write_commit_graph_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
+    if args.dry_run {
+        return Ok(());
+    }
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let write_graph = cfg
+        .get_bool("fetch.writecommitgraph")
+        .and_then(|v| v.ok())
+        .or_else(|| {
+            cfg.get("fetch.writeCommitGraph")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    if !write_graph {
+        return Ok(());
+    }
+    let repo = Repository::open(git_dir, None)?;
+    let work_dir = repo.work_tree.as_deref().unwrap_or(git_dir);
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.current_dir(work_dir).args([
+        "commit-graph",
+        "write",
+        "--split",
+        "--reachable",
+        "--changed-paths",
+    ]);
+    if args.quiet {
+        cmd.arg("--no-progress");
+    }
+    let status = cmd
+        .status()
+        .context("failed to run grit commit-graph write after fetch")?;
+    if !status.success() {
+        eprintln!("warning: commit-graph write returned non-zero status");
+    }
+    Ok(())
+}
+
+fn maybe_run_auto_gc_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
+    if args.dry_run {
+        return Ok(());
+    }
+    let repo = Repository::open(git_dir, None)?;
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    if !crate::commands::gc::need_to_gc(&repo, &cfg) {
+        return Ok(());
+    }
+    if !args.quiet {
+        eprintln!("Auto packing the repository for optimum performance.");
+        eprintln!("See \"git help gc\" for manual housekeeping.");
+    }
+    trace_run_command_git_invocation(&["gc", "--auto"]);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(git_dir);
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.current_dir(work_dir).args(["gc", "--auto"]);
+    if args.quiet {
+        cmd.arg("--quiet");
+    }
+    let status = cmd.status().context("failed to run auto gc after fetch")?;
+    if !status.success() {
+        eprintln!("warning: auto gc returned non-zero status");
+    }
     Ok(())
 }
 
@@ -2379,6 +2851,23 @@ fn apply_partial_clone_fetch_config(
     config_file
         .write()
         .context("writing promisor config after fetch")?;
+    Ok(())
+}
+
+fn set_fetch_upstream_config(
+    git_dir: &Path,
+    local_branch: &str,
+    remote_name: &str,
+    remote_ref: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config_file.set(&format!("branch.{local_branch}.remote"), remote_name)?;
+    config_file.set(&format!("branch.{local_branch}.merge"), remote_ref)?;
+    config_file.write()?;
     Ok(())
 }
 
@@ -2492,7 +2981,6 @@ fn collect_blob_sets_for_tree(
             )?;
             continue;
         }
-        all_blobs.insert(entry.oid);
         let blob_obj = match odb.read(&entry.oid) {
             Ok(obj) => obj,
             Err(_) => continue,
@@ -2500,6 +2988,7 @@ fn collect_blob_sets_for_tree(
         if blob_obj.kind != ObjectKind::Blob {
             continue;
         }
+        all_blobs.insert(entry.oid);
         if sparse_path_is_included(patterns, &rel_path) {
             keep_blobs.insert(entry.oid);
         }
@@ -2673,8 +3162,191 @@ fn read_loose_ref_chain(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     None
 }
 
+fn read_loose_symbolic_ref_chain(git_dir: &Path, refname: &str) -> Option<String> {
+    let mut name = refname.to_string();
+    for _ in 0..20 {
+        let path = git_dir.join(&name);
+        let content = fs::read_to_string(&path).ok()?;
+        let line = content.trim_end_matches(['\n', '\r']);
+        if let Some(target) = line.strip_prefix("ref: ") {
+            name = target.trim().to_string();
+            continue;
+        }
+        return Some(name);
+    }
+    None
+}
+
 fn zero_oid() -> ObjectId {
     ObjectId::from_hex("0000000000000000000000000000000000000000").expect("null oid")
+}
+
+fn hook_update_for_pending_ref_op(op: &PendingRefOp) -> HookUpdate {
+    match op {
+        PendingRefOp::Write {
+            refname,
+            old_oid,
+            new_oid,
+        } => HookUpdate {
+            old_value: old_oid
+                .as_ref()
+                .map_or_else(|| "0".repeat(40), ObjectId::to_hex),
+            new_value: new_oid.to_hex(),
+            refname: refname.clone(),
+            deletes_ref: *new_oid == zero_oid(),
+        },
+        PendingRefOp::Delete { refname, old_oid } => HookUpdate {
+            old_value: old_oid
+                .as_ref()
+                .map_or_else(|| "0".repeat(40), ObjectId::to_hex),
+            new_value: "0".repeat(40),
+            refname: refname.clone(),
+            deletes_ref: true,
+        },
+    }
+}
+
+fn apply_pending_ref_ops_atomic(git_dir: &Path, ops: &[PendingRefOp]) -> Result<()> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let work_tree = if git_dir.file_name().is_some_and(|name| name == ".git") {
+        git_dir.parent().map(Path::to_path_buf)
+    } else {
+        None
+    };
+    let repo = Repository::open(git_dir, work_tree.as_deref())
+        .context("open repository for atomic fetch updates")?;
+    let hook_updates: Vec<HookUpdate> = ops.iter().map(hook_update_for_pending_ref_op).collect();
+    run_ref_transaction_prepare(&repo, &hook_updates)?;
+    for op in ops {
+        let apply = match op {
+            PendingRefOp::Write {
+                refname, new_oid, ..
+            } => refs::write_ref(git_dir, refname, new_oid)
+                .with_context(|| format!("updating ref {refname}")),
+            PendingRefOp::Delete { refname, .. } => {
+                refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))
+            }
+        };
+        if let Err(err) = apply {
+            run_ref_transaction_aborted(&repo, &hook_updates);
+            return Err(err);
+        }
+    }
+    run_ref_transaction_committed(&repo, &hook_updates);
+    Ok(())
+}
+
+fn apply_single_ref_update(
+    args: &Args,
+    git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
+    refname: &str,
+    old_oid: Option<ObjectId>,
+    new_oid: ObjectId,
+    ref_update_failures: &mut Vec<String>,
+) -> Result<()> {
+    if args.atomic {
+        pending_atomic_ref_ops.push(PendingRefOp::Write {
+            refname: refname.to_owned(),
+            old_oid,
+            new_oid,
+        });
+    } else {
+        if let Err(err) = refs::write_ref(git_dir, refname, &new_oid) {
+            ref_update_failures.push(refname.to_owned());
+            print_ref_update_error(git_dir, refname, &err);
+        }
+    }
+    Ok(())
+}
+
+fn apply_single_ref_delete(
+    args: &Args,
+    git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
+    refname: &str,
+    old_oid: Option<ObjectId>,
+    ref_update_failures: &mut Vec<String>,
+) -> Result<()> {
+    if args.atomic {
+        pending_atomic_ref_ops.push(PendingRefOp::Delete {
+            refname: refname.to_owned(),
+            old_oid,
+        });
+    } else {
+        if let Err(err) = refs::delete_ref(git_dir, refname) {
+            ref_update_failures.push(refname.to_owned());
+            eprintln!("error: deleting ref {refname}: {err}");
+        }
+    }
+    Ok(())
+}
+
+fn print_ref_update_error(git_dir: &Path, refname: &str, err: &GritError) {
+    if let GritError::Io(io_err) = err {
+        if io_err.kind() == std::io::ErrorKind::AlreadyExists
+            || io_err.raw_os_error() == Some(libc::EEXIST)
+        {
+            let lock_path = git_dir.join(refname).with_extension("lock");
+            eprintln!(
+                "error: cannot lock ref '{}': Unable to create '{}': File exists.",
+                refname,
+                lock_path.display()
+            );
+            return;
+        }
+    }
+    eprintln!("error: updating ref {refname}: {err}");
+}
+
+fn pending_writes_ref(ops: &[PendingRefOp], refname: &str) -> bool {
+    ops.iter().any(|op| {
+        matches!(
+            op,
+            PendingRefOp::Write {
+                refname: r,
+                new_oid,
+                ..
+            } if r == refname && *new_oid != zero_oid()
+        )
+    })
+}
+
+fn repository_for_ref_hooks(git_dir: &Path) -> Result<Repository> {
+    if git_dir.file_name().is_some_and(|n| n == ".git") {
+        if let Some(work_tree) = git_dir.parent() {
+            if let Ok(repo) = Repository::open(git_dir, Some(work_tree)) {
+                return Ok(repo);
+            }
+        }
+    }
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        return Ok(repo);
+    }
+    Repository::discover(None).context("open repository for reference-transaction hooks")
+}
+
+fn run_prepare_only_symref_hook(
+    repo: &Repository,
+    refname: &str,
+    old_value: &str,
+    target: &str,
+) -> Result<()> {
+    let line = format!("{old_value} ref:{target} {refname}\n");
+    let result = run_hook(
+        repo,
+        "reference-transaction",
+        &["preparing"],
+        Some(line.as_bytes()),
+    );
+    match result {
+        HookResult::NotFound | HookResult::Success => Ok(()),
+        HookResult::Failed(_) => {
+            bail!("in 'preparing' phase, update aborted by the reference-transaction hook")
+        }
+    }
 }
 
 fn fetch_reflog_identity(git_dir: &Path) -> String {
@@ -2759,10 +3431,6 @@ fn fetch_object_copy_roots(
                 .split_once(':')
                 .map(|(a, _)| a)
                 .unwrap_or(spec_clean);
-            if let Ok(oid) = ObjectId::from_hex(src.trim()) {
-                roots.push(oid);
-                continue;
-            }
             if src.contains('*') {
                 let remote_all_refs = refs::list_refs(remote_git_dir, "refs/")?;
                 for (refname, oid) in &remote_all_refs {
@@ -2812,18 +3480,104 @@ fn fetch_object_copy_roots(
 
 /// Resolve a short or full remote ref name for fetch (CLI refspec source side).
 fn resolve_remote_ref_for_fetch_src(remote_git_dir: &Path, src: &str) -> Result<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Ok("HEAD".to_owned());
+    }
     if src.starts_with("refs/") {
         return Ok(src.to_owned());
+    }
+    let candidates = [
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    for cand in candidates {
+        if refs::resolve_ref(remote_git_dir, &cand).is_ok() {
+            return Ok(cand);
+        }
     }
     let heads_ref = format!("refs/heads/{src}");
     if refs::resolve_ref(remote_git_dir, &heads_ref).is_ok() {
         return Ok(heads_ref);
     }
-    let tags_ref = format!("refs/tags/{src}");
-    if refs::resolve_ref(remote_git_dir, &tags_ref).is_ok() {
-        return Ok(tags_ref);
-    }
     Ok(heads_ref)
+}
+
+fn resolve_advertised_ref_for_fetch_src(
+    src: &str,
+    remote_all_refs: &[(String, ObjectId)],
+    remote_symbolic_head_branch: Option<&str>,
+) -> Option<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Some("HEAD".to_owned());
+    }
+    if src.starts_with("refs/") {
+        return Some(src.to_owned());
+    }
+    let mut candidates = vec![
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    if let Some(branch) = remote_symbolic_head_branch {
+        candidates.push(format!("refs/heads/{branch}"));
+    }
+    candidates
+        .into_iter()
+        .find(|cand| remote_all_refs.iter().any(|(name, _)| name == cand))
+}
+
+fn remote_oid_for_resolved_ref(
+    resolved_ref: &str,
+    find_remote_ref_oid: &dyn Fn(&str) -> Option<ObjectId>,
+    remote_head_advertised_oid: Option<ObjectId>,
+    remote_symbolic_head_branch: Option<&str>,
+) -> Option<ObjectId> {
+    if resolved_ref == "HEAD" {
+        remote_head_advertised_oid
+            .or_else(|| find_remote_ref_oid("HEAD"))
+            .or_else(|| {
+                remote_symbolic_head_branch
+                    .and_then(|b| find_remote_ref_oid(&format!("refs/heads/{b}")))
+            })
+    } else {
+        find_remote_ref_oid(resolved_ref)
+    }
+}
+
+fn ensure_head_ref_target_is_commit(
+    remote_repo: Option<&Repository>,
+    local_ref: &str,
+    remote_oid: ObjectId,
+    src: &str,
+    resolved_remote_ref: &Option<String>,
+) -> Result<()> {
+    if src.is_empty() {
+        return Ok(());
+    }
+    if !local_ref.starts_with("refs/heads/") {
+        return Ok(());
+    }
+    let Some(repo) = remote_repo else {
+        return Ok(());
+    };
+    let Ok(obj) = repo.odb.read(&remote_oid) else {
+        return Ok(());
+    };
+    if obj.kind == ObjectKind::Commit {
+        return Ok(());
+    }
+    let shown_src = resolved_remote_ref.as_deref().unwrap_or(src);
+    bail!(
+        "object {} from '{}' is not a commit; cannot update '{}'",
+        remote_oid.to_hex(),
+        shown_src,
+        local_ref
+    );
 }
 
 /// Copy all objects (loose + packs) from remote to local.
@@ -2842,8 +3596,28 @@ pub(crate) fn copy_reachable_objects(
     dst_git_dir: &Path,
     roots: &[ObjectId],
 ) -> Result<()> {
+    copy_reachable_objects_internal(src_git_dir, dst_git_dir, roots, false)
+}
+
+/// Copy objects reachable from `roots`, optionally stopping parent traversal at remote shallow
+/// boundaries found in `<src_git_dir>/shallow`.
+///
+/// When `respect_remote_shallow_boundaries` is true, commits listed in the source shallow file are
+/// treated as traversal boundaries: the commit object and its tree are copied, but parent commits
+/// beyond that boundary are not copied.
+fn copy_reachable_objects_internal(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    roots: &[ObjectId],
+    respect_remote_shallow_boundaries: bool,
+) -> Result<()> {
     let src_odb = Odb::new(&src_git_dir.join("objects"));
     let dst_odb = Odb::new(&dst_git_dir.join("objects"));
+    let remote_shallow_boundaries = if respect_remote_shallow_boundaries {
+        read_shallow_boundary_oids(src_git_dir)?
+    } else {
+        HashSet::new()
+    };
     let mut stack: Vec<ObjectId> = roots.to_vec();
     let mut seen = HashSet::new();
 
@@ -2854,16 +3628,18 @@ pub(crate) fn copy_reachable_objects(
         let obj = src_odb.read(&oid).with_context(|| {
             format!("missing object {} while copying from remote", oid.to_hex())
         })?;
-        if !dst_odb.exists_local(&oid) {
+        if !dst_odb.exists(&oid) {
             dst_odb
-                .write_loose_materialize(obj.kind, &obj.data)
+                .write(obj.kind, &obj.data)
                 .with_context(|| format!("write object {}", oid.to_hex()))?;
         }
         match obj.kind {
             ObjectKind::Commit => {
                 let c = parse_commit(&obj.data)?;
                 stack.push(c.tree);
-                stack.extend_from_slice(&c.parents);
+                if !remote_shallow_boundaries.contains(&oid) {
+                    stack.extend_from_slice(&c.parents);
+                }
             }
             ObjectKind::Tree => {
                 for e in parse_tree(&obj.data)? {
@@ -2877,6 +3653,16 @@ pub(crate) fn copy_reachable_objects(
         }
     }
     Ok(())
+}
+
+/// Copy objects reachable from `roots`, but do not traverse parent commits past source shallow
+/// boundaries.
+fn copy_reachable_objects_respecting_source_shallow(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    roots: &[ObjectId],
+) -> Result<()> {
+    copy_reachable_objects_internal(src_git_dir, dst_git_dir, roots, true)
 }
 
 fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {
@@ -2945,6 +3731,17 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
 /// Verify that all objects reachable from the given OIDs exist in the local ODB.
 /// This is used after copying objects from a remote to detect incomplete transfers.
 fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
+    let hidden_prefix = if has_hide_refs_for_fetch_connectivity(git_dir) {
+        Some("--exclude-hidden=fetch")
+    } else {
+        None
+    };
+    if let Some(flag) = hidden_prefix {
+        trace_run_command_git_invocation(&["rev-list", "--objects", "--stdin", flag]);
+    } else {
+        trace_run_command_git_invocation(&["rev-list", "--objects", "--stdin"]);
+    }
+
     use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
     use grit_lib::odb::Odb;
     use std::collections::HashSet;
@@ -2988,18 +3785,52 @@ fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
     Ok(())
 }
 
+fn has_hide_refs_for_fetch_connectivity(git_dir: &Path) -> bool {
+    if std::env::var("GIT_CONFIG_PARAMETERS")
+        .ok()
+        .is_some_and(|raw| {
+            let lower = raw.to_ascii_lowercase();
+            lower.contains("fetch.hiderefs=") || lower.contains("transfer.hiderefs=")
+        })
+    {
+        return true;
+    }
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .is_some_and(|cfg| {
+            cfg.entries().iter().any(|entry| {
+                let key = entry.key.as_str();
+                key.starts_with("fetch.hiderefs")
+                    || key.starts_with("transfer.hiderefs")
+                    || key == "fetch.hiderefs"
+                    || key == "transfer.hiderefs"
+            })
+        })
+}
+
 /// Remove remote-tracking refs that no longer exist on the remote.
 fn prune_stale_refs(
+    args: &Args,
     git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
     prefix: &str,
     current_refs: &[String],
     remote_name: &str,
     quiet: bool,
+    ref_update_failures: &mut Vec<String>,
 ) -> Result<()> {
     let existing = refs::list_refs(git_dir, prefix)?;
-    for (refname, _oid) in &existing {
+    for (refname, oid) in &existing {
         if !current_refs.contains(refname) {
-            refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))?;
+            apply_single_ref_delete(
+                args,
+                git_dir,
+                pending_atomic_ref_ops,
+                refname,
+                Some(*oid),
+                ref_update_failures,
+            )
+            .with_context(|| format!("pruning {refname}"))?;
             if !quiet {
                 // Show short name: "origin/branch" instead of "refs/remotes/origin/branch"
                 let short = refname.strip_prefix("refs/remotes/").unwrap_or(refname);
@@ -3022,17 +3853,19 @@ fn write_shallow_info(
     remote_heads: &[(String, ObjectId)],
     remote_repo: &Repository,
     depth: usize,
+    replace_ancestor_boundaries: bool,
 ) -> Result<()> {
     use grit_lib::objects::{parse_commit, ObjectKind};
     use grit_lib::odb::Odb;
 
     let shallow_path = git_dir.join("shallow");
-    // Collect existing shallow commits
+    // Start from existing shallow boundaries; each fetched tip rewrites only its own boundary.
     let mut shallow_set: std::collections::HashSet<String> = if shallow_path.exists() {
         fs::read_to_string(&shallow_path)?
             .lines()
+            .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+            .map(ToOwned::to_owned)
             .collect()
     } else {
         std::collections::HashSet::new()
@@ -3040,8 +3873,23 @@ fn write_shallow_info(
 
     let odb = Odb::new(&remote_repo.git_dir.join("objects"));
 
-    // For each remote head, walk `depth` commits and mark the boundary
+    // For each remote head, walk `depth` commits and mark the boundary.
     for (_refname, tip_oid) in remote_heads {
+        if replace_ancestor_boundaries {
+            let mut to_remove = Vec::new();
+            for existing in &shallow_set {
+                if let Ok(existing_oid) = ObjectId::from_hex(existing) {
+                    let superseded = merge_base::is_ancestor(remote_repo, existing_oid, *tip_oid)
+                        .unwrap_or(false);
+                    if superseded {
+                        to_remove.push(existing.clone());
+                    }
+                }
+            }
+            for old in to_remove {
+                shallow_set.remove(&old);
+            }
+        }
         let mut oid = *tip_oid;
         for _ in 0..depth.saturating_sub(1) {
             match odb.read(&oid) {
@@ -3064,6 +3912,271 @@ fn write_shallow_info(
     entries.sort();
     let content = entries.join("\n") + "\n";
     fs::write(&shallow_path, content).context("writing shallow file")?;
+    Ok(())
+}
+
+fn read_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
+    let mut out = HashSet::new();
+    let Ok(content) = fs::read_to_string(git_dir.join("shallow")) else {
+        return out;
+    };
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.insert(oid);
+        }
+    }
+    out
+}
+
+fn shallow_depth_from_tip(
+    repo: &Repository,
+    tip: ObjectId,
+    boundaries: &HashSet<ObjectId>,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut current = tip;
+    loop {
+        if boundaries.contains(&current) {
+            return Some(depth);
+        }
+        let obj = repo.odb.read(&current).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            return Some(depth);
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        let parent = *commit.parents.first()?;
+        current = parent;
+        depth += 1;
+    }
+}
+
+fn commit_distance(repo: &Repository, from: ObjectId, target: ObjectId) -> Option<usize> {
+    if from == target {
+        return Some(0);
+    }
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = HashSet::new();
+    queue.push_back((from, 0usize));
+    while let Some((oid, dist)) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = repo.odb.read(&oid).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        for parent in commit.parents {
+            if parent == target {
+                return Some(dist + 1);
+            }
+            queue.push_back((parent, dist + 1));
+        }
+    }
+    None
+}
+
+fn read_shallow_boundary_oids(remote_git_dir: &Path) -> Result<HashSet<ObjectId>> {
+    let shallow_path = remote_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(HashSet::new());
+    }
+    let mut set = HashSet::new();
+    for line in fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            set.insert(oid);
+        }
+    }
+    Ok(set)
+}
+
+fn oid_reaches_shallow_boundary(
+    repo: &Repository,
+    oid: ObjectId,
+    boundary_oids: &HashSet<ObjectId>,
+    memo: &mut HashMap<ObjectId, bool>,
+) -> bool {
+    if let Some(result) = memo.get(&oid) {
+        return *result;
+    }
+    if boundary_oids.contains(&oid) {
+        memo.insert(oid, true);
+        return true;
+    }
+    let Ok(obj) = repo.odb.read(&oid) else {
+        memo.insert(oid, false);
+        return false;
+    };
+    let reaches = match obj.kind {
+        ObjectKind::Commit => parse_commit(&obj.data).is_ok_and(|commit| {
+            commit
+                .parents
+                .iter()
+                .any(|parent| oid_reaches_shallow_boundary(repo, *parent, boundary_oids, memo))
+        }),
+        ObjectKind::Tag => parse_tag(&obj.data)
+            .is_ok_and(|tag| oid_reaches_shallow_boundary(repo, tag.object, boundary_oids, memo)),
+        _ => false,
+    };
+    memo.insert(oid, reaches);
+    reaches
+}
+
+fn refs_requiring_update_shallow(
+    remote_git_dir: &Path,
+    local_git_dir: &Path,
+) -> Result<HashSet<String>> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    if boundary_oids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let local_boundary_oids = read_shallow_boundary_oids(local_git_dir)?;
+    let required_new_boundaries: HashSet<ObjectId> = boundary_oids
+        .difference(&local_boundary_oids)
+        .copied()
+        .collect();
+    if required_new_boundaries.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+    let mut blocked = HashSet::new();
+    let mut memo = HashMap::new();
+    for (refname, oid) in refs::list_refs(remote_git_dir, "refs/")? {
+        if refname.starts_with("refs/tags/") {
+            continue;
+        }
+        if oid_reaches_shallow_boundary(&repo, oid, &required_new_boundaries, &mut memo) {
+            blocked.insert(refname);
+        }
+    }
+    Ok(blocked)
+}
+
+fn write_remote_shallow_info_for_tips(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    if boundary_oids.is_empty() {
+        return Ok(());
+    }
+    let remote_repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+    let shallow_path = local_git_dir.join("shallow");
+    let mut local_boundaries: HashSet<ObjectId> = if shallow_path.exists() {
+        fs::read_to_string(&shallow_path)?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| ObjectId::from_hex(l).ok())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    let mut stack: Vec<ObjectId> = tip_oids.to_vec();
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if boundary_oids.contains(&oid) {
+            local_boundaries.insert(oid);
+            continue;
+        }
+        let Ok(obj) = remote_repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.extend(commit.parents);
+                }
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    stack.push(tag.object);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !local_boundaries.is_empty() {
+        let mut entries: Vec<String> = local_boundaries.iter().map(ObjectId::to_hex).collect();
+        entries.sort();
+        fs::write(&shallow_path, entries.join("\n") + "\n").context("writing shallow file")?;
+    }
+    Ok(())
+}
+
+fn sync_shallow_boundaries_for_unshallow(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    let shallow_path = local_git_dir.join("shallow");
+
+    if boundary_oids.is_empty() {
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+        return Ok(());
+    }
+
+    let remote_repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+
+    // `--unshallow` should align local shallow boundaries to the remote's current boundaries,
+    // not keep previous local deepen markers that may be superseded.
+    let mut local_boundaries: HashSet<ObjectId> = HashSet::new();
+
+    let mut stack: Vec<ObjectId> = tip_oids.to_vec();
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if boundary_oids.contains(&oid) {
+            local_boundaries.insert(oid);
+            continue;
+        }
+        let Ok(obj) = remote_repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.extend(commit.parents);
+                }
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    stack.push(tag.object);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if local_boundaries.is_empty() {
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+    } else {
+        let mut entries: Vec<String> = local_boundaries.iter().map(ObjectId::to_hex).collect();
+        entries.sort();
+        fs::write(&shallow_path, entries.join("\n") + "\n").context("writing shallow file")?;
+    }
     Ok(())
 }
 
@@ -3141,11 +4254,23 @@ fn parse_follow_remote_head(config: &ConfigSet, remote_name: &str) -> FollowRemo
     }
 }
 
+fn should_force_tag_update(config: &ConfigSet, remote_name: &str, args: &Args) -> bool {
+    if args.force {
+        return true;
+    }
+    let key = format!("remote.{remote_name}.tagOpt");
+    config
+        .get(&key)
+        .map(|v| v.trim() == "--force")
+        .unwrap_or(false)
+}
+
 fn trace_ls_refs_head_prefix() {
     crate::trace_packet::trace_packet_line(b"fetch> ref-prefix HEAD");
 }
 
 /// Previous `refs/remotes/<remote>/HEAD` state for `followRemoteHEAD` warnings.
+#[derive(Clone)]
 enum RemoteHeadPrevious {
     Symref(String),
     DetachedOid(ObjectId),
@@ -3312,6 +4437,63 @@ fn parse_cli_fetch_refspecs(cli: &[String]) -> Vec<FetchRefspec> {
             });
         }
     }
+    out
+}
+
+/// Prune namespaces implied by CLI refspecs.
+///
+/// Only explicit `<src>:<dst>` refspecs participate. A source-only refspec
+/// (e.g. `main`) does not define a prune destination namespace.
+fn prune_prefixes_from_cli_refspecs(cli: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for spec in cli {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let Some(colon) = clean.find(':') else {
+            continue;
+        };
+        let dst_raw = &clean[colon + 1..];
+        if dst_raw.is_empty() {
+            continue;
+        }
+        let dst = normalize_fetch_refspec_dst(dst_raw);
+        if !dst.starts_with("refs/") {
+            continue;
+        }
+        let prefix = if let Some(star) = dst.find('*') {
+            dst[..star].to_string()
+        } else {
+            dst
+        };
+        out.push(prefix);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Remote-tracking prune namespaces implied by configured fetch refspecs.
+fn prune_prefixes_from_fetch_refspecs(specs: &[FetchRefspec]) -> Vec<String> {
+    let mut out = Vec::new();
+    for spec in specs {
+        if spec.negative || spec.dst.is_empty() {
+            continue;
+        }
+        let dst = normalize_fetch_refspec_dst(&spec.dst);
+        if !dst.starts_with("refs/remotes/") {
+            continue;
+        }
+        let prefix = if let Some(star) = dst.find('*') {
+            dst[..star].to_string()
+        } else {
+            dst
+        };
+        out.push(prefix);
+    }
+    out.sort();
+    out.dedup();
     out
 }
 
@@ -3616,6 +4798,24 @@ pub fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
     names
 }
 
+/// Collect remote names from the repository-local config only.
+fn collect_local_remote_names(git_dir: &Path) -> Option<Vec<String>> {
+    let cfg = ConfigFile::from_path(&git_dir.join("config"), ConfigScope::Local)
+        .ok()
+        .flatten()?;
+    let mut names = Vec::new();
+    for entry in cfg.entries {
+        let parts: Vec<&str> = entry.key.splitn(3, '.').collect();
+        if parts.len() == 3 && parts[0] == "remote" && parts[2] == "url" {
+            let name = parts[1].to_string();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    Some(names)
+}
+
 /// True when `path` is a regular file starting with the v2 git bundle header.
 fn remote_path_is_git_bundle_file(path: &Path) -> bool {
     if !path.is_file() {
@@ -3624,7 +4824,8 @@ fn remote_path_is_git_bundle_file(path: &Path) -> bool {
     if let Ok(mut f) = fs::File::open(path) {
         let mut buf = [0u8; 20];
         if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
-            return buf[..n].starts_with(b"# v2 git bundle");
+            return buf[..n].starts_with(b"# v2 git bundle")
+                || buf[..n].starts_with(b"# v3 git bundle");
         }
     }
     false
@@ -3775,26 +4976,26 @@ fn resolve_fetch_display_url(
     remote_repo: Option<&Repository>,
 ) -> Result<String> {
     let base = configured_remote_base(git_dir);
-    if let Some(remote_repo) = remote_repo {
-        if !crate::ssh_transport::is_configured_ssh_url(raw_url) {
-            if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
-                let mut sb = String::new();
-                let base_s = base.to_string_lossy();
-                let remote_s = canon_remote.to_string_lossy();
-                if let Some(rel) = crate::git_path::relative_path(&remote_s, &base_s, &mut sb) {
-                    let mut s = normalize_fetch_url_display(rel);
-                    if let Some(prefix) = s.strip_suffix("/.git") {
-                        s = normalize_fetch_url_display(prefix);
+    if url_override.is_some() {
+        if let Some(remote_repo) = remote_repo {
+            if !crate::ssh_transport::is_configured_ssh_url(raw_url) {
+                if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
+                    let mut sb = String::new();
+                    let base_s = base.to_string_lossy();
+                    let remote_s = canon_remote.to_string_lossy();
+                    if let Some(rel) = crate::git_path::relative_path(&remote_s, &base_s, &mut sb) {
+                        let mut s = normalize_fetch_url_display(rel);
+                        if let Some(prefix) = s.strip_suffix("/.git") {
+                            s = normalize_fetch_url_display(prefix);
+                        }
+                        if s == ".." {
+                            return Ok("../".to_owned());
+                        }
+                        return Ok(s);
                     }
-                    if s == ".." {
-                        return Ok("../".to_owned());
-                    }
-                    return Ok(s);
                 }
             }
         }
-    }
-    if url_override.is_some() {
         let trimmed = raw_url.trim_end_matches('/');
         let u = Path::new(trimmed);
         if u.is_relative() {
@@ -3812,6 +5013,8 @@ fn resolve_fetch_display_url(
                 }
             }
         }
+    }
+    if url_override.is_some() {
         let mut s = normalize_fetch_url_display(raw_url);
         if let Some(prefix) = s.strip_suffix("/.git") {
             s = normalize_fetch_url_display(prefix);
@@ -3819,6 +5022,29 @@ fn resolve_fetch_display_url(
         return Ok(s);
     }
     Ok(normalize_fetch_url_display(raw_url))
+}
+
+fn resolve_fetch_from_line_url(
+    raw_url: &str,
+    url_override: Option<&str>,
+    remote_repo: Option<&Repository>,
+    default_display_url: &str,
+) -> String {
+    if url_override.is_none() && !crate::ssh_transport::is_configured_ssh_url(raw_url) {
+        if let Some(remote_repo) = remote_repo {
+            if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
+                let mut s = canon_remote.to_string_lossy().to_string();
+                if let Some(prefix) = s.strip_suffix("/.git") {
+                    s = prefix.to_owned();
+                }
+                if !s.ends_with("/.") {
+                    s.push_str("/.");
+                }
+                return s;
+            }
+        }
+    }
+    default_display_url.to_owned()
 }
 
 fn remotes_match_same_repository(git_dir: &Path, remote_repo: &Repository, url_str: &str) -> bool {
@@ -4044,19 +5270,13 @@ fn fetch_branch_merge_rank(
 }
 
 fn configured_remote_base(git_dir: &Path) -> PathBuf {
-    let gd = git_dir
-        .canonicalize()
-        .unwrap_or_else(|_| git_dir.to_path_buf());
-    let s = gd.to_string_lossy();
-    if let Some(idx) = s.find("/.git/modules/") {
-        return PathBuf::from(s[..idx].to_string());
-    }
-    if gd.file_name().is_some_and(|name| name == ".git") {
-        gd.parent()
+    if git_dir.file_name().is_some_and(|name| name == ".git") {
+        git_dir
+            .parent()
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| gd.clone())
+            .unwrap_or_else(|| git_dir.to_path_buf())
     } else {
-        gd
+        git_dir.to_path_buf()
     }
 }
 
@@ -4096,6 +5316,17 @@ fn resolve_git_dir() -> Result<PathBuf> {
             None => bail!("not a git repository (or any of the parent directories): .git"),
         };
     }
+}
+
+fn repository_is_bare(git_dir: &Path) -> bool {
+    if git_dir.file_name().is_some_and(|name| name == ".git") {
+        return false;
+    }
+    let cfg = ConfigSet::load(Some(git_dir), true).ok();
+    cfg.and_then(|c| c.get("core.bare"))
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .unwrap_or_else(|| git_dir.join("HEAD").is_file() && git_dir.join("objects").is_dir())
 }
 
 /// Check if a branch ref is checked out in any worktree, return the worktree path.

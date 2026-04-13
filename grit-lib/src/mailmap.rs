@@ -76,12 +76,10 @@ impl MailmapTable {
                     None
                 }
             })
+        } else if bucket.simple.name.is_some() || bucket.simple.email.is_some() {
+            Some(&bucket.simple)
         } else {
-            if bucket.simple.name.is_some() || bucket.simple.email.is_some() {
-                Some(&bucket.simple)
-            } else {
-                None
-            }
+            None
         };
 
         let Some(info) = info else {

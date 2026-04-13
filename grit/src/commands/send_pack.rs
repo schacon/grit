@@ -327,8 +327,12 @@ fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
         .unwrap_or_else(|_| remote_path.to_path_buf());
     let remote_str = remote_path.to_string_lossy();
     let client_proto = protocol_wire::effective_client_protocol_version();
+    let is_default_receive_pack = {
+        let t = receive_cmd.trim();
+        t == "git receive-pack" || t == "git-receive-pack"
+    };
     let apply_proto = |c: &mut Command| {
-        if client_proto == 0 {
+        if !is_default_receive_pack || client_proto == 0 {
             c.env_remove("GIT_PROTOCOL");
         } else {
             protocol_wire::merge_git_protocol_env_for_child(c, client_proto);

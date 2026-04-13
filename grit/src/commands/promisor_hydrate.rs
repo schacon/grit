@@ -292,6 +292,7 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
                         &remote_git_dir,
                         upload_pack.as_deref(),
                         &[oid],
+                        None,
                     )
                 }) {
                     Ok(p) => p,
@@ -390,6 +391,7 @@ pub(crate) fn try_lazy_fetch_promisor_objects_batch(
                         &remote_git_dir,
                         upload_pack.as_deref(),
                         &need,
+                        None,
                     )
                 }) {
                     Ok(p) => p,

@@ -282,24 +282,48 @@ pub fn run(args: Args) -> Result<()> {
 
     // Determine output paths.
     let (pack_path, idx_path) = if args.stdin {
-        // Compute pack checksum to derive filename (trailing 20 bytes).
-        let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
-        // We need to discover a repo to find objects/pack/.
-        let repo = grit_lib::repo::Repository::discover(None)
-            .context("not a git repository (needed for --stdin)")?;
-        let pack_dir = repo.odb.objects_dir().join("pack");
-        fs::create_dir_all(&pack_dir)?;
-        let pack_out = pack_dir.join(format!("pack-{pack_hash}.pack"));
-        let mut idx_out = pack_dir.join(format!("pack-{pack_hash}.idx"));
-        if let Some(ref o) = args.output {
-            idx_out = o.clone();
+        if let Some(path) = &args.pack_file {
+            // Match `git index-pack --stdin <path>`: read pack from stdin and write the
+            // resulting fixed pack to the provided path (with adjacent `.idx` by default).
+            let pack_out = PathBuf::from(path);
+            if let Some(parent) = pack_out.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&pack_out, &pack_bytes)?;
+            let idx_out = if let Some(ref o) = args.output {
+                o.clone()
+            } else {
+                let mut p = pack_out.clone();
+                p.set_extension("idx");
+                p
+            };
+            (pack_out, idx_out)
+        } else {
+            // Compute pack checksum to derive filename (trailing 20 bytes).
+            let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
+            // We need to discover a repo to find objects/pack/.
+            let repo = grit_lib::repo::Repository::discover(None)
+                .context("not a git repository (needed for --stdin)")?;
+            let pack_dir = repo.odb.objects_dir().join("pack");
+            fs::create_dir_all(&pack_dir)?;
+            let pack_out = pack_dir.join(format!("pack-{pack_hash}.pack"));
+            let mut idx_out = pack_dir.join(format!("pack-{pack_hash}.idx"));
+            if let Some(ref o) = args.output {
+                idx_out = o.clone();
+            }
+            fs::write(&pack_out, &pack_bytes)?;
+            if let Some(ref reason) = args.keep {
+                let keep_name = pack_out
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| format!("{n}.{reason}"))
+                    .unwrap_or_else(|| format!("pack-{pack_hash}.pack.{reason}"));
+                fs::write(pack_dir.join(keep_name), b"")?;
+            }
+            (pack_out, idx_out)
         }
-        fs::write(&pack_out, &pack_bytes)?;
-        if args.keep.is_some() {
-            // Match Git: `index-pack --keep` creates `pack-<hash>.keep` beside the pack (t5300).
-            fs::write(pack_dir.join(format!("pack-{pack_hash}.keep")), b"")?;
-        }
-        (pack_out, idx_out)
     } else {
         let pack_path = PathBuf::from(
             args.pack_file

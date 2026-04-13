@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::fetch_negotiator::SkippingNegotiator;
+use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -62,7 +63,13 @@ pub(crate) fn agent_header() -> String {
 }
 
 fn http_get(client: &crate::http_client::HttpClientContext, url: &str) -> Result<Vec<u8>> {
-    trace2_child_start_git_remote_https(url);
+    client.get(url)
+}
+
+fn http_get_discovery(
+    client: &crate::http_client::HttpClientContext,
+    url: &str,
+) -> Result<Vec<u8>> {
     client.get(url)
 }
 
@@ -73,8 +80,24 @@ fn http_post(
     accept: &str,
     body: &[u8],
 ) -> Result<Vec<u8>> {
-    trace2_child_start_git_remote_https(url);
-    client.post(url, content_type, accept, body)
+    client.post_with_git_protocol(
+        url,
+        content_type,
+        accept,
+        body,
+        client.git_protocol_header(),
+    )
+}
+
+fn http_post_discovery(
+    client: &crate::http_client::HttpClientContext,
+    url: &str,
+    content_type: &str,
+    accept: &str,
+    body: &[u8],
+    git_protocol_header: Option<&str>,
+) -> Result<Vec<u8>> {
+    client.post_with_git_protocol(url, content_type, accept, body, git_protocol_header)
 }
 
 fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
@@ -97,6 +120,96 @@ fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
         }
     }
     Ok(caps)
+}
+
+fn parse_v0_v1_advertisement(
+    body: &[u8],
+) -> Result<(Vec<LsRefEntry>, std::collections::HashSet<String>)> {
+    let mut cur = Cursor::new(body);
+    let mut refs = Vec::new();
+    let mut caps = std::collections::HashSet::new();
+    let mut first_ref_line = true;
+    loop {
+        match pkt_line::read_packet(&mut cur)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                let line = line.trim_end_matches('\n');
+                if line.starts_with("version ") {
+                    crate::trace_packet::trace_packet_git('<', line);
+                    continue;
+                }
+                let (payload, cap_part) = match line.split_once('\0') {
+                    Some((p, c)) => (p.trim(), Some(c)),
+                    None => (line.trim(), None),
+                };
+                let (oid_hex, refname) = payload
+                    .split_once('\t')
+                    .or_else(|| payload.split_once(' '))
+                    .ok_or_else(|| anyhow::anyhow!("malformed v0/v1 advertisement: {line}"))?;
+                let oid = ObjectId::from_hex(oid_hex.trim())
+                    .with_context(|| format!("bad oid in v0/v1 advertisement: {oid_hex}"))?;
+                let refname = refname.trim();
+                if refname.is_empty() {
+                    continue;
+                }
+                if first_ref_line {
+                    if let Some(raw_caps) = cap_part {
+                        for cap in raw_caps.split_whitespace() {
+                            caps.insert(cap.to_string());
+                        }
+                    }
+                    first_ref_line = false;
+                }
+                refs.push(LsRefEntry {
+                    name: refname.to_string(),
+                    oid,
+                });
+            }
+            Some(other) => bail!("unexpected packet in v0/v1 advertisement: {other:?}"),
+        }
+    }
+    Ok((refs, caps))
+}
+
+enum HttpDiscovery {
+    V2 {
+        caps: Vec<String>,
+        object_format: String,
+    },
+    V0V1 {
+        advertised: Vec<LsRefEntry>,
+        caps: std::collections::HashSet<String>,
+    },
+}
+
+fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
+    let mut cur = Cursor::new(pkt_body);
+    let first = match pkt_line::read_packet(&mut cur)? {
+        None => bail!("empty smart-http advertisement"),
+        Some(pkt_line::Packet::Data(s)) => s,
+        Some(other) => bail!("unexpected first advertisement packet: {other:?}"),
+    };
+    if first == "version 2" {
+        let caps = read_v2_caps(pkt_body)?;
+        let object_format = caps
+            .iter()
+            .find_map(|c| c.strip_prefix("object-format="))
+            .unwrap_or("sha1")
+            .to_string();
+        return Ok(HttpDiscovery::V2 {
+            caps,
+            object_format,
+        });
+    }
+    let (advertised, caps) = parse_v0_v1_advertisement(pkt_body)?;
+    Ok(HttpDiscovery::V0V1 { advertised, caps })
+}
+
+fn trace_http_v0_v1_negotiated(client: &crate::http_client::HttpClientContext) {
+    if matches!(client.git_protocol_header(), Some("version=1")) {
+        crate::trace_packet::trace_packet_git('<', "version 1");
+    }
 }
 
 fn cap_lines_for_client_request(caps: &[String]) -> Vec<String> {
@@ -129,6 +242,106 @@ pub struct LsRefEntry {
     pub oid: ObjectId,
 }
 
+/// Wire options for HTTP smart fetch requests.
+#[derive(Clone, Debug, Default)]
+pub struct HttpFetchOptions {
+    /// Absolute depth requested by `--depth`.
+    pub depth: Option<usize>,
+    /// Relative deepening requested by `--deepen`.
+    pub deepen: Option<usize>,
+    /// Date boundary requested by `--shallow-since`.
+    pub shallow_since: Option<String>,
+    /// Exclusion revisions requested by `--shallow-exclude`.
+    pub shallow_exclude: Vec<String>,
+    /// Partial-clone filter specification requested by `--filter`.
+    pub filter_spec: Option<String>,
+    /// Request full-object transfer without have/common negotiation (`--refetch`).
+    pub refetch: bool,
+}
+
+fn requested_depth(opts: &HttpFetchOptions) -> Option<usize> {
+    opts.depth.or(opts.deepen).filter(|d| *d > 0)
+}
+
+fn append_fetch_request_extensions_v0_v1(
+    req: &mut Vec<u8>,
+    caps: &std::collections::HashSet<String>,
+    options: &HttpFetchOptions,
+) -> Result<()> {
+    if let Some(depth) = requested_depth(options) {
+        pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
+    }
+    if let Some(since) = options.shallow_since.as_deref() {
+        if caps.contains("deepen-since") {
+            pkt_line::write_line_to_vec(req, &format!("deepen-since {since}"))?;
+        }
+    }
+    if caps.contains("deepen-not") {
+        for excl in &options.shallow_exclude {
+            let excl = excl.trim();
+            if excl.is_empty() {
+                continue;
+            }
+            pkt_line::write_line_to_vec(req, &format!("deepen-not {excl}"))?;
+        }
+    }
+    if caps.contains("filter") {
+        if let Some(filter_spec) = options.filter_spec.as_deref() {
+            let filter_spec = filter_spec.trim();
+            if !filter_spec.is_empty() {
+                pkt_line::write_line_to_vec(req, &format!("filter {filter_spec}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn v2_fetch_features(caps: &[String]) -> std::collections::HashSet<String> {
+    let mut features = std::collections::HashSet::new();
+    for line in caps {
+        if let Some(rest) = line.strip_prefix("fetch=") {
+            for feature in rest.split_whitespace() {
+                features.insert(feature.to_string());
+            }
+        }
+    }
+    features
+}
+
+fn append_fetch_request_extensions_v2(
+    req: &mut Vec<u8>,
+    caps: &[String],
+    options: &HttpFetchOptions,
+) -> Result<()> {
+    let features = v2_fetch_features(caps);
+    if let Some(depth) = requested_depth(options) {
+        pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
+    }
+    if let Some(since) = options.shallow_since.as_deref() {
+        if features.contains("deepen-since") || features.contains("shallow") {
+            pkt_line::write_line_to_vec(req, &format!("deepen-since {since}"))?;
+        }
+    }
+    if features.contains("deepen-not") || features.contains("shallow") {
+        for excl in &options.shallow_exclude {
+            let excl = excl.trim();
+            if excl.is_empty() {
+                continue;
+            }
+            pkt_line::write_line_to_vec(req, &format!("deepen-not {excl}"))?;
+        }
+    }
+    if features.contains("filter") {
+        if let Some(filter_spec) = options.filter_spec.as_deref() {
+            let filter_spec = filter_spec.trim();
+            if !filter_spec.is_empty() {
+                pkt_line::write_line_to_vec(req, &format!("filter {filter_spec}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Run `ls-refs` over smart HTTP and return advertised refs.
 pub fn http_ls_refs(
     repo_url: &str,
@@ -141,12 +354,13 @@ pub fn http_ls_refs(
 
     let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
-    let caps = read_v2_caps(pkt_body)?;
-
-    let object_format = caps
-        .iter()
-        .find_map(|c| c.strip_prefix("object-format="))
-        .unwrap_or("sha1");
+    let (caps, object_format) = match discover_http_protocol(pkt_body)? {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { advertised, .. } => return Ok(advertised),
+    };
 
     let mut req = Vec::new();
     pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
@@ -169,6 +383,84 @@ pub fn http_ls_refs(
     )?;
 
     parse_ls_refs_v2_response(&resp)
+}
+
+/// Perform HTTP smart protocol-v2 negotiation-only common-base discovery.
+///
+/// Returns local commit IDs that are common with the remote and reachable from the provided
+/// negotiation tips. This mirrors fetch's negotiate-only behavior without downloading pack data.
+pub fn http_negotiate_only_common(
+    local_git_dir: &Path,
+    repo_url: &str,
+    negotiation_tips: &[ObjectId],
+    client: &crate::http_client::HttpClientContext,
+) -> Result<Vec<ObjectId>> {
+    let base = repo_url.trim_end_matches('/');
+    let mut refs_url = format!("{base}/info/refs");
+    refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
+    refs_url.push_str(&format!("service={SERVICE}"));
+
+    let body = http_get(client, &refs_url)?;
+    let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
+    let (caps, object_format) = match discover_http_protocol(pkt_body)? {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { .. } => bail!("negotiate-only requires protocol v2"),
+    };
+
+    let features = v2_fetch_features(&caps);
+    if !features.contains("wait-for-done") {
+        bail!("server does not support wait-for-done");
+    }
+
+    let mut req = Vec::new();
+    pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
+    pkt_line::write_line_to_vec(&mut req, &format!("object-format={object_format}"))?;
+    for line in cap_lines_for_client_request(&caps) {
+        pkt_line::write_line_to_vec(&mut req, &line)?;
+    }
+    pkt_line::write_delim(&mut req)?;
+    pkt_line::write_line_to_vec(&mut req, "peel")?;
+    pkt_line::write_line_to_vec(&mut req, "symrefs")?;
+    pkt_line::write_flush(&mut req)?;
+
+    let post_url = format!("{base}/{SERVICE}");
+    let resp = http_post(
+        client,
+        &post_url,
+        &format!("application/x-{SERVICE}-request"),
+        &format!("application/x-{SERVICE}-result"),
+        &req,
+    )?;
+    let advertised = parse_ls_refs_v2_response(&resp)?;
+
+    let local_repo = Repository::open(local_git_dir, None)
+        .with_context(|| format!("open repository {}", local_git_dir.display()))?;
+    let mut remote_oids: Vec<ObjectId> = advertised.iter().map(|e| e.oid).collect();
+    remote_oids.sort_by_key(|o| o.to_hex());
+    remote_oids.dedup();
+
+    let mut commons = Vec::new();
+    for tip in negotiation_tips {
+        if local_repo.odb.read(tip).is_err() {
+            continue;
+        }
+        for remote_oid in &remote_oids {
+            if local_repo.odb.read(remote_oid).is_err() {
+                continue;
+            }
+            if let Ok(mut bases) =
+                merge_base::merge_bases_first_vs_rest(&local_repo, *tip, &[*remote_oid])
+            {
+                commons.append(&mut bases);
+            }
+        }
+    }
+    commons.sort_by_key(|o| o.to_hex());
+    commons.dedup();
+    Ok(commons)
 }
 
 fn parse_ls_refs_v2_response(data: &[u8]) -> Result<Vec<LsRefEntry>> {
@@ -210,6 +502,15 @@ fn collect_wants_from_advertised(
         return Ok(wants);
     }
     let mut wants = Vec::new();
+    let negative_patterns: Vec<&str> = refspecs
+        .iter()
+        .filter_map(|s| s.strip_prefix('^'))
+        .collect();
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| match_glob_pattern(pat, refname).is_some() || *pat == refname)
+    };
     for spec in refspecs {
         if spec.starts_with('^') {
             continue;
@@ -219,36 +520,350 @@ fn collect_wants_from_advertised(
             .split_once(':')
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
+        if let Ok(oid) = ObjectId::from_hex(src) {
+            wants.push(oid);
+            continue;
+        }
         if src.contains('*') {
             for e in advertised {
-                if e.name == "HEAD" {
+                if is_excluded(&e.name) {
                     continue;
                 }
-                if crate::fetch_transport::match_glob_star_pattern(src, &e.name).is_some() {
-                    if !wants.contains(&e.oid) {
-                        wants.push(e.oid);
-                    }
+                if match_glob_pattern(src, &e.name).is_some() {
+                    wants.push(e.oid);
                 }
             }
             continue;
         }
-        let remote_ref = if src.starts_with("refs/") {
-            src.to_string()
-        } else {
-            format!("refs/heads/{src}")
-        };
+        let remote_ref =
+            resolve_advertised_ref_for_fetch_src(src, advertised).unwrap_or_else(|| {
+                if src.starts_with("refs/") {
+                    src.to_string()
+                } else {
+                    format!("refs/heads/{src}")
+                }
+            });
+        if is_excluded(&remote_ref) {
+            continue;
+        }
         let oid = advertised
             .iter()
             .find(|e| e.name == remote_ref)
             .map(|e| e.oid)
             .or_else(|| {
                 let tag_ref = format!("refs/tags/{src}");
+                if is_excluded(&tag_ref) {
+                    return None;
+                }
                 advertised.iter().find(|e| e.name == tag_ref).map(|e| e.oid)
             })
             .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
         wants.push(oid);
     }
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
     Ok(wants)
+}
+
+fn resolve_advertised_ref_for_fetch_src(src: &str, advertised: &[LsRefEntry]) -> Option<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Some("HEAD".to_string());
+    }
+    if src.starts_with("refs/") {
+        return Some(src.to_string());
+    }
+    let candidates = [
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    candidates
+        .into_iter()
+        .find(|cand| advertised.iter().any(|e| e.name == *cand))
+}
+
+fn has_fetch_request_extensions(options: &HttpFetchOptions) -> bool {
+    requested_depth(options).is_some()
+        || options
+            .shallow_since
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+        || options.shallow_exclude.iter().any(|v| !v.trim().is_empty())
+        || options
+            .filter_spec
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
+}
+
+fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
+}
+
+fn build_fetch_caps_v0(caps: &std::collections::HashSet<String>) -> String {
+    let mut enabled = Vec::new();
+    for want in [
+        "multi_ack_detailed",
+        "side-band-64k",
+        "thin-pack",
+        "no-progress",
+        "include-tag",
+        "ofs-delta",
+    ] {
+        if caps.contains(want) {
+            enabled.push(want);
+        }
+    }
+    if enabled.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", enabled.join(" "))
+    }
+}
+
+fn fetch_pack_v0_v1_stateless_http(
+    local_git_dir: &Path,
+    base: &str,
+    advertised: &[LsRefEntry],
+    refspecs: &[String],
+    caps: &std::collections::HashSet<String>,
+    filter_active: bool,
+    options: &HttpFetchOptions,
+    client: &crate::http_client::HttpClientContext,
+) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
+    let wants = collect_wants_from_advertised(advertised, refspecs)?;
+    if wants.is_empty() {
+        bail!("nothing to fetch (empty want list)");
+    }
+
+    let remote_heads: Vec<_> = advertised
+        .iter()
+        .filter(|e| e.name.starts_with("refs/heads/"))
+        .cloned()
+        .collect();
+    let remote_tags: Vec<_> = advertised
+        .iter()
+        .filter(|e| e.name.starts_with("refs/tags/"))
+        .cloned()
+        .collect();
+    let all_advertised = advertised.to_vec();
+    if !options.refetch && !has_fetch_request_extensions(options) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let all_wants_local = wants.iter().all(|oid| repo.odb.read(oid).is_ok());
+        if all_wants_local {
+            return Ok((remote_heads, remote_tags, all_advertised));
+        }
+    }
+
+    let fetch_caps = build_fetch_caps_v0(caps);
+    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
+    let mut negotiator = if options.refetch {
+        None
+    } else {
+        let local_repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let mut negotiator = SkippingNegotiator::new(local_repo);
+
+        for w in &wants {
+            if negotiator.repo().odb.read(w).is_ok() {
+                negotiator.add_tip(*w)?;
+            }
+        }
+        let mut tips: Vec<ObjectId> = Vec::new();
+        for prefix in ["refs/heads/", "refs/tags/"] {
+            if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+                for (name, oid) in entries {
+                    let tip = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                        resolved
+                    } else {
+                        oid
+                    };
+                    if negotiator.repo().odb.read(&tip).is_err() {
+                        continue;
+                    }
+                    tips.push(tip);
+                }
+            }
+        }
+        if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
+            if negotiator.repo().odb.read(&h).is_ok() {
+                tips.push(h);
+            }
+        }
+        tips.sort_by_key(|o| o.to_hex());
+        tips.dedup();
+        for t in tips {
+            if want_set.contains(&t) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&t).is_err() {
+                continue;
+            }
+            negotiator.add_tip(t)?;
+        }
+        for e in advertised {
+            if want_set.contains(&e.oid) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&e.oid).is_ok() {
+                negotiator.known_common(e.oid)?;
+            }
+        }
+        Some(negotiator)
+    };
+
+    let mut req = Vec::new();
+    let first = wants[0];
+    pkt_line::write_line_to_vec(&mut req, &format!("want {}{}", first.to_hex(), fetch_caps))?;
+    for w in wants.iter().skip(1) {
+        pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
+    }
+    append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
+    // Protocol v0/v1 request framing: terminate the `want` section before `have` / `done`.
+    pkt_line::write_flush(&mut req)?;
+    if let Some(negotiator) = negotiator.as_mut() {
+        while let Some(oid) = negotiator.next_have()? {
+            pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
+        }
+    }
+    pkt_line::write_line_to_vec(&mut req, "done")?;
+    pkt_line::write_flush(&mut req)?;
+
+    let wants_missing_locally = {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        wants.iter().any(|oid| repo.odb.read(oid).is_err())
+    };
+
+    let post_url = format!("{base}/{SERVICE}");
+    let resp = http_post(
+        client,
+        &post_url,
+        &format!("application/x-{SERVICE}-request"),
+        &format!("application/x-{SERVICE}-result"),
+        &req,
+    )?;
+
+    let mut cur = Cursor::new(resp.as_slice());
+    let mut first_pkt = None::<String>;
+    let mut pack_buf = Vec::new();
+    if caps.contains("side-band-64k") {
+        // Do not consume an initial pkt-line with `pkt_line::read_packet()` here: when the
+        // server starts streaming channel-1 data immediately, that first packet is binary pack
+        // data and must be fed to the side-band reader.
+        read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
+    } else {
+        if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut cur)? {
+            let line = line.trim_end_matches('\n').to_string();
+            if line.starts_with("ERR ") {
+                bail!(
+                    "remote upload-pack error: {}",
+                    line.trim_start_matches("ERR ")
+                );
+            }
+            first_pkt = Some(line);
+        }
+        let pos = cur.position() as usize;
+        if pos < resp.len() {
+            pack_buf.extend_from_slice(&resp[pos..]);
+        }
+    }
+
+    if pack_buf.is_empty() && wants_missing_locally {
+        // Some protocol-v1 stateless endpoints answer the first round with ACK/NAK only when
+        // haves are present. Retry once without have-lines to force a full transfer.
+        let mut retry_req = Vec::new();
+        let first = wants[0];
+        pkt_line::write_line_to_vec(
+            &mut retry_req,
+            &format!("want {}{}", first.to_hex(), fetch_caps),
+        )?;
+        for w in wants.iter().skip(1) {
+            pkt_line::write_line_to_vec(&mut retry_req, &format!("want {}", w.to_hex()))?;
+        }
+        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options)?;
+        pkt_line::write_flush(&mut retry_req)?;
+        pkt_line::write_line_to_vec(&mut retry_req, "done")?;
+        pkt_line::write_flush(&mut retry_req)?;
+
+        let retry_resp = http_post(
+            client,
+            &post_url,
+            &format!("application/x-{SERVICE}-request"),
+            &format!("application/x-{SERVICE}-result"),
+            &retry_req,
+        )?;
+        let mut retry_cur = Cursor::new(retry_resp.as_slice());
+        let mut retry_first_pkt = None::<String>;
+        let mut retry_pack = Vec::new();
+        if caps.contains("side-band-64k") {
+            read_sideband_pack_until_done(&mut retry_cur, &mut retry_pack)?;
+        } else {
+            if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut retry_cur)? {
+                let line = line.trim_end_matches('\n').to_string();
+                if line.starts_with("ERR ") {
+                    bail!(
+                        "remote upload-pack error: {}",
+                        line.trim_start_matches("ERR ")
+                    );
+                }
+                retry_first_pkt = Some(line);
+            }
+            let pos = retry_cur.position() as usize;
+            if pos < retry_resp.len() {
+                retry_pack.extend_from_slice(&retry_resp[pos..]);
+            }
+        }
+        if !retry_pack.is_empty() {
+            if retry_pack.len() < 12 || &retry_pack[0..4] != b"PACK" {
+                bail!("did not receive a pack file from HTTP v0/v1 fetch");
+            }
+            crate::fetch_transport::unpack_upload_pack_bytes(
+                local_git_dir,
+                &retry_pack,
+                filter_active,
+            )?;
+            return Ok((remote_heads, remote_tags, all_advertised));
+        }
+        if let Some(line) = retry_first_pkt {
+            let normalized = line.trim();
+            if normalized != "NAK" && !normalized.starts_with("ACK ") {
+                bail!("unexpected v0/v1 fetch response: {normalized}");
+            }
+        }
+        bail!("did not receive a pack file from HTTP v0/v1 fetch");
+    }
+
+    if !pack_buf.is_empty() {
+        if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+            bail!("did not receive a pack file from HTTP v0/v1 fetch");
+        }
+        crate::fetch_transport::unpack_upload_pack_bytes(local_git_dir, &pack_buf, filter_active)?;
+    } else if let Some(line) = first_pkt {
+        let normalized = line.trim();
+        if normalized != "NAK" && !normalized.starts_with("ACK ") {
+            bail!("unexpected v0/v1 fetch response: {normalized}");
+        }
+    }
+
+    Ok((remote_heads, remote_tags, all_advertised))
 }
 
 fn trace_clone_negotiation_line(line: &str) {
@@ -257,23 +872,63 @@ fn trace_clone_negotiation_line(line: &str) {
 
 fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
     let mut seen_pack = false;
+    let mut pending: Vec<u8> = Vec::new();
     loop {
-        let Some(payload) = crate::fetch_transport::read_pkt_payload_raw(r)? else {
-            break;
-        };
+        let mut len_buf = [0u8; 4];
+        match r.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
+        }
+        let len_str = std::str::from_utf8(&len_buf)?;
+        let len = usize::from_str_radix(len_str, 16)?;
+        match len {
+            0 => {
+                // Some upload-pack responses include an extra flush between ACK/NAK and side-band
+                // data. Ignore such pre-pack flushes instead of terminating early.
+                if seen_pack {
+                    break;
+                }
+                continue;
+            }
+            1 | 2 => continue,
+            n if n <= 4 => bail!("invalid pkt-line length in side-band stream: {n}"),
+            _ => {}
+        }
+        let mut payload = vec![0u8; len - 4];
+        r.read_exact(&mut payload)?;
         if payload.is_empty() {
             continue;
         }
         match payload[0] {
             1 => {
-                seen_pack = true;
-                out.extend_from_slice(&payload[1..]);
+                let data = &payload[1..];
+                if !seen_pack {
+                    pending.extend_from_slice(data);
+                    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+                        seen_pack = true;
+                        out.extend_from_slice(&pending[pos..]);
+                        pending.clear();
+                    } else if pending.len() > 3 {
+                        let keep_from = pending.len() - 3;
+                        pending.drain(..keep_from);
+                    }
+                } else {
+                    out.extend_from_slice(data);
+                }
             }
             2 | 3 => {}
             _ => {
-                if !seen_pack && payload.starts_with(b"PACK") {
-                    seen_pack = true;
-                    out.extend_from_slice(&payload);
+                if !seen_pack {
+                    pending.extend_from_slice(&payload);
+                    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+                        seen_pack = true;
+                        out.extend_from_slice(&pending[pos..]);
+                        pending.clear();
+                    } else if pending.len() > 3 {
+                        let keep_from = pending.len() - 3;
+                        pending.drain(..keep_from);
+                    }
                 } else if seen_pack {
                     out.extend_from_slice(&payload);
                 }
@@ -292,8 +947,10 @@ pub fn http_fetch_pack(
     repo_url: &str,
     refspecs: &[String],
     filter_active: bool,
+    options: &HttpFetchOptions,
     client: &crate::http_client::HttpClientContext,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
+    trace_http_v0_v1_negotiated(client);
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
@@ -301,12 +958,25 @@ pub fn http_fetch_pack(
 
     let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
-    let caps = read_v2_caps(pkt_body)?;
-
-    let object_format = caps
-        .iter()
-        .find_map(|c| c.strip_prefix("object-format="))
-        .unwrap_or("sha1");
+    let discovery = discover_http_protocol(pkt_body)?;
+    let (caps, object_format) = match discovery {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { advertised, caps } => {
+            return fetch_pack_v0_v1_stateless_http(
+                local_git_dir,
+                base,
+                &advertised,
+                refspecs,
+                &caps,
+                filter_active,
+                options,
+                client,
+            )
+        }
+    };
 
     let advertised = {
         let mut req = Vec::new();
@@ -348,78 +1018,91 @@ pub fn http_fetch_pack(
         .filter(|e| e.name.starts_with("refs/tags/"))
         .cloned()
         .collect();
-
-    let local_repo = Repository::open(local_git_dir, None)
-        .with_context(|| format!("open {}", local_git_dir.display()))?;
-    let mut negotiator = SkippingNegotiator::new(local_repo);
-
-    if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
-        for (name, oid) in entries {
-            let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                resolved
-            } else {
-                oid
-            };
-            if negotiator.repo().odb.read(&t).is_ok() {
-                negotiator.add_tip(t)?;
-            }
+    if !options.refetch && !has_fetch_request_extensions(options) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let all_wants_local = wants.iter().all(|oid| repo.odb.read(oid).is_ok());
+        if all_wants_local {
+            return Ok((remote_heads, remote_tags, all_advertised));
         }
     }
 
-    for w in &wants {
-        if negotiator.repo().odb.read(w).is_ok() {
-            negotiator.add_tip(*w)?;
-        }
-    }
+    let mut negotiator = if options.refetch {
+        None
+    } else {
+        let local_repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let mut negotiator = SkippingNegotiator::new(local_repo);
 
-    let mut tips: Vec<ObjectId> = Vec::new();
-    for prefix in ["refs/heads/", "refs/tags/"] {
-        if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+        if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
             for (name, oid) in entries {
-                if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                    tips.push(resolved);
+                let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                    resolved
                 } else {
-                    tips.push(oid);
+                    oid
+                };
+                if negotiator.repo().odb.read(&t).is_ok() {
+                    negotiator.add_tip(t)?;
                 }
             }
         }
-    }
-    if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
-        tips.push(h);
-    }
-    for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
-        if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
-            tips.push(oid);
-        }
-    }
-    tips.sort_by_key(|o| o.to_hex());
-    tips.dedup();
-    for t in tips {
-        if want_set.contains(&t) {
-            continue;
-        }
-        if negotiator.repo().odb.read(&t).is_err() {
-            continue;
-        }
-        negotiator.add_tip(t)?;
-    }
 
-    for e in &advertised {
-        if want_set.contains(&e.oid) {
-            continue;
+        for w in &wants {
+            if negotiator.repo().odb.read(w).is_ok() {
+                negotiator.add_tip(*w)?;
+            }
         }
-        if negotiator.repo().odb.read(&e.oid).is_ok() {
-            negotiator.known_common(e.oid)?;
+        let mut tips: Vec<ObjectId> = Vec::new();
+        for prefix in ["refs/heads/", "refs/tags/"] {
+            if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+                for (name, oid) in entries {
+                    if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                        tips.push(resolved);
+                    } else {
+                        tips.push(oid);
+                    }
+                }
+            }
         }
-    }
+        if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
+            tips.push(h);
+        }
+        for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+            if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
+                tips.push(oid);
+            }
+        }
+        tips.sort_by_key(|o| o.to_hex());
+        tips.dedup();
+        for t in tips {
+            if want_set.contains(&t) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&t).is_err() {
+                continue;
+            }
+            negotiator.add_tip(t)?;
+        }
+        for e in &advertised {
+            if want_set.contains(&e.oid) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&e.oid).is_ok() {
+                negotiator.known_common(e.oid)?;
+            }
+        }
+        Some(negotiator)
+    };
 
     let post_url = format!("{base}/{SERVICE}");
     let cap_send = cap_lines_for_client_request(&caps);
     let fetch_caps = "thin-pack ofs-delta side-band-64k no-progress wait-for-done";
 
     let mut pending_haves: Vec<ObjectId> = Vec::new();
-    while let Some(oid) = negotiator.next_have()? {
-        pending_haves.push(oid);
+    if let Some(negotiator) = negotiator.as_mut() {
+        while let Some(oid) = negotiator.next_have()? {
+            pending_haves.push(oid);
+        }
     }
 
     let write_fetch_request = |include_done: bool| -> Result<Vec<u8>> {
@@ -433,6 +1116,7 @@ pub fn http_fetch_pack(
         for w in &wants {
             pkt_line::write_line_to_vec(&mut req, &format!("want {} {}", w.to_hex(), fetch_caps))?;
         }
+        append_fetch_request_extensions_v2(&mut req, &caps, options)?;
         for h in &pending_haves {
             let trace = format!("clone> have {}", h.to_hex());
             trace_clone_negotiation_line(&trace);
@@ -494,6 +1178,7 @@ pub fn http_fetch_pack(
         let pkt = match pkt_line::read_packet(&mut cur)? {
             None => break,
             Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Delim) => continue,
             Some(pkt_line::Packet::Data(s)) => s,
             Some(other) => bail!("unexpected fetch response: {other:?}"),
         };

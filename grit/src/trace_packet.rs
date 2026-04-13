@@ -67,6 +67,12 @@ pub fn trace_packet_git(direction: char, payload: &str) {
     };
     let sanitized: String = payload.chars().filter(|&c| c != '\n').collect();
     let line = format!("packet: {:>12}{} {}\n", "git", direction, sanitized);
+    if dest == "/dev/stderr" {
+        let mut err = stderr().lock();
+        let _ = err.write_all(line.as_bytes());
+        let _ = err.flush();
+        return;
+    }
     if let Ok(mut out) = OpenOptions::new().create(true).append(true).open(&dest) {
         let _ = out.write_all(line.as_bytes());
     }

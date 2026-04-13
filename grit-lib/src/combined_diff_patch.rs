@@ -364,7 +364,7 @@ fn make_hunks(slines: &mut [Sline], cnt: usize, num_parent: usize, dense: bool, 
                     }
                 }
                 let mut ll_iter = slines[jj].lost.iter();
-                while let Some(seg) = ll_iter.next() {
+                for seg in ll_iter {
                     if has_interesting {
                         break;
                     }

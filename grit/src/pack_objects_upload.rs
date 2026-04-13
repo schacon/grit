@@ -2,10 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
+use grit_lib::repo::Repository;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::{collections::HashSet, collections::VecDeque};
 
 use crate::grit_exe::grit_executable;
 
@@ -22,14 +24,10 @@ fn resolve_hook_path(git_dir: &Path, hook: &str) -> PathBuf {
 ///
 /// When `thin` is true, omit objects the client already has (requires matching `have` lines).
 /// For a fetch/clone with no common objects, pass `false` so the pack is self-contained.
-///
-/// When `list_objects_filter` is set (e.g. `blob:none`), forward `--filter` to `pack-objects`
-/// (`upload-pack` partial clone negotiation).
 pub fn spawn_pack_objects_upload(
     git_dir: &Path,
     thin: bool,
-    shallow_pack: bool,
-    list_objects_filter: Option<&str>,
+    filter_spec: Option<&str>,
 ) -> Result<Child> {
     let protected = ConfigSet::load_protected(true).unwrap_or_default();
     let hook_raw = protected.get("uploadpack.packobjectshook");
@@ -47,15 +45,12 @@ pub fn spawn_pack_objects_upload(
         if thin {
             c.arg("--thin");
         }
-        if shallow_pack {
-            c.arg("--shallow");
+        if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+            c.arg("--filter").arg(spec);
         }
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
-        if let Some(f) = list_objects_filter.filter(|s| !s.trim().is_empty()) {
-            c.arg(format!("--filter={f}"));
-        }
         c
     } else {
         let mut c = Command::new(&grit);
@@ -63,23 +58,16 @@ pub fn spawn_pack_objects_upload(
         if thin {
             c.arg("--thin");
         }
-        if shallow_pack {
-            c.arg("--shallow");
+        if let Some(spec) = filter_spec.map(str::trim).filter(|s| !s.is_empty()) {
+            c.arg("--filter").arg(spec);
         }
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
-        if let Some(f) = list_objects_filter.filter(|s| !s.trim().is_empty()) {
-            c.arg(format!("--filter={f}"));
-        }
         c
     };
 
-    // Clear inherited `GIT_DIR` from the client (`git --git-dir=… fetch`); otherwise
-    // `current_dir(git_dir)` + relative `GIT_DIR` resolves under the wrong admin directory
-    // (e.g. remote `.git/clone.git` during upload-pack).
     cmd.current_dir(git_dir)
-        .env("GIT_DIR", git_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -93,33 +81,148 @@ pub fn spawn_pack_objects_upload(
         })
 }
 
-/// Write the stdin Git's `pack-objects --revs` expects (`--not` + have commit OIDs).
-///
-/// When `use_shallow_pack` is true, `shallow_grafts` are written as `--shallow <oid>` lines before
-/// the positive revisions, and `--shallow` is passed on the command line so the walk cuts parent
-/// chains at those commits (matches `git upload-pack` → `git pack-objects` for shallow fetches).
+/// Write the stdin Git's `pack-objects --revs` expects (`--not` + exclusion commit OIDs).
 pub fn write_pack_objects_revs_stdin(
     pin: &mut impl Write,
     wants: &[ObjectId],
-    have_commits: &[ObjectId],
-    shallow_grafts: &[ObjectId],
-    use_shallow_pack: bool,
+    exclude_commits: &[ObjectId],
 ) -> Result<()> {
-    if use_shallow_pack {
-        for g in shallow_grafts {
-            writeln!(pin, "--shallow {}", g.to_hex())?;
-        }
-    }
     for w in wants {
         writeln!(pin, "{}", w.to_hex())?;
     }
     writeln!(pin, "--not")?;
-    for h in have_commits {
+    for h in exclude_commits {
         writeln!(pin, "{}", h.to_hex())?;
     }
     writeln!(pin)?;
     pin.flush()?;
     Ok(())
+}
+
+/// Compute commit OIDs to exclude for a depth-limited upload-pack response.
+///
+/// The returned OIDs are parent commits just beyond the requested depth from the wanted tips.
+/// Passing these OIDs after `--not` to `pack-objects --revs` keeps history at or above the depth
+/// boundary while allowing boundary commits themselves to be included.
+pub fn compute_depth_exclude_commits(
+    repo: &Repository,
+    wants: &[ObjectId],
+    depth: usize,
+) -> Result<Vec<ObjectId>> {
+    if depth == 0 || wants.is_empty() || depth >= i32::MAX as usize {
+        return Ok(Vec::new());
+    }
+
+    let mut queue: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    let mut seen: std::collections::HashMap<ObjectId, usize> = std::collections::HashMap::new();
+
+    for want in wants {
+        if let Some(commit_oid) = peel_commit_oid(repo, *want)? {
+            if seen.insert(commit_oid, 0).is_none() {
+                queue.push_back((commit_oid, 0));
+            }
+        }
+    }
+
+    let mut excludes: HashSet<ObjectId> = HashSet::new();
+    while let Some((oid, dist)) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        if dist + 1 >= depth {
+            excludes.extend(commit.parents.iter().copied());
+            continue;
+        }
+        for parent in commit.parents {
+            let next_dist = dist + 1;
+            if seen
+                .get(&parent)
+                .is_some_and(|existing| *existing <= next_dist)
+            {
+                continue;
+            }
+            seen.insert(parent, next_dist);
+            queue.push_back((parent, next_dist));
+        }
+    }
+
+    let mut out: Vec<ObjectId> = excludes.into_iter().collect();
+    out.sort_by_key(|oid| oid.to_hex());
+    Ok(out)
+}
+
+/// Compute exclusion commits for `--deepen=<n>` when the client is already shallow.
+///
+/// The client advertises shallow boundary commits via `shallow <oid>` lines. Relative deepening
+/// should extend history by `deepen` commits beyond the nearest advertised boundary, rather than
+/// applying `deepen` as an absolute depth from the new tip.
+pub fn compute_relative_deepen_exclude_commits(
+    repo: &Repository,
+    wants: &[ObjectId],
+    shallow_boundaries: &HashSet<ObjectId>,
+    deepen: usize,
+) -> Result<Vec<ObjectId>> {
+    if deepen == 0 || wants.is_empty() || shallow_boundaries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut min_boundary_distance: Option<usize> = None;
+    for want in wants {
+        let Some(commit_oid) = peel_commit_oid(repo, *want)? else {
+            continue;
+        };
+        let mut queue: VecDeque<(ObjectId, usize)> = VecDeque::from([(commit_oid, 0)]);
+        let mut seen: HashSet<ObjectId> = HashSet::new();
+        while let Some((oid, dist)) = queue.pop_front() {
+            if !seen.insert(oid) {
+                continue;
+            }
+            if shallow_boundaries.contains(&oid) {
+                min_boundary_distance = Some(match min_boundary_distance {
+                    Some(cur) => cur.min(dist),
+                    None => dist,
+                });
+                continue;
+            }
+            let Ok(obj) = repo.odb.read(&oid) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = parse_commit(&obj.data)?;
+            for parent in commit.parents {
+                queue.push_back((parent, dist + 1));
+            }
+        }
+    }
+
+    let effective_depth = min_boundary_distance
+        .map(|d| d + 1 + deepen)
+        .unwrap_or(deepen);
+    compute_depth_exclude_commits(repo, wants, effective_depth)
+}
+
+fn peel_commit_oid(repo: &Repository, mut oid: ObjectId) -> Result<Option<ObjectId>> {
+    loop {
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => return Ok(None),
+        };
+        match obj.kind {
+            ObjectKind::Commit => return Ok(Some(oid)),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 pub(crate) fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {

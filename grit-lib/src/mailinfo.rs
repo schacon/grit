@@ -218,15 +218,13 @@ impl OptHdr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum TE {
     #[default]
     DontCare,
     Qp,
     Base64,
 }
-
 
 struct Mime {
     boundaries: Vec<Vec<u8>>,
@@ -526,9 +524,7 @@ fn slurp_attr_ci(line: &str, name: &str) -> Option<String> {
         let end = ap.find('"')?;
         Some(ap[..end].to_string())
     } else {
-        let end = ap
-            .find([';', ' ', '\t'])
-            .unwrap_or(ap.len());
+        let end = ap.find([';', ' ', '\t']).unwrap_or(ap.len());
         let s = ap[..end].trim();
         (!s.is_empty()).then(|| s.to_string())
     }

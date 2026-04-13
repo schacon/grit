@@ -1639,28 +1639,62 @@ fn run_remote_archive(
     _format: &str,
     name_hint: Option<&str>,
 ) -> Result<()> {
-    let repo_path = Path::new(url);
-    let repo_path = repo_path
-        .canonicalize()
-        .unwrap_or_else(|_| repo_path.to_path_buf());
-    let prog = std::env::var("GUST_BIN")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok())
-        .unwrap_or_else(|| PathBuf::from("git"));
-    let exec_base = exec.rsplit('/').next().unwrap_or(exec);
-    let subcmd = exec_base.strip_prefix("git-").unwrap_or(exec_base);
-    let mut child = Command::new(&prog)
-        .arg("-C")
-        .arg(&repo_path)
-        .arg(subcmd)
-        .arg(".")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("spawning upload-archive")?;
+    let resolved_url = resolve_remote_archive_url(url)?;
+    let repo_path_raw = if let Some(path) = resolved_url.strip_prefix("file://") {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(&resolved_url)
+    };
+    let repo_path = repo_path_raw.canonicalize().unwrap_or(repo_path_raw);
+    let exec_trimmed = exec.trim();
+    let exec_base = exec_trimmed.rsplit('/').next().unwrap_or(exec_trimmed);
+    let is_default_exec = matches!(exec_base, "git-upload-archive" | "upload-archive")
+        || exec_trimmed == "git upload-archive";
+    let mut child = if is_default_exec {
+        let prog = std::env::var("GUST_BIN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok())
+            .unwrap_or_else(|| PathBuf::from("git"));
+        let subcmd = exec_base.strip_prefix("git-").unwrap_or(exec_base);
+        Command::new(&prog)
+            .arg("-C")
+            .arg(&repo_path)
+            .arg(subcmd)
+            .arg(".")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("spawning upload-archive")?
+    } else {
+        let prog = std::env::var("GUST_BIN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok())
+            .unwrap_or_else(|| PathBuf::from("git"));
+        let prog_quoted = shell_single_quote(&prog.to_string_lossy());
+        let exec_script = if exec_trimmed.contains("git-upload-archive") {
+            exec_trimmed.replace(
+                "git-upload-archive",
+                &format!("{prog_quoted} upload-archive"),
+            )
+        } else {
+            exec_trimmed.to_owned()
+        };
+        let repo_arg = repo_path.to_string_lossy().replace('\'', "'\"'\"'");
+        let script = format!("{exec_script} '{repo_arg}'");
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(script)
+            .env_remove("GIT_PROTOCOL")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        cmd.spawn().context("spawning custom upload-archive")?
+    };
 
     let mut stdin = child.stdin.take().context("upload-archive stdin")?;
     if let Some(hint) = name_hint {
@@ -1724,6 +1758,27 @@ fn run_remote_archive(
         out.flush()?;
     }
     Ok(())
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn resolve_remote_archive_url(remote: &str) -> Result<String> {
+    if remote.contains("://")
+        || remote.starts_with('/')
+        || remote.starts_with("./")
+        || remote.starts_with("../")
+    {
+        return Ok(remote.to_owned());
+    }
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let key = format!("remote.{remote}.url");
+    if let Some(url) = config.get(&key).filter(|u| !u.trim().is_empty()) {
+        return Ok(url);
+    }
+    Ok(remote.to_owned())
 }
 
 pub fn run(_args: Args) -> Result<()> {

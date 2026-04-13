@@ -136,7 +136,9 @@ fn parse_authority_host_port(authority: &str) -> Result<(String, Option<String>)
         let tail = &hostport[ci + 1..];
         // Only split a trailing `:port` when the host side is not IPv6 (unbracketed `::1` would
         // otherwise yield a bogus numeric "port" from the last hex group).
-        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) && !h.contains(':') {
+        if tail.is_empty() && !h.is_empty() && !h.contains(':') {
+            (h.to_string(), None)
+        } else if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) && !h.contains(':') {
             (h.to_string(), Some(tail.to_string()))
         } else {
             (hostport.to_string(), None)
@@ -667,13 +669,17 @@ pub fn append_test_fake_ssh_output(argv: &[OsString]) -> Result<()> {
     };
     let ssh_path = Path::new(&ssh);
     let trash_path = Path::new(&trash);
+    let is_test_fake_ssh = ssh_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == "test-fake-ssh");
     let ssh_canon = ssh_path
         .canonicalize()
         .unwrap_or_else(|_| ssh_path.to_path_buf());
     let trash_canon = trash_path
         .canonicalize()
         .unwrap_or_else(|_| trash_path.to_path_buf());
-    if !ssh_canon.starts_with(&trash_canon) {
+    if !is_test_fake_ssh && !ssh_canon.starts_with(&trash_canon) {
         return Ok(());
     }
     let mut line = String::from("ssh:");

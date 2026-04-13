@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::diff_trees;
+use grit_lib::git_date::approx::approxidate_careful;
 use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::pack;
@@ -816,7 +817,7 @@ pub fn run(args: Args) -> Result<()> {
         Ok(())
     };
 
-    if !options.quiet {
+    if !options.quiet || options.objects {
         let interleaved_objects = options.objects
             && options.use_bitmap_index
             && result.per_commit_object_counts.is_empty()
@@ -833,7 +834,7 @@ pub fn run(args: Args) -> Result<()> {
             }
             for &ci in &commit_order {
                 let oid = &result.commits[ci];
-                if result.objects_print_commit.get(ci).copied().unwrap_or(true) {
+                if !options.quiet && result.objects_print_commit.get(ci).copied().unwrap_or(true) {
                     print_commit_line(oid)?;
                 }
                 if let Some(seg) = result.object_segments.get(ci) {
@@ -850,7 +851,9 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             let mut obj_offset = 0usize;
             for (ci, oid) in result.commits.iter().enumerate() {
-                if !options.objects || result.objects_print_commit.get(ci).copied().unwrap_or(true)
+                if !options.quiet
+                    && (!options.objects
+                        || result.objects_print_commit.get(ci).copied().unwrap_or(true))
                 {
                     print_commit_line(oid)?;
                 }
@@ -1101,10 +1104,17 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
 
 fn parse_rev_list_date(s: &str) -> Result<i64> {
     let s = s.trim();
+    let mut approx_err = 0;
+    let approx = approxidate_careful(s, Some(&mut approx_err));
+    if approx_err == 0 {
+        return i64::try_from(approx).context("date out of range for rev-list cutoff");
+    }
     if let Ok((ts, _)) = parse_date_basic(s) {
         return i64::try_from(ts).context("date out of range for rev-list cutoff");
     }
-    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+    // Fallback for plain `YYYY-MM-DD` dates only. `parse_date_basic()` already handles
+    // date+time strings (including RFC formats) and should not be truncated to midnight.
+    if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let parts: Vec<&str> = s[..10].split('-').collect();
         if parts.len() == 3 {
             if let (Ok(y), Ok(m), Ok(d)) = (

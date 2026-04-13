@@ -1397,7 +1397,7 @@ pub fn diff_tree_to_worktree(
         };
 
         if unmerged_only_paths.contains(path) {
-            if let (Some(te), Some(ref meta)) = (tree_entry, wt_meta.as_ref()) {
+            if let (Some(te), Some(meta)) = (tree_entry, wt_meta.as_ref()) {
                 let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
                 let wt_oid =
                     hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path, None)?;

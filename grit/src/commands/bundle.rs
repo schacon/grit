@@ -4,12 +4,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use grit_lib::git_date::approx::approxidate_careful;
+use grit_lib::git_date::parse::parse_date_basic;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 
-use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, RevListOptions};
@@ -39,6 +41,10 @@ pub struct CreateArgs {
     /// Output bundle file path.
     #[arg(value_name = "FILE")]
     pub file: String,
+
+    /// Bundle format version (supports 2 and 3).
+    #[arg(long = "version", value_name = "N")]
+    pub version: Option<u8>,
 
     /// Revision arguments (refs, commit ranges, --all).
     #[arg(value_name = "REV", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
@@ -82,6 +88,10 @@ pub fn run(args: Args) -> Result<()> {
 
 fn run_create(args: CreateArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let version = args.version.unwrap_or(2);
+    if version != 2 && version != 3 {
+        bail!("unsupported bundle version {version}");
+    }
 
     let refs = collect_refs_for_bundle(&repo, &args.rev_list_args)?;
     if refs.is_empty() {
@@ -89,9 +99,14 @@ fn run_create(args: CreateArgs) -> Result<()> {
     }
 
     let (positive, negative) = parse_bundle_rev_list_args(&repo, &args.rev_list_args)?;
+    let cutoffs = parse_bundle_rev_cutoffs(&args.rev_list_args)?;
+    let max_count = parse_max_count_arg(&args.rev_list_args);
     let opts = RevListOptions {
         objects: true,
-        boundary: !negative.is_empty(),
+        boundary: !negative.is_empty() || cutoffs.since.is_some() || cutoffs.until.is_some(),
+        max_count,
+        since_cutoff: cutoffs.since,
+        until_cutoff: cutoffs.until,
         ..Default::default()
     };
     let listed =
@@ -101,8 +116,74 @@ fn run_create(args: CreateArgs) -> Result<()> {
     for c in &listed.commits {
         oids.insert(*c);
     }
-    for (oid, _) in &listed.objects {
-        oids.insert(*oid);
+    if max_count.is_some() {
+        for c in &listed.commits {
+            let Ok(obj) = read_object(&repo, c) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            if let Ok(commit) = parse_commit(&obj.data) {
+                let mut tip_tree_objects = std::collections::BTreeSet::new();
+                walk_reachable(&repo, &commit.tree, &mut tip_tree_objects)?;
+
+                let mut parent_tree_objects = std::collections::BTreeSet::new();
+                for parent in &commit.parents {
+                    let Ok(parent_obj) = read_object(&repo, parent) else {
+                        continue;
+                    };
+                    if parent_obj.kind != ObjectKind::Commit {
+                        continue;
+                    }
+                    if let Ok(parent_commit) = parse_commit(&parent_obj.data) {
+                        walk_reachable(&repo, &parent_commit.tree, &mut parent_tree_objects)?;
+                    }
+                }
+
+                for oid in tip_tree_objects {
+                    if !parent_tree_objects.contains(&oid) {
+                        oids.insert(oid);
+                    }
+                }
+            }
+        }
+    } else {
+        for (oid, _) in &listed.objects {
+            if let Ok(obj) = read_object(&repo, oid) {
+                if obj.kind == ObjectKind::Commit {
+                    continue;
+                }
+            }
+            oids.insert(*oid);
+        }
+        if !prerequisites.is_empty() {
+            let mut prerequisite_objects = std::collections::BTreeSet::new();
+            for boundary in &prerequisites {
+                walk_reachable(&repo, boundary, &mut prerequisite_objects)?;
+            }
+            oids.retain(|oid| !prerequisite_objects.contains(oid));
+            let has_blob = oids
+                .iter()
+                .any(|oid| read_object(&repo, oid).is_ok_and(|obj| obj.kind == ObjectKind::Blob));
+            if !has_blob {
+                for commit_oid in &listed.commits {
+                    let Ok(commit_obj) = read_object(&repo, commit_oid) else {
+                        continue;
+                    };
+                    if commit_obj.kind != ObjectKind::Commit {
+                        continue;
+                    }
+                    let Ok(commit) = parse_commit(&commit_obj.data) else {
+                        continue;
+                    };
+                    if let Some(blob_oid) = find_first_blob_in_tree(&repo, commit.tree) {
+                        oids.insert(blob_oid);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Read all objects.
@@ -119,11 +200,20 @@ fn run_create(args: CreateArgs) -> Result<()> {
     let mut out =
         fs::File::create(&args.file).with_context(|| format!("cannot create {}", args.file))?;
 
-    // Bundle v2 header.
-    out.write_all(b"# v2 git bundle\n")?;
+    if version == 3 {
+        out.write_all(b"# v3 git bundle\n")?;
+        out.write_all(b"@object-format=sha1\n")?;
+    } else {
+        out.write_all(b"# v2 git bundle\n")?;
+    }
 
     for oid in &prerequisites {
-        writeln!(out, "-{}", oid.to_hex())?;
+        let subject = commit_subject(&repo, oid).unwrap_or_default();
+        if subject.is_empty() {
+            writeln!(out, "-{}", oid.to_hex())?;
+        } else {
+            writeln!(out, "-{} {subject}", oid.to_hex())?;
+        }
     }
     // Write refs.
     for (refname, oid) in &refs {
@@ -178,22 +268,41 @@ fn collect_refs_for_bundle(
             .with_context(|| format!("cannot resolve '{tip_spec}' (from '{arg}')"))?;
         let full_name = if tip_spec.starts_with("refs/") || tip_spec == "HEAD" {
             tip_spec.to_string()
+        } else if resolve_ref(repo, &format!("refs/heads/{tip_spec}")).is_ok() {
+            format!("refs/heads/{tip_spec}")
+        } else if resolve_ref(repo, &format!("refs/tags/{tip_spec}")).is_ok() {
+            format!("refs/tags/{tip_spec}")
         } else {
-            let heads = repo.git_dir.join("refs/heads").join(tip_spec);
-            let tags = repo.git_dir.join("refs/tags").join(tip_spec);
-            if heads.exists() {
-                format!("refs/heads/{tip_spec}")
-            } else if tags.exists() {
-                format!("refs/tags/{tip_spec}")
-            } else {
-                tip_spec.to_string()
-            }
+            tip_spec.to_string()
         };
         refs.insert(full_name, oid);
         i += 1;
     }
 
     Ok(refs)
+}
+
+fn parse_max_count_arg(rev_args: &[String]) -> Option<usize> {
+    for arg in rev_args {
+        let Some(n) = arg.strip_prefix('-') else {
+            continue;
+        };
+        if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(v) = n.parse::<usize>() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+fn commit_subject(repo: &Repository, oid: &ObjectId) -> Option<String> {
+    let obj = read_object(repo, oid).ok()?;
+    if obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    let commit = parse_commit(&obj.data).ok()?;
+    commit.message.lines().next().map(ToOwned::to_owned)
 }
 
 fn parse_bundle_rev_list_args(
@@ -207,6 +316,18 @@ fn parse_bundle_rev_list_args(
     let mut i = 0usize;
     while i < rev_args.len() {
         let arg = &rev_args[i];
+        if arg == "--since" || arg == "--after" || arg == "--until" || arg == "--before" {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with("--since=")
+            || arg.starts_with("--after=")
+            || arg.starts_with("--until=")
+            || arg.starts_with("--before=")
+        {
+            i += 1;
+            continue;
+        }
         if arg == "--not" {
             i += 1;
             while i < rev_args.len() && rev_args[i] != "--not" {
@@ -245,6 +366,78 @@ fn parse_bundle_rev_list_args(
     }
 
     Ok((positive, negative))
+}
+
+#[derive(Default)]
+struct BundleRevCutoffs {
+    since: Option<i64>,
+    until: Option<i64>,
+}
+
+fn parse_bundle_rev_cutoffs(rev_args: &[String]) -> Result<BundleRevCutoffs> {
+    let mut cutoffs = BundleRevCutoffs::default();
+    let mut i = 0usize;
+    while i < rev_args.len() {
+        let arg = &rev_args[i];
+        match arg.as_str() {
+            "--since" | "--after" => {
+                i += 1;
+                if let Some(v) = rev_args.get(i) {
+                    cutoffs.since = Some(parse_bundle_date(v)?);
+                }
+            }
+            "--until" | "--before" => {
+                i += 1;
+                if let Some(v) = rev_args.get(i) {
+                    cutoffs.until = Some(parse_bundle_date(v)?);
+                }
+            }
+            _ if arg.starts_with("--since=") || arg.starts_with("--after=") => {
+                let value = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                cutoffs.since = Some(parse_bundle_date(value)?);
+            }
+            _ if arg.starts_with("--until=") || arg.starts_with("--before=") => {
+                let value = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                cutoffs.until = Some(parse_bundle_date(value)?);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(cutoffs)
+}
+
+fn parse_bundle_date(s: &str) -> Result<i64> {
+    let trimmed = s.trim();
+    let mut approx_err = 0;
+    let approx = approxidate_careful(trimmed, Some(&mut approx_err));
+    if approx_err == 0 {
+        return i64::try_from(approx).context("date out of range for bundle cutoff");
+    }
+    if let Ok((ts, _)) = parse_date_basic(trimmed) {
+        return i64::try_from(ts).context("date out of range for bundle cutoff");
+    }
+    if trimmed.len() >= 10 && trimmed.as_bytes()[4] == b'-' && trimmed.as_bytes()[7] == b'-' {
+        let parts: Vec<&str> = trimmed[..10].split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+            ) {
+                if let Ok(month) = time::Month::try_from(m) {
+                    if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
+                        if let Ok(dt) = date.with_hms(0, 0, 0) {
+                            return Ok(dt.assume_utc().unix_timestamp());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    trimmed
+        .parse::<i64>()
+        .with_context(|| format!("invalid date '{trimmed}'"))
 }
 
 fn collect_all_refs(repo: &Repository, refs: &mut BTreeMap<String, ObjectId>) -> Result<()> {
@@ -369,13 +562,15 @@ fn run_unbundle(args: UnbundleArgs) -> Result<()> {
 
 /// Parse the bundle v2 header, returning refs and the byte offset where pack data starts.
 fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize)> {
-    // Find the header line.
-    let header_line = b"# v2 git bundle\n";
-    if !data.starts_with(header_line) {
-        bail!("not a v2 git bundle");
-    }
-
-    let mut pos = header_line.len();
+    let header_v2 = b"# v2 git bundle\n";
+    let header_v3 = b"# v3 git bundle\n";
+    let mut pos = if data.starts_with(header_v2) {
+        header_v2.len()
+    } else if data.starts_with(header_v3) {
+        header_v3.len()
+    } else {
+        bail!("not a git bundle");
+    };
     let mut refs = BTreeMap::new();
 
     loop {
@@ -397,6 +592,10 @@ fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize
 
         // Prerequisite lines start with '-'.
         if line_str.starts_with('-') {
+            pos = eol + 1;
+            continue;
+        }
+        if line_str.starts_with('@') {
             pos = eol + 1;
             continue;
         }
@@ -484,6 +683,36 @@ fn walk_reachable(
         ObjectKind::Blob => {}
     }
     Ok(())
+}
+
+fn find_first_blob_in_tree(repo: &Repository, tree_oid: ObjectId) -> Option<ObjectId> {
+    let tree_obj = read_object(repo, &tree_oid).ok()?;
+    if tree_obj.kind != ObjectKind::Tree {
+        return None;
+    }
+    let mut pos = 0usize;
+    while pos < tree_obj.data.len() {
+        let Some(nul_rel) = tree_obj.data[pos..].iter().position(|&b| b == 0) else {
+            break;
+        };
+        let nul = pos + nul_rel;
+        if nul + 21 > tree_obj.data.len() {
+            break;
+        }
+        let mode_end = tree_obj.data[pos..nul].iter().position(|&b| b == b' ')?;
+        let mode = std::str::from_utf8(&tree_obj.data[pos..pos + mode_end]).ok()?;
+        let oid = ObjectId::from_bytes(&tree_obj.data[nul + 1..nul + 21]).ok()?;
+        if mode == "100644" || mode == "100755" || mode == "120000" {
+            return Some(oid);
+        }
+        if mode == "40000" {
+            if let Some(found) = find_first_blob_in_tree(repo, oid) {
+                return Some(found);
+            }
+        }
+        pos = nul + 21;
+    }
+    None
 }
 
 fn read_object(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::objects::Object> {

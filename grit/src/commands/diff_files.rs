@@ -193,7 +193,12 @@ pub fn run(mut args: Args) -> Result<()> {
                                 &work_tree,
                             )?;
                         } else {
-                            print_stat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
+                            print_stat_from_diff_entries(
+                                &diff_entries,
+                                &repo,
+                                &work_tree,
+                                &options,
+                            )?;
                         }
                         wrote_any = true;
                         need_blank_before_patch = true;
@@ -202,7 +207,12 @@ pub fn run(mut args: Args) -> Result<()> {
                         if options.suppress_diff {
                             continue;
                         }
-                        print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
+                        print_numstat_from_diff_entries(
+                            &diff_entries,
+                            &repo,
+                            &work_tree,
+                            &options,
+                        )?;
                         wrote_any = true;
                         need_blank_before_patch = true;
                     }
@@ -358,7 +368,12 @@ pub fn run(mut args: Args) -> Result<()> {
                             need_blank_before_patch = true;
                         }
                         if options.patch_with_stat {
-                            print_stat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
+                            print_stat_from_diff_entries(
+                                &diff_entries,
+                                &repo,
+                                &work_tree,
+                                &options,
+                            )?;
                             wrote_any = true;
                             need_blank_before_patch = true;
                         }
@@ -380,7 +395,12 @@ pub fn run(mut args: Args) -> Result<()> {
                         print_stat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
                     }
                     OutputFormat::NumStat => {
-                        print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
+                        print_numstat_from_diff_entries(
+                            &diff_entries,
+                            &repo,
+                            &work_tree,
+                            &options,
+                        )?;
                     }
                 }
             } else if options.format == OutputFormat::Raw && options.explicit_raw {
@@ -674,24 +694,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 // Silently accept diff options we don't fully implement yet
                 "--full-index" | "--no-ext-diff" | "--no-prefix" | "--no-abbrev" => {}
                 "--indent-heuristic" | "--no-indent-heuristic" => {}
-                "-s"
-                | "--no-patch"
-                | "-p"
-                | "--patch"
-                | "-u"
-                | "--raw"
-                | "--stat"
-                | "--compact-summary"
-                | "--numstat"
-                | "--shortstat"
-                | "--name-only"
-                | "--name-status"
-                | "--summary"
-                | "--patch-with-raw"
-                | "--patch-with-stat"
-                | "--dirstat"
-                | "--dirstat-by-file"
-                | "--cumulative" => {}
+                "-s" | "--no-patch" | "-p" | "--patch" | "-u" | "--raw" | "--stat"
+                | "--compact-summary" | "--numstat" | "--shortstat" | "--name-only"
+                | "--name-status" | "--summary" | "--patch-with-raw" | "--patch-with-stat"
+                | "--dirstat" | "--dirstat-by-file" | "--cumulative" => {}
                 s if s.starts_with("--dirstat=") => {}
                 s if s.starts_with("--dirstat-by-file=") => {}
                 "-M" | "--find-renames" => {
