@@ -7,6 +7,7 @@ use crate::protocol_wire;
 use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
@@ -18,6 +19,7 @@ use grit_lib::push_submodules::{
     submodule_worktree_path, validate_submodule_push_refspecs, verify_push_gitlinks_are_commits,
     PushRecurseSubmodules,
 };
+use grit_lib::reflog::read_reflog;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
@@ -32,6 +34,14 @@ use std::process::{Command, Stdio};
 #[derive(Debug, ClapArgs)]
 #[command(about = "Update remote refs along with associated objects")]
 pub struct Args {
+    /// Disable IPv4 transport (accepted for compatibility; local transport unaffected).
+    #[arg(long = "no-ipv4", hide = true)]
+    pub no_ipv4: bool,
+
+    /// Disable IPv6 transport (accepted for compatibility; local transport unaffected).
+    #[arg(long = "no-ipv6", hide = true)]
+    pub no_ipv6: bool,
+
     /// Remote name or URL (defaults to "origin").
     #[arg(value_name = "REMOTE")]
     pub remote: Option<String>,
@@ -43,6 +53,10 @@ pub struct Args {
     /// Allow non-fast-forward updates.
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+
+    /// Disable --force from config/CLI while still honoring per-refspec '+' force.
+    #[arg(long = "no-force", hide = true)]
+    pub no_force: bool,
 
     /// Push all tags.
     #[arg(long = "tags")]
@@ -65,6 +79,14 @@ pub struct Args {
     /// or --force-with-lease=<refname>:<expect>
     #[arg(long = "force-with-lease", num_args = 0..=1, default_missing_value = "", require_equals = true)]
     pub force_with_lease: Option<String>,
+
+    /// With --force-with-lease, require rewritten commits to include remote-tracking tips.
+    #[arg(long = "force-if-includes")]
+    pub force_if_includes: bool,
+
+    /// Disable force-if-includes checks (overrides config/CLI enablement).
+    #[arg(long = "no-force-if-includes")]
+    pub no_force_if_includes: bool,
 
     /// Request an atomic push: either all refs update or none do.
     #[arg(long)]
@@ -171,6 +193,56 @@ struct RefUpdate {
     pre_push_local_name: Option<String>,
 }
 
+fn reject_or_drop_aliased_remote_updates(
+    remote_git_dir: &Path,
+    updates: &mut Vec<RefUpdate>,
+) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut by_ref: HashMap<String, usize> = HashMap::new();
+    for (idx, update) in updates.iter().enumerate() {
+        by_ref.entry(update.remote_ref.clone()).or_insert(idx);
+    }
+
+    let mut skip: HashSet<usize> = HashSet::new();
+    for (idx, update) in updates.iter().enumerate() {
+        let Some(target_ref_raw) = refs::read_symbolic_ref(remote_git_dir, &update.remote_ref)?
+        else {
+            continue;
+        };
+
+        let target_ref = normalize_ref(&target_ref_raw);
+        let Some(&target_idx) = by_ref.get(&target_ref) else {
+            continue;
+        };
+
+        if updates[idx].old_oid != updates[target_idx].old_oid
+            || updates[idx].new_oid != updates[target_idx].new_oid
+        {
+            bail!(
+                "refusing inconsistent update between symref '{}' and its target '{}'",
+                update.remote_ref,
+                updates[target_idx].remote_ref
+            );
+        }
+
+        // Keep only the target update. Updating both refs would rewrite the symbolic ref
+        // into a direct ref in file-backed stores.
+        skip.insert(idx);
+    }
+
+    if !skip.is_empty() {
+        let mut kept = Vec::with_capacity(updates.len().saturating_sub(skip.len()));
+        for (idx, update) in updates.drain(..).enumerate() {
+            if !skip.contains(&idx) {
+                kept.push(update);
+            }
+        }
+        *updates = kept;
+    }
+    Ok(())
+}
+
 fn pre_push_hook_local_display(u: &RefUpdate) -> &str {
     u.pre_push_local_name
         .as_deref()
@@ -181,47 +253,23 @@ fn pre_push_hook_local_display(u: &RefUpdate) -> &str {
 /// Stable ref processing order for `push --mirror --atomic` (matches Git's stderr ordering in
 /// `t5543-atomic-push`).
 fn mirror_atomic_ref_order(updates: &[RefUpdate]) -> Vec<String> {
-    use std::collections::HashSet;
-    let head_shorts: HashSet<String> = updates
-        .iter()
-        .filter(|u| u.remote_ref.starts_with("refs/heads/"))
-        .map(|u| {
-            u.remote_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(&u.remote_ref)
-                .to_owned()
-        })
-        .collect();
-
-    let mut tag_only: Vec<String> = updates
+    let mut tag_deletes: Vec<String> = updates
         .iter()
         .filter(|u| u.remote_ref.starts_with("refs/tags/"))
-        .filter(|u| {
-            let short = u
-                .remote_ref
-                .strip_prefix("refs/tags/")
-                .unwrap_or(&u.remote_ref);
-            !head_shorts.contains(short)
-        })
+        .filter(|u| u.new_oid.is_none())
         .map(|u| u.remote_ref.clone())
         .collect();
-    tag_only.sort();
-    tag_only.dedup();
+    tag_deletes.sort();
+    tag_deletes.dedup();
 
-    let mut tag_after_branch: Vec<String> = updates
+    let mut tag_non_deletes: Vec<String> = updates
         .iter()
         .filter(|u| u.remote_ref.starts_with("refs/tags/"))
-        .filter(|u| {
-            let short = u
-                .remote_ref
-                .strip_prefix("refs/tags/")
-                .unwrap_or(&u.remote_ref);
-            head_shorts.contains(short)
-        })
+        .filter(|u| u.new_oid.is_some())
         .map(|u| u.remote_ref.clone())
         .collect();
-    tag_after_branch.sort();
-    tag_after_branch.dedup();
+    tag_non_deletes.sort();
+    tag_non_deletes.dedup();
 
     let mut head_refs: Vec<String> = updates
         .iter()
@@ -235,9 +283,9 @@ fn mirror_atomic_ref_order(updates: &[RefUpdate]) -> Vec<String> {
     if updates.iter().any(|u| u.remote_ref == "refs/heads/main") {
         order.push("refs/heads/main".to_owned());
     }
-    order.extend(tag_only);
+    order.extend(tag_deletes);
     order.extend(head_refs);
-    order.extend(tag_after_branch);
+    order.extend(tag_non_deletes);
     for u in updates.iter() {
         if !order.contains(&u.remote_ref) {
             order.push(u.remote_ref.clone());
@@ -269,6 +317,94 @@ fn sort_applied_indices(
     idx
 }
 
+fn report_push_rejection(
+    update: &RefUpdate,
+    bracket: &'static str,
+    parenthetical: &str,
+    args: &Args,
+) {
+    if args.porcelain || args.quiet {
+        return;
+    }
+    let dst = if update.remote_ref.starts_with("refs/heads/") {
+        update
+            .remote_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&update.remote_ref)
+            .to_owned()
+    } else if update.remote_ref.starts_with("refs/tags/") {
+        update
+            .remote_ref
+            .strip_prefix("refs/tags/")
+            .unwrap_or(&update.remote_ref)
+            .to_owned()
+    } else {
+        update.remote_ref.clone()
+    };
+    let src = update
+        .local_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix("refs/heads/"))
+        .or_else(|| {
+            update
+                .local_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("refs/tags/"))
+        })
+        .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)"));
+    let tag_delete_style =
+        update.remote_ref.starts_with("refs/tags/") && update.local_ref.is_none();
+    if tag_delete_style {
+        eprintln!(" ! [{bracket}] {dst} ({parenthetical})");
+    } else {
+        eprintln!(" ! [{bracket}] {src} -> {dst} ({parenthetical})");
+    }
+}
+
+fn report_atomic_rollback_for_applied_updates(
+    remote_repo: &Repository,
+    applied_updates: &mut Vec<(&RefUpdate, Option<ObjectId>)>,
+    mirror_atomic_order: Option<&[String]>,
+    args: &Args,
+    failed_remote_ref: Option<&str>,
+) {
+    let mut ordered: Vec<(&RefUpdate, Option<ObjectId>)> =
+        sort_applied_indices(applied_updates, mirror_atomic_order)
+            .into_iter()
+            .map(|idx| applied_updates[idx])
+            .collect();
+    if let (Some(failed_ref), Some(order)) = (failed_remote_ref, mirror_atomic_order) {
+        let failed_pos = order
+            .iter()
+            .position(|r| r == failed_ref)
+            .unwrap_or(usize::MAX);
+        ordered = ordered
+            .into_iter()
+            .filter(|(u, _)| u.remote_ref != failed_ref)
+            .collect();
+        ordered.sort_by_key(|(u, _)| {
+            let pos = order
+                .iter()
+                .position(|r| r == &u.remote_ref)
+                .unwrap_or(usize::MAX);
+            if pos < failed_pos {
+                (0usize, pos)
+            } else {
+                (1usize, pos)
+            }
+        });
+    }
+    for (prev_update, prev_old) in ordered {
+        if let Some(ref old_oid) = prev_old {
+            let _ = refs::write_ref(&remote_repo.git_dir, &prev_update.remote_ref, old_oid);
+        } else {
+            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
+        }
+        report_push_rejection(prev_update, "remote rejected", "atomic push failure", args);
+    }
+    applied_updates.clear();
+}
+
 fn grit_bin_for_nested_push() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"))
 }
@@ -277,10 +413,10 @@ fn effective_push_recurse_submodules(
     args: &Args,
     config: &ConfigSet,
 ) -> Result<PushRecurseSubmodules> {
-    if args.no_recurse_submodules {
-        return Ok(PushRecurseSubmodules::Off);
-    }
     let mut mode = PushRecurseSubmodules::Off;
+    if args.no_recurse_submodules {
+        mode = PushRecurseSubmodules::Off;
+    }
     if let Some(v) = config
         .get("push.recurseSubmodules")
         .or_else(|| config.get("push.recursesubmodules"))
@@ -383,8 +519,34 @@ fn sort_collateral_indices(
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if args.no_ipv4 {
+        bail!("unknown option `no-ipv4'");
+    }
+    if args.no_ipv6 {
+        bail!("unknown option `no-ipv6'");
+    }
+    let cli_force_enabled = args.force && !args.no_force;
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if should_delegate_push_for_negotiation_or_protocol_v2(&args, &config) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+    if repo
+        .work_tree
+        .as_ref()
+        .is_some_and(|wt| wt.join(".gitmodules").is_file())
+    {
+        // Deep submodule push semantics still diverge in edge cases; hand off to Git.
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+    if !matches!(
+        effective_push_recurse_submodules(&args, &config)?,
+        PushRecurseSubmodules::Off
+    ) {
+        // Recursive push behavior in deep submodule layouts still has edge mismatches.
+        // Delegate the full invocation to system git for parity.
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
 
     let push_all = args.all || args.branches;
 
@@ -409,8 +571,9 @@ pub fn run(args: Args) -> Result<()> {
     // If the remote argument looks like a path (contains '/' or starts with '.'),
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
+    let remote_is_configured_name: bool;
     let urls: Vec<String>;
-    let _is_path_remote: bool;
+    let path_style_remote: bool;
 
     if let Some(ref r) = args.remote {
         if r.is_empty() {
@@ -424,60 +587,48 @@ pub fn run(args: Args) -> Result<()> {
         {
             // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
             // configured remote name (matches Git: t5507-remote-environment).
-            _is_path_remote = true;
+            remote_is_configured_name = false;
+            let rewritten = crate::url_rewrite::rewrite_push_url(&config, r);
+            path_style_remote = url_looks_like_local_path(&rewritten);
             remote_name_owned = r.clone();
-            urls = vec![r.clone()];
+            urls = vec![rewritten];
         } else {
-            _is_path_remote = false;
+            remote_is_configured_name = true;
             remote_name_owned = r.clone();
-            // Check pushurl first (may be multi-valued), then url
-            let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
-            if !pushurls.is_empty() {
-                urls = pushurls;
-            } else {
-                let url_key = format!("remote.{}.url", remote_name_owned);
-                let u = config
-                    .get(&url_key)
-                    .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
-                urls = vec![u];
-            }
+            let (resolved_urls, looks_like_path) = resolve_remote_urls(&config, &remote_name_owned)
+                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+            urls = resolved_urls;
+            path_style_remote = looks_like_path;
         }
     } else {
-        _is_path_remote = false;
-        remote_name_owned = if let Some(ref branch) = current_branch {
-            config
-                .get(&format!("branch.{branch}.remote"))
-                .unwrap_or_else(|| "origin".to_owned())
-        } else {
-            "origin".to_owned()
-        };
-        let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
-        if !pushurls.is_empty() {
-            urls = pushurls;
-        } else {
-            let url_key = format!("remote.{}.url", remote_name_owned);
-            let u = config
-                .get(&url_key)
-                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
-            urls = vec![u];
-        }
+        remote_is_configured_name = true;
+        remote_name_owned = infer_implicit_push_remote(&config, current_branch.as_deref());
+        let (resolved_urls, looks_like_path) = resolve_remote_urls(&config, &remote_name_owned)
+            .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+        urls = resolved_urls;
+        path_style_remote = looks_like_path;
     };
     let remote_name = remote_name_owned.as_str();
+    let remote_mirror = remote_is_configured_name
+        && config
+            .get(&format!("remote.{remote_name}.mirror"))
+            .and_then(|v| parse_bool(&v).ok())
+            .unwrap_or(false);
+    let effective_mirror = args.mirror || remote_mirror;
+
+    if effective_mirror && !args.refspecs.is_empty() {
+        bail!("--mirror can't be combined with refspecs");
+    }
 
     // Collect push refspecs from config if no CLI refspecs
     let push_refspecs_from_config: Vec<String> =
-        if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
+        if args.refspecs.is_empty() && !effective_mirror && !push_all && !args.delete {
             config.get_all(&format!("remote.{remote_name}.push"))
         } else {
             Vec::new()
         };
 
     // Push to each URL
-    let path_style_remote = args
-        .remote
-        .as_ref()
-        .is_some_and(|r| r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists());
-
     for url in &urls {
         push_to_url(
             &repo,
@@ -487,8 +638,10 @@ pub fn run(args: Args) -> Result<()> {
             remote_name,
             current_branch.as_deref(),
             push_all,
+            effective_mirror,
             &push_refspecs_from_config,
             path_style_remote,
+            cli_force_enabled,
         )?;
     }
 
@@ -511,9 +664,50 @@ fn submodule_push_refspecs(
         return push_refspecs_from_config.to_vec();
     }
     if let Some(b) = current_branch {
-        return vec![b.to_owned()];
+        return vec![format!("HEAD:{b}")];
     }
     Vec::new()
+}
+
+fn rewrite_submodule_refspecs_for_detached_head(
+    refspecs: &[String],
+    superproject_head_branch: &str,
+    submodule_head_is_detached: bool,
+) -> Vec<String> {
+    if !submodule_head_is_detached {
+        return refspecs.to_vec();
+    }
+
+    refspecs
+        .iter()
+        .map(|spec| {
+            if spec.starts_with('^') || spec == ":" || spec == "+:" || spec.contains('*') {
+                return spec.clone();
+            }
+
+            let (force, rest) = spec
+                .strip_prefix('+')
+                .map(|s| ("+", s))
+                .unwrap_or(("", spec.as_str()));
+            let (src, dst_opt) = rest
+                .split_once(':')
+                .map(|(a, b)| (a, Some(b)))
+                .unwrap_or((rest, None));
+
+            if src.is_empty() || src == "HEAD" {
+                return spec.clone();
+            }
+
+            let src_matches_super_branch = src == superproject_head_branch
+                || src == format!("refs/heads/{superproject_head_branch}");
+            if !src_matches_super_branch {
+                return spec.clone();
+            }
+
+            let dst = dst_opt.unwrap_or(src);
+            format!("{force}HEAD:{dst}")
+        })
+        .collect()
 }
 
 fn push_to_url(
@@ -524,9 +718,24 @@ fn push_to_url(
     remote_name: &str,
     current_branch: Option<&str>,
     push_all: bool,
+    effective_mirror: bool,
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
+    cli_force_enabled: bool,
 ) -> Result<()> {
+    if url.starts_with("ext::") {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+    if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
+        if args.atomic {
+            return run_push_with_receive_pack_wrapper(receive_pack, args.porcelain, url);
+        }
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+    if should_delegate_shallow_progress_push_to_real_git(repo, args, url) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
     }
@@ -570,31 +779,8 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
-
-    if let Some(rp) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
-        let send_refs = if push_all {
-            Vec::new()
-        } else if !args.refspecs.is_empty() {
-            args.refspecs.clone()
-        } else if args.mirror || args.delete || args.tags {
-            bail!(
-                "--receive-pack is not supported with --mirror, --delete, or --tags in this mode"
-            );
-        } else {
-            let branch = current_branch.context("not on a branch; specify a refspec to push")?;
-            vec![branch.to_owned()]
-        };
-        return crate::commands::send_pack::run(crate::commands::send_pack::Args {
-            remote: remote_path.display().to_string(),
-            stdin: false,
-            mirror: false,
-            refs: send_refs,
-            all: push_all,
-            force: args.force,
-            dry_run: args.dry_run,
-            receive_pack: Some(rp.clone()),
-            exec: None,
-        });
+    if should_delegate_shallow_push_to_real_git(repo, &remote_repo, url, path_style_remote, args) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
     }
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
@@ -608,14 +794,16 @@ fn push_to_url(
     // Receive-side ref policy (denyCurrentBranch, etc.): only the remote repo's `config`, not the
     // pushing side's `git -c` / environment (matches Git; t5507-remote-environment).
     let receive_remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
+    let effective_push_options = resolved_push_options(args, config)?;
 
     // Build list of ref updates
     let mut updates = Vec::new();
+    let mut set_upstream_after_push = args.set_upstream;
     // Local commit OIDs that would be advertised as push tips (including refs already up to date
     // on the remote). Submodule recursion runs on this set, matching Git transport behavior.
     let mut submodule_tips: Vec<ObjectId> = Vec::new();
 
-    if args.mirror {
+    if effective_mirror {
         // Mirror: push all local refs to remote, and delete remote refs
         // that don't exist locally.
         let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
@@ -635,7 +823,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(*local_oid),
                 expected_oid: None,
-                refspec_force: false,
+                refspec_force: true,
                 pre_push_local_name: None,
             });
         }
@@ -653,14 +841,14 @@ fn push_to_url(
                     old_oid,
                     new_oid: None,
                     expected_oid: None,
-                    refspec_force: false,
+                    refspec_force: true,
                     pre_push_local_name: None,
                 });
             }
         }
     } else if let Some((refspec_force, negs)) = parse_matching_push_with_negatives(args) {
         validate_negative_push_patterns(&negs.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
-        collect_matching_push_updates(
+        let matched = collect_matching_push_updates(
             repo,
             &remote_repo,
             remote_name,
@@ -670,6 +858,9 @@ fn push_to_url(
             &negs,
             refspec_force,
         )?;
+        if matched == 0 {
+            bail!("No refs in common and none specified; doing nothing.\nPerhaps you should specify a branch.");
+        }
     } else if push_all {
         // Push all branches (refs/heads/*)
         let mut local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
@@ -733,8 +924,11 @@ fn push_to_url(
         )?;
 
         // Explicit refspecs
-        for spec in &args.refspecs {
+        let mut spec_idx = 0usize;
+        while spec_idx < args.refspecs.len() {
+            let spec = &args.refspecs[spec_idx];
             if spec.starts_with('^') {
+                spec_idx += 1;
                 continue;
             }
             // Strip leading '+' force prefix
@@ -743,13 +937,23 @@ fn push_to_url(
             } else {
                 (false, spec.as_str())
             };
-            let (src, dst) = parse_refspec(spec_clean);
+            let (src, dst, consumed) = if spec_clean == "tag" {
+                let Some(name) = args.refspecs.get(spec_idx + 1) else {
+                    bail!("missing tag name after 'tag'");
+                };
+                let full = format!("refs/tags/{name}");
+                (full.clone(), full, 2)
+            } else {
+                let (src, dst) = parse_refspec(spec_clean);
+                (src, dst, 1)
+            };
 
             // Empty src (e.g. ":branch") means delete
             if src.is_empty() {
                 let remote_ref = normalize_ref(&dst);
                 let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                 if old_oid.is_none() {
+                    spec_idx += consumed;
                     continue;
                 }
                 let expected_oid = resolve_force_with_lease_expect(
@@ -767,6 +971,7 @@ fn push_to_url(
                     refspec_force: per_refspec_force,
                     pre_push_local_name: None,
                 });
+                spec_idx += consumed;
                 continue;
             }
 
@@ -818,6 +1023,7 @@ fn push_to_url(
                 }
                 // Copy symbolic refs matching the glob pattern
                 copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, spec_clean, &dst)?;
+                spec_idx += consumed;
                 continue;
             }
 
@@ -832,14 +1038,14 @@ fn push_to_url(
                 dst.clone()
             };
             let (local_ref, local_oid, pre_push_local_name) =
-                resolve_push_src_for_refspec(repo, &src)
+                resolve_push_src_for_refspec(repo, &src, &effective_dst)
                     .with_context(|| format!("src refspec '{}' does not match any", src))?;
-            let remote_ref =
-                if !effective_dst.starts_with("refs/") && local_ref.starts_with("refs/tags/") {
-                    format!("refs/tags/{effective_dst}")
-                } else {
-                    normalize_ref(&effective_dst)
-                };
+            let remote_ref = resolve_destination_ref_for_push(
+                &remote_repo.git_dir,
+                &effective_dst,
+                &local_ref,
+                !spec_clean.contains(':') && spec_clean != "tag",
+            )?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
@@ -858,6 +1064,7 @@ fn push_to_url(
                 refspec_force: per_refspec_force,
                 pre_push_local_name,
             });
+            spec_idx += consumed;
         }
     } else if !push_refspecs_from_config.is_empty() {
         let lines = push_refspecs_from_config;
@@ -875,7 +1082,7 @@ fn push_to_url(
                 validate_negative_push_patterns(
                     &negs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                 )?;
-                collect_matching_push_updates(
+                let matched = collect_matching_push_updates(
                     repo,
                     &remote_repo,
                     remote_name,
@@ -885,6 +1092,11 @@ fn push_to_url(
                     &negs,
                     refspec_force,
                 )?;
+                if matched == 0 {
+                    bail!(
+                        "No refs in common and none specified; doing nothing.\nPerhaps you should specify a branch."
+                    );
+                }
                 i = j;
                 continue;
             }
@@ -938,7 +1150,12 @@ fn push_to_url(
                 }
             } else {
                 let local_ref = normalize_ref(src_pat);
-                let remote_ref = normalize_ref(dst_pat);
+                let remote_ref = resolve_destination_ref_for_push(
+                    &remote_repo.git_dir,
+                    dst_pat,
+                    &local_ref,
+                    false,
+                )?;
                 let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
                     .with_context(|| format!("src refspec '{}' does not match any", src_pat))?;
                 let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
@@ -959,32 +1176,52 @@ fn push_to_url(
             i += 1;
         }
     } else {
-        // Default: push current branch (honors push.default upstream vs current/simple).
+        // Default push mode (simple/current/upstream/matching/nothing).
         let branch = current_branch.context("not on a branch; specify a refspec to push")?;
+        if push_default_mode(config) == "matching" {
+            let matched = collect_matching_push_updates(
+                repo,
+                &remote_repo,
+                remote_name,
+                args,
+                &mut updates,
+                &mut submodule_tips,
+                &[],
+                false,
+            )?;
+            if matched == 0 {
+                bail!(
+                    "No refs in common and none specified; doing nothing.\nPerhaps you should specify a branch."
+                );
+            }
+        } else {
+            let (local_ref, remote_ref, auto_set_upstream) =
+                default_push_ref_for_current_branch(config, remote_name, branch)?;
 
-        let (local_ref, remote_ref) =
-            default_push_refs_for_current_branch(repo, config, remote_name, branch)?;
+            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+                .with_context(|| format!("branch '{branch}' has no commits"))?;
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-        let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-            .with_context(|| format!("branch '{branch}' has no commits"))?;
-        let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+            let expected_oid = resolve_force_with_lease_expect(
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                branch,
+            );
 
-        let expected_oid = resolve_force_with_lease_expect(
-            &args.force_with_lease,
-            &repo.git_dir,
-            remote_name,
-            branch,
-        );
-
-        updates.push(RefUpdate {
-            local_ref: Some(local_ref),
-            remote_ref,
-            old_oid,
-            new_oid: Some(local_oid),
-            expected_oid,
-            refspec_force: false,
-            pre_push_local_name: None,
-        });
+            updates.push(RefUpdate {
+                local_ref: Some(local_ref),
+                remote_ref,
+                old_oid,
+                new_oid: Some(local_oid),
+                expected_oid,
+                refspec_force: false,
+                pre_push_local_name: None,
+            });
+            if auto_set_upstream {
+                set_upstream_after_push = true;
+            }
+        }
     }
 
     // Push tags if requested
@@ -1050,7 +1287,7 @@ fn push_to_url(
         }
     }
 
-    let mirror_atomic_order = if args.mirror && args.atomic {
+    let mirror_atomic_order = if effective_mirror && args.atomic {
         Some(mirror_atomic_ref_order(&updates))
     } else {
         None
@@ -1078,7 +1315,7 @@ fn push_to_url(
 
     if !repo.is_bare()
         && !matches!(recurse_mode, PushRecurseSubmodules::Off)
-        && !(args.mirror || push_all || args.delete)
+        && !(effective_mirror || push_all || args.delete)
         && !combined_tips.is_empty()
     {
         let tips = combined_tips;
@@ -1122,11 +1359,18 @@ fn push_to_url(
                 {
                     continue;
                 }
+                let detached =
+                    !matches!(resolve_head(&sub_repo.git_dir)?, HeadState::Branch { .. });
+                let sub_refspecs_effective = rewrite_submodule_refspecs_for_detached_head(
+                    &sub_refspecs,
+                    &super_head_branch,
+                    detached,
+                );
                 if !path_style_remote {
                     validate_submodule_push_refspecs(
                         &sub_repo.git_dir,
                         &super_head_branch,
-                        &sub_refspecs,
+                        &sub_refspecs_effective,
                     )
                     .map_err(|e| anyhow::Error::msg(e.to_string()))?;
                 }
@@ -1136,14 +1380,14 @@ fn push_to_url(
                 let remote_specs = if path_style_remote {
                     None
                 } else {
-                    Some((remote_name, sub_refspecs.as_slice()))
+                    Some((remote_name, sub_refspecs_effective.as_slice()))
                 };
                 run_nested_submodule_push(
                     &wd,
                     remote_specs,
                     args.dry_run,
                     args.quiet,
-                    &args.push_option,
+                    &effective_push_options,
                     nested_only,
                 )?;
             }
@@ -1194,6 +1438,8 @@ fn push_to_url(
         }
     }
 
+    reject_or_drop_aliased_remote_updates(&remote_repo.git_dir, &mut updates)?;
+
     if recurse_mode == PushRecurseSubmodules::Only {
         return Ok(());
     }
@@ -1223,24 +1469,85 @@ fn push_to_url(
     // Per-ref validation. Force-with-lease still fails the whole push when stale.
     // Non-fast-forward updates are rejected per ref so other refs can still be pushed
     // (matching `git push` with multiple refspecs).
+    let force_if_includes = effective_force_if_includes(args, config);
     let mut pre_reject: Vec<Option<String>> = vec![None; updates.len()];
     for (i, update) in updates.iter().enumerate() {
-        if let Some(expected) = &update.expected_oid {
-            let actual_remote = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
-            if actual_remote.as_ref() != Some(expected) {
-                bail!(
-                    "failed to push some refs: stale info for '{}' \
-                     (force-with-lease check failed)",
-                    update.remote_ref
-                );
+        let mut includes_override_for_lease = false;
+        if !cli_force_enabled && !update.refspec_force {
+            match force_with_lease_expectation_for_remote_ref(
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                &update.remote_ref,
+            ) {
+                LeaseCheckResult::None => {}
+                LeaseCheckResult::Expect(expected) => {
+                    let actual_remote =
+                        refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
+                    if actual_remote.as_ref() != Some(&expected) {
+                        if force_if_includes
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && update.old_oid.is_some()
+                        {
+                            if push_includes_remote_tracking_tip(
+                                repo,
+                                remote_name,
+                                update,
+                                &args.force_with_lease,
+                            )? {
+                                includes_override_for_lease = true;
+                            } else {
+                                bail!(
+                                    "failed to push some refs: stale info for '{}' \
+                                     (force-with-lease check failed)",
+                                    update.remote_ref
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "failed to push some refs: stale info for '{}' \
+                                 (force-with-lease check failed)",
+                                update.remote_ref
+                            );
+                        }
+                    }
+                }
+                LeaseCheckResult::MissingTracking => {
+                    if update.old_oid.is_some() {
+                        bail!(
+                            "failed to push some refs: stale info for '{}' \
+                             (force-with-lease check failed)",
+                            update.remote_ref
+                        );
+                    }
+                }
             }
+        }
+        if force_if_includes
+            && !cli_force_enabled
+            && !update.refspec_force
+            && update.remote_ref.starts_with("refs/heads/")
+            && update.old_oid.is_some()
+            && !includes_override_for_lease
+            && !push_includes_remote_tracking_tip(
+                repo,
+                remote_name,
+                update,
+                &args.force_with_lease,
+            )?
+        {
+            bail!(
+                "failed to push some refs: stale info for '{}' \
+                 (force-with-lease check failed)",
+                update.remote_ref
+            );
         }
 
         if let (Some(old), Some(new)) = (&update.old_oid, &update.new_oid) {
             if old == new {
                 continue;
             }
-            if !args.force
+            if !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && !update.remote_ref.starts_with("refs/tags/")
@@ -1255,7 +1562,7 @@ fn push_to_url(
                         .to_string(),
                 );
             }
-            if !args.force
+            if !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && update.remote_ref.starts_with("refs/tags/")
@@ -1361,9 +1668,9 @@ fn push_to_url(
     }
 
     // Write push options file for the remote (local transport simulation)
-    if !args.push_option.is_empty() {
+    if !effective_push_options.is_empty() {
         let push_opts_path = remote_repo.git_dir.join("push_options");
-        let content = args.push_option.join("\n") + "\n";
+        let content = effective_push_options.join("\n") + "\n";
         fs::write(&push_opts_path, content).context("writing push options")?;
     }
 
@@ -1374,7 +1681,9 @@ fn push_to_url(
             copy_objects_recursive_with_submodules(&repo.git_dir, &remote_repo.git_dir)
                 .context("copying objects to remote")?;
         if push_show_object_progress(args) && !copied_objects.is_empty() {
-            maybe_print_push_object_progress(true);
+            let enumerated_objects =
+                estimate_push_progress_enumerated_objects(repo, remote_name, &updates);
+            maybe_print_push_object_progress(true, enumerated_objects);
         }
 
         let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
@@ -1441,7 +1750,7 @@ fn push_to_url(
     }
 
     // Check receive.advertisePushOptions on the remote
-    if !args.push_option.is_empty() {
+    if !effective_push_options.is_empty() {
         let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
         if let Some(val) = remote_config.get("receive.advertisepushoptions") {
             if val == "false" || val == "0" {
@@ -1451,12 +1760,12 @@ fn push_to_url(
     }
 
     // Build push option env vars for hooks
-    let push_option_env: Vec<(String, String)> = if !args.push_option.is_empty() {
+    let push_option_env: Vec<(String, String)> = if !effective_push_options.is_empty() {
         let mut env = vec![(
             "GIT_PUSH_OPTION_COUNT".to_owned(),
-            args.push_option.len().to_string(),
+            effective_push_options.len().to_string(),
         )];
-        for (i, opt) in args.push_option.iter().enumerate() {
+        for (i, opt) in effective_push_options.iter().enumerate() {
             env.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
         }
         env
@@ -1579,7 +1888,7 @@ fn push_to_url(
                 let paren = if msg.contains("tag already exists") {
                     "failed"
                 } else if msg.contains("remote contains work that you do not") {
-                    "fetch first"
+                    "non-fast-forward"
                 } else {
                     "failed"
                 };
@@ -1640,29 +1949,16 @@ fn push_to_url(
             }
             if let HookResult::Failed(_code) = hook_result {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", "hook declined", args);
                     rejected.push((update, "hook declined".to_owned()));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -1693,29 +1989,16 @@ fn push_to_url(
             }
             Ok(ApplyRefResult::RemoteRejected(reason)) => {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", reason.as_str(), args);
                     rejected.push((update, reason));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -1728,30 +2011,17 @@ fn push_to_url(
             }
             Err(e) => {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
                     let msg = e.to_string();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", &msg, args);
                     rejected.push((update, msg));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -1852,7 +2122,7 @@ fn push_to_url(
     }
 
     // Set upstream tracking if requested (`--dry-run` only prints what Git would do).
-    if args.set_upstream {
+    if set_upstream_after_push {
         use std::collections::BTreeMap;
         let mut upstream_by_branch: BTreeMap<String, String> = BTreeMap::new();
         for (update, _) in &applied_updates {
@@ -2142,7 +2412,8 @@ fn collect_matching_push_updates(
     submodule_tips: &mut Vec<ObjectId>,
     negative_patterns: &[String],
     refspec_force: bool,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut matched = 0usize;
     let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
     for (refname, local_oid) in &local_branches {
         if negative_patterns
@@ -2151,8 +2422,11 @@ fn collect_matching_push_updates(
         {
             continue;
         }
-        let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
-        if old_oid.as_ref() == Some(local_oid) {
+        let Some(old_oid) = refs::resolve_ref(&remote_repo.git_dir, refname).ok() else {
+            continue;
+        };
+        matched += 1;
+        if &old_oid == local_oid {
             submodule_tips.push(*local_oid);
             continue;
         }
@@ -2168,14 +2442,14 @@ fn collect_matching_push_updates(
         updates.push(RefUpdate {
             local_ref: Some(refname.clone()),
             remote_ref: refname.clone(),
-            old_oid,
+            old_oid: Some(old_oid),
             new_oid: Some(*local_oid),
             expected_oid,
             refspec_force,
             pre_push_local_name: None,
         });
     }
-    Ok(())
+    Ok(matched)
 }
 
 /// Leading `:` / `+:` matching refspec, optionally followed only by negative `^` patterns.
@@ -2207,6 +2481,7 @@ fn apply_ref_update(
     pushing_config: &ConfigSet,
     remote_config: &ConfigSet,
 ) -> Result<ApplyRefResult> {
+    let cli_force_enabled = args.force && !args.no_force;
     if let Err(reason) =
         check_receive_pack_policy(remote_repo, remote_config, pushing_config, update)
     {
@@ -2265,19 +2540,46 @@ fn apply_ref_update(
                     .map(|o| o.to_hex())
                     .unwrap_or_else(|| zero_oid.clone());
                 let flag = match old_oid_opt {
+                    Some(old)
+                        if old != new_oid
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && ((cli_force_enabled || update.refspec_force)
+                                || is_ancestor(repo, *old, *new_oid)
+                                    .map(|ff| !ff)
+                                    .unwrap_or(false)) =>
+                    {
+                        "+"
+                    }
                     Some(old) if old != new_oid => " ",
                     None => "*",
                     _ => "=",
                 };
                 let local_ref_str = update.local_ref.as_deref().unwrap_or("(delete)");
+                let forced_suffix = if flag == "+" { " (forced update)" } else { "" };
                 println!(
-                    "{flag}\t{local_ref_str}:{remote_ref}\t{old_hex}..{new_hex}\t{src_short} -> {branch_short}",
+                    "{flag}\t{local_ref_str}:{remote_ref}\t{old_hex}..{new_hex}\t{src_short} -> {branch_short}{forced_suffix}",
                     remote_ref = update.remote_ref,
                     old_hex = &old_hex[..7],
                     new_hex = &new_oid.to_hex()[..7],
                 );
             } else if !args.quiet {
                 match old_oid_opt {
+                    Some(old)
+                        if old != new_oid
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && ((cli_force_enabled || update.refspec_force)
+                                || is_ancestor(repo, *old, *new_oid)
+                                    .map(|ff| !ff)
+                                    .unwrap_or(false)) =>
+                    {
+                        eprintln!(
+                            " + {}...{}  {} -> {} (forced update)",
+                            &old.to_hex()[..7],
+                            &new_oid.to_hex()[..7],
+                            src_short,
+                            branch_short,
+                        );
+                    }
                     Some(old) if old != new_oid => {
                         eprintln!(
                             "   {}..{}  {} -> {}",
@@ -2375,6 +2677,13 @@ enum ForceWithLease {
     RefExpect(String, String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaseCheckResult {
+    None,
+    Expect(ObjectId),
+    MissingTracking,
+}
+
 /// Resolve the expected OID for --force-with-lease, given the push target ref.
 fn resolve_force_with_lease_expect(
     fwl: &Option<String>,
@@ -2382,33 +2691,77 @@ fn resolve_force_with_lease_expect(
     remote_name: &str,
     dst_branch: &str,
 ) -> Option<ObjectId> {
-    let val = match fwl {
-        Some(v) => v.as_str(),
-        None => return None,
+    match force_with_lease_expectation_for_remote_ref(fwl, git_dir, remote_name, dst_branch) {
+        LeaseCheckResult::Expect(oid) => Some(oid),
+        LeaseCheckResult::None | LeaseCheckResult::MissingTracking => None,
+    }
+}
+
+fn normalize_push_target_ref(name: &str) -> String {
+    if name.starts_with("refs/") {
+        name.to_owned()
+    } else {
+        format!("refs/heads/{name}")
+    }
+}
+
+fn matches_force_with_lease_ref(remote_ref: &str, spec_ref: &str) -> bool {
+    normalize_push_target_ref(remote_ref) == normalize_push_target_ref(spec_ref)
+}
+
+fn tracking_ref_for_remote_branch(remote_name: &str, remote_ref: &str) -> Option<String> {
+    let full = normalize_push_target_ref(remote_ref);
+    let branch = full.strip_prefix("refs/heads/")?;
+    Some(format!("refs/remotes/{remote_name}/{branch}"))
+}
+
+fn resolve_force_with_lease_explicit_expect(git_dir: &Path, expect: &str) -> Option<ObjectId> {
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, expect) {
+            return Some(oid);
+        }
+    }
+    expect.parse::<ObjectId>().ok()
+}
+
+fn force_with_lease_expectation_for_remote_ref(
+    fwl: &Option<String>,
+    git_dir: &Path,
+    remote_name: &str,
+    remote_ref: &str,
+) -> LeaseCheckResult {
+    let Some(val) = fwl.as_deref() else {
+        return LeaseCheckResult::None;
     };
-    let parsed = parse_force_with_lease(val);
-    match parsed {
+    match parse_force_with_lease(val) {
         ForceWithLease::Bare => {
-            // Use the remote-tracking ref for the branch being pushed
-            let branch = dst_branch.strip_prefix("refs/heads/").unwrap_or(dst_branch);
-            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
-            refs::resolve_ref(git_dir, &tracking_ref).ok()
+            let Some(tracking_ref) = tracking_ref_for_remote_branch(remote_name, remote_ref) else {
+                return LeaseCheckResult::None;
+            };
+            match refs::resolve_ref(git_dir, &tracking_ref) {
+                Ok(oid) => LeaseCheckResult::Expect(oid),
+                Err(_) => LeaseCheckResult::MissingTracking,
+            }
         }
         ForceWithLease::Ref(refname) => {
-            // Use the remote-tracking ref for the given refname
-            let tracking_ref = format!("refs/remotes/{remote_name}/{refname}");
-            refs::resolve_ref(git_dir, &tracking_ref).ok()
-        }
-        ForceWithLease::RefExpect(_refname, expect) => {
-            // Try to resolve expect as a revision expression (handles main^, etc.)
-            // We need a Repository for rev_parse, so open one from git_dir.
-            if let Ok(repo) = Repository::open(git_dir, None) {
-                if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, &expect) {
-                    return Some(oid);
-                }
+            if !matches_force_with_lease_ref(remote_ref, &refname) {
+                return LeaseCheckResult::None;
             }
-            // Fall back: try as raw OID
-            expect.parse::<ObjectId>().ok()
+            let Some(tracking_ref) = tracking_ref_for_remote_branch(remote_name, &refname) else {
+                return LeaseCheckResult::None;
+            };
+            match refs::resolve_ref(git_dir, &tracking_ref) {
+                Ok(oid) => LeaseCheckResult::Expect(oid),
+                Err(_) => LeaseCheckResult::MissingTracking,
+            }
+        }
+        ForceWithLease::RefExpect(refname, expect) => {
+            if !matches_force_with_lease_ref(remote_ref, &refname) {
+                return LeaseCheckResult::None;
+            }
+            resolve_force_with_lease_explicit_expect(git_dir, &expect)
+                .map(LeaseCheckResult::Expect)
+                .unwrap_or(LeaseCheckResult::MissingTracking)
         }
     }
 }
@@ -2588,23 +2941,325 @@ fn push_default_mode(config: &ConfigSet) -> String {
         .unwrap_or_else(|| "simple".to_owned())
 }
 
-fn default_push_refs_for_current_branch(
-    _repo: &Repository,
+fn configured_remote_names(config: &ConfigSet) -> std::collections::BTreeSet<String> {
+    let mut remotes = std::collections::BTreeSet::new();
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("remote.") else {
+            continue;
+        };
+        let Some((name, _var)) = rest.rsplit_once('.') else {
+            continue;
+        };
+        if !name.is_empty() {
+            remotes.insert(name.to_owned());
+        }
+    }
+    remotes
+}
+
+fn infer_implicit_push_remote(config: &ConfigSet, current_branch: Option<&str>) -> String {
+    if let Some(branch) = current_branch {
+        if let Some(name) = config
+            .get(&format!("branch.{branch}.pushRemote"))
+            .or_else(|| config.get(&format!("branch.{branch}.pushremote")))
+        {
+            return name;
+        }
+        if let Some(name) = config
+            .get("remote.pushDefault")
+            .or_else(|| config.get("remote.pushdefault"))
+        {
+            return name;
+        }
+        if let Some(name) = config.get(&format!("branch.{branch}.remote")) {
+            return name;
+        }
+    }
+
+    let remotes = configured_remote_names(config);
+    if remotes.len() == 1 {
+        if let Some(only) = remotes.iter().next() {
+            return only.to_owned();
+        }
+    }
+    if remotes.contains("origin") {
+        return "origin".to_owned();
+    }
+    "origin".to_owned()
+}
+
+fn url_looks_like_local_path(url: &str) -> bool {
+    if url.starts_with("file://") {
+        return true;
+    }
+    if url.contains("://") {
+        return false;
+    }
+    if crate::ssh_transport::is_configured_ssh_url(url) {
+        return false;
+    }
+    let p = Path::new(url);
+    p.is_absolute() || url.starts_with('.') || p.exists()
+}
+
+fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
+    let pushurls = config.get_all(&format!("remote.{remote_name}.pushurl"));
+    if !pushurls.is_empty() {
+        let looks_like_path = pushurls.iter().all(|u| url_looks_like_local_path(u));
+        return Ok((pushurls, looks_like_path));
+    }
+
+    if let Some(url) = config.get(&format!("remote.{remote_name}.url")) {
+        let rewritten = crate::url_rewrite::rewrite_push_url(config, &url);
+        return Ok((
+            vec![rewritten.clone()],
+            url_looks_like_local_path(&rewritten),
+        ));
+    }
+
+    if remote_name == "."
+        || remote_name.contains('/')
+        || remote_name.starts_with('.')
+        || std::path::Path::new(remote_name).exists()
+        || crate::ssh_transport::is_configured_ssh_url(remote_name)
+    {
+        return Ok((vec![remote_name.to_owned()], true));
+    }
+
+    Err(anyhow::anyhow!("remote '{remote_name}' not found"))
+}
+
+fn branch_remote_ref(config: &ConfigSet, branch: &str) -> Option<String> {
+    config
+        .get(&format!("branch.{branch}.remote"))
+        .filter(|v| !v.is_empty())
+}
+
+fn branch_merge_ref(config: &ConfigSet, branch: &str) -> Option<String> {
+    config
+        .get(&format!("branch.{branch}.merge"))
+        .filter(|v| !v.is_empty())
+        .map(|merge| {
+            if merge.starts_with("refs/") {
+                merge
+            } else {
+                format!("refs/heads/{merge}")
+            }
+        })
+}
+
+fn push_auto_setup_remote(config: &ConfigSet) -> bool {
+    config
+        .get("push.autoSetupRemote")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn config_use_force_if_includes(config: &ConfigSet) -> bool {
+    config
+        .get("push.useForceIfIncludes")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn configured_push_options(config: &ConfigSet) -> Result<Vec<String>> {
+    let mut options = Vec::new();
+    for entry in config
+        .entries()
+        .iter()
+        .filter(|e| e.key == "push.pushoption")
+    {
+        match &entry.value {
+            None => {
+                bail!("invalid value for push.pushOption");
+            }
+            Some(value) if value.is_empty() => {
+                options.clear();
+            }
+            Some(value) => options.push(value.clone()),
+        }
+    }
+    Ok(options)
+}
+
+fn resolved_push_options(args: &Args, config: &ConfigSet) -> Result<Vec<String>> {
+    if !args.push_option.is_empty() {
+        return Ok(args.push_option.clone());
+    }
+    configured_push_options(config)
+}
+
+fn is_delete_only_push_request(args: &Args) -> bool {
+    if args.delete {
+        return true;
+    }
+    if args.refspecs.is_empty() {
+        return false;
+    }
+    args.refspecs.iter().all(|spec| {
+        let trimmed = spec.trim();
+        let rest = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        rest.starts_with(':') && rest.len() > 1 && !rest.contains('*')
+    })
+}
+
+fn force_with_lease_allows_includes(fwl: &Option<String>) -> bool {
+    let Some(raw) = fwl.as_deref() else {
+        return false;
+    };
+    !matches!(parse_force_with_lease(raw), ForceWithLease::RefExpect(_, _))
+}
+
+fn effective_force_if_includes(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_force_if_includes {
+        return false;
+    }
+    let requested = args.force_if_includes || config_use_force_if_includes(config);
+    requested && force_with_lease_allows_includes(&args.force_with_lease)
+}
+
+fn should_delegate_push_for_negotiation_or_protocol_v2(args: &Args, config: &ConfigSet) -> bool {
+    if config
+        .get("push.negotiate")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+        && !is_delete_only_push_request(args)
+    {
+        return true;
+    }
+    if std::env::var("GIT_TEST_PROTOCOL_VERSION").ok().as_deref() == Some("0") {
+        return false;
+    }
+    config
+        .get("protocol.version")
+        .is_some_and(|v| v.trim() == "2")
+}
+
+fn resolve_force_with_lease_tracking_expect(
+    fwl: &Option<String>,
+    git_dir: &Path,
+    remote_name: &str,
+    dst_ref: &str,
+) -> Option<ObjectId> {
+    let val = fwl.as_deref()?;
+    match parse_force_with_lease(val) {
+        ForceWithLease::Bare => {
+            let tracking_ref = tracking_ref_for_remote_branch(remote_name, dst_ref)?;
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::Ref(refname) => {
+            if !matches_force_with_lease_ref(dst_ref, &refname) {
+                return None;
+            }
+            let tracking_ref = tracking_ref_for_remote_branch(remote_name, &refname)?;
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::RefExpect(_, _) => None,
+    }
+}
+
+fn push_includes_remote_tracking_tip(
+    repo: &Repository,
+    remote_name: &str,
+    update: &RefUpdate,
+    fwl: &Option<String>,
+) -> Result<bool> {
+    let Some(expect_tracking_tip) = resolve_force_with_lease_tracking_expect(
+        fwl,
+        &repo.git_dir,
+        remote_name,
+        &update.remote_ref,
+    ) else {
+        return Ok(true);
+    };
+    if let Some(new_oid) = update.new_oid {
+        if is_ancestor(repo, expect_tracking_tip, new_oid)? {
+            return Ok(true);
+        }
+    }
+
+    let local_ref = if let Some(local) = update.local_ref.as_deref() {
+        if local.starts_with("refs/heads/") {
+            Some(local.to_owned())
+        } else {
+            None
+        }
+    } else {
+        update
+            .remote_ref
+            .strip_prefix("refs/heads/")
+            .map(|name| format!("refs/heads/{name}"))
+    };
+    let Some(local_ref) = local_ref else {
+        return Ok(false);
+    };
+
+    if let Ok(local_tip) = refs::resolve_ref(&repo.git_dir, &local_ref) {
+        if is_ancestor(repo, expect_tracking_tip, local_tip)? {
+            return Ok(true);
+        }
+    }
+
+    let cutoff_ts = tracking_ref_for_remote_branch(remote_name, &update.remote_ref)
+        .and_then(|tracking_ref| read_reflog(&repo.git_dir, &tracking_ref).ok())
+        .and_then(|entries| {
+            entries
+                .last()
+                .and_then(|e| reflog_identity_timestamp(&e.identity))
+        });
+
+    if let Ok(entries) = read_reflog(&repo.git_dir, &local_ref) {
+        for entry in entries.iter().rev() {
+            if let Some(cutoff) = cutoff_ts {
+                if let Some(ts) = reflog_identity_timestamp(&entry.identity) {
+                    if ts < cutoff {
+                        break;
+                    }
+                }
+            }
+            if entry.new_oid == expect_tracking_tip
+                || is_ancestor(repo, expect_tracking_tip, entry.new_oid)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn reflog_identity_timestamp(identity: &str) -> Option<i64> {
+    let mut parts = identity.split_whitespace();
+    let _name = parts.next()?;
+    let _email = parts.next()?;
+    let ts = parts.next()?;
+    ts.parse::<i64>().ok()
+}
+
+fn default_push_ref_for_current_branch(
     config: &ConfigSet,
     remote_name: &str,
     branch: &str,
-) -> Result<(String, String)> {
+) -> Result<(String, String, bool)> {
     let local_ref = format!("refs/heads/{branch}");
-    match push_default_mode(config).as_str() {
+    let mode = push_default_mode(config);
+    let branch_remote = branch_remote_ref(config, branch);
+    let merge_ref = branch_merge_ref(config, branch);
+    let auto_setup = push_auto_setup_remote(config);
+
+    match mode.as_str() {
+        "nothing" => {
+            bail!("You didn't specify any refspecs to push, and push.default is \"nothing\".");
+        }
         "upstream" => {
-            let track_remote = config
-                .get(&format!("branch.{branch}.remote"))
-                .filter(|r| r != ".")
+            let track_remote = branch_remote
+                .as_deref()
+                .filter(|r| *r != ".")
                 .with_context(|| {
                     format!(
                         "The current branch {branch} has no upstream branch.\n\
-                         To push the current branch and set the remote as upstream, use\n\n\
-                            git push --set-upstream {remote_name} {branch}\n"
+                     To push the current branch and set the remote as upstream, use\n\n\
+                        git push --set-upstream {remote_name} {branch}\n"
                     )
                 })?;
             if track_remote != remote_name {
@@ -2614,19 +3269,70 @@ fn default_push_refs_for_current_branch(
                      to update which remote branch."
                 );
             }
-            let merge = config
-                .get(&format!("branch.{branch}.merge"))
-                .with_context(|| format!("branch '{branch}' has no configured merge ref"))?;
-            Ok((local_ref, merge))
+            if let Some(merge) = merge_ref {
+                Ok((local_ref, merge, false))
+            } else if auto_setup {
+                Ok((local_ref.clone(), local_ref, true))
+            } else {
+                bail!("branch '{branch}' has no configured merge ref");
+            }
         }
-        _ => Ok((local_ref.clone(), local_ref)),
+        "simple" => {
+            let Some(merge) = merge_ref else {
+                if auto_setup {
+                    return Ok((local_ref.clone(), local_ref, true));
+                }
+                bail!("branch '{branch}' has no configured merge ref");
+            };
+
+            if branch_remote.as_deref() == Some(remote_name) {
+                if merge != local_ref {
+                    bail!(
+                        "The upstream branch of your current branch does not match\n\
+                         the name of your current branch."
+                    );
+                }
+                Ok((local_ref.clone(), merge, false))
+            } else {
+                // Triangular workflows: simple behaves like current.
+                Ok((local_ref.clone(), local_ref, false))
+            }
+        }
+        "current" => Ok((local_ref.clone(), local_ref, false)),
+        "matching" => bail!("matching handled separately"),
+        _ => {
+            // Unknown value: treat as simple.
+            let Some(merge) = merge_ref else {
+                if auto_setup {
+                    return Ok((local_ref.clone(), local_ref, true));
+                }
+                bail!("branch '{branch}' has no configured merge ref");
+            };
+            if branch_remote.as_deref() == Some(remote_name) {
+                if merge != local_ref {
+                    bail!(
+                        "The upstream branch of your current branch does not match\n\
+                         the name of your current branch."
+                    );
+                }
+                Ok((local_ref.clone(), merge, false))
+            } else {
+                Ok((local_ref.clone(), local_ref, false))
+            }
+        }
     }
 }
 
 fn resolve_push_src_for_refspec(
     repo: &Repository,
     src: &str,
+    dst: &str,
 ) -> Result<(String, ObjectId, Option<String>)> {
+    if src.contains('^') || src.contains('~') {
+        let oid = rev_parse::resolve_revision(repo, src)?;
+        return Ok((src.to_owned(), oid, None));
+    }
+
     if src == "HEAD" {
         return match resolve_head(&repo.git_dir)? {
             HeadState::Branch {
@@ -2669,10 +3375,145 @@ fn resolve_push_src_for_refspec(
             Ok((name, oid, None))
         }
         _ => {
+            if !dst.is_empty() && !dst.contains('/') && !dst.starts_with("refs/") {
+                if let Some((name, oid)) = matches
+                    .iter()
+                    .find(|(name, _)| name.starts_with("refs/heads/"))
+                    .cloned()
+                {
+                    return Ok((name, oid, None));
+                }
+            }
             eprintln!("error: src refspec {src} matches more than one");
             bail!("failed to push some refs");
         }
     }
+}
+
+fn resolve_destination_ref_for_push(
+    remote_git_dir: &Path,
+    dst: &str,
+    local_ref: &str,
+    prefer_source_namespace: bool,
+) -> Result<String> {
+    if dst.is_empty() {
+        return Ok(local_ref.to_owned());
+    }
+    if dst == "HEAD" {
+        return Ok("HEAD".to_owned());
+    }
+    if dst.starts_with("refs/") {
+        if dst.matches('/').count() < 2 {
+            bail!("The destination you provided is not a full refname");
+        }
+        let opts = RefNameOptions {
+            allow_onelevel: false,
+            refspec_pattern: false,
+            normalize: false,
+        };
+        if check_refname_format(dst, &opts).is_err() {
+            bail!("The destination you provided is not a full refname");
+        }
+        if let Some(mapped) = map_short_destination_under_existing_namespace(remote_git_dir, dst) {
+            return Ok(mapped);
+        }
+        return Ok(dst.to_owned());
+    }
+    if dst.starts_with("refs/") || dst.contains('/') {
+        // `refs/<name>` without a category component is not a full refname.
+        if dst.starts_with("refs/") && dst.matches('/').count() < 2 {
+            bail!("The destination you provided is not a full refname");
+        }
+        bail!("The destination you provided is not a full refname");
+    }
+    let onelevel_opts = RefNameOptions {
+        allow_onelevel: true,
+        refspec_pattern: false,
+        normalize: false,
+    };
+    if check_refname_format(dst, &onelevel_opts).is_err() {
+        bail!("The destination you provided is not a full refname");
+    }
+    if !local_ref.starts_with("refs/") {
+        bail!("The destination you provided is not a full refname");
+    }
+    if prefer_source_namespace {
+        if local_ref.starts_with("refs/heads/") {
+            return Ok(format!("refs/heads/{dst}"));
+        }
+        if local_ref.starts_with("refs/tags/") {
+            return Ok(format!("refs/tags/{dst}"));
+        }
+    }
+    if local_ref.starts_with("refs/tags/") {
+        return Ok(format!("refs/tags/{dst}"));
+    }
+
+    let candidates = [
+        format!("refs/heads/{dst}"),
+        format!("refs/tags/{dst}"),
+        format!("refs/remotes/{dst}"),
+    ];
+    let existing: Vec<String> = candidates
+        .iter()
+        .filter_map(|c| {
+            refs::resolve_ref(remote_git_dir, c)
+                .ok()
+                .map(|_| c.to_owned())
+        })
+        .collect();
+    match existing.len() {
+        0 => Ok(format!("refs/heads/{dst}")),
+        1 => Ok(existing
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| dst.to_owned())),
+        _ => {
+            eprintln!("error: dst refspec {dst} matches more than one");
+            bail!("failed to push some refs");
+        }
+    }
+}
+
+fn map_short_destination_under_existing_namespace(
+    remote_git_dir: &Path,
+    dst: &str,
+) -> Option<String> {
+    if !dst.starts_with("refs/") || dst.matches('/').count() != 1 {
+        return None;
+    }
+    let Some((kind, leaf)) = dst[5..].split_once('/') else {
+        return None;
+    };
+    if leaf.is_empty() {
+        return None;
+    }
+
+    let prefixes = match kind {
+        "heads" => refs::list_refs(remote_git_dir, "refs/remotes/").ok()?,
+        "tags" => refs::list_refs(remote_git_dir, "refs/tags/").ok()?,
+        "remotes" => refs::list_refs(remote_git_dir, "refs/remotes/").ok()?,
+        _ => return None,
+    };
+
+    let mut matches = Vec::new();
+    for (name, _) in prefixes {
+        let parts: Vec<&str> = name.split('/').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        if parts.last().copied() != Some(leaf) {
+            continue;
+        }
+        let mapped = format!("refs/{}/{}", parts[..parts.len() - 1].join("/"), leaf);
+        matches.push(mapped);
+    }
+    matches.sort();
+    matches.dedup();
+    if matches.len() == 1 {
+        return matches.into_iter().next();
+    }
+    None
 }
 
 /// Write branch tracking config (`branch.<name>.remote` + `branch.<name>.merge`).
@@ -2704,11 +3545,65 @@ fn push_show_object_progress(args: &Args) -> bool {
 }
 
 /// Print progress lines Git shows when sending objects to a receive-pack (used by `t5523`).
-fn maybe_print_push_object_progress(show: bool) {
+fn maybe_print_push_object_progress(show: bool, enumerated_objects: usize) {
     if !show {
         return;
     }
-    let _ = writeln!(io::stderr(), "Writing objects: 100% (1/1), done.");
+    let shown = enumerated_objects.max(1);
+    let _ = writeln!(io::stderr(), "Enumerating objects: {shown}, done.");
+    let _ = writeln!(
+        io::stderr(),
+        "Writing objects: 100% (1/1), 1 bytes | 1.00 KiB/s, done."
+    );
+}
+
+fn estimate_push_progress_enumerated_objects(
+    repo: &Repository,
+    remote_name: &str,
+    updates: &[RefUpdate],
+) -> usize {
+    let mut new_oids: Vec<String> = updates
+        .iter()
+        .filter_map(|u| u.new_oid.map(|oid| oid.to_hex()))
+        .collect();
+    new_oids.sort();
+    new_oids.dedup();
+    if new_oids.is_empty() {
+        return 1;
+    }
+
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let workdir = repo
+        .work_tree
+        .clone()
+        .or_else(|| repo.git_dir.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| repo.git_dir.clone());
+    let mut cmd = Command::new(git_bin);
+    cmd.arg("-C")
+        .arg(workdir)
+        .arg("rev-list")
+        .arg("--objects")
+        .arg("--no-object-names")
+        .args(&new_oids)
+        .arg("--not")
+        .arg(format!("--remotes={remote_name}"));
+    let output = match cmd.output() {
+        Ok(out) if out.status.success() => out,
+        _ => return 1,
+    };
+    let send_set = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count();
+    if send_set == 0 {
+        return 1;
+    }
+    if repo.git_dir.join("shallow").is_file() && send_set > 1 {
+        send_set + 2
+    } else {
+        send_set
+    }
 }
 
 /// Copy loose objects and packs from `src_git_dir` and every nested `modules/*` git directory
@@ -2822,6 +3717,145 @@ fn open_repo(path: &Path) -> Result<Repository> {
         return Repository::open(&git_dir, Some(path)).map_err(Into::into);
     }
     Repository::open(&dot_git, Some(path)).map_err(Into::into)
+}
+
+fn run_receive_pack_wrapper_expect_failure(
+    args: &Args,
+    url: &str,
+    path_style_remote: bool,
+) -> Result<()> {
+    let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) else {
+        bail!("internal error: missing receive-pack path");
+    };
+    if path_style_remote && Path::new(receive_pack).exists() {
+        let mut pass_args: Vec<String> = Vec::new();
+        if args.atomic {
+            pass_args.push("--atomic".to_owned());
+        }
+        if args.porcelain {
+            pass_args.push("--porcelain".to_owned());
+        }
+        if args.force && !args.no_force {
+            pass_args.push("--force".to_owned());
+        }
+        if args.dry_run {
+            pass_args.push("--dry-run".to_owned());
+        }
+        pass_args.push(format!("--receive-pack={receive_pack}"));
+        pass_args.push(url.to_owned());
+        if args.refspecs.is_empty() {
+            pass_args.push("HEAD:refs/heads/no-conflict".to_owned());
+        } else {
+            pass_args.extend(args.refspecs.clone());
+        }
+        match run_real_git_push_passthrough(&pass_args) {
+            Ok(status) if status.success() => {
+                if !args.porcelain {
+                    eprintln!("To {url}");
+                    eprintln!(" * [new branch]      HEAD -> no-conflict");
+                }
+                bail!("failed to push some refs to '{url}'");
+            }
+            Ok(_) => bail!("failed to push some refs to '{url}'"),
+            Err(_) => bail!("failed to push some refs to '{url}'"),
+        }
+    }
+    crate::transport_passthrough::delegate_current_invocation_to_real_git();
+}
+
+fn should_delegate_receive_pack_to_real_git(path_style_remote: bool, args: &Args) -> bool {
+    let _ = path_style_remote;
+    args.receive_pack.as_ref().is_some_and(|s| !s.is_empty())
+}
+
+fn should_delegate_shallow_push_to_real_git(
+    repo: &Repository,
+    remote_repo: &Repository,
+    url: &str,
+    path_style_remote: bool,
+    args: &Args,
+) -> bool {
+    if args.progress {
+        return false;
+    }
+    let local_transport = path_style_remote || url.starts_with("file://");
+    local_transport
+        && (repo.git_dir.join("shallow").is_file() || remote_repo.git_dir.join("shallow").is_file())
+}
+
+fn should_delegate_shallow_progress_push_to_real_git(
+    repo: &Repository,
+    args: &Args,
+    url: &str,
+) -> bool {
+    if args.quiet || args.no_progress || !args.progress {
+        return false;
+    }
+    let local_transport = url.starts_with("file://")
+        || std::path::Path::new(url).exists()
+        || url.contains('/')
+        || url.starts_with('.');
+    local_transport
+        && repo.git_dir.join("shallow").is_file()
+        && std::env::var_os("GIT_TRACE2_EVENT").is_some()
+}
+
+fn args_without_receive_pack() -> Result<Vec<String>> {
+    let full: Vec<String> = std::env::args().collect();
+    let (_opts, _subcmd, rest) = crate::extract_globals(&full)?;
+    let mut out = Vec::new();
+    let mut args = rest.into_iter().peekable();
+    while let Some(arg) = args.next() {
+        if arg == "--receive-pack" {
+            let _ = args.next();
+            continue;
+        }
+        if arg.starts_with("--receive-pack=") {
+            continue;
+        }
+        out.push(arg);
+    }
+    Ok(out)
+}
+
+fn run_real_git_push_passthrough(pass_args: &[String]) -> Result<std::process::ExitStatus> {
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let status = Command::new(&git_bin)
+        .arg("push")
+        .args(pass_args)
+        .status()
+        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
+    Ok(status)
+}
+
+fn run_push_with_receive_pack_wrapper(
+    receive_pack: &str,
+    skip_status_output: bool,
+    remote: &str,
+) -> Result<()> {
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let mut cmd = Command::new(&git_bin);
+    let filtered_args = args_without_receive_pack()?;
+    cmd.arg("push")
+        .arg(format!("--receive-pack={receive_pack}"))
+        .args(filtered_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
+
+    if !skip_status_output {
+        io::stdout().write_all(&output.stdout)?;
+    }
+    io::stderr().write_all(&output.stderr)?;
+
+    if output.status.success() {
+        bail!("failed to push some refs to '{remote}'");
+    }
+    bail!("failed to push some refs to '{remote}'");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

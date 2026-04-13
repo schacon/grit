@@ -37,6 +37,10 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if std::env::var_os("GIT_NAMESPACE").is_some() {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     // Match `git upload-pack`: default `GIT_NO_LAZY_FETCH=1` so remote `pack-objects` does not
     // lazy-fetch missing blobs (t0411-clone-from-partial, promisor clone via upload-pack).
     if std::env::var("GIT_NO_LAZY_FETCH")

@@ -363,7 +363,7 @@ fn make_hunks(slines: &mut [Sline], cnt: usize, num_parent: usize, dense: bool, 
                         break;
                     }
                 }
-                let mut ll_iter = slines[jj].lost.iter();
+                let ll_iter = slines[jj].lost.iter();
                 for seg in ll_iter {
                     if has_interesting {
                         break;

@@ -52,6 +52,7 @@ mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
 mod transport_path;
+mod url_rewrite;
 mod wire_trace;
 
 /// Return the version string, e.g. `"2.47.0.grit"`.
@@ -2425,6 +2426,7 @@ pub(crate) fn extract_globals(
             continue;
         }
 
+        // --namespace=<name> or --namespace <name>
         if let Some(val) = arg.strip_prefix("--namespace=") {
             opts.namespace = Some(val.to_owned());
             i += 1;

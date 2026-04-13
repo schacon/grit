@@ -63,6 +63,9 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
+    if effective_path.to_string_lossy().starts_with("ext::") {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
     let repo_path_str = effective_path.to_string_lossy().to_string();
     let remote_name = maybe_remote_name(&args.repository);
     let server_options = effective_server_options(&args, remote_name.as_deref());

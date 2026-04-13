@@ -224,6 +224,14 @@ pub struct Args {
     /// Internal: path prefix for nested submodule fetch (Git hidden option).
     #[arg(long = "submodule-prefix", hide = true)]
     pub submodule_prefix: Option<String>,
+
+    /// Rejected for parity with git's global-only parser.
+    #[arg(long = "no-ipv4", hide = true)]
+    pub no_ipv4: bool,
+
+    /// Rejected for parity with git's global-only parser.
+    #[arg(long = "no-ipv6", hide = true)]
+    pub no_ipv6: bool,
 }
 
 #[derive(Clone)]
@@ -242,6 +250,12 @@ enum PendingRefOp {
 pub fn run(mut args: Args) -> Result<()> {
     if args.no_prune {
         args.prune = false;
+    }
+    if args.no_ipv4 {
+        bail!("unknown option `no-ipv4'");
+    }
+    if args.no_ipv6 {
+        bail!("unknown option `no-ipv6'");
     }
     if args.negotiate_only {
         let recurse_requested = args
@@ -893,7 +907,7 @@ fn fetch_remote(
         };
 
     // Determine remote URL: CLI path, config, `.git/remotes/<name>`, or `.git/branches/<name>`.
-    let url = if let Some(u) = url_override {
+    let raw_url = if let Some(u) = url_override {
         u.to_owned()
     } else if let Some(u) = config
         .get_all(&url_key)
@@ -910,6 +924,7 @@ fn fetch_remote(
     } else {
         bail!("fatal: '{remote_name}' does not appear to be a git repository");
     };
+    let url = crate::url_rewrite::rewrite_fetch_url(config, &raw_url);
 
     let is_ext_url = url.starts_with("ext::");
     if is_ext_url {

@@ -367,6 +367,10 @@ fn compute_midx_reused_entries(
         return Ok(None);
     }
     let objects_dir = repo.odb.objects_dir();
+    let Some(tables) = load_midx_reuse_tables(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?
+    else {
+        return Ok(None);
+    };
 
     let pack_names = match read_midx_pack_idx_names(objects_dir) {
         Ok(names) => names,
@@ -385,11 +389,6 @@ fn compute_midx_reused_entries(
         Some(id)
     } else {
         None
-    };
-
-    let Some(tables) = load_midx_reuse_tables(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?
-    else {
-        return Ok(None);
     };
 
     let indexes = midx_pack_indexes(objects_dir)?;

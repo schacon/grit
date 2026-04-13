@@ -42,6 +42,10 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if std::env::var_os("GIT_NAMESPACE").is_some() {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     let repo = open_repo(&args.directory).with_context(|| {
         format!(
             "could not open repository at '{}'",

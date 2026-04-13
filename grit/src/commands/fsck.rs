@@ -669,8 +669,9 @@ fn walk_reachable(
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     queue.push_back((commit.tree, Some(oid)));
-                    // Shallow repositories omit parent chains at boundary commits; do not require
-                    // those parents (or their trees) to exist — matches `git fsck` (t5539).
+                    // Shallow repositories omit parent chains at boundary commits; commits listed in
+                    // `.git/shallow` are synthetic roots — do not walk parents/trees beyond them
+                    // (matches `git fsck`, t5539).
                     if !shallow_boundaries.contains(&oid) {
                         for parent in commit.parents {
                             queue.push_back((parent, Some(oid)));

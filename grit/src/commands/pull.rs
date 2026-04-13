@@ -402,6 +402,8 @@ pub fn run(args: Args) -> Result<()> {
         no_recurse_submodules: args.no_recurse_submodules,
         recurse_submodules_default: None,
         submodule_prefix: None,
+        no_ipv4: false,
+        no_ipv6: false,
     };
     super::fetch::run(fetch_args)?;
 
