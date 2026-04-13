@@ -748,6 +748,7 @@ fn do_merge_or_rebase_after_fetch(
             committer_date_is_author_date: false,
             reset_author_date: false,
             edit_todo: false,
+            no_verify: false,
         };
         super::rebase::run(rebase_args)?;
         return Ok(PullIntegrateKind::Rebase);

@@ -282,6 +282,10 @@ pub struct Args {
     /// Edit the todo list of the current interactive rebase.
     #[arg(long = "edit-todo")]
     pub edit_todo: bool,
+
+    /// Do not run the pre-rebase hook.
+    #[arg(long = "no-verify")]
+    pub no_verify: bool,
 }
 
 /// Expand combined short flags (`-ki`, `-ik`) before clap parsing.
@@ -405,6 +409,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let pre_rebase_hook_second = args.branch.clone();
+    let mut pre_rebase_upstream_label: Option<String> = None;
 
     // If a branch argument is given, checkout that branch first.
     // Resolve `upstream` before checkout: `git rebase <upstream> <branch>` uses the pre-checkout
@@ -417,6 +422,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.branch.is_some() {
         let repo = Repository::discover(None).context("not a git repository")?;
         let uspec = args.upstream.as_deref().unwrap_or("HEAD");
+        pre_rebase_upstream_label = Some(uspec.to_owned());
         let uoid = resolve_revision_without_index_dwim(&repo, uspec)
             .with_context(|| format!("bad revision '{uspec}'"))?
             .to_hex();
@@ -489,7 +495,12 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     args.upstream_explicit = upstream_explicit;
-    do_rebase(args, pre_rebase_hook_second, upstream_spec_before_hex)
+    do_rebase(
+        args,
+        pre_rebase_hook_second,
+        upstream_spec_before_hex,
+        pre_rebase_upstream_label,
+    )
 }
 
 const INTERNAL_REBASE_PICK_ENV: &str = "GRIT_INTERNAL_REBASE_PICK_LINE";
@@ -3191,6 +3202,7 @@ fn do_rebase(
     args: Args,
     pre_rebase_hook_second: Option<String>,
     upstream_spec_before_branch_checkout: Option<String>,
+    pre_rebase_upstream_label: Option<String>,
 ) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
@@ -3506,18 +3518,19 @@ Use '--' to separate paths from revisions, like this:\n\
         commits.retain(|oid| !is_commit_tree_unchanged(&repo, oid).unwrap_or(false));
     }
 
-    let hook_arg1: &str = if args.root {
-        "--root"
-    } else {
-        upstream_spec.as_str()
-    };
+    let hook_upstream = pre_rebase_upstream_label
+        .as_deref()
+        .unwrap_or_else(|| upstream_spec.as_str());
+    let hook_arg1: &str = if args.root { "--root" } else { hook_upstream };
     let hook_arg2: Option<&str> = pre_rebase_hook_second.as_deref();
     let hook_args: Vec<&str> = match hook_arg2 {
         Some(s) => vec![hook_arg1, s],
         None => vec![hook_arg1],
     };
-    if let HookResult::Failed(_) = run_hook(&repo, "pre-rebase", &hook_args, None) {
-        bail!("The pre-rebase hook refused to rebase.");
+    if !args.no_verify {
+        if let HookResult::Failed(_) = run_hook(&repo, "pre-rebase", &hook_args, None) {
+            bail!("The pre-rebase hook refused to rebase.");
+        }
     }
 
     let mut generated_merge_script: Option<String> = None;
