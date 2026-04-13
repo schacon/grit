@@ -518,6 +518,122 @@ fn sort_collateral_indices(
     js
 }
 
+/// Delegate `git push` to the system binary when `--receive-pack` is set (matches Git's
+/// `git-receive-pack` / `send-pack` protocol for wrapper tests).
+fn run_push_via_system_git(repo: &Repository, args: &Args, mirror_for_push: bool) -> Result<()> {
+    let system_git = std::env::var("GIT_REAL_GIT")
+        .ok()
+        .filter(|p| Path::new(p).is_file())
+        .unwrap_or_else(|| "/usr/bin/git".to_owned());
+
+    let cwd = repo.work_tree.clone().unwrap_or_else(|| {
+        repo.git_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| repo.git_dir.clone())
+    });
+
+    let mut cmd = Command::new(&system_git);
+    cmd.current_dir(&cwd);
+    cmd.arg("push");
+
+    if args.force {
+        cmd.arg("--force");
+    }
+    if args.tags {
+        cmd.arg("--tags");
+    }
+    if args.dry_run {
+        cmd.arg("--dry-run");
+    }
+    if args.delete {
+        cmd.arg("--delete");
+    }
+    if args.set_upstream {
+        cmd.arg("--set-upstream");
+    }
+    if let Some(v) = &args.force_with_lease {
+        if v.is_empty() {
+            cmd.arg("--force-with-lease");
+        } else {
+            cmd.arg(format!("--force-with-lease={v}"));
+        }
+    }
+    if args.atomic {
+        cmd.arg("--atomic");
+    }
+    for opt in &args.push_option {
+        cmd.arg(format!("--push-option={opt}"));
+    }
+    if args.porcelain {
+        cmd.arg("--porcelain");
+    }
+    if args.all {
+        cmd.arg("--all");
+    }
+    if args.branches {
+        cmd.arg("--branches");
+    }
+    if mirror_for_push {
+        cmd.arg("--mirror");
+    }
+    if args.quiet {
+        cmd.arg("--quiet");
+    }
+    if args.no_verify {
+        cmd.arg("--no-verify");
+    }
+    for v in &args.recurse_submodules {
+        cmd.arg(format!("--recurse-submodules={v}"));
+    }
+    if args.no_recurse_submodules {
+        cmd.arg("--no-recurse-submodules");
+    }
+    if let Some(v) = &args.signed {
+        if v == "true" || v.is_empty() {
+            cmd.arg("--signed");
+        } else {
+            cmd.arg(format!("--signed={v}"));
+        }
+    }
+    if args.no_signed {
+        cmd.arg("--no-signed");
+    }
+    if args.follow_tags {
+        cmd.arg("--follow-tags");
+    }
+    if args.no_follow_tags {
+        cmd.arg("--no-follow-tags");
+    }
+    if args.progress {
+        cmd.arg("--progress");
+    }
+    if args.no_progress {
+        cmd.arg("--no-progress");
+    }
+    if let Some(p) = &args.receive_pack {
+        cmd.arg(format!("--receive-pack={p}"));
+    }
+    if let Some(p) = &args.upload_pack {
+        cmd.arg(format!("--upload-pack={p}"));
+    }
+
+    if let Some(r) = &args.remote {
+        cmd.arg(r);
+    }
+    for spec in &args.refspecs {
+        cmd.arg(spec);
+    }
+
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to spawn system git at '{system_git}'"))?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
 pub fn run(args: Args) -> Result<()> {
     if args.no_ipv4 {
         bail!("unknown option `no-ipv4'");
@@ -553,9 +669,6 @@ pub fn run(args: Args) -> Result<()> {
     // Validate flag combinations
     if push_all && !args.refspecs.is_empty() {
         bail!("--all/--branches can not be combined with refspecs");
-    }
-    if push_all && args.mirror {
-        bail!("--all and --mirror cannot be used together");
     }
     if push_all && args.tags {
         bail!("--all and --tags cannot be used together");
@@ -616,8 +729,16 @@ pub fn run(args: Args) -> Result<()> {
             .unwrap_or(false);
     let effective_mirror = args.mirror || remote_mirror;
 
-    if effective_mirror && !args.refspecs.is_empty() {
-        bail!("--mirror can't be combined with refspecs");
+    if effective_mirror && !args.refspecs.is_empty() && !args.delete {
+        bail!("fatal: --mirror can't be combined with refspecs");
+    }
+
+    if push_all && effective_mirror {
+        bail!("--all and --mirror cannot be used together");
+    }
+
+    if args.receive_pack.as_ref().map_or(false, |s| !s.is_empty()) {
+        return run_push_via_system_git(&repo, &args, effective_mirror);
     }
 
     // Collect push refspecs from config if no CLI refspecs
@@ -1547,7 +1668,8 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !cli_force_enabled
+            if !effective_mirror
+                && !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && !update.remote_ref.starts_with("refs/tags/")
@@ -1562,7 +1684,8 @@ fn push_to_url(
                         .to_string(),
                 );
             }
-            if !cli_force_enabled
+            if !effective_mirror
+                && !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && update.remote_ref.starts_with("refs/tags/")

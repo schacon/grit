@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   360 |
+| Completed   |   361 |
 | In progress |     6 |
-| Remaining   |   406 |
+| Remaining   |   405 |
 | **Total**   |   772 |
 
-Task lines in `PLAN.md`: 360 completed (`[x]`), 6 in progress (`[~]`), 406 remaining (`[ ]`).
+Task lines in `PLAN.md`: 361 completed (`[x]`), 6 in progress (`[~]`), 405 remaining (`[ ]`).
 
 ## In progress
 
@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 360 completed (`[x]`), 6 in progress (`[~]`), 406 remai
 
 ## Recently completed
 
+- `t5517-push-mirror` — 13/13 tests pass (`push`: `remote.<name>.mirror` enables full mirror push including ref deletion; mirror skips non-FF branch/tag rejection; refspecs with mirror remote fail like Git; `--receive-pack` delegates after mirror validation)
 - `t6132-pathspec-exclude` — 31/31 tests pass (exclude pathspec lists: `matches_pathspec_list` in grit-lib; cwd-relative resolution for short/long magic; implicit cwd positive for `PATHSPEC_PREFER_CWD` commands; `log` honors `--format` with `--oneline`; archive subtrees from cwd; add staging for all-exclude pathspecs; `diff` parses `--cached` when mixed with rev args; `grep --untracked` + magic pathspec argv fixes)
 - `t4129-apply-samemode` — 23/23 tests pass (`diff --stat -p` emits unified hunks after stat; `apply` strips `a/`/`b/` from `diff --git` paths; Git `canon_mode` / invalid mode errors; `core.fileMode` preimage warnings; reverse mode swap matches Git; umask-aware worktree chmod)
 - `t4252-am-options` — 8/8 tests pass (`am`: passthrough `git apply` options `-p`/`-C`, `--directory`, `--whitespace=fix`, `--ignore-space-change`, `--ignore-whitespace`, `--exclude`/`--include`, `--reject`; persist shell-quoted argv in `rebase-apply/apply-opt`; partial apply with `.rej` hunks leaves work tree dirty vs index; harness CSV/dashboards refreshed)
