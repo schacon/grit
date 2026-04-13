@@ -211,8 +211,12 @@ pub struct Args {
     pub max_pack_size: Option<String>,
 
     /// Sparse reachability traversal (accepted for compat).
-    #[arg(long = "sparse")]
+    #[arg(long = "sparse", action = clap::ArgAction::SetTrue)]
     pub sparse: bool,
+
+    /// Dense reachability traversal (disables sparse; matches Git `--no-sparse`).
+    #[arg(long = "no-sparse", action = clap::ArgAction::SetTrue)]
+    pub no_sparse: bool,
 
     /// Progress output (accepted for compat).
     #[arg(long = "progress")]
@@ -563,6 +567,10 @@ pub fn run(mut args: Args) -> Result<()> {
         args.path_walk && (args.progress || std::env::var("GIT_PROGRESS_DELAY").is_ok());
     if path_walk_progress {
         eprintln!("Compressing objects by path");
+    }
+
+    if args.sparse && args.no_sparse {
+        bail!("cannot combine --sparse and --no-sparse");
     }
 
     if !args.stdout && args.base_name.is_none() {
@@ -1492,6 +1500,303 @@ fn stdin_looks_like_rev_list(lines: &[String]) -> bool {
     })
 }
 
+/// Matches `git_parse_maybe_bool` + integer fallback used by Git's `git_env_bool` for
+/// `GIT_TEST_PACK_SPARSE`.
+fn parse_git_test_pack_sparse_env() -> Option<bool> {
+    let v = std::env::var_os("GIT_TEST_PACK_SPARSE")?;
+    let t = v.to_string_lossy();
+    let s = t.trim();
+    if s.eq_ignore_ascii_case("true")
+        || s == "1"
+        || s.eq_ignore_ascii_case("yes")
+        || s.eq_ignore_ascii_case("on")
+    {
+        return Some(true);
+    }
+    if s.eq_ignore_ascii_case("false")
+        || s == "0"
+        || s.eq_ignore_ascii_case("no")
+        || s.eq_ignore_ascii_case("off")
+    {
+        return Some(false);
+    }
+    if let Ok(i) = s.parse::<i64>() {
+        return Some(i != 0);
+    }
+    None
+}
+
+/// Whether `pack-objects` should use Git's sparse reachability algorithm for `--revs`.
+///
+/// Precedence: `--no-sparse` / `--sparse`, then `GIT_TEST_PACK_SPARSE`, then `pack.useSparse`
+/// (default true), matching Git's `pack-objects.c`.
+/// When sparse packing uses a single `^ancestor` exclusion, Git keeps objects that a full
+/// reachable-subtract would remove (t5322). Multi-tip ranges like `topic1 ^topic2 ^topic3` still
+/// need the subtract (test 3).
+fn sparse_skip_full_exclude_subtract(
+    repo: &Repository,
+    positive_tips: &[ObjectId],
+    exclude_roots: &[ObjectId],
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<bool> {
+    if positive_tips.len() != 1 || exclude_roots.len() != 1 {
+        return Ok(false);
+    }
+    let tip = positive_tips[0];
+    let excl = exclude_roots[0];
+    let mut seen = HashSet::<ObjectId>::new();
+    let mut queue = VecDeque::from([tip]);
+    while let Some(cid) = queue.pop_front() {
+        if cid == excl {
+            return Ok(true);
+        }
+        if !seen.insert(cid) {
+            continue;
+        }
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        for p in c.parents {
+            if !shallow_grafts.contains(&cid) {
+                queue.push_back(p);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn pack_objects_sparse_mode(repo: &Repository, args: &Args) -> Result<bool> {
+    if args.no_sparse {
+        return Ok(false);
+    }
+    if args.sparse {
+        return Ok(true);
+    }
+    if let Some(b) = parse_git_test_pack_sparse_env() {
+        return Ok(b);
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    for key in ["pack.useSparse", "pack.usesparse"] {
+        if let Some(Ok(b)) = config.get_bool(key) {
+            return Ok(b);
+        }
+    }
+    Ok(true)
+}
+
+fn add_children_by_path_for_sparse(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    uninteresting: &mut HashSet<ObjectId>,
+    map: &mut HashMap<Vec<u8>, HashSet<ObjectId>>,
+) -> Result<()> {
+    let obj = read_object_from_repo(repo, tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    let entries = parse_tree(&obj.data)?;
+    let parent_uninteresting = uninteresting.contains(tree_oid);
+    for e in entries {
+        if e.mode == 0o040000 {
+            map.entry(e.name.clone()).or_default().insert(e.oid);
+            if parent_uninteresting {
+                uninteresting.insert(e.oid);
+            }
+        } else if e.mode != 0o160000 && parent_uninteresting {
+            uninteresting.insert(e.oid);
+        }
+    }
+    Ok(())
+}
+
+/// Port of Git's `mark_trees_uninteresting_sparse` (`revision.c`): when both interesting and
+/// uninteresting root trees are present at the same walk depth, prune uninteresting paths that
+/// match by entry name across those trees.
+fn mark_trees_uninteresting_sparse(
+    repo: &Repository,
+    trees: &HashSet<ObjectId>,
+    uninteresting: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    let mut has_interesting = false;
+    let mut has_uninteresting = false;
+    for oid in trees {
+        if uninteresting.contains(oid) {
+            has_uninteresting = true;
+        } else {
+            has_interesting = true;
+        }
+    }
+    if !has_uninteresting || !has_interesting {
+        return Ok(());
+    }
+    let mut map: HashMap<Vec<u8>, HashSet<ObjectId>> = HashMap::new();
+    for oid in trees {
+        add_children_by_path_for_sparse(repo, oid, uninteresting, &mut map)?;
+    }
+    for child_set in map.into_values() {
+        mark_trees_uninteresting_sparse(repo, &child_set, uninteresting)?;
+    }
+    Ok(())
+}
+
+fn walk_tree_respecting_uninteresting(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    uninteresting: &HashSet<ObjectId>,
+    oids: &mut BTreeSet<ObjectId>,
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<()> {
+    if uninteresting.contains(tree_oid) {
+        return Ok(());
+    }
+    if !oids.insert(*tree_oid) {
+        return Ok(());
+    }
+    let obj = read_object_from_repo(repo, tree_oid)?;
+    let entries = parse_tree(&obj.data)?;
+    for e in entries {
+        if e.mode == MODE_GITLINK {
+            continue;
+        }
+        if e.mode == 0o040000 {
+            walk_tree_respecting_uninteresting(repo, &e.oid, uninteresting, oids, shallow_grafts)?;
+        } else if !uninteresting.contains(&e.oid) {
+            oids.insert(e.oid);
+        }
+    }
+    Ok(())
+}
+
+fn walk_reachable_commits_first(
+    repo: &Repository,
+    root: ObjectId,
+    oids: &mut BTreeSet<ObjectId>,
+    commit_seen: &mut HashSet<ObjectId>,
+    commit_uninteresting: &HashSet<ObjectId>,
+    uninteresting: &HashSet<ObjectId>,
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<()> {
+    let mut queue = VecDeque::new();
+    queue.push_back(root);
+    while let Some(cid) = queue.pop_front() {
+        if !commit_seen.insert(cid) {
+            continue;
+        }
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            walk_reachable(repo, &cid, oids, shallow_grafts)?;
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        if commit_uninteresting.contains(&cid) {
+            for p in c.parents {
+                if !shallow_grafts.contains(&cid) {
+                    queue.push_back(p);
+                }
+            }
+            continue;
+        }
+        oids.insert(cid);
+        walk_tree_respecting_uninteresting(repo, &c.tree, uninteresting, oids, shallow_grafts)?;
+        for p in c.parents {
+            if !shallow_grafts.contains(&cid) {
+                queue.push_back(p);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_revs_pack_objects_sparse(
+    repo: &Repository,
+    positive_tips: &[ObjectId],
+    exclude_roots: &[ObjectId],
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<BTreeSet<ObjectId>> {
+    let mut commit_uninteresting: HashSet<ObjectId> = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = VecDeque::new();
+    let mut commit_seen_exclude: HashSet<ObjectId> = HashSet::new();
+
+    for root in exclude_roots {
+        queue.push_back(*root);
+    }
+    while let Some(cid) = queue.pop_front() {
+        if !commit_seen_exclude.insert(cid) {
+            continue;
+        }
+        commit_uninteresting.insert(cid);
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        for p in c.parents {
+            if !shallow_grafts.contains(&cid) {
+                queue.push_back(p);
+            }
+        }
+    }
+
+    let mut edge_trees: HashSet<ObjectId> = HashSet::new();
+    let mut uninteresting: HashSet<ObjectId> = HashSet::new();
+
+    // Match Git's `mark_edges_uninteresting`: every starting commit (included and `^` excluded)
+    // contributes its root tree and its parents' root trees to the edge set.
+    let mut edge_commits: Vec<ObjectId> = Vec::new();
+    edge_commits.extend_from_slice(positive_tips);
+    edge_commits.extend_from_slice(exclude_roots);
+
+    for tip in edge_commits {
+        let obj = read_object_from_repo(repo, &tip)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        edge_trees.insert(c.tree);
+        if commit_uninteresting.contains(&tip) {
+            uninteresting.insert(c.tree);
+        }
+        for p in &c.parents {
+            let pobj = read_object_from_repo(repo, p)?;
+            if pobj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let pc = parse_commit(&pobj.data)?;
+            edge_trees.insert(pc.tree);
+            if commit_uninteresting.contains(p) {
+                uninteresting.insert(pc.tree);
+            }
+        }
+    }
+
+    mark_trees_uninteresting_sparse(repo, &edge_trees, &mut uninteresting)?;
+
+    let mut oids = BTreeSet::new();
+    let mut commit_seen_walk: HashSet<ObjectId> = HashSet::new();
+    for tip in positive_tips {
+        let obj = read_object_from_repo(repo, tip)?;
+        match obj.kind {
+            ObjectKind::Commit => {
+                walk_reachable_commits_first(
+                    repo,
+                    *tip,
+                    &mut oids,
+                    &mut commit_seen_walk,
+                    &commit_uninteresting,
+                    &uninteresting,
+                    shallow_grafts,
+                )?;
+            }
+            _ => {
+                walk_reachable(repo, tip, &mut oids, shallow_grafts)?;
+            }
+        }
+    }
+    Ok(oids)
+}
+
 fn collect_pack_objects_from_rev_stdin_lines(
     repo: &Repository,
     args: &Args,
@@ -1547,6 +1852,65 @@ fn collect_pack_objects_from_rev_stdin_lines(
         } else {
             positive.push(trimmed.to_string());
         }
+    }
+
+    let use_sparse = pack_objects_sparse_mode(repo, args)?;
+
+    if use_sparse {
+        let mut positive_tips: Vec<ObjectId> = Vec::with_capacity(positive.len());
+        for pos in &positive {
+            let oid = resolve_revision(repo, pos)
+                .with_context(|| format!("cannot resolve ref '{pos}'"))?;
+            positive_tips.push(oid);
+        }
+        let mut exclude_roots: Vec<ObjectId> = Vec::with_capacity(negative.len());
+        for neg in &negative {
+            let oid = resolve_revision(repo, neg)
+                .with_context(|| format!("cannot resolve ref '{neg}'"))?;
+            exclude_roots.push(oid);
+        }
+
+        let mut oids = collect_revs_pack_objects_sparse(
+            repo,
+            &positive_tips,
+            &exclude_roots,
+            &shallow_grafts,
+        )?;
+
+        let skip_full_exclude_subtract = sparse_skip_full_exclude_subtract(
+            repo,
+            &positive_tips,
+            &exclude_roots,
+            &shallow_grafts,
+        )?;
+        if !skip_full_exclude_subtract {
+            let mut exclude = BTreeSet::new();
+            for root in &exclude_roots {
+                walk_reachable(repo, root, &mut exclude, &shallow_grafts)?;
+            }
+            for oid in &exclude {
+                oids.remove(oid);
+            }
+        }
+
+        let mut ordered: Vec<ObjectId> = oids.into_iter().collect();
+
+        if args.thin && !have_roots.is_empty() {
+            let mut have_closure = BTreeSet::new();
+            for root in &have_roots {
+                walk_reachable(repo, root, &mut have_closure, &shallow_grafts)?;
+            }
+            ordered.retain(|o| !have_closure.contains(o));
+        }
+        if is_shallow_repo(repo) && !ordered.is_empty() {
+            ordered = prune_hidden_objects_for_shallow_repo(repo, &ordered)?;
+        }
+
+        return Ok(PackObjectList {
+            oids: ordered,
+            thin_blob_deltas: Vec::new(),
+            rev_list_stdin: true,
+        });
     }
 
     let mut oids: BTreeSet<ObjectId> = BTreeSet::new();

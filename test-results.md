@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-13 (t5322 / pack-objects sparse --revs)**
+
+- `cargo test -p grit-lib --lib`: passed (see merge)
+- `./scripts/run-tests.sh t5322-pack-objects-sparse.sh`: 11/11 passed (verified after merge)
+
 **2026-04-10 (t4252 / am apply passthrough options)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
