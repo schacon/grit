@@ -1507,6 +1507,15 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
+/// True when `log` should use the built-in one-line output (`<abbrev><decorate> <subject>`).
+///
+/// Git: `--oneline` sets the default pretty, but `--format=%s` (or any format other than
+/// `oneline`) overrides that default while still leaving `--oneline` set for other effects.
+fn log_uses_builtin_oneline(args: &Args) -> bool {
+    (args.oneline && args.format.as_deref().map_or(true, |f| f == "oneline"))
+        || (!args.oneline && args.format.as_deref() == Some("oneline"))
+}
+
 /// Whether to load ref decorations and whether to use full ref names (`refs/heads/...`).
 ///
 /// Mirrors Git's handling of `--decorate`, `--no-decorate`, and raw argv scanning for
@@ -1537,7 +1546,7 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
         show = false;
         full = false;
     }
-    let oneline_like = args.oneline || args.format.as_deref() == Some("oneline");
+    let oneline_like = log_uses_builtin_oneline(args);
     if oneline_like && !args.no_decorate && !show {
         // Upstream Git only decorates `--oneline` for TTY/pager output, but many harness tests
         // (and users comparing to `git log` in scripts) expect branch tips on every line; match
@@ -2867,7 +2876,7 @@ fn render_graph_commit_text(
     head_for_decor: &HeadState,
 ) -> String {
     let hex = node.oid.to_hex();
-    if args.oneline || args.format.as_deref() == Some("oneline") {
+    if log_uses_builtin_oneline(args) {
         let first_line = info.message.lines().next().unwrap_or("");
         let first_line = if args.expand_tabs_in_log > 0 {
             grit_lib::tab_expand::expand_tabs_in_line(first_line, args.expand_tabs_in_log)
@@ -4690,7 +4699,7 @@ fn tree_matches_any_pathspec(odb: &Odb, tree_oid: &ObjectId, pathspecs: &[String
     let paths = grit_lib::diff::head_path_states(odb, Some(tree_oid))?;
     Ok(paths
         .keys()
-        .any(|path| pathspecs.iter().any(|ps| path_matches(path.as_str(), ps))))
+        .any(|path| path_matches(path.as_str(), pathspecs)))
 }
 
 /// Whether a reflog step matches `pathspecs`.
@@ -4721,7 +4730,7 @@ fn reflog_transition_touches_paths(
         let entries = diff_trees(odb, old_t.as_ref(), Some(to_tree), "")?;
         Ok(entries.iter().any(|e| {
             let path = e.path();
-            pathspecs.iter().any(|ps| path_matches(path, ps))
+            path_matches(path, pathspecs)
         }))
     };
 
@@ -6221,7 +6230,7 @@ fn commit_touches_paths(
         let entries = diff_trees(odb, None, Some(&info.tree), "")?;
         let touches = entries.iter().any(|e| {
             let path = e.path();
-            pathspecs.iter().any(|ps| path_matches(path, ps))
+            path_matches(path, pathspecs)
         });
         if bloom_ret == BloomPrecheck::Maybe && !touches {
             if let Some(stats) = bloom_stats {
@@ -6263,7 +6272,7 @@ fn commit_touches_paths(
         let entries = diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?;
         let touches = entries.iter().any(|e| {
             let path = e.path();
-            pathspecs.iter().any(|ps| path_matches(path, ps))
+            path_matches(path, pathspecs)
         });
         if bloom_ret == BloomPrecheck::Maybe && !touches {
             if let Some(stats) = bloom_stats {
@@ -6281,7 +6290,7 @@ fn commit_touches_paths(
         let entries = diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?;
         if entries.iter().any(|e| {
             let path = e.path();
-            pathspecs.iter().any(|ps| path_matches(path, ps))
+            path_matches(path, pathspecs)
         }) {
             return Ok(true);
         }
@@ -6290,9 +6299,9 @@ fn commit_touches_paths(
     Ok(false)
 }
 
-/// Check if a file path matches a pathspec (prefix match or exact match).
-fn path_matches(path: &str, pathspec: &str) -> bool {
-    crate::pathspec::pathspec_matches(pathspec, path)
+/// Check if a file path matches a pathspec list (Git `match_pathspec`, including `:(exclude)`).
+fn path_matches(path: &str, pathspecs: &[String]) -> bool {
+    grit_lib::pathspec::matches_pathspec_list(path, pathspecs)
 }
 
 /// Extract unix timestamp from an author/committer line.
@@ -7256,7 +7265,7 @@ fn format_commit(
         .unwrap_or_default();
     let et = args.expand_tabs_in_log;
 
-    if args.oneline || args.format.as_deref() == Some("oneline") {
+    if log_uses_builtin_oneline(args) {
         let first_line = info.message.lines().next().unwrap_or("");
         let first_line = if et > 0 {
             grit_lib::tab_expand::expand_tabs_in_line(first_line, et)

@@ -1886,6 +1886,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--patch-with-stat" => args.patch_with_stat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
+                "--cached" | "--staged" => args.cached = true,
                 s if s.starts_with("--stat-width=") => {
                     if let Some(v) = s.strip_prefix("--stat-width=").and_then(|x| x.parse().ok()) {
                         args.stat_width = Some(v);

@@ -807,7 +807,7 @@ fn stash_is_intent_to_add_only(
 // Push (save)
 // ---------------------------------------------------------------------------
 
-fn do_push(opts: PushOpts) -> Result<()> {
+fn do_push(mut opts: PushOpts) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     stash_preflight_index_writable(&repo)?;
     let work_tree = repo
@@ -821,6 +821,14 @@ fn do_push(opts: PushOpts) -> Result<()> {
         // Exit 128 matches Git; avoids harness treating exit 1 as acceptable success.
         return Err(anyhow::Error::new(SilentNonZeroExit { code: 128 }));
     }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.clone());
+    let prefix = crate::pathspec::pathdiff(&cwd, &work_tree);
+    opts.pathspec = opts
+        .pathspec
+        .iter()
+        .map(|p| crate::pathspec::resolve_pathspec(p, &work_tree, prefix.as_deref()))
+        .collect();
 
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = head
@@ -3817,12 +3825,40 @@ fn do_clear() -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Check if a path matches any of the given pathspecs (Git pathspec syntax).
+/// Check if a path matches the pathspec list (Git semantics, including `:(exclude)`).
 fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
-    pathspecs.iter().any(|spec| {
-        let spec = spec.strip_prefix("--").unwrap_or(spec);
-        lib_pathspec_matches(spec, path)
-    })
+    let specs: Vec<String> = pathspecs
+        .iter()
+        .map(|s| s.strip_prefix("--").unwrap_or(s.as_str()).to_owned())
+        .collect();
+    grit_lib::pathspec::matches_pathspec_list(path, &specs)
+}
+
+/// Simple glob matching (only supports * wildcard).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(found) = text[pos..].find(part) {
+            if i == 0 && found != 0 {
+                return false;
+            }
+            pos += found + part.len();
+        } else {
+            return false;
+        }
+    }
+    // If pattern doesn't end with *, text must end exactly
+    if !pattern.ends_with('*') {
+        return pos == text.len();
+    }
+    true
 }
 
 /// Create a stash commit and return its OID (does NOT update refs/stash).

@@ -15,7 +15,7 @@ use grit_lib::index::{
 use grit_lib::merge_base::{merge_base_for_diff_index, MergeBaseForDiffError};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
+use grit_lib::pathspec::context_from_mode_bits;
 use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{merge_bases, rev_list, RevListOptions};
@@ -1532,9 +1532,7 @@ fn entry_matches_pathspecs(
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs
-        .iter()
-        .any(|spec| matches_pathspec_with_context(spec, path, ctx))
+    grit_lib::pathspec::matches_pathspec_list_with_context(path, pathspecs, ctx)
 }
 
 fn parse_mode_octal(mode: &str) -> Option<u32> {

@@ -1166,29 +1166,50 @@ fn reset_paths(
     let cwd_prefix = cwd_prefix_relative_to_worktree(work_tree, &cwd)?;
     let prefix_opt = (!cwd_prefix.is_empty()).then_some(cwd_prefix.as_str());
 
-    let mut expanded_paths: Vec<String> = Vec::new();
-    for raw in paths {
-        let resolved = crate::pathspec::resolve_pathspec(raw, work_tree, prefix_opt);
-        if raw == "." && resolved.is_empty() {
-            let mut seen: HashSet<Vec<u8>> = HashSet::new();
-            for k in tree_map.keys() {
-                seen.insert(k.clone());
-            }
-            for e in &index.entries {
-                if e.stage() == 0 {
-                    seen.insert(e.path.clone());
-                }
-            }
-            for k in seen {
-                expanded_paths.push(String::from_utf8_lossy(&k).into_owned());
-            }
-            continue;
+    let resolved_specs: Vec<String> = paths
+        .iter()
+        .map(|p| crate::pathspec::resolve_pathspec(p, work_tree, prefix_opt))
+        .collect();
+
+    let expanded_paths: Vec<String> = if paths.is_empty() {
+        Vec::new()
+    } else if paths.iter().any(|p| p == ".") {
+        let mut seen: HashSet<Vec<u8>> = HashSet::new();
+        for k in tree_map.keys() {
+            seen.insert(k.clone());
         }
-        if resolved.is_empty() {
-            bail!("pathspec '{raw}' did not match any file(s) known to git");
+        for e in &index.entries {
+            if e.stage() == 0 {
+                seen.insert(e.path.clone());
+            }
         }
-        expanded_paths.push(resolved);
-    }
+        seen.into_iter()
+            .map(|k| String::from_utf8_lossy(&k).into_owned())
+            .collect::<Vec<_>>()
+    } else {
+        let mut out: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|e| {
+                e.stage() == 0
+                    && grit_lib::pathspec::matches_pathspec_list(
+                        &String::from_utf8_lossy(&e.path),
+                        &resolved_specs,
+                    )
+            })
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        out.sort();
+        if out.is_empty() {
+            bail!(
+                "pathspec '{}' did not match any file(s) known to git",
+                paths.join(" ")
+            );
+        }
+        out
+    };
 
     for path_str in expanded_paths {
         let path_bytes = path_str.as_bytes().to_vec();

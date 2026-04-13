@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   358 |
+| Completed   |   359 |
 | In progress |     6 |
-| Remaining   |   408 |
+| Remaining   |   407 |
 | **Total**   |   772 |
 
-Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remaining (`[ ]`).
+Task lines in `PLAN.md`: 359 completed (`[x]`), 6 in progress (`[~]`), 407 remaining (`[ ]`).
 
 ## In progress
 
@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remai
 
 ## Recently completed
 
+- `t6132-pathspec-exclude` — 31/31 tests pass (exclude pathspec lists: `matches_pathspec_list` in grit-lib; cwd-relative resolution for short/long magic; implicit cwd positive for `PATHSPEC_PREFER_CWD` commands; `log` honors `--format` with `--oneline`; archive subtrees from cwd; add staging for all-exclude pathspecs; `diff` parses `--cached` when mixed with rev args; `grep --untracked` + magic pathspec argv fixes)
 - `t4129-apply-samemode` — 23/23 tests pass (`diff --stat -p` emits unified hunks after stat; `apply` strips `a/`/`b/` from `diff --git` paths; Git `canon_mode` / invalid mode errors; `core.fileMode` preimage warnings; reverse mode swap matches Git; umask-aware worktree chmod)
 - `t4252-am-options` — 8/8 tests pass (`am`: passthrough `git apply` options `-p`/`-C`, `--directory`, `--whitespace=fix`, `--ignore-space-change`, `--ignore-whitespace`, `--exclude`/`--include`, `--reject`; persist shell-quoted argv in `rebase-apply/apply-opt`; partial apply with `.rej` hunks leaves work tree dirty vs index; harness CSV/dashboards refreshed)
 - `t4069-remerge-diff` — 16/16 tests pass (`show`: POSIX `-S"not present"` glued argv split for clap; `--remerge-diff` omits redundant `modify/delete` for `file/directory` relocated paths like Git)
@@ -257,4 +258,4 @@ Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remai
 
 ## What Remains
 
-408 task lines still open in `PLAN.md` (plus 6 in progress). See `PLAN.md` for the full prioritized list.
+407 task lines still open in `PLAN.md` (plus 6 in progress). See `PLAN.md` for the full prioritized list.

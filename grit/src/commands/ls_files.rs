@@ -267,10 +267,36 @@ pub fn run(args: Args) -> Result<()> {
 
     pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index, precompose_walk);
 
+    let cwd_prefix_str = String::from_utf8_lossy(&cwd_prefix).into_owned();
+    let cwd_trim = cwd_prefix_str.trim_end_matches('/').to_string();
+    let cwd_for_resolve = (!cwd_trim.is_empty()).then_some(cwd_trim);
+    let resolved_pathspec_strings: Vec<String> = pathspec_filter
+        .iter()
+        .map(|ps| {
+            let raw = pathspec_for_lib_path_match(ps);
+            match ps {
+                Pathspec::Magic(_) => {
+                    crate::pathspec::resolve_pathspec(&raw, work_tree, cwd_for_resolve.as_deref())
+                }
+                _ => raw,
+            }
+        })
+        .collect();
+    let pathspec_lib_strings = grit_lib::pathspec::extend_pathspec_list_implicit_cwd(
+        &resolved_pathspec_strings,
+        cwd_for_resolve.as_deref(),
+    );
+
     // For `--error-unmatch`, Git matches pathspecs separately against index output vs untracked
     // output (`-c` vs `-o`). A pathspec that only hits tracked files does not satisfy `-o`.
     let mut matched_index: Vec<bool> = vec![false; pathspec_filter.len()];
     let mut matched_others: Vec<bool> = vec![false; pathspec_filter.len()];
+    for i in 0..resolved_pathspec_strings.len() {
+        if grit_lib::pathspec::pathspec_is_exclude(&resolved_pathspec_strings[i]) {
+            matched_index[i] = true;
+            matched_others[i] = true;
+        }
+    }
 
     // Build exclude/ignore matcher if needed (before cached loop so -i -c works).
     // Git order: standard excludes (global → info → .gitignore), plus `-X` files and `-x` patterns.
@@ -312,7 +338,7 @@ pub fn run(args: Args) -> Result<()> {
             Pathspec::Glob(g) => g.clone(),
             Pathspec::Magic(m) => m.clone(),
         };
-        if grit_lib::pathspec::pathspec_is_exclude_only(&s) {
+        if grit_lib::pathspec::pathspec_is_exclude(&s) {
             matched_index[i] = true;
             matched_others[i] = true;
         }
@@ -323,19 +349,11 @@ pub fn run(args: Args) -> Result<()> {
         if entry.overlay_tree_skip_output() {
             continue;
         }
-        // Filter by pathspec (Git OR for positives, AND with negated excludes).
+        // Filter by pathspec (Git `match_pathspec`: positives ORed, then excludes subtracted).
         if !pathspec_filter.is_empty() {
             let path_str = String::from_utf8_lossy(&entry.path);
-            let specs: Vec<String> = pathspec_filter
-                .iter()
-                .map(|spec| match spec {
-                    Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
-                    Pathspec::Glob(g) => g.clone(),
-                    Pathspec::Magic(m) => m.clone(),
-                })
-                .collect();
             if !grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(
-                &specs,
+                &pathspec_lib_strings,
                 path_str.as_ref(),
                 entry.mode,
                 &attrs_for_eol,
@@ -343,7 +361,7 @@ pub fn run(args: Args) -> Result<()> {
                 continue;
             }
             for (i, spec) in pathspec_filter.iter().enumerate() {
-                if grit_lib::pathspec::pathspec_is_exclude_only(&specs[i]) {
+                if grit_lib::pathspec::pathspec_is_exclude(&pathspec_lib_strings[i]) {
                     continue;
                 }
                 if spec.matches(&entry.path) {
@@ -606,14 +624,6 @@ pub fn run(args: Args) -> Result<()> {
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
-        let specs_strings: Vec<String> = pathspec_filter
-            .iter()
-            .map(|spec| match spec {
-                Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
-                Pathspec::Glob(g) => g.clone(),
-                Pathspec::Magic(m) => m.clone(),
-            })
-            .collect();
 
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
@@ -625,7 +635,7 @@ pub fn run(args: Args) -> Result<()> {
                 };
                 let path_for_match = path_str.trim_end_matches('/');
                 if !grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(
-                    &specs_strings,
+                    &pathspec_lib_strings,
                     path_for_match,
                     mode,
                     &attrs_for_eol,
@@ -656,7 +666,7 @@ pub fn run(args: Args) -> Result<()> {
 
             if !pathspec_filter.is_empty() {
                 for (i, spec) in pathspec_filter.iter().enumerate() {
-                    if grit_lib::pathspec::pathspec_is_exclude_only(&specs_strings[i]) {
+                    if grit_lib::pathspec::pathspec_is_exclude(&pathspec_lib_strings[i]) {
                         continue;
                     }
                     if spec.matches(path_bytes) {
@@ -1109,6 +1119,14 @@ fn expand_ls_files_globs(
     out
 }
 
+/// String form of a parsed `ls-files` pathspec for [`grit_lib::pathspec::matches_pathspec_list`].
+fn pathspec_for_lib_path_match(spec: &Pathspec) -> String {
+    match spec {
+        Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
+        Pathspec::Glob(s) | Pathspec::Magic(s) => s.clone(),
+    }
+}
+
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
         match self {
@@ -1290,10 +1308,19 @@ fn resolve_pathspec(
             // `:/` or `:/*` — match all paths under the work tree root (git pathspec magic).
             return Ok(Pathspec::Glob("*".to_string()));
         }
+        // Short magic after `:/` (e.g. `:/!sub2`, `:/^foo`) must stay a full pathspec string for
+        // `grit_lib::pathspec` — not a literal `!sub2` path (t6132-pathspec-exclude).
+        if rest.starts_with('^') || rest.starts_with('!') {
+            return Ok(Pathspec::Magic(nfc_lossy));
+        }
         if has_glob_chars(rest) {
             return Ok(Pathspec::Glob(rest.to_string()));
         }
         return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
+    }
+    // `:!foo`, `:^bar`, etc. — short magic must not be resolved as a repo-relative path.
+    if nfc_lossy.starts_with(':') && !nfc_lossy.starts_with(":(") {
+        return Ok(Pathspec::Magic(nfc_lossy));
     }
     if has_glob_chars(&nfc_lossy) {
         // If the pathspec spells an existing work-tree path literally (e.g. `fo[ou]bar` when

@@ -19,6 +19,27 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::pathspec::parse_magic;
 
+fn pathspec_list_matches_file(specs: &[String], rel: &str) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    grit_lib::pathspec::matches_pathspec_list(rel, specs)
+}
+
+fn pathspec_list_matches_dir(specs: &[String], rel: &str) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    grit_lib::pathspec::matches_pathspec_list_with_context(
+        rel,
+        specs,
+        grit_lib::pathspec::PathspecMatchContext {
+            is_directory: true,
+            is_git_submodule: false,
+        },
+    )
+}
+
 /// Arguments for `grit clean`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Remove untracked files from the working tree")]
@@ -93,16 +114,32 @@ pub fn run(args: Args) -> Result<()> {
 
     let tracked = tracked_stage0_paths(&index);
 
+    let cwd_prefix = pathdiff(&cwd, &work_tree);
+    let cwd_for_resolve = cwd_prefix
+        .as_deref()
+        .map(|s| s.trim_end_matches('/'))
+        .filter(|s| !s.is_empty());
     let pathspecs: Vec<String> = args
         .pathspec
         .iter()
-        .map(|p| normalize_repo_relative(&repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}")))
+        .map(|p| {
+            if p.starts_with(':') {
+                Ok(crate::pathspec::resolve_pathspec(
+                    p,
+                    &work_tree,
+                    cwd_for_resolve,
+                ))
+            } else {
+                normalize_repo_relative(&repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}"))
+            }
+        })
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .filter(|p| !p.is_empty())
         .collect();
 
-    let cwd_prefix = pathdiff(&cwd, &work_tree);
+    let pathspecs =
+        grit_lib::pathspec::extend_pathspec_list_implicit_cwd(&pathspecs, cwd_for_resolve);
     let walk_root = if pathspecs.is_empty() {
         match &cwd_prefix {
             Some(p) if !p.is_empty() => work_tree.join(p),
@@ -911,7 +948,7 @@ fn path_to_slash(path: &Path) -> String {
 }
 
 pub(crate) fn path_matches_any_pathspec(specs: &[String], rel: &str) -> bool {
-    specs.iter().any(|s| lib_pathspec_matches(s, rel))
+    pathspec_list_matches_file(specs, rel)
 }
 
 fn pathspecs_have_glob(specs: &[String]) -> bool {
@@ -922,6 +959,16 @@ fn pathspecs_have_glob(specs: &[String]) -> bool {
 }
 
 pub(crate) fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let d = dir_repo_rel.trim_end_matches('/');
+    if !d.is_empty()
+        && (pathspec_list_matches_dir(specs, d)
+            || pathspec_list_matches_file(specs, &format!("{d}/")))
+    {
+        return true;
+    }
     if specs.iter().any(|s| {
         let (_, pat) = parse_magic(s);
         crate::pathspec::has_glob_chars(pat)
