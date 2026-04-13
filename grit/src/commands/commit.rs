@@ -12,7 +12,10 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
-use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
+use grit_lib::hooks::{
+    run_commit_hook, run_hook, run_reference_transaction_committed_for_head_update, CommitHookEnv,
+    HookResult,
+};
 use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::mailmap::load_mailmap_table;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -899,13 +902,6 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Run pre-commit hook (skipped with `--no-verify` / `-n`, matching Git).
-    if !args.no_verify {
-        if let HookResult::Failed(code) = run_hook(&repo, "pre-commit", &[], None) {
-            bail!("pre-commit hook exited with status {code}");
-        }
-    }
-
     let template_path = resolve_commit_template_path(&args, &config)?;
     let use_editor_for_message = commit_uses_editor(&args, fixup_parsed.as_ref());
 
@@ -1017,6 +1013,32 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     let committer = resolve_committer(&config, now)?;
 
+    let author_hook_env = author_env_for_commit_hooks(&author)?;
+    let author_env_refs: Vec<(&str, &str)> = author_hook_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let hook_editor = if use_editor_for_message {
+        None
+    } else {
+        Some(":")
+    };
+    let hook_opts = CommitHookEnv {
+        index_file: Some(index_path.as_path()),
+        git_editor: hook_editor,
+        git_prefix: None,
+        extra_env: author_env_refs.as_slice(),
+    };
+
+    if !args.no_verify {
+        let r = run_commit_hook(&repo, "pre-commit", &[], None, &hook_opts)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        if let HookResult::Failed(code) = r {
+            bail!("pre-commit hook exited with status {code}");
+        }
+    }
+
     // Append Signed-off-by trailer if --signoff
     if args.signoff {
         let trailer = if let Some(angle_end) = committer.find('>') {
@@ -1126,7 +1148,9 @@ pub fn run(mut args: Args) -> Result<()> {
             fs::write(&msg_file, &message)?;
         }
         let msg_path_str = msg_file.to_string_lossy().to_string();
-        match run_hook(&repo, "commit-msg", &[&msg_path_str], None) {
+        let r = run_commit_hook(&repo, "commit-msg", &[&msg_path_str], None, &hook_opts)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        match r {
             HookResult::Failed(code) => {
                 bail!("commit-msg hook exited with status {code}");
             }
@@ -3750,6 +3774,19 @@ fn find_author_by_nickname(repo: &Repository, nick: &str) -> Result<String> {
         "--author '{}' is not 'Name <email>' and matches no existing author",
         nick
     );
+}
+
+/// Build `GIT_AUTHOR_*` values for hook subprocesses (matches Git `determine_author_info` / `export_one`).
+pub(crate) fn author_env_for_commit_hooks(author_line: &str) -> Result<Vec<(String, String)>> {
+    let (name, email, date_tail) = split_stored_author_line(author_line)?;
+    let mut out = vec![
+        ("GIT_AUTHOR_NAME".to_string(), name),
+        ("GIT_AUTHOR_EMAIL".to_string(), email),
+    ];
+    if let Some(dt) = date_tail.filter(|s| !s.is_empty()) {
+        out.push(("GIT_AUTHOR_DATE".to_string(), format!("@{dt}")));
+    }
+    Ok(out)
 }
 
 /// Split a stored author line (`name <email> <epoch> <tz>`) into name, email, and optional date tail.

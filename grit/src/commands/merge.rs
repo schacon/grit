@@ -20,7 +20,10 @@ use grit_lib::diff::{
     DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
-use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
+use grit_lib::hooks::{
+    run_commit_hook, run_hook, run_reference_transaction_committed_for_head_update, CommitHookEnv,
+    HookResult,
+};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -36,6 +39,7 @@ use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
 
+use crate::commands::commit::author_env_for_commit_hooks;
 use crate::commands::diff_index;
 use crate::explicit_exit::{ExplicitExit, SilentNonZeroExit};
 
@@ -82,9 +86,48 @@ fn run_post_merge_hook(repo: &Repository, squash: bool) {
     let _ = run_hook(repo, "post-merge", &[flag], None);
 }
 
-fn run_pre_merge_commit_hook(repo: &Repository) -> Result<()> {
-    if let HookResult::Failed(code) = run_hook(repo, "pre-merge-commit", &[], None) {
+fn run_pre_merge_commit_hook(
+    repo: &Repository,
+    no_verify: bool,
+    merge_will_launch_editor: bool,
+    index: &mut Index,
+) -> Result<()> {
+    if no_verify {
+        return Ok(());
+    }
+    let index_path = repo.index_path();
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    let author_line = resolve_ident(&config, "author", now)?;
+    let author_env = author_env_for_commit_hooks(&author_line)?;
+    let author_refs: Vec<(&str, &str)> = author_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let hook_editor = if merge_will_launch_editor {
+        None
+    } else {
+        Some(":")
+    };
+    let hook_env = CommitHookEnv {
+        index_file: Some(index_path.as_path()),
+        git_editor: hook_editor,
+        git_prefix: None,
+        extra_env: author_refs.as_slice(),
+    };
+    let before = run_commit_hook(repo, "pre-merge-commit", &[], None, &hook_env)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if let HookResult::Failed(code) = before {
         bail!("pre-merge-commit hook exited with status {code}");
+    }
+    if before.was_executed() {
+        *index = match repo.load_index_at(&index_path) {
+            Ok(idx) => idx,
+            Err(grit_lib::error::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                Index::new()
+            }
+            Err(e) => return Err(e.into()),
+        };
     }
     Ok(())
 }
@@ -1775,6 +1818,9 @@ Aborting"
         return Ok(());
     }
 
+    run_pre_merge_commit_hook(repo, args.no_verify, args.edit && !args.no_edit, &mut index)?;
+    repo.write_index(&mut index)?;
+
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let effective_custom_msg = if let Some(ref file_path) = args.file {
@@ -2179,9 +2225,8 @@ Aborting"
         return Ok(());
     }
 
-    if !args.no_verify {
-        run_pre_merge_commit_hook(repo)?;
-    }
+    run_pre_merge_commit_hook(repo, args.no_verify, !args.no_edit, &mut merge_result.index)?;
+    repo.write_index(&mut merge_result.index)?;
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
@@ -3483,9 +3528,8 @@ fn do_octopus_merge(
         return Ok(());
     }
 
-    if !args.no_verify {
-        run_pre_merge_commit_hook(repo)?;
-    }
+    run_pre_merge_commit_hook(repo, args.no_verify, !args.no_edit, &mut final_index)?;
+    repo.write_index(&mut final_index)?;
 
     let tree_oid = write_tree_from_index(&repo.odb, &final_index, "")?;
     let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
@@ -3679,7 +3723,6 @@ fn do_strategy_ours(
         format!("{}\n", head_oid.to_hex()),
     )?;
 
-    let tree_oid = commit_tree(repo, head_oid)?;
     let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
@@ -3701,9 +3744,11 @@ fn do_strategy_ours(
         return Ok(());
     }
 
-    if !args.no_verify {
-        run_pre_merge_commit_hook(repo)?;
-    }
+    let mut idx = repo.load_index()?;
+    run_pre_merge_commit_hook(repo, args.no_verify, !args.no_edit, &mut idx)?;
+    repo.write_index(&mut idx)?;
+
+    let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -3747,7 +3792,6 @@ fn do_strategy_theirs(
         format!("{}\n", head_oid.to_hex()),
     )?;
 
-    let tree_oid = commit_tree(repo, merge_oid)?;
     let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
@@ -3755,9 +3799,11 @@ fn do_strategy_theirs(
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
 
-    if !args.no_verify {
-        run_pre_merge_commit_hook(repo)?;
-    }
+    let mut idx = repo.load_index()?;
+    run_pre_merge_commit_hook(repo, args.no_verify, !args.no_edit, &mut idx)?;
+    repo.write_index(&mut idx)?;
+
+    let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -4166,7 +4212,7 @@ fn merge_continue(message: Option<String>) -> Result<()> {
     }
 
     // Check that index has no unmerged entries
-    let index = match repo.load_index() {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(e) => bail!("cannot load index: {}", e),
     };
@@ -4190,13 +4236,14 @@ fn merge_continue(message: Option<String>) -> Result<()> {
         bail!("no merge message found (use -m to provide one)");
     };
 
+    let no_verify_merge_continue = std::env::args().any(|a| a == "--no-verify");
+    run_pre_merge_commit_hook(&repo, no_verify_merge_continue, false, &mut index)?;
+    repo.write_index(&mut index)?;
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
     let config = ConfigSet::load(Some(git_dir), true)?;
     let now = OffsetDateTime::now_utc();
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
-
-    run_pre_merge_commit_hook(&repo)?;
 
     let mut parents = vec![head_oid];
     parents.extend(merge_heads);

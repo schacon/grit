@@ -223,6 +223,7 @@ fn run_cmd(rest: &[String]) -> Result<()> {
             path_to_stdin: stdin_path,
             stdin_data: None,
             env_vars: &[],
+            commit_env: None,
         },
         None,
     ) {

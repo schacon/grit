@@ -30,6 +30,86 @@ fn stdio_piped(piped: bool) -> Stdio {
     }
 }
 
+/// Environment for commit-style hooks (`GIT_INDEX_FILE`, `GIT_EDITOR`, `GIT_PREFIX`, and extra pairs).
+#[derive(Debug, Clone, Default)]
+pub struct CommitHookEnv<'a> {
+    /// Absolute or cwd-relative index path passed as `GIT_INDEX_FILE`.
+    pub index_file: Option<&'a Path>,
+    /// When set, overrides `GIT_EDITOR` for the hook subprocess (e.g. `":"` when no editor is used).
+    pub git_editor: Option<&'a str>,
+    /// When set, used as `GIT_PREFIX`; when unset, derived from the current directory and work tree.
+    pub git_prefix: Option<&'a str>,
+    /// Additional `KEY=value` pairs for the hook subprocess.
+    pub extra_env: &'a [(&'a str, &'a str)],
+}
+
+fn absolute_index_path(index_file: &Path) -> PathBuf {
+    if index_file.is_absolute() {
+        index_file.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(index_file)
+    } else {
+        index_file.to_path_buf()
+    }
+}
+
+/// `GIT_PREFIX` for the invoking cwd relative to the work tree (Git sets this from the user's
+/// `pwd`, not from the hook subprocess cwd, which is usually the work tree root).
+fn git_prefix_for_invocation(repo: &Repository, invocation_cwd: &Path) -> String {
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return String::new();
+    };
+    if invocation_cwd == repo.git_dir.as_path() {
+        return String::new();
+    }
+    let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf());
+    let wd_canon = invocation_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| invocation_cwd.to_path_buf());
+    let rel = wd_canon.strip_prefix(&wt_canon).ok();
+    let Some(rel) = rel else {
+        return String::new();
+    };
+    let Some(s) = rel.to_str() else {
+        return String::new();
+    };
+    if s.is_empty() {
+        return String::new();
+    }
+    let mut out = s.replace('\\', "/");
+    if !out.ends_with('/') {
+        out.push('/');
+    }
+    out
+}
+
+fn build_commit_hook_env(
+    repo: &Repository,
+    work_dir: &Path,
+    opts: &CommitHookEnv<'_>,
+) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = Vec::new();
+    if let Some(p) = opts.index_file {
+        env.push((
+            "GIT_INDEX_FILE".to_string(),
+            absolute_index_path(p).to_string_lossy().into_owned(),
+        ));
+    }
+    let invocation_cwd = std::env::current_dir().unwrap_or_else(|_| work_dir.to_path_buf());
+    let prefix = opts
+        .git_prefix
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| git_prefix_for_invocation(repo, &invocation_cwd));
+    env.push(("GIT_PREFIX".to_string(), prefix));
+    if let Some(ed) = opts.git_editor {
+        env.push(("GIT_EDITOR".to_string(), ed.to_string()));
+    }
+    for (k, v) in opts.extra_env {
+        env.push(((*k).to_string(), (*v).to_string()));
+    }
+    env
+}
+
 /// Git `git_parse_maybe_bool`: `Some(true/false)` or `None` if unrecognized.
 fn parse_maybe_bool(value: &str) -> Option<bool> {
     let v = value.trim().to_ascii_lowercase();
@@ -268,7 +348,7 @@ fn spawn_traditional_hook(
     hook_args: &[&str],
     cwd: &Path,
     git_dir: &Path,
-    extra_env: &[(&str, &str)],
+    extra_env: &[(String, String)],
     stdin_piped: bool,
     stdout_piped: bool,
     stderr_piped: bool,
@@ -320,7 +400,7 @@ fn spawn_configured_hook(
     hook_args: &[&str],
     cwd: &Path,
     git_dir: Option<&Path>,
-    extra_env: &[(&str, &str)],
+    extra_env: &[(String, String)],
     stdin_piped: bool,
     stdout_piped: bool,
     stderr_piped: bool,
@@ -389,6 +469,8 @@ pub struct RunHookOptions<'a> {
     pub stdin_data: Option<&'a [u8]>,
     /// Extra environment variables for each hook subprocess.
     pub env_vars: &'a [(&'a str, &'a str)],
+    /// Commit-style env (`GIT_INDEX_FILE`, `GIT_PREFIX`, author exports, …) merged after `env_vars`.
+    pub commit_env: Option<&'a CommitHookEnv<'a>>,
 }
 
 /// Run all hooks for `hook_name` in Git order; return first non-zero exit or success.
@@ -421,6 +503,17 @@ pub fn run_hook_opts(
     let work_dir = work_dir.as_path();
     let git_dir_for_configured = repo.map(|r| r.git_dir.as_path());
 
+    let mut merged_env: Vec<(String, String)> = opts
+        .env_vars
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    if let Some(r) = repo {
+        if let Some(ce) = opts.commit_env {
+            merged_env.extend(build_commit_hook_env(r, work_dir, ce));
+        }
+    }
+
     for h in &seq {
         let (stdin_piped, stdin_file) = match opts.path_to_stdin {
             Some(p) => (true, Some(p.to_path_buf())),
@@ -447,7 +540,7 @@ pub fn run_hook_opts(
                     args,
                     work_dir,
                     gd,
-                    opts.env_vars,
+                    &merged_env,
                     stdin_piped,
                     stdout_piped,
                     stderr_piped,
@@ -466,7 +559,7 @@ pub fn run_hook_opts(
                     args,
                     work_dir,
                     git_dir_for_configured,
-                    opts.env_vars,
+                    &merged_env,
                     stdin_piped,
                     stdout_piped,
                     stderr_piped,
@@ -534,6 +627,32 @@ pub fn run_hook_opts(
     Ok(HookResult::Success)
 }
 
+/// Run commit-style hooks with `GIT_INDEX_FILE`, `GIT_PREFIX`, and related env (Git `run_commit_hook`).
+pub fn run_commit_hook(
+    repo: &Repository,
+    hook_name: &str,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    commit_env: &CommitHookEnv<'_>,
+) -> Result<HookResult, String> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).map_err(|e| format!("{e}"))?;
+    let stdout_to_stderr = hook_name != "pre-push";
+    run_hook_opts(
+        Some(repo),
+        hook_name,
+        args,
+        &config,
+        RunHookOptions {
+            stdout_to_stderr,
+            path_to_stdin: None,
+            stdin_data,
+            env_vars: &[],
+            commit_env: Some(commit_env),
+        },
+        None,
+    )
+}
+
 /// Run a hook by name with the given arguments (Git-compatible multihooks).
 ///
 /// `pre-push` keeps stdout separate; other hooks merge stdout to stderr.
@@ -558,6 +677,7 @@ pub fn run_hook(
             path_to_stdin: None,
             stdin_data,
             env_vars: &[],
+            commit_env: None,
         },
         None,
     ) {
@@ -592,6 +712,7 @@ pub fn run_hook_in_git_dir(
             path_to_stdin: None,
             stdin_data,
             env_vars,
+            commit_env: None,
         },
         Some(&mut captured),
     ) {
@@ -623,6 +744,7 @@ pub fn run_hook_with_env(
             path_to_stdin: None,
             stdin_data,
             env_vars,
+            commit_env: None,
         },
         Some(&mut captured),
     ) {
