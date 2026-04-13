@@ -509,17 +509,38 @@ pub(crate) fn collect_wants(
         if src.contains('*') {
             let pattern = resolve_advertised_source_ref(src, advertised)
                 .unwrap_or_else(|| format!("refs/heads/{src}"));
+            let mut matched_any = false;
             for (name, oid) in advertised {
                 if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
                     wants.push(*oid);
+                    matched_any = true;
                 }
+            }
+            if !matched_any {
+                bail!("could not find any remote ref matching glob '{src}'");
             }
             continue;
         }
-        let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
-            ObjectId::from_hex(src)
-                .with_context(|| format!("invalid object id in refspec: {src}"))?
-        } else if src.is_empty() || src == "HEAD" {
+        if src.eq_ignore_ascii_case("HEAD") {
+            let oid = advertised
+                .iter()
+                .find(|(n, _)| n == "HEAD")
+                .map(|(_, o)| *o)
+                .with_context(|| "could not find remote ref 'HEAD' in advertisement")?;
+            if is_excluded("HEAD") {
+                continue;
+            }
+            wants.push(oid);
+            continue;
+        }
+        if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            let oid: ObjectId = src
+                .parse()
+                .with_context(|| format!("invalid object id '{src}' in refspec"))?;
+            wants.push(oid);
+            continue;
+        }
+        let oid = if src.is_empty() || src == "HEAD" {
             let resolved = advertised
                 .iter()
                 .find(|(n, _)| n == "HEAD")
@@ -547,6 +568,13 @@ pub(crate) fn collect_wants(
                 .iter()
                 .find(|(n, _)| n == &remote_ref)
                 .map(|(_, o)| *o)
+                .or_else(|| {
+                    let tag_ref = format!("refs/tags/{src}");
+                    advertised
+                        .iter()
+                        .find(|(n, _)| n == &tag_ref)
+                        .map(|(_, o)| *o)
+                })
                 .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
             if is_excluded(&remote_ref) {
                 continue;
