@@ -4581,7 +4581,7 @@ fn replay_remaining(
                          hint:   grit rebase --continue",
                             exec_cmd
                         );
-                        let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                        let remaining: Vec<&str> = todo[i..].to_vec();
                         write_rebase_todo_slice(rb_dir, &remaining)?;
                         std::process::exit(code);
                     }
@@ -4726,7 +4726,7 @@ fn replay_remaining(
                             std::process::exit(0);
                         }
                         Err(_e) => {
-                            let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                            let remaining: Vec<&str> = todo[i..].to_vec();
                             write_rebase_todo_slice(rb_dir, &remaining)?;
                             let ff =
                                 is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
@@ -4837,7 +4837,7 @@ fn replay_remaining(
                             continue 'rebase_loop;
                         }
                         Err(_e) => {
-                            let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                            let remaining: Vec<&str> = todo[i..].to_vec();
                             write_rebase_todo_slice(rb_dir, &remaining)?;
                             let ff =
                                 is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
