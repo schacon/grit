@@ -120,13 +120,6 @@ test_expect_success() {
 	# restores the trash root.
 	test_run_ "$commands"
 	result=$?
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		cd "$TRASH_DIRECTORY" || {
-			echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
-			result=1
-		}
-	fi
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	if test -f "$_TICK_FILE"
 	then
@@ -138,7 +131,13 @@ test_expect_success() {
 	then
 		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
 	fi
-	echo >&3 ""
+	# Verbose diagnostics go to fd 3 (stderr when verbose); blank line matches
+	# upstream git test-lib between cases. Skip when not verbose so nested
+	# subtests (fd 3 → stdout) do not get spurious lines in captured `out`.
+	if test "$verbose" = t
+	then
+		echo >&3 ""
+	fi
 	maybe_teardown_verbose
 	if test "$result" -eq 0
 	then
@@ -209,13 +208,6 @@ test_expect_failure() {
 	test -f "$_exports_file" && . "$_exports_file"
 	test_run_ "$commands" expecting_failure
 	result=$?
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		cd "$TRASH_DIRECTORY" || {
-			echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
-			result=1
-		}
-	fi
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
 	then
@@ -227,7 +219,10 @@ test_expect_failure() {
 	then
 		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
 	fi
-	echo >&3 ""
+	if test "$verbose" = t
+	then
+		echo >&3 ""
+	fi
 	maybe_teardown_verbose
 	if test "$result" -ne 0
 	then
