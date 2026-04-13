@@ -689,21 +689,25 @@ fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> boo
     let simple = simple_length(pattern);
 
     // Git `match_pathspec_item`: exact / directory prefix before `git_fnmatch`.
+    // Only when the pattern has no glob metacharacters (`simple_length` spans the whole pattern);
+    // otherwise a pattern like `a[a]` must not match children via `a[a]/` prefix (t6130 vs ls-tree).
     if ps_str_eq(pattern, path, magic.icase) {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix('/') {
-        if ps_str_eq(prefix, path, magic.icase) {
-            return true;
-        }
-        let prefix_slash = format!("{prefix}/");
-        if path_starts_with(path, &prefix_slash, magic.icase) {
-            return true;
-        }
-    } else {
-        let prefix_slash = format!("{pattern}/");
-        if path_starts_with(path, &prefix_slash, magic.icase) {
-            return true;
+    if simple == pattern.len() {
+        if let Some(prefix) = pattern.strip_suffix('/') {
+            if ps_str_eq(prefix, path, magic.icase) {
+                return true;
+            }
+            let prefix_slash = format!("{prefix}/");
+            if path_starts_with(path, &prefix_slash, magic.icase) {
+                return true;
+            }
+        } else {
+            let prefix_slash = format!("{pattern}/");
+            if path_starts_with(path, &prefix_slash, magic.icase) {
+                return true;
+            }
         }
     }
 
