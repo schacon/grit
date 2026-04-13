@@ -738,11 +738,33 @@ pub fn rev_list(
 
     let mut ordered = match options.ordering {
         OrderingMode::Default | OrderingMode::DateOrderWalk | OrderingMode::AuthorDateWalk => {
-            date_order_walk(
-                &mut graph,
-                &included,
-                options.ordering == OrderingMode::AuthorDateWalk,
-            )?
+            let author_dates = options.ordering == OrderingMode::AuthorDateWalk;
+            let parent_count_filter_active =
+                options.min_parents.is_some() || options.max_parents.is_some();
+            if parent_count_filter_active {
+                // When parent-count filters (`--max-parents=1` / `--no-merges`, …) drop a user-given
+                // tip (e.g. a merge under `--no-merges`), Git still seeds the walk from that tip's
+                // parents so both sides of the merge remain reachable (`format-patch`, `rev-list`).
+                let mut tips: Vec<ObjectId> = Vec::new();
+                let mut tip_seen = HashSet::new();
+                for &tip in &include {
+                    if included.contains(&tip) {
+                        if tip_seen.insert(tip) {
+                            tips.push(tip);
+                        }
+                        continue;
+                    }
+                    let parents = graph.parents_of(tip).unwrap_or_default();
+                    for p in parents {
+                        if tip_seen.insert(p) {
+                            tips.push(p);
+                        }
+                    }
+                }
+                date_order_walk_with_tips(&mut graph, &tips, &included, author_dates)?
+            } else {
+                date_order_walk(&mut graph, &included, author_dates)?
+            }
         }
         OrderingMode::Topo => topo_sort(&mut graph, &included, false)?,
         OrderingMode::AuthorDateTopo => topo_sort(&mut graph, &included, true)?,
@@ -2489,6 +2511,64 @@ pub(crate) fn walk_closure_ordered(
         }
     }
     Ok((seen, order))
+}
+
+/// Like [`date_order_walk`], but the initial heap is seeded from `tips` (in order) instead of
+/// every commit with no selected children. Used when `--max-parents` / `--min-parents` filter out
+/// a user tip (e.g. a merge): parents must be explicit seeds so both sides stay reachable.
+fn date_order_walk_with_tips(
+    graph: &mut CommitGraph<'_>,
+    tips: &[ObjectId],
+    selected: &HashSet<ObjectId>,
+    author_dates: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut unfinished_children: HashMap<ObjectId, usize> =
+        selected.iter().map(|&oid| (oid, 0usize)).collect();
+    for &child in selected {
+        for parent in graph.parents_of(child)? {
+            if selected.contains(&parent) {
+                if let Some(count) = unfinished_children.get_mut(&parent) {
+                    *count += 1;
+                }
+            }
+        }
+    }
+
+    let mut heap = BinaryHeap::new();
+    for &tip in tips {
+        if selected.contains(&tip) {
+            heap.push(CommitDateKey {
+                oid: tip,
+                date: graph.sort_key(tip, author_dates),
+            });
+        }
+    }
+
+    let mut emitted = HashSet::new();
+    let mut out = Vec::with_capacity(selected.len());
+    while let Some(item) = heap.pop() {
+        if !emitted.insert(item.oid) {
+            continue;
+        }
+        out.push(item.oid);
+        for parent in graph.parents_of(item.oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            let Some(count) = unfinished_children.get_mut(&parent) else {
+                continue;
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                heap.push(CommitDateKey {
+                    oid: parent,
+                    date: graph.sort_key(parent, author_dates),
+                });
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 /// Git-style default ordering: among commits ready to print, pick the one with the
