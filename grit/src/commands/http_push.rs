@@ -1,11 +1,11 @@
-//! `grit http-push` — push objects to a remote repository via HTTP/DAV.
+//! `grit http-push` — push objects to a remote repository via HTTP(S).
 //!
-//! Pushes objects to a remote repository using HTTP/WebDAV.
-//! Currently a stub that reports the feature is not implemented.
+//! This command is a compatibility entry point that forwards to the native
+//! `grit push` implementation with an explicit HTTP(S) URL remote.
 //!
-//!     grit http-push <URL>
+//!     grit http-push <URL> [<REF>...]
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::Args as ClapArgs;
 
 /// Arguments for `grit http-push`.
@@ -29,7 +29,41 @@ pub struct Args {
     pub verbose: bool,
 }
 
-/// Run `grit http-push`.
+/// Run `grit http-push` by forwarding to `grit push`.
 pub fn run(args: Args) -> Result<()> {
-    bail!("http-push to '{}' is not yet implemented in grit", args.url)
+    crate::commands::push::run(crate::commands::push::Args {
+        no_ipv4: false,
+        no_ipv6: false,
+        remote: Some(args.url),
+        refspecs: args.refs,
+        force: false,
+        no_force: false,
+        tags: false,
+        dry_run: args.dry_run,
+        delete: false,
+        set_upstream: false,
+        force_with_lease: None,
+        force_if_includes: false,
+        no_force_if_includes: false,
+        atomic: false,
+        push_option: Vec::new(),
+        porcelain: false,
+        all: false,
+        branches: false,
+        mirror: false,
+        quiet: !args.verbose,
+        no_verify: false,
+        recurse_submodules: Vec::new(),
+        no_recurse_submodules: true,
+        signed: None,
+        no_signed: false,
+        follow_tags: false,
+        no_follow_tags: false,
+        prune: false,
+        verbose: args.verbose,
+        progress: false,
+        no_progress: false,
+        receive_pack: None,
+        upload_pack: None,
+    })
 }
