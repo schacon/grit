@@ -1,8 +1,6 @@
 //! `grit push` — update remote refs and associated objects.
 //!
-//! Native push support currently targets **local (file://)** transports.
-//! HTTP(S) and other non-local transports are delegated to system Git for
-//! protocol compatibility.
+//! Native push support targets local transports and smart HTTP receive-pack.
 
 use crate::commands::pack_objects;
 use crate::protocol_wire;
@@ -740,21 +738,6 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--all and --mirror cannot be used together");
     }
 
-    if urls.iter().any(|u| is_http_transport_url(u)) {
-        for url in &urls {
-            if !is_http_transport_url(url) {
-                continue;
-            }
-            let proto = if url.starts_with("https://") {
-                "https"
-            } else {
-                "http"
-            };
-            crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
-        }
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-
     if args.receive_pack.as_ref().map_or(false, |s| !s.is_empty()) {
         return run_push_via_system_git(&repo, &args, effective_mirror);
     }
@@ -893,13 +876,7 @@ fn push_to_url(
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
     } else if is_http_transport_url(url) {
-        let proto = if url.starts_with("https://") {
-            "https"
-        } else {
-            "http"
-        };
-        crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        return push_to_http_url(repo, config, args, url);
     } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(url)?;
@@ -3182,6 +3159,27 @@ fn url_looks_like_local_path(url: &str) -> bool {
 
 fn is_http_transport_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn push_to_http_url(repo: &Repository, config: &ConfigSet, args: &Args, url: &str) -> Result<()> {
+    let proto = if url.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
+
+    let client = crate::http_client::HttpClientContext::from_config_set(config)?;
+    let advertised = crate::http_push_smart::discover_receive_pack(url, &client)?;
+    if advertised.object_format != "sha1" {
+        bail!(
+            "unsupported remote object format '{}' for push over HTTP",
+            advertised.object_format
+        );
+    }
+    let _ = args;
+    let _ = advertised;
+    bail!("smart HTTP push execution path is not implemented yet")
 }
 
 fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
