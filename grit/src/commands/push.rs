@@ -519,122 +519,6 @@ fn sort_collateral_indices(
     js
 }
 
-/// Delegate `git push` to the system binary when `--receive-pack` is set (matches Git's
-/// `git-receive-pack` / `send-pack` protocol for wrapper tests).
-fn run_push_via_system_git(repo: &Repository, args: &Args, mirror_for_push: bool) -> Result<()> {
-    let system_git = std::env::var("GIT_REAL_GIT")
-        .ok()
-        .filter(|p| Path::new(p).is_file())
-        .unwrap_or_else(|| "/usr/bin/git".to_owned());
-
-    let cwd = repo.work_tree.clone().unwrap_or_else(|| {
-        repo.git_dir
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| repo.git_dir.clone())
-    });
-
-    let mut cmd = Command::new(&system_git);
-    cmd.current_dir(&cwd);
-    cmd.arg("push");
-
-    if args.force {
-        cmd.arg("--force");
-    }
-    if args.tags {
-        cmd.arg("--tags");
-    }
-    if args.dry_run {
-        cmd.arg("--dry-run");
-    }
-    if args.delete {
-        cmd.arg("--delete");
-    }
-    if args.set_upstream {
-        cmd.arg("--set-upstream");
-    }
-    if let Some(v) = &args.force_with_lease {
-        if v.is_empty() {
-            cmd.arg("--force-with-lease");
-        } else {
-            cmd.arg(format!("--force-with-lease={v}"));
-        }
-    }
-    if args.atomic {
-        cmd.arg("--atomic");
-    }
-    for opt in &args.push_option {
-        cmd.arg(format!("--push-option={opt}"));
-    }
-    if args.porcelain {
-        cmd.arg("--porcelain");
-    }
-    if args.all {
-        cmd.arg("--all");
-    }
-    if args.branches {
-        cmd.arg("--branches");
-    }
-    if mirror_for_push {
-        cmd.arg("--mirror");
-    }
-    if args.quiet {
-        cmd.arg("--quiet");
-    }
-    if args.no_verify {
-        cmd.arg("--no-verify");
-    }
-    for v in &args.recurse_submodules {
-        cmd.arg(format!("--recurse-submodules={v}"));
-    }
-    if args.no_recurse_submodules {
-        cmd.arg("--no-recurse-submodules");
-    }
-    if let Some(v) = &args.signed {
-        if v == "true" || v.is_empty() {
-            cmd.arg("--signed");
-        } else {
-            cmd.arg(format!("--signed={v}"));
-        }
-    }
-    if args.no_signed {
-        cmd.arg("--no-signed");
-    }
-    if args.follow_tags {
-        cmd.arg("--follow-tags");
-    }
-    if args.no_follow_tags {
-        cmd.arg("--no-follow-tags");
-    }
-    if args.progress {
-        cmd.arg("--progress");
-    }
-    if args.no_progress {
-        cmd.arg("--no-progress");
-    }
-    if let Some(p) = &args.receive_pack {
-        cmd.arg(format!("--receive-pack={p}"));
-    }
-    if let Some(p) = &args.upload_pack {
-        cmd.arg(format!("--upload-pack={p}"));
-    }
-
-    if let Some(r) = &args.remote {
-        cmd.arg(r);
-    }
-    for spec in &args.refspecs {
-        cmd.arg(spec);
-    }
-
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to spawn system git at '{system_git}'"))?;
-    if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
-    Ok(())
-}
-
 pub fn run(args: Args) -> Result<()> {
     if args.no_ipv4 {
         bail!("unknown option `no-ipv4'");
@@ -645,25 +529,6 @@ pub fn run(args: Args) -> Result<()> {
     let cli_force_enabled = args.force && !args.no_force;
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
-    if should_delegate_push_for_negotiation_or_protocol_v2(&args, &config) {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-    if repo
-        .work_tree
-        .as_ref()
-        .is_some_and(|wt| wt.join(".gitmodules").is_file())
-    {
-        // Deep submodule push semantics still diverge in edge cases; hand off to Git.
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-    if !matches!(
-        effective_push_recurse_submodules(&args, &config)?,
-        PushRecurseSubmodules::Off
-    ) {
-        // Recursive push behavior in deep submodule layouts still has edge mismatches.
-        // Delegate the full invocation to system git for parity.
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
 
     let push_all = args.all || args.branches;
 
@@ -738,8 +603,8 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--all and --mirror cannot be used together");
     }
 
-    if args.receive_pack.as_ref().map_or(false, |s| !s.is_empty()) {
-        return run_push_via_system_git(&repo, &args, effective_mirror);
+    if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
+        bail!("--receive-pack is not supported by native grit push");
     }
 
     // Collect push refspecs from config if no CLI refspecs
@@ -846,16 +711,11 @@ fn push_to_url(
     cli_force_enabled: bool,
 ) -> Result<()> {
     if url.starts_with("ext::") {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        bail!("ext transport is not supported for push");
     }
     if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
-        if args.atomic {
-            return run_push_with_receive_pack_wrapper(receive_pack, args.porcelain, url);
-        }
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-    if should_delegate_shallow_progress_push_to_real_git(repo, args, url) {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        let _ = receive_pack;
+        bail!("--receive-pack is not supported by native push transport");
     }
 
     if protocol_wire::effective_client_protocol_version() == 1 {
@@ -874,7 +734,7 @@ fn push_to_url(
     }
     let remote_path = if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        bail!("git:// transport is not supported for push");
     } else if is_http_transport_url(url) {
         return push_to_http_url(
             repo,
@@ -914,9 +774,6 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
-    if should_delegate_shallow_push_to_real_git(repo, &remote_repo, url, path_style_remote, args) {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
         if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
@@ -3731,23 +3588,6 @@ fn effective_force_if_includes(args: &Args, config: &ConfigSet) -> bool {
     requested && force_with_lease_allows_includes(&args.force_with_lease)
 }
 
-fn should_delegate_push_for_negotiation_or_protocol_v2(args: &Args, config: &ConfigSet) -> bool {
-    if config
-        .get("push.negotiate")
-        .and_then(|v| parse_bool(&v).ok())
-        .unwrap_or(false)
-        && !is_delete_only_push_request(args)
-    {
-        return true;
-    }
-    if std::env::var("GIT_TEST_PROTOCOL_VERSION").ok().as_deref() == Some("0") {
-        return false;
-    }
-    config
-        .get("protocol.version")
-        .is_some_and(|v| v.trim() == "2")
-}
-
 fn resolve_force_with_lease_tracking_expect(
     fwl: &Option<String>,
     git_dir: &Path,
@@ -4175,48 +4015,13 @@ fn estimate_push_progress_enumerated_objects(
     remote_name: &str,
     updates: &[RefUpdate],
 ) -> usize {
-    let mut new_oids: Vec<String> = updates
-        .iter()
-        .filter_map(|u| u.new_oid.map(|oid| oid.to_hex()))
-        .collect();
-    new_oids.sort();
-    new_oids.dedup();
-    if new_oids.is_empty() {
-        return 1;
-    }
-
-    let git_bin =
-        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
-    let workdir = repo
-        .work_tree
-        .clone()
-        .or_else(|| repo.git_dir.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| repo.git_dir.clone());
-    let mut cmd = Command::new(git_bin);
-    cmd.arg("-C")
-        .arg(workdir)
-        .arg("rev-list")
-        .arg("--objects")
-        .arg("--no-object-names")
-        .args(&new_oids)
-        .arg("--not")
-        .arg(format!("--remotes={remote_name}"));
-    let output = match cmd.output() {
-        Ok(out) if out.status.success() => out,
-        _ => return 1,
-    };
-    let send_set = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .count();
+    let _ = repo;
+    let _ = remote_name;
+    let send_set = updates.iter().filter(|u| u.new_oid.is_some()).count();
     if send_set == 0 {
         return 1;
     }
-    if repo.git_dir.join("shallow").is_file() && send_set > 1 {
-        send_set + 2
-    } else {
-        send_set
-    }
+    send_set
 }
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.
@@ -4377,145 +4182,6 @@ fn open_repo(path: &Path) -> Result<Repository> {
         return Repository::open(&git_dir, Some(path)).map_err(Into::into);
     }
     Repository::open(&dot_git, Some(path)).map_err(Into::into)
-}
-
-fn run_receive_pack_wrapper_expect_failure(
-    args: &Args,
-    url: &str,
-    path_style_remote: bool,
-) -> Result<()> {
-    let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) else {
-        bail!("internal error: missing receive-pack path");
-    };
-    if path_style_remote && Path::new(receive_pack).exists() {
-        let mut pass_args: Vec<String> = Vec::new();
-        if args.atomic {
-            pass_args.push("--atomic".to_owned());
-        }
-        if args.porcelain {
-            pass_args.push("--porcelain".to_owned());
-        }
-        if args.force && !args.no_force {
-            pass_args.push("--force".to_owned());
-        }
-        if args.dry_run {
-            pass_args.push("--dry-run".to_owned());
-        }
-        pass_args.push(format!("--receive-pack={receive_pack}"));
-        pass_args.push(url.to_owned());
-        if args.refspecs.is_empty() {
-            pass_args.push("HEAD:refs/heads/no-conflict".to_owned());
-        } else {
-            pass_args.extend(args.refspecs.clone());
-        }
-        match run_real_git_push_passthrough(&pass_args) {
-            Ok(status) if status.success() => {
-                if !args.porcelain {
-                    eprintln!("To {url}");
-                    eprintln!(" * [new branch]      HEAD -> no-conflict");
-                }
-                bail!("failed to push some refs to '{url}'");
-            }
-            Ok(_) => bail!("failed to push some refs to '{url}'"),
-            Err(_) => bail!("failed to push some refs to '{url}'"),
-        }
-    }
-    crate::transport_passthrough::delegate_current_invocation_to_real_git();
-}
-
-fn should_delegate_receive_pack_to_real_git(path_style_remote: bool, args: &Args) -> bool {
-    let _ = path_style_remote;
-    args.receive_pack.as_ref().is_some_and(|s| !s.is_empty())
-}
-
-fn should_delegate_shallow_push_to_real_git(
-    repo: &Repository,
-    remote_repo: &Repository,
-    url: &str,
-    path_style_remote: bool,
-    args: &Args,
-) -> bool {
-    if args.progress {
-        return false;
-    }
-    let local_transport = path_style_remote || url.starts_with("file://");
-    local_transport
-        && (repo.git_dir.join("shallow").is_file() || remote_repo.git_dir.join("shallow").is_file())
-}
-
-fn should_delegate_shallow_progress_push_to_real_git(
-    repo: &Repository,
-    args: &Args,
-    url: &str,
-) -> bool {
-    if args.quiet || args.no_progress || !args.progress {
-        return false;
-    }
-    let local_transport = url.starts_with("file://")
-        || std::path::Path::new(url).exists()
-        || url.contains('/')
-        || url.starts_with('.');
-    local_transport
-        && repo.git_dir.join("shallow").is_file()
-        && std::env::var_os("GIT_TRACE2_EVENT").is_some()
-}
-
-fn args_without_receive_pack() -> Result<Vec<String>> {
-    let full: Vec<String> = std::env::args().collect();
-    let (_opts, _subcmd, rest) = crate::extract_globals(&full)?;
-    let mut out = Vec::new();
-    let mut args = rest.into_iter().peekable();
-    while let Some(arg) = args.next() {
-        if arg == "--receive-pack" {
-            let _ = args.next();
-            continue;
-        }
-        if arg.starts_with("--receive-pack=") {
-            continue;
-        }
-        out.push(arg);
-    }
-    Ok(out)
-}
-
-fn run_real_git_push_passthrough(pass_args: &[String]) -> Result<std::process::ExitStatus> {
-    let git_bin =
-        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
-    let status = Command::new(&git_bin)
-        .arg("push")
-        .args(pass_args)
-        .status()
-        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
-    Ok(status)
-}
-
-fn run_push_with_receive_pack_wrapper(
-    receive_pack: &str,
-    skip_status_output: bool,
-    remote: &str,
-) -> Result<()> {
-    let git_bin =
-        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
-    let mut cmd = Command::new(&git_bin);
-    let filtered_args = args_without_receive_pack()?;
-    cmd.arg("push")
-        .arg(format!("--receive-pack={receive_pack}"))
-        .args(filtered_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
-
-    if !skip_status_output {
-        io::stdout().write_all(&output.stdout)?;
-    }
-    io::stderr().write_all(&output.stderr)?;
-
-    if output.status.success() {
-        bail!("failed to push some refs to '{remote}'");
-    }
-    bail!("failed to push some refs to '{remote}'");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
