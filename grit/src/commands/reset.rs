@@ -2287,11 +2287,7 @@ fn find_untracked_obstruction(
     // Include every path that appears at any stage. During merge conflicts there may be no stage 0
     // for a path (only higher stages); those paths are still tracked and must not be treated as
     // new additions for obstruction purposes (`t7110` reset --merge with pending merge).
-    let old_paths: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .map(|e| e.path.clone())
-        .collect();
+    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
     let mut ignore_matcher = IgnoreMatcher::from_repository(repo).ok();
 
     for entry in &new_index.entries {

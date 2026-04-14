@@ -36,6 +36,7 @@ mod git_path;
 mod grit_exe;
 mod http_bundle_uri;
 mod http_client;
+mod http_push_smart;
 mod http_smart;
 mod ident;
 mod pack_objects_upload;
