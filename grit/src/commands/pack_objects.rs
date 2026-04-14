@@ -1404,12 +1404,34 @@ pub fn build_thin_push_pack(
         }
     }
 
+    build_thin_push_pack_from_have_set(local_repo, push_tips, &have_roots)
+}
+
+/// Build a thin push pack while excluding object IDs known to exist remotely.
+///
+/// This variant is useful for transports that do not expose remote object storage directly
+/// (for example smart HTTP), but do provide a set of remote object IDs via advertisement and
+/// negotiation.
+pub fn build_thin_push_pack_from_remote_oids(
+    local_repo: &Repository,
+    push_tips: &[ObjectId],
+    remote_have_oids: &[ObjectId],
+) -> Result<Vec<u8>> {
+    let have_roots: BTreeSet<ObjectId> = remote_have_oids.iter().copied().collect();
+    build_thin_push_pack_from_have_set(local_repo, push_tips, &have_roots)
+}
+
+fn build_thin_push_pack_from_have_set(
+    local_repo: &Repository,
+    push_tips: &[ObjectId],
+    have_roots: &BTreeSet<ObjectId>,
+) -> Result<Vec<u8>> {
     let shallow_grafts: HashSet<ObjectId> = HashSet::new();
     let mut to_pack: BTreeSet<ObjectId> = BTreeSet::new();
     for tip in push_tips {
         walk_reachable(local_repo, tip, &mut to_pack, &shallow_grafts)?;
     }
-    for oid in &have_roots {
+    for oid in have_roots {
         to_pack.remove(oid);
     }
 
@@ -1439,7 +1461,7 @@ pub fn build_thin_push_pack(
             writeln!(stdin, "{}", tip.to_hex())?;
         }
         writeln!(stdin, "--not")?;
-        for oid in &have_roots {
+        for oid in have_roots {
             writeln!(stdin, "{}", oid.to_hex())?;
         }
     }

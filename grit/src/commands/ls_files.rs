@@ -387,7 +387,7 @@ pub fn run(args: Args) -> Result<()> {
             &mut matcher,
         )?;
     } else {
-    for (i, spec) in pathspec_filter.iter().enumerate() {
+        for (i, spec) in pathspec_filter.iter().enumerate() {
             let s = match spec {
                 Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
                 Pathspec::Glob(g) => g.clone(),
