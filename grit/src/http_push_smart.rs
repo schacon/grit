@@ -172,3 +172,231 @@ pub(crate) fn discover_receive_pack(
         service_url,
     })
 }
+
+/// One reference update command sent to `git-receive-pack`.
+#[derive(Clone, Debug)]
+pub(crate) struct PushCommand {
+    /// Current old value expected on the remote (`None` means all-zero object id).
+    pub(crate) old_oid: Option<ObjectId>,
+    /// New value to update (`None` means delete).
+    pub(crate) new_oid: Option<ObjectId>,
+    /// Fully qualified destination reference name.
+    pub(crate) refname: String,
+}
+
+/// One per-ref status line returned by the remote.
+#[derive(Clone, Debug)]
+pub(crate) struct PushStatusEntry {
+    /// Updated reference.
+    pub(crate) refname: String,
+    /// Whether the update succeeded.
+    pub(crate) ok: bool,
+    /// Optional error text for rejected updates.
+    pub(crate) message: Option<String>,
+}
+
+/// Parsed `report-status` response for a push request.
+#[derive(Clone, Debug)]
+pub(crate) struct PushStatusReport {
+    /// Whether the remote unpack phase succeeded.
+    pub(crate) unpack_ok: bool,
+    /// Unpack status message returned by remote.
+    pub(crate) unpack_message: String,
+    /// Per-reference status entries.
+    pub(crate) statuses: Vec<PushStatusEntry>,
+    /// Sideband progress/error bytes from remote (channels 2 and 3).
+    pub(crate) sideband_stderr: Vec<u8>,
+}
+
+fn format_push_old_new(oid: Option<ObjectId>) -> String {
+    oid.map(|o| o.to_hex()).unwrap_or_else(|| "0".repeat(40))
+}
+
+fn client_push_capabilities(
+    advertised: &ReceivePackAdvertisement,
+    atomic: bool,
+    push_options: &[String],
+) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    if advertised.supports("report-status-v2") {
+        out.push("report-status-v2".to_string());
+    } else if advertised.supports("report-status") {
+        out.push("report-status".to_string());
+    } else {
+        bail!("remote does not support report-status");
+    }
+    if advertised.supports("ofs-delta") {
+        out.push("ofs-delta".to_string());
+    }
+    if advertised.supports("side-band-64k") {
+        out.push("side-band-64k".to_string());
+    } else if advertised.supports("side-band") {
+        out.push("side-band".to_string());
+    }
+    if atomic {
+        if !advertised.supports("atomic") {
+            bail!("the receiving end does not support --atomic push");
+        }
+        out.push("atomic".to_string());
+    }
+    if !push_options.is_empty() {
+        if !advertised.supports("push-options") {
+            bail!("the receiving end does not support push options");
+        }
+        out.push("push-options".to_string());
+    }
+    if advertised.supports("agent") {
+        out.push(format!("agent={}", crate::http_smart::agent_header()));
+    }
+    if advertised.supports("object-format") {
+        out.push("object-format=sha1".to_string());
+    }
+    if advertised.supports("session-id") {
+        out.push(format!(
+            "session-id={}",
+            crate::trace2_transfer::trace2_session_id_wire_once()
+        ));
+    }
+    Ok(out)
+}
+
+fn decode_sideband_stream(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let mut i = 0usize;
+    let mut primary = Vec::new();
+    let mut stderr = Vec::new();
+    while i + 4 <= body.len() {
+        let len_str = std::str::from_utf8(&body[i..i + 4])
+            .with_context(|| format!("invalid sideband length header at offset {i}"))?;
+        let pkt_len = usize::from_str_radix(len_str, 16)
+            .with_context(|| format!("invalid sideband length value '{len_str}'"))?;
+        i += 4;
+        if pkt_len == 0 {
+            break;
+        }
+        if pkt_len < 5 || i + (pkt_len - 4) > body.len() {
+            bail!("truncated sideband packet in push response");
+        }
+        let payload = &body[i..i + (pkt_len - 4)];
+        i += pkt_len - 4;
+        let (band, data) = (payload[0], &payload[1..]);
+        match band {
+            1 => primary.extend_from_slice(data),
+            2 | 3 => stderr.extend_from_slice(data),
+            _ => {}
+        }
+    }
+    Ok((primary, stderr))
+}
+
+fn parse_report_status_body(body: &[u8]) -> Result<PushStatusReport> {
+    let mut cur = Cursor::new(body);
+    let unpack_line = match pkt_line::read_packet(&mut cur)? {
+        Some(pkt_line::Packet::Data(line)) => line,
+        Some(other) => bail!("unexpected first report-status packet: {other:?}"),
+        None => bail!("empty report-status response"),
+    };
+    let unpack_line = unpack_line.trim_end_matches('\n').to_string();
+    let unpack_ok = unpack_line == "unpack ok";
+    let unpack_message = unpack_line
+        .strip_prefix("unpack ")
+        .unwrap_or(unpack_line.as_str())
+        .to_string();
+
+    let mut statuses = Vec::new();
+    loop {
+        match pkt_line::read_packet(&mut cur)? {
+            Some(pkt_line::Packet::Data(line)) => {
+                let line = line.trim_end_matches('\n');
+                if let Some(rest) = line.strip_prefix("ok ") {
+                    statuses.push(PushStatusEntry {
+                        refname: rest.trim().to_string(),
+                        ok: true,
+                        message: None,
+                    });
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("ng ") {
+                    let (refname, message) = rest
+                        .split_once(' ')
+                        .map(|(r, m)| (r.trim(), Some(m.trim().to_string())))
+                        .unwrap_or((rest.trim(), None));
+                    statuses.push(PushStatusEntry {
+                        refname: refname.to_string(),
+                        ok: false,
+                        message,
+                    });
+                    continue;
+                }
+            }
+            Some(pkt_line::Packet::Flush) | None => break,
+            Some(pkt_line::Packet::Delim | pkt_line::Packet::ResponseEnd) => {}
+        }
+    }
+
+    Ok(PushStatusReport {
+        unpack_ok,
+        unpack_message,
+        statuses,
+        sideband_stderr: Vec::new(),
+    })
+}
+
+/// Send a smart-HTTP `git-receive-pack` request and parse `report-status`.
+pub(crate) fn send_receive_pack(
+    client: &crate::http_client::HttpClientContext,
+    advertised: &ReceivePackAdvertisement,
+    commands: &[PushCommand],
+    push_options: &[String],
+    pack_data: &[u8],
+    atomic: bool,
+) -> Result<PushStatusReport> {
+    if commands.is_empty() {
+        bail!("cannot push without update commands");
+    }
+
+    let caps = client_push_capabilities(advertised, atomic, push_options)?;
+    let mut request = Vec::new();
+    for (idx, cmd) in commands.iter().enumerate() {
+        let old_hex = format_push_old_new(cmd.old_oid);
+        let new_hex = format_push_old_new(cmd.new_oid);
+        let mut payload = format!("{old_hex} {new_hex} {}", cmd.refname);
+        if idx == 0 && !caps.is_empty() {
+            payload.push('\0');
+            payload.push_str(&caps.join(" "));
+        }
+        payload.push('\n');
+        pkt_line::write_packet_raw(&mut request, payload.as_bytes())?;
+    }
+    pkt_line::write_flush(&mut request)?;
+
+    if !push_options.is_empty() {
+        for opt in push_options {
+            pkt_line::write_line_to_vec(&mut request, opt)?;
+        }
+        pkt_line::write_flush(&mut request)?;
+    }
+
+    let delete_only = commands.iter().all(|cmd| cmd.new_oid.is_none());
+    if !delete_only {
+        request.extend_from_slice(pack_data);
+    }
+
+    let response = client.post_with_git_protocol(
+        &advertised.service_url,
+        "application/x-git-receive-pack-request",
+        "application/x-git-receive-pack-result",
+        &request,
+        None,
+    )?;
+
+    let (primary, sideband_stderr) =
+        if caps.iter().any(|c| c == "side-band-64k" || c == "side-band") {
+            decode_sideband_stream(&response)?
+        } else {
+            (response, Vec::new())
+        };
+
+    let mut status = parse_report_status_body(&primary)?;
+    status.sideband_stderr = sideband_stderr;
+    Ok(status)
+}

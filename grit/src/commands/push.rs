@@ -876,7 +876,18 @@ fn push_to_url(
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
     } else if is_http_transport_url(url) {
-        return push_to_http_url(repo, config, args, url);
+        return push_to_http_url(
+            repo,
+            config,
+            args,
+            url,
+            remote_name,
+            current_branch,
+            push_all,
+            effective_mirror,
+            push_refspecs_from_config,
+            cli_force_enabled,
+        );
     } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(url)?;
@@ -3161,7 +3172,27 @@ fn is_http_transport_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
-fn push_to_http_url(repo: &Repository, config: &ConfigSet, args: &Args, url: &str) -> Result<()> {
+fn scrub_push_url_credentials(url: &str) -> String {
+    if let Ok(mut parsed) = url::Url::parse(url) {
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+        return parsed.to_string();
+    }
+    url.to_owned()
+}
+
+fn push_to_http_url(
+    repo: &Repository,
+    config: &ConfigSet,
+    args: &Args,
+    url: &str,
+    remote_name: &str,
+    current_branch: Option<&str>,
+    push_all: bool,
+    effective_mirror: bool,
+    push_refspecs_from_config: &[String],
+    cli_force_enabled: bool,
+) -> Result<()> {
     let proto = if url.starts_with("https://") {
         "https"
     } else {
@@ -3177,9 +3208,411 @@ fn push_to_http_url(repo: &Repository, config: &ConfigSet, args: &Args, url: &st
             advertised.object_format
         );
     }
-    let _ = args;
-    let _ = advertised;
-    bail!("smart HTTP push execution path is not implemented yet")
+    if advertised.protocol_version == 2 {
+        bail!("smart HTTP push over protocol v2 is not implemented yet");
+    }
+
+    let mut remote_ref_map: std::collections::BTreeMap<String, ObjectId> =
+        std::collections::BTreeMap::new();
+    for r in &advertised.refs {
+        remote_ref_map.insert(r.name.clone(), r.oid);
+    }
+
+    let mut updates: Vec<RefUpdate> = Vec::new();
+    let mut set_upstream_after_push = args.set_upstream;
+    let mut remote_have: std::collections::BTreeSet<ObjectId> =
+        remote_ref_map.values().copied().collect();
+
+    if effective_mirror {
+        let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
+        for (refname, local_oid) in &local_all {
+            if !refname.starts_with("refs/") {
+                continue;
+            }
+            let old_oid = remote_ref_map.get(refname).copied();
+            if old_oid.as_ref() == Some(local_oid) {
+                continue;
+            }
+            updates.push(RefUpdate {
+                local_ref: Some(refname.clone()),
+                remote_ref: refname.clone(),
+                old_oid,
+                new_oid: Some(*local_oid),
+                expected_oid: None,
+                refspec_force: true,
+                pre_push_local_name: None,
+            });
+        }
+        for (refname, remote_oid) in &remote_ref_map {
+            if !refname.starts_with("refs/") {
+                continue;
+            }
+            if !local_all.iter().any(|(r, _)| r == refname) {
+                updates.push(RefUpdate {
+                    local_ref: None,
+                    remote_ref: refname.clone(),
+                    old_oid: Some(*remote_oid),
+                    new_oid: None,
+                    expected_oid: None,
+                    refspec_force: true,
+                    pre_push_local_name: None,
+                });
+            }
+        }
+    } else if push_all {
+        let mut local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+        local_branches.sort_by(|a, b| a.0.cmp(&b.0));
+        for (refname, local_oid) in &local_branches {
+            let old_oid = remote_ref_map.get(refname).copied();
+            if old_oid.as_ref() == Some(local_oid) {
+                continue;
+            }
+            updates.push(RefUpdate {
+                local_ref: Some(refname.clone()),
+                remote_ref: refname.clone(),
+                old_oid,
+                new_oid: Some(*local_oid),
+                expected_oid: None,
+                refspec_force: false,
+                pre_push_local_name: None,
+            });
+        }
+    } else {
+        let mut resolved_refspecs: Vec<String> = if !args.refspecs.is_empty() {
+            args.refspecs.clone()
+        } else if !push_refspecs_from_config.is_empty() {
+            push_refspecs_from_config.to_vec()
+        } else if let Some(branch) = current_branch {
+            let (src, dst, auto_setup) =
+                default_push_ref_for_current_branch(config, remote_name, branch)?;
+            if auto_setup {
+                set_upstream_after_push = true;
+            }
+            vec![format!("{src}:{dst}")]
+        } else {
+            bail!("You are not currently on a branch.");
+        };
+
+        if args.delete {
+            if resolved_refspecs.is_empty() {
+                bail!("--delete doesn't make sense without any refs");
+            }
+            for spec in &resolved_refspecs {
+                if spec.contains('*') {
+                    bail!("wildcard delete refspecs are not supported over HTTP push yet");
+                }
+                let remote_ref = if spec.contains(':') {
+                    let (_, dst) = parse_refspec(spec);
+                    normalize_ref(&dst)
+                } else {
+                    normalize_ref(spec)
+                };
+                if remote_ref.is_empty() {
+                    continue;
+                }
+                let old_oid = remote_ref_map.get(&remote_ref).copied();
+                updates.push(RefUpdate {
+                    local_ref: None,
+                    remote_ref,
+                    old_oid,
+                    new_oid: None,
+                    expected_oid: None,
+                    refspec_force: false,
+                    pre_push_local_name: None,
+                });
+            }
+            resolved_refspecs.clear();
+        }
+
+        for spec in &resolved_refspecs {
+            if spec.contains('*') {
+                bail!("wildcard push refspecs are not supported over HTTP push yet");
+            }
+            let refspec_force = spec.starts_with('+');
+            let (src_raw, dst_raw) = parse_refspec(spec);
+            if src_raw.is_empty() {
+                let remote_ref = normalize_ref(&dst_raw);
+                let old_oid = remote_ref_map.get(&remote_ref).copied();
+                updates.push(RefUpdate {
+                    local_ref: None,
+                    remote_ref,
+                    old_oid,
+                    new_oid: None,
+                    expected_oid: None,
+                    refspec_force,
+                    pre_push_local_name: None,
+                });
+                continue;
+            }
+
+            let local_ref = if src_raw == "HEAD" || src_raw.starts_with("refs/") {
+                src_raw.clone()
+            } else {
+                normalize_ref(&src_raw)
+            };
+            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+                .with_context(|| format!("src ref '{}' does not match any", src_raw))?;
+            let remote_ref = normalize_ref(&dst_raw);
+            let old_oid = remote_ref_map.get(&remote_ref).copied();
+
+            if let Some(old) = old_oid {
+                remote_have.insert(old);
+                if old == local_oid {
+                    continue;
+                }
+                if !effective_mirror
+                    && !cli_force_enabled
+                    && !refspec_force
+                    && args.force_with_lease.is_none()
+                    && !remote_ref.starts_with("refs/tags/")
+                    && !is_ancestor(repo, old, local_oid)?
+                {
+                    bail!(
+                        "Updates were rejected because the remote contains work that you do not\n\
+                         have locally. This is usually caused by another repository pushing to\n\
+                         the same ref. If you want to integrate the remote changes, use\n\
+                         'git pull' before pushing again.\n\
+                         See the 'Note about fast-forwards' in 'git push --help' for details."
+                    );
+                }
+            }
+
+            updates.push(RefUpdate {
+                local_ref: Some(local_ref),
+                remote_ref,
+                old_oid,
+                new_oid: Some(local_oid),
+                expected_oid: None,
+                refspec_force,
+                pre_push_local_name: if src_raw == "HEAD" {
+                    Some("HEAD".to_owned())
+                } else {
+                    None
+                },
+            });
+        }
+    }
+
+    if updates.is_empty() {
+        if !args.quiet {
+            println!("Everything up-to-date");
+        }
+        return Ok(());
+    }
+
+    if !args.no_verify {
+        let zero_oid = "0".repeat(40);
+        let mut hook_lines = String::new();
+        for update in &updates {
+            let local_ref = pre_push_hook_local_display(update);
+            let local_oid = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid.clone());
+            let remote_oid = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid.clone());
+            hook_lines.push_str(&format!(
+                "{local_ref} {local_oid} {} {remote_oid}\n",
+                update.remote_ref
+            ));
+        }
+        let result = run_hook(
+            repo,
+            "pre-push",
+            &[remote_name, url],
+            Some(hook_lines.as_bytes()),
+        );
+        if let HookResult::Failed(code) = result {
+            bail!("pre-push hook declined the push (exit code {code})");
+        }
+    }
+
+    if args.dry_run {
+        if !args.quiet {
+            println!("To {}", scrub_push_url_credentials(url));
+        }
+        return Ok(());
+    }
+
+    let push_tips: Vec<ObjectId> = updates.iter().filter_map(|u| u.new_oid).collect();
+    let remote_have_vec: Vec<ObjectId> = remote_have.into_iter().collect();
+    let delete_only = updates.iter().all(|u| u.new_oid.is_none());
+    let pack_data = if delete_only {
+        Vec::new()
+    } else {
+        pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
+    };
+    if push_show_object_progress(args) && !delete_only {
+        maybe_print_push_object_progress(true, push_tips.len().max(1));
+    }
+
+    let effective_push_options = resolved_push_options(args, config)?;
+    let commands: Vec<crate::http_push_smart::PushCommand> = updates
+        .iter()
+        .map(|u| crate::http_push_smart::PushCommand {
+            old_oid: u.old_oid,
+            new_oid: u.new_oid,
+            refname: u.remote_ref.clone(),
+        })
+        .collect();
+    let status = crate::http_push_smart::send_receive_pack(
+        &client,
+        &advertised,
+        &commands,
+        &effective_push_options,
+        &pack_data,
+        args.atomic,
+    )?;
+    if !status.sideband_stderr.is_empty() {
+        io::stderr().write_all(&status.sideband_stderr)?;
+    }
+    if !status.unpack_ok {
+        bail!("remote unpack failed: {}", status.unpack_message);
+    }
+
+    let status_by_ref: std::collections::HashMap<&str, &crate::http_push_smart::PushStatusEntry> =
+        status
+            .statuses
+            .iter()
+            .map(|s| (s.refname.as_str(), s))
+            .collect();
+
+    let display_url = scrub_push_url_credentials(url);
+    if args.porcelain {
+        println!("To {display_url}");
+    } else if !args.quiet {
+        eprintln!("To {display_url}");
+    }
+
+    let mut rejected = false;
+    let mut successful_branch_updates: Vec<(String, String)> = Vec::new();
+    for update in &updates {
+        let short_dst = update
+            .remote_ref
+            .strip_prefix("refs/heads/")
+            .or_else(|| update.remote_ref.strip_prefix("refs/tags/"))
+            .unwrap_or(update.remote_ref.as_str())
+            .to_owned();
+        let short_src = update
+            .local_ref
+            .as_deref()
+            .and_then(|r| r.strip_prefix("refs/heads/"))
+            .or_else(|| {
+                update
+                    .local_ref
+                    .as_deref()
+                    .and_then(|r| r.strip_prefix("refs/tags/"))
+            })
+            .unwrap_or("(delete)")
+            .to_owned();
+
+        let remote_status = status_by_ref.get(update.remote_ref.as_str());
+        if remote_status.is_some_and(|s| !s.ok) {
+            rejected = true;
+            let reason = remote_status
+                .and_then(|s| s.message.as_deref())
+                .unwrap_or("remote rejected");
+            if args.porcelain || args.quiet {
+                eprintln!("error: {reason}");
+            } else {
+                eprintln!(" ! [remote rejected] {short_src} -> {short_dst} ({reason})");
+            }
+            continue;
+        }
+
+        update_remote_tracking_ref(repo, remote_name, &update.remote_ref, update.new_oid)?;
+        if update.remote_ref.starts_with("refs/heads/") {
+            if let Some(local_ref) = update.local_ref.as_deref() {
+                if let Some(local_branch) = local_ref.strip_prefix("refs/heads/") {
+                    successful_branch_updates
+                        .push((local_branch.to_owned(), update.remote_ref.clone()));
+                }
+            }
+        }
+
+        if args.porcelain {
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| "0".repeat(40));
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| "0".repeat(40));
+            let flag = if update.new_oid.is_none() {
+                "-"
+            } else if update.old_oid.is_none() {
+                "*"
+            } else {
+                " "
+            };
+            println!(
+                "{flag}\t{src}:{dst}\t{old}..{new}\t{src_short} -> {dst_short}",
+                src = update.local_ref.as_deref().unwrap_or("(delete)"),
+                dst = update.remote_ref,
+                old = &old_hex[..7],
+                new = &new_hex[..7],
+                src_short = short_src,
+                dst_short = short_dst
+            );
+        } else if !args.quiet {
+            match (update.old_oid, update.new_oid) {
+                (_, None) => {
+                    eprintln!(" - [deleted]         {short_dst}");
+                }
+                (None, Some(_)) => {
+                    let kind = if update.remote_ref.starts_with("refs/tags/") {
+                        "tag"
+                    } else {
+                        "branch"
+                    };
+                    eprintln!(" * [new {kind}]      {short_src} -> {short_dst}");
+                }
+                (Some(old), Some(new)) if old != new => {
+                    let forced =
+                        (cli_force_enabled || update.refspec_force) && !is_ancestor(repo, old, new)?;
+                    if forced {
+                        eprintln!(
+                            " + {}...{}  {} -> {} (forced update)",
+                            &old.to_hex()[..7],
+                            &new.to_hex()[..7],
+                            short_src,
+                            short_dst
+                        );
+                    } else {
+                        eprintln!(
+                            "   {}..{}  {} -> {}",
+                            &old.to_hex()[..7],
+                            &new.to_hex()[..7],
+                            short_src,
+                            short_dst
+                        );
+                    }
+                }
+                _ => {
+                    eprintln!(" = [up to date]      {} -> {}", short_src, short_dst);
+                }
+            }
+        }
+    }
+
+    if rejected {
+        bail!("failed to push some refs to '{display_url}'");
+    }
+
+    if set_upstream_after_push {
+        for (branch, merge_ref) in successful_branch_updates {
+            set_upstream_config(&repo.git_dir, &branch, remote_name, &merge_ref)?;
+            if !args.quiet {
+                let track_short = merge_ref.strip_prefix("refs/heads/").unwrap_or(&merge_ref);
+                eprintln!("branch '{branch}' set up to track '{remote_name}/{track_short}'.");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
