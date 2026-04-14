@@ -389,12 +389,14 @@ pub(crate) fn send_receive_pack(
         None,
     )?;
 
-    let (primary, sideband_stderr) =
-        if caps.iter().any(|c| c == "side-band-64k" || c == "side-band") {
-            decode_sideband_stream(&response)?
-        } else {
-            (response, Vec::new())
-        };
+    let (primary, sideband_stderr) = if caps
+        .iter()
+        .any(|c| c == "side-band-64k" || c == "side-band")
+    {
+        decode_sideband_stream(&response)?
+    } else {
+        (response, Vec::new())
+    };
 
     let mut status = parse_report_status_body(&primary)?;
     status.sideband_stderr = sideband_stderr;

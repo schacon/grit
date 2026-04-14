@@ -3571,8 +3571,8 @@ fn push_to_http_url(
                     eprintln!(" * [new {kind}]      {short_src} -> {short_dst}");
                 }
                 (Some(old), Some(new)) if old != new => {
-                    let forced =
-                        (cli_force_enabled || update.refspec_force) && !is_ancestor(repo, old, new)?;
+                    let forced = (cli_force_enabled || update.refspec_force)
+                        && !is_ancestor(repo, old, new)?;
                     if forced {
                         eprintln!(
                             " + {}...{}  {} -> {} (forced update)",
