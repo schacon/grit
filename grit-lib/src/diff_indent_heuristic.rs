@@ -300,7 +300,8 @@ fn change_compact_one(xdf: &mut XdFile<'_>, xdfo: &mut XdFile<'_>, indent_heuris
                 let groupsize = g.end - g.start;
                 let mut end_matching_other = -1_isize;
 
-                while !group_slide_up(xdf, &mut g) {
+                // Git's C uses `while (!group_slide_up)` with 0=success; here bool true=success.
+                while group_slide_up(xdf, &mut g) {
                     let slid = group_previous(xdfo, &mut go);
                     debug_assert!(slid, "group sync broken sliding up");
                 }
