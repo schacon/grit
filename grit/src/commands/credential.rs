@@ -12,6 +12,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use url::Url;
 
@@ -116,12 +117,127 @@ fn find_git_dir() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Read `credential.helper` from Git config (supports -c overrides via
-/// `GIT_CONFIG_PARAMETERS` and the normal config file cascade).
-fn get_credential_helper() -> Option<String> {
-    let git_dir = find_git_dir();
-    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
-    config.get("credential.helper")
+/// Build the effective `credential.helper` list in Git order.
+///
+/// Git walks every `credential.helper` and `credential.<URL>.helper` config entry in
+/// load order. URL-scoped entries only apply when the subsection pattern matches
+/// `target_url` (per Git's URL-match rules). For every applicable entry, a non-empty
+/// value is appended to the helper list and an empty value resets it (Git's
+/// `string_list_clear` semantics in `credential_apply_config_cb`).
+///
+/// `target_url` is the URL we're authenticating against (e.g.
+/// `https://github.com/owner/repo.git`). When `None`, only unscoped
+/// `credential.helper` entries contribute.
+fn credential_helpers(
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in config.entries() {
+        let key = &entry.key;
+        let Some(first_dot) = key.find('.') else {
+            continue;
+        };
+        let Some(last_dot) = key.rfind('.') else {
+            continue;
+        };
+        let section = &key[..first_dot];
+        let variable = &key[last_dot + 1..];
+        if !section.eq_ignore_ascii_case("credential") || !variable.eq_ignore_ascii_case("helper") {
+            continue;
+        }
+        if first_dot != last_dot {
+            let subsection = &key[first_dot + 1..last_dot];
+            let Some(target) = target_url else {
+                continue;
+            };
+            if !grit_lib::config::url_matches(subsection, target) {
+                continue;
+            }
+        }
+        let value = entry.value.as_deref().unwrap_or("");
+        if value.trim().is_empty() {
+            out.clear();
+        } else {
+            out.push(value.to_string());
+        }
+    }
+    out
+}
+
+/// Reconstruct the target URL from credential input fields.
+///
+/// Git helpers are scoped per-URL. The credential protocol either provides
+/// `url=<full url>` directly or split fields (`protocol`, `host`, `path`); this
+/// helper produces a single URL string for [`grit_lib::config::url_matches`]. Returns
+/// `None` when there is not enough information to build a URL.
+fn target_url_from_credentials(creds: &BTreeMap<String, String>) -> Option<String> {
+    if let Some(u) = creds.get("url") {
+        if !u.trim().is_empty() {
+            return Some(u.clone());
+        }
+    }
+    let protocol = creds.get("protocol")?;
+    let host = creds.get("host")?;
+    let mut url = format!("{protocol}://{host}");
+    if let Some(path) = creds.get("path").filter(|p| !p.is_empty()) {
+        if !path.starts_with('/') {
+            url.push('/');
+        }
+        url.push_str(path);
+    }
+    Some(url)
+}
+
+/// Directories to search for `git-credential-*` the same way Git does (`exec_path` before `PATH`).
+///
+/// Git installs helpers under `/usr/libexec/git-core` on macOS; they are not on `PATH`, so a bare
+/// [`Command::new`] lookup fails while `git credential` still works.
+fn credential_helper_exec_path_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Ok(ep) = std::env::var("GIT_EXEC_PATH") {
+        let p = PathBuf::from(ep.trim());
+        if p.is_dir() {
+            v.push(p);
+        }
+    }
+    for candidate in [
+        "/usr/libexec/git-core",
+        "/Library/Developer/CommandLineTools/usr/libexec/git-core",
+        "/opt/homebrew/opt/git/libexec/git-core",
+        "/opt/homebrew/libexec/git-core",
+        "/usr/lib/git-core",
+        "/usr/local/libexec/git-core",
+    ] {
+        let p = PathBuf::from(candidate);
+        if p.is_dir() {
+            v.push(p);
+        }
+    }
+    if let Some(p) = crate::git_exec_path_for_helpers(None) {
+        v.push(p);
+    }
+    v
+}
+
+fn resolve_credential_helper_executable(helper_program: &str) -> PathBuf {
+    if helper_program.contains('/') {
+        return PathBuf::from(helper_program);
+    }
+    if helper_program.starts_with("git-credential-") {
+        let cmd = helper_program
+            .strip_prefix("git-")
+            .unwrap_or(helper_program);
+        for ep in credential_helper_exec_path_candidates() {
+            if let Some(p) = crate::alias::find_git_external_helper(cmd, Some(&ep)) {
+                return p;
+            }
+        }
+        if let Some(p) = crate::alias::find_git_external_helper(cmd, None) {
+            return p;
+        }
+    }
+    PathBuf::from(helper_program)
 }
 
 /// Invoke an external credential helper program.
@@ -187,7 +303,8 @@ fn invoke_helper(
         } else {
             format!("git-credential-{first_word}")
         };
-        let mut cmd = Command::new(&helper_program);
+        let resolved = resolve_credential_helper_executable(&helper_program);
+        let mut cmd = Command::new(&resolved);
         cmd.arg(action);
         for arg in extra_args {
             cmd.arg(arg);
@@ -241,6 +358,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut creds = read_credential_input()?;
     normalize_url_field(&mut creds)?;
 
+    let target_url = target_url_from_credentials(&creds);
+
     match args.action {
         CredentialAction::Fill => {
             // For fill, we need at minimum protocol and host.
@@ -248,16 +367,15 @@ pub fn run(args: Args) -> Result<()> {
                 bail!("credential input must include protocol and host");
             }
 
-            // Try to invoke configured credential helper.
-            let filled = if let Some(helper) = get_credential_helper() {
-                if !helper.is_empty() {
-                    invoke_helper(&helper, "get", &creds)?
-                } else {
-                    creds
-                }
-            } else {
-                creds
-            };
+            // Try configured credential helpers in order (Git runs the full chain, not only the
+            // last `credential.helper` value).
+            let git_dir = find_git_dir();
+            let config =
+                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
+            let mut filled = creds.clone();
+            for helper in credential_helpers(&config, target_url.as_deref()) {
+                filled = invoke_helper(&helper, "get", &filled)?;
+            }
 
             // Output all known fields.
             let stdout = io::stdout();
@@ -268,17 +386,19 @@ pub fn run(args: Args) -> Result<()> {
             writeln!(out)?;
         }
         CredentialAction::Approve => {
-            if let Some(helper) = get_credential_helper() {
-                if !helper.is_empty() {
-                    let _ = invoke_helper(&helper, "store", &creds)?;
-                }
+            let git_dir = find_git_dir();
+            let config =
+                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
+            for helper in credential_helpers(&config, target_url.as_deref()) {
+                let _ = invoke_helper(&helper, "store", &creds)?;
             }
         }
         CredentialAction::Reject => {
-            if let Some(helper) = get_credential_helper() {
-                if !helper.is_empty() {
-                    let _ = invoke_helper(&helper, "erase", &creds)?;
-                }
+            let git_dir = find_git_dir();
+            let config =
+                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
+            for helper in credential_helpers(&config, target_url.as_deref()) {
+                let _ = invoke_helper(&helper, "erase", &creds)?;
             }
         }
     }

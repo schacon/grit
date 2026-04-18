@@ -82,6 +82,7 @@ def run_one_family(
     digit: int,
     timeout: int,
     quiet: bool,
+    verbose: bool,
     from_stem: str,
 ) -> tuple[int, int]:
     out_csv = DATA_FAMILY / f"{digit}.csv"
@@ -97,6 +98,8 @@ def run_one_family(
     ]
     if quiet:
         cmd.append("--quiet")
+    if verbose:
+        cmd.append("--verbose")
     if from_stem:
         cmd.extend(["--from", from_stem])
     env = os.environ.copy()
@@ -109,6 +112,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=int, default=120, metavar="N")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Forward to run-tests.sh: print each file as it starts.",
+    )
     parser.add_argument("--from", dest="from_stem", default="", metavar="NAME")
     parser.add_argument(
         "targets",
@@ -117,10 +126,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.quiet and args.verbose:
+        print("ERROR: --verbose and --quiet are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
+
     if args.targets and any(t.strip().endswith(".sh") for t in args.targets):
         cmd = [str(RUN_TESTS), "--timeout", str(args.timeout)]
         if args.quiet:
             cmd.append("--quiet")
+        if args.verbose:
+            cmd.append("--verbose")
         if args.from_stem:
             cmd.extend(["--from", args.from_stem])
         cmd.extend(args.targets)
@@ -139,6 +154,7 @@ def main() -> None:
                 d,
                 args.timeout,
                 args.quiet,
+                args.verbose,
                 args.from_stem,
             )
             for d in fams

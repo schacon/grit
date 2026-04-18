@@ -11,6 +11,7 @@
 # Options:
 #   --timeout N    per-file timeout (default: 120)
 #   --quiet        minimal output
+#   --verbose, -v  print each test file as it starts ([i/N] name …) before the per-file result line
 #   --from NAME    resume: skip tests before NAME (stem or .sh; first match in run order)
 #   --parallel     run one process per Git test family (t0–t9); merge into data/test-files.csv at the end
 #   --family N     only tests whose CSV group is tN (N is 0–9 or t0–t9)
@@ -33,6 +34,7 @@ GEN_DASH="$REPO/scripts/generate-dashboard-from-test-files.py"
 BIN="$REPO/target/release/grit"
 TIMEOUT=120
 QUIET=false
+VERBOSE=false
 TARGET=""
 FROM=""
 POS=()
@@ -49,6 +51,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   --quiet)
     QUIET=true
+    shift
+    ;;
+  --verbose|-v)
+    VERBOSE=true
     shift
     ;;
   --parallel)
@@ -99,9 +105,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$VERBOSE" == true && "$QUIET" == true ]]; then
+  echo "ERROR: --verbose and --quiet are mutually exclusive"
+  exit 1
+fi
+
 if [[ "$PARALLEL" == true ]]; then
   PY_ARGS=(--timeout "$TIMEOUT")
   [[ "$QUIET" == true ]] && PY_ARGS+=(--quiet)
+  [[ "$VERBOSE" == true ]] && PY_ARGS+=(--verbose)
   [[ -n "$FROM" ]] && PY_ARGS+=(--from "$FROM")
   exec python3 "$REPO/scripts/run-tests-parallel.py" "${PY_ARGS[@]}" -- "${POS[@]}"
 fi
@@ -369,7 +381,11 @@ run_one() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$base" "$total" "$pass" "$fail" "$status" "$ef"
 }
 
-for f in "${FILES[@]}"; do
+for i in "${!FILES[@]}"; do
+  f="${FILES[$i]}"
+  if [[ "$VERBOSE" == true && "$QUIET" != true ]]; then
+    printf '  [%d/%d] %s ...\n' "$((i + 1))" "${#FILES[@]}" "$f" >&2
+  fi
   line=$(run_one "$f")
   printf '%s\n' "$line" >"$LINE_TMP"
   python3 "$APPLY" "$LINE_TMP" --skip-dashboard --csv "$APPLY_CSV"

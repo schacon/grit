@@ -562,6 +562,11 @@ impl HttpClientContext {
     fn credential_input_for_url(&self, url: &str) -> Result<BTreeMap<String, String>> {
         let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
         let mut input = BTreeMap::new();
+        // `url=` matches Git and lets helpers (e.g. git-credential-osxkeychain) keychain lookup
+        // the same way as `git credential fill`.
+        let mut cred_lookup_url = parsed.clone();
+        let _ = cred_lookup_url.set_password(None);
+        input.insert("url".to_string(), cred_lookup_url.to_string());
         input.insert("protocol".to_string(), parsed.scheme().to_string());
         let host = host_header_value(&parsed);
         input.insert("host".to_string(), host);
