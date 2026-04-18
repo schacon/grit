@@ -14,6 +14,7 @@ use std::fs;
 use std::io;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A parsed entry from an index file.
 #[derive(Debug, Clone)]
@@ -33,8 +34,48 @@ pub struct PackIndex {
     pub pack_path: PathBuf,
     /// OID width in bytes (`20` for SHA-1, `32` for SHA-256).
     pub hash_bytes: usize,
-    /// Parsed entries in index order.
+    /// Parsed entries in index order (sorted by OID).
     pub entries: Vec<PackIndexEntry>,
+    /// 256-entry first-byte fanout table: `fanout[b]` is the count of entries whose
+    /// first OID byte is `<= b`. Enables O(log n) lookup via the OID's first byte
+    /// (matches Git's `find_pack_entry_one` in `packfile.c`).
+    pub fanout: [u32; 256],
+}
+
+impl PackIndex {
+    /// Find the offset in the `.pack` file for the given SHA-1 OID via the fanout
+    /// table and binary search; returns `None` when the OID is not present.
+    ///
+    /// Pack indexes containing SHA-256 OIDs are skipped here (callers handling
+    /// SHA-256 should branch on [`PackIndex::hash_bytes`]).
+    #[must_use]
+    pub fn find_offset(&self, oid: &ObjectId) -> Option<u64> {
+        if self.hash_bytes != 20 {
+            return None;
+        }
+        let needle = oid.as_bytes();
+        let first_byte = needle[0] as usize;
+        let lo = if first_byte == 0 {
+            0
+        } else {
+            self.fanout[first_byte - 1] as usize
+        };
+        let hi = self.fanout[first_byte] as usize;
+        if lo >= hi || hi > self.entries.len() {
+            return None;
+        }
+        let slice = &self.entries[lo..hi];
+        slice
+            .binary_search_by(|e| e.oid.as_slice().cmp(needle.as_slice()))
+            .ok()
+            .map(|idx| slice[idx].offset)
+    }
+
+    /// Whether this pack index contains the given SHA-1 OID.
+    #[must_use]
+    pub fn contains(&self, oid: &ObjectId) -> bool {
+        self.find_offset(oid).is_some()
+    }
 }
 
 /// A single entry produced by `show-index`, with an optional CRC32.
@@ -265,6 +306,242 @@ pub fn read_local_pack_indexes(objects_dir: &Path) -> Result<Vec<PackIndex>> {
     Ok(out)
 }
 
+/// Process-wide cache of parsed pack indexes and pack file bytes.
+///
+/// Object lookups in a busy command (`status`, `log`, ancestor walks, packing) re-issue
+/// `read_local_pack_indexes` for every single object, which used to mean re-opening,
+/// re-reading, re-SHA1-verifying every `.idx` (and re-reading the entire `.pack` for each
+/// object). This cache keeps parsed indexes and pack bytes in memory keyed by path with
+/// mtime-based invalidation: if a pack/index is rewritten on disk, we re-parse it on the
+/// next access. New packs added to a directory invalidate the directory listing via the
+/// dir's mtime.
+///
+/// SHA-1 verification of the index trailer is **not** performed on cached reads: Git only
+/// verifies pack indexes during `fsck`/`verify-pack`, not on every object lookup. Use
+/// [`read_pack_index`] when verification is required.
+mod pack_cache {
+    use super::{read_pack_index_no_verify, Error, PackIndex, Result};
+    use std::collections::HashMap;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::SystemTime;
+
+    struct CachedDir {
+        dir_mtime: SystemTime,
+        indexes: Vec<Arc<PackIndex>>,
+    }
+
+    struct CachedIdx {
+        mtime: SystemTime,
+        size: u64,
+        idx: Arc<PackIndex>,
+    }
+
+    struct CachedPack {
+        mtime: SystemTime,
+        size: u64,
+        bytes: Arc<Vec<u8>>,
+    }
+
+    #[derive(Default)]
+    struct State {
+        by_dir: HashMap<PathBuf, CachedDir>,
+        by_idx: HashMap<PathBuf, CachedIdx>,
+        by_pack: HashMap<PathBuf, CachedPack>,
+    }
+
+    static CACHE: OnceLock<Mutex<State>> = OnceLock::new();
+
+    fn lock() -> std::sync::MutexGuard<'static, State> {
+        CACHE
+            .get_or_init(|| Mutex::new(State::default()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn dir_mtime(path: &Path) -> SystemTime {
+        fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
+    fn file_signature(path: &Path) -> Option<(SystemTime, u64)> {
+        let m = fs::metadata(path).ok()?;
+        let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        Some((mtime, m.len()))
+    }
+
+    /// Get a parsed pack index from cache, re-parsing from disk only when the file
+    /// is missing from the cache or its mtime/size has changed since last parse.
+    pub fn get_index(idx_path: &Path) -> Result<Arc<PackIndex>> {
+        let sig = file_signature(idx_path);
+        if let Some((mtime, size)) = sig {
+            {
+                let g = lock();
+                if let Some(c) = g.by_idx.get(idx_path) {
+                    if c.mtime == mtime && c.size == size {
+                        return Ok(Arc::clone(&c.idx));
+                    }
+                }
+            }
+            let parsed = Arc::new(read_pack_index_no_verify(idx_path)?);
+            let mut g = lock();
+            g.by_idx.insert(
+                idx_path.to_path_buf(),
+                CachedIdx {
+                    mtime,
+                    size,
+                    idx: Arc::clone(&parsed),
+                },
+            );
+            Ok(parsed)
+        } else {
+            Err(Error::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("idx not found: {}", idx_path.display()),
+            )))
+        }
+    }
+
+    /// Get all `.idx` files for `objects_dir`, with each parsed index served from cache.
+    /// The directory listing itself is cached and invalidated by the directory mtime.
+    pub fn get_dir_indexes(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
+        let pack_dir = objects_dir.join("pack");
+        let dir_mt = dir_mtime(&pack_dir);
+
+        {
+            let g = lock();
+            if let Some(c) = g.by_dir.get(&pack_dir) {
+                if c.dir_mtime == dir_mt {
+                    return Ok(c.indexes.clone());
+                }
+            }
+        }
+
+        let rd = match fs::read_dir(&pack_dir) {
+            Ok(rd) => rd,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                let mut g = lock();
+                g.by_dir.insert(
+                    pack_dir.clone(),
+                    CachedDir {
+                        dir_mtime: dir_mt,
+                        indexes: Vec::new(),
+                    },
+                );
+                return Ok(Vec::new());
+            }
+            Err(err) => return Err(Error::Io(err)),
+        };
+
+        let mut out = Vec::new();
+        for entry in rd {
+            let entry = entry.map_err(Error::Io)?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+                continue;
+            }
+            let Ok(idx) = get_index(&path) else { continue };
+            if !idx.pack_path.is_file() {
+                continue;
+            }
+            out.push(idx);
+        }
+
+        let mut g = lock();
+        g.by_dir.insert(
+            pack_dir,
+            CachedDir {
+                dir_mtime: dir_mt,
+                indexes: out.clone(),
+            },
+        );
+        Ok(out)
+    }
+
+    /// Get the raw bytes of a pack file from cache, re-reading from disk when the
+    /// file's mtime/size changes.
+    pub fn get_pack_bytes(pack_path: &Path) -> Result<Arc<Vec<u8>>> {
+        let sig = file_signature(pack_path);
+        if let Some((mtime, size)) = sig {
+            {
+                let g = lock();
+                if let Some(c) = g.by_pack.get(pack_path) {
+                    if c.mtime == mtime && c.size == size {
+                        return Ok(Arc::clone(&c.bytes));
+                    }
+                }
+            }
+            let bytes = Arc::new(fs::read(pack_path).map_err(Error::Io)?);
+            let mut g = lock();
+            g.by_pack.insert(
+                pack_path.to_path_buf(),
+                CachedPack {
+                    mtime,
+                    size,
+                    bytes: Arc::clone(&bytes),
+                },
+            );
+            Ok(bytes)
+        } else {
+            Err(Error::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("pack not found: {}", pack_path.display()),
+            )))
+        }
+    }
+
+    /// Drop all cached pack indexes and pack bytes. Used by `repack`/`gc` and by tests
+    /// that mutate the pack directory in-place without changing its mtime.
+    pub fn clear() {
+        let mut g = lock();
+        g.by_dir.clear();
+        g.by_idx.clear();
+        g.by_pack.clear();
+    }
+}
+
+/// Read all pack indexes under `<objects_dir>/pack/` from the process-wide cache.
+///
+/// Cached reads skip the `.idx` SHA-1 trailer verification that [`read_pack_index`]
+/// performs; corruption checks happen during `fsck`/`verify-pack`, not on every object
+/// lookup (matches Git). The directory listing itself is cached and invalidated when
+/// the pack directory's mtime changes (i.e. when packs are added or removed).
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the directory cannot be enumerated.
+pub fn read_local_pack_indexes_cached(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
+    pack_cache::get_dir_indexes(objects_dir)
+}
+
+/// Read a single pack index from the process-wide cache (parses from disk on miss
+/// or when the file's mtime/size has changed). Skips trailer verification.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the file is missing or [`Error::CorruptObject`] for
+/// malformed indexes.
+pub fn read_pack_index_cached(idx_path: &Path) -> Result<Arc<PackIndex>> {
+    pack_cache::get_index(idx_path)
+}
+
+/// Read pack file bytes from the process-wide cache.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the pack cannot be read.
+pub fn read_pack_bytes_cached(pack_path: &Path) -> Result<Arc<Vec<u8>>> {
+    pack_cache::get_pack_bytes(pack_path)
+}
+
+/// Drop all cached pack indexes and pack bytes (call after `repack`/`gc`).
+pub fn clear_pack_cache() {
+    pack_cache::clear();
+}
+
 /// Collect aggregate local pack metrics.
 ///
 /// # Errors
@@ -310,7 +587,7 @@ fn verify_idx_trailing_checksum(idx_path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn read_pack_index_v1(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
+fn read_pack_index_v1(idx_path: &Path, bytes: &[u8], verify: bool) -> Result<PackIndex> {
     let mut pos = 0usize;
     if bytes.len() < 256 * 4 + 20 {
         return Err(Error::CorruptObject(format!(
@@ -347,20 +624,39 @@ fn read_pack_index_v1(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
         entries.push(PackIndexEntry { oid, offset });
     }
 
-    verify_idx_trailing_checksum(idx_path, bytes)?;
+    if verify {
+        verify_idx_trailing_checksum(idx_path, bytes)?;
+    }
 
     let mut pack_path = idx_path.to_path_buf();
     pack_path.set_extension("pack");
 
+    let fanout = compute_fanout_from_entries(&entries);
     Ok(PackIndex {
         idx_path: idx_path.to_path_buf(),
         pack_path,
         hash_bytes: 20,
         entries,
+        fanout,
     })
 }
 
-fn read_pack_index_v2(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
+/// Compute the 256-entry fanout from a sorted entry list (used for v1 indexes
+/// where the fanout is not stored explicitly in a usable form for lookups).
+fn compute_fanout_from_entries(entries: &[PackIndexEntry]) -> [u32; 256] {
+    let mut fanout = [0u32; 256];
+    let mut idx = 0usize;
+    for byte in 0u32..256 {
+        let needle = byte as u8;
+        while idx < entries.len() && entries[idx].oid.first().copied().unwrap_or(0) <= needle {
+            idx += 1;
+        }
+        fanout[byte as usize] = u32::try_from(idx).unwrap_or(u32::MAX);
+    }
+    fanout
+}
+
+fn read_pack_index_v2(idx_path: &Path, bytes: &[u8], verify: bool) -> Result<PackIndex> {
     if bytes.len() < 8 + 256 * 4 + 40 {
         return Err(Error::CorruptObject(format!(
             "index file {} is too small",
@@ -449,13 +745,16 @@ fn read_pack_index_v2(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
     let mut pack_path = idx_path.to_path_buf();
     pack_path.set_extension("pack");
 
-    verify_idx_trailing_checksum(idx_path, bytes)?;
+    if verify {
+        verify_idx_trailing_checksum(idx_path, bytes)?;
+    }
 
     Ok(PackIndex {
         idx_path: idx_path.to_path_buf(),
         pack_path,
         hash_bytes,
         entries,
+        fanout,
     })
 }
 
@@ -543,13 +842,29 @@ pub fn hash_object_bytes(kind: ObjectKind, data: &[u8], hash_bytes: usize) -> Re
     }
 }
 
-/// Parse a pack index file (version 1 legacy or version 2).
+/// Parse a pack index file (version 1 legacy or version 2), verifying the SHA-1
+/// trailer checksum.
+///
+/// Used by `fsck`/`verify-pack` and similar code that wants on-disk validation. Hot
+/// object-lookup paths should call [`read_pack_index_cached`] (which skips trailer
+/// verification, matching Git's normal read path).
 ///
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] when format checks fail.
 pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     let bytes = fs::read(idx_path).map_err(Error::Io)?;
+    parse_pack_index_bytes(idx_path, &bytes, true)
+}
+
+/// Parse a pack index file without verifying the SHA-1 trailer checksum. Used by
+/// the cached lookup path (`read_pack_index_cached`); not part of the public API.
+fn read_pack_index_no_verify(idx_path: &Path) -> Result<PackIndex> {
+    let bytes = fs::read(idx_path).map_err(Error::Io)?;
+    parse_pack_index_bytes(idx_path, &bytes, false)
+}
+
+fn parse_pack_index_bytes(idx_path: &Path, bytes: &[u8], verify: bool) -> Result<PackIndex> {
     if bytes.len() < 8 {
         return Err(Error::CorruptObject(format!(
             "index file {} is too small",
@@ -558,9 +873,9 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     }
     let magic = &bytes[0..4];
     if magic == [0xff, b't', b'O', b'c'] {
-        read_pack_index_v2(idx_path, &bytes)
+        read_pack_index_v2(idx_path, bytes, verify)
     } else {
-        read_pack_index_v1(idx_path, &bytes)
+        read_pack_index_v1(idx_path, bytes, verify)
     }
 }
 
@@ -945,14 +1260,12 @@ fn read_pack_object_at(
 ///
 /// Returns [`Error::ObjectNotFound`] if the OID is not in this pack.
 pub fn read_object_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Object> {
-    let entry = idx
-        .entries
-        .iter()
-        .find(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
-        .ok_or_else(|| Error::ObjectNotFound(oid.to_hex()))?;
+    if idx.find_offset(oid).is_none() {
+        return Err(Error::ObjectNotFound(oid.to_hex()));
+    }
 
-    let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
-    read_object_from_pack_bytes(&pack_bytes, idx, &entry.oid)
+    let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
+    read_object_from_pack_bytes(&pack_bytes, idx, oid.as_bytes().as_slice())
 }
 
 /// Resolve an object from already-loaded pack bytes (used by `verify-pack`).
@@ -976,13 +1289,9 @@ pub fn read_object_from_pack_bytes(
 ///
 /// Returns [`Error::ObjectNotFound`] if no pack contains the OID.
 pub fn read_object_from_packs(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
-    let indexes = read_local_pack_indexes(objects_dir)?;
+    let indexes = read_local_pack_indexes_cached(objects_dir)?;
     for idx in &indexes {
-        if idx
-            .entries
-            .iter()
-            .any(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
-        {
+        if idx.find_offset(oid).is_some() {
             return read_object_from_pack(idx, oid);
         }
     }

@@ -1711,8 +1711,8 @@ fn object_storage_dirs_for_abbrev(repo: &Repository) -> Result<Vec<PathBuf>> {
 
 fn collect_pack_oids_with_prefix(objects_dir: &Path, prefix: &str) -> Result<Vec<ObjectId>> {
     let mut out = Vec::new();
-    for idx in pack::read_local_pack_indexes(objects_dir)? {
-        for e in idx.entries {
+    for idx in pack::read_local_pack_indexes_cached(objects_dir)? {
+        for e in &idx.entries {
             if e.oid.len() != 20 {
                 continue;
             }

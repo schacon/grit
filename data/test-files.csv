@@ -157,7 +157,7 @@ t10550-mv-verbose-dry-run	t1	yes	28	1	27	false	ok	0
 t10560-switch-create-detach	t1	yes	28	1	27	false	ok	0
 t10570-restore-worktree-only	t1	yes	28	1	27	false	ok	0
 t10580-reset-path-mixed	t1	yes	25	1	24	false	ok	0
-t1060-object-corruption	t1	yes	17	15	1	false	ok	1
+t1060-object-corruption	t1	yes	16	15	1	false	ok	1
 t1060-object-types	t1	yes	35	1	34	false	ok	0
 t10600-for-each-ref-exclude	t1	yes	35	2	33	false	ok	0
 t10610-show-ref-dereference-extra	t1	yes	40	1	39	false	ok	0
@@ -190,7 +190,7 @@ t10880-reset-hard-soft-path	t1	yes	31	1	30	false	ok	0
 t10890-cherry-pick-message	t1	yes	30	2	28	false	ok	0
 t1090-sparse-checkout-scope	t1	yes	7	5	2	false	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	2	32	false	ok	0
-t1091-sparse-checkout-builtin	t1	yes	77	27	49	false	ok	1
+t1091-sparse-checkout-builtin	t1	yes	76	27	49	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	3	32	false	ok	0
 t1092-sparse-checkout-compatibility	t1	yes	106	1	105	false	ok	0
 t10920-update-ref-create-delete	t1	yes	29	2	27	false	ok	0

@@ -93,6 +93,21 @@ pub struct Repository {
     pub work_tree_from_env: bool,
     /// `.git` was a gitfile (not a directory) when the repo was discovered.
     pub discovery_via_gitfile: bool,
+    /// Cached settings derived from config that are stable for the process lifetime.
+    ///
+    /// Cached the first time they are needed; recreated on each `Repository` open. Used to
+    /// avoid re-loading the system/global/local config cascade on every object read in hot
+    /// paths like `Repository::read_replaced`.
+    cached_settings: std::sync::Arc<std::sync::OnceLock<RepoCachedSettings>>,
+}
+
+/// Repository-level settings derived from config that are read on hot paths.
+#[derive(Debug, Clone)]
+struct RepoCachedSettings {
+    /// `core.useReplaceRefs` (default `true`).
+    use_replace_refs: bool,
+    /// Effective `refs/replace/` base path (always slash-terminated).
+    replace_ref_base: String,
 }
 
 impl Repository {
@@ -149,6 +164,35 @@ impl Repository {
             discovery_root: None,
             work_tree_from_env: false,
             discovery_via_gitfile: false,
+            cached_settings: std::sync::Arc::new(std::sync::OnceLock::new()),
+        })
+    }
+
+    /// Lazily compute and return the cached repo-level settings used on hot paths.
+    ///
+    /// The settings are computed once per `Repository` instance: they read the system / global
+    /// / local config cascade and may stat env vars. Because `Repository` is reopened per
+    /// command invocation, this matches Git's process-lifetime caching of the same values.
+    fn cached_settings(&self) -> &RepoCachedSettings {
+        self.cached_settings.get_or_init(|| {
+            let cfg = ConfigSet::load(Some(&self.git_dir), true).unwrap_or_default();
+            let use_replace_refs = cfg
+                .get_bool("core.useReplaceRefs")
+                .and_then(|r| r.ok())
+                .unwrap_or(true);
+            let replace_ref_base = std::env::var("GIT_REPLACE_REF_BASE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "refs/replace/".to_owned());
+            let replace_ref_base = if replace_ref_base.ends_with('/') {
+                replace_ref_base
+            } else {
+                format!("{replace_ref_base}/")
+            };
+            RepoCachedSettings {
+                use_replace_refs,
+                replace_ref_base,
+            }
         })
     }
 
@@ -600,26 +644,13 @@ impl Repository {
         if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
             return self.odb.read(oid);
         }
-        let use_replace_refs = ConfigSet::load(Some(&self.git_dir), true)
-            .ok()
-            .and_then(|c| c.get_bool("core.useReplaceRefs"))
-            .and_then(|r| r.ok())
-            .unwrap_or(true);
-        if !use_replace_refs {
+        let settings = self.cached_settings();
+        if !settings.use_replace_refs {
             return self.odb.read(oid);
         }
-        let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "refs/replace/".to_owned());
-        let replace_base = if replace_base.ends_with('/') {
-            replace_base
-        } else {
-            format!("{replace_base}/")
-        };
-        let replace_ref = self
-            .git_dir
-            .join(format!("{}{}", replace_base, oid.to_hex()));
+        let replace_ref =
+            self.git_dir
+                .join(format!("{}{}", settings.replace_ref_base, oid.to_hex()));
         if replace_ref.is_file() {
             if let Ok(content) = std::fs::read_to_string(&replace_ref) {
                 let hex = content.trim();

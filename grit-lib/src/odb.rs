@@ -21,7 +21,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -67,18 +67,14 @@ fn exists_materialized_in_objects_dir(objects_dir: &Path, oid: &ObjectId) -> boo
     if loose.exists() {
         return true;
     }
-    let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) else {
+    let Ok(indexes) = pack::read_local_pack_indexes_cached(objects_dir) else {
         return false;
     };
     for idx in &indexes {
         if idx.pack_path.with_extension("promisor").is_file() {
             continue;
         }
-        if idx
-            .entries
-            .iter()
-            .any(|e| e.oid.as_slice() == oid.as_bytes())
-        {
+        if idx.contains(oid) {
             return true;
         }
     }
@@ -95,6 +91,12 @@ pub struct Odb {
     submodule_alternate_dirs: Arc<Mutex<Vec<PathBuf>>>,
     /// When set, used to read `core.multiPackIndex` (and related) for MIDX-backed object reads.
     config_git_dir: Option<PathBuf>,
+    /// Cache for `core.multiPackIndex` — populated on first lookup.
+    ///
+    /// Reading this config requires loading the system/global/local config cascade and reparsing
+    /// every file; the value cannot change for a process that has opened a single repository, so
+    /// caching it here avoids re-loading the cascade for every object read.
+    core_multi_pack_index_cache: Arc<OnceLock<bool>>,
 }
 
 impl std::fmt::Debug for Odb {
@@ -120,6 +122,7 @@ impl Odb {
             work_tree: None,
             submodule_alternate_dirs: Arc::new(Mutex::new(Vec::new())),
             config_git_dir: None,
+            core_multi_pack_index_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -131,6 +134,7 @@ impl Odb {
             work_tree: Some(work_tree.to_path_buf()),
             submodule_alternate_dirs: Arc::new(Mutex::new(Vec::new())),
             config_git_dir: None,
+            core_multi_pack_index_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -176,15 +180,20 @@ impl Odb {
     }
 
     fn core_multi_pack_index_enabled(&self) -> bool {
-        let Some(git_dir) = &self.config_git_dir else {
-            return false;
-        };
-        let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
-        match cfg.get_bool("core.multiPackIndex") {
-            Some(Ok(b)) => b,
-            Some(Err(_)) => true,
-            None => true,
-        }
+        // The system/global/local config cascade is expensive to load (the parser walks every
+        // file from `/etc/gitconfig` through `.git/config`); calling it once per object lookup
+        // dominated `status` runtime. Cache the result for the lifetime of this `Odb`.
+        *self.core_multi_pack_index_cache.get_or_init(|| {
+            let Some(git_dir) = &self.config_git_dir else {
+                return false;
+            };
+            let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+            match cfg.get_bool("core.multiPackIndex") {
+                Some(Ok(b)) => b,
+                Some(Err(_)) => true,
+                None => true,
+            }
+        })
     }
 
     /// Return the path to the `objects/` directory.
@@ -269,13 +278,9 @@ impl Odb {
         if loose.exists() {
             return true;
         }
-        if let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) {
+        if let Ok(indexes) = pack::read_local_pack_indexes_cached(objects_dir) {
             for idx in &indexes {
-                if idx
-                    .entries
-                    .iter()
-                    .any(|e| pack::pack_index_entry_matches_sha1_oid(e, oid))
-                {
+                if idx.contains(oid) {
                     return true;
                 }
             }
@@ -759,15 +764,11 @@ fn touch_path_mtime(path: &Path) -> bool {
 }
 
 fn freshen_object_in_objects_dir(objects_dir: &Path, oid: &ObjectId) -> bool {
-    let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) else {
+    let Ok(indexes) = pack::read_local_pack_indexes_cached(objects_dir) else {
         return false;
     };
     for idx in &indexes {
-        if idx
-            .entries
-            .iter()
-            .any(|e| pack::pack_index_entry_matches_sha1_oid(e, oid))
-        {
+        if idx.contains(oid) {
             return touch_path_mtime(&idx.pack_path);
         }
     }
