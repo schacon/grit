@@ -461,23 +461,23 @@ Primary files:
 
 Tasks:
 
-- [ ] Add `core.sshCommand` support.
-- [ ] Implement precedence:
-  - [ ] `GIT_SSH_COMMAND`
-  - [ ] `core.sshCommand`
-  - [ ] `GIT_SSH`
-  - [ ] default `ssh`
-- [ ] Audit `GIT_SSH_VARIANT` vs `ssh.variant` precedence.
-- [ ] Keep OpenSSH/Plink/Putty/TortoisePlink/simple variant handling compatible.
-- [ ] Fix asymmetry where argv-building requires `GIT_SSH` while spawn defaults to `ssh`.
-- [ ] Expand URL classifier use in submodule/push-submodule code:
-  - [ ] use full `is_configured_ssh_url` semantics for `ssh://`, `git+ssh://`, and scp-style URLs
-  - [ ] avoid treating SSH remotes as local paths
-- [ ] Preserve existing fake-SSH logging behavior used by tests.
+- [x] Add `core.sshCommand` support.
+- [x] Implement precedence:
+  - [x] `GIT_SSH_COMMAND`
+  - [x] `core.sshCommand`
+  - [x] `GIT_SSH`
+  - [x] default `ssh`
+- [x] Audit `GIT_SSH_VARIANT` vs `ssh.variant` precedence.
+- [x] Keep OpenSSH/Plink/Putty/TortoisePlink/simple variant handling compatible.
+- [x] Fix asymmetry where argv-building requires `GIT_SSH` while spawn defaults to `ssh`.
+- [x] Expand URL classifier use in submodule/push-submodule code:
+  - [x] use full `is_configured_ssh_url` semantics for `ssh://`, `git+ssh://`, and scp-style URLs
+  - [x] avoid treating SSH remotes as local paths
+- [x] Preserve existing fake-SSH logging behavior used by tests.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5601-clone.sh`
 - [ ] `./scripts/run-tests.sh t5602-clone-remote-exec.sh`
 - [ ] `./scripts/run-tests.sh t5507-remote-environment.sh`
@@ -485,8 +485,8 @@ Validation:
 
 Definition of done:
 
-- [ ] SSH command selection matches Git for env/config precedence.
-- [ ] Existing SSH wrapper tests do not regress.
+- [x] SSH command selection matches Git for env/config precedence.
+- [x] Existing SSH wrapper tests do not regress.
 
 ## Phase 12: Live SSH Upload-Pack for Fetch and Clone
 
