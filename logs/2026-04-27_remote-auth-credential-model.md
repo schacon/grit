@@ -95,3 +95,6 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added proactive Basic credential lookup before the first HTTP request.
 - Added proactive auto credential lookup that can use helper-selected pre-encoded auth schemes.
 - Parsed `http.emptyAuth`; for now it disables proactive auth and leaves the normal 401 path intact.
+- Added global `http.extraHeader` support with load-order reset semantics.
+- Applied extra headers to ureq, HTTP proxy, and SOCKS-over-Unix request paths.
+- Redacted authorization-like extra headers in `GIT_TRACE_CURL` output by default.
