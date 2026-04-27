@@ -88,3 +88,6 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Replaced Basic-only HTTP credential state with a typed auth representation.
 - Added support for helper-provided pre-encoded credentials via `authtype` + `credential`, producing `Authorization: <authtype> <credential>`.
 - Preserved existing Basic `Authorization` generation for username/password helper responses and askpass fallback.
+- Added one-step multistage auth handling for helper responses with `continue=1`, carrying helper `state[]` and updated challenges into a second `credential fill`.
+- Included pre-encoded auth fields and helper state in approve/reject credential input.
+- Preserved ephemeral markers so helpers can avoid storing short-lived credentials.

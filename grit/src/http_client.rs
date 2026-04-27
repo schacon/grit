@@ -216,14 +216,43 @@ impl HttpClientContext {
             self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
         let mut credential_input = self.credential_input_for_url(url)?;
         auth.add_to_credential_input(&mut credential_input);
-        let reject_extras = credential_challenge_extras(&auth_challenges);
+        let mut reject_extras = auth.credential_extras();
+        reject_extras.extend(credential_challenge_extras(&auth_challenges));
         self.trace_response_status(retry.status, &retry.reason);
+        if retry.status == 401 && auth.should_continue() {
+            let next_challenges = retry.www_authenticate_challenges();
+            if let Some(next_auth) =
+                self.credentials_from_fill_continue(url, &next_challenges, &auth)?
+            {
+                self.trace_auth_header();
+                let retry2 = self.http_get_once(
+                    url,
+                    Some(&next_auth.authorization_header()),
+                    git_protocol_header,
+                )?;
+                let mut credential_input = self.credential_input_for_url(url)?;
+                next_auth.add_to_credential_input(&mut credential_input);
+                let mut reject_extras = next_auth.credential_extras();
+                reject_extras.extend(credential_challenge_extras(&next_challenges));
+                self.trace_response_status(retry2.status, &retry2.reason);
+                if retry2.status >= 400 {
+                    let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
+                    self.clear_cached_auth();
+                    return Err(http_access_error(url, retry2.status));
+                }
+                let approve_extras = next_auth.credential_extras();
+                let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
+                self.store_cached_auth(next_auth);
+                return Ok(retry2.body);
+            }
+        }
         if retry.status >= 400 {
             let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input, &[]);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
         self.store_cached_auth(auth);
         Ok(retry.body)
     }
@@ -321,14 +350,48 @@ impl HttpClientContext {
         )?;
         let mut credential_input = self.credential_input_for_url(url)?;
         auth.add_to_credential_input(&mut credential_input);
-        let reject_extras = credential_challenge_extras(&auth_challenges);
+        let mut reject_extras = auth.credential_extras();
+        reject_extras.extend(credential_challenge_extras(&auth_challenges));
         self.trace_response_status(retry.status, &retry.reason);
+        if retry.status == 401 && auth.should_continue() {
+            let next_challenges = retry.www_authenticate_challenges();
+            if let Some(next_auth) =
+                self.credentials_from_fill_continue(url, &next_challenges, &auth)?
+            {
+                self.trace_auth_header();
+                let retry2 = self.http_post_once(
+                    url,
+                    content_type,
+                    accept,
+                    &payload,
+                    Some(&next_auth.authorization_header()),
+                    gzip_enabled,
+                    chunked,
+                    git_protocol_header,
+                )?;
+                let mut credential_input = self.credential_input_for_url(url)?;
+                next_auth.add_to_credential_input(&mut credential_input);
+                let mut reject_extras = next_auth.credential_extras();
+                reject_extras.extend(credential_challenge_extras(&next_challenges));
+                self.trace_response_status(retry2.status, &retry2.reason);
+                if retry2.status >= 400 {
+                    let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
+                    self.clear_cached_auth();
+                    return Err(http_access_error(url, retry2.status));
+                }
+                let approve_extras = next_auth.credential_extras();
+                let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
+                self.store_cached_auth(next_auth);
+                return Ok(retry2.body);
+            }
+        }
         if retry.status >= 400 {
             let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input, &[]);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
         self.store_cached_auth(auth);
         Ok(retry.body)
     }
@@ -658,14 +721,18 @@ impl HttpClientContext {
             (filled.get("authtype"), filled.get("credential"))
         {
             if !authtype.is_empty() && !credential.is_empty() {
-                return Ok(Some(AuthCredentials::Preencoded {
-                    authtype: authtype.clone(),
-                    credential: credential.clone(),
-                    username: filled.get("username").cloned(),
-                    ephemeral: filled
+                return Ok(Some(AuthCredentials::preencoded_from_fields(
+                    authtype.clone(),
+                    credential.clone(),
+                    filled.get("username").cloned(),
+                    filled
                         .get("ephemeral")
                         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
-                }));
+                    filled.get("state[]").cloned().into_iter().collect(),
+                    filled
+                        .get("continue")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                )));
             }
         }
         let username = filled
@@ -678,6 +745,38 @@ impl HttpClientContext {
             return Ok(None);
         }
         Ok(Some(AuthCredentials::Basic { username, password }))
+    }
+
+    fn credentials_from_fill_continue(
+        &self,
+        url: &str,
+        auth_challenges: &[String],
+        previous: &AuthCredentials,
+    ) -> Result<Option<AuthCredentials>> {
+        let mut input = self.credential_input_for_url(url)?;
+        previous.add_to_fill_input(&mut input);
+        let mut extras = credential_fill_extras(auth_challenges);
+        extras.extend(previous.state_extras());
+        let filled = self.run_credential_action("fill", &input, &extras)?;
+        if let (Some(authtype), Some(credential)) =
+            (filled.get("authtype"), filled.get("credential"))
+        {
+            if !authtype.is_empty() && !credential.is_empty() {
+                return Ok(Some(AuthCredentials::preencoded_from_fields(
+                    authtype.clone(),
+                    credential.clone(),
+                    filled.get("username").cloned(),
+                    filled
+                        .get("ephemeral")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                    filled.get("state[]").cloned().into_iter().collect(),
+                    filled
+                        .get("continue")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                )));
+            }
+        }
+        Ok(None)
     }
 
     fn default_auth_for_url(&self, url: &str) -> Result<AuthCredentials> {
@@ -851,10 +950,30 @@ enum AuthCredentials {
         credential: String,
         username: Option<String>,
         ephemeral: bool,
+        state: Vec<String>,
+        continue_auth: bool,
     },
 }
 
 impl AuthCredentials {
+    fn preencoded_from_fields(
+        authtype: String,
+        credential: String,
+        username: Option<String>,
+        ephemeral: bool,
+        state: Vec<String>,
+        continue_auth: bool,
+    ) -> Self {
+        Self::Preencoded {
+            authtype,
+            credential,
+            username,
+            ephemeral,
+            state,
+            continue_auth,
+        }
+    }
+
     fn authorization_header(&self) -> String {
         match self {
             Self::Basic { username, password } => {
@@ -877,8 +996,64 @@ impl AuthCredentials {
         }
     }
 
+    fn should_continue(&self) -> bool {
+        matches!(
+            self,
+            Self::Preencoded {
+                continue_auth: true,
+                ..
+            }
+        )
+    }
+
     fn needs_basic_prompt(&self) -> bool {
         matches!(self, Self::Basic { username, password } if username.is_empty() || password.is_empty())
+    }
+
+    fn credential_extras(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Basic { .. } => Vec::new(),
+            Self::Preencoded { state, .. } => {
+                let mut out = vec![("capability[]".to_string(), "authtype".to_string())];
+                if !state.is_empty() {
+                    out.push(("capability[]".to_string(), "state".to_string()));
+                    out.extend(
+                        state
+                            .iter()
+                            .map(|value| ("state[]".to_string(), value.clone())),
+                    );
+                }
+                out
+            }
+        }
+    }
+
+    fn state_extras(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Preencoded { state, .. } => state
+                .iter()
+                .map(|value| ("state[]".to_string(), value.clone()))
+                .collect(),
+            Self::Basic { .. } => Vec::new(),
+        }
+    }
+
+    fn add_to_fill_input(&self, input: &mut BTreeMap<String, String>) {
+        match self {
+            Self::Preencoded {
+                authtype, username, ..
+            } => {
+                input.insert("authtype".to_string(), authtype.clone());
+                if let Some(username) = username {
+                    input.insert("username".to_string(), username.clone());
+                }
+            }
+            Self::Basic { username, .. } => {
+                if !username.is_empty() {
+                    input.insert("username".to_string(), username.clone());
+                }
+            }
+        }
     }
 
     fn add_to_credential_input(&self, input: &mut BTreeMap<String, String>) {
@@ -892,8 +1067,8 @@ impl AuthCredentials {
                 credential,
                 username,
                 ephemeral,
+                ..
             } => {
-                input.insert("capability[]".to_string(), "authtype".to_string());
                 input.insert("authtype".to_string(), authtype.clone());
                 input.insert("credential".to_string(), credential.clone());
                 if let Some(username) = username {

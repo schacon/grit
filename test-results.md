@@ -28,6 +28,7 @@
 - `cargo test -p grit-lib --lib`: 197 passed
 - HTTP client now captures response headers, extracts `WWW-Authenticate` challenges, passes `capability[]=authtype`, `capability[]=state`, and ordered `wwwauth[]` to `credential fill`, and passes `wwwauth[]` to reject paths while keeping Basic approve requests unchanged
 - HTTP client now uses a typed auth credential representation and can build `Authorization: <authtype> <credential>` for helper-provided pre-encoded credentials while preserving Basic username/password auth
+- HTTP client now performs one multistage `continue=1` follow-up with helper `state[]` and updated challenges, includes pre-encoded auth fields in approve/reject, and avoids storing ephemeral pre-encoded credentials through helper input
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
