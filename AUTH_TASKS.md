@@ -165,26 +165,26 @@ Primary files:
 
 Tasks:
 
-- [ ] Design a minimal Git-compatible Unix socket cache daemon.
-- [ ] Implement default socket path selection:
-  - [ ] `$XDG_CACHE_HOME/git/credential/socket`
-  - [ ] `$HOME/.cache/git/credential/socket`
-  - [ ] `$HOME/.git-credential-cache/socket` when that directory exists
-- [ ] Support `--socket <path>` and `--socket=<path>`.
-- [ ] Reject or error on relative socket paths if Git does.
-- [ ] Implement `store` over the daemon protocol.
-- [ ] Implement `get` with matching semantics from the credential model.
-- [ ] Implement `erase`.
-- [ ] Implement `exit`.
-- [ ] Implement timeout expiration from `--timeout`.
-- [ ] Honor `password_expiry_utc`.
-- [ ] Preserve confidential fields such as `oauth_refresh_token` if Git cache tests require it.
-- [ ] Enforce socket directory permissions sufficiently for upstream tests.
-- [ ] Ensure daemon cleanup does not leave stale background processes after tests.
+- [x] Design a minimal Git-compatible Unix socket cache daemon.
+- [x] Implement default socket path selection:
+  - [x] `$XDG_CACHE_HOME/git/credential/socket`
+  - [x] `$HOME/.cache/git/credential/socket`
+  - [x] `$HOME/.git-credential-cache/socket` when that directory exists
+- [x] Support `--socket <path>` and `--socket=<path>`.
+- [x] Reject or error on relative socket paths if Git does.
+- [x] Implement `store` over the daemon protocol.
+- [x] Implement `get` with matching semantics from the credential model.
+- [x] Implement `erase`.
+- [x] Implement `exit`.
+- [x] Implement timeout expiration from `--timeout`.
+- [x] Honor `password_expiry_utc`.
+- [x] Preserve confidential fields such as `oauth_refresh_token` if Git cache tests require it.
+- [x] Enforce socket directory permissions sufficiently for upstream tests.
+- [x] Ensure daemon cleanup does not leave stale background processes after tests.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t0301-credential-cache.sh`
 - [ ] `./scripts/run-tests.sh t0300-credentials.sh`
 

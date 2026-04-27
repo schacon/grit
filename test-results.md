@@ -15,6 +15,12 @@
 - `./scripts/run-tests.sh t0302-credential-store.sh`: skipped by current `data/test-files.csv` scope; no credential-store harness tests executed
 - Manual credential-store smoke checks: home/XDG lookup precedence, XDG fallback, overwrite-on-store, erase across files, `--file` and `--file=`, path matching, CRLF path behavior, invalid-line handling, and Unix permissions passed
 
+**2026-04-27 (remote auth / credential-cache daemon)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Manual credential-cache smoke checks: default socket creation, custom socket creation, store/get output ordering, erase, timeout expiry, and exit cleanup passed
+
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
 - `cargo test -p grit-lib --lib`: passed (see merge)
