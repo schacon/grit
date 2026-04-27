@@ -21,6 +21,12 @@
 - `cargo build --release -p grit-rs`: passed
 - Manual credential-cache smoke checks: default socket creation, custom socket creation, store/get output ordering, erase, timeout expiry, and exit cleanup passed
 
+**2026-04-27 (remote auth / SSH command precedence)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5507-remote-environment.sh`: 5/5 passed
+- `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`: 63/81 passed (known remaining failures; no regression from SSH command precedence work)
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

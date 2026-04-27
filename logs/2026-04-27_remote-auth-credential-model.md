@@ -77,6 +77,15 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Ensured socket parent directories are created with restrictive permissions on Unix.
 - Verified default socket creation, custom socket creation, store/get, erase, timeout expiry, and exit cleanup manually.
 
+## SSH Command Parity
+
+- Added `core.sshCommand` support for shell-based SSH invocation.
+- Preserved precedence: `GIT_SSH_COMMAND`, then `core.sshCommand`, then `GIT_SSH`, then default `ssh`.
+- Made `build_git_ssh_argv` default to `ssh` when `GIT_SSH` is unset, matching live spawn behavior.
+- Kept `GIT_SSH_VARIANT` overriding `ssh.variant`.
+- Extended submodule push remote URL classification to treat scp-style and `git+ssh://` URLs as SSH, not local paths.
+- Validation: `t5507-remote-environment` passed 5/5; `t5813-proto-disable-ssh` remains 63/81 with known existing failures.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.
