@@ -21,6 +21,13 @@
 - `cargo build --release -p grit-rs`: passed
 - Manual credential-cache smoke checks: default socket creation, custom socket creation, store/get output ordering, erase, timeout expiry, and exit cleanup passed
 
+**2026-04-27 (remote auth / HTTP challenge plumbing)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- HTTP client now captures response headers, extracts `WWW-Authenticate` challenges, passes `capability[]=authtype`, `capability[]=state`, and ordered `wwwauth[]` to `credential fill`, and passes `wwwauth[]` to reject paths while keeping Basic approve requests unchanged
+
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
 - `cargo test -p grit-lib --lib`: passed (see merge)

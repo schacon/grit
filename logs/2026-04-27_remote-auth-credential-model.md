@@ -76,3 +76,12 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Preserved confidential fields such as `oauth_refresh_token` in cached credential records.
 - Ensured socket parent directories are created with restrictive permissions on Unix.
 - Verified default socket creation, custom socket creation, store/get, erase, timeout expiry, and exit cleanup manually.
+
+## HTTP Challenge Plumbing
+
+- Added header retention to raw HTTP responses.
+- Extracted `WWW-Authenticate` challenge values from 401 responses.
+- Added folded header continuation handling for manually parsed HTTP responses.
+- Passed `capability[]=authtype`, `capability[]=state`, and ordered `wwwauth[]` attributes to `grit credential fill`.
+- Passed `wwwauth[]` attributes to `credential reject` so rejected credentials keep challenge context.
+- Kept Basic credential approval requests free of challenge-only fields, matching Git's simple Basic auth expectations.
