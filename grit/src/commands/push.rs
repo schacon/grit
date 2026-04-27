@@ -1714,10 +1714,19 @@ fn push_to_url(
             copy_submodule_object_stores_only(&repo.git_dir, &remote_repo.git_dir)
                 .context("copying submodule objects to remote")?,
         );
-        if push_show_object_progress(args) && !copied_objects.is_empty() {
+        if push_show_object_progress(args) && !copied_objects.is_empty() && !thin_pack.is_empty() {
+            let written_objects = pack_object_count(&thin_pack).unwrap_or_else(|| {
+                estimate_push_progress_enumerated_objects(repo, remote_name, &updates)
+            });
             let enumerated_objects =
-                estimate_push_progress_enumerated_objects(repo, remote_name, &updates);
-            maybe_print_push_object_progress(true, enumerated_objects);
+                estimate_push_progress_enumerated_objects(repo, remote_name, &updates)
+                    .max(written_objects);
+            maybe_print_push_object_progress(
+                true,
+                enumerated_objects,
+                written_objects,
+                thin_pack.len(),
+            );
         }
 
         let fsck_receive = receive_remote_config
@@ -3310,7 +3319,14 @@ fn push_to_http_url(
         pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
     };
     if push_show_object_progress(args) && !delete_only {
-        maybe_print_push_object_progress(true, push_tips.len().max(1));
+        let written_objects =
+            pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
+        maybe_print_push_object_progress(
+            true,
+            written_objects.max(push_tips.len()),
+            written_objects,
+            pack_data.len(),
+        );
     }
 
     let effective_push_options = resolved_push_options(args, config)?;
@@ -3751,7 +3767,14 @@ fn push_to_ssh_url(
         pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
     };
     if push_show_object_progress(args) && !delete_only {
-        maybe_print_push_object_progress(true, push_tips.len().max(1));
+        let written_objects =
+            pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
+        maybe_print_push_object_progress(
+            true,
+            written_objects.max(push_tips.len()),
+            written_objects,
+            pack_data.len(),
+        );
     }
 
     let effective_push_options = resolved_push_options(args, config)?;
@@ -4448,16 +4471,31 @@ fn push_show_object_progress(args: &Args) -> bool {
 }
 
 /// Print progress lines Git shows when sending objects to a receive-pack (used by `t5523`).
-fn maybe_print_push_object_progress(show: bool, enumerated_objects: usize) {
+fn maybe_print_push_object_progress(
+    show: bool,
+    enumerated_objects: usize,
+    written_objects: usize,
+    pack_bytes: usize,
+) {
     if !show {
         return;
     }
-    let shown = enumerated_objects.max(1);
-    let _ = writeln!(io::stderr(), "Enumerating objects: {shown}, done.");
+    let enumerated = enumerated_objects.max(written_objects).max(1);
+    let written = written_objects.max(1);
+    let _ = writeln!(io::stderr(), "Enumerating objects: {enumerated}, done.");
     let _ = writeln!(
         io::stderr(),
-        "Writing objects: 100% (1/1), 1 bytes | 1.00 KiB/s, done."
+        "Writing objects: 100% ({written}/{written}), {} bytes, done.",
+        pack_bytes
     );
+}
+
+fn pack_object_count(pack: &[u8]) -> Option<usize> {
+    if pack.len() < 12 || &pack[..4] != b"PACK" {
+        return None;
+    }
+    let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
+    Some(count as usize)
 }
 
 fn estimate_push_progress_enumerated_objects(
