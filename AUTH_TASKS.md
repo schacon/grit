@@ -122,30 +122,30 @@ Primary files:
 
 Tasks:
 
-- [ ] Implement default file search order:
-  - [ ] `~/.git-credentials`
-  - [ ] `$XDG_CONFIG_HOME/git/credentials`
-  - [ ] `$HOME/.config/git/credentials` when `XDG_CONFIG_HOME` is unset or empty
-- [ ] Implement default write target:
-  - [ ] first existing file among Git's default list
-  - [ ] create `~/.git-credentials` if none exists
-- [ ] Support `--file <path>` and `--file=<path>`.
-- [ ] Implement URL parsing for credential-store lines with Git-compatible invalid-line handling.
-- [ ] Match entries by:
-  - [ ] protocol
-  - [ ] host and optional port
-  - [ ] username when supplied in the query
-  - [ ] path when path is relevant
-- [ ] Respect `credential.useHttpPath`.
-- [ ] Handle CRLF rules from `t0302`.
-- [ ] Erase matching credentials from all relevant files.
-- [ ] Avoid duplicate stored credentials when replacing/updating existing entries.
-- [ ] Preserve or set restrictive file permissions on Unix.
-- [ ] Decide and document behavior for unreadable store files to match Git tests.
+- [x] Implement default file search order:
+  - [x] `~/.git-credentials`
+  - [x] `$XDG_CONFIG_HOME/git/credentials`
+  - [x] `$HOME/.config/git/credentials` when `XDG_CONFIG_HOME` is unset or empty
+- [x] Implement default write target:
+  - [x] first existing file among Git's default list
+  - [x] create `~/.git-credentials` if none exists
+- [x] Support `--file <path>` and `--file=<path>`.
+- [x] Implement URL parsing for credential-store lines with Git-compatible invalid-line handling.
+- [x] Match entries by:
+  - [x] protocol
+  - [x] host and optional port
+  - [x] username when supplied in the query
+  - [x] path when path is relevant
+- [x] Respect `credential.useHttpPath`.
+- [x] Handle CRLF rules from `t0302`.
+- [x] Erase matching credentials from all relevant files.
+- [x] Avoid duplicate stored credentials when replacing/updating existing entries.
+- [x] Preserve or set restrictive file permissions on Unix.
+- [x] Decide and document behavior for unreadable store files to match Git tests.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t0302-credential-store.sh`
 - [ ] `./scripts/run-tests.sh t0300-credentials.sh`
 
