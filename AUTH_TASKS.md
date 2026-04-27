@@ -46,8 +46,8 @@ Tasks:
 - [x] Add serializer support preserving Git-compatible output order where tests care.
 - [x] Normalize `url=` into split fields without losing the original credential context.
 - [x] Preserve HTTP path omission rules for `credential.useHttpPath=false`.
-- [ ] Add protection against invalid protocol/host fields required by `credential.protectProtocol`.
-- [ ] Add prompt-safe rendering helpers for usernames/hosts required by `credential.sanitizePrompt`.
+- [x] Add protection against invalid protocol/host fields required by `credential.protectProtocol`.
+- [x] Add prompt-safe rendering helpers for usernames/hosts required by `credential.sanitizePrompt`.
 - [ ] Drive validation from the upstream-derived harness files; do not add new non-upstream tests for this work.
 
 Validation:
@@ -62,7 +62,7 @@ Definition of done:
 - [x] Multi-valued credential attributes survive helper round trips.
 - [x] The model can represent helper-provided `authtype` + `credential` without username/password.
 
-## Phase 2: Credential Helper Semantics
+## Phase 2: Credential Helper Semantics [~]
 
 Dependency: Phase 1.
 
@@ -73,7 +73,7 @@ Primary files:
 
 Tasks:
 
-- [ ] Implement `grit credential capability`.
+- [x] Implement `grit credential capability`.
 - [ ] Match Git helper chain behavior for `fill`:
   - [ ] invoke helpers in config load order
   - [ ] support empty helper reset

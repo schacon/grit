@@ -16,6 +16,11 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added expiry filtering for `password_expiry_utc`.
 - Added helper-chain stopping once a complete username/password or pre-encoded credential is available.
 - Added `GIT_ASKPASS`, `core.askPass`, and `SSH_ASKPASS` lookup for missing credential prompts.
+- Added `credential.protectProtocol` checks for decoded carriage returns in protocol/host values.
+- Added encoded-newline URL rejection before helpers are invoked.
+- Added prompt sanitization for unsafe credential prompt components, including control characters and spaces.
+- Forwarded askpass stderr so upstream-style askpass prompt tests can observe prompt text.
+- Added `grit credential capability` output for `authtype` and `state` support.
 
 ## Validation
 
@@ -27,9 +32,12 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
   - Basic username/password helper output.
   - Capability-aware `authtype` + `credential` helper output.
   - Capability filtering when the caller did not advertise `authtype` support.
+  - Encoded newline URL rejection.
+  - `credential.protectProtocol` CR rejection and `credential.protectProtocol=false` override.
+  - Sanitized askpass prompt for a control-character username.
+  - `grit credential capability` output.
 
 ## Remaining Work
 
-- Implement full `credential.protectProtocol` validation.
-- Implement prompt sanitization for control characters.
 - Continue Phase 2 helper semantics, including `grit credential capability`, exact `quit` stderr wording, and URL-scoped username behavior.
+- Enable or directly run `t0300-credentials.sh` once the harness scope allows it.

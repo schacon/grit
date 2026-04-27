@@ -6,6 +6,7 @@
 - `cargo build --release -p grit-rs`: passed
 - `cargo test -p grit-lib --lib`: 197 passed
 - `./scripts/run-tests.sh t0300-credentials.sh`: skipped by current `data/test-files.csv` scope; no credential harness tests executed
+- Manual credential smoke checks: Basic helper fill, `authtype` capability filtering, encoded-newline URL rejection, `credential.protectProtocol` CR handling, sanitized askpass prompt, and `grit credential capability` passed
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
