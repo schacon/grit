@@ -30,7 +30,7 @@ pub struct HttpClientContext {
     credential_use_http_path: bool,
     credential_username: Option<String>,
     cookie_header: Option<String>,
-    extra_headers: Vec<(String, String)>,
+    extra_headers: Vec<ExtraHeaderRule>,
     smart_http_enabled: bool,
     proactive_auth: ProactiveAuth,
     empty_auth: bool,
@@ -62,6 +62,12 @@ struct TraceCurl {
 enum TraceCurlDest {
     Stderr,
     File(String),
+}
+
+#[derive(Clone)]
+struct ExtraHeaderRule {
+    pattern: Option<String>,
+    header: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,7 +157,7 @@ impl HttpClientContext {
             .get("credential.username")
             .filter(|s| !s.trim().is_empty());
         let cookie_header = build_cookie_header(config)?;
-        let extra_headers = extra_headers_from_config(config);
+        let extra_headers = extra_header_rules_from_config(config);
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
             .is_none_or(|v| v.trim() != "0");
@@ -216,7 +222,8 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
         self.trace_cookie_header();
-        self.trace_extra_headers();
+        let extra_headers = self.extra_headers_for_url(url);
+        self.trace_extra_headers(&extra_headers);
         let request_auth = match self.cached_authorization_header() {
             Some(header) => Some(header),
             None => self.proactive_authorization_header(url)?,
@@ -325,7 +332,8 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
         self.trace_cookie_header();
-        self.trace_extra_headers();
+        let extra_headers = self.extra_headers_for_url(url);
+        self.trace_extra_headers(&extra_headers);
         let (payload, gzip_enabled) = self.encode_post_payload(body)?;
         if gzip_enabled {
             self.trace_outgoing_header("Content-Encoding: gzip");
@@ -439,6 +447,7 @@ impl HttpClientContext {
         git_protocol_header: Option<&str>,
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
+        let extra_headers = self.extra_headers_for_url(&request_url);
         match &self.transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
@@ -453,7 +462,7 @@ impl HttpClientContext {
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
                 }
-                for (name, value) in &self.extra_headers {
+                for (name, value) in &extra_headers {
                     req = req.set(name, value);
                 }
                 match req.call() {
@@ -500,7 +509,7 @@ impl HttpClientContext {
                     auth_header,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
-                    &self.extra_headers,
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -511,7 +520,7 @@ impl HttpClientContext {
                     auth_header,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
-                    &self.extra_headers,
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -531,6 +540,7 @@ impl HttpClientContext {
         git_protocol_header: Option<&str>,
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
+        let extra_headers = self.extra_headers_for_url(&request_url);
         match &self.transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
@@ -550,7 +560,7 @@ impl HttpClientContext {
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
                 }
-                for (name, value) in &self.extra_headers {
+                for (name, value) in &extra_headers {
                     req = req.set(name, value);
                 }
                 let send_result = if chunked {
@@ -608,7 +618,7 @@ impl HttpClientContext {
                     chunked,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
-                    &self.extra_headers,
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -624,7 +634,7 @@ impl HttpClientContext {
                     chunked,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
-                    &self.extra_headers,
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -921,14 +931,32 @@ impl HttpClientContext {
         }
     }
 
-    fn trace_extra_headers(&self) {
+    fn extra_headers_for_url(&self, url: &str) -> Vec<(String, String)> {
+        let mut headers = Vec::new();
+        for rule in &self.extra_headers {
+            let matches = rule
+                .pattern
+                .as_deref()
+                .is_none_or(|pattern| grit_lib::config::url_matches(pattern, url));
+            if !matches {
+                continue;
+            }
+            match &rule.header {
+                Some(header) => headers.push(header.clone()),
+                None => headers.clear(),
+            }
+        }
+        headers
+    }
+
+    fn trace_extra_headers(&self, extra_headers: &[(String, String)]) {
         let Some(ref t) = self.trace_curl else {
             return;
         };
         if !trace_component_enabled(&t.components, "http") {
             return;
         }
-        for (name, value) in &self.extra_headers {
+        for (name, value) in extra_headers {
             let rendered = if t.redact && header_should_redact(name) {
                 format!("{name}: <redacted>")
             } else {
@@ -1006,28 +1034,63 @@ fn response_headers(resp: &ureq::Response) -> Vec<(String, String)> {
         .collect()
 }
 
-fn extra_headers_from_config(config: &ConfigSet) -> Vec<(String, String)> {
-    let mut headers = Vec::new();
+fn extra_header_rules_from_config(config: &ConfigSet) -> Vec<ExtraHeaderRule> {
+    let mut rules = Vec::new();
     for entry in config.entries() {
-        if !entry.key.eq_ignore_ascii_case("http.extraheader") {
+        let Some((pattern, variable)) = parse_http_config_key(&entry.key) else {
+            continue;
+        };
+        if !variable.eq_ignore_ascii_case("extraheader") {
             continue;
         }
+        let pattern = pattern.map(ToOwned::to_owned);
         let Some(raw) = entry.value.as_deref() else {
-            headers.clear();
+            rules.push(ExtraHeaderRule {
+                pattern,
+                header: None,
+            });
             continue;
         };
         if raw.trim().is_empty() {
-            headers.clear();
+            rules.push(ExtraHeaderRule {
+                pattern,
+                header: None,
+            });
             continue;
         }
         if let Some((name, value)) = raw.split_once(':') {
             let name = name.trim();
             if !name.is_empty() {
-                headers.push((name.to_string(), value.trim_start().to_string()));
+                rules.push(ExtraHeaderRule {
+                    pattern,
+                    header: Some((name.to_string(), value.trim_start().to_string())),
+                });
             }
         }
     }
-    headers
+    rules
+}
+
+fn parse_http_config_key(key: &str) -> Option<(Option<&str>, &str)> {
+    let first_dot = key.find('.')?;
+    let section = &key[..first_dot];
+    if !section.eq_ignore_ascii_case("http") {
+        return None;
+    }
+    let rest = &key[first_dot + 1..];
+    if let Some(last_dot) = rest.rfind('.') {
+        let subsection = &rest[..last_dot];
+        let variable = &rest[last_dot + 1..];
+        if subsection.is_empty() || variable.is_empty() {
+            None
+        } else {
+            Some((Some(subsection), variable))
+        }
+    } else if rest.is_empty() {
+        None
+    } else {
+        Some((None, rest))
+    }
 }
 
 fn header_should_redact(name: &str) -> bool {

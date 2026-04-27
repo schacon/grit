@@ -321,10 +321,10 @@ Primary files:
 
 Tasks:
 
-- [~] Implement `http.extraHeader`:
+- [x] Implement `http.extraHeader`:
   - [x] multiple values
   - [x] empty-value reset
-  - [ ] per-URL matching if config layer supports it
+  - [x] per-URL matching if config layer supports it
   - [x] redaction for auth-like headers in traces
 - [ ] Implement environment proxy variables:
   - [ ] `http_proxy`
