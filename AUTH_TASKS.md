@@ -379,12 +379,12 @@ Tasks:
   - [ ] `http.sslCAPath` / `GIT_SSL_CAPATH` if feasible
   - [ ] document unsupported client certificate options if `ureq` cannot support them cleanly
 - [ ] Audit `http.sslCert`, `http.sslKey`, and password-protected cert behavior.
-- [ ] Route bundle URI HTTP(S) downloads through `HttpClientContext`:
-  - [ ] `grit/src/bundle_uri.rs`
-  - [ ] `grit/src/http_bundle_uri.rs`
-  - [ ] preserve existing bundle-uri protocol behavior
-  - [ ] ensure auth, proxy, cookies, and trace are shared with normal HTTP remote operations
-- [ ] Audit other raw `ureq` uses and either route through shared client or document why not.
+- [x] Route bundle URI HTTP(S) downloads through `HttpClientContext`:
+  - [x] `grit/src/bundle_uri.rs`
+  - [x] `grit/src/http_bundle_uri.rs`
+  - [x] preserve existing bundle-uri protocol behavior
+  - [x] ensure auth, proxy, cookies, and trace are shared with normal HTTP remote operations
+- [x] Audit other raw `ureq` uses and either route through shared client or document why not.
 
 Validation:
 

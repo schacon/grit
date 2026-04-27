@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -76,23 +76,11 @@ fn read_bundle_uri_bytes(uri: &str) -> Result<Vec<u8>> {
             if let Some(b) = map.get(uri) {
                 return Ok(b.clone());
             }
-            let agent = format!("grit/{}", crate::version_string());
-            let resp = match ureq::get(uri).set("User-Agent", &agent).call() {
-                Ok(r) => r,
-                Err(e) => {
-                    bail!("failed to download bundle from URI '{uri}': {e}")
-                }
-            };
-            if resp.status() == 404 || resp.status() == 410 {
-                bail!("warning: failed to download bundle from URI '{uri}'");
-            }
-            if resp.status() >= 400 {
-                bail!("warning: failed to download bundle from URI '{uri}'");
-            }
-            let mut body = Vec::new();
-            resp.into_reader()
-                .read_to_end(&mut body)
-                .context("read bundle URI body")?;
+            let config = ConfigSet::load(None, true).unwrap_or_default();
+            let client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+            let body = client
+                .get_with_git_protocol(uri, None)
+                .with_context(|| format!("failed to download bundle from URI '{uri}'"))?;
             map.insert(uri.to_string(), body.clone());
             Ok(body)
         });
@@ -620,23 +608,11 @@ fn read_bundle_list_from_http(repo_url: &str) -> Result<String> {
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
     refs_url.push_str("service=git-upload-pack");
 
-    let agent = format!("grit/{}", crate::version_string());
-    let resp = ureq::get(&refs_url)
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent)
-        .call()
+    let config = ConfigSet::load(None, true).unwrap_or_default();
+    let client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+    let body = client
+        .get_with_git_protocol(&refs_url, Some("version=2"))
         .with_context(|| format!("GET {refs_url}"))?;
-    if resp.status() >= 400 {
-        bail!(
-            "info/refs request failed: HTTP {} {}",
-            resp.status(),
-            resp.status_text()
-        );
-    }
-    let mut body = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut body)
-        .context("read info/refs body")?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
     let mut cur = Cursor::new(pkt_body);
     let first = match pkt_line::read_packet(&mut cur)? {
@@ -681,26 +657,15 @@ fn read_bundle_list_from_http(repo_url: &str) -> Result<String> {
     pkt_line::write_flush(&mut request)?;
 
     let post_url = format!("{base}/git-upload-pack");
-    let post = ureq::post(&post_url)
-        .set("Content-Type", "application/x-git-upload-pack-request")
-        .set("Accept", "application/x-git-upload-pack-result")
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent)
-        .send_bytes(&request)
+    let out_body = client
+        .post_with_git_protocol(
+            &post_url,
+            "application/x-git-upload-pack-request",
+            "application/x-git-upload-pack-result",
+            &request,
+            Some("version=2"),
+        )
         .with_context(|| format!("POST {post_url}"))?;
-
-    if post.status() >= 400 {
-        bail!(
-            "upload-pack POST failed: HTTP {} {}",
-            post.status(),
-            post.status_text()
-        );
-    }
-
-    let mut out_body = Vec::new();
-    post.into_reader()
-        .read_to_end(&mut out_body)
-        .context("read bundle-uri response")?;
 
     let mut ini = String::new();
     ini.push_str("[bundle]\n\tversion = 1\n\tmode = all\n");
