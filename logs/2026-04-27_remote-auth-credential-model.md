@@ -113,3 +113,5 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added `http.saveCookies` support by appending received `Set-Cookie` headers to the configured cookie file.
 - Routed raw HTTP bundle downloads in `bundle_uri.rs` through `HttpClientContext`.
 - Routed protocol-v2 HTTP bundle-uri discovery in `bundle_uri.rs` and `http_bundle_uri.rs` through `HttpClientContext`.
+- Added `http.sslVerify=false` and `GIT_SSL_NO_VERIFY` handling by configuring rustls with a permissive verifier when explicitly requested.
+- Audited TLS options: CA file/path and client certificate/key options are not cleanly supported by the current ureq/rustls setup and remain documented limitations.

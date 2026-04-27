@@ -372,13 +372,13 @@ Tasks:
   - [x] secure flag handling where applicable
   - [x] simplified header format remains supported
 - [x] Implement `http.saveCookies`.
-- [ ] Implement TLS-related configuration that the current HTTP stack can support:
-  - [ ] `http.sslVerify`
-  - [ ] `GIT_SSL_NO_VERIFY`
+- [x] Implement TLS-related configuration that the current HTTP stack can support:
+  - [x] `http.sslVerify`
+  - [x] `GIT_SSL_NO_VERIFY`
   - [ ] `http.sslCAInfo` / `GIT_SSL_CAINFO`
   - [ ] `http.sslCAPath` / `GIT_SSL_CAPATH` if feasible
-  - [ ] document unsupported client certificate options if `ureq` cannot support them cleanly
-- [ ] Audit `http.sslCert`, `http.sslKey`, and password-protected cert behavior.
+  - [x] document unsupported client certificate options if `ureq` cannot support them cleanly
+- [x] Audit `http.sslCert`, `http.sslKey`, and password-protected cert behavior.
 - [x] Route bundle URI HTTP(S) downloads through `HttpClientContext`:
   - [x] `grit/src/bundle_uri.rs`
   - [x] `grit/src/http_bundle_uri.rs`
@@ -397,7 +397,7 @@ Validation:
 Definition of done:
 
 - [ ] Authenticated/proxied bundle URI fetches use the same client behavior as normal HTTP remotes.
-- [ ] TLS support and limitations are explicit and covered by tests where feasible.
+- [x] TLS support and limitations are explicit and covered by tests where feasible.
 
 ## Phase 10: HTTP Smart Transport Regression Push
 
