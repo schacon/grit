@@ -61,3 +61,4 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Preserved CRLF behavior where a CR belongs to the path when a stored URL has a path, but invalidates a host-only stored URL.
 - Kept unreadable store files as non-fatal misses so later files can satisfy lookup.
 - Verified `--file <path>` and `--file=<path>` behavior manually.
+- Attempted `./scripts/run-tests.sh t0302-credential-store.sh`; it remains skipped by current harness scope, so no harness tests executed.
