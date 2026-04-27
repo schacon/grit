@@ -1426,16 +1426,7 @@ fn build_thin_push_pack_from_have_set(
     push_tips: &[ObjectId],
     have_roots: &BTreeSet<ObjectId>,
 ) -> Result<Vec<u8>> {
-    let shallow_grafts: HashSet<ObjectId> = HashSet::new();
-    let mut to_pack: BTreeSet<ObjectId> = BTreeSet::new();
-    for tip in push_tips {
-        walk_reachable(local_repo, tip, &mut to_pack, &shallow_grafts)?;
-    }
-    for oid in have_roots {
-        to_pack.remove(oid);
-    }
-
-    if to_pack.is_empty() {
+    if push_tips.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -1713,11 +1704,6 @@ fn walk_reachable_commits_first(
         }
         let c = parse_commit(&obj.data)?;
         if commit_uninteresting.contains(&cid) {
-            for p in c.parents {
-                if !shallow_grafts.contains(&cid) {
-                    queue.push_back(p);
-                }
-            }
             continue;
         }
         oids.insert(cid);
@@ -1738,25 +1724,31 @@ fn collect_revs_pack_objects_sparse(
     shallow_grafts: &HashSet<ObjectId>,
 ) -> Result<BTreeSet<ObjectId>> {
     let mut commit_uninteresting: HashSet<ObjectId> = HashSet::new();
-    let mut queue: VecDeque<ObjectId> = VecDeque::new();
-    let mut commit_seen_exclude: HashSet<ObjectId> = HashSet::new();
+    let boundary_only_excludes =
+        sparse_skip_full_exclude_subtract(repo, positive_tips, exclude_roots, shallow_grafts)?;
+    if boundary_only_excludes {
+        commit_uninteresting.extend(exclude_roots.iter().copied());
+    } else {
+        let mut queue: VecDeque<ObjectId> = VecDeque::new();
+        let mut commit_seen_exclude: HashSet<ObjectId> = HashSet::new();
 
-    for root in exclude_roots {
-        queue.push_back(*root);
-    }
-    while let Some(cid) = queue.pop_front() {
-        if !commit_seen_exclude.insert(cid) {
-            continue;
+        for root in exclude_roots {
+            queue.push_back(*root);
         }
-        commit_uninteresting.insert(cid);
-        let obj = read_object_from_repo(repo, &cid)?;
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let c = parse_commit(&obj.data)?;
-        for p in c.parents {
-            if !shallow_grafts.contains(&cid) {
-                queue.push_back(p);
+        while let Some(cid) = queue.pop_front() {
+            if !commit_seen_exclude.insert(cid) {
+                continue;
+            }
+            commit_uninteresting.insert(cid);
+            let obj = read_object_from_repo(repo, &cid)?;
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let c = parse_commit(&obj.data)?;
+            for p in c.parents {
+                if !shallow_grafts.contains(&cid) {
+                    queue.push_back(p);
+                }
             }
         }
     }
@@ -1866,6 +1858,7 @@ fn collect_pack_objects_from_rev_stdin_lines(
                 resolve_revision(repo, trimmed)
                     .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
             };
+            negative.push(trimmed.to_string());
             have_roots.insert(oid);
             continue;
         }
@@ -1899,12 +1892,13 @@ fn collect_pack_objects_from_rev_stdin_lines(
             &shallow_grafts,
         )?;
 
-        let skip_full_exclude_subtract = sparse_skip_full_exclude_subtract(
-            repo,
-            &positive_tips,
-            &exclude_roots,
-            &shallow_grafts,
-        )?;
+        let skip_full_exclude_subtract = (args.thin && !have_roots.is_empty())
+            || sparse_skip_full_exclude_subtract(
+                repo,
+                &positive_tips,
+                &exclude_roots,
+                &shallow_grafts,
+            )?;
         if !skip_full_exclude_subtract {
             let mut exclude = BTreeSet::new();
             for root in &exclude_roots {
@@ -1917,7 +1911,7 @@ fn collect_pack_objects_from_rev_stdin_lines(
 
         let mut ordered: Vec<ObjectId> = oids.into_iter().collect();
 
-        if args.thin && !have_roots.is_empty() {
+        if args.thin && !have_roots.is_empty() && negative.is_empty() {
             let mut have_closure = BTreeSet::new();
             for root in &have_roots {
                 walk_reachable(repo, root, &mut have_closure, &shallow_grafts)?;

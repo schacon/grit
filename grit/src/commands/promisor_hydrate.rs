@@ -5,7 +5,7 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{zero_oid, DiffEntry, DiffStatus};
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, Object, ObjectId, ObjectKind};
 use grit_lib::promisor::{
     read_promisor_missing_oids, repo_treats_promisor_packs, write_promisor_marker,
 };
@@ -13,7 +13,6 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Once;
 
 use crate::commands::index_pack;
@@ -315,7 +314,7 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
                 }
             }
             PromisorSource::Http { remote } => {
-                if run_system_git_fetch_objects(repo, remote, &[oid]).is_ok()
+                if run_http_fetch_objects(repo, remote, &[oid], false).is_ok()
                     && repo.odb.read(&oid).is_ok()
                 {
                     return Ok(());
@@ -423,7 +422,7 @@ pub(crate) fn try_lazy_fetch_promisor_objects_batch(
                 }
             }
             PromisorSource::Http { remote } => {
-                if run_system_git_fetch_objects(repo, remote, &need).is_ok() {
+                if run_http_fetch_objects(repo, remote, &need, false).is_ok() {
                     need.retain(|o| !repo.odb.exists_local(o));
                     if need.is_empty() {
                         return Ok(());
@@ -492,10 +491,7 @@ pub(crate) fn hydrate_sparse_tip_blobs_from_promisor(
     cone_mode: bool,
 ) -> Result<()> {
     let head_oid = refs::resolve_ref(&dest.git_dir, "HEAD")?;
-    let obj = dest
-        .odb
-        .read(&head_oid)
-        .context("reading HEAD for sparse hydration")?;
+    let obj = read_or_fetch_promisor_object(dest, promisor, head_oid, "HEAD for sparse hydration")?;
     if obj.kind != ObjectKind::Commit {
         return Ok(());
     }
@@ -528,6 +524,7 @@ pub(crate) fn hydrate_tree_blobs_from_promisor(
     let mut seen_blobs = HashSet::new();
     collect_all_missing_blobs_from_tree(
         dest,
+        promisor,
         tree_oid,
         &mut seen_trees,
         &mut seen_blobs,
@@ -542,10 +539,7 @@ pub(crate) fn hydrate_head_tree_blobs_from_promisor(
     promisor: &PromisorSource,
 ) -> Result<()> {
     let head_oid = refs::resolve_ref(&dest.git_dir, "HEAD")?;
-    let obj = dest
-        .odb
-        .read(&head_oid)
-        .context("reading HEAD for hydration")?;
+    let obj = read_or_fetch_promisor_object(dest, promisor, head_oid, "HEAD for hydration")?;
     if obj.kind != ObjectKind::Commit {
         return Ok(());
     }
@@ -555,6 +549,7 @@ pub(crate) fn hydrate_head_tree_blobs_from_promisor(
     let mut seen_blobs = HashSet::new();
     collect_all_missing_blobs_from_tree(
         dest,
+        promisor,
         commit.tree,
         &mut seen_trees,
         &mut seen_blobs,
@@ -577,10 +572,8 @@ fn collect_sparse_missing_blobs_from_tree(
     if !seen_trees.insert(tree_oid) {
         return Ok(());
     }
-    let tree_obj = dest
-        .odb
-        .read(&tree_oid)
-        .context("reading tree for sparse hydration")?;
+    let tree_obj =
+        read_or_fetch_promisor_object(dest, promisor, tree_oid, "tree for sparse hydration")?;
     if tree_obj.kind != ObjectKind::Tree {
         return Ok(());
     }
@@ -627,6 +620,7 @@ fn collect_sparse_missing_blobs_from_tree(
 
 fn collect_all_missing_blobs_from_tree(
     dest: &Repository,
+    promisor: &PromisorSource,
     tree_oid: ObjectId,
     seen_trees: &mut HashSet<ObjectId>,
     seen_blobs: &mut HashSet<ObjectId>,
@@ -635,10 +629,7 @@ fn collect_all_missing_blobs_from_tree(
     if !seen_trees.insert(tree_oid) {
         return Ok(());
     }
-    let tree_obj = dest
-        .odb
-        .read(&tree_oid)
-        .context("reading tree for hydration")?;
+    let tree_obj = read_or_fetch_promisor_object(dest, promisor, tree_oid, "tree for hydration")?;
     if tree_obj.kind != ObjectKind::Tree {
         return Ok(());
     }
@@ -647,7 +638,9 @@ fn collect_all_missing_blobs_from_tree(
             continue;
         }
         if (entry.mode & 0o170000) == 0o040000 {
-            collect_all_missing_blobs_from_tree(dest, entry.oid, seen_trees, seen_blobs, need)?;
+            collect_all_missing_blobs_from_tree(
+                dest, promisor, entry.oid, seen_trees, seen_blobs, need,
+            )?;
             continue;
         }
         if dest.odb.exists_local(&entry.oid) {
@@ -659,6 +652,36 @@ fn collect_all_missing_blobs_from_tree(
         need.push(entry.oid);
     }
     Ok(())
+}
+
+fn read_or_fetch_promisor_object(
+    repo: &Repository,
+    promisor: &PromisorSource,
+    oid: ObjectId,
+    purpose: &str,
+) -> Result<Object> {
+    if let Ok(obj) = repo.odb.read(&oid) {
+        return Ok(obj);
+    }
+
+    match promisor {
+        PromisorSource::Local(odb) => {
+            let obj = odb
+                .read(&oid)
+                .with_context(|| format!("promisor remote missing object {}", oid.to_hex()))?;
+            repo.odb
+                .write(obj.kind, &obj.data)
+                .with_context(|| format!("writing promised object {}", oid.to_hex()))?;
+        }
+        PromisorSource::Http { remote } => {
+            run_http_fetch_objects(repo, remote, &[oid], true)
+                .with_context(|| format!("fetching promised object {}", oid.to_hex()))?;
+        }
+    }
+
+    repo.odb
+        .read(&oid)
+        .with_context(|| format!("reading {purpose}"))
 }
 
 fn flush_promisor_blob_batches(
@@ -704,8 +727,8 @@ pub(crate) fn flush_promisor_blob_batch(
         }
         PromisorSource::Http { remote } => {
             let oids: Vec<ObjectId> = std::mem::take(batch);
+            run_http_fetch_objects(repo, remote, &oids, false)?;
             for oid in &oids {
-                run_system_git_fetch_objects(repo, remote, &[*oid])?;
                 let _ = repo
                     .odb
                     .read(oid)
@@ -728,34 +751,38 @@ pub(crate) fn flush_promisor_blob_batch(
     Ok(())
 }
 
-fn system_git_binary() -> PathBuf {
-    std::env::var("GIT_REAL_GIT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/usr/bin/git"))
-}
-
-fn run_system_git_fetch_objects(repo: &Repository, remote: &str, oids: &[ObjectId]) -> Result<()> {
+fn run_http_fetch_objects(
+    repo: &Repository,
+    remote: &str,
+    oids: &[ObjectId],
+    use_partial_filter: bool,
+) -> Result<()> {
     if oids.is_empty() {
         return Ok(());
     }
-    let repo_root = repo.work_tree.as_deref().unwrap_or(repo.git_dir.as_path());
-    let mut cmd = Command::new(system_git_binary());
-    cmd.arg("-C").arg(repo_root);
-    cmd.arg("fetch");
-    cmd.arg(remote);
-    for oid in oids {
-        cmd.arg(oid.to_hex());
-    }
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to spawn {}", system_git_binary().display()))?;
-    if !status.success() {
-        bail!(
-            "git fetch {} for {} objects failed with status {:?}",
-            remote,
-            oids.len(),
-            status
-        );
-    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let url = config
+        .get(&format!("remote.{remote}.url"))
+        .with_context(|| format!("remote.{remote}.url is not configured"))?;
+    let filter_spec = if use_partial_filter {
+        config.get(&format!("remote.{remote}.partialclonefilter"))
+    } else {
+        None
+    };
+    let http_ctx = crate::http_client::HttpClientContext::from_config_set(&config)?;
+    let refspecs: Vec<String> = oids.iter().map(ObjectId::to_hex).collect();
+    let options = crate::http_smart::HttpFetchOptions {
+        filter_spec: filter_spec.clone(),
+        refetch: true,
+        ..Default::default()
+    };
+    crate::http_smart::http_fetch_pack(
+        &repo.git_dir,
+        &url,
+        &refspecs,
+        filter_spec.is_some(),
+        &options,
+        &http_ctx,
+    )?;
     Ok(())
 }

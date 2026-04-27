@@ -1,5 +1,12 @@
 # Test results
 
+**2026-04-27 (remote auth / credential protocol model)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- `./scripts/run-tests.sh t0300-credentials.sh`: skipped by current `data/test-files.csv` scope; no credential harness tests executed
+
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
 - `cargo test -p grit-lib --lib`: passed (see merge)
