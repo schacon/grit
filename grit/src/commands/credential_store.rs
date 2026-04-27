@@ -48,6 +48,12 @@ fn read_input() -> Result<BTreeMap<String, String>> {
 
 /// Build a URL-style credential line from components.
 fn to_url_line(creds: &BTreeMap<String, String>) -> Option<String> {
+    if creds
+        .get("ephemeral")
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+    {
+        return None;
+    }
     let protocol = creds.get("protocol")?;
     let host = creds.get("host")?;
     let username = creds.get("username").map(|s| s.as_str()).unwrap_or("");

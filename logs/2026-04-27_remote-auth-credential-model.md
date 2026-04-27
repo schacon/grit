@@ -23,6 +23,8 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added `grit credential capability` output for `authtype` and `state` support.
 - Added URL-scoped credential config lookup for `username`, `useHttpPath`, `protectProtocol`, and `sanitizePrompt`.
 - Adjusted credential parse/helper abort failures to use Git-shaped `fatal:` output.
+- Added terminal prompting via `/dev/tty` when no askpass program is configured and interactive prompting is allowed.
+- Updated built-in `credential-store` to avoid persisting credentials marked `ephemeral`.
 
 ## Validation
 
@@ -41,8 +43,9 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
   - URL-scoped `credential.username`.
   - URL-scoped `credential.useHttpPath` and default HTTP path stripping.
   - Fatal output shape for missing protocol, encoded-newline URL rejection, and helper `quit`.
+  - Built-in `credential-store` skips ephemeral credentials.
 
 ## Remaining Work
 
-- Continue Phase 2 helper semantics, including terminal prompt fallback and built-in helper behavior for ephemeral credentials.
+- Continue Phase 2 validation by enabling or directly running the upstream-derived credential harness when scope allows it.
 - Enable or directly run `t0300-credentials.sh` once the harness scope allows it.
