@@ -12,7 +12,8 @@
 
 - `cargo check -p grit-rs`: passed
 - `cargo build --release -p grit-rs`: passed
-- Manual credential-store smoke checks: home/XDG lookup precedence, XDG fallback, overwrite-on-store, erase across files, `--file` and `--file=`, path matching, CRLF path behavior, and Unix permissions passed
+- `./scripts/run-tests.sh t0302-credential-store.sh`: skipped by current `data/test-files.csv` scope; no credential-store harness tests executed
+- Manual credential-store smoke checks: home/XDG lookup precedence, XDG fallback, overwrite-on-store, erase across files, `--file` and `--file=`, path matching, CRLF path behavior, invalid-line handling, and Unix permissions passed
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
