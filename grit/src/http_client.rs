@@ -31,6 +31,8 @@ pub struct HttpClientContext {
     credential_username: Option<String>,
     cookie_header: Option<String>,
     smart_http_enabled: bool,
+    proactive_auth: ProactiveAuth,
+    empty_auth: bool,
     auth_cache: Arc<Mutex<Option<AuthCredentials>>>,
 }
 
@@ -59,6 +61,21 @@ struct TraceCurl {
 enum TraceCurlDest {
     Stderr,
     File(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProactiveAuth {
+    None,
+    Basic,
+    Auto,
+}
+
+fn parse_proactive_auth(value: Option<String>) -> ProactiveAuth {
+    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
+        Some(value) if value == "basic" => ProactiveAuth::Basic,
+        Some(value) if value == "auto" => ProactiveAuth::Auto,
+        _ => ProactiveAuth::None,
+    }
 }
 
 /// Validate `http.proxy` from `git clone -c http.proxy=...` before clap runs, so invalid URLs
@@ -136,6 +153,12 @@ impl HttpClientContext {
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
             .is_none_or(|v| v.trim() != "0");
+        let proactive_auth = parse_proactive_auth(config.get("http.proactiveAuth"));
+        let empty_auth = config
+            .get("http.emptyAuth")
+            .as_deref()
+            .map(|value| parse_bool(value).unwrap_or(false))
+            .unwrap_or(false);
         Ok(Self {
             transport,
             trace_curl,
@@ -146,6 +169,8 @@ impl HttpClientContext {
             credential_username,
             cookie_header,
             smart_http_enabled,
+            proactive_auth,
+            empty_auth,
             auth_cache: Arc::new(Mutex::new(None)),
         })
     }
@@ -188,8 +213,11 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
         self.trace_cookie_header();
-        let cached_auth = self.cached_authorization_header();
-        let first = self.http_get_once(url, cached_auth.as_deref(), git_protocol_header)?;
+        let request_auth = match self.cached_authorization_header() {
+            Some(header) => Some(header),
+            None => self.proactive_authorization_header(url)?,
+        };
+        let first = self.http_get_once(url, request_auth.as_deref(), git_protocol_header)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
@@ -305,13 +333,16 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Content-Length: {}", payload.len()));
         }
 
-        let cached_auth = self.cached_authorization_header();
+        let request_auth = match self.cached_authorization_header() {
+            Some(header) => Some(header),
+            None => self.proactive_authorization_header(url)?,
+        };
         let first = self.http_post_once(
             url,
             content_type,
             accept,
             &payload,
-            cached_auth.as_deref(),
+            request_auth.as_deref(),
             gzip_enabled,
             chunked,
             git_protocol_header,
@@ -608,6 +639,27 @@ impl HttpClientContext {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
+    }
+
+    fn proactive_authorization_header(&self, url: &str) -> Result<Option<String>> {
+        if self.empty_auth || self.proactive_auth == ProactiveAuth::None {
+            return Ok(None);
+        }
+        let challenges = match self.proactive_auth {
+            ProactiveAuth::Basic => vec!["Basic".to_string()],
+            ProactiveAuth::Auto => Vec::new(),
+            ProactiveAuth::None => return Ok(None),
+        };
+        let Some(auth) = self.credentials_from_fill(url, &challenges)? else {
+            return Ok(None);
+        };
+        if auth.needs_basic_prompt() || auth.should_continue() {
+            return Ok(None);
+        }
+        self.trace_auth_header();
+        let header = auth.authorization_header();
+        self.store_cached_auth(auth);
+        Ok(Some(header))
     }
 
     fn encode_post_payload(&self, body: &[u8]) -> Result<(Vec<u8>, bool)> {

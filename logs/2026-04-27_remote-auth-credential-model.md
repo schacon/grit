@@ -91,3 +91,7 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added one-step multistage auth handling for helper responses with `continue=1`, carrying helper `state[]` and updated challenges into a second `credential fill`.
 - Included pre-encoded auth fields and helper state in approve/reject credential input.
 - Preserved ephemeral markers so helpers can avoid storing short-lived credentials.
+- Added `http.proactiveAuth` parsing for `basic`, `auto`, and `none`.
+- Added proactive Basic credential lookup before the first HTTP request.
+- Added proactive auto credential lookup that can use helper-selected pre-encoded auth schemes.
+- Parsed `http.emptyAuth`; for now it disables proactive auth and leaves the normal 401 path intact.

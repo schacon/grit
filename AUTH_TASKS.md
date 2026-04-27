@@ -280,32 +280,32 @@ Primary files:
 
 Tasks:
 
-- [ ] Parse `http.proactiveAuth` values:
-  - [ ] `basic`
-  - [ ] `auto`
-  - [ ] `none`
-- [ ] Implement proactive Basic:
-  - [ ] call credential helpers before first request
-  - [ ] request Basic-capable credentials from helpers
-  - [ ] send `Authorization` on first request
-- [ ] Implement proactive auto:
-  - [ ] allow helper-selected auth scheme
-  - [ ] fall back to Basic only when Git would
-- [ ] Parse and implement `http.emptyAuth`.
-- [ ] Ensure proactive auth is disabled by default.
-- [ ] Ensure credentials are not sent over plain HTTP unexpectedly beyond Git-compatible behavior.
-- [ ] Update trace redaction for proactive auth headers.
+- [x] Parse `http.proactiveAuth` values:
+  - [x] `basic`
+  - [x] `auto`
+  - [x] `none`
+- [x] Implement proactive Basic:
+  - [x] call credential helpers before first request
+  - [x] request Basic-capable credentials from helpers
+  - [x] send `Authorization` on first request
+- [x] Implement proactive auto:
+  - [x] allow helper-selected auth scheme
+  - [x] fall back to Basic only when Git would
+- [~] Parse and implement `http.emptyAuth`.
+- [x] Ensure proactive auth is disabled by default.
+- [x] Ensure credentials are not sent over plain HTTP unexpectedly beyond Git-compatible behavior.
+- [x] Update trace redaction for proactive auth headers.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
 
-- [ ] Proactive Basic and auto auth cases in `t5563-simple-http-auth` pass.
-- [ ] Auth trace output remains redacted by default.
+- [~] Proactive Basic and auto auth cases in `t5563-simple-http-auth` pass.
+- [x] Auth trace output remains redacted by default.
 
 ## Phase 8: HTTP Request Configuration Parity
 
