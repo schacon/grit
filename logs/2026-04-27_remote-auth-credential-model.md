@@ -62,3 +62,17 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Kept unreadable store files as non-fatal misses so later files can satisfy lookup.
 - Verified `--file <path>` and `--file=<path>` behavior manually.
 - Attempted `./scripts/run-tests.sh t0302-credential-store.sh`; it remains skipped by current harness scope, so no harness tests executed.
+
+## Credential Cache Daemon
+
+- Replaced the credential-cache stub with a Unix-socket daemon path.
+- Implemented default socket paths:
+  - `$XDG_CACHE_HOME/git/credential/socket` when `XDG_CACHE_HOME` is set.
+  - `$HOME/.cache/git/credential/socket` by default.
+  - `$HOME/.git-credential-cache/socket` when that directory exists.
+- Implemented absolute `--socket` support.
+- Implemented `store`, `get`, `erase`, and `exit`.
+- Implemented timeout expiration and `password_expiry_utc` checks.
+- Preserved confidential fields such as `oauth_refresh_token` in cached credential records.
+- Ensured socket parent directories are created with restrictive permissions on Unix.
+- Verified default socket creation, custom socket creation, store/get, erase, timeout expiry, and exit cleanup manually.
