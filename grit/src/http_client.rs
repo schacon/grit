@@ -202,19 +202,20 @@ impl HttpClientContext {
         let mut auth = self
             .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.username.is_empty() {
-            auth.username = self.askpass_username(url)?;
-        }
-        if auth.password.is_empty() {
-            auth.password = self.askpass_password(url, &auth.username)?;
+        if auth.needs_basic_prompt() {
+            let mut username = auth.username().unwrap_or_default().to_string();
+            if username.is_empty() {
+                username = self.askpass_username(url)?;
+            }
+            let password = self.askpass_password(url, &username)?;
+            auth = AuthCredentials::Basic { username, password };
         }
 
         self.trace_auth_header();
         let retry =
             self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
         let mut credential_input = self.credential_input_for_url(url)?;
-        credential_input.insert("username".to_string(), auth.username.clone());
-        credential_input.insert("password".to_string(), auth.password.clone());
+        auth.add_to_credential_input(&mut credential_input);
         let reject_extras = credential_challenge_extras(&auth_challenges);
         self.trace_response_status(retry.status, &retry.reason);
         if retry.status >= 400 {
@@ -298,11 +299,13 @@ impl HttpClientContext {
         let mut auth = self
             .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.username.is_empty() {
-            auth.username = self.askpass_username(url)?;
-        }
-        if auth.password.is_empty() {
-            auth.password = self.askpass_password(url, &auth.username)?;
+        if auth.needs_basic_prompt() {
+            let mut username = auth.username().unwrap_or_default().to_string();
+            if username.is_empty() {
+                username = self.askpass_username(url)?;
+            }
+            let password = self.askpass_password(url, &username)?;
+            auth = AuthCredentials::Basic { username, password };
         }
         self.trace_auth_header();
 
@@ -317,8 +320,7 @@ impl HttpClientContext {
             git_protocol_header,
         )?;
         let mut credential_input = self.credential_input_for_url(url)?;
-        credential_input.insert("username".to_string(), auth.username.clone());
-        credential_input.insert("password".to_string(), auth.password.clone());
+        auth.add_to_credential_input(&mut credential_input);
         let reject_extras = credential_challenge_extras(&auth_challenges);
         self.trace_response_status(retry.status, &retry.reason);
         if retry.status >= 400 {
@@ -652,6 +654,20 @@ impl HttpClientContext {
         let input = self.credential_input_for_url(url)?;
         let extras = credential_fill_extras(auth_challenges);
         let filled = self.run_credential_action("fill", &input, &extras)?;
+        if let (Some(authtype), Some(credential)) =
+            (filled.get("authtype"), filled.get("credential"))
+        {
+            if !authtype.is_empty() && !credential.is_empty() {
+                return Ok(Some(AuthCredentials::Preencoded {
+                    authtype: authtype.clone(),
+                    credential: credential.clone(),
+                    username: filled.get("username").cloned(),
+                    ephemeral: filled
+                        .get("ephemeral")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                }));
+            }
+        }
         let username = filled
             .get("username")
             .cloned()
@@ -661,13 +677,13 @@ impl HttpClientContext {
         if username.is_empty() && password.is_empty() {
             return Ok(None);
         }
-        Ok(Some(AuthCredentials { username, password }))
+        Ok(Some(AuthCredentials::Basic { username, password }))
     }
 
     fn default_auth_for_url(&self, url: &str) -> Result<AuthCredentials> {
         let input = self.credential_input_for_url(url)?;
         let username = input.get("username").cloned().unwrap_or_default();
-        Ok(AuthCredentials {
+        Ok(AuthCredentials::Basic {
             username,
             password: String::new(),
         })
@@ -825,16 +841,69 @@ impl RawHttpResponse {
 }
 
 #[derive(Clone)]
-struct AuthCredentials {
-    username: String,
-    password: String,
+enum AuthCredentials {
+    Basic {
+        username: String,
+        password: String,
+    },
+    Preencoded {
+        authtype: String,
+        credential: String,
+        username: Option<String>,
+        ephemeral: bool,
+    },
 }
 
 impl AuthCredentials {
     fn authorization_header(&self) -> String {
-        let cred = format!("{}:{}", self.username, self.password);
-        let encoded = base64::engine::general_purpose::STANDARD.encode(cred.as_bytes());
-        format!("Basic {encoded}")
+        match self {
+            Self::Basic { username, password } => {
+                let cred = format!("{username}:{password}");
+                let encoded = base64::engine::general_purpose::STANDARD.encode(cred.as_bytes());
+                format!("Basic {encoded}")
+            }
+            Self::Preencoded {
+                authtype,
+                credential,
+                ..
+            } => format!("{authtype} {credential}"),
+        }
+    }
+
+    fn username(&self) -> Option<&str> {
+        match self {
+            Self::Basic { username, .. } => Some(username),
+            Self::Preencoded { username, .. } => username.as_deref(),
+        }
+    }
+
+    fn needs_basic_prompt(&self) -> bool {
+        matches!(self, Self::Basic { username, password } if username.is_empty() || password.is_empty())
+    }
+
+    fn add_to_credential_input(&self, input: &mut BTreeMap<String, String>) {
+        match self {
+            Self::Basic { username, password } => {
+                input.insert("username".to_string(), username.clone());
+                input.insert("password".to_string(), password.clone());
+            }
+            Self::Preencoded {
+                authtype,
+                credential,
+                username,
+                ephemeral,
+            } => {
+                input.insert("capability[]".to_string(), "authtype".to_string());
+                input.insert("authtype".to_string(), authtype.clone());
+                input.insert("credential".to_string(), credential.clone());
+                if let Some(username) = username {
+                    input.insert("username".to_string(), username.clone());
+                }
+                if *ephemeral {
+                    input.insert("ephemeral".to_string(), "1".to_string());
+                }
+            }
+        }
     }
 }
 

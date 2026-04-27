@@ -213,7 +213,7 @@ Tasks:
 - [x] Preserve challenge strings for `wwwauth[]` exactly enough for helpers/tests.
 - [x] Pass `capability[]=authtype` and `capability[]=state` to `credential fill`.
 - [x] Pass all parsed challenges as ordered `wwwauth[]`.
-- [~] Include relevant `wwwauth[]` and state fields in `approve` / `reject`.
+- [x] Include relevant `wwwauth[]` and state fields in `approve` / `reject`.
 - [x] Keep current Basic username/password flow working when no advanced auth is returned.
 
 Validation:
@@ -225,7 +225,7 @@ Validation:
 Definition of done:
 
 - [x] HTTP auth helpers receive Git-compatible challenge input.
-- [ ] Basic auth tests still pass through the new challenge-aware path.
+- [x] Basic auth tests still pass through the new challenge-aware path.
 
 ## Phase 6: HTTP Auth Schemes and Multistage Flow
 
@@ -239,12 +239,12 @@ Primary files:
 
 Tasks:
 
-- [ ] Represent resolved HTTP auth as an enum rather than Basic-only username/password:
-  - [ ] Basic from username/password
-  - [ ] pre-encoded `authtype` + `credential`
+- [x] Represent resolved HTTP auth as an enum rather than Basic-only username/password:
+  - [x] Basic from username/password
+  - [x] pre-encoded `authtype` + `credential`
   - [ ] empty auth if supported later
-- [ ] Build `Authorization: <authtype> <credential>` from helper-provided credentials.
-- [ ] Preserve Basic `Authorization` generation for username/password.
+- [x] Build `Authorization: <authtype> <credential>` from helper-provided credentials.
+- [x] Preserve Basic `Authorization` generation for username/password.
 - [ ] Implement invalid credential retry/reject behavior:
   - [ ] reject failed credentials with all relevant credential fields
   - [ ] clear in-process auth cache on failure
