@@ -88,15 +88,15 @@ Tasks:
   - [x] ignore expired passwords during `fill`
   - [x] preserve non-expired values where Git does
 - [x] Preserve `oauth_refresh_token` as confidential helper data.
-- [ ] Honor `ephemeral`:
-  - [ ] do not persist ephemeral credentials in helpers that should not store them
+- [x] Honor `ephemeral`:
+  - [x] do not persist ephemeral credentials in helpers that should not store them
   - [x] still notify helpers on approve/reject when Git would
 - [x] Implement `credential.interactive=false`.
-- [~] Implement prompt fallback order:
+- [x] Implement prompt fallback order:
   - [x] `GIT_ASKPASS`
   - [x] `core.askPass`
   - [x] `SSH_ASKPASS`
-  - [ ] terminal prompt when interactive is allowed
+  - [x] terminal prompt when interactive is allowed
 - [x] Make failure messages match Git closely enough for `t0300`.
 
 Validation:
@@ -109,7 +109,7 @@ Definition of done:
 
 - [ ] `t0300-credentials` is mostly or fully passing.
 - [ ] `t0303-credential-external` remains passing.
-- [ ] Credential helpers can return Bearer-style credentials for later HTTP use.
+- [x] Credential helpers can return Bearer-style credentials for later HTTP use.
 
 ## Phase 3: Credential Store Parity
 

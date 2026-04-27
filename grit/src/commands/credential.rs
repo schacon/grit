@@ -735,7 +735,7 @@ fn askpass_program(config: &grit_lib::config::ConfigSet) -> Option<String> {
 
 fn run_askpass(config: &grit_lib::config::ConfigSet, prompt: &str) -> Result<String> {
     let Some(program) = askpass_program(config) else {
-        bail!("could not read Username/Password: terminal prompts are not implemented");
+        return prompt_terminal(prompt);
     };
     let out = Command::new(&program)
         .arg(prompt)
@@ -748,6 +748,31 @@ fn run_askpass(config: &grit_lib::config::ConfigSet, prompt: &str) -> Result<Str
         bail!("askpass failed");
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(unix)]
+fn prompt_terminal(prompt: &str) -> Result<String> {
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .context("open /dev/tty for credential prompt")?;
+    tty.write_all(prompt.as_bytes())?;
+    tty.flush()?;
+
+    let mut reader = std::io::BufReader::new(tty.try_clone()?);
+    let mut value = String::new();
+    reader.read_line(&mut value)?;
+    Ok(value.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(not(unix))]
+fn prompt_terminal(prompt: &str) -> Result<String> {
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut value = String::new();
+    std::io::stdin().read_line(&mut value)?;
+    Ok(value.trim_end_matches(['\r', '\n']).to_string())
 }
 
 fn credential_prompt_origin(
