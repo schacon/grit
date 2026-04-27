@@ -371,7 +371,7 @@ Tasks:
   - [x] path matching
   - [x] secure flag handling where applicable
   - [x] simplified header format remains supported
-- [ ] Implement `http.saveCookies`.
+- [x] Implement `http.saveCookies`.
 - [ ] Implement TLS-related configuration that the current HTTP stack can support:
   - [ ] `http.sslVerify`
   - [ ] `GIT_SSL_NO_VERIFY`

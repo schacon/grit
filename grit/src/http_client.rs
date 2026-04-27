@@ -30,6 +30,8 @@ pub struct HttpClientContext {
     credential_use_http_path: bool,
     credential_username: Option<String>,
     cookies: Vec<CookieSpec>,
+    cookie_file_path: Option<PathBuf>,
+    save_cookies: bool,
     extra_headers: Vec<ExtraHeaderRule>,
     smart_http_enabled: bool,
     proactive_auth: ProactiveAuth,
@@ -203,7 +205,18 @@ impl HttpClientContext {
         let credential_username = config
             .get("credential.username")
             .filter(|s| !s.trim().is_empty());
+        let cookie_file_path = config
+            .get("http.cookieFile")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
         let cookies = build_cookie_specs(config)?;
+        let save_cookies = cookie_file_path.is_some()
+            && config
+                .get("http.saveCookies")
+                .as_deref()
+                .map(|value| parse_bool(value).unwrap_or(false))
+                .unwrap_or(false);
         let extra_headers = extra_header_rules_from_config(config);
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
@@ -223,6 +236,8 @@ impl HttpClientContext {
             credential_use_http_path,
             credential_username,
             cookies,
+            cookie_file_path,
+            save_cookies,
             extra_headers,
             smart_http_enabled,
             proactive_auth,
@@ -277,6 +292,7 @@ impl HttpClientContext {
             None => self.proactive_authorization_header(url)?,
         };
         let first = self.http_get_once(url, request_auth.as_deref(), git_protocol_header)?;
+        self.save_response_cookies(&first)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
@@ -301,6 +317,7 @@ impl HttpClientContext {
         self.trace_auth_header();
         let retry =
             self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
+        self.save_response_cookies(&retry)?;
         let mut credential_input = self.credential_input_for_url(url)?;
         auth.add_to_credential_input(&mut credential_input);
         let mut reject_extras = auth.credential_extras();
@@ -317,6 +334,7 @@ impl HttpClientContext {
                     Some(&next_auth.authorization_header()),
                     git_protocol_header,
                 )?;
+                self.save_response_cookies(&retry2)?;
                 let mut credential_input = self.credential_input_for_url(url)?;
                 next_auth.add_to_credential_input(&mut credential_input);
                 let mut reject_extras = next_auth.credential_extras();
@@ -409,6 +427,7 @@ impl HttpClientContext {
             chunked,
             git_protocol_header,
         )?;
+        self.save_response_cookies(&first)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
@@ -441,6 +460,7 @@ impl HttpClientContext {
             chunked,
             git_protocol_header,
         )?;
+        self.save_response_cookies(&retry)?;
         let mut credential_input = self.credential_input_for_url(url)?;
         auth.add_to_credential_input(&mut credential_input);
         let mut reject_extras = auth.credential_extras();
@@ -462,6 +482,7 @@ impl HttpClientContext {
                     chunked,
                     git_protocol_header,
                 )?;
+                self.save_response_cookies(&retry2)?;
                 let mut credential_input = self.credential_input_for_url(url)?;
                 next_auth.add_to_credential_input(&mut credential_input);
                 let mut reject_extras = next_auth.credential_extras();
@@ -1029,6 +1050,38 @@ impl HttpClientContext {
             };
             t.write_line(&format!("=> Send header: {rendered}\n"));
         }
+    }
+
+    fn save_response_cookies(&self, response: &RawHttpResponse) -> Result<()> {
+        if !self.save_cookies {
+            return Ok(());
+        }
+        let Some(path) = self.cookie_file_path.as_ref() else {
+            return Ok(());
+        };
+        let values = response
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("set-cookie"))
+            .map(|(_, value)| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if values.is_empty() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create cookie directory {}", parent.display()))?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("open cookie file {}", path.display()))?;
+        for value in values {
+            writeln!(file, "Set-Cookie: {value}")?;
+        }
+        Ok(())
     }
 
     fn trace_proxy_auth_header(&self) {
