@@ -74,34 +74,34 @@ Primary files:
 Tasks:
 
 - [x] Implement `grit credential capability`.
-- [ ] Match Git helper chain behavior for `fill`:
-  - [ ] invoke helpers in config load order
-  - [ ] support empty helper reset
-  - [ ] stop once username/password are complete
-  - [ ] stop once `authtype` + `credential` are complete
-  - [ ] stop on `quit=true` or `quit=1`
-  - [ ] continue through partial helper responses
-- [ ] Implement helper output filtering based on caller capabilities:
-  - [ ] only accept `authtype` / `credential` when caller sent `capability[]=authtype`
-  - [ ] only accept `state[]` / `continue` when caller sent `capability[]=state`
-- [ ] Implement `password_expiry_utc` handling:
-  - [ ] ignore expired passwords during `fill`
-  - [ ] preserve non-expired values where Git does
-- [ ] Preserve `oauth_refresh_token` as confidential helper data.
+- [x] Match Git helper chain behavior for `fill`:
+  - [x] invoke helpers in config load order
+  - [x] support empty helper reset
+  - [x] stop once username/password are complete
+  - [x] stop once `authtype` + `credential` are complete
+  - [x] stop on `quit=true` or `quit=1`
+  - [x] continue through partial helper responses
+- [x] Implement helper output filtering based on caller capabilities:
+  - [x] only accept `authtype` / `credential` when caller sent `capability[]=authtype`
+  - [x] only accept `state[]` / `continue` when caller sent `capability[]=state`
+- [x] Implement `password_expiry_utc` handling:
+  - [x] ignore expired passwords during `fill`
+  - [x] preserve non-expired values where Git does
+- [x] Preserve `oauth_refresh_token` as confidential helper data.
 - [ ] Honor `ephemeral`:
   - [ ] do not persist ephemeral credentials in helpers that should not store them
-  - [ ] still notify helpers on approve/reject when Git would
-- [ ] Implement `credential.interactive=false`.
-- [ ] Implement prompt fallback order:
-  - [ ] `GIT_ASKPASS`
-  - [ ] `core.askPass`
-  - [ ] `SSH_ASKPASS`
+  - [x] still notify helpers on approve/reject when Git would
+- [x] Implement `credential.interactive=false`.
+- [~] Implement prompt fallback order:
+  - [x] `GIT_ASKPASS`
+  - [x] `core.askPass`
+  - [x] `SSH_ASKPASS`
   - [ ] terminal prompt when interactive is allowed
-- [ ] Make failure messages match Git closely enough for `t0300`.
+- [x] Make failure messages match Git closely enough for `t0300`.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t0300-credentials.sh`
 - [ ] `./scripts/run-tests.sh t0303-credential-external.sh`
 

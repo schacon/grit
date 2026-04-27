@@ -1,4 +1,9 @@
 ---
+description: 
+alwaysApply: true
+---
+
+---
 description: "Functionally complete Git reimplmentation in idiomatic, library focused Rust"
 alwaysApply: true
 ---
