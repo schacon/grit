@@ -2688,7 +2688,7 @@ fn fetch_remote(
     }
 
     maybe_write_commit_graph_after_fetch(git_dir, args)?;
-    maybe_run_auto_gc_after_fetch(git_dir, args)?;
+    maybe_run_auto_maintenance_after_fetch(git_dir, args)?;
 
     // Write machine-readable output if --output is given
     if let Some(ref output_path) = args.output {
@@ -2760,29 +2760,27 @@ fn maybe_write_commit_graph_after_fetch(git_dir: &Path, args: &Args) -> Result<(
     Ok(())
 }
 
-fn maybe_run_auto_gc_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
+fn maybe_run_auto_maintenance_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
     if args.dry_run {
         return Ok(());
     }
     let repo = Repository::open(git_dir, None)?;
-    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
-    if !crate::commands::gc::need_to_gc(&repo, &cfg) {
-        return Ok(());
-    }
-    if !args.quiet {
-        eprintln!("Auto packing the repository for optimum performance.");
-        eprintln!("See \"git help gc\" for manual housekeeping.");
-    }
-    trace_run_command_git_invocation(&["gc", "--auto"]);
+    trace_run_command_git_invocation(&["maintenance", "run", "--auto", "--no-quiet", "--detach"]);
     let work_dir = repo.work_tree.as_deref().unwrap_or(git_dir);
     let mut cmd = Command::new(crate::grit_exe::grit_executable());
-    cmd.current_dir(work_dir).args(["gc", "--auto"]);
+    cmd.current_dir(work_dir)
+        .args(["maintenance", "run", "--auto"]);
     if args.quiet {
         cmd.arg("--quiet");
+    } else {
+        cmd.arg("--no-quiet");
     }
-    let status = cmd.status().context("failed to run auto gc after fetch")?;
+    cmd.arg("--detach");
+    let status = cmd
+        .status()
+        .context("failed to run auto maintenance after fetch")?;
     if !status.success() {
-        eprintln!("warning: auto gc returned non-zero status");
+        eprintln!("warning: auto maintenance returned non-zero status");
     }
     Ok(())
 }
@@ -3837,6 +3835,9 @@ fn prune_stale_refs(
 ) -> Result<()> {
     let existing = refs::list_refs(git_dir, prefix)?;
     for (refname, oid) in &existing {
+        if refname == &format!("refs/remotes/{remote_name}/HEAD") {
+            continue;
+        }
         if !current_refs.contains(refname) {
             apply_single_ref_delete(
                 args,
