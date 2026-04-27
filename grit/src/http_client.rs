@@ -30,6 +30,7 @@ pub struct HttpClientContext {
     credential_use_http_path: bool,
     credential_username: Option<String>,
     cookie_header: Option<String>,
+    extra_headers: Vec<(String, String)>,
     smart_http_enabled: bool,
     proactive_auth: ProactiveAuth,
     empty_auth: bool,
@@ -150,6 +151,7 @@ impl HttpClientContext {
             .get("credential.username")
             .filter(|s| !s.trim().is_empty());
         let cookie_header = build_cookie_header(config)?;
+        let extra_headers = extra_headers_from_config(config);
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
             .is_none_or(|v| v.trim() != "0");
@@ -168,6 +170,7 @@ impl HttpClientContext {
             credential_use_http_path,
             credential_username,
             cookie_header,
+            extra_headers,
             smart_http_enabled,
             proactive_auth,
             empty_auth,
@@ -213,6 +216,7 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
         self.trace_cookie_header();
+        self.trace_extra_headers();
         let request_auth = match self.cached_authorization_header() {
             Some(header) => Some(header),
             None => self.proactive_authorization_header(url)?,
@@ -321,6 +325,7 @@ impl HttpClientContext {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
         self.trace_cookie_header();
+        self.trace_extra_headers();
         let (payload, gzip_enabled) = self.encode_post_payload(body)?;
         if gzip_enabled {
             self.trace_outgoing_header("Content-Encoding: gzip");
@@ -448,6 +453,9 @@ impl HttpClientContext {
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
                 }
+                for (name, value) in &self.extra_headers {
+                    req = req.set(name, value);
+                }
                 match req.call() {
                     Ok(resp) => {
                         let status = resp.status();
@@ -492,6 +500,7 @@ impl HttpClientContext {
                     auth_header,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
+                    &self.extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -502,6 +511,7 @@ impl HttpClientContext {
                     auth_header,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
+                    &self.extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -539,6 +549,9 @@ impl HttpClientContext {
                 }
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
+                }
+                for (name, value) in &self.extra_headers {
+                    req = req.set(name, value);
                 }
                 let send_result = if chunked {
                     let mut cur = std::io::Cursor::new(body);
@@ -595,6 +608,7 @@ impl HttpClientContext {
                     chunked,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
+                    &self.extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -610,6 +624,7 @@ impl HttpClientContext {
                     chunked,
                     git_protocol_header,
                     self.cookie_header.as_deref(),
+                    &self.extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -906,6 +921,23 @@ impl HttpClientContext {
         }
     }
 
+    fn trace_extra_headers(&self) {
+        let Some(ref t) = self.trace_curl else {
+            return;
+        };
+        if !trace_component_enabled(&t.components, "http") {
+            return;
+        }
+        for (name, value) in &self.extra_headers {
+            let rendered = if t.redact && header_should_redact(name) {
+                format!("{name}: <redacted>")
+            } else {
+                format!("{name}: {value}")
+            };
+            t.write_line(&format!("=> Send header: {rendered}\n"));
+        }
+    }
+
     fn trace_proxy_auth_header(&self) {
         let Some(ref t) = self.trace_curl else {
             return;
@@ -972,6 +1004,36 @@ fn response_headers(resp: &ureq::Response) -> Vec<(String, String)> {
                 .map(|value| (name.to_ascii_lowercase(), value.to_string()))
         })
         .collect()
+}
+
+fn extra_headers_from_config(config: &ConfigSet) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    for entry in config.entries() {
+        if !entry.key.eq_ignore_ascii_case("http.extraheader") {
+            continue;
+        }
+        let Some(raw) = entry.value.as_deref() else {
+            headers.clear();
+            continue;
+        };
+        if raw.trim().is_empty() {
+            headers.clear();
+            continue;
+        }
+        if let Some((name, value)) = raw.split_once(':') {
+            let name = name.trim();
+            if !name.is_empty() {
+                headers.push((name.to_string(), value.trim_start().to_string()));
+            }
+        }
+    }
+    headers
+}
+
+fn header_should_redact(name: &str) -> bool {
+    name.eq_ignore_ascii_case("authorization")
+        || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("cookie")
 }
 
 struct RawHttpResponse {
@@ -1150,6 +1212,7 @@ fn build_proxy_get_request(
     auth_header: Option<&str>,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
@@ -1175,6 +1238,9 @@ fn build_proxy_get_request(
     if let Some(cookie) = cookie_header {
         s.push_str(&format!("Cookie: {cookie}\r\n"));
     }
+    for (name, value) in extra_headers {
+        s.push_str(&format!("{name}: {value}\r\n"));
+    }
     s.push_str("\r\n");
     Ok(s.into_bytes())
 }
@@ -1190,6 +1256,7 @@ fn build_proxy_post_request(
     chunked: bool,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
@@ -1216,6 +1283,9 @@ fn build_proxy_post_request(
     if let Some(cookie) = cookie_header {
         head.push_str(&format!("Cookie: {cookie}\r\n"));
     }
+    for (name, value) in extra_headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
     if gzip_enabled {
         head.push_str("Content-Encoding: gzip\r\n");
     }
@@ -1239,6 +1309,7 @@ fn build_get_request(
     auth_header: Option<&str>,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
@@ -1272,6 +1343,12 @@ fn build_get_request(
             s.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
         }
     }
+    for (name, value) in extra_headers {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = s.find(marker) {
+            s.insert_str(pos, &format!("{name}: {value}\r\n"));
+        }
+    }
     Ok(s.into_bytes())
 }
 
@@ -1285,6 +1362,7 @@ fn build_post_request(
     chunked: bool,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
@@ -1317,6 +1395,12 @@ fn build_post_request(
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
             head.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
+        }
+    }
+    for (name, value) in extra_headers {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = head.find(marker) {
+            head.insert_str(pos, &format!("{name}: {value}\r\n"));
         }
     }
     if gzip_enabled {

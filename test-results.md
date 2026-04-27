@@ -30,6 +30,7 @@
 - HTTP client now uses a typed auth credential representation and can build `Authorization: <authtype> <credential>` for helper-provided pre-encoded credentials while preserving Basic username/password auth
 - HTTP client now performs one multistage `continue=1` follow-up with helper `state[]` and updated challenges, includes pre-encoded auth fields in approve/reject, and avoids storing ephemeral pre-encoded credentials through helper input
 - HTTP client now parses `http.proactiveAuth` and proactively sends complete Basic or helper-selected pre-encoded credentials before the first request; `http.emptyAuth` is parsed and disables proactive auth for now
+- HTTP client now applies global `http.extraHeader` values to ureq, proxy, and SOCKS request paths, supports empty-value reset, and redacts auth-like extra headers in curl trace output
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 

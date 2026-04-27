@@ -321,11 +321,11 @@ Primary files:
 
 Tasks:
 
-- [ ] Implement `http.extraHeader`:
-  - [ ] multiple values
-  - [ ] empty-value reset
+- [~] Implement `http.extraHeader`:
+  - [x] multiple values
+  - [x] empty-value reset
   - [ ] per-URL matching if config layer supports it
-  - [ ] redaction for auth-like headers in traces
+  - [x] redaction for auth-like headers in traces
 - [ ] Implement environment proxy variables:
   - [ ] `http_proxy`
   - [ ] `https_proxy`
@@ -341,7 +341,7 @@ Tasks:
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
 - [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 - [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
