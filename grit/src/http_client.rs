@@ -19,6 +19,61 @@ use flate2::Compression;
 use grit_lib::config::{parse_bool, parse_i64, ConfigSet};
 use url::Url;
 
+#[derive(Debug)]
+struct NoCertificateVerification;
+
+impl ureq::rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[ureq::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &ureq::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: ureq::rustls::pki_types::UnixTime,
+    ) -> std::result::Result<ureq::rustls::client::danger::ServerCertVerified, ureq::rustls::Error>
+    {
+        Ok(ureq::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _dss: &ureq::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        ureq::rustls::client::danger::HandshakeSignatureValid,
+        ureq::rustls::Error,
+    > {
+        Ok(ureq::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _dss: &ureq::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        ureq::rustls::client::danger::HandshakeSignatureValid,
+        ureq::rustls::Error,
+    > {
+        Ok(ureq::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<ureq::rustls::SignatureScheme> {
+        vec![
+            ureq::rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            ureq::rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            ureq::rustls::SignatureScheme::ED25519,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA256,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA384,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA512,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA512,
+        ]
+    }
+}
+
 /// Pre-built ureq agent or SOCKS-over-Unix tunnel for `http.proxy`.
 #[derive(Clone)]
 pub struct HttpClientContext {
@@ -1989,13 +2044,44 @@ fn http_access_error(url: &str, status: u16) -> anyhow::Error {
     anyhow::anyhow!("unable to access '{url}': The requested URL returned error: {status}")
 }
 
+fn ssl_verify_enabled(config: &ConfigSet) -> bool {
+    if std::env::var("GIT_SSL_NO_VERIFY")
+        .ok()
+        .is_some_and(|value| {
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+    {
+        return false;
+    }
+    config
+        .get("http.sslVerify")
+        .as_deref()
+        .map(|value| parse_bool(value).unwrap_or(true))
+        .unwrap_or(true)
+}
+
+fn ureq_agent(config: &ConfigSet, proxy: Option<ureq::Proxy>) -> ureq::Agent {
+    let mut builder = ureq::AgentBuilder::new();
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(proxy);
+    }
+    if !ssl_verify_enabled(config) {
+        let tls_config = ureq::rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+            .with_no_client_auth();
+        builder = builder.tls_config(Arc::new(tls_config));
+    }
+    builder.build()
+}
+
 fn build_transport(config: &ConfigSet) -> Result<Transport> {
     let Some(raw_proxy) = config.get("http.proxy") else {
-        return Ok(Transport::Ureq(ureq::Agent::new()));
+        return Ok(Transport::Ureq(ureq_agent(config, None)));
     };
     let raw_proxy = raw_proxy.trim();
     if raw_proxy.is_empty() {
-        return Ok(Transport::Ureq(ureq::Agent::new()));
+        return Ok(Transport::Ureq(ureq_agent(config, None)));
     }
     validate_proxy_url(raw_proxy)?;
     let with_scheme = if raw_proxy.contains("://") {
@@ -2030,9 +2116,7 @@ fn build_transport(config: &ConfigSet) -> Result<Transport> {
     let proxy_url = normalize_proxy_url_for_ureq(raw_proxy, &parsed)?;
     let proxy =
         ureq::Proxy::new(&proxy_url).with_context(|| format!("invalid proxy URL '{raw_proxy}'"))?;
-    Ok(Transport::Ureq(
-        ureq::AgentBuilder::new().proxy(proxy).build(),
-    ))
+    Ok(Transport::Ureq(ureq_agent(config, Some(proxy))))
 }
 
 fn proxy_basic_token(url: &Url) -> Result<Option<String>> {
