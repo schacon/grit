@@ -414,3 +414,75 @@ pub fn fetch_via_ext_skipping(
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
 }
+
+/// Query refs from an `ext::` remote without fetching objects.
+pub fn ls_remote_via_ext(
+    ext_url: &str,
+    service: &str,
+) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
+    let spec = parse_remote_ext_url(ext_url)?;
+    let (prog, child_args) = resolve_ext_child_argv(&spec);
+    let grit = grit_executable();
+    let mut child = if prog == grit && child_args.len() == 2 && child_args[0] == "upload-pack" {
+        let mut repo = PathBuf::from(&child_args[1]);
+        if repo.as_os_str() == "." {
+            repo = std::env::current_dir()
+                .and_then(|p| p.canonicalize())
+                .unwrap_or(repo);
+        } else if repo.is_relative() {
+            if let Ok(cwd) = std::env::current_dir() {
+                repo = cwd.join(&repo);
+            }
+        }
+        fetch_transport::spawn_upload_pack_with_proto(None, &repo, 0).with_context(|| {
+            format!(
+                "failed to spawn upload-pack for ext:: (repo {})",
+                repo.display()
+            )
+        })?
+    } else {
+        let mut cmd = Command::new(&prog);
+        cmd.args(&child_args)
+            .env("GIT_EXT_SERVICE", service)
+            .env("GIT_EXT_SERVICE_NOPREFIX", service_noprefix(service))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        cmd.env_remove("GIT_TRACE_PACKET");
+        cmd.env_remove("GIT_PROTOCOL");
+        cmd.spawn().with_context(|| {
+            format!(
+                "failed to spawn ext:: command {} {:?}",
+                prog.display(),
+                child_args
+            )
+        })?
+    };
+
+    let mut stdin = child.stdin.take().context("ext:: stdin")?;
+    let mut stdout = child.stdout.take().context("ext:: stdout")?;
+
+    if let Some(ref repo_path) = spec.git_repo_path {
+        write_git_daemon_request(&mut stdin, service, repo_path, spec.git_vhost.as_deref())?;
+    }
+
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid) =
+        fetch_transport::read_advertisement(&mut stdout)?;
+    if saw_v2 {
+        crate::trace2_transfer::emit_negotiated_version_client_fetch_v2();
+    } else {
+        crate::trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+    }
+    if let Some(ref sid) = server_sid {
+        crate::trace2_transfer::emit_server_sid(sid);
+    }
+
+    drop(stdin);
+    let _ = fetch_transport::drain_child_stdout_to_eof(&mut stdout);
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("ext:: helper exited with {}", status);
+    }
+
+    Ok((advertised, head_symref))
+}

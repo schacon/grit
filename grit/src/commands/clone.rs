@@ -459,15 +459,6 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
 }
 
 pub fn run(mut args: Args) -> Result<()> {
-    if std::env::var_os("GIT_NAMESPACE").is_some() {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-    if args.recurse_submodules {
-        // Deep recursive clone/submodule URL resolution still has edge mismatches.
-        // Delegate to system git for parity with upstream submodule tests.
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
-
     // `git clone --mirror` is a bare clone into `<name>.git` with a full ref mirror;
     // the object store must live at `<repo>/objects/...`, not `<repo>/.git/objects/...`.
     if args.mirror {

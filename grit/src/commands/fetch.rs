@@ -932,6 +932,7 @@ fn fetch_remote(
     }
 
     let is_http_url = !is_ext_url && (url.starts_with("http://") || url.starts_with("https://"));
+    let is_git_url = !is_ext_url && !is_http_url && url.starts_with("git://");
 
     let mut remote_path = if is_ext_url {
         PathBuf::new()
@@ -943,9 +944,9 @@ fn fetch_remote(
         };
         crate::protocol::check_protocol_allowed(proto, Some(git_dir))?;
         PathBuf::new()
-    } else if url.starts_with("git://") {
+    } else if is_git_url {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        PathBuf::new()
     } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
@@ -969,7 +970,7 @@ fn fetch_remote(
     };
     // Resolve relative paths from the repository root (not process CWD), for both
     // configured `remote.<name>.url` and path-based remotes (`git fetch ./server`).
-    if !is_ext_url && !is_http_url && remote_path.is_relative() {
+    if !is_ext_url && !is_http_url && !is_git_url && remote_path.is_relative() {
         let base = configured_remote_base(git_dir);
         remote_path = base.join(&remote_path);
         if url_override.is_none() && !remote_path.exists() {
@@ -991,7 +992,7 @@ fn fetch_remote(
     // `git clone` from a bundle records the bundle path as `remote.origin.url`. A no-op `fetch`
     // must succeed (`t5605` bundle clone + fetch). For explicit path fetches against a bundle
     // file (`git fetch ../bundle main:main`), unbundle objects/refs into the current repository.
-    if !is_ext_url && !is_http_url && remote_path_is_git_bundle_file(&remote_path) {
+    if !is_ext_url && !is_http_url && !is_git_url && remote_path_is_git_bundle_file(&remote_path) {
         if url_override.is_none() {
             return Ok(());
         }
@@ -1005,7 +1006,7 @@ fn fetch_remote(
         return Ok(());
     }
 
-    let remote_repo = if is_ext_url || is_http_url {
+    let remote_repo = if is_ext_url || is_http_url || is_git_url {
         None
     } else {
         let r = open_repo(&remote_path).with_context(|| {
@@ -1345,7 +1346,7 @@ fn fetch_remote(
             .and_then(|s| s.strip_prefix("refs/heads/"))
             .map(ToOwned::to_owned);
         (heads, tags, Vec::new())
-    } else if url.starts_with("git://") {
+    } else if is_git_url {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         let (heads, tags, head_symref, head_oid) =
             crate::fetch_transport::with_packet_trace_identity("fetch", || {

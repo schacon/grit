@@ -63,9 +63,6 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
-    if effective_path.to_string_lossy().starts_with("ext::") {
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
-    }
     let repo_path_str = effective_path.to_string_lossy().to_string();
     let remote_name = maybe_remote_name(&args.repository);
     let server_options = effective_server_options(&args, remote_name.as_deref());
@@ -80,6 +77,15 @@ pub fn run(args: Args) -> Result<()> {
         let (advertised, head_symref, _saw_v1, _saw_v2) =
             crate::fetch_transport::with_packet_trace_identity("ls-remote", || {
                 crate::fetch_transport::ls_remote_via_git_protocol(&repo_path_str)
+            })?;
+        return print_advertised_refs_for_ls_remote(&args, advertised, head_symref);
+    }
+
+    if repo_path_str.starts_with("ext::") {
+        crate::protocol::check_protocol_allowed("ext", None)?;
+        let (advertised, head_symref) =
+            crate::fetch_transport::with_packet_trace_identity("ls-remote", || {
+                crate::ext_transport::ls_remote_via_ext(&repo_path_str, "git-upload-pack")
             })?;
         return print_advertised_refs_for_ls_remote(&args, advertised, head_symref);
     }

@@ -53,7 +53,6 @@ mod test_tool_pack_deltas;
 mod test_tool_run_command;
 mod trace2_transfer;
 mod trace_packet;
-mod transport_passthrough;
 mod transport_path;
 mod url_rewrite;
 mod wire_trace;
