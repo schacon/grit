@@ -189,7 +189,7 @@ impl HttpClientContext {
         }
         self.trace_cookie_header();
         let cached_auth = self.cached_authorization_header();
-        let mut first = self.http_get_once(url, cached_auth.as_deref(), git_protocol_header)?;
+        let first = self.http_get_once(url, cached_auth.as_deref(), git_protocol_header)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
@@ -197,9 +197,10 @@ impl HttpClientContext {
             }
             return Ok(first.body);
         }
+        let auth_challenges = first.www_authenticate_challenges();
 
         let mut auth = self
-            .credentials_from_fill(url)?
+            .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
         if auth.username.is_empty() {
             auth.username = self.askpass_username(url)?;
@@ -214,15 +215,15 @@ impl HttpClientContext {
         let mut credential_input = self.credential_input_for_url(url)?;
         credential_input.insert("username".to_string(), auth.username.clone());
         credential_input.insert("password".to_string(), auth.password.clone());
+        let reject_extras = credential_challenge_extras(&auth_challenges);
         self.trace_response_status(retry.status, &retry.reason);
         if retry.status >= 400 {
-            let _ = self.run_credential_action("reject", &credential_input);
+            let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input);
+        let _ = self.run_credential_action("approve", &credential_input, &[]);
         self.store_cached_auth(auth);
-        first.body.clear();
         Ok(retry.body)
     }
 
@@ -275,7 +276,7 @@ impl HttpClientContext {
         }
 
         let cached_auth = self.cached_authorization_header();
-        let mut first = self.http_post_once(
+        let first = self.http_post_once(
             url,
             content_type,
             accept,
@@ -292,9 +293,10 @@ impl HttpClientContext {
             }
             return Ok(first.body);
         }
+        let auth_challenges = first.www_authenticate_challenges();
 
         let mut auth = self
-            .credentials_from_fill(url)?
+            .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
         if auth.username.is_empty() {
             auth.username = self.askpass_username(url)?;
@@ -317,15 +319,15 @@ impl HttpClientContext {
         let mut credential_input = self.credential_input_for_url(url)?;
         credential_input.insert("username".to_string(), auth.username.clone());
         credential_input.insert("password".to_string(), auth.password.clone());
+        let reject_extras = credential_challenge_extras(&auth_challenges);
         self.trace_response_status(retry.status, &retry.reason);
         if retry.status >= 400 {
-            let _ = self.run_credential_action("reject", &credential_input);
+            let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input);
+        let _ = self.run_credential_action("approve", &credential_input, &[]);
         self.store_cached_auth(auth);
-        first.body.clear();
         Ok(retry.body)
     }
 
@@ -354,6 +356,7 @@ impl HttpClientContext {
                     Ok(resp) => {
                         let status = resp.status();
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut body = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut body)
@@ -361,11 +364,13 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status,
                             reason,
+                            headers,
                             body,
                         })
                     }
                     Err(ureq::Error::Status(code, resp)) => {
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut body = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut body)
@@ -373,6 +378,7 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status: code,
                             reason,
+                            headers,
                             body,
                         })
                     }
@@ -448,6 +454,7 @@ impl HttpClientContext {
                     Ok(resp) => {
                         let status = resp.status();
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut out = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut out)
@@ -455,11 +462,13 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status,
                             reason,
+                            headers,
                             body: out,
                         })
                     }
                     Err(ureq::Error::Status(code, resp)) => {
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut out = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut out)
@@ -467,6 +476,7 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status: code,
                             reason,
+                            headers,
                             body: out,
                         })
                     }
@@ -592,6 +602,7 @@ impl HttpClientContext {
         &self,
         action: &str,
         input: &BTreeMap<String, String>,
+        extras: &[(String, String)],
     ) -> Result<BTreeMap<String, String>> {
         let exe = std::env::current_exe().context("resolve current executable for credential")?;
         let mut child = Command::new(exe)
@@ -607,6 +618,9 @@ impl HttpClientContext {
                 .stdin
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("credential {action}: missing stdin"))?;
+            for (k, v) in extras {
+                writeln!(stdin, "{k}={v}")?;
+            }
             for (k, v) in input {
                 writeln!(stdin, "{k}={v}")?;
             }
@@ -630,9 +644,14 @@ impl HttpClientContext {
         Ok(map)
     }
 
-    fn credentials_from_fill(&self, url: &str) -> Result<Option<AuthCredentials>> {
+    fn credentials_from_fill(
+        &self,
+        url: &str,
+        auth_challenges: &[String],
+    ) -> Result<Option<AuthCredentials>> {
         let input = self.credential_input_for_url(url)?;
-        let filled = self.run_credential_action("fill", &input)?;
+        let extras = credential_fill_extras(auth_challenges);
+        let filled = self.run_credential_action("fill", &input, &extras)?;
         let username = filled
             .get("username")
             .cloned()
@@ -778,10 +797,31 @@ impl TraceCurl {
     }
 }
 
+fn response_headers(resp: &ureq::Response) -> Vec<(String, String)> {
+    resp.headers_names()
+        .into_iter()
+        .filter_map(|name| {
+            resp.header(&name)
+                .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+        })
+        .collect()
+}
+
 struct RawHttpResponse {
     status: u16,
     reason: String,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+impl RawHttpResponse {
+    fn www_authenticate_challenges(&self) -> Vec<String> {
+        self.headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("www-authenticate"))
+            .map(|(_, value)| value.clone())
+            .collect()
+    }
 }
 
 #[derive(Clone)]
@@ -1027,6 +1067,22 @@ fn append_chunked_body(out: &mut Vec<u8>, body: &[u8]) {
     out.extend_from_slice(b"0\r\n\r\n");
 }
 
+fn credential_fill_extras(auth_challenges: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(2 + auth_challenges.len());
+    out.push(("capability[]".to_string(), "authtype".to_string()));
+    out.push(("capability[]".to_string(), "state".to_string()));
+    out.extend(credential_challenge_extras(auth_challenges));
+    out
+}
+
+fn credential_challenge_extras(auth_challenges: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(auth_challenges.len());
+    for challenge in auth_challenges {
+        out.push(("wwwauth[]".to_string(), challenge.clone()));
+    }
+    out
+}
+
 fn url_path_and_query(url: &Url) -> String {
     let mut p = url.path().to_string();
     if p.is_empty() {
@@ -1130,6 +1186,15 @@ fn read_http_response(r: &mut impl Read) -> Result<RawHttpResponse> {
         if line.is_empty() {
             break;
         }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, value)) = headers.last_mut() {
+                if !value.is_empty() {
+                    value.push(' ');
+                }
+                value.push_str(line.trim());
+            }
+            continue;
+        }
         if let Some((k, v)) = line.split_once(':') {
             headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
@@ -1170,6 +1235,7 @@ fn read_http_response(r: &mut impl Read) -> Result<RawHttpResponse> {
     Ok(RawHttpResponse {
         status,
         reason,
+        headers,
         body,
     })
 }
