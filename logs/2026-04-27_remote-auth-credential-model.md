@@ -101,3 +101,4 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Replaced the static cookie header with parsed cookie records matched per request URL.
 - Added Netscape cookie file parsing with domain, path, secure, and expiration handling.
 - Preserved simplified cookie/header-line parsing for existing `http.cookieFile` behavior.
+- Added `http.saveCookies` support by appending received `Set-Cookie` headers to the configured cookie file.
