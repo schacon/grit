@@ -9,7 +9,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use crate::protocol_wire;
 
@@ -492,6 +492,17 @@ fn remote_upload_pack_cmd(upload_pack: Option<&str>, quoted_path: &str) -> Strin
     }
 }
 
+fn protocol_version_for_remote_cmd(remote_cmd_name: Option<&str>) -> u8 {
+    let proto = protocol_wire::effective_client_protocol_version();
+    // Git only uses protocol v2 automatically for upload-pack. Push over receive-pack falls back
+    // to v0 unless the caller explicitly selected v1.
+    if proto == 2 && remote_cmd_name.is_some_and(|name| !name.trim().contains("upload-pack")) {
+        0
+    } else {
+        proto
+    }
+}
+
 /// Build argv for `GIT_SSH` (no shell): program, options…, host, `git-upload-pack 'path'`.
 pub fn build_git_ssh_argv(
     host: &str,
@@ -508,7 +519,7 @@ pub fn build_git_ssh_argv(
 
     let quoted_path = sq_quote_shell_arg(remote_repo_path);
     let remote_cmd = remote_upload_pack_cmd(upload_pack, &quoted_path);
-    let proto = protocol_wire::effective_client_protocol_version();
+    let proto = protocol_version_for_remote_cmd(upload_pack);
 
     let mut variant = determine_ssh_variant(&ssh, false);
     if variant == SshVariant::Auto {
@@ -533,6 +544,119 @@ pub fn build_git_ssh_argv(
     out.push(OsString::from(host));
     out.push(OsString::from(remote_cmd));
     Ok(out)
+}
+
+/// Spawn SSH running `git-receive-pack '<path>'` for a smart push transport.
+pub fn spawn_git_ssh_receive_pack(spec: &SshUrl) -> Result<Child> {
+    spawn_git_ssh_service(
+        &spec.ssh_host,
+        spec.port.as_deref(),
+        Some("git-receive-pack"),
+        &spec.path,
+        false,
+        false,
+    )
+}
+
+fn spawn_git_ssh_service(
+    host: &str,
+    port: Option<&str>,
+    remote_cmd_name: Option<&str>,
+    remote_repo_path: &str,
+    ipv4: bool,
+    ipv6: bool,
+) -> Result<Child> {
+    let quoted_path = sq_quote_shell_arg(remote_repo_path);
+    let remote_cmd = remote_upload_pack_cmd(remote_cmd_name, &quoted_path);
+    let proto = protocol_version_for_remote_cmd(remote_cmd_name);
+
+    if let Some(cmd_os) = std::env::var_os("GIT_SSH_COMMAND").filter(|v| !v.is_empty()) {
+        let cmd = cmd_os.to_string_lossy();
+        let mut variant = determine_ssh_variant(cmd.as_ref(), true);
+        if variant == SshVariant::Auto {
+            let words = shell_words::split(cmd.as_ref())
+                .map_err(|_| anyhow::anyhow!("GIT_SSH_COMMAND: missing closing quote"))?;
+            let Some(prog) = words.first() else {
+                bail!("empty GIT_SSH_COMMAND");
+            };
+            let mut probe_args: Vec<OsString> =
+                words[1..].iter().map(|s| OsString::from(s)).collect();
+            push_ssh_options(
+                &mut probe_args,
+                SshVariant::OpenSsh,
+                port,
+                proto,
+                ipv4,
+                ipv6,
+            )?;
+            variant = if run_ssh_minus_g_detection(prog.as_str(), &probe_args) {
+                SshVariant::Simple
+            } else {
+                SshVariant::OpenSsh
+            };
+        }
+
+        let mut extra = Vec::new();
+        push_ssh_options(&mut extra, variant, port, proto, ipv4, ipv6)?;
+        let extra_s = extra
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = format!(
+            "{} {} {} {}",
+            cmd,
+            extra_s,
+            shell_words::quote(host),
+            shell_words::quote(&remote_cmd)
+        );
+        let mut c = Command::new("sh");
+        if proto > 0 {
+            protocol_wire::merge_git_protocol_env_for_child(&mut c, proto);
+        }
+        return c
+            .arg("-c")
+            .arg(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("failed to spawn GIT_SSH_COMMAND");
+    }
+
+    let ssh = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let mut variant = determine_ssh_variant(&ssh, false);
+    if variant == SshVariant::Auto {
+        let mut probe_args: Vec<OsString> = Vec::new();
+        push_ssh_options(
+            &mut probe_args,
+            SshVariant::OpenSsh,
+            port,
+            proto,
+            ipv4,
+            ipv6,
+        )?;
+        variant = if run_ssh_minus_g_detection(&ssh, &probe_args) {
+            SshVariant::Simple
+        } else {
+            SshVariant::OpenSsh
+        };
+    }
+
+    let mut c = Command::new(&ssh);
+    let mut args = Vec::new();
+    push_ssh_options(&mut args, variant, port, proto, ipv4, ipv6)?;
+    c.args(args)
+        .arg(host)
+        .arg(remote_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    if proto > 0 {
+        protocol_wire::merge_git_protocol_env_for_child(&mut c, proto);
+    }
+    c.spawn()
+        .with_context(|| format!("failed to execute SSH command '{ssh}'"))
 }
 
 /// Run `GIT_SSH_COMMAND` via shell when clone cannot resolve locally (matches Git).

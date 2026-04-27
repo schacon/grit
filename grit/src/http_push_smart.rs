@@ -4,7 +4,7 @@
 //! `http://` and `https://` remotes.
 
 use std::collections::HashSet;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
@@ -159,6 +159,101 @@ pub(crate) fn discover_receive_pack(
 
     let (refs, caps) = parse_v0_v1_advertisement(pkt_body)?;
     let protocol_version = if first == "version 1" { 1 } else { 0 };
+    let object_format = caps
+        .iter()
+        .find_map(|c| c.strip_prefix("object-format="))
+        .unwrap_or("sha1")
+        .to_string();
+    Ok(ReceivePackAdvertisement {
+        protocol_version,
+        refs,
+        capabilities: caps,
+        object_format,
+        service_url,
+    })
+}
+
+/// Read a `git-receive-pack` advertisement from an already-open smart transport stream.
+pub(crate) fn read_receive_pack_advertisement<R: Read>(
+    reader: &mut R,
+    service_url: String,
+) -> Result<ReceivePackAdvertisement> {
+    let mut refs = Vec::new();
+    let mut caps = HashSet::new();
+    let mut first_ref_line = true;
+    let mut protocol_version = 0;
+    let mut saw_first = false;
+
+    loop {
+        match pkt_line::read_packet(reader)? {
+            None => bail!("empty receive-pack advertisement"),
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Delim | pkt_line::Packet::ResponseEnd) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                let line = line.trim_end_matches('\n');
+                if !saw_first {
+                    saw_first = true;
+                    if line == "version 2" {
+                        protocol_version = 2;
+                        caps.insert(line.to_string());
+                        loop {
+                            match pkt_line::read_packet(reader)? {
+                                Some(pkt_line::Packet::Flush) => break,
+                                Some(pkt_line::Packet::Data(cap)) => {
+                                    caps.insert(cap.trim_end_matches('\n').to_string());
+                                }
+                                Some(other) => {
+                                    bail!("unexpected packet in v2 receive-pack advertisement: {other:?}");
+                                }
+                                None => bail!("unexpected EOF in v2 receive-pack advertisement"),
+                            }
+                        }
+                        let object_format = caps
+                            .iter()
+                            .find_map(|c| c.strip_prefix("object-format="))
+                            .unwrap_or("sha1")
+                            .to_string();
+                        return Ok(ReceivePackAdvertisement {
+                            protocol_version,
+                            refs,
+                            capabilities: caps,
+                            object_format,
+                            service_url,
+                        });
+                    }
+                    if line == "version 1" {
+                        protocol_version = 1;
+                        continue;
+                    }
+                }
+
+                let (payload, cap_part) = match line.split_once('\0') {
+                    Some((p, c)) => (p.trim(), Some(c)),
+                    None => (line.trim(), None),
+                };
+                let Some((oid_hex, refname)) =
+                    payload.split_once('\t').or_else(|| payload.split_once(' '))
+                else {
+                    continue;
+                };
+                let oid = ObjectId::from_hex(oid_hex.trim())
+                    .with_context(|| format!("bad oid in receive-pack advertisement: {oid_hex}"))?;
+                if first_ref_line {
+                    if let Some(raw_caps) = cap_part {
+                        for cap in raw_caps.split_whitespace() {
+                            caps.insert(cap.to_string());
+                        }
+                    }
+                    first_ref_line = false;
+                }
+                refs.push(ReceivePackAdvertisedRef {
+                    name: refname.trim().to_string(),
+                    oid,
+                });
+            }
+        }
+    }
+
     let object_format = caps
         .iter()
         .find_map(|c| c.strip_prefix("object-format="))
@@ -354,6 +449,51 @@ pub(crate) fn send_receive_pack(
         bail!("cannot push without update commands");
     }
 
+    let (request, use_sideband) =
+        build_receive_pack_request(advertised, commands, push_options, pack_data, atomic)?;
+    let response = client.post_with_git_protocol(
+        &advertised.service_url,
+        "application/x-git-receive-pack-request",
+        "application/x-git-receive-pack-result",
+        &request,
+        None,
+    )?;
+
+    parse_receive_pack_response(response, use_sideband)
+}
+
+/// Send a `git-receive-pack` request over a bidirectional stream (SSH/local smart transport).
+pub(crate) fn send_receive_pack_stream<W: Write, R: Read>(
+    advertised: &ReceivePackAdvertisement,
+    commands: &[PushCommand],
+    push_options: &[String],
+    pack_data: &[u8],
+    atomic: bool,
+    mut writer: W,
+    mut reader: R,
+) -> Result<PushStatusReport> {
+    if commands.is_empty() {
+        bail!("cannot push without update commands");
+    }
+
+    let (request, use_sideband) =
+        build_receive_pack_request(advertised, commands, push_options, pack_data, atomic)?;
+    writer.write_all(&request)?;
+    writer.flush()?;
+    drop(writer);
+
+    let mut response = Vec::new();
+    reader.read_to_end(&mut response)?;
+    parse_receive_pack_response(response, use_sideband)
+}
+
+fn build_receive_pack_request(
+    advertised: &ReceivePackAdvertisement,
+    commands: &[PushCommand],
+    push_options: &[String],
+    pack_data: &[u8],
+    atomic: bool,
+) -> Result<(Vec<u8>, bool)> {
     let caps = client_push_capabilities(advertised, atomic, push_options)?;
     let mut request = Vec::new();
     for (idx, cmd) in commands.iter().enumerate() {
@@ -381,18 +521,14 @@ pub(crate) fn send_receive_pack(
         request.extend_from_slice(pack_data);
     }
 
-    let response = client.post_with_git_protocol(
-        &advertised.service_url,
-        "application/x-git-receive-pack-request",
-        "application/x-git-receive-pack-result",
-        &request,
-        None,
-    )?;
-
-    let (primary, sideband_stderr) = if caps
+    let use_sideband = caps
         .iter()
-        .any(|c| c == "side-band-64k" || c == "side-band")
-    {
+        .any(|c| c == "side-band-64k" || c == "side-band");
+    Ok((request, use_sideband))
+}
+
+fn parse_receive_pack_response(response: Vec<u8>, use_sideband: bool) -> Result<PushStatusReport> {
+    let (primary, sideband_stderr) = if use_sideband {
         decode_sideband_stream(&response)?
     } else {
         (response, Vec::new())
