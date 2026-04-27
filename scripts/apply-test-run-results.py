@@ -80,7 +80,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-dashboard",
         action="store_true",
-        help="Update CSV only; skip docs dashboards (index.html, testfiles.html, test-progress.svg; caller may run generate-dashboard-from-test-files.py once at the end).",
+        help="Update CSV only; skip docs dashboards (progress/index.html, testfiles.html, test-progress.svg; caller may run generate-dashboard-from-test-files.py once at the end).",
     )
     args = parser.parse_args()
     csv_path = args.csv if args.csv is not None else DEFAULT_CSV_PATH
@@ -121,7 +121,7 @@ def main() -> None:
             check=True,
         )
         print(
-            f"Updated {csv_path} and regenerated docs/index.html, docs/testfiles.html, docs/test-progress.svg"
+            f"Updated {csv_path} and regenerated docs/progress/index.html, docs/testfiles.html, docs/test-progress.svg"
         )
 
 

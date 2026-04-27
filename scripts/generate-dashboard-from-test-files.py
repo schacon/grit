@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/index.html, docs/testfiles.html, and docs/test-progress.svg from data/test-files.csv."""
+"""Generate docs/progress/index.html, docs/testfiles.html, and docs/test-progress.svg from data/test-files.csv."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "data" / "test-files.csv"
-OUT_INDEX = REPO / "docs" / "index.html"
+OUT_INDEX = REPO / "docs" / "progress" / "index.html"
 OUT_FILES = REPO / "docs" / "testfiles.html"
 OUT_SVG = REPO / "docs" / "test-progress.svg"
 
@@ -293,7 +293,7 @@ def generate_index(rows: list[dict[str, str]]) -> str:
         pc = pct(tpass, ttot)
         band = pass_rate_band(pc)
         q = urllib.parse.urlencode({"group": g})
-        href = f"testfiles.html?{q}"
+        href = f"../testfiles.html?{q}"
         n_skip = skipped_by_group.get(g, 0)
         group_html += f"""
     <a class="group-card" href="{html.escape(href)}">
@@ -458,7 +458,7 @@ h1 {{ font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }}
 </head>
 <body>
 <h1>Grit Project Progress</h1>
-<p class="sub">Generated {time_el} · {sha_l} · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
+<p class="sub">Generated {time_el} · {sha_l} · <a href="../testfiles.html" style="color:#58a6ff">All test files</a></p>
 
 <section class="summary-hero" aria-label="Overall test progress">
   <div class="summary-big">
@@ -663,7 +663,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 </head>
 <body>
 <h1>Test files</h1>
-<p class="sub"><a href="index.html">Dashboard</a> · {time_el} · {sha_l}</p>
+<p class="sub"><a href="progress/">Dashboard</a> · {time_el} · {sha_l}</p>
 
 <div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for the current view (group, search, and Remaining work only)" aria-live="polite">
   <div class="card"><div class="n" id="sum-files">{file_count:,}</div><div class="lbl">Files in scope</div></div>
