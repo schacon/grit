@@ -49,3 +49,15 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 
 - Continue Phase 2 validation by enabling or directly running the upstream-derived credential harness when scope allows it.
 - Enable or directly run `t0300-credentials.sh` once the harness scope allows it.
+
+## Credential Store Parity
+
+- Implemented Git-compatible lookup order: `~/.git-credentials`, then `$XDG_CONFIG_HOME/git/credentials` or `$HOME/.config/git/credentials`.
+- Implemented write target selection: first existing default file, or create `~/.git-credentials` if none exist.
+- Implemented erase across all relevant store files.
+- Implemented overwrite-on-store by removing matching existing entries before appending the new credential.
+- Implemented stricter stored URL parsing so invalid entries are ignored.
+- Implemented protocol, host, username, and relevant-path matching.
+- Preserved CRLF behavior where a CR belongs to the path when a stored URL has a path, but invalidates a host-only stored URL.
+- Kept unreadable store files as non-fatal misses so later files can satisfy lookup.
+- Verified `--file <path>` and `--file=<path>` behavior manually.
