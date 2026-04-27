@@ -85,3 +85,6 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Passed `capability[]=authtype`, `capability[]=state`, and ordered `wwwauth[]` attributes to `grit credential fill`.
 - Passed `wwwauth[]` attributes to `credential reject` so rejected credentials keep challenge context.
 - Kept Basic credential approval requests free of challenge-only fields, matching Git's simple Basic auth expectations.
+- Replaced Basic-only HTTP credential state with a typed auth representation.
+- Added support for helper-provided pre-encoded credentials via `authtype` + `credential`, producing `Authorization: <authtype> <credential>`.
+- Preserved existing Basic `Authorization` generation for username/password helper responses and askpass fallback.
