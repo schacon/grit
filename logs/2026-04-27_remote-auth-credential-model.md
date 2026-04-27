@@ -98,3 +98,6 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added global and URL-scoped `http.extraHeader` support with load-order reset semantics.
 - Applied extra headers to ureq, HTTP proxy, and SOCKS-over-Unix request paths.
 - Redacted authorization-like extra headers in `GIT_TRACE_CURL` output by default.
+- Replaced the static cookie header with parsed cookie records matched per request URL.
+- Added Netscape cookie file parsing with domain, path, secure, and expiration handling.
+- Preserved simplified cookie/header-line parsing for existing `http.cookieFile` behavior.

@@ -365,12 +365,12 @@ Primary files:
 
 Tasks:
 
-- [ ] Upgrade `http.cookieFile` support:
-  - [ ] Netscape cookie format
-  - [ ] domain matching
-  - [ ] path matching
-  - [ ] secure flag handling where applicable
-  - [ ] simplified header format remains supported
+- [x] Upgrade `http.cookieFile` support:
+  - [x] Netscape cookie format
+  - [x] domain matching
+  - [x] path matching
+  - [x] secure flag handling where applicable
+  - [x] simplified header format remains supported
 - [ ] Implement `http.saveCookies`.
 - [ ] Implement TLS-related configuration that the current HTTP stack can support:
   - [ ] `http.sslVerify`
@@ -388,7 +388,7 @@ Tasks:
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5732-protocol-v2-bundle-uri-http.sh`
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
 - [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`

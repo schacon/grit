@@ -29,7 +29,7 @@ pub struct HttpClientContext {
     post_buffer: usize,
     credential_use_http_path: bool,
     credential_username: Option<String>,
-    cookie_header: Option<String>,
+    cookies: Vec<CookieSpec>,
     extra_headers: Vec<ExtraHeaderRule>,
     smart_http_enabled: bool,
     proactive_auth: ProactiveAuth,
@@ -70,6 +70,16 @@ struct ExtraHeaderRule {
     header: Option<(String, String)>,
 }
 
+#[derive(Clone, Debug)]
+struct CookieSpec {
+    name_value: String,
+    domain: Option<String>,
+    include_subdomains: bool,
+    path: Option<String>,
+    secure: bool,
+    expires_at: Option<i64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProactiveAuth {
     None,
@@ -82,6 +92,43 @@ fn parse_proactive_auth(value: Option<String>) -> ProactiveAuth {
         Some(value) if value == "basic" => ProactiveAuth::Basic,
         Some(value) if value == "auto" => ProactiveAuth::Auto,
         _ => ProactiveAuth::None,
+    }
+}
+
+impl CookieSpec {
+    fn matches_url(&self, url: Option<&Url>) -> bool {
+        if self.is_expired() {
+            return false;
+        }
+        let Some(url) = url else {
+            return self.domain.is_none() && self.path.is_none() && !self.secure;
+        };
+        if self.secure && url.scheme() != "https" {
+            return false;
+        }
+        if let Some(domain) = self.domain.as_deref() {
+            let Some(host) = url.host_str() else {
+                return false;
+            };
+            if self.include_subdomains {
+                if host != domain && !host.ends_with(&format!(".{domain}")) {
+                    return false;
+                }
+            } else if host != domain {
+                return false;
+            }
+        }
+        if let Some(path) = self.path.as_deref() {
+            if !url.path().starts_with(path) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_expired(&self) -> bool {
+        self.expires_at
+            .is_some_and(|expiry| time::OffsetDateTime::now_utc().unix_timestamp() >= expiry)
     }
 }
 
@@ -156,7 +203,7 @@ impl HttpClientContext {
         let credential_username = config
             .get("credential.username")
             .filter(|s| !s.trim().is_empty());
-        let cookie_header = build_cookie_header(config)?;
+        let cookies = build_cookie_specs(config)?;
         let extra_headers = extra_header_rules_from_config(config);
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
@@ -175,7 +222,7 @@ impl HttpClientContext {
             post_buffer,
             credential_use_http_path,
             credential_username,
-            cookie_header,
+            cookies,
             extra_headers,
             smart_http_enabled,
             proactive_auth,
@@ -221,7 +268,8 @@ impl HttpClientContext {
         if let Some(v) = git_protocol_header {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
-        self.trace_cookie_header();
+        let cookie_header = self.cookie_header_for_url(url);
+        self.trace_cookie_header(cookie_header.as_deref());
         let extra_headers = self.extra_headers_for_url(url);
         self.trace_extra_headers(&extra_headers);
         let request_auth = match self.cached_authorization_header() {
@@ -331,7 +379,8 @@ impl HttpClientContext {
         if let Some(v) = git_protocol_header {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
-        self.trace_cookie_header();
+        let cookie_header = self.cookie_header_for_url(url);
+        self.trace_cookie_header(cookie_header.as_deref());
         let extra_headers = self.extra_headers_for_url(url);
         self.trace_extra_headers(&extra_headers);
         let (payload, gzip_enabled) = self.encode_post_payload(body)?;
@@ -448,6 +497,7 @@ impl HttpClientContext {
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
         let extra_headers = self.extra_headers_for_url(&request_url);
+        let cookie_header = self.cookie_header_for_url(&request_url);
         match &self.transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
@@ -456,7 +506,7 @@ impl HttpClientContext {
                 if let Some(v) = git_protocol_header {
                     req = req.set("Git-Protocol", v);
                 }
-                if let Some(cookie) = self.cookie_header.as_deref() {
+                if let Some(cookie) = cookie_header.as_deref() {
                     req = req.set("Cookie", cookie);
                 }
                 if let Some(v) = auth_header {
@@ -508,7 +558,7 @@ impl HttpClientContext {
                     proxy_basic.as_deref(),
                     auth_header,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
                     &extra_headers,
                     self.smart_http_enabled,
                 )?;
@@ -519,7 +569,7 @@ impl HttpClientContext {
                     &request_url,
                     auth_header,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
                     &extra_headers,
                     self.smart_http_enabled,
                 )?;
@@ -541,6 +591,7 @@ impl HttpClientContext {
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
         let extra_headers = self.extra_headers_for_url(&request_url);
+        let cookie_header = self.cookie_header_for_url(&request_url);
         match &self.transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
@@ -554,7 +605,7 @@ impl HttpClientContext {
                 if gzip_enabled {
                     req = req.set("Content-Encoding", "gzip");
                 }
-                if let Some(cookie) = self.cookie_header.as_deref() {
+                if let Some(cookie) = cookie_header.as_deref() {
                     req = req.set("Cookie", cookie);
                 }
                 if let Some(v) = auth_header {
@@ -617,7 +668,7 @@ impl HttpClientContext {
                     gzip_enabled,
                     chunked,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
                     &extra_headers,
                     self.smart_http_enabled,
                 )?;
@@ -633,7 +684,7 @@ impl HttpClientContext {
                     gzip_enabled,
                     chunked,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
                     &extra_headers,
                     self.smart_http_enabled,
                 )?;
@@ -913,8 +964,22 @@ impl HttpClientContext {
         t.write_line(&format!("=> Send header: {line}\n"));
     }
 
-    fn trace_cookie_header(&self) {
-        let Some(cookie) = self.cookie_header.as_deref() else {
+    fn cookie_header_for_url(&self, url: &str) -> Option<String> {
+        if self.cookies.is_empty() {
+            return None;
+        }
+        let parsed = Url::parse(url).ok();
+        let parts = self
+            .cookies
+            .iter()
+            .filter(|cookie| cookie.matches_url(parsed.as_ref()))
+            .map(|cookie| cookie.name_value.clone())
+            .collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
+
+    fn trace_cookie_header(&self, cookie: Option<&str>) {
+        let Some(cookie) = cookie else {
             return;
         };
         let Some(ref t) = self.trace_curl else {
@@ -1696,34 +1761,19 @@ fn read_response_body(mut reader: impl Read, context: &'static str) -> Result<Ve
     Ok(out)
 }
 
-fn build_cookie_header(config: &ConfigSet) -> Result<Option<String>> {
+fn build_cookie_specs(config: &ConfigSet) -> Result<Vec<CookieSpec>> {
     let Some(path_raw) = config.get("http.cookieFile") else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let path_raw = path_raw.trim();
     if path_raw.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let lines = read_cookie_file_lines(path_raw)?;
-    if lines.is_empty() {
-        return Ok(None);
-    }
-    let mut parts = Vec::new();
-    for line in lines {
-        let v = line.trim();
-        if v.is_empty() {
-            continue;
-        }
-        if let Some(stripped) = strip_cookie_value(v) {
-            if !stripped.is_empty() {
-                parts.push(stripped);
-            }
-        }
-    }
-    if parts.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(parts.join("; ")))
+    Ok(lines
+        .iter()
+        .filter_map(|line| parse_cookie_spec(line))
+        .collect())
 }
 
 fn read_cookie_file_lines(path_raw: &str) -> Result<Vec<String>> {
@@ -1744,14 +1794,79 @@ fn read_cookie_file_lines(path_raw: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn strip_cookie_value(line: &str) -> Option<String> {
-    if let Some(v) = line.strip_prefix("Set-Cookie:") {
-        return Some(v.trim().to_string());
+fn parse_cookie_spec(line: &str) -> Option<CookieSpec> {
+    parse_netscape_cookie(line).or_else(|| parse_header_cookie(line))
+}
+
+fn parse_netscape_cookie(line: &str) -> Option<CookieSpec> {
+    let cols: Vec<&str> = line.split('\t').collect();
+    if cols.len() < 7 {
+        return None;
     }
-    if let Some(v) = line.strip_prefix("set-cookie:") {
-        return Some(v.trim().to_string());
+    let domain = cols[0].trim().trim_start_matches('.').to_ascii_lowercase();
+    if domain.is_empty() {
+        return None;
     }
-    Some(line.trim().to_string())
+    let include_subdomains =
+        cols[1].trim().eq_ignore_ascii_case("TRUE") || cols[0].starts_with('.');
+    let path = cols[2].trim();
+    let secure = cols[3].trim().eq_ignore_ascii_case("TRUE");
+    let expires_at = cols[4].trim().parse::<i64>().ok().filter(|v| *v > 0);
+    let name = cols[5].trim();
+    let value = cols[6].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(CookieSpec {
+        name_value: format!("{name}={value}"),
+        domain: Some(domain),
+        include_subdomains,
+        path: (!path.is_empty()).then(|| path.to_string()),
+        secure,
+        expires_at,
+    })
+}
+
+fn parse_header_cookie(line: &str) -> Option<CookieSpec> {
+    let raw = line
+        .strip_prefix("Set-Cookie:")
+        .or_else(|| line.strip_prefix("set-cookie:"))
+        .unwrap_or(line)
+        .trim();
+    let mut parts = raw.split(';').map(str::trim);
+    let name_value = parts.next()?.to_string();
+    if !name_value.contains('=') {
+        return None;
+    }
+    let mut cookie = CookieSpec {
+        name_value,
+        domain: None,
+        include_subdomains: false,
+        path: None,
+        secure: false,
+        expires_at: None,
+    };
+    for attr in parts {
+        if attr.eq_ignore_ascii_case("secure") {
+            cookie.secure = true;
+            continue;
+        }
+        if let Some((key, value)) = attr.split_once('=') {
+            if key.eq_ignore_ascii_case("domain") {
+                let domain = value.trim().trim_start_matches('.').to_ascii_lowercase();
+                if !domain.is_empty() {
+                    cookie.include_subdomains = true;
+                    cookie.domain = Some(domain);
+                }
+            } else if key.eq_ignore_ascii_case("path") {
+                let path = value.trim();
+                if !path.is_empty() {
+                    cookie.path = Some(path.to_string());
+                }
+            }
+        }
+    }
+    Some(cookie)
 }
 
 fn redact_cookie_header(cookie: &str) -> String {
