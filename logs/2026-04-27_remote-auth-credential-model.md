@@ -111,3 +111,5 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added Netscape cookie file parsing with domain, path, secure, and expiration handling.
 - Preserved simplified cookie/header-line parsing for existing `http.cookieFile` behavior.
 - Added `http.saveCookies` support by appending received `Set-Cookie` headers to the configured cookie file.
+- Routed raw HTTP bundle downloads in `bundle_uri.rs` through `HttpClientContext`.
+- Routed protocol-v2 HTTP bundle-uri discovery in `bundle_uri.rs` and `http_bundle_uri.rs` through `HttpClientContext`.

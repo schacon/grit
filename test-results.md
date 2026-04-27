@@ -39,6 +39,7 @@
 - HTTP client now applies global and URL-scoped `http.extraHeader` values to ureq, proxy, and SOCKS request paths, supports empty-value reset, and redacts auth-like extra headers in curl trace output
 - HTTP client now parses Netscape and simplified `http.cookieFile` entries and matches cookies per request URL by domain, path, and secure flag
 - HTTP client now honors `http.saveCookies` by appending received `Set-Cookie` headers to the configured cookie file in a format that is read back by `http.cookieFile`
+- HTTP bundle URI downloads and protocol-v2 bundle-uri discovery now route through `HttpClientContext`, sharing auth, proxy, cookie, extra header, and curl trace behavior with normal HTTP remotes
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
