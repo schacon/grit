@@ -245,21 +245,21 @@ Tasks:
   - [ ] empty auth if supported later
 - [x] Build `Authorization: <authtype> <credential>` from helper-provided credentials.
 - [x] Preserve Basic `Authorization` generation for username/password.
-- [ ] Implement invalid credential retry/reject behavior:
-  - [ ] reject failed credentials with all relevant credential fields
-  - [ ] clear in-process auth cache on failure
-  - [ ] avoid reusing stale credentials across RPC requests
-- [ ] Implement `continue=1` multistage auth:
-  - [ ] call helpers again with `state[]`
-  - [ ] pass updated challenges
-  - [ ] cap retry loops to avoid infinite authentication loops
-- [ ] Avoid storing credentials marked `ephemeral` where Git avoids persistence.
-- [ ] Share auth state across smart HTTP discovery and RPC POSTs in one operation.
-- [ ] Make GET and POST behavior consistent.
+- [x] Implement invalid credential retry/reject behavior:
+  - [x] reject failed credentials with all relevant credential fields
+  - [x] clear in-process auth cache on failure
+  - [x] avoid reusing stale credentials across RPC requests
+- [x] Implement `continue=1` multistage auth:
+  - [x] call helpers again with `state[]`
+  - [x] pass updated challenges
+  - [x] cap retry loops to avoid infinite authentication loops
+- [x] Avoid storing credentials marked `ephemeral` where Git avoids persistence.
+- [x] Share auth state across smart HTTP discovery and RPC POSTs in one operation.
+- [x] Make GET and POST behavior consistent.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 - [ ] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
