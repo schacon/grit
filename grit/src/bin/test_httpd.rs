@@ -329,8 +329,7 @@ fn redirect_target(path: &str) -> Option<(u16, String)> {
             return Some((301, format!("/smart/{repo}/info/refs")));
         }
     }
-    if path.starts_with(LOOP_DEEP_PREFIX) {
-        let rest = &path[LOOP_DEEP_PREFIX.len()..];
+    if let Some(rest) = path.strip_prefix(LOOP_DEEP_PREFIX) {
         return Some((302, format!("/{rest}")));
     }
     if let Some(rest) = path.strip_prefix("/loop-redir/") {
