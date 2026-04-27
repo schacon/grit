@@ -21,6 +21,8 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added prompt sanitization for unsafe credential prompt components, including control characters and spaces.
 - Forwarded askpass stderr so upstream-style askpass prompt tests can observe prompt text.
 - Added `grit credential capability` output for `authtype` and `state` support.
+- Added URL-scoped credential config lookup for `username`, `useHttpPath`, `protectProtocol`, and `sanitizePrompt`.
+- Adjusted credential parse/helper abort failures to use Git-shaped `fatal:` output.
 
 ## Validation
 
@@ -36,8 +38,11 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
   - `credential.protectProtocol` CR rejection and `credential.protectProtocol=false` override.
   - Sanitized askpass prompt for a control-character username.
   - `grit credential capability` output.
+  - URL-scoped `credential.username`.
+  - URL-scoped `credential.useHttpPath` and default HTTP path stripping.
+  - Fatal output shape for missing protocol, encoded-newline URL rejection, and helper `quit`.
 
 ## Remaining Work
 
-- Continue Phase 2 helper semantics, including `grit credential capability`, exact `quit` stderr wording, and URL-scoped username behavior.
+- Continue Phase 2 helper semantics, including terminal prompt fallback and built-in helper behavior for ephemeral credentials.
 - Enable or directly run `t0300-credentials.sh` once the harness scope allows it.

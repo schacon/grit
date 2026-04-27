@@ -309,7 +309,7 @@ fn normalize_url_field(creds: &mut Credential, config: &grit_lib::config::Config
     check_raw_url_protected_values(&raw_url, config)?;
     let parsed = match Url::parse(&raw_url) {
         Ok(parsed) => parsed,
-        Err(e) if !credential_protect_protocol(config) => {
+        Err(e) if !credential_protect_protocol(config, None) => {
             normalize_url_field_lenient(creds, &raw_url)?;
             return Ok(());
         }
@@ -368,7 +368,7 @@ fn reject_url_with_newline(raw_url: &str) -> Result<()> {
     let decoded = percent_decode_lossy(raw_url);
     if decoded.contains('\n') {
         eprintln!("warning: url contains a newline in its path component: {raw_url}");
-        bail!("credential url cannot be parsed: {raw_url}");
+        bail!("fatal: credential url cannot be parsed: {raw_url}");
     }
     Ok(())
 }
@@ -377,7 +377,7 @@ fn check_raw_url_protected_values(
     raw_url: &str,
     config: &grit_lib::config::ConfigSet,
 ) -> Result<()> {
-    if !credential_protect_protocol(config) {
+    if !credential_protect_protocol(config, None) {
         return Ok(());
     }
     let decoded = percent_decode_lossy(raw_url);
@@ -386,7 +386,7 @@ fn check_raw_url_protected_values(
     };
     if protocol.contains('\r') {
         bail!(
-            "credential value for protocol contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+            "fatal: credential value for protocol contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
         );
     }
     let (authority, _) = split_url_authority_and_path(rest);
@@ -396,7 +396,7 @@ fn check_raw_url_protected_values(
         .unwrap_or(authority);
     if host.contains('\r') {
         bail!(
-            "credential value for host contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+            "fatal: credential value for host contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
         );
     }
     Ok(())
@@ -406,7 +406,7 @@ fn check_protected_credential_values(
     creds: &Credential,
     config: &grit_lib::config::ConfigSet,
 ) -> Result<()> {
-    if !credential_protect_protocol(config) {
+    if !credential_protect_protocol(config, creds.target_url().as_deref()) {
         return Ok(());
     }
     for key in ["protocol", "host"] {
@@ -415,21 +415,23 @@ fn check_protected_credential_values(
         };
         if value.contains('\r') {
             bail!(
-                "credential value for {key} contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+                "fatal: credential value for {key} contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
             );
         }
         if value.contains('\n') {
             bail!(
-                "credential value for {key} contains newline\nIf this is intended, set `credential.protectProtocol=false`"
+                "fatal: credential value for {key} contains newline\nIf this is intended, set `credential.protectProtocol=false`"
             );
         }
     }
     Ok(())
 }
 
-fn credential_protect_protocol(config: &grit_lib::config::ConfigSet) -> bool {
-    config
-        .get("credential.protectProtocol")
+fn credential_protect_protocol(
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+) -> bool {
+    credential_config_value(config, target_url, "protectProtocol")
         .as_deref()
         .map(|value| grit_lib::config::parse_bool(value).unwrap_or(true))
         .unwrap_or(true)
@@ -534,6 +536,41 @@ fn credential_helpers(
         } else {
             out.push(value.to_string());
         }
+    }
+    out
+}
+
+fn credential_config_value(
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+    variable_name: &str,
+) -> Option<String> {
+    let mut out = None;
+    for entry in config.entries() {
+        let key = &entry.key;
+        let Some(first_dot) = key.find('.') else {
+            continue;
+        };
+        let Some(last_dot) = key.rfind('.') else {
+            continue;
+        };
+        let section = &key[..first_dot];
+        let variable = &key[last_dot + 1..];
+        if !section.eq_ignore_ascii_case("credential")
+            || !variable.eq_ignore_ascii_case(variable_name)
+        {
+            continue;
+        }
+        if first_dot != last_dot {
+            let subsection = &key[first_dot + 1..last_dot];
+            let Some(target) = target_url else {
+                continue;
+            };
+            if !grit_lib::config::url_matches(subsection, target) {
+                continue;
+            }
+        }
+        out = entry.value.clone();
     }
     out
 }
@@ -736,8 +773,7 @@ fn credential_prompt_origin(
 }
 
 fn sanitize_prompt_component(value: &str, config: &grit_lib::config::ConfigSet) -> String {
-    let sanitize = config
-        .get("credential.sanitizePrompt")
+    let sanitize = credential_config_value(config, None, "sanitizePrompt")
         .as_deref()
         .map(|value| grit_lib::config::parse_bool(value).unwrap_or(true))
         .unwrap_or(true);
@@ -804,9 +840,12 @@ fn credential_interactive_allowed(config: &grit_lib::config::ConfigSet) -> bool 
         .unwrap_or(true)
 }
 
-fn apply_config_defaults(creds: &mut Credential, config: &grit_lib::config::ConfigSet) {
-    if !config
-        .get("credential.useHttpPath")
+fn apply_config_defaults(
+    creds: &mut Credential,
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+) {
+    if !credential_config_value(config, target_url, "useHttpPath")
         .as_deref()
         .map(|value| grit_lib::config::parse_bool(value).unwrap_or(false))
         .unwrap_or(false)
@@ -814,7 +853,7 @@ fn apply_config_defaults(creds: &mut Credential, config: &grit_lib::config::Conf
         creds.remove_path_for_http();
     }
     if !creds.has_key("username") {
-        if let Some(username) = config.get("credential.username") {
+        if let Some(username) = credential_config_value(config, target_url, "username") {
             creds.set("username", username);
         }
     }
@@ -822,10 +861,10 @@ fn apply_config_defaults(creds: &mut Credential, config: &grit_lib::config::Conf
 
 fn check_required_fields(creds: &Credential) -> Result<()> {
     if !creds.has_key("protocol") {
-        bail!("refusing to work with credential missing protocol field");
+        bail!("fatal: refusing to work with credential missing protocol field");
     }
     if !creds.has_key("host") {
-        bail!("refusing to work with credential missing host field");
+        bail!("fatal: refusing to work with credential missing host field");
     }
     Ok(())
 }
@@ -845,9 +884,9 @@ pub fn run(args: Args) -> Result<()> {
     let git_dir = find_git_dir();
     let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
     normalize_url_field(&mut creds, &config)?;
-    apply_config_defaults(&mut creds, &config);
-    check_protected_credential_values(&creds, &config)?;
     let target_url = creds.target_url();
+    apply_config_defaults(&mut creds, &config, target_url.as_deref());
+    check_protected_credential_values(&creds, &config)?;
     let now_utc = OffsetDateTime::now_utc().unix_timestamp();
 
     match args.action {
@@ -862,7 +901,7 @@ pub fn run(args: Args) -> Result<()> {
                         .get("quit")
                         .is_some_and(|v| v == "1" || v == "true")
                     {
-                        bail!("credential helper '{helper}' told us to quit");
+                        bail!("fatal: credential helper '{helper}' told us to quit");
                     }
                     filled.merge_helper_response(&response, &creds);
                     if filled.password_expired(now_utc) {
