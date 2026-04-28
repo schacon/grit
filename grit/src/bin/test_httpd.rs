@@ -90,9 +90,11 @@ struct Config {
 
 fn find_git_http_backend() -> PathBuf {
     if let Ok(exec_path) = std::env::var("GIT_EXEC_PATH") {
-        let candidate = Path::new(&exec_path).join("git-http-backend");
-        if candidate.exists() {
-            return candidate;
+        for path in std::env::split_paths(&exec_path) {
+            let candidate = path.join("git-http-backend");
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
 
@@ -101,6 +103,8 @@ fn find_git_http_backend() -> PathBuf {
         "/usr/libexec/git-core/git-http-backend",
         "/usr/local/lib/git-core/git-http-backend",
         "/usr/local/libexec/git-core/git-http-backend",
+        "/opt/homebrew/opt/git/libexec/git-core/git-http-backend",
+        "/opt/homebrew/libexec/git-core/git-http-backend",
     ];
     for c in &candidates {
         if Path::new(c).exists() {
@@ -917,6 +921,7 @@ fn run_smart_http_cgi_output(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    cmd.env_remove("GIT_PROTOCOL");
 
     if let Some(ct) = req.headers.get("content-type") {
         cmd.env("CONTENT_TYPE", ct);

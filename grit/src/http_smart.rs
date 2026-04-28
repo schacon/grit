@@ -532,12 +532,13 @@ pub fn http_ls_refs(
     pkt_line::write_flush(&mut req)?;
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
 
     parse_ls_refs_v2_response(&resp)
@@ -585,12 +586,13 @@ pub fn http_negotiate_only_common(
     pkt_line::write_flush(&mut req)?;
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
     let advertised = parse_ls_refs_v2_response(&resp)?;
 
@@ -911,12 +913,13 @@ fn fetch_pack_v0_v1_stateless_http(
     };
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
 
     let mut cur = Cursor::new(resp.as_slice());
@@ -961,12 +964,13 @@ fn fetch_pack_v0_v1_stateless_http(
         pkt_line::write_line_to_vec(&mut retry_req, "done")?;
         pkt_line::write_flush(&mut retry_req)?;
 
-        let retry_resp = http_post(
+        let retry_resp = http_post_discovery(
             client,
             &post_url,
             &format!("application/x-{SERVICE}-request"),
             &format!("application/x-{SERVICE}-result"),
             &retry_req,
+            None,
         )?;
         let mut retry_cur = Cursor::new(retry_resp.as_slice());
         let mut retry_first_pkt = None::<String>;
