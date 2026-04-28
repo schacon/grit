@@ -2070,7 +2070,12 @@ fn run_http_clone(args: Args) -> Result<()> {
         &fetch_options,
         &http_ctx,
     )?;
-    crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(&dest.git_dir, &repo_url, None)?;
+    crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch_with_client(
+        &dest.git_dir,
+        &repo_url,
+        None,
+        Some(&http_ctx),
+    )?;
 
     if args.bare {
         for e in &remote_heads {

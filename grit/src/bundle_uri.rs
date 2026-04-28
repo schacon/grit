@@ -602,14 +602,23 @@ pub fn apply_bundle_uri(
     Ok(())
 }
 
-fn read_bundle_list_from_http(repo_url: &str) -> Result<String> {
+fn read_bundle_list_from_http(
+    repo_url: &str,
+    client_override: Option<&crate::http_client::HttpClientContext>,
+) -> Result<String> {
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
     refs_url.push_str("service=git-upload-pack");
 
     let config = ConfigSet::load(None, true).unwrap_or_default();
-    let client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+    let owned_client;
+    let client = if let Some(client) = client_override {
+        client
+    } else {
+        owned_client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+        &owned_client
+    };
     let body = client
         .get_with_git_protocol(&refs_url, Some("version=2"))
         .with_context(|| format!("GET {refs_url}"))?;
@@ -713,6 +722,7 @@ fn resolve_bundle_uri_for_fetch(
     git_dir: &Path,
     remote_url: &str,
     bundle_uri_opt: Option<&str>,
+    client_override: Option<&crate::http_client::HttpClientContext>,
 ) -> Result<String> {
     if let Some(u) = bundle_uri_opt {
         if !u.is_empty() {
@@ -727,7 +737,7 @@ fn resolve_bundle_uri_for_fetch(
         return load_bundle_list_document(&u);
     }
     if remote_url.starts_with("http://") || remote_url.starts_with("https://") {
-        return read_bundle_list_from_http(remote_url);
+        return read_bundle_list_from_http(remote_url, client_override);
     }
     bail!("no bundle-uri configured for fetch");
 }
@@ -902,18 +912,34 @@ pub fn maybe_apply_bundle_uri_after_http_fetch(
     remote_url: &str,
     bundle_uri_override: Option<&str>,
 ) -> Result<()> {
-    let list_text = match resolve_bundle_uri_for_fetch(git_dir, remote_url, bundle_uri_override) {
-        Ok(t) => t,
-        Err(e) => {
-            let msg = format!("{e:#}");
-            if msg.contains("no bundle-uri configured")
-                || msg.contains("server does not advertise bundle-uri")
-            {
-                return Ok(());
+    maybe_apply_bundle_uri_after_http_fetch_with_client(
+        git_dir,
+        remote_url,
+        bundle_uri_override,
+        None,
+    )
+}
+
+/// After an HTTP fetch, apply bundle-uri using an existing HTTP client when available.
+pub fn maybe_apply_bundle_uri_after_http_fetch_with_client(
+    git_dir: &Path,
+    remote_url: &str,
+    bundle_uri_override: Option<&str>,
+    client: Option<&crate::http_client::HttpClientContext>,
+) -> Result<()> {
+    let list_text =
+        match resolve_bundle_uri_for_fetch(git_dir, remote_url, bundle_uri_override, client) {
+            Ok(t) => t,
+            Err(e) => {
+                let msg = format!("{e:#}");
+                if msg.contains("no bundle-uri configured")
+                    || msg.contains("server does not advertise bundle-uri")
+                {
+                    return Ok(());
+                }
+                return Err(e);
             }
-            return Err(e);
-        }
-    };
+        };
     let list_uri = bundle_list_uri_for_config(git_dir, remote_url);
     let (mode, heuristic, entries) = parse_bundle_list_ini(&list_text)?;
     apply_bundle_list_for_fetch(git_dir, &list_uri, &list_text, mode, heuristic, &entries)
