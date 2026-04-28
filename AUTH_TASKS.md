@@ -546,23 +546,23 @@ Primary files:
 Tasks:
 
 - [ ] Re-check `push_to_ssh_url` against current receive-pack tests.
-- [ ] Confirm `--receive-pack` handling matches Git.
+- [x] Confirm `--receive-pack` handling matches Git.
 - [ ] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it.
 - [ ] Validate sideband stderr/progress propagation.
 - [ ] Validate push options over SSH.
 - [ ] Validate atomic push over SSH.
 - [ ] Validate porcelain output over SSH.
-- [ ] Validate hook/error propagation.
+- [x] Validate hook/error propagation.
 - [ ] Scrub credentials/userinfo-like data in displayed SSH URLs where applicable.
 - [ ] Confirm child process cleanup on dry-run, rejected updates, and failed remote status.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t5545-push-options.sh`
+- [x] `cargo build --release -p grit-rs`
+- [~] `./scripts/run-tests.sh t5545-push-options.sh`
 - [ ] `./scripts/run-tests.sh t5547-push-quarantine.sh`
 - [ ] `./scripts/run-tests.sh t5548-push-porcelain.sh`
-- [ ] `./scripts/run-tests.sh t5406-remote-rejects.sh`
+- [x] `./scripts/run-tests.sh t5406-remote-rejects.sh`
 - [ ] `./scripts/run-tests.sh t5409-colorize-remote-messages.sh`
 
 Definition of done:

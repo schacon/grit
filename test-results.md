@@ -47,6 +47,12 @@
 - `./scripts/run-tests.sh t5601-clone.sh`: 64/115 passed (existing broader failures remain)
 - `./scripts/run-tests.sh t5603-clone-dirname.sh`: 25/47 passed (existing broader failures remain)
 
+**2026-04-28 (remote auth / SSH push hardening)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5406-remote-rejects.sh`: 3/3 passed
+- `./scripts/run-tests.sh t5545-push-options.sh`: 2/13 passed (existing broader failures remain)
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
