@@ -93,6 +93,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Reused the existing upload-pack advertisement and protocol-v2 `ls-refs` parsing path.
 - Preserved `--upload-pack` custom remote command behavior for SSH `ls-remote`.
 - Validation: `t5512-ls-remote` remains 16/40 and `t5601-clone` remains 64/115, with broader pre-existing failures still to address.
+- Added live SSH fetch over `git-upload-pack` for unresolved SSH URLs.
+- Reused existing upload-pack negotiation for v0/v1 and v2 fetch over SSH streams.
+- Preserved the local SSH shortcut for test harness URLs that resolve to local repositories.
+- Validation: `t5510-fetch` remains 199/215 and `t5700-protocol-v1` returned 0/0 warning from harness selection/status.
 
 ## HTTP Challenge Plumbing
 
