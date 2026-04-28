@@ -92,6 +92,15 @@
 - `./scripts/run-tests.sh --timeout 90 t5581-http-curl-verbose.sh t5564-http-proxy.sh t5555-http-smart-common.sh`: `t5581` 2/2, `t5564` 8/8, `t5555` 10/10
 - Routed the intentional `error_git_upload_pack` clone path through Grit in the lightweight HTTP harness and added the matching `500 Intentional Breakage` route to `test-httpd`, so `GIT_CURL_VERBOSE` validates Grit's curl trace output instead of failing in system Git helper lookup.
 
+**2026-04-28 (remote auth / HTTP push regression)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 90 t5549-fetch-push-http.sh`: 3/3 passed
+- `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5564` 8/8, `t5581` 2/2
+- Routed HTTP push through Grit in the lightweight harness, fixed real Git exec-path discovery for server-side HTTP helpers, added a `git-receive-pack` helper wrapper for `git-http-backend`, allowed HTTP push source refs to resolve tags/revisions, ignored remote-only haves when building local push packs, emitted the expected `write_pack_file/wrote` trace2 event from HTTP push packs, and implemented the initial `push.negotiate` behavior needed by the test.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

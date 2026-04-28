@@ -79,7 +79,7 @@ done
 # command line, so delegate those to real git so smart-HTTP transport keeps working in the suite.
 if test "$_http" != 1 && test -n "${HTTPD_URL-}"; then
 	case "$*" in
-	*fetch*|*pull*|*push*) _http=1 ;;
+	*fetch*|*pull*) _http=1 ;;
 	esac
 fi
 # HTTP fetch uses grit for bundle-uri parity (t5558), except glob refspecs (grit does not
@@ -110,6 +110,11 @@ done
 if test "$_clone" = 1 && test "$_bundle_uri" = 1; then
 	_http=0
 fi
+# Smart HTTP push is implemented in Grit and must not use system Git with the
+# temporary server-only GIT_EXEC_PATH.
+case "$*" in
+*push*) _http=0 ;;
+esac
 # t5581-http-curl-verbose intentionally hits a failing upload-pack endpoint and checks
 # Grit's curl-style trace output.
 case "$*" in
@@ -205,7 +210,7 @@ start_httpd() {
 	# `--advertise-refs` (ref listing / capability string); delegate negotiation and
 	# pack generation to grit so shallow deepen and multi_ack match the harness (t5539).
 	_grit_exec="${GUST_BIN:-$REAL_GIT}"
-	_real_exec_path="$("$REAL_GIT" -c safe.directory='*' --exec-path 2>/dev/null || true)"
+	_real_exec_path="$(env -u GIT_EXEC_PATH "$REAL_GIT" -c safe.directory='*' --exec-path 2>/dev/null || true)"
 	if test -z "$_real_exec_path"
 	then
 		_real_exec_path="$(dirname "$REAL_GIT")"
@@ -223,6 +228,12 @@ case " \$* " in
 esac
 EOFUP
 	chmod +x "$HTTPD_GIT_EXEC_PATH/git-upload-pack"
+	cat >"$HTTPD_GIT_EXEC_PATH/git-receive-pack" <<EOFRP
+#!/bin/sh
+REAL_RP='$_real_exec_path/git-receive-pack'
+exec "\$REAL_RP" "\$@"
+EOFRP
+	chmod +x "$HTTPD_GIT_EXEC_PATH/git-receive-pack"
 	GIT_EXEC_PATH="$HTTPD_GIT_EXEC_PATH:$_real_exec_path"
 	export GIT_EXEC_PATH
 

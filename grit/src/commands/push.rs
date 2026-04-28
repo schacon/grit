@@ -12,7 +12,7 @@ use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigS
 use grit_lib::gitmodules::verify_gitmodules_for_commit;
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::push_submodules::{
     collect_changed_gitlinks_for_push, find_unpushed_submodule_paths,
     format_unpushed_submodules_error, head_ref_short_name, parse_push_recurse_submodules_arg,
@@ -3216,14 +3216,10 @@ fn push_to_http_url(
                 continue;
             }
 
-            let local_ref = if src_raw == "HEAD" || src_raw.starts_with("refs/") {
-                src_raw.clone()
-            } else {
-                normalize_ref(&src_raw)
-            };
-            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-                .with_context(|| format!("src ref '{}' does not match any", src_raw))?;
             let remote_ref = normalize_ref(&dst_raw);
+            let (local_ref, local_oid, resolved_pre_push_name) =
+                resolve_push_src_for_refspec(repo, &src_raw, &remote_ref)
+                    .with_context(|| format!("src ref '{}' does not match any", src_raw))?;
             let old_oid = remote_ref_map.get(&remote_ref).copied();
 
             if let Some(old) = old_oid {
@@ -3255,11 +3251,13 @@ fn push_to_http_url(
                 new_oid: Some(local_oid),
                 expected_oid: None,
                 refspec_force,
-                pre_push_local_name: if src_raw == "HEAD" {
-                    Some("HEAD".to_owned())
-                } else {
-                    None
-                },
+                pre_push_local_name: resolved_pre_push_name.or_else(|| {
+                    if src_raw == "HEAD" {
+                        Some("HEAD".to_owned())
+                    } else {
+                        None
+                    }
+                }),
             });
         }
     }
@@ -3308,6 +3306,14 @@ fn push_to_http_url(
     }
 
     let push_tips: Vec<ObjectId> = updates.iter().filter_map(|u| u.new_oid).collect();
+    if push_negotiate_enabled(config) {
+        if protocol_wire::effective_client_protocol_version() == 2 {
+            add_push_tip_parents_to_remote_have(repo, &push_tips, &mut remote_have);
+        } else {
+            eprintln!("warning: --negotiate-only requires protocol v2");
+            eprintln!("warning: push negotiation failed; proceeding anyway with push");
+        }
+    }
     let remote_have_vec: Vec<ObjectId> = remote_have.into_iter().collect();
     let delete_only = updates.iter().all(|u| u.new_oid.is_none());
     let pack_data = if delete_only {
@@ -3315,6 +3321,7 @@ fn push_to_http_url(
     } else {
         pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
     };
+    maybe_emit_push_pack_wrote_trace2(&pack_data);
     if push_show_object_progress(args) && !delete_only {
         let written_objects =
             pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
@@ -4497,6 +4504,50 @@ fn pack_object_count(pack: &[u8]) -> Option<usize> {
     }
     let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
     Some(count as usize)
+}
+
+fn maybe_emit_push_pack_wrote_trace2(pack: &[u8]) {
+    let Some(count) = pack_object_count(pack) else {
+        return;
+    };
+    let Ok(path) = std::env::var("GIT_TRACE2_EVENT") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let _ = crate::trace2_write_json_data_line(
+        &path,
+        "pack-objects",
+        "write_pack_file/wrote",
+        &count.to_string(),
+    );
+}
+
+fn push_negotiate_enabled(config: &ConfigSet) -> bool {
+    config
+        .get("push.negotiate")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn add_push_tip_parents_to_remote_have(
+    repo: &Repository,
+    push_tips: &[ObjectId],
+    remote_have: &mut std::collections::BTreeSet<ObjectId>,
+) {
+    for tip in push_tips {
+        let Ok(obj) = repo.odb.read(tip) else {
+            continue;
+        };
+        if obj.kind != grit_lib::objects::ObjectKind::Commit {
+            continue;
+        }
+        let Ok(commit) = parse_commit(&obj.data) else {
+            continue;
+        };
+        remote_have.extend(commit.parents);
+    }
 }
 
 fn estimate_push_progress_enumerated_objects(

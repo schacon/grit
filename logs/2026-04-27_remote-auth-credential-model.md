@@ -135,6 +135,13 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Routed `error_git_upload_pack` HTTP clone through Grit in the lightweight HTTP harness so `t5581` exercises Grit's `GIT_CURL_VERBOSE` output.
 - Added the `test-httpd` `500 Intentional Breakage` route for `/error_git_upload_pack/smart/...git-upload-pack`.
 - Validation: `t5581-http-curl-verbose` now passes 2/2 while `t5564-http-proxy` remains 8/8 and `t5555-http-smart-common` remains 10/10.
+- Routed HTTP push through Grit in the lightweight HTTP harness.
+- Fixed server-side helper discovery by computing the real Git exec path with `GIT_EXEC_PATH` unset and adding a `git-receive-pack` wrapper beside the existing upload-pack wrapper.
+- Allowed HTTP push source refspecs to resolve tags and general revisions via the shared push source resolver.
+- Filtered remote-only advertised haves out of local `pack-objects --not` input so push packs can be built when the remote has unrelated objects.
+- Emitted `write_pack_file/wrote` trace2 data for HTTP push packs from the generated pack header object count.
+- Added initial `push.negotiate` handling: protocol-v2 pushes use local parent commits as common bases for thin-pack object counts, while non-v2 negotiation emits Git-compatible warnings and proceeds.
+- Validation: `t5549-fetch-push-http` now passes 3/3; `t5555-http-smart-common`, `t5564-http-proxy`, and `t5581-http-curl-verbose` remain fully passing.
 
 ## HTTP Challenge Plumbing
 

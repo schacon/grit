@@ -1421,7 +1421,11 @@ pub fn build_thin_push_pack_from_remote_oids(
     push_tips: &[ObjectId],
     remote_have_oids: &[ObjectId],
 ) -> Result<Vec<u8>> {
-    let have_roots: BTreeSet<ObjectId> = remote_have_oids.iter().copied().collect();
+    let have_roots: BTreeSet<ObjectId> = remote_have_oids
+        .iter()
+        .copied()
+        .filter(|oid| local_repo.odb.read(oid).is_ok())
+        .collect();
     build_thin_push_pack_from_have_set(local_repo, push_tips, &have_roots)
 }
 
