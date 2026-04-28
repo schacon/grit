@@ -503,13 +503,13 @@ Primary files:
 Tasks:
 
 - [x] Add `spawn_git_ssh_upload_pack` using shared SSH service spawning.
-- [ ] Expose a bidirectional upload-pack stream API in `fetch_transport.rs`.
+- [x] Expose a bidirectional upload-pack stream API in `fetch_transport.rs`.
 - [~] Refactor existing upload-pack negotiation to work with:
   - [ ] local child process
   - [ ] git-daemon socket
   - [x] SSH child process
 - [x] Implement live SSH `fetch` for unresolved SSH URLs.
-- [ ] Implement live SSH `clone` for unresolved SSH URLs.
+- [x] Implement live SSH `clone` for unresolved SSH URLs.
 - [x] Implement or wire live SSH `ls-remote` if not already covered.
 - [x] Preserve local SSH shortcut behavior for tests that intentionally resolve to local repos.
 - [x] Preserve `--upload-pack` behavior.
@@ -521,8 +521,8 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t5601-clone.sh`
-- [ ] `./scripts/run-tests.sh t5603-clone-dirname.sh`
+- [~] `./scripts/run-tests.sh t5601-clone.sh`
+- [~] `./scripts/run-tests.sh t5603-clone-dirname.sh`
 - [ ] `./scripts/run-tests.sh t5510-fetch.sh`
 - [ ] `./scripts/run-tests.sh t5512-ls-remote.sh`
 - [ ] `./scripts/run-tests.sh t5700-protocol-v1.sh`
@@ -530,7 +530,7 @@ Validation:
 
 Definition of done:
 
-- [ ] SSH clone/fetch work through an external SSH process for non-local remotes.
+- [x] SSH clone/fetch work through an external SSH process for non-local remotes.
 - [ ] Grit still delegates actual SSH authentication to the user's SSH implementation.
 
 ## Phase 13: SSH Receive-Pack Hardening

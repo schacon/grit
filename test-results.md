@@ -41,6 +41,12 @@
 - `./scripts/run-tests.sh t5510-fetch.sh`: 199/215 passed (existing broader failures remain)
 - `./scripts/run-tests.sh t5700-protocol-v1.sh`: 0/0 warning from harness selection/status
 
+**2026-04-28 (remote auth / live SSH clone)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5601-clone.sh`: 64/115 passed (existing broader failures remain)
+- `./scripts/run-tests.sh t5603-clone-dirname.sh`: 25/47 passed (existing broader failures remain)
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
