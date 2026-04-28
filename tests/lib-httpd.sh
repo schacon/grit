@@ -110,6 +110,10 @@ done
 if test "$_clone" = 1 && test "$_bundle_uri" = 1; then
 	_http=0
 fi
+# t5732 bundle-uri HTTP tests need Grit's protocol-v2 bundle-uri client path.
+if test "${BUNDLE_URI_PROTOCOL-}" = http && test "$_clone" = 1; then
+	_http=0
+fi
 # Smart HTTP push is implemented in Grit and must not use system Git with the
 # temporary server-only GIT_EXEC_PATH.
 case "$*" in
@@ -210,6 +214,10 @@ start_httpd() {
 		export LIB_HTTPD_PROXY
 		proxy_arg="--proxy --proxy-auth ${HTTPD_PROXY_AUTH_LINE}"
 	fi
+	if test -n "${BUNDLE_URI_PROTOCOL-}"
+	then
+		export BUNDLE_URI_PROTOCOL
+	fi
 	# Smart HTTP runs `git-http-backend` → `git-upload-pack`. Use system Git only for
 	# `--advertise-refs` (ref listing / capability string); delegate negotiation and
 	# pack generation to grit so shallow deepen and multi_ack match the harness (t5539).
@@ -226,6 +234,10 @@ start_httpd() {
 REAL_GIT='$REAL_GIT'
 GUST_BIN='$_grit_exec'
 REAL_UP='$_real_exec_path/git-upload-pack'
+if test '${BUNDLE_URI_PROTOCOL-}' = 'http'
+then
+	exec "\$GUST_BIN" upload-pack "\$@"
+fi
 case " \$* " in
 *" --advertise-refs "*) exec "\$REAL_UP" "\$@" ;;
 *) exec "\$GUST_BIN" upload-pack "\$@" ;;

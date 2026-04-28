@@ -2060,6 +2060,7 @@ fn run_http_clone(args: Args) -> Result<()> {
         shallow_exclude: args.shallow_exclude.clone(),
         filter_spec: args.filter.clone(),
         refetch: false,
+        bundle_uri_override: args.bundle_uri.is_some(),
     };
     let (remote_heads, remote_tags, adv) = crate::http_smart::http_fetch_pack(
         &dest.git_dir,
