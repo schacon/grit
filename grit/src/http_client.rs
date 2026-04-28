@@ -80,6 +80,8 @@ pub struct HttpClientContext {
     transport: Transport,
     trace_curl: Option<TraceCurl>,
     proxy_raw: Option<String>,
+    proxy_auth_method: ProxyAuthMethod,
+    ssl_verify: bool,
     git_protocol_header: Option<String>,
     post_buffer: usize,
     credential_use_http_path: bool,
@@ -144,11 +146,43 @@ enum ProactiveAuth {
     Auto,
 }
 
+#[derive(Clone, Debug)]
+enum ProxyAuthMethod {
+    AnyAuth,
+    Basic,
+    Unsupported(String),
+}
+
 fn parse_proactive_auth(value: Option<String>) -> ProactiveAuth {
     match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
         Some(value) if value == "basic" => ProactiveAuth::Basic,
         Some(value) if value == "auto" => ProactiveAuth::Auto,
         _ => ProactiveAuth::None,
+    }
+}
+
+fn proxy_auth_method(config: &ConfigSet) -> ProxyAuthMethod {
+    let raw = std::env::var("GIT_HTTP_PROXY_AUTHMETHOD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| config.get("http.proxyAuthMethod"))
+        .unwrap_or_else(|| "anyauth".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "anyauth" => ProxyAuthMethod::AnyAuth,
+        "basic" => ProxyAuthMethod::Basic,
+        other => ProxyAuthMethod::Unsupported(other.to_string()),
+    }
+}
+
+fn ensure_supported_proxy_auth_method(method: &ProxyAuthMethod, proxy_url: &Url) -> Result<()> {
+    if proxy_url.username().is_empty() {
+        return Ok(());
+    }
+    match method {
+        ProxyAuthMethod::AnyAuth | ProxyAuthMethod::Basic => Ok(()),
+        ProxyAuthMethod::Unsupported(method) => {
+            bail!("unsupported HTTP proxy authentication method '{method}'")
+        }
     }
 }
 
@@ -244,7 +278,9 @@ impl HttpClientContext {
     pub fn from_config_set(config: &ConfigSet) -> Result<Self> {
         let trace_curl = trace_curl_from_env();
         let proxy_raw = config.get("http.proxy");
-        let transport = build_transport(config)?;
+        let proxy_auth_method = proxy_auth_method(config);
+        let transport = build_transport(config, &proxy_auth_method)?;
+        let ssl_verify = ssl_verify_enabled(config);
         let git_protocol_header = resolve_git_protocol_header(config);
         let post_buffer = config
             .get("http.postBuffer")
@@ -286,6 +322,8 @@ impl HttpClientContext {
             transport,
             trace_curl,
             proxy_raw,
+            proxy_auth_method,
+            ssl_verify,
             git_protocol_header,
             post_buffer,
             credential_use_http_path,
@@ -574,7 +612,17 @@ impl HttpClientContext {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
         let extra_headers = self.extra_headers_for_url(&request_url);
         let cookie_header = self.cookie_header_for_url(&request_url);
-        match &self.transport {
+        let env_transport = if self.proxy_raw.is_none() {
+            env_proxy_for_url(&request_url)
+                .map(|proxy| {
+                    build_transport_from_proxy(&proxy, self.ssl_verify, &self.proxy_auth_method)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let transport = env_transport.as_ref().unwrap_or(&self.transport);
+        match transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
                     .get(&request_url)
@@ -668,7 +716,17 @@ impl HttpClientContext {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
         let extra_headers = self.extra_headers_for_url(&request_url);
         let cookie_header = self.cookie_header_for_url(&request_url);
-        match &self.transport {
+        let env_transport = if self.proxy_raw.is_none() {
+            env_proxy_for_url(&request_url)
+                .map(|proxy| {
+                    build_transport_from_proxy(&proxy, self.ssl_verify, &self.proxy_auth_method)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let transport = env_transport.as_ref().unwrap_or(&self.transport);
+        match transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
                     .post(&request_url)
@@ -2040,6 +2098,58 @@ fn trace_curl_from_env() -> Option<TraceCurl> {
     })
 }
 
+fn env_proxy_for_url(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if no_proxy_matches(&parsed) {
+        return None;
+    }
+    let scheme = parsed.scheme();
+    let candidates: &[&str] = match scheme {
+        "https" => &["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"],
+        "http" => &["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"],
+        _ => &["all_proxy", "ALL_PROXY"],
+    };
+    candidates.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+fn no_proxy_matches(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let port = url.port_or_known_default();
+    let raw = std::env::var("no_proxy")
+        .or_else(|_| std::env::var("NO_PROXY"))
+        .unwrap_or_default();
+    raw.split(',').map(str::trim).any(|entry| {
+        if entry.is_empty() {
+            return false;
+        }
+        if entry == "*" {
+            return true;
+        }
+        let entry = entry.to_ascii_lowercase();
+        if let Some((entry_host, entry_port)) = entry.rsplit_once(':') {
+            if entry_port.chars().all(|c| c.is_ascii_digit())
+                && entry_port.parse::<u16>().ok() != port
+            {
+                return false;
+            }
+            return no_proxy_host_matches(&host, entry_host);
+        }
+        no_proxy_host_matches(&host, &entry)
+    })
+}
+
+fn no_proxy_host_matches(host: &str, entry: &str) -> bool {
+    let entry = entry.trim_start_matches('.');
+    host == entry || host.ends_with(&format!(".{entry}"))
+}
+
 fn http_access_error(url: &str, status: u16) -> anyhow::Error {
     anyhow::anyhow!("unable to access '{url}': The requested URL returned error: {status}")
 }
@@ -2060,12 +2170,12 @@ fn ssl_verify_enabled(config: &ConfigSet) -> bool {
         .unwrap_or(true)
 }
 
-fn ureq_agent(config: &ConfigSet, proxy: Option<ureq::Proxy>) -> ureq::Agent {
+fn ureq_agent(ssl_verify: bool, proxy: Option<ureq::Proxy>) -> ureq::Agent {
     let mut builder = ureq::AgentBuilder::new();
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
     }
-    if !ssl_verify_enabled(config) {
+    if !ssl_verify {
         let tls_config = ureq::rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
@@ -2075,14 +2185,23 @@ fn ureq_agent(config: &ConfigSet, proxy: Option<ureq::Proxy>) -> ureq::Agent {
     builder.build()
 }
 
-fn build_transport(config: &ConfigSet) -> Result<Transport> {
+fn build_transport(config: &ConfigSet, proxy_auth_method: &ProxyAuthMethod) -> Result<Transport> {
+    let ssl_verify = ssl_verify_enabled(config);
     let Some(raw_proxy) = config.get("http.proxy") else {
-        return Ok(Transport::Ureq(ureq_agent(config, None)));
+        return Ok(Transport::Ureq(ureq_agent(ssl_verify, None)));
     };
     let raw_proxy = raw_proxy.trim();
     if raw_proxy.is_empty() {
-        return Ok(Transport::Ureq(ureq_agent(config, None)));
+        return Ok(Transport::Ureq(ureq_agent(ssl_verify, None)));
     }
+    build_transport_from_proxy(raw_proxy, ssl_verify, proxy_auth_method)
+}
+
+fn build_transport_from_proxy(
+    raw_proxy: &str,
+    ssl_verify: bool,
+    proxy_auth_method: &ProxyAuthMethod,
+) -> Result<Transport> {
     validate_proxy_url(raw_proxy)?;
     let with_scheme = if raw_proxy.contains("://") {
         raw_proxy.to_string()
@@ -2100,6 +2219,7 @@ fn build_transport(config: &ConfigSet) -> Result<Transport> {
     if scheme == "http" {
         let mut p = parsed.clone();
         fill_proxy_password_via_askpass(&mut p)?;
+        ensure_supported_proxy_auth_method(proxy_auth_method, &p)?;
         let proxy_host = p
             .host_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid proxy URL '{raw_proxy}'"))?
@@ -2114,9 +2234,12 @@ fn build_transport(config: &ConfigSet) -> Result<Transport> {
     }
 
     let proxy_url = normalize_proxy_url_for_ureq(raw_proxy, &parsed)?;
+    let parsed_proxy_url =
+        Url::parse(&proxy_url).map_err(|_| anyhow::anyhow!("Invalid proxy URL '{raw_proxy}'"))?;
+    ensure_supported_proxy_auth_method(proxy_auth_method, &parsed_proxy_url)?;
     let proxy =
         ureq::Proxy::new(&proxy_url).with_context(|| format!("invalid proxy URL '{raw_proxy}'"))?;
-    Ok(Transport::Ureq(ureq_agent(config, Some(proxy))))
+    Ok(Transport::Ureq(ureq_agent(ssl_verify, Some(proxy))))
 }
 
 fn proxy_basic_token(url: &Url) -> Result<Option<String>> {

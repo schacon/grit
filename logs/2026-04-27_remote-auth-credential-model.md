@@ -115,3 +115,7 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Routed protocol-v2 HTTP bundle-uri discovery in `bundle_uri.rs` and `http_bundle_uri.rs` through `HttpClientContext`.
 - Added `http.sslVerify=false` and `GIT_SSL_NO_VERIFY` handling by configuring rustls with a permissive verifier when explicitly requested.
 - Audited TLS options: CA file/path and client certificate/key options are not cleanly supported by the current ureq/rustls setup and remain documented limitations.
+- Added environment proxy support for `http_proxy`, `https_proxy`, `all_proxy`, and `no_proxy`.
+- Preserved `http.proxy` precedence over environment proxy variables.
+- Added `http.proxyAuthMethod` and `GIT_HTTP_PROXY_AUTHMETHOD` parsing.
+- Kept Basic/anyauth proxy credentials supported and fail clearly for unsupported proxy auth methods.

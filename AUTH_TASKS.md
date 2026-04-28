@@ -326,18 +326,18 @@ Tasks:
   - [x] empty-value reset
   - [x] per-URL matching if config layer supports it
   - [x] redaction for auth-like headers in traces
-- [ ] Implement environment proxy variables:
-  - [ ] `http_proxy`
-  - [ ] `https_proxy`
-  - [ ] `all_proxy`
-  - [ ] `no_proxy`
-  - [ ] Git-compatible precedence with `http.proxy`
-- [ ] Implement `http.proxyAuthMethod`.
-- [ ] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
+- [x] Implement environment proxy variables:
+  - [x] `http_proxy`
+  - [x] `https_proxy`
+  - [x] `all_proxy`
+  - [x] `no_proxy`
+  - [x] Git-compatible precedence with `http.proxy`
+- [x] Implement `http.proxyAuthMethod`.
+- [x] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
 - [ ] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
 - [ ] Audit current manual HTTP forward proxy path for HTTPS behavior and document any limitation.
 - [ ] Add `remote.<name>.proxy` if required by tests encountered in this phase.
-- [ ] Make proxy auth redaction match `GIT_TRACE_REDACT`.
+- [x] Make proxy auth redaction match `GIT_TRACE_REDACT`.
 
 Validation:
 
