@@ -502,7 +502,7 @@ Primary files:
 
 Tasks:
 
-- [ ] Add `spawn_git_ssh_upload_pack` using shared SSH service spawning.
+- [x] Add `spawn_git_ssh_upload_pack` using shared SSH service spawning.
 - [ ] Expose a bidirectional upload-pack stream API in `fetch_transport.rs`.
 - [ ] Refactor existing upload-pack negotiation to work with:
   - [ ] local child process
@@ -510,17 +510,17 @@ Tasks:
   - [ ] SSH child process
 - [ ] Implement live SSH `fetch` for unresolved SSH URLs.
 - [ ] Implement live SSH `clone` for unresolved SSH URLs.
-- [ ] Implement or wire live SSH `ls-remote` if not already covered.
+- [x] Implement or wire live SSH `ls-remote` if not already covered.
 - [ ] Preserve local SSH shortcut behavior for tests that intentionally resolve to local repos.
-- [ ] Preserve `--upload-pack` behavior.
+- [x] Preserve `--upload-pack` behavior.
 - [ ] Preserve protocol v0/v1/v2 negotiation.
-- [ ] Propagate `GIT_PROTOCOL` correctly for upload-pack.
+- [x] Propagate `GIT_PROTOCOL` correctly for upload-pack.
 - [ ] Handle child stderr/stdout/stdin closure without deadlocks.
 - [ ] Map SSH child exit status to Git-like errors.
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
+- [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5601-clone.sh`
 - [ ] `./scripts/run-tests.sh t5603-clone-dirname.sh`
 - [ ] `./scripts/run-tests.sh t5510-fetch.sh`

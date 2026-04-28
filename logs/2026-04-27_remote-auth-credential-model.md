@@ -86,6 +86,14 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Extended submodule push remote URL classification to treat scp-style and `git+ssh://` URLs as SSH, not local paths.
 - Validation: `t5507-remote-environment` passed 5/5; `t5813-proto-disable-ssh` remains 63/81 with known existing failures.
 
+## Live SSH Upload-Pack
+
+- Added `spawn_git_ssh_upload_pack` on top of the shared SSH service spawner.
+- Wired `git ls-remote` for SSH URLs to run `git-upload-pack` over an external SSH subprocess.
+- Reused the existing upload-pack advertisement and protocol-v2 `ls-refs` parsing path.
+- Preserved `--upload-pack` custom remote command behavior for SSH `ls-remote`.
+- Validation: `t5512-ls-remote` remains 16/40 and `t5601-clone` remains 64/115, with broader pre-existing failures still to address.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.
