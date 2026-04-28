@@ -198,9 +198,11 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 ## Protocol Policy Audit
 
 - Validated HTTP protocol policy with `t5812-proto-disable-http`; it now passes 29/29.
+- Fixed submodule clone setup for protocol-policy tests by allowing `--separate-git-dir` with SSH/ext submodule clone sources.
+- Validated submodule protocol policy with `t5815-submodule-protos`; it now passes 8/8.
 - Re-ran `t5814-proto-disable-ext`; it remains 19/27.
 - `t5814` failures are the enabled ext fetch/push cases. The disabled clone/fetch/push policy cases pass, so the remaining failure surface is ext transport implementation, not protocol allow/deny classification.
-- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5814-proto-disable-ext.sh` reported `t5812` 29/29 and `t5814` 19/27.
+- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5814` 19/27, and `t5815` 8/8.
 
 ## HTTP Challenge Plumbing
 

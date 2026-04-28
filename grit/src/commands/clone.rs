@@ -511,12 +511,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     if args.separate_git_dir.is_some() {
         let repo = args.repository.as_str();
-        if repo.starts_with("ext::")
-            || is_ssh_url(repo)
-            || repo.starts_with("ssh://")
-            || repo.starts_with("git://")
-            || repo.starts_with("http://")
-            || repo.starts_with("https://")
+        if repo.starts_with("git://") || repo.starts_with("http://") || repo.starts_with("https://")
         {
             bail!("--separate-git-dir is only supported for local repository clones");
         }
@@ -3042,9 +3037,6 @@ fn default_branch_from_upload_pack_advertisement(
 }
 
 fn run_ssh_network_clone(args: Args, spec: &crate::ssh_transport::SshUrl) -> Result<()> {
-    if args.separate_git_dir.is_some() {
-        bail!("--separate-git-dir is not supported for SSH network clones");
-    }
     if args.shared {
         bail!("--shared is not supported for SSH network clones");
     }
@@ -3099,7 +3091,27 @@ fn run_ssh_network_clone(args: Args, spec: &crate::ssh_transport::SshUrl) -> Res
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
     let ref_storage = resolved_clone_ref_storage(&args)?;
     let template_dir = args.template.as_ref().map(PathBuf::from);
-    let dest = if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
+    let dest = if let Some(ref sep_git) = args.separate_git_dir {
+        if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
+            bail!(
+                "destination path '{}' already exists and is not an empty directory",
+                sep_git.display()
+            );
+        }
+        init_repository_separate_git_dir(
+            &target_path,
+            sep_git,
+            &initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize separate git dir '{}'",
+                sep_git.display()
+            )
+        })?
+    } else if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
         init_bare_clone_minimal(&target_path, &initial_branch, ref_storage).with_context(|| {
             format!(
                 "failed to initialize bare clone '{}'",
