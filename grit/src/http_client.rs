@@ -401,6 +401,7 @@ impl HttpClientContext {
             if first.status >= 400 {
                 return Err(http_access_error(url, first.status));
             }
+            self.approve_cached_auth_for_url(url);
             return Ok(first.body);
         }
         let auth_challenges = first.www_authenticate_challenges();
@@ -536,6 +537,7 @@ impl HttpClientContext {
             if first.status >= 400 {
                 return Err(http_access_error(url, first.status));
             }
+            self.approve_cached_auth_for_url(url);
             return Ok(first.body);
         }
         let auth_challenges = first.www_authenticate_challenges();
@@ -845,6 +847,14 @@ impl HttpClientContext {
         guard.as_ref().map(AuthCredentials::authorization_header)
     }
 
+    fn cached_auth_credentials(&self) -> Option<AuthCredentials> {
+        let guard = self
+            .auth_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
+    }
+
     fn store_cached_auth(&self, auth: AuthCredentials) {
         let mut guard = self
             .auth_cache
@@ -859,6 +869,18 @@ impl HttpClientContext {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = None;
+    }
+
+    fn approve_cached_auth_for_url(&self, url: &str) {
+        let Some(auth) = self.cached_auth_credentials() else {
+            return;
+        };
+        let Ok(mut credential_input) = self.credential_input_for_url(url) else {
+            return;
+        };
+        auth.add_to_credential_input(&mut credential_input);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
     }
 
     fn proactive_authorization_header(&self, url: &str) -> Result<Option<String>> {
@@ -1271,11 +1293,15 @@ impl TraceCurl {
 }
 
 fn response_headers(resp: &ureq::Response) -> Vec<(String, String)> {
+    let mut seen = std::collections::BTreeSet::new();
     resp.headers_names()
         .into_iter()
-        .filter_map(|name| {
-            resp.header(&name)
-                .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+        .filter(|name| seen.insert(name.to_ascii_lowercase()))
+        .flat_map(|name| {
+            let key = name.to_ascii_lowercase();
+            resp.all(&name)
+                .into_iter()
+                .map(move |value| (key.clone(), value.to_string()))
         })
         .collect()
 }

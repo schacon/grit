@@ -120,6 +120,10 @@ esac
 case "$*" in
 *"error_git_upload_pack"*) _http=0 ;;
 esac
+# t5563-simple-http-auth validates Grit's credential-helper and HTTP auth flow.
+case "$*" in
+*"custom_auth"*) _http=0 ;;
+esac
 # t5564-http-proxy: grit implements http.proxy / GIT_TRACE_CURL / SOCKS path validation.
 if test -n "${LIB_HTTPD_PROXY-}"; then
 	case "$*" in
@@ -381,11 +385,8 @@ clear_netrc () {
 	rm -f "$TRASH_DIRECTORY/.netrc"
 }
 
-# CGIPassAuth is an Apache feature not supported by test-httpd
 enable_cgipassauth () {
-	# Our test-httpd doesn't support CGIPassAuth
-	# Set prereq so tests can check
-	:
+	test_set_prereq CGIPASSAUTH
 }
 
 expect_askpass () {
