@@ -168,6 +168,13 @@
 - `./scripts/run-tests.sh --timeout 150 t5539-fetch-http-shallow.sh`: 4/8
 - Repaired the in-progress HTTP smart shallow request plumbing so local `.git/shallow` OIDs are passed to v0/v1 and v2 fetch request builders and the code compiles again. Remaining failures are shallow deepen/since/exclude transport behavior, not auth-specific regression.
 
+**2026-04-28 (remote auth / protocol policy audit)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh`: 29/29 passed
+- `./scripts/run-tests.sh --timeout 150 t5814-proto-disable-ext.sh`: 19/27
+- HTTP protocol allow/deny policy is green. The remaining `t5814` failures are enabled `ext::` fetch/push behavior; disabled clone/fetch/push policy paths pass and the residual gap is ext transport support, not auth classification.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

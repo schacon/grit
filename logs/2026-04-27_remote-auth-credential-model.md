@@ -195,6 +195,13 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Remaining `t5539` failures are deeper shallow/deepen/since/exclude transport behavior and are not auth-specific.
 - Validation: `cargo check -p grit-rs` and `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5539-fetch-http-shallow.sh` remains 4/8.
 
+## Protocol Policy Audit
+
+- Validated HTTP protocol policy with `t5812-proto-disable-http`; it now passes 29/29.
+- Re-ran `t5814-proto-disable-ext`; it remains 19/27.
+- `t5814` failures are the enabled ext fetch/push cases. The disabled clone/fetch/push policy cases pass, so the remaining failure surface is ext transport implementation, not protocol allow/deny classification.
+- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5814-proto-disable-ext.sh` reported `t5812` 29/29 and `t5814` 19/27.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.
