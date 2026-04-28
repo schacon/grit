@@ -140,6 +140,15 @@
 - `./scripts/run-tests.sh --timeout 150 t5551-http-fetch-smart.sh`: 29/37. The remaining real failures are empty SHA-256 clone object-format support; the auth/redaction cases are green.
 - Routed authenticated smart HTTP cases through Grit in the lightweight HTTP harness, fixed unredacted `Authorization` curl trace output, and made access log stripping preserve status codes by adding an Apache-like byte-count field.
 
+**2026-04-28 (remote auth / t5541 HTTP push auth slice)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Focused `t5541-http-push-smart.sh --run=1-9,18-21`: passed
+- `./scripts/run-tests.sh --timeout 150 t5541-http-push-smart.sh`: 20/21. The remaining failure is `push --atomic prevents branch creation, reports collateral`; auth, chunked push, URL scrubbing, and reflog scrubbing cases are green.
+- HTTP push now accepts repeated `-v`, expands default `push.default=matching` for HTTP remotes, prints Git-style `POST git-receive-pack` summaries for verbose pushes, and sends a valid empty pack when the remote already has all pushed objects.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

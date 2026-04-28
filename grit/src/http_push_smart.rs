@@ -521,7 +521,11 @@ fn build_receive_pack_request(
 
     let delete_only = commands.iter().all(|cmd| cmd.new_oid.is_none());
     if !delete_only {
-        request.extend_from_slice(pack_data);
+        if pack_data.is_empty() {
+            request.extend_from_slice(&crate::pack_objects_upload::empty_packfile_v2_bytes());
+        } else {
+            request.extend_from_slice(pack_data);
+        }
     }
 
     let use_sideband = caps

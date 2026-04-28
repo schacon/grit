@@ -8,7 +8,7 @@ use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
-use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::gitmodules::verify_gitmodules_for_commit;
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
@@ -154,8 +154,8 @@ pub struct Args {
     pub prune: bool,
 
     /// Show detailed progress.
-    #[arg(short = 'v', long = "verbose")]
-    pub verbose: bool,
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
 
     /// Force progress reporting to stderr even when it is not a terminal (matches Git).
     #[arg(long = "progress", action = clap::ArgAction::SetTrue)]
@@ -3153,6 +3153,13 @@ fn push_to_http_url(
             args.refspecs.clone()
         } else if !push_refspecs_from_config.is_empty() {
             push_refspecs_from_config.to_vec()
+        } else if push_default_mode(config) == "matching" {
+            refs::list_refs(&repo.git_dir, "refs/heads/")?
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| remote_ref_map.contains_key(name))
+                .map(|name| format!("{name}:{name}"))
+                .collect()
         } else if let Some(branch) = current_branch {
             let (src, dst, auto_setup) =
                 default_push_ref_for_current_branch(config, remote_name, branch)?;
@@ -3343,6 +3350,7 @@ fn push_to_http_url(
             refname: u.remote_ref.clone(),
         })
         .collect();
+    maybe_print_http_push_post_summary(args, config, &pack_data);
     let status = crate::http_push_smart::send_receive_pack(
         &client,
         &advertised,
@@ -4523,6 +4531,24 @@ fn maybe_emit_push_pack_wrote_trace2(pack: &[u8]) {
         "write_pack_file/wrote",
         &count.to_string(),
     );
+}
+
+fn maybe_print_http_push_post_summary(args: &Args, config: &ConfigSet, pack_data: &[u8]) {
+    if args.verbose == 0 {
+        return;
+    }
+    let post_buffer = config
+        .get("http.postBuffer")
+        .or_else(|| config.get("http.postbuffer"))
+        .as_deref()
+        .and_then(|v| parse_i64(v).ok())
+        .filter(|v| *v > 0)
+        .map_or(1024 * 1024, |v| usize::try_from(v).unwrap_or(1024 * 1024));
+    if pack_data.len() > post_buffer {
+        eprintln!("POST git-receive-pack (chunked)");
+    } else {
+        eprintln!("POST git-receive-pack ({} bytes)", pack_data.len());
+    }
 }
 
 fn push_negotiate_enabled(config: &ConfigSet) -> bool {

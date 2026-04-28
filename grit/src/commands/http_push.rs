@@ -60,7 +60,7 @@ pub fn run(args: Args) -> Result<()> {
         follow_tags: false,
         no_follow_tags: false,
         prune: false,
-        verbose: args.verbose,
+        verbose: u8::from(args.verbose),
         progress: false,
         no_progress: false,
         receive_pack: None,

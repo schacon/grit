@@ -514,6 +514,7 @@ impl HttpClientContext {
         } else {
             self.trace_outgoing_header(&format!("Content-Length: {}", payload.len()));
         }
+        self.trace_rpc_post_size(url, payload.len(), chunked);
 
         let request_auth = match self.cached_authorization_header() {
             Some(header) => Some(header),
@@ -1128,6 +1129,30 @@ impl HttpClientContext {
             return;
         }
         t.write_line(&format!("<= Recv header: HTTP/1.1 {status} {text}\n"));
+    }
+
+    fn trace_rpc_post_size(&self, url: &str, len: usize, chunked: bool) {
+        let Some(ref t) = self.trace_curl else {
+            return;
+        };
+        if !trace_component_enabled(&t.components, "http") {
+            return;
+        }
+        let service = if url.ends_with("/git-receive-pack") {
+            Some("git-receive-pack")
+        } else if url.ends_with("/git-upload-pack") {
+            Some("git-upload-pack")
+        } else {
+            None
+        };
+        let Some(service) = service else {
+            return;
+        };
+        if chunked {
+            t.write_line(&format!("== Info: POST {service} (chunked)\n"));
+        } else {
+            t.write_line(&format!("== Info: POST {service} ({len} bytes)\n"));
+        }
     }
 
     fn trace_outgoing_header(&self, line: &str) {
