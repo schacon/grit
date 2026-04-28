@@ -101,6 +101,16 @@
 - `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5564` 8/8, `t5581` 2/2
 - Routed HTTP push through Grit in the lightweight harness, fixed real Git exec-path discovery for server-side HTTP helpers, added a `git-receive-pack` helper wrapper for `git-http-backend`, allowed HTTP push source refs to resolve tags/revisions, ignored remote-only haves when building local push packs, emitted the expected `write_pack_file/wrote` trace2 event from HTTP push packs, and implemented the initial `push.negotiate` behavior needed by the test.
 
+**2026-04-28 (remote auth / shallow HTTP push)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed
+- `./scripts/run-tests.sh --timeout 90 t5542-push-http-shallow.sh`: 3/3 passed
+- `./scripts/run-tests.sh --timeout 90 t5549-fetch-push-http.sh t5555-http-smart-common.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5549` 3/3, `t5555` 10/10, `t5564` 8/8, `t5581` 2/2
+- HTTP receive-pack advertisement parsing now ignores `shallow <oid>` lines, HTTP push force refspec parsing strips the leading `+` before resolving sources, and the lightweight HTTP server decodes gzip request bodies before invoking `git-http-backend`.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

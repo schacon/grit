@@ -3200,7 +3200,8 @@ fn push_to_http_url(
                 bail!("wildcard push refspecs are not supported over HTTP push yet");
             }
             let refspec_force = spec.starts_with('+');
-            let (src_raw, dst_raw) = parse_refspec(spec);
+            let spec_body = spec.strip_prefix('+').unwrap_or(spec);
+            let (src_raw, dst_raw) = parse_refspec(spec_body);
             if src_raw.is_empty() {
                 let remote_ref = normalize_ref(&dst_raw);
                 let old_oid = remote_ref_map.get(&remote_ref).copied();

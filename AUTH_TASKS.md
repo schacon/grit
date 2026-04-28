@@ -439,7 +439,7 @@ Validation:
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (currently `in_scope=skip`)
 - [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
 - [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
-- [~] `./scripts/run-tests.sh t5542-push-http-shallow.sh` (1/3)
+- [x] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
 - [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
