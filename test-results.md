@@ -117,9 +117,9 @@
 - `cargo check -p grit-rs`: passed
 - `cargo build --release -p grit-rs`: passed
 - `cargo build -p grit-rs --bin test-httpd`: passed
-- Temporary no-skip run of `t5563-simple-http-auth.sh`: 17/17 passed. The normal harness still skips this file because `tests/test-lib.sh` hardcodes `CGIPASSAUTH` as unsupported; that file remains untouched.
+- `./scripts/run-tests.sh --timeout 120 t5563-simple-http-auth.sh`: 17/17 passed
 - `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh t5549-fetch-push-http.sh t5542-push-http-shallow.sh`: `t5555` 10/10, `t5564` 8/8, `t5581` 2/2, `t5549` 3/3, `t5542` 3/3
-- Added lightweight `/custom_auth/` support to `test-httpd`, routed `custom_auth` requests through Grit, preserved duplicate `WWW-Authenticate` headers from ureq, approved proactive credentials after successful first requests, and fixed the custom auth challenge parser for folded headers and multistage `status=... response=...` lines.
+- Added lightweight `/custom_auth/` support to `test-httpd`, routed `custom_auth` requests through Grit, allowed `CGIPASSAUTH` when `lib-httpd.sh` sets that prereq, preserved duplicate `WWW-Authenticate` headers from ureq, approved proactive credentials after successful first requests, and fixed the custom auth challenge parser for folded headers and multistage `status=... response=...` lines.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
