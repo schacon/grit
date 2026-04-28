@@ -592,11 +592,11 @@ Tasks:
 - [ ] Ensure submodule URL handling uses the same protocol classification as top-level operations.
 - [ ] Ensure SSH path/host safety checks remain enforced before spawning subprocesses.
 - [ ] Ensure HTTP credentials are not sent to a different origin after redirects unless Git would do so.
-- [ ] Audit trace redaction:
-  - [ ] `Authorization`
-  - [ ] `Proxy-Authorization`
-  - [ ] cookies
-  - [ ] URL userinfo
+- [~] Audit trace redaction:
+  - [x] `Authorization`
+  - [x] `Proxy-Authorization`
+  - [x] cookies
+  - [x] URL userinfo
   - [ ] credential helper stderr/stdout passthrough
 - [ ] Document intentional security boundary: SSH auth, host keys, agents, and `~/.ssh/config` are delegated to external SSH.
 

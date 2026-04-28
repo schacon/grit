@@ -679,7 +679,7 @@ impl HttpClientContext {
                             body,
                         })
                     }
-                    Err(err) => Err(anyhow::anyhow!("GET {url}: {err}")),
+                    Err(err) => Err(http_request_error("GET", &request_url, err)),
                 }
             }
             Transport::HttpForward {
@@ -794,7 +794,7 @@ impl HttpClientContext {
                             body: out,
                         })
                     }
-                    Err(err) => Err(anyhow::anyhow!("POST {url}: {err}")),
+                    Err(err) => Err(http_request_error("POST", &request_url, err)),
                 }
             }
             Transport::HttpForward {
@@ -1085,6 +1085,11 @@ impl HttpClientContext {
             return;
         }
         let shown_url = discovery_url_for_mode(url, smart_http_enabled);
+        let shown_url = if t.redact {
+            scrub_url_credentials(&shown_url)
+        } else {
+            shown_url
+        };
         t.write_line(&format!("=> Send header: {method} {shown_url} HTTP/1.1\n"));
     }
 
@@ -2160,8 +2165,27 @@ fn no_proxy_host_matches(host: &str, entry: &str) -> bool {
     host == entry || host.ends_with(&format!(".{entry}"))
 }
 
+pub(crate) fn scrub_url_credentials(url: &str) -> String {
+    if let Ok(mut parsed) = Url::parse(url) {
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+        return parsed.to_string();
+    }
+    url.to_string()
+}
+
 fn http_access_error(url: &str, status: u16) -> anyhow::Error {
+    let url = scrub_url_credentials(url);
     anyhow::anyhow!("unable to access '{url}': The requested URL returned error: {status}")
+}
+
+fn http_request_error(method: &str, url: &str, err: impl std::fmt::Display) -> anyhow::Error {
+    let safe_url = scrub_url_credentials(url);
+    let mut message = err.to_string();
+    if safe_url != url {
+        message = message.replace(url, &safe_url);
+    }
+    anyhow::anyhow!("{method} {safe_url}: {message}")
 }
 
 fn ssl_verify_enabled(config: &ConfigSet) -> bool {

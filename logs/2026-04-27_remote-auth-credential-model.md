@@ -108,6 +108,16 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Passed custom receive-pack command names into the SSH service spawner.
 - Validation: `t5406-remote-rejects` passed 3/3; `t5545-push-options` remains 2/13 with broader existing failures.
 
+## Trace Redaction Audit
+
+- Added shared HTTP URL credential scrubbing for display paths.
+- Scrubbed URL username/password fields from HTTP access errors.
+- Scrubbed URL username/password fields from ureq connection-level error contexts.
+- Scrubbed URL username/password fields from curl request-start traces when trace redaction is enabled.
+- Scrubbed URL username/password fields from trace2 `git-remote-https` child-start events.
+- Confirmed existing curl trace redaction already covers `Authorization`, `Proxy-Authorization`, cookie values, and auth-like extra headers by default.
+- Validation: `cargo fmt`, `cargo check -p grit-rs`, and `cargo build --release -p grit-rs` passed; manual HTTP trace/error smoke with URL userinfo passed.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.
