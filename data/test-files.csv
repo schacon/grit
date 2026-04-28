@@ -1033,7 +1033,7 @@ t5802-connect-helper	t5	yes	8	8	0	true	ok	0
 t5810-proto-disable-local	t5	yes	54	53	1	false	ok	0
 t5811-proto-disable-git	t5	yes	0	0	0	false	ok	0
 t5812-proto-disable-http	t5	yes	29	29	0	true	ok	0
-t5813-proto-disable-ssh	t5	yes	81	63	18	false	ok	0
+t5813-proto-disable-ssh	t5	yes	81	81	0	true	ok	0
 t5814-proto-disable-ext	t5	yes	27	19	8	false	ok	0
 t5815-submodule-protos	t5	yes	8	8	0	true	ok	0
 t5900-repo-selection	t5	yes	8	4	4	false	ok	0

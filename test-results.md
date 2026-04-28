@@ -172,9 +172,10 @@
 
 - `cargo build --release -p grit-rs`: passed
 - `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh`: 29/29 passed
+- `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`: 81/81 passed
 - `./scripts/run-tests.sh --timeout 150 t5815-submodule-protos.sh`: 8/8 passed
 - `./scripts/run-tests.sh --timeout 150 t5814-proto-disable-ext.sh`: 19/27
-- HTTP and submodule protocol allow/deny policy are green. The remaining `t5814` failures are enabled `ext::` fetch/push behavior; disabled clone/fetch/push policy paths pass and the residual gap is ext transport support, not auth classification.
+- HTTP, SSH, and submodule protocol allow/deny policy are green. The remaining `t5814` failures are enabled `ext::` fetch/push behavior; disabled clone/fetch/push policy paths pass and the residual gap is ext transport support, not auth classification.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

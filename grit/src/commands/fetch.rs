@@ -1418,7 +1418,10 @@ fn fetch_remote(
             .map(ToOwned::to_owned);
         (heads, tags, Vec::new())
     } else if use_upload_pack_negotiation {
-        crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
+        crate::protocol::check_protocol_allowed(
+            if is_ssh_url { "ssh" } else { "file" },
+            Some(git_dir),
+        )?;
         let remote_repo_upload = remote_repo
             .as_ref()
             .expect("upload-pack path requires local remote repository");

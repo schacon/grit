@@ -528,11 +528,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let repo_probe = Path::new(args.repository.trim());
     if !args.repository.contains("://") && repo_probe.exists() {
         // Fall through to local clone below.
-    } else if is_ssh_url(&args.repository) {
-        crate::protocol::check_protocol_allowed("ssh", None)?;
-        return run_ssh_clone(args);
-    }
-    if args.repository.starts_with("ssh://") {
+    } else if crate::ssh_transport::is_configured_ssh_url(&args.repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
     }
@@ -704,7 +700,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let remote_url_for_config = if is_file_url
+    let remote_url_for_config = if crate::ssh_transport::is_configured_ssh_url(&args.repository) {
+        args.repository.clone()
+    } else if is_file_url
         || args.repository.starts_with("http://")
         || args.repository.starts_with("https://")
     {

@@ -585,9 +585,9 @@ Primary files:
 
 Tasks:
 
-- [~] Verify `GIT_ALLOW_PROTOCOL` behavior for HTTP, HTTPS, SSH, git, file, and ext. (`t5812` HTTP passes; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
-- [~] Verify `protocol.<name>.allow` behavior. (`t5812` HTTP passes; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
-- [~] Verify `GIT_PROTOCOL_FROM_USER` behavior. (`t5812` HTTP passes; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
+- [~] Verify `GIT_ALLOW_PROTOCOL` behavior for HTTP, HTTPS, SSH, git, file, and ext. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
+- [~] Verify `protocol.<name>.allow` behavior. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
+- [~] Verify `GIT_PROTOCOL_FROM_USER` behavior. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
 - [ ] Ensure URL rewrites do not bypass protocol policy.
 - [x] Ensure submodule URL handling uses the same protocol classification as top-level operations.
 - [ ] Ensure SSH path/host safety checks remain enforced before spawning subprocesses.
@@ -604,7 +604,7 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh`
-- [ ] `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`
 - [~] `./scripts/run-tests.sh --timeout 150 t5814-proto-disable-ext.sh` (19/27; remaining failures are enabled ext fetch/push transport support, not allow/deny rejection)
 - [x] `./scripts/run-tests.sh --timeout 150 t5815-submodule-protos.sh`
 - [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
