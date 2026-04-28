@@ -1375,11 +1375,16 @@ fn fetch_remote(
     } else if is_http_url {
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
         // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
-        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
         let http_ctx = crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
             config,
             proxy_override,
+        )?;
+        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch_with_client(
+            git_dir,
+            &url,
+            None,
+            Some(&http_ctx),
         )?;
         let (heads, tags, adv) = crate::http_smart::http_fetch_pack(
             git_dir,

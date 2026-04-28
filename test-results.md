@@ -129,7 +129,7 @@
 - `cargo build -p grit-rs --bin test-httpd`: passed
 - `./scripts/run-tests.sh --timeout 120 t5732-protocol-v2-bundle-uri-http.sh`: 9/9 passed
 - `./scripts/run-tests.sh --timeout 120 t5555-http-smart-common.sh t5563-simple-http-auth.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5563` 17/17, `t5564` 8/8, `t5581` 2/2
-- In bundle-uri HTTP mode, the lightweight HTTP server now uses Grit upload-pack for smart HTTP so the server advertises and serves `bundle-uri`; HTTP fetch sends the protocol-v2 `bundle-uri` command when enabled and suppresses it for explicit `--bundle-uri`; protocol-v2 HTTP capability discovery is packet-traced for clone/ls-remote assertions.
+- In bundle-uri HTTP mode, the lightweight HTTP server now uses Grit upload-pack for smart HTTP so the server advertises and serves `bundle-uri`; HTTP fetch sends the protocol-v2 `bundle-uri` command when enabled and suppresses it for explicit `--bundle-uri`; protocol-v2 HTTP capability discovery is packet-traced for clone/ls-remote assertions. Post-fetch bundle-uri lookup can now reuse the active HTTP client context so auth/proxy state is preserved.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

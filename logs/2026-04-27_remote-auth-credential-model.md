@@ -156,6 +156,7 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Validation: `./scripts/run-tests.sh --timeout 120 t5563-simple-http-auth.sh` passes 17/17. Nearby official HTTP checks `t5555`, `t5564`, `t5581`, `t5549`, and `t5542` remain fully passing.
 - Scoped the lightweight HTTP server to use Grit upload-pack for protocol-v2 bundle-uri HTTP tests.
 - Added HTTP fetch support for sending and draining the protocol-v2 `bundle-uri` command when advertised and enabled, while suppressing it for explicit `--bundle-uri` clones.
+- Reused the active HTTP client context for post-fetch bundle-uri lookups so auth/proxy/cookie state is not reset between fetch and bundle-uri discovery.
 - Added packet tracing for HTTP protocol-v2 capability advertisements so clone/ls-remote assertions see `version 2` and `bundle-uri`.
 - Validation: `t5732-protocol-v2-bundle-uri-http` now passes 9/9; nearby official HTTP checks `t5555`, `t5563`, `t5564`, and `t5581` remain fully passing.
 
