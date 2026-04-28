@@ -435,7 +435,7 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
-- [~] `./scripts/run-tests.sh t5549-fetch-push-http.sh` (0/3)
+- [x] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (currently `in_scope=skip`)
 - [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
 - [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
