@@ -187,6 +187,14 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Cache socket handling now expands `$HOME` in `--socket` helper arguments and removes socket/sidecar files during `credential-cache exit`.
 - Validation: `./scripts/run-tests.sh --timeout 120 t0301-credential-cache.sh` now passes 52/52.
 
+## Shallow HTTP Fetch Audit
+
+- Re-ran `t5539-fetch-http-shallow` after credential/cache work; current official status is 4/8.
+- Repaired the existing HTTP smart shallow request plumbing so local shallow boundary OIDs are passed into the v0/v1 and v2 fetch request builders.
+- Added client-side parsing for protocol-v2 `shallow-info` sections and best-effort server-side shallow-info emission for Grit's protocol-v2 upload-pack helper.
+- Remaining `t5539` failures are deeper shallow/deepen/since/exclude transport behavior and are not auth-specific.
+- Validation: `cargo check -p grit-rs` and `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5539-fetch-http-shallow.sh` remains 4/8.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.

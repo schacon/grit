@@ -438,7 +438,7 @@ Validation:
 - [x] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
 - [~] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (29/37; auth/redaction subset passes, SHA-256 empty clone remains)
 - [x] `./scripts/run-tests.sh t5541-http-push-smart.sh`
-- [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
+- [~] `./scripts/run-tests.sh --timeout 150 t5539-fetch-http-shallow.sh` (4/8; remaining failures are shallow/deepen transport state, not auth)
 - [x] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
 - [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 

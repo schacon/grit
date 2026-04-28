@@ -161,6 +161,13 @@
 - Credential-store now preserves explicit empty username/password credentials, overwrites stored credentials by identity instead of password, and only honors password matching during reject/erase.
 - Credential-cache now shares the same overwrite/erase/empty-credential semantics, filters cached pre-encoded credentials by caller capability, expands `$HOME` in `--socket` helper arguments, and removes socket/sidecar files on exit for deterministic harness cleanup.
 
+**2026-04-28 (remote auth / shallow HTTP fetch audit)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 150 t5539-fetch-http-shallow.sh`: 4/8
+- Repaired the in-progress HTTP smart shallow request plumbing so local `.git/shallow` OIDs are passed to v0/v1 and v2 fetch request builders and the code compiles again. Remaining failures are shallow deepen/since/exclude transport behavior, not auth-specific regression.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

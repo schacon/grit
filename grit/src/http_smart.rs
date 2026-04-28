@@ -432,7 +432,11 @@ fn append_fetch_request_extensions_v0_v1(
     req: &mut Vec<u8>,
     caps: &std::collections::HashSet<String>,
     options: &HttpFetchOptions,
+    local_shallow_oids: &[ObjectId],
 ) -> Result<()> {
+    for oid in local_shallow_oids {
+        pkt_line::write_line_to_vec(req, &format!("shallow {}", oid.to_hex()))?;
+    }
     if let Some(depth) = requested_depth(options) {
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
     }
@@ -477,8 +481,14 @@ fn append_fetch_request_extensions_v2(
     req: &mut Vec<u8>,
     caps: &[String],
     options: &HttpFetchOptions,
+    local_shallow_oids: &[ObjectId],
 ) -> Result<()> {
     let features = v2_fetch_features(caps);
+    if features.contains("shallow") {
+        for oid in local_shallow_oids {
+            pkt_line::write_line_to_vec(req, &format!("shallow {}", oid.to_hex()))?;
+        }
+    }
     if let Some(depth) = requested_depth(options) {
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
     }
@@ -764,6 +774,84 @@ fn has_fetch_request_extensions(options: &HttpFetchOptions) -> bool {
             .is_some_and(|v| !v.trim().is_empty())
 }
 
+fn read_local_shallow_oids(local_git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let shallow_path = local_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.push(oid);
+        }
+    }
+    Ok(out)
+}
+
+fn apply_shallow_updates(
+    local_git_dir: &Path,
+    shallow: &[ObjectId],
+    unshallow: &[ObjectId],
+) -> Result<()> {
+    if shallow.is_empty() && unshallow.is_empty() {
+        return Ok(());
+    }
+    let mut boundaries: HashSet<ObjectId> = read_local_shallow_oids(local_git_dir)?
+        .into_iter()
+        .collect();
+    for oid in shallow {
+        boundaries.insert(*oid);
+    }
+    for oid in unshallow {
+        boundaries.remove(oid);
+    }
+
+    let shallow_path = local_git_dir.join("shallow");
+    if boundaries.is_empty() {
+        let _ = std::fs::remove_file(shallow_path);
+        return Ok(());
+    }
+
+    let mut lines = boundaries
+        .into_iter()
+        .map(|oid| oid.to_hex())
+        .collect::<Vec<_>>();
+    lines.sort();
+    let mut contents = lines.join("\n");
+    contents.push('\n');
+    std::fs::write(&shallow_path, contents)
+        .with_context(|| format!("write {}", shallow_path.display()))?;
+    Ok(())
+}
+
+fn read_shallow_info_section(r: &mut impl Read) -> Result<(Vec<ObjectId>, Vec<ObjectId>)> {
+    let mut shallow = Vec::new();
+    let mut unshallow = Vec::new();
+    loop {
+        match pkt_line::read_packet(r)? {
+            None | Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Delim) => continue,
+            Some(pkt_line::Packet::Data(line)) => {
+                if let Some(rest) = line.strip_prefix("shallow ") {
+                    let oid = ObjectId::from_hex(rest.trim())
+                        .with_context(|| format!("parse shallow oid {}", rest.trim()))?;
+                    shallow.push(oid);
+                } else if let Some(rest) = line.strip_prefix("unshallow ") {
+                    let oid = ObjectId::from_hex(rest.trim())
+                        .with_context(|| format!("parse unshallow oid {}", rest.trim()))?;
+                    unshallow.push(oid);
+                }
+            }
+            Some(other) => bail!("unexpected shallow-info packet: {other:?}"),
+        }
+    }
+    Ok((shallow, unshallow))
+}
+
 fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
     if let Some(star_pos) = pattern.find('*') {
         let prefix = &pattern[..star_pos];
@@ -896,13 +984,14 @@ fn fetch_pack_v0_v1_stateless_http(
         Some(negotiator)
     };
 
+    let local_shallow_oids = read_local_shallow_oids(local_git_dir)?;
     let mut req = Vec::new();
     let first = wants[0];
     pkt_line::write_line_to_vec(&mut req, &format!("want {}{}", first.to_hex(), fetch_caps))?;
     for w in wants.iter().skip(1) {
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
     }
-    append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
+    append_fetch_request_extensions_v0_v1(&mut req, caps, options, &local_shallow_oids)?;
     // Protocol v0/v1 request framing: terminate the `want` section before `have` / `done`.
     pkt_line::write_flush(&mut req)?;
     if let Some(negotiator) = negotiator.as_mut() {
@@ -966,7 +1055,7 @@ fn fetch_pack_v0_v1_stateless_http(
         for w in wants.iter().skip(1) {
             pkt_line::write_line_to_vec(&mut retry_req, &format!("want {}", w.to_hex()))?;
         }
-        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options)?;
+        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options, &local_shallow_oids)?;
         pkt_line::write_flush(&mut retry_req)?;
         pkt_line::write_line_to_vec(&mut retry_req, "done")?;
         pkt_line::write_flush(&mut retry_req)?;
@@ -1293,6 +1382,7 @@ pub fn http_fetch_pack(
         }
     }
 
+    let local_shallow_oids = read_local_shallow_oids(local_git_dir)?;
     let write_fetch_request = |include_done: bool| -> Result<Vec<u8>> {
         let mut req = Vec::new();
         pkt_line::write_line_to_vec(&mut req, "command=fetch")?;
@@ -1304,7 +1394,7 @@ pub fn http_fetch_pack(
         for w in &wants {
             pkt_line::write_line_to_vec(&mut req, &format!("want {} {}", w.to_hex(), fetch_caps))?;
         }
-        append_fetch_request_extensions_v2(&mut req, &caps, options)?;
+        append_fetch_request_extensions_v2(&mut req, &caps, options, &local_shallow_oids)?;
         for h in &pending_haves {
             let trace = format!("clone> have {}", h.to_hex());
             trace_clone_negotiation_line(&trace);
@@ -1336,19 +1426,26 @@ pub fn http_fetch_pack(
             &req,
         )?;
         let mut cur = Cursor::new(resp.as_slice());
-        let first = match pkt_line::read_packet(&mut cur)? {
-            Some(pkt_line::Packet::Data(s)) => s,
-            _ => String::new(),
-        };
-        if first == "packfile" {
-            let mut pack_buf = Vec::new();
-            read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
-            unpack_packfile(&pack_buf)?;
-            crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
-            return Ok((remote_heads, remote_tags, all_advertised));
-        }
-        if first == "acknowledgments" {
-            skip_to_flush(&mut cur)?;
+        loop {
+            let pkt = match pkt_line::read_packet(&mut cur)? {
+                None => break,
+                Some(pkt_line::Packet::Flush) => break,
+                Some(pkt_line::Packet::Delim) => continue,
+                Some(pkt_line::Packet::Data(s)) => s,
+                Some(other) => bail!("unexpected fetch response: {other:?}"),
+            };
+            if pkt == "acknowledgments" {
+                skip_to_flush(&mut cur)?;
+            } else if pkt == "shallow-info" {
+                let (shallow, unshallow) = read_shallow_info_section(&mut cur)?;
+                apply_shallow_updates(local_git_dir, &shallow, &unshallow)?;
+            } else if pkt == "packfile" {
+                let mut pack_buf = Vec::new();
+                read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
+                unpack_packfile(&pack_buf)?;
+                crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
+                return Ok((remote_heads, remote_tags, all_advertised));
+            }
         }
     }
 
@@ -1372,6 +1469,9 @@ pub fn http_fetch_pack(
         };
         if pkt == "acknowledgments" {
             skip_to_flush(&mut cur)?;
+        } else if pkt == "shallow-info" {
+            let (shallow, unshallow) = read_shallow_info_section(&mut cur)?;
+            apply_shallow_updates(local_git_dir, &shallow, &unshallow)?;
         } else if pkt == "packfile" {
             let mut pack_buf = Vec::new();
             read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
