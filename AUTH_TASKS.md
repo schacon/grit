@@ -588,17 +588,17 @@ Tasks:
 - [~] Verify `GIT_ALLOW_PROTOCOL` behavior for HTTP, HTTPS, SSH, git, file, and ext. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
 - [~] Verify `protocol.<name>.allow` behavior. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
 - [~] Verify `GIT_PROTOCOL_FROM_USER` behavior. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
-- [ ] Ensure URL rewrites do not bypass protocol policy.
+- [x] Ensure URL rewrites do not bypass protocol policy. (fetch/push classify after rewrite; clone/ls-remote do not currently apply rewrite rules)
 - [x] Ensure submodule URL handling uses the same protocol classification as top-level operations.
 - [ ] Ensure SSH path/host safety checks remain enforced before spawning subprocesses.
-- [ ] Ensure HTTP credentials are not sent to a different origin after redirects unless Git would do so.
+- [~] Ensure HTTP credentials are not sent to a different origin after redirects unless Git would do so. (`t5551` redirect/auth cases remain expected failures)
 - [~] Audit trace redaction:
   - [x] `Authorization`
   - [x] `Proxy-Authorization`
   - [x] cookies
   - [x] URL userinfo
-  - [ ] credential helper stderr/stdout passthrough
-- [ ] Document intentional security boundary: SSH auth, host keys, agents, and `~/.ssh/config` are delegated to external SSH.
+  - [x] credential helper stderr/stdout passthrough (helper stdout is parsed, not traced; helper stderr is external helper-owned output)
+- [x] Document intentional security boundary: SSH auth, host keys, agents, and `~/.ssh/config` are delegated to external SSH.
 
 Validation:
 
@@ -607,12 +607,12 @@ Validation:
 - [x] `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`
 - [~] `./scripts/run-tests.sh --timeout 150 t5814-proto-disable-ext.sh` (19/27; remaining failures are enabled ext fetch/push transport support, not allow/deny rejection)
 - [x] `./scripts/run-tests.sh --timeout 150 t5815-submodule-protos.sh`
-- [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh`
 
 Definition of done:
 
 - [~] Protocol policy tests pass or remaining failures are unrelated to auth/transport classification.
-- [ ] Security-sensitive auth material is redacted by default.
+- [x] Security-sensitive auth material is redacted by default.
 
 ## Phase 15: Scope and Dashboard Cleanup
 

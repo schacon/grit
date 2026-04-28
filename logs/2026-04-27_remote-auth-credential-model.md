@@ -204,7 +204,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Validated submodule protocol policy with `t5815-submodule-protos`; it now passes 8/8.
 - Re-ran `t5814-proto-disable-ext`; it remains 19/27.
 - `t5814` failures are the enabled ext fetch/push cases. The disabled clone/fetch/push policy cases pass, so the remaining failure surface is ext transport implementation, not protocol allow/deny classification.
-- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5813-proto-disable-ssh.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5813` 81/81, `t5814` 19/27, and `t5815` 8/8.
+- Audited URL rewrite ordering: fetch and push classify/check the rewritten URL, while clone and ls-remote do not currently apply rewrite rules.
+- Audited credential helper output redaction: helper stdout is parsed into credential fields and is not traced; helper stderr is inherited as external helper-owned output, matching Git's trust boundary.
+- Documented the SSH auth boundary: SSH authentication, host keys, agents, and `~/.ssh/config` remain delegated to the external SSH implementation.
+- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5813-proto-disable-ssh.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5813` 81/81, `t5814` 19/27, and `t5815` 8/8. `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh` reported 2/2.
 
 ## HTTP Challenge Plumbing
 
