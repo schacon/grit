@@ -222,10 +222,6 @@ pub struct Args {
     #[arg(long = "progress")]
     pub progress: bool,
 
-    /// Progress hint passed by Git transport internals; accepted for compatibility.
-    #[arg(long = "all-progress-implied", hide = true)]
-    pub all_progress_implied: bool,
-
     /// Include indexed objects (accepted for compat).
     #[arg(long = "indexed-objects")]
     pub indexed_objects: bool,

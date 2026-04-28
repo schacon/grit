@@ -933,11 +933,6 @@ fn fetch_remote(
 
     let is_http_url = !is_ext_url && (url.starts_with("http://") || url.starts_with("https://"));
     let is_git_url = !is_ext_url && !is_http_url && url.starts_with("git://");
-    let is_ssh_url = !is_ext_url
-        && !is_http_url
-        && !is_git_url
-        && crate::ssh_transport::is_configured_ssh_url(&url);
-    let mut ssh_spec_for_transport = None;
 
     let mut remote_path = if is_ext_url {
         PathBuf::new()
@@ -952,15 +947,16 @@ fn fetch_remote(
     } else if is_git_url {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         PathBuf::new()
-    } else if is_ssh_url {
+    } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
-        if let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) {
-            gd
-        } else {
-            ssh_spec_for_transport = Some(spec);
-            PathBuf::new()
-        }
+        let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
+            bail!(
+                "ssh: could not resolve remote URL '{}' to a local repository",
+                url
+            );
+        };
+        gd
     } else {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
         // Strip file:// prefix if present.
@@ -1010,8 +1006,7 @@ fn fetch_remote(
         return Ok(());
     }
 
-    let remote_repo = if is_ext_url || is_http_url || is_git_url || ssh_spec_for_transport.is_some()
-    {
+    let remote_repo = if is_ext_url || is_http_url || is_git_url {
         None
     } else {
         let r = open_repo(&remote_path).with_context(|| {
@@ -1029,12 +1024,7 @@ fn fetch_remote(
     if args.negotiate_only {
         let negotiation_tips = resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?;
         let common: Vec<ObjectId> = if is_http_url {
-            let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
-            let http_ctx =
-                crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
-                    config,
-                    proxy_override,
-                )?;
+            let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
             crate::http_smart::http_negotiate_only_common(
                 git_dir,
                 &url,
@@ -1057,7 +1047,7 @@ fn fetch_remote(
         resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?
     };
 
-    if is_ssh_url {
+    if crate::ssh_transport::is_configured_ssh_url(&url) {
         if remote_repo.is_some() {
             if let Ok(spec) = crate::ssh_transport::parse_ssh_url(&url) {
                 let _ = crate::ssh_transport::record_resolved_git_ssh_upload_pack_for_tests(
@@ -1256,9 +1246,11 @@ fn fetch_remote(
     // Local (non-SSH) non-URL fetches use the upload-pack protocol like upstream Git. This keeps
     // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
     // tests such as t5503-tagfollow. CLI refspecs are applied after the pack is received.
-    let ssh_url_with_local_repo = is_ssh_url && remote_repo.is_some();
-    let use_upload_pack_negotiation =
-        !is_ext_url && !is_http_url && (!is_ssh_url || ssh_url_with_local_repo);
+    let ssh_url_with_local_repo =
+        crate::ssh_transport::is_configured_ssh_url(&url) && remote_repo.is_some();
+    let use_upload_pack_negotiation = !is_ext_url
+        && !is_http_url
+        && (!crate::ssh_transport::is_configured_ssh_url(&url) || ssh_url_with_local_repo);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -1375,11 +1367,7 @@ fn fetch_remote(
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
         // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
-        let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
-        let http_ctx = crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
-            config,
-            proxy_override,
-        )?;
+        let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
         let (heads, tags, adv) = crate::http_smart::http_fetch_pack(
             git_dir,
             &url,
@@ -1394,23 +1382,6 @@ fn fetch_remote(
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
         (heads, tags, adv)
-    } else if let Some(spec) = ssh_spec_for_transport.as_ref() {
-        let (heads, tags, head_symref, head_oid) =
-            crate::fetch_transport::with_packet_trace_identity("fetch", || {
-                crate::fetch_transport::fetch_via_ssh_upload_pack_skipping(
-                    git_dir,
-                    spec,
-                    upload_pack_cmd.as_deref(),
-                    upload_pack_refspecs,
-                    filter_active,
-                )
-            })?;
-        remote_head_advertised_oid = head_oid;
-        remote_head_symbolic_branch_from_transport = head_symref
-            .as_deref()
-            .and_then(|s| s.strip_prefix("refs/heads/"))
-            .map(ToOwned::to_owned);
-        (heads, tags, Vec::new())
     } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
         let remote_repo_upload = remote_repo

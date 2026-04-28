@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::io::{self, Read};
+use std::io;
 
 use grit_lib::config::parse_i64;
 use grit_lib::repo::Repository;
@@ -31,10 +31,6 @@ pub struct Args {
     /// Maximum pack input size in bytes (`k`/`m`/`g` suffixes; `0` = unlimited).
     #[arg(long = "max-input-size", value_name = "SIZE")]
     pub max_input_size: Option<String>,
-
-    /// Pack header supplied by receive-pack after it has already parsed the stream header.
-    #[arg(long = "pack_header", value_name = "HEADER", hide = true)]
-    pub pack_header: Option<String>,
 }
 
 /// Run `grit unpack-objects`.
@@ -62,38 +58,12 @@ pub fn run(args: Args) -> Result<()> {
         max_input_bytes,
     };
 
-    let count = if let Some(raw_header) = args.pack_header.as_deref() {
-        let (version, count) = parse_pack_header_arg(raw_header)?;
-        let mut pack = Vec::new();
-        pack.extend_from_slice(b"PACK");
-        pack.extend_from_slice(&version.to_be_bytes());
-        pack.extend_from_slice(&count.to_be_bytes());
-        io::stdin()
-            .lock()
-            .read_to_end(&mut pack)
-            .context("read pack body")?;
-        unpack_objects(&mut &pack[..], &repo.odb, &opts).context("unpack-objects failed")?
-    } else {
-        let mut stdin = io::stdin().lock();
-        unpack_objects(&mut stdin, &repo.odb, &opts).context("unpack-objects failed")?
-    };
+    let mut stdin = io::stdin().lock();
+    let count = unpack_objects(&mut stdin, &repo.odb, &opts).context("unpack-objects failed")?;
 
     if !args.quiet {
         eprintln!("Unpacking objects: done ({count} objects)");
     }
 
     Ok(())
-}
-
-fn parse_pack_header_arg(raw: &str) -> Result<(u32, u32)> {
-    let (version, count) = raw
-        .split_once(',')
-        .ok_or_else(|| anyhow::anyhow!("invalid --pack_header value '{raw}'"))?;
-    let version = version
-        .parse::<u32>()
-        .with_context(|| format!("invalid --pack_header version '{version}'"))?;
-    let count = count
-        .parse::<u32>()
-        .with_context(|| format!("invalid --pack_header count '{count}'"))?;
-    Ok((version, count))
 }

@@ -321,35 +321,35 @@ Primary files:
 
 Tasks:
 
-- [x] Implement `http.extraHeader`:
-  - [x] multiple values
-  - [x] empty-value reset
-  - [x] per-URL matching if config layer supports it
-  - [x] redaction for auth-like headers in traces
-- [x] Implement environment proxy variables:
-  - [x] `http_proxy`
-  - [x] `https_proxy`
-  - [x] `all_proxy`
-  - [x] `no_proxy`
-  - [x] Git-compatible precedence with `http.proxy`
-- [x] Implement `http.proxyAuthMethod`.
-- [x] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
-- [x] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
+- [ ] Implement `http.extraHeader`:
+  - [ ] multiple values
+  - [ ] empty-value reset
+  - [ ] per-URL matching if config layer supports it
+  - [ ] redaction for auth-like headers in traces
+- [ ] Implement environment proxy variables:
+  - [ ] `http_proxy`
+  - [ ] `https_proxy`
+  - [ ] `all_proxy`
+  - [ ] `no_proxy`
+  - [ ] Git-compatible precedence with `http.proxy`
+- [ ] Implement `http.proxyAuthMethod`.
+- [ ] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
+- [ ] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
 - [ ] Audit current manual HTTP forward proxy path for HTTPS behavior and document any limitation.
-- [x] Add `remote.<name>.proxy` if required by tests encountered in this phase.
-- [x] Make proxy auth redaction match `GIT_TRACE_REDACT`.
+- [ ] Add `remote.<name>.proxy` if required by tests encountered in this phase.
+- [ ] Make proxy auth redaction match `GIT_TRACE_REDACT`.
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
-- [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
-- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; current failure is harness `git-remote-http` lookup)
-- [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
+- [ ] `cargo build --release -p grit-rs`
+- [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
+- [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
+- [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 
 Definition of done:
 
-- [x] `t5564-http-proxy` no longer times out and has clear pass/fail counts.
-- [x] Proxy credentials are never leaked in default traces.
+- [ ] `t5564-http-proxy` no longer times out and has clear pass/fail counts.
+- [ ] Proxy credentials are never leaked in default traces.
 
 ## Phase 9: HTTP Cookies, TLS, and Split HTTP Stack
 
@@ -365,39 +365,39 @@ Primary files:
 
 Tasks:
 
-- [x] Upgrade `http.cookieFile` support:
-  - [x] Netscape cookie format
-  - [x] domain matching
-  - [x] path matching
-  - [x] secure flag handling where applicable
-  - [x] simplified header format remains supported
-- [x] Implement `http.saveCookies`.
-- [x] Implement TLS-related configuration that the current HTTP stack can support:
-  - [x] `http.sslVerify`
-  - [x] `GIT_SSL_NO_VERIFY`
+- [ ] Upgrade `http.cookieFile` support:
+  - [ ] Netscape cookie format
+  - [ ] domain matching
+  - [ ] path matching
+  - [ ] secure flag handling where applicable
+  - [ ] simplified header format remains supported
+- [ ] Implement `http.saveCookies`.
+- [ ] Implement TLS-related configuration that the current HTTP stack can support:
+  - [ ] `http.sslVerify`
+  - [ ] `GIT_SSL_NO_VERIFY`
   - [ ] `http.sslCAInfo` / `GIT_SSL_CAINFO`
   - [ ] `http.sslCAPath` / `GIT_SSL_CAPATH` if feasible
-  - [x] document unsupported client certificate options if `ureq` cannot support them cleanly
-- [x] Audit `http.sslCert`, `http.sslKey`, and password-protected cert behavior.
-- [x] Route bundle URI HTTP(S) downloads through `HttpClientContext`:
-  - [x] `grit/src/bundle_uri.rs`
-  - [x] `grit/src/http_bundle_uri.rs`
-  - [x] preserve existing bundle-uri protocol behavior
-  - [x] ensure auth, proxy, cookies, and trace are shared with normal HTTP remote operations
-- [x] Audit other raw `ureq` uses and either route through shared client or document why not.
+  - [ ] document unsupported client certificate options if `ureq` cannot support them cleanly
+- [ ] Audit `http.sslCert`, `http.sslKey`, and password-protected cert behavior.
+- [ ] Route bundle URI HTTP(S) downloads through `HttpClientContext`:
+  - [ ] `grit/src/bundle_uri.rs`
+  - [ ] `grit/src/http_bundle_uri.rs`
+  - [ ] preserve existing bundle-uri protocol behavior
+  - [ ] ensure auth, proxy, cookies, and trace are shared with normal HTTP remote operations
+- [ ] Audit other raw `ureq` uses and either route through shared client or document why not.
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
+- [ ] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5732-protocol-v2-bundle-uri-http.sh`
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
 - [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
-- [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
+- [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
 
 Definition of done:
 
 - [ ] Authenticated/proxied bundle URI fetches use the same client behavior as normal HTTP remotes.
-- [x] TLS support and limitations are explicit and covered by tests where feasible.
+- [ ] TLS support and limitations are explicit and covered by tests where feasible.
 
 ## Phase 10: HTTP Smart Transport Regression Push
 
@@ -415,12 +415,12 @@ Primary files:
 
 Tasks:
 
-- [~] Re-run unauthenticated HTTP baseline and fix regressions.
+- [ ] Re-run unauthenticated HTTP baseline and fix regressions.
 - [ ] Re-run authenticated HTTP tests and fix regressions.
 - [ ] Verify auth state sharing across:
-- [x] discovery GET
-- [x] ls-refs POST
-- [x] fetch POST
+  - [ ] discovery GET
+  - [ ] ls-refs POST
+  - [ ] fetch POST
   - [ ] receive-pack discovery
   - [ ] receive-pack POST
 - [ ] Verify redirect/auth behavior in `t5551-http-fetch-smart`.
@@ -428,19 +428,19 @@ Tasks:
 - [ ] Audit URL credential scrubbing in:
   - [ ] push output
   - [ ] fetch/clone errors
-- [x] trace output
+  - [ ] trace output
   - [ ] credential helper inputs
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
-- [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
-- [~] `./scripts/run-tests.sh t5549-fetch-push-http.sh` (0/3)
-- [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (currently `in_scope=skip`)
-- [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
-- [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
-- [~] `./scripts/run-tests.sh t5542-push-http-shallow.sh` (1/3)
-- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; harness `git-remote-http` lookup)
+- [ ] `cargo build --release -p grit-rs`
+- [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
+- [ ] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
+- [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
+- [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh`
+- [ ] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh`
+- [ ] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
+- [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
 
@@ -461,23 +461,23 @@ Primary files:
 
 Tasks:
 
-- [x] Add `core.sshCommand` support.
-- [x] Implement precedence:
-  - [x] `GIT_SSH_COMMAND`
-  - [x] `core.sshCommand`
-  - [x] `GIT_SSH`
-  - [x] default `ssh`
-- [x] Audit `GIT_SSH_VARIANT` vs `ssh.variant` precedence.
-- [x] Keep OpenSSH/Plink/Putty/TortoisePlink/simple variant handling compatible.
-- [x] Fix asymmetry where argv-building requires `GIT_SSH` while spawn defaults to `ssh`.
-- [x] Expand URL classifier use in submodule/push-submodule code:
-  - [x] use full `is_configured_ssh_url` semantics for `ssh://`, `git+ssh://`, and scp-style URLs
-  - [x] avoid treating SSH remotes as local paths
-- [x] Preserve existing fake-SSH logging behavior used by tests.
+- [ ] Add `core.sshCommand` support.
+- [ ] Implement precedence:
+  - [ ] `GIT_SSH_COMMAND`
+  - [ ] `core.sshCommand`
+  - [ ] `GIT_SSH`
+  - [ ] default `ssh`
+- [ ] Audit `GIT_SSH_VARIANT` vs `ssh.variant` precedence.
+- [ ] Keep OpenSSH/Plink/Putty/TortoisePlink/simple variant handling compatible.
+- [ ] Fix asymmetry where argv-building requires `GIT_SSH` while spawn defaults to `ssh`.
+- [ ] Expand URL classifier use in submodule/push-submodule code:
+  - [ ] use full `is_configured_ssh_url` semantics for `ssh://`, `git+ssh://`, and scp-style URLs
+  - [ ] avoid treating SSH remotes as local paths
+- [ ] Preserve existing fake-SSH logging behavior used by tests.
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
+- [ ] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5601-clone.sh`
 - [ ] `./scripts/run-tests.sh t5602-clone-remote-exec.sh`
 - [ ] `./scripts/run-tests.sh t5507-remote-environment.sh`
@@ -485,8 +485,8 @@ Validation:
 
 Definition of done:
 
-- [x] SSH command selection matches Git for env/config precedence.
-- [x] Existing SSH wrapper tests do not regress.
+- [ ] SSH command selection matches Git for env/config precedence.
+- [ ] Existing SSH wrapper tests do not regress.
 
 ## Phase 12: Live SSH Upload-Pack for Fetch and Clone
 
@@ -502,27 +502,27 @@ Primary files:
 
 Tasks:
 
-- [x] Add `spawn_git_ssh_upload_pack` using shared SSH service spawning.
-- [x] Expose a bidirectional upload-pack stream API in `fetch_transport.rs`.
-- [~] Refactor existing upload-pack negotiation to work with:
+- [ ] Add `spawn_git_ssh_upload_pack` using shared SSH service spawning.
+- [ ] Expose a bidirectional upload-pack stream API in `fetch_transport.rs`.
+- [ ] Refactor existing upload-pack negotiation to work with:
   - [ ] local child process
   - [ ] git-daemon socket
-  - [x] SSH child process
-- [x] Implement live SSH `fetch` for unresolved SSH URLs.
-- [x] Implement live SSH `clone` for unresolved SSH URLs.
-- [x] Implement or wire live SSH `ls-remote` if not already covered.
-- [x] Preserve local SSH shortcut behavior for tests that intentionally resolve to local repos.
-- [x] Preserve `--upload-pack` behavior.
-- [x] Preserve protocol v0/v1/v2 negotiation.
-- [x] Propagate `GIT_PROTOCOL` correctly for upload-pack.
-- [x] Handle child stderr/stdout/stdin closure without deadlocks.
-- [x] Map SSH child exit status to Git-like errors.
+  - [ ] SSH child process
+- [ ] Implement live SSH `fetch` for unresolved SSH URLs.
+- [ ] Implement live SSH `clone` for unresolved SSH URLs.
+- [ ] Implement or wire live SSH `ls-remote` if not already covered.
+- [ ] Preserve local SSH shortcut behavior for tests that intentionally resolve to local repos.
+- [ ] Preserve `--upload-pack` behavior.
+- [ ] Preserve protocol v0/v1/v2 negotiation.
+- [ ] Propagate `GIT_PROTOCOL` correctly for upload-pack.
+- [ ] Handle child stderr/stdout/stdin closure without deadlocks.
+- [ ] Map SSH child exit status to Git-like errors.
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5601-clone.sh`
-- [~] `./scripts/run-tests.sh t5603-clone-dirname.sh`
+- [ ] `cargo build --release -p grit-rs`
+- [ ] `./scripts/run-tests.sh t5601-clone.sh`
+- [ ] `./scripts/run-tests.sh t5603-clone-dirname.sh`
 - [ ] `./scripts/run-tests.sh t5510-fetch.sh`
 - [ ] `./scripts/run-tests.sh t5512-ls-remote.sh`
 - [ ] `./scripts/run-tests.sh t5700-protocol-v1.sh`
@@ -530,7 +530,7 @@ Validation:
 
 Definition of done:
 
-- [x] SSH clone/fetch work through an external SSH process for non-local remotes.
+- [ ] SSH clone/fetch work through an external SSH process for non-local remotes.
 - [ ] Grit still delegates actual SSH authentication to the user's SSH implementation.
 
 ## Phase 13: SSH Receive-Pack Hardening
@@ -546,23 +546,23 @@ Primary files:
 Tasks:
 
 - [ ] Re-check `push_to_ssh_url` against current receive-pack tests.
-- [x] Confirm `--receive-pack` handling matches Git.
+- [ ] Confirm `--receive-pack` handling matches Git.
 - [ ] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it.
 - [ ] Validate sideband stderr/progress propagation.
 - [ ] Validate push options over SSH.
 - [ ] Validate atomic push over SSH.
 - [ ] Validate porcelain output over SSH.
-- [x] Validate hook/error propagation.
+- [ ] Validate hook/error propagation.
 - [ ] Scrub credentials/userinfo-like data in displayed SSH URLs where applicable.
 - [ ] Confirm child process cleanup on dry-run, rejected updates, and failed remote status.
 
 Validation:
 
-- [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5545-push-options.sh`
+- [ ] `cargo build --release -p grit-rs`
+- [ ] `./scripts/run-tests.sh t5545-push-options.sh`
 - [ ] `./scripts/run-tests.sh t5547-push-quarantine.sh`
 - [ ] `./scripts/run-tests.sh t5548-push-porcelain.sh`
-- [x] `./scripts/run-tests.sh t5406-remote-rejects.sh`
+- [ ] `./scripts/run-tests.sh t5406-remote-rejects.sh`
 - [ ] `./scripts/run-tests.sh t5409-colorize-remote-messages.sh`
 
 Definition of done:
@@ -592,11 +592,11 @@ Tasks:
 - [ ] Ensure submodule URL handling uses the same protocol classification as top-level operations.
 - [ ] Ensure SSH path/host safety checks remain enforced before spawning subprocesses.
 - [ ] Ensure HTTP credentials are not sent to a different origin after redirects unless Git would do so.
-- [~] Audit trace redaction:
-  - [x] `Authorization`
-  - [x] `Proxy-Authorization`
-  - [x] cookies
-  - [x] URL userinfo
+- [ ] Audit trace redaction:
+  - [ ] `Authorization`
+  - [ ] `Proxy-Authorization`
+  - [ ] cookies
+  - [ ] URL userinfo
   - [ ] credential helper stderr/stdout passthrough
 - [ ] Document intentional security boundary: SSH auth, host keys, agents, and `~/.ssh/config` are delegated to external SSH.
 

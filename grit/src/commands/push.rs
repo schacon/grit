@@ -603,6 +603,10 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--all and --mirror cannot be used together");
     }
 
+    if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
+        bail!("--receive-pack is not supported by native grit push");
+    }
+
     // Collect push refspecs from config if no CLI refspecs
     let push_refspecs_from_config: Vec<String> =
         if args.refspecs.is_empty() && !effective_mirror && !push_all && !args.delete {
@@ -709,6 +713,11 @@ fn push_to_url(
     if url.starts_with("ext::") {
         bail!("ext transport is not supported for push");
     }
+    if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
+        let _ = receive_pack;
+        bail!("--receive-pack is not supported by native push transport");
+    }
+
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
     }
@@ -727,9 +736,6 @@ fn push_to_url(
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
         bail!("git:// transport is not supported for push");
     } else if is_http_transport_url(url) {
-        if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
-            bail!("--receive-pack is not supported for HTTP push");
-        }
         return push_to_http_url(
             repo,
             config,
@@ -761,9 +767,6 @@ fn push_to_url(
         };
         gd
     } else {
-        if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
-            bail!("--receive-pack is not supported for local push");
-        }
         crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
         if let Some(stripped) = url.strip_prefix("file://") {
             PathBuf::from(stripped)
@@ -3506,11 +3509,7 @@ fn push_to_ssh_url(
     cli_force_enabled: bool,
 ) -> Result<()> {
     let spec = crate::ssh_transport::parse_ssh_url(url)?;
-    let receive_pack = args
-        .receive_pack
-        .as_deref()
-        .filter(|s| !s.trim().is_empty());
-    let mut child = crate::ssh_transport::spawn_git_ssh_receive_pack(&spec, receive_pack)?;
+    let mut child = crate::ssh_transport::spawn_git_ssh_receive_pack(&spec)?;
     let mut stdout = child.stdout.take().context("ssh receive-pack stdout")?;
     let stdin = child.stdin.take().context("ssh receive-pack stdin")?;
     let advertised = crate::http_push_smart::read_receive_pack_advertisement(

@@ -19,7 +19,7 @@ fn resolve_remote_url_to_local_git_dir(url: &str, base_for_relative: &Path) -> O
     if url.starts_with("git://")
         || url.starts_with("http://")
         || url.starts_with("https://")
-        || is_ssh_transport_url(url)
+        || url.starts_with("ssh://")
     {
         return None;
     }
@@ -38,18 +38,6 @@ fn resolve_remote_url_to_local_git_dir(url: &str, base_for_relative: &Path) -> O
     } else {
         None
     }
-}
-
-fn is_ssh_transport_url(url: &str) -> bool {
-    if url.starts_with("ssh://") || url.starts_with("git+ssh://") {
-        return true;
-    }
-    if url.contains("://") {
-        return false;
-    }
-    let colon = url.find(':');
-    let slash = url.find('/');
-    colon.is_some_and(|ci| slash.is_none_or(|si| ci < si))
 }
 
 /// True when `rev-list <oids> --not <remote_tip_oids>` is non-empty: some gitlink commit is not on the remote.

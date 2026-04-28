@@ -8,14 +8,15 @@ use crate::index::{
 };
 use crate::objects::{parse_tree, serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
+use crate::storage::ObjectWriter;
 
-fn ensure_empty_blob_for_intent_to_add(odb: &Odb, index: &Index) -> Result<()> {
+fn ensure_empty_blob_for_intent_to_add(store: &mut impl ObjectWriter, index: &Index) -> Result<()> {
     if index
         .entries
         .iter()
         .any(|e| e.stage() == 0 && e.intent_to_add())
     {
-        let _ = odb.write(ObjectKind::Blob, b"")?;
+        let _ = store.write_object(ObjectKind::Blob, b"")?;
     }
     Ok(())
 }
@@ -30,8 +31,19 @@ pub fn write_tree_from_index_subset(
     index: &Index,
     paths: &std::collections::HashSet<Vec<u8>>,
 ) -> Result<ObjectId> {
-    ensure_empty_blob_for_intent_to_add(odb, index)?;
+    let mut store = odb.clone();
+    write_tree_from_index_subset_in_store(&mut store, index, paths)
+}
 
+/// Build and write tree object(s) from a storage-agnostic object store.
+///
+/// Only index entries whose path is listed in `paths` are included in the tree.
+pub fn write_tree_from_index_subset_in_store(
+    store: &mut impl ObjectWriter,
+    index: &Index,
+    paths: &std::collections::HashSet<Vec<u8>>,
+) -> Result<ObjectId> {
+    ensure_empty_blob_for_intent_to_add(store, index)?;
     let mut entries: Vec<&IndexEntry> = index
         .entries
         .iter()
@@ -43,13 +55,24 @@ pub fn write_tree_from_index_subset(
         })
         .collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-    build_tree(odb, &entries, b"")
+    build_tree(store, &entries, b"")
 }
 
 /// Build and write tree object(s) from index entries and return the tree OID.
 pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<ObjectId> {
-    ensure_empty_blob_for_intent_to_add(odb, index)?;
+    let mut store = odb.clone();
+    write_tree_from_index_in_store(&mut store, index, prefix)
+}
 
+/// Build and write tree object(s) from a storage-agnostic object store.
+///
+/// The `prefix` argument optionally limits the write to a subtree path.
+pub fn write_tree_from_index_in_store(
+    store: &mut impl ObjectWriter,
+    index: &Index,
+    prefix: &str,
+) -> Result<ObjectId> {
+    ensure_empty_blob_for_intent_to_add(store, index)?;
     let prefix_bytes = prefix.as_bytes();
     let mut entries: Vec<&IndexEntry> = index
         .entries
@@ -62,10 +85,14 @@ pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<O
         })
         .collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-    build_tree(odb, &entries, prefix_bytes)
+    build_tree(store, &entries, prefix_bytes)
 }
 
-fn build_tree(odb: &Odb, entries: &[&IndexEntry], dir_prefix: &[u8]) -> Result<ObjectId> {
+fn build_tree(
+    store: &mut impl ObjectWriter,
+    entries: &[&IndexEntry],
+    dir_prefix: &[u8],
+) -> Result<ObjectId> {
     let mut children: BTreeMap<Vec<u8>, ChildKind> = BTreeMap::new();
 
     for entry in entries {
@@ -107,7 +134,7 @@ fn build_tree(odb: &Odb, entries: &[&IndexEntry], dir_prefix: &[u8]) -> Result<O
         match child {
             ChildKind::Blob { mode, oid } => tree_entries.push(TreeEntry { mode, name, oid }),
             ChildKind::Tree(sub_prefix, sub_entries) => {
-                let sub_oid = build_tree(odb, &sub_entries, &sub_prefix)?;
+                let sub_oid = build_tree(store, &sub_entries, &sub_prefix)?;
                 tree_entries.push(TreeEntry {
                     mode: MODE_TREE,
                     name,
@@ -124,7 +151,7 @@ fn build_tree(odb: &Odb, entries: &[&IndexEntry], dir_prefix: &[u8]) -> Result<O
     });
 
     let data = serialize_tree(&tree_entries);
-    odb.write(ObjectKind::Tree, &data)
+    store.write_object(ObjectKind::Tree, &data)
 }
 
 /// Build a tree for a **partial** commit: paths listed in `paths_from_index` (repository-relative,
@@ -139,7 +166,21 @@ pub fn write_tree_partial_from_index(
     base_tree_oid: &ObjectId,
     paths_from_index: &std::collections::HashSet<Vec<u8>>,
 ) -> Result<ObjectId> {
-    let _ = odb.write(ObjectKind::Blob, b"");
+    let mut store = odb.clone();
+    write_tree_partial_from_index_in_store(&mut store, index, base_tree_oid, paths_from_index)
+}
+
+/// Build a partial commit tree from a storage-agnostic object store.
+///
+/// Paths listed in `paths_from_index` are taken from `index`; every other path
+/// is copied from `base_tree_oid`.
+pub fn write_tree_partial_from_index_in_store(
+    store: &mut impl ObjectWriter,
+    index: &Index,
+    base_tree_oid: &ObjectId,
+    paths_from_index: &std::collections::HashSet<Vec<u8>>,
+) -> Result<ObjectId> {
+    let _ = store.write_object(ObjectKind::Blob, b"");
 
     fn full_path(prefix: &[u8], name: &[u8]) -> Vec<u8> {
         if prefix.is_empty() {
@@ -158,14 +199,14 @@ pub fn write_tree_partial_from_index(
             .any(|p| p == dir || (p.starts_with(dir) && p.get(dir.len()) == Some(&b'/')))
     }
 
-    fn merge_level(
-        odb: &Odb,
+    fn merge_level<S: ObjectWriter>(
+        store: &mut S,
         index: &Index,
         base_tree_oid: &ObjectId,
         prefix: &[u8],
         paths_from_index: &std::collections::HashSet<Vec<u8>>,
     ) -> Result<ObjectId> {
-        let base_obj = odb.read(base_tree_oid)?;
+        let base_obj = store.read_object(base_tree_oid)?;
         let base_entries = parse_tree(&base_obj.data)?;
 
         let mut by_name: BTreeMap<Vec<u8>, TreeEntry> = BTreeMap::new();
@@ -174,7 +215,7 @@ pub fn write_tree_partial_from_index(
             if !subtree_affected(paths_from_index, &fp) {
                 by_name.insert(te.name.clone(), te);
             } else if te.mode == MODE_TREE {
-                let sub_oid = merge_level(odb, index, &te.oid, &fp, paths_from_index)?;
+                let sub_oid = merge_level(store, index, &te.oid, &fp, paths_from_index)?;
                 by_name.insert(
                     te.name.clone(),
                     TreeEntry {
@@ -225,8 +266,11 @@ pub fn write_tree_partial_from_index(
                     continue;
                 }
                 let sub_prefix = full_path(prefix, &dir_name);
-                let sub_oid =
-                    write_tree_from_index(odb, index, &String::from_utf8_lossy(&sub_prefix))?;
+                let sub_oid = write_tree_from_index_in_store(
+                    store,
+                    index,
+                    &String::from_utf8_lossy(&sub_prefix),
+                )?;
                 by_name.insert(
                     dir_name.clone(),
                     TreeEntry {
@@ -257,10 +301,10 @@ pub fn write_tree_partial_from_index(
             tree_entry_cmp(&a.name, a_tree, &b.name, b_tree)
         });
         let data = serialize_tree(&out);
-        odb.write(ObjectKind::Tree, &data)
+        store.write_object(ObjectKind::Tree, &data)
     }
 
-    merge_level(odb, index, base_tree_oid, b"", paths_from_index)
+    merge_level(store, index, base_tree_oid, b"", paths_from_index)
 }
 
 fn canonicalize_blob_mode(mode: u32) -> u32 {
