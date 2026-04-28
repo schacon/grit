@@ -56,6 +56,24 @@ impl CacheEntry {
         }
         true
     }
+
+    fn matches_store_identity(&self, query: &BTreeMap<String, String>) -> bool {
+        matches_field(&self.fields, query, "protocol")
+            && matches_field(&self.fields, query, "host")
+            && matches_exact_if_present(&self.fields, query, "username")
+            && matches_exact_if_present(&self.fields, query, "path")
+    }
+
+    fn usable_for_query(&self, query: &BTreeMap<String, String>) -> bool {
+        if (self.fields.contains_key("authtype") || self.fields.contains_key("credential"))
+            && query
+                .get("capability[]")
+                .is_none_or(|value| value != "authtype")
+        {
+            return false;
+        }
+        true
+    }
 }
 
 fn matches_field(
@@ -66,6 +84,16 @@ fn matches_field(
     query
         .get(key)
         .filter(|value| !value.is_empty())
+        .is_none_or(|value| stored.get(key) == Some(value))
+}
+
+fn matches_exact_if_present(
+    stored: &BTreeMap<String, String>,
+    query: &BTreeMap<String, String>,
+    key: &str,
+) -> bool {
+    query
+        .get(key)
         .is_none_or(|value| stored.get(key) == Some(value))
 }
 
@@ -132,12 +160,7 @@ fn should_store(fields: &BTreeMap<String, String>) -> bool {
     if password_expired(fields) {
         return false;
     }
-    fields
-        .get("password")
-        .is_some_and(|value| !value.is_empty())
-        || fields
-            .get("credential")
-            .is_some_and(|value| !value.is_empty())
+    fields.contains_key("password") || fields.contains_key("credential")
 }
 
 fn sidecar_path(socket: &Path) -> PathBuf {
@@ -245,7 +268,7 @@ fn sidecar_get(
     entries.retain(|entry| !entry.is_expired());
     let out = entries
         .iter()
-        .find(|entry| entry.matches_get(query))
+        .find(|entry| entry.matches_get(query) && entry.usable_for_query(query))
         .map(|entry| entry.fields.clone());
     write_sidecar_entries(socket, &entries)?;
     Ok(out)
@@ -253,7 +276,7 @@ fn sidecar_get(
 
 fn sidecar_store(socket: &Path, creds: BTreeMap<String, String>, timeout: u64) -> Result<()> {
     let mut entries = read_sidecar_entries(socket)?;
-    entries.retain(|entry| !entry.is_expired() && !entry.matches_erase(&creds));
+    entries.retain(|entry| !entry.is_expired() && !entry.matches_store_identity(&creds));
     if should_store(&creds) {
         entries.push(CacheEntry {
             fields: creds,
@@ -285,7 +308,7 @@ fn default_socket_path() -> Result<PathBuf> {
 
 fn socket_path(raw: Option<&str>) -> Result<PathBuf> {
     let path = raw
-        .map(PathBuf::from)
+        .map(expand_socket_path)
         .map_or_else(default_socket_path, Ok)?;
     if !path.is_absolute() {
         bail!(
@@ -294,6 +317,22 @@ fn socket_path(raw: Option<&str>) -> Result<PathBuf> {
         );
     }
     Ok(path)
+}
+
+fn expand_socket_path(raw: &str) -> PathBuf {
+    let Ok(home) = std::env::var("HOME") else {
+        return PathBuf::from(raw);
+    };
+    if raw == "$HOME" {
+        return PathBuf::from(home);
+    }
+    if let Some(rest) = raw.strip_prefix("$HOME/") {
+        return PathBuf::from(home).join(rest);
+    }
+    if let Some(rest) = raw.strip_prefix("${HOME}/") {
+        return PathBuf::from(home).join(rest);
+    }
+    PathBuf::from(raw)
 }
 
 #[cfg(unix)]
@@ -364,6 +403,7 @@ fn run_client(args: Args) -> Result<()> {
             let creds = BTreeMap::new();
             let _ = send_request(&path, "exit", args.timeout, &creds);
         }
+        let _ = fs::remove_file(&path);
         let _ = fs::remove_file(sidecar_path(&path));
         return Ok(());
     }
@@ -419,7 +459,10 @@ fn handle_daemon_request(mut stream: UnixStream, entries: &mut Vec<CacheEntry>) 
     entries.retain(|entry| !entry.is_expired());
     match action.as_str() {
         "get" => {
-            if let Some(entry) = entries.iter().find(|entry| entry.matches_get(&creds)) {
+            if let Some(entry) = entries
+                .iter()
+                .find(|entry| entry.matches_get(&creds) && entry.usable_for_query(&creds))
+            {
                 write_credential(&mut stream, &entry.fields)?;
             } else {
                 writeln!(stream)?;
@@ -427,7 +470,7 @@ fn handle_daemon_request(mut stream: UnixStream, entries: &mut Vec<CacheEntry>) 
         }
         "store" => {
             if should_store(&creds) {
-                entries.retain(|entry| !entry.matches_erase(&creds));
+                entries.retain(|entry| !entry.matches_store_identity(&creds));
                 entries.push(CacheEntry {
                     fields: creds,
                     expires_at: Instant::now() + Duration::from_secs(timeout),

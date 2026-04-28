@@ -185,13 +185,13 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t0301-credential-cache.sh`
-- [ ] `./scripts/run-tests.sh t0300-credentials.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0301-credential-cache.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`
 
 Definition of done:
 
-- [ ] `t0301-credential-cache` is fully passing on Unix-like platforms.
-- [ ] Cache daemon handles repeated helper invocations without leaking stale credentials.
+- [x] `t0301-credential-cache` is fully passing on Unix-like platforms.
+- [x] Cache daemon handles repeated helper invocations without leaking stale credentials.
 
 ## Phase 5: HTTP Auth Challenge Parsing
 

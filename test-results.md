@@ -154,10 +154,12 @@
 - `cargo fmt`: passed
 - `cargo build --release -p grit-rs`: passed
 - `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`: 56/56 passed
+- `./scripts/run-tests.sh --timeout 120 t0301-credential-cache.sh`: 52/52 passed
 - `./scripts/run-tests.sh --timeout 120 t0303-credential-external.sh`: 23/23 passed
 - `./scripts/run-tests.sh --timeout 120 t0302-credential-store.sh`: 65/65 passed
 - Credential helpers now use Git-compatible argv/stdin/stdout framing, helper-advertised capabilities drive credential output, and credential URL parsing/matching covers decoded paths, wildcard hosts, username/no-username scope matching, bare query/fragment path markers, and partial URL config scopes.
 - Credential-store now preserves explicit empty username/password credentials, overwrites stored credentials by identity instead of password, and only honors password matching during reject/erase.
+- Credential-cache now shares the same overwrite/erase/empty-credential semantics, filters cached pre-encoded credentials by caller capability, expands `$HOME` in `--socket` helper arguments, and removes socket/sidecar files on exit for deterministic harness cleanup.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

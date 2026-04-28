@@ -182,6 +182,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Brought `t0302-credential-store` into scope.
 - Credential-store now stores explicit empty `username=`/`password=` pairs, replaces existing stored credentials by identity fields when approving, and respects a supplied password only for reject/erase matching.
 - Validation: `./scripts/run-tests.sh --timeout 120 t0302-credential-store.sh` now passes 65/65.
+- Brought `t0301-credential-cache` into scope.
+- Credential-cache now mirrors store identity semantics for overwrite, keeps password matching for erase, stores explicit empty credentials, and filters cached `authtype`/`credential` responses unless the caller advertises `capability[]=authtype`.
+- Cache socket handling now expands `$HOME` in `--socket` helper arguments and removes socket/sidecar files during `credential-cache exit`.
+- Validation: `./scripts/run-tests.sh --timeout 120 t0301-credential-cache.sh` now passes 52/52.
 
 ## HTTP Challenge Plumbing
 
