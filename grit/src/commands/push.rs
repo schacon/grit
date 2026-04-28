@@ -3074,7 +3074,11 @@ fn push_to_http_url(
     };
     crate::protocol::check_protocol_allowed(proto, Some(&repo.git_dir))?;
 
-    let client = crate::http_client::HttpClientContext::from_config_set(config)?;
+    let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
+    let client = crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
+        config,
+        proxy_override,
+    )?;
     let advertised = crate::http_push_smart::discover_receive_pack(url, &client)?;
     if advertised.object_format != "sha1" {
         bail!(

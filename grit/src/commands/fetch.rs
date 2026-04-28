@@ -1029,7 +1029,12 @@ fn fetch_remote(
     if args.negotiate_only {
         let negotiation_tips = resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?;
         let common: Vec<ObjectId> = if is_http_url {
-            let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
+            let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
+            let http_ctx =
+                crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
+                    config,
+                    proxy_override,
+                )?;
             crate::http_smart::http_negotiate_only_common(
                 git_dir,
                 &url,
@@ -1370,7 +1375,11 @@ fn fetch_remote(
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
         // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
-        let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
+        let proxy_override = config.get(&format!("remote.{remote_name}.proxy"));
+        let http_ctx = crate::http_client::HttpClientContext::from_config_set_with_proxy_override(
+            config,
+            proxy_override,
+        )?;
         let (heads, tags, adv) = crate::http_smart::http_fetch_pack(
             git_dir,
             &url,
