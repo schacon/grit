@@ -1626,36 +1626,31 @@ fn build_get_request(
     let host = host_header_value(&parsed);
     let request_path_q = discovery_url_for_mode(&path_q, smart_http_enabled);
     let mut s = format!(
-        "GET {request_path_q} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         User-Agent: {}\r\n\
-         Connection: close\r\n\
-         Accept: */*\r\n\
-         \r\n",
+        "GET {request_path_q} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
         crate::http_smart::agent_header()
     );
     if let Some(v) = git_protocol_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+            s.insert_str(pos, &format!("\r\nGit-Protocol: {v}"));
         }
     }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Authorization: {a}\r\n"));
+            s.insert_str(pos, &format!("\r\nAuthorization: {a}"));
         }
     }
     if let Some(cookie) = cookie_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
+            s.insert_str(pos, &format!("\r\nCookie: {cookie}"));
         }
     }
     for (name, value) in extra_headers {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("{name}: {value}\r\n"));
+            s.insert_str(pos, &format!("\r\n{name}: {value}"));
         }
     }
     Ok(s.into_bytes())
@@ -1679,54 +1674,48 @@ fn build_post_request(
     let host = host_header_value(&parsed);
     let request_path_q = discovery_url_for_mode(&path_q, smart_http_enabled);
     let mut head = format!(
-        "POST {request_path_q} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         Content-Type: {content_type}\r\n\
-         Accept: {accept}\r\n\
-         User-Agent: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
+        "POST {request_path_q} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {content_type}\r\nAccept: {accept}\r\nUser-Agent: {}\r\nConnection: close\r\n\r\n",
         crate::http_smart::agent_header()
     );
     if let Some(v) = git_protocol_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+            head.insert_str(pos, &format!("\r\nGit-Protocol: {v}"));
         }
     }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Authorization: {a}\r\n"));
+            head.insert_str(pos, &format!("\r\nAuthorization: {a}"));
         }
     }
     if let Some(cookie) = cookie_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
+            head.insert_str(pos, &format!("\r\nCookie: {cookie}"));
         }
     }
     for (name, value) in extra_headers {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("{name}: {value}\r\n"));
+            head.insert_str(pos, &format!("\r\n{name}: {value}"));
         }
     }
     if gzip_enabled {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, "Content-Encoding: gzip\r\n");
+            head.insert_str(pos, "\r\nContent-Encoding: gzip");
         }
     }
     if chunked {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, "Transfer-Encoding: chunked\r\n");
+            head.insert_str(pos, "\r\nTransfer-Encoding: chunked");
         }
     } else {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Content-Length: {}\r\n", body.len()));
+            head.insert_str(pos, &format!("\r\nContent-Length: {}", body.len()));
         }
     }
     let mut out = head.into_bytes();
