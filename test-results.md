@@ -149,6 +149,13 @@
 - `./scripts/run-tests.sh --timeout 150 t5541-http-push-smart.sh t5549-fetch-push-http.sh t5542-push-http-shallow.sh`: `t5541` 21/21, `t5549` 3/3, `t5542` 3/3
 - HTTP push now accepts repeated `-v`, expands default `push.default=matching` for HTTP remotes, prints Git-style `POST git-receive-pack` summaries for verbose pushes, sends a valid empty pack when the remote already has all pushed objects, and reports client-side atomic collateral failures with Git-like per-ref status lines.
 
+**2026-04-28 (remote auth / credential harness validation)**
+
+- `cargo fmt`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`: 56/56 passed
+- Credential helpers now use Git-compatible argv/stdin/stdout framing, helper-advertised capabilities drive credential output, and credential URL parsing/matching covers decoded paths, wildcard hosts, username/no-username scope matching, bare query/fragment path markers, and partial URL config scopes.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

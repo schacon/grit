@@ -170,6 +170,15 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Reported client-side atomic pre-rejections with Git-like per-ref status lines, including collateral `atomic push failed` refs.
 - Validation: `t5541-http-push-smart` now passes 21/21; `t5549-fetch-push-http` and `t5542-push-http-shallow` remain fully passing.
 
+## Credential Harness Validation
+
+- Brought `t0300-credentials` into scope in `data/test-files.csv`.
+- Fixed credential helper invocation to append the action after configured helper arguments, matching Git's `helper args... get/store/erase` contract.
+- Stopped writing protocol separator blank lines to one-shot helper stdin and `credential fill` stdout.
+- Made helper-advertised capabilities, not caller-requested capabilities, determine capability lines in filled credential output.
+- Added credential-specific URL parsing and matching for decoded path/host components, wildcard host scopes, username and no-username scope comparisons, bare query/fragment path markers, and partial URL config keys.
+- Validation: `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh` now passes 56/56.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.

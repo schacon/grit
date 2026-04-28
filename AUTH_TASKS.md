@@ -25,7 +25,7 @@ This checklist breaks `plans/remote-auth-plan.md` into dependency-ordered implem
 - [ ] Resolve status drift between `plan.md` and `data/test-files.csv` for `t5813-proto-disable-ssh`.
 - [ ] Confirm whether skipped auth tests should remain skipped until implementation lands, or temporarily run single-file despite `in_scope=skip`.
 
-## Phase 1: Credential Data Model [~]
+## Phase 1: Credential Data Model
 
 Dependency: none. This unblocks all richer HTTP auth work.
 
@@ -48,13 +48,13 @@ Tasks:
 - [x] Preserve HTTP path omission rules for `credential.useHttpPath=false`.
 - [x] Add protection against invalid protocol/host fields required by `credential.protectProtocol`.
 - [x] Add prompt-safe rendering helpers for usernames/hosts required by `credential.sanitizePrompt`.
-- [ ] Drive validation from the upstream-derived harness files; do not add new non-upstream tests for this work.
+- [x] Drive validation from the upstream-derived harness files; do not add new non-upstream tests for this work.
 
 Validation:
 
 - [x] `cargo test -p grit-lib --lib`
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t0300-credentials.sh` (attempted; skipped by current `data/test-files.csv` scope)
+- [x] `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`
 
 Definition of done:
 
@@ -102,12 +102,12 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t0300-credentials.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`
 - [ ] `./scripts/run-tests.sh t0303-credential-external.sh`
 
 Definition of done:
 
-- [ ] `t0300-credentials` is mostly or fully passing.
+- [x] `t0300-credentials` is fully passing.
 - [ ] `t0303-credential-external` remains passing.
 - [x] Credential helpers can return Bearer-style credentials for later HTTP use.
 
