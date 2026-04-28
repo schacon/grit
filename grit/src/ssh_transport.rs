@@ -571,6 +571,18 @@ pub fn spawn_git_ssh_receive_pack(spec: &SshUrl) -> Result<Child> {
     )
 }
 
+/// Spawn SSH running `git-upload-pack '<path>'` for smart fetch/ls-remote transport.
+pub fn spawn_git_ssh_upload_pack(spec: &SshUrl, upload_pack: Option<&str>) -> Result<Child> {
+    spawn_git_ssh_service(
+        &spec.ssh_host,
+        spec.port.as_deref(),
+        upload_pack,
+        &spec.path,
+        false,
+        false,
+    )
+}
+
 fn spawn_git_ssh_service(
     host: &str,
     port: Option<&str>,

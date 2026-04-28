@@ -27,6 +27,14 @@
 - `./scripts/run-tests.sh t5507-remote-environment.sh`: 5/5 passed
 - `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`: 63/81 passed (known remaining failures; no regression from SSH command precedence work)
 
+**2026-04-28 (remote auth / live SSH ls-remote)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- `./scripts/run-tests.sh t5512-ls-remote.sh`: 16/40 passed (existing broader failures remain)
+- `./scripts/run-tests.sh t5601-clone.sh`: 64/115 passed (existing broader failures remain)
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
