@@ -131,6 +131,15 @@
 - `./scripts/run-tests.sh --timeout 120 t5555-http-smart-common.sh t5563-simple-http-auth.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5563` 17/17, `t5564` 8/8, `t5581` 2/2
 - In bundle-uri HTTP mode, the lightweight HTTP server now uses Grit upload-pack for smart HTTP so the server advertises and serves `bundle-uri`; HTTP fetch sends the protocol-v2 `bundle-uri` command when enabled and suppresses it for explicit `--bundle-uri`; protocol-v2 HTTP capability discovery is packet-traced for clone/ls-remote assertions. Post-fetch bundle-uri lookup can now reuse the active HTTP client context so auth/proxy state is preserved.
 
+**2026-04-28 (remote auth / t5551 auth-redaction slice)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Focused `t5551-http-fetch-smart.sh --run=1-17,32-33`: all non-expected-failure auth/redaction cases passed through Grit; redirect cases remain expected failures.
+- `./scripts/run-tests.sh --timeout 150 t5551-http-fetch-smart.sh`: 29/37. The remaining real failures are empty SHA-256 clone object-format support; the auth/redaction cases are green.
+- Routed authenticated smart HTTP cases through Grit in the lightweight HTTP harness, fixed unredacted `Authorization` curl trace output, and made access log stripping preserve status codes by adding an Apache-like byte-count field.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

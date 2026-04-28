@@ -356,9 +356,9 @@ fn send_redirect(stream: &mut TcpStream, status: u16, location: &str) -> Result<
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
     let line = if query.is_empty() {
-        format!("{} {} HTTP/1.1 {}", method, path, status)
+        format!("{} {} HTTP/1.1 {} 1", method, path, status)
     } else {
-        format!("{} {}?{} HTTP/1.1 {}", method, path, query, status)
+        format!("{} {}?{} HTTP/1.1 {} 1", method, path, query, status)
     };
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
