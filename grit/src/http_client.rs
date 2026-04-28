@@ -418,9 +418,9 @@ impl HttpClientContext {
             auth = AuthCredentials::Basic { username, password };
         }
 
-        self.trace_auth_header();
-        let retry =
-            self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
+        let auth_header = auth.authorization_header();
+        self.trace_auth_header(&auth_header);
+        let retry = self.http_get_once(url, Some(&auth_header), git_protocol_header)?;
         self.save_response_cookies(&retry)?;
         let mut credential_input = self.credential_input_for_url(url)?;
         auth.add_to_credential_input(&mut credential_input);
@@ -432,12 +432,10 @@ impl HttpClientContext {
             if let Some(next_auth) =
                 self.credentials_from_fill_continue(url, &next_challenges, &auth)?
             {
-                self.trace_auth_header();
-                let retry2 = self.http_get_once(
-                    url,
-                    Some(&next_auth.authorization_header()),
-                    git_protocol_header,
-                )?;
+                let next_auth_header = next_auth.authorization_header();
+                self.trace_auth_header(&next_auth_header);
+                let retry2 =
+                    self.http_get_once(url, Some(&next_auth_header), git_protocol_header)?;
                 self.save_response_cookies(&retry2)?;
                 let mut credential_input = self.credential_input_for_url(url)?;
                 next_auth.add_to_credential_input(&mut credential_input);
@@ -553,14 +551,15 @@ impl HttpClientContext {
             let password = self.askpass_password(url, &username)?;
             auth = AuthCredentials::Basic { username, password };
         }
-        self.trace_auth_header();
+        let auth_header = auth.authorization_header();
+        self.trace_auth_header(&auth_header);
 
         let retry = self.http_post_once(
             url,
             content_type,
             accept,
             &payload,
-            Some(&auth.authorization_header()),
+            Some(&auth_header),
             gzip_enabled,
             chunked,
             git_protocol_header,
@@ -576,13 +575,14 @@ impl HttpClientContext {
             if let Some(next_auth) =
                 self.credentials_from_fill_continue(url, &next_challenges, &auth)?
             {
-                self.trace_auth_header();
+                let next_auth_header = next_auth.authorization_header();
+                self.trace_auth_header(&next_auth_header);
                 let retry2 = self.http_post_once(
                     url,
                     content_type,
                     accept,
                     &payload,
-                    Some(&next_auth.authorization_header()),
+                    Some(&next_auth_header),
                     gzip_enabled,
                     chunked,
                     git_protocol_header,
@@ -898,8 +898,8 @@ impl HttpClientContext {
         if auth.needs_basic_prompt() || auth.should_continue() {
             return Ok(None);
         }
-        self.trace_auth_header();
         let header = auth.authorization_header();
+        self.trace_auth_header(&header);
         self.store_cached_auth(auth);
         Ok(Some(header))
     }
@@ -914,7 +914,7 @@ impl HttpClientContext {
         Ok((payload, true))
     }
 
-    fn trace_auth_header(&self) {
+    fn trace_auth_header(&self, header: &str) {
         let Some(ref t) = self.trace_curl else {
             return;
         };
@@ -922,9 +922,14 @@ impl HttpClientContext {
             return;
         }
         if t.redact {
-            t.write_line("=> Send header: Authorization: Basic <redacted>\n");
+            let scheme = header
+                .split_once(' ')
+                .map_or("Authorization", |(scheme, _)| scheme);
+            t.write_line(&format!(
+                "=> Send header: Authorization: {scheme} <redacted>\n"
+            ));
         } else {
-            t.write_line("=> Send header: Authorization: Basic <not-redacted>\n");
+            t.write_line(&format!("=> Send header: Authorization: {header}\n"));
         }
     }
 

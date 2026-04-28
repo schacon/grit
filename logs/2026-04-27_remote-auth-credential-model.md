@@ -159,6 +159,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Reused the active HTTP client context for post-fetch bundle-uri lookups so auth/proxy/cookie state is not reset between fetch and bundle-uri discovery.
 - Added packet tracing for HTTP protocol-v2 capability advertisements so clone/ls-remote assertions see `version 2` and `bundle-uri`.
 - Validation: `t5732-protocol-v2-bundle-uri-http` now passes 9/9; nearby official HTTP checks `t5555`, `t5563`, `t5564`, and `t5581` remain fully passing.
+- Routed authenticated smart HTTP paths through Grit in the lightweight HTTP harness.
+- Fixed curl trace output for `GIT_TRACE_REDACT=0` to include the actual `Authorization` header value instead of a placeholder.
+- Made the lightweight HTTP access log include an Apache-like byte-count field so `strip_access_log` preserves status codes.
+- Validation: focused `t5551-http-fetch-smart` auth/redaction cases pass through Grit; official `t5551` is now in-scope at 29/37 with remaining real failures in empty SHA-256 clone object-format support, not auth.
 
 ## HTTP Challenge Plumbing
 

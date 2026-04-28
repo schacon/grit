@@ -128,6 +128,10 @@ esac
 case "$*" in
 *"custom_auth"*) _http=0 ;;
 esac
+# Authenticated smart HTTP cases exercise Grit's credential and trace-redaction paths.
+case "$*" in
+*"auth/smart"*|*"auth-fetch/smart"*|*"auth-push/smart"*) _http=0 ;;
+esac
 # t5564-http-proxy: grit implements http.proxy / GIT_TRACE_CURL / SOCKS path validation.
 if test -n "${LIB_HTTPD_PROXY-}"; then
 	case "$*" in
