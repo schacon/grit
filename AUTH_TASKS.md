@@ -389,14 +389,14 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t5732-protocol-v2-bundle-uri-http.sh`
+- [x] `./scripts/run-tests.sh t5732-protocol-v2-bundle-uri-http.sh`
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
-- [~] `./scripts/run-tests.sh t5563-simple-http-auth.sh` (officially skipped by `CGIPASSAUTH`; temporary no-skip run passes 17/17)
+- [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
 
 Definition of done:
 
-- [ ] Authenticated/proxied bundle URI fetches use the same client behavior as normal HTTP remotes.
+- [x] Authenticated/proxied bundle URI fetches use the same client behavior as normal HTTP remotes.
 - [x] TLS support and limitations are explicit and covered by tests where feasible.
 
 ## Phase 10: HTTP Smart Transport Regression Push

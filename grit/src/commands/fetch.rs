@@ -1289,6 +1289,7 @@ fn fetch_remote(
         shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
         filter_spec: args.filter.clone(),
         refetch: args.refetch,
+        bundle_uri_override: false,
     };
     let upload_pack_shallow_options = crate::fetch_transport::UploadPackShallowOptions {
         depth: args.depth,

@@ -121,6 +121,16 @@
 - `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh t5549-fetch-push-http.sh t5542-push-http-shallow.sh`: `t5555` 10/10, `t5564` 8/8, `t5581` 2/2, `t5549` 3/3, `t5542` 3/3
 - Added lightweight `/custom_auth/` support to `test-httpd`, routed `custom_auth` requests through Grit, allowed `CGIPASSAUTH` when `lib-httpd.sh` sets that prereq, preserved duplicate `WWW-Authenticate` headers from ureq, approved proactive credentials after successful first requests, and fixed the custom auth challenge parser for folded headers and multistage `status=... response=...` lines.
 
+**2026-04-28 (remote auth / protocol-v2 bundle-uri HTTP)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed
+- `./scripts/run-tests.sh --timeout 120 t5732-protocol-v2-bundle-uri-http.sh`: 9/9 passed
+- `./scripts/run-tests.sh --timeout 120 t5555-http-smart-common.sh t5563-simple-http-auth.sh t5564-http-proxy.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5563` 17/17, `t5564` 8/8, `t5581` 2/2
+- In bundle-uri HTTP mode, the lightweight HTTP server now uses Grit upload-pack for smart HTTP so the server advertises and serves `bundle-uri`; HTTP fetch sends the protocol-v2 `bundle-uri` command when enabled and suppresses it for explicit `--bundle-uri`; protocol-v2 HTTP capability discovery is packet-traced for clone/ls-remote assertions.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

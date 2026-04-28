@@ -350,6 +350,11 @@ fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
     };
     if first == "version 2" {
         let caps = read_v2_caps(pkt_body)?;
+        crate::trace_packet::trace_packet_git('<', "version 2");
+        for cap in &caps {
+            crate::trace_packet::trace_packet_git('<', cap);
+        }
+        crate::trace_packet::trace_packet_git('<', "0000");
         let object_format = caps
             .iter()
             .find_map(|c| c.strip_prefix("object-format="))
@@ -415,6 +420,8 @@ pub struct HttpFetchOptions {
     pub filter_spec: Option<String>,
     /// Request full-object transfer without have/common negotiation (`--refetch`).
     pub refetch: bool,
+    /// Suppress protocol-v2 bundle-uri discovery because the caller supplied an explicit URI.
+    pub bundle_uri_override: bool,
 }
 
 fn requested_depth(opts: &HttpFetchOptions) -> Option<usize> {
@@ -1139,6 +1146,25 @@ pub fn http_fetch_pack(
             )
         }
     };
+
+    if !options.bundle_uri_override
+        && crate::file_upload_pack_v2::server_advertises_bundle_uri(&caps)
+        && crate::file_upload_pack_v2::transfer_bundle_uri_enabled()
+    {
+        let cap_send = crate::file_upload_pack_v2::cap_lines_for_bundle_request(&caps);
+        let mut req = Vec::new();
+        crate::file_upload_pack_v2::write_bundle_uri_command(&mut req, &cap_send)?;
+        let post_url = format!("{base}/{SERVICE}");
+        let resp = http_post(
+            client,
+            &post_url,
+            &format!("application/x-{SERVICE}-request"),
+            &format!("application/x-{SERVICE}-result"),
+            &req,
+        )?;
+        let mut cur = Cursor::new(resp.as_slice());
+        crate::file_upload_pack_v2::drain_bundle_uri_response(&mut cur)?;
+    }
 
     let advertised = {
         let mut req = Vec::new();

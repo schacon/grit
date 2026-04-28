@@ -523,6 +523,17 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
+        if std::env::var("BUNDLE_URI_PROTOCOL").ok().as_deref() == Some("http") {
+            let r = handle_smart_http_grit_upload_pack(&mut stream, &req, config, "/smart");
+            log_access(
+                config,
+                &req.method,
+                &req.path,
+                &req.query,
+                if r.is_ok() { 200 } else { 500 },
+            );
+            return r;
+        }
         let r = handle_smart_http(&mut stream, &req, config);
         log_access(
             config,
@@ -857,6 +868,74 @@ fn handle_smart_http_with_path(
 ) -> Result<(), String> {
     let output = run_smart_http_cgi_output(req, config, prefix)?;
     parse_and_send_cgi_response(stream, &output)
+}
+
+fn handle_smart_http_grit_upload_pack(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<(), String> {
+    let repo_path = smart_repo_path(req, config, prefix)?;
+    let Some(grit) = std::env::var_os("GUST_BIN") else {
+        return Err("GUST_BIN is not set".to_string());
+    };
+    let mut cmd = Command::new(grit);
+    cmd.arg("upload-pack")
+        .arg("--stateless-rpc")
+        .arg(repo_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let discovery_get =
+        req.query.contains("service=git-upload-pack") && req.method.eq_ignore_ascii_case("GET");
+    if discovery_get {
+        cmd.arg("--http-backend-info-refs");
+    }
+    if let Some(proto) = req.headers.get("git-protocol") {
+        cmd.env("GIT_PROTOCOL", proto);
+    } else {
+        cmd.env_remove("GIT_PROTOCOL");
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn grit upload-pack: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(&req.body);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for grit upload-pack: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("grit upload-pack failed: {}", err.trim()));
+    }
+    send_response(
+        stream,
+        200,
+        "OK",
+        &[(
+            "Content-Type",
+            if discovery_get {
+                "application/x-git-upload-pack-advertisement"
+            } else {
+                "application/x-git-upload-pack-result"
+            },
+        )],
+        &output.stdout,
+    )
+}
+
+fn smart_repo_path(req: &Request, config: &Config, prefix: &str) -> Result<PathBuf, String> {
+    let smart_path = req
+        .path
+        .strip_prefix(prefix)
+        .ok_or_else(|| "bad smart path".to_string())?;
+    let repo_part = smart_path
+        .strip_suffix("/info/refs")
+        .or_else(|| smart_path.strip_suffix("/git-upload-pack"))
+        .ok_or_else(|| format!("bad smart service path {}", req.path))?;
+    Ok(config.root.join(repo_part.trim_start_matches('/')))
 }
 
 fn one_time_script_path(config: &Config) -> std::path::PathBuf {
