@@ -1,9 +1,8 @@
 //! Smart HTTP client for protocol v2 `bundle-uri` (test-tool / harness).
 
 use anyhow::{bail, Context, Result};
+use grit_lib::pkt_line;
 use std::io::{Cursor, Read};
-
-use crate::pkt_line;
 
 const SERVICE: &str = "git-upload-pack";
 

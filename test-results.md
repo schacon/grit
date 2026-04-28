@@ -1,5 +1,105 @@
 # Test results
 
+**2026-04-27 (remote auth / credential protocol model)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- `./scripts/run-tests.sh t0300-credentials.sh`: skipped by current `data/test-files.csv` scope; no credential harness tests executed
+- Manual credential smoke checks: Basic helper fill, `authtype` capability filtering, encoded-newline URL rejection, `credential.protectProtocol` CR handling, sanitized askpass prompt, `grit credential capability`, URL-scoped `credential.username`, URL-scoped `credential.useHttpPath`, default HTTP path stripping, fatal credential error shape, and `credential-store` ephemeral skip passed
+
+**2026-04-27 (remote auth / credential-store parity)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t0302-credential-store.sh`: skipped by current `data/test-files.csv` scope; no credential-store harness tests executed
+- Manual credential-store smoke checks: home/XDG lookup precedence, XDG fallback, overwrite-on-store, erase across files, `--file` and `--file=`, path matching, CRLF path behavior, invalid-line handling, and Unix permissions passed
+
+**2026-04-27 (remote auth / credential-cache daemon)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Manual credential-cache smoke checks: default socket creation, custom socket creation, store/get output ordering, erase, timeout expiry, and exit cleanup passed
+
+**2026-04-27 (remote auth / SSH command precedence)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5507-remote-environment.sh`: 5/5 passed
+- `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`: 63/81 passed (known remaining failures; no regression from SSH command precedence work)
+
+**2026-04-28 (remote auth / live SSH ls-remote)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- `./scripts/run-tests.sh t5512-ls-remote.sh`: 16/40 passed (existing broader failures remain)
+- `./scripts/run-tests.sh t5601-clone.sh`: 64/115 passed (existing broader failures remain)
+
+**2026-04-28 (remote auth / live SSH fetch)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5510-fetch.sh`: 199/215 passed (existing broader failures remain)
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 0/0 warning from harness selection/status
+
+**2026-04-28 (remote auth / live SSH clone)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5601-clone.sh`: 64/115 passed (existing broader failures remain)
+- `./scripts/run-tests.sh t5603-clone-dirname.sh`: 25/47 passed (existing broader failures remain)
+
+**2026-04-28 (remote auth / SSH push hardening)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t5406-remote-rejects.sh`: 3/3 passed
+- `./scripts/run-tests.sh t5545-push-options.sh`: 2/13 passed (existing broader failures remain)
+
+**2026-04-28 (remote auth / trace redaction audit)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Manual HTTP trace/error smoke check with URL userinfo: passed; curl request line and connection error both scrubbed username/password.
+- HTTP access errors, curl request-start traces (when `GIT_TRACE_REDACT` is not `0`), and trace2 `git-remote-https` child-start URLs now scrub URL username/password fields before display.
+- Existing curl trace redaction already covers `Authorization`, `Proxy-Authorization`, cookie values, and auth-like `http.extraHeader` values by default.
+
+**2026-04-28 (remote auth / HTTP proxy and smart regression sweep)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed (local harness uses the debug helper when present)
+- `./scripts/run-tests.sh --timeout 60 t5564-http-proxy.sh`: 7/8 passed; no timeout, proxy `407`, authenticated proxy clone, proxy askpass, and proxy redaction pass. Remaining failure: SOCKS Unix socket clone gets an empty v0 stateless upload-pack response.
+- `./scripts/run-tests.sh --timeout 90 t5581-http-curl-verbose.sh t5555-http-smart-common.sh`: `t5581` 1/2, `t5555` 10/10. `t5581` currently selects system Git for HTTP clone and fails before curl output because the temporary `GIT_EXEC_PATH` lacks `git-remote-http`.
+- `./scripts/run-tests.sh --timeout 90 t5549-fetch-push-http.sh t5541-http-push-smart.sh t5539-fetch-http-shallow.sh t5542-push-http-shallow.sh`: `t5549` 0/3, `t5539` 1/8, `t5542` 1/3; `t5541` skipped by current `data/test-files.csv` scope.
+- Implemented upload-pack compatibility for smart-HTTP `--http-backend-info-refs` and `--stateless-rpc`, fixed stateless v2 responses so `ls-refs`/fetch responses are not prefixed by capability advertisements, avoided leaking v2 `Git-Protocol` into v0 HTTP POSTs, fixed Homebrew/system `git-http-backend` lookup in `test-httpd`, and cached proxy askpass results per process.
+
+**2026-04-28 (remote auth / SOCKS proxy completion)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed
+- `./scripts/run-tests.sh --timeout 60 t5564-http-proxy.sh`: 8/8 passed
+- `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5581` 1/2
+- Fixed SOCKS-over-Unix HTTP request construction so inserted headers are separate CRLF-delimited header lines instead of being appended to the previous header; this made `Git-Protocol` and `Content-Length` parse correctly for direct SOCKS GET/POST requests.
+
+**2026-04-27 (remote auth / HTTP challenge plumbing)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 197 passed
+- HTTP client now captures response headers, extracts `WWW-Authenticate` challenges, passes `capability[]=authtype`, `capability[]=state`, and ordered `wwwauth[]` to `credential fill`, and passes `wwwauth[]` to reject paths while keeping Basic approve requests unchanged
+- HTTP client now uses a typed auth credential representation and can build `Authorization: <authtype> <credential>` for helper-provided pre-encoded credentials while preserving Basic username/password auth
+- HTTP client now performs one multistage `continue=1` follow-up with helper `state[]` and updated challenges, includes pre-encoded auth fields in approve/reject, and avoids storing ephemeral pre-encoded credentials through helper input
+- HTTP client now parses `http.proactiveAuth` and proactively sends complete Basic or helper-selected pre-encoded credentials before the first request; `http.emptyAuth` is parsed and disables proactive auth for now
+- HTTP client now applies global and URL-scoped `http.extraHeader` values to ureq, proxy, and SOCKS request paths, supports empty-value reset, and redacts auth-like extra headers in curl trace output
+- HTTP client now parses Netscape and simplified `http.cookieFile` entries and matches cookies per request URL by domain, path, and secure flag
+- HTTP client now honors `http.saveCookies` by appending received `Set-Cookie` headers to the configured cookie file in a format that is read back by `http.cookieFile`
+- HTTP bundle URI downloads and protocol-v2 bundle-uri discovery now route through `HttpClientContext`, sharing auth, proxy, cookie, extra header, and curl trace behavior with normal HTTP remotes
+- HTTP client now honors `http.sslVerify=false` and `GIT_SSL_NO_VERIFY` by disabling rustls certificate verification; CA file/path and client cert/key options remain unsupported with the current HTTP stack
+- HTTP client now honors `http_proxy`, `https_proxy`, `all_proxy`, and `no_proxy` for requests without `http.proxy`, while keeping configured `http.proxy` precedence
+- HTTP client now parses `http.proxyAuthMethod` and `GIT_HTTP_PROXY_AUTHMETHOD`; Basic/anyauth proxy credentials remain supported and unsupported methods are reported instead of silently downgraded
+- HTTP fetch and push now honor `remote.<name>.proxy` as a per-remote override before falling back to `http.proxy` and environment proxy variables
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 
 - `cargo test -p grit-lib --lib`: passed (see merge)

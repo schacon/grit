@@ -1,0 +1,28 @@
+[package]
+name = "grit-wasm"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "Browser WASM bindings for the grit Git implementation"
+repository = "https://github.com/schacon/grit"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true
+grit-lib = { version = "0.1.0", path = "../grit-lib" }
+js-sys = "0.3.95"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha1 = { workspace = true }
+url.workspace = true
+wasm-bindgen = "0.2.118"
+wasm-bindgen-futures = "0.4.68"
+web-sys = { version = "0.3.95", features = ["DomException", "Event", "Headers", "IdbDatabase", "IdbFactory", "IdbObjectStore", "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode", "IdbVersionChangeEvent", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.68"
