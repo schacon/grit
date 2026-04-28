@@ -146,6 +146,13 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Stripped leading `+` before resolving HTTP push source refspecs.
 - Decoded gzip request bodies in the lightweight HTTP server before passing them to `git-http-backend`, which fixes large receive-pack POSTs.
 - Validation: `t5542-push-http-shallow` now passes 3/3; `t5549`, `t5555`, `t5564`, and `t5581` remain fully passing.
+- Added lightweight `/custom_auth/` handling to `test-httpd` for `t5563-simple-http-auth` semantics.
+- Routed `custom_auth` HTTP operations through Grit in the hybrid HTTP test wrapper.
+- Preserved duplicate ureq response header values without multiplying them, so ordered `WWW-Authenticate` challenges reach credential helpers correctly.
+- Approved proactively supplied credentials on first-request success, matching helper `store` expectations.
+- Folded custom auth continuation response lines in the test HTTP server before sending headers.
+- Parsed `status=... response=...` custom auth challenge lines so multistage auth gets the next challenge after an intermediate 401.
+- Validation: a temporary no-skip run of `t5563-simple-http-auth.sh` passes 17/17; official harness remains skipped by the hardcoded `CGIPASSAUTH` prereq in `tests/test-lib.sh`. Nearby official HTTP checks `t5555`, `t5564`, `t5581`, `t5549`, and `t5542` remain fully passing.
 
 ## HTTP Challenge Plumbing
 

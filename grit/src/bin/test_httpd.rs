@@ -457,6 +457,17 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
             return r;
         }
     }
+    if req.path.starts_with("/custom_auth/") {
+        let r = handle_custom_auth_smart(&mut stream, &req, config);
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
+        return r;
+    }
     // Route: /one_time_script/<repo> -> git-http-backend CGI output transformed once.
     if req.path.starts_with("/one_time_script/") {
         let r = handle_one_time_script_smart(&mut stream, &req, config);
@@ -898,6 +909,110 @@ fn apply_one_time_script(script_path: &Path, input: &[u8]) -> Result<Vec<u8>, St
     Ok(output.stdout)
 }
 
+fn handle_custom_auth_smart(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let auth_id = custom_auth_id(req, config).unwrap_or_else(|| "default".to_string());
+    let (status, headers) = custom_auth_challenge(config, &auth_id)?;
+    if status != 200 {
+        return send_response_raw(
+            stream,
+            status,
+            status_text(status),
+            &headers,
+            b"Authentication required\n",
+        );
+    }
+    handle_smart_http_with_path(stream, req, config, "/custom_auth")
+}
+
+fn custom_auth_id(req: &Request, config: &Config) -> Option<String> {
+    let auth = req.headers.get("authorization")?.trim();
+    let root = config.root.parent().unwrap_or(&config.root);
+    let valid = fs::read_to_string(root.join("custom-auth.valid")).ok()?;
+    valid.lines().find_map(|line| {
+        let mut id = None;
+        let mut creds = None;
+        for part in line.split_whitespace() {
+            if let Some(rest) = part.strip_prefix("id=") {
+                id = Some(rest);
+            }
+        }
+        if let Some((_, rest)) = line.split_once("creds=") {
+            creds = Some(rest.trim());
+        }
+        (creds == Some(auth)).then(|| id.unwrap_or("default").to_string())
+    })
+}
+
+fn custom_auth_challenge(config: &Config, id: &str) -> Result<(u16, Vec<String>), String> {
+    let root = config.root.parent().unwrap_or(&config.root);
+    let path = root.join("custom-auth.challenge");
+    let raw = fs::read_to_string(&path).unwrap_or_default();
+    let mut fallback_status: Option<u16> = None;
+    let mut fallback_headers: Vec<String> = Vec::new();
+    let mut selected_status: Option<u16> = None;
+    let mut selected_headers: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let Some((line_id, rest)) = line
+            .strip_prefix("id=")
+            .and_then(|value| value.split_once(' '))
+        else {
+            continue;
+        };
+        let target = if line_id == id {
+            Some((&mut selected_status, &mut selected_headers))
+        } else if line_id == "default" {
+            Some((&mut fallback_status, &mut fallback_headers))
+        } else {
+            None
+        };
+        let Some((status_slot, headers_slot)) = target else {
+            continue;
+        };
+        let response_part = if let Some(value) = rest.strip_prefix("status=") {
+            let (status, trailing) = value.split_once(' ').unwrap_or((value, ""));
+            *status_slot = status.trim().parse::<u16>().ok();
+            trailing.trim_start().strip_prefix("response=")
+        } else {
+            rest.strip_prefix("response=")
+        };
+        if let Some(value) = response_part {
+            if value.starts_with(' ') || value.starts_with('\t') {
+                if let Some(prev) = headers_slot.last_mut() {
+                    let continuation = value.trim();
+                    if !continuation.is_empty() {
+                        prev.push(' ');
+                        prev.push_str(continuation);
+                    }
+                }
+            } else {
+                headers_slot.push(value.to_string());
+            }
+        }
+    }
+    Ok((
+        selected_status.or(fallback_status).unwrap_or(401),
+        if selected_headers.is_empty() {
+            fallback_headers
+        } else {
+            selected_headers
+        },
+    ))
+}
+
+fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        500 => "Internal Server Error",
+        _ => "Status",
+    }
+}
+
 fn run_smart_http_cgi_output(
     req: &Request,
     config: &Config,
@@ -1086,6 +1201,29 @@ fn send_response(
     response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
 
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| e.to_string())?;
+    stream.write_all(body).map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn send_response_raw(
+    stream: &mut TcpStream,
+    status: u16,
+    status_text: &str,
+    headers: &[String],
+    body: &[u8],
+) -> Result<(), String> {
+    let mut response = format!("HTTP/1.1 {status} {status_text}\r\n");
+    for header in headers {
+        response.push_str(header);
+        response.push_str("\r\n");
+    }
+    response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    response.push_str("Connection: close\r\n");
+    response.push_str("\r\n");
     stream
         .write_all(response.as_bytes())
         .map_err(|e| e.to_string())?;
