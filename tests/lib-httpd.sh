@@ -110,6 +110,11 @@ done
 if test "$_clone" = 1 && test "$_bundle_uri" = 1; then
 	_http=0
 fi
+# t5581-http-curl-verbose intentionally hits a failing upload-pack endpoint and checks
+# Grit's curl-style trace output.
+case "$*" in
+*"error_git_upload_pack"*) _http=0 ;;
+esac
 # t5564-http-proxy: grit implements http.proxy / GIT_TRACE_CURL / SOCKS path validation.
 if test -n "${LIB_HTTPD_PROXY-}"; then
 	case "$*" in

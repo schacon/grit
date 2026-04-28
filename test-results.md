@@ -83,6 +83,15 @@
 - `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5581` 1/2
 - Fixed SOCKS-over-Unix HTTP request construction so inserted headers are separate CRLF-delimited header lines instead of being appended to the previous header; this made `Git-Protocol` and `Content-Length` parse correctly for direct SOCKS GET/POST requests.
 
+**2026-04-28 (remote auth / curl verbose error route)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed
+- `./scripts/run-tests.sh --timeout 90 t5581-http-curl-verbose.sh t5564-http-proxy.sh t5555-http-smart-common.sh`: `t5581` 2/2, `t5564` 8/8, `t5555` 10/10
+- Routed the intentional `error_git_upload_pack` clone path through Grit in the lightweight HTTP harness and added the matching `500 Intentional Breakage` route to `test-httpd`, so `GIT_CURL_VERBOSE` validates Grit's curl trace output instead of failing in system Git helper lookup.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed

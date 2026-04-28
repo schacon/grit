@@ -132,6 +132,9 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Fixed SOCKS-over-Unix direct HTTP request construction so inserted headers are CRLF-delimited instead of concatenated onto the previous header.
 - This restored parseable `Git-Protocol` and `Content-Length` headers for SOCKS smart HTTP discovery and stateless POSTs.
 - Validation: `t5564-http-proxy` now passes 8/8; `t5555-http-smart-common` remains 10/10; `t5581-http-curl-verbose` remains 1/2 with the known harness `git-remote-http` lookup issue.
+- Routed `error_git_upload_pack` HTTP clone through Grit in the lightweight HTTP harness so `t5581` exercises Grit's `GIT_CURL_VERBOSE` output.
+- Added the `test-httpd` `500 Intentional Breakage` route for `/error_git_upload_pack/smart/...git-upload-pack`.
+- Validation: `t5581-http-curl-verbose` now passes 2/2 while `t5564-http-proxy` remains 8/8 and `t5555-http-smart-common` remains 10/10.
 
 ## HTTP Challenge Plumbing
 

@@ -343,7 +343,7 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
-- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; current failure is harness `git-remote-http` lookup)
+- [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 - [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 
 Definition of done:
@@ -440,7 +440,7 @@ Validation:
 - [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
 - [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
 - [~] `./scripts/run-tests.sh t5542-push-http-shallow.sh` (1/3)
-- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; harness `git-remote-http` lookup)
+- [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
 

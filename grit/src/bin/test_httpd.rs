@@ -467,6 +467,18 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         );
         return r;
     }
+    if req.path.starts_with("/error_git_upload_pack/smart/")
+        && (req.path.contains("git-upload-pack") || req.query.contains("service=git-upload-pack"))
+    {
+        log_access(config, &req.method, &req.path, &req.query, 500);
+        return send_response(
+            &mut stream,
+            500,
+            "Intentional Breakage",
+            &[],
+            b"Intentional Breakage\n",
+        );
+    }
     // Route parity with upstream apache test CGI shims:
     // - /smart/incomplete_length/.../git-upload-pack -> truncated pkt-line length header
     // - /smart/incomplete_body/.../git-upload-pack   -> truncated pkt-line body
