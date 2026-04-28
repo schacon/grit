@@ -153,9 +153,9 @@ commit → check it off → move on.
 
 - [ ] `t1800-hook` ██░░░░░░░░░░░░░░░░░░ 5/44 (39 left) — git-hook command and config-managed multihooks
 - [ ] `t1500-rev-parse` █████████░░░░░░░░░░░ 38/81 (43 left) — test git rev-parse
-- [ ] `t0301-credential-cache` ██░░░░░░░░░░░░░░░░░░ 6/52 (46 left) — credential-cache tests
-- [ ] `t0300-credentials` █░░░░░░░░░░░░░░░░░░░ 3/56 (53 left) — basic credential helper tests
-- [ ] `t0302-credential-store` █░░░░░░░░░░░░░░░░░░░ 5/65 (60 left) — credential-store tests
+- [x] `t0301-credential-cache` ████████████████████ 52/52 (0 left) — credential-cache tests
+- [x] `t0300-credentials` ████████████████████ 56/56 (0 left) — basic credential helper tests
+- [x] `t0302-credential-store` ████████████████████ 65/65 (0 left) — credential-store tests
 - [x] `t1451-fsck-buffer` ████████████████████ 72/72 (0 left) — fsck on buffers without NUL termination
 
 - [ ] `t1091-sparse-checkout-builtin` ██░░░░░░░░░░░░░░░░░░ 10/77 (67 left) — sparse checkout builtin tests
@@ -561,7 +561,7 @@ commit → check it off → move on.
 
 - [x] `t5405-send-pack-rewind` ████████████████████ 3/3 (0 left) — forced push to replace commit we do not have
 - [x] `t5524-pull-msg` ████████████████████ 3/3 (0 left) — git pull message generation
-- [ ] `t5542-push-http-shallow` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — push from/to a shallow clone over http
+- [x] `t5542-push-http-shallow` ████████████████████ 3/3 (0 left) — push from/to a shallow clone over http
 - [x] `t5321-pack-large-objects` ████████████████████ 2/2 (0 left) — git pack-object with large delta metadata (`GIT_TEST_OE_DELTA_SIZE` path exercised by `pack-objects` REF_DELTA reuse)
 - [ ] `t5557-http-get` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test downloading a file by URL
 - [ ] `t5565-push-multiple` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — push to group
@@ -584,7 +584,7 @@ commit → check it off → move on.
 - [x] `t5517-push-mirror` ████████████████████ 13/13 (0 left) — pushing to a mirror repository
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
-- [ ] `t5564-http-proxy` ███████░░░░░░░░░░░░░ 3/8 (5 left) — test fetching through http proxy
+- [x] `t5564-http-proxy` ████████████████████ 8/8 (0 left) — test fetching through http proxy
 - [x] `t5402-post-merge-hook` ████████████████████ 7/7 (0 left) — Test the post-merge hook.
 - [ ] `t5502-quickfetch` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test quickfetch from local
 - [x] `t5544-pack-objects-hook` ████████████████████ 7/7 (0 left) — test custom script in place of pack-objects
@@ -607,7 +607,7 @@ commit → check it off → move on.
 - [ ] `t5313-pack-bounds-checks` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — bounds-checking of access to mmapped on-disk file formats
 - [x] `t5617-clone-submodules-remote` — Test cloning repos with submodules using remote-tracking branches (9/9 harness)
 - [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone
-- [ ] `t5539-fetch-http-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — fetch/clone from a shallow clone over http
+- [ ] `t5539-fetch-http-shallow` ██████████░░░░░░░░░░ 4/8 (4 left) — fetch/clone from a shallow clone over http
 - [x] `t5810-proto-disable-local` — test disabling of local paths in clone/fetch (54/54 harness)
 - [ ] `t5545-push-options` ███████░░░░░░░░░░░░░ 5/13 (8 left) — pushing to a repository using push options
 - [x] `t5322-pack-objects-sparse` — pack-objects object selection using sparse algorithm
@@ -644,7 +644,7 @@ commit → check it off → move on.
 - [ ] `t5533-push-cas` ███████░░░░░░░░░░░░░ 9/23 (14 left) — compare & swap push force/delete safety
 - [ ] `t5407-post-rewrite-hook` ███░░░░░░░░░░░░░░░░░ 3/17 (14 left) — Test the post-rewrite hook.
 - [x] `t5705-session-id-in-capabilities` — session ID in capabilities (17/17)
-- [ ] `t5814-proto-disable-ext` ████████░░░░░░░░░░░░ 11/27 (16 left) — test disabling of remote-helper paths in clone/fetch
+- [ ] `t5814-proto-disable-ext` ██████████████░░░░░░ 19/27 (8 left) — test disabling of remote-helper paths in clone/fetch
 - [ ] `t5333-pseudo-merge-bitmaps` ██░░░░░░░░░░░░░░░░░░ 2/18 (16 left) — pseudo-merge bitmaps
 - [ ] `t5331-pack-objects-stdin` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — pack-objects --stdin
 - [ ] `t5553-set-upstream` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — 
@@ -655,14 +655,14 @@ commit → check it off → move on.
 - [x] `t5812-proto-disable-http` — test disabling of git-over-http in clone/fetch (29/29)
 - [ ] `t5521-pull-options` ███░░░░░░░░░░░░░░░░░ 4/22 (18 left) — pull options
 - [ ] `t5100-mailinfo` ████████████░░░░░░░░ 33/52 (19 left) — git mailinfo and git mailsplit test
-- [ ] `t5541-http-push-smart` █░░░░░░░░░░░░░░░░░░░ 2/21 (19 left) — test smart pushing over http via http-backend
+- [x] `t5541-http-push-smart` ████████████████████ 21/21 (0 left) — test smart pushing over http via http-backend
 - [ ] `t5001-archive-attr` ██████████░░░░░░░░░░ 24/44 (20 left) — git archive attribute tests
 - [x] `t5514-fetch-multiple` — fetch --all works correctly (25/25)
 - [ ] `t5710-promisor-remote-capability` ░░░░░░░░░░░░░░░░░░░░ 1/22 (21 left) — handling of promisor remote advertisement
 - [ ] `t5703-upload-pack-ref-in-want` ███░░░░░░░░░░░░░░░░░ 4/26 (22 left) — upload-pack ref-in-want
 - [ ] `t5329-pack-objects-cruft` ██░░░░░░░░░░░░░░░░░░ 3/25 (22 left) — cruft pack related pack-objects tests
 - [ ] `t5511-refspec` ██████████░░░░░░░░░░ 24/47 (23 left) — refspec parsing
-- [ ] `t5551-http-fetch-smart` ███████░░░░░░░░░░░░░ 13/37 (24 left) — test smart fetching over http via http-backend ($HTTP_PROTO)
+- [ ] `t5551-http-fetch-smart` ████████████████░░░░ 29/37 (8 left) — test smart fetching over http via http-backend ($HTTP_PROTO)
 - [x] `t5317-pack-objects-filter-objects` — git pack-objects using object filtering (33/33)
 - [x] `t5318-pack-objects-revs-exclude` — pack-objects `--revs` with `^ref` exclusion and `--stdin-packs` (9/9)
 - [ ] `t5304-prune` █████░░░░░░░░░░░░░░░ 8/32 (24 left) — prune
