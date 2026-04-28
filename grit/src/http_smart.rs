@@ -47,7 +47,8 @@ pub fn trace2_child_start_git_remote_https(url: &str) {
         }
     }
     let now = crate::trace2_json_now();
-    let esc = url.replace('\\', "\\\\").replace('"', "\\\"");
+    let safe_url = crate::http_client::scrub_url_credentials(url);
+    let esc = safe_url.replace('\\', "\\\\").replace('"', "\\\"");
     let line = format!(
         r#"{{"event":"child_start","sid":"grit-0","time":"{}","argv":["git-remote-https","{}"]}}"#,
         now, esc

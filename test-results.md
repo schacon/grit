@@ -53,6 +53,15 @@
 - `./scripts/run-tests.sh t5406-remote-rejects.sh`: 3/3 passed
 - `./scripts/run-tests.sh t5545-push-options.sh`: 2/13 passed (existing broader failures remain)
 
+**2026-04-28 (remote auth / trace redaction audit)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- Manual HTTP trace/error smoke check with URL userinfo: passed; curl request line and connection error both scrubbed username/password.
+- HTTP access errors, curl request-start traces (when `GIT_TRACE_REDACT` is not `0`), and trace2 `git-remote-https` child-start URLs now scrub URL username/password fields before display.
+- Existing curl trace redaction already covers `Authorization`, `Proxy-Authorization`, cookie values, and auth-like `http.extraHeader` values by default.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
