@@ -167,7 +167,8 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Expanded default `push.default=matching` for HTTP remotes instead of bailing in the default-refspec path.
 - Emitted Git-style `POST git-receive-pack` summaries for verbose HTTP pushes, including chunked requests.
 - Sent a valid empty pack for HTTP receive-pack updates when the remote already has all pushed objects, fixing URL-scrub porcelain pushes.
-- Validation: focused `t5541-http-push-smart` auth/chunked/scrubbing slice passes; official `t5541` is now in-scope at 20/21 with only atomic collateral reporting remaining.
+- Reported client-side atomic pre-rejections with Git-like per-ref status lines, including collateral `atomic push failed` refs.
+- Validation: `t5541-http-push-smart` now passes 21/21; `t5549-fetch-push-http` and `t5542-push-http-shallow` remain fully passing.
 
 ## HTTP Challenge Plumbing
 

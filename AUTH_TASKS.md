@@ -437,14 +437,14 @@ Validation:
 - [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 - [x] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
 - [~] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (29/37; auth/redaction subset passes, SHA-256 empty clone remains)
-- [~] `./scripts/run-tests.sh t5541-http-push-smart.sh` (20/21; remaining failure is atomic collateral reporting)
+- [x] `./scripts/run-tests.sh t5541-http-push-smart.sh`
 - [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
 - [x] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
 - [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
 
-- [~] Smart HTTP auth is integrated across fetch, clone, ls-remote, and push.
+- [x] Smart HTTP auth is integrated across fetch, clone, ls-remote, and push.
 - [ ] Any remaining HTTP failures are documented as non-auth transport gaps.
 
 ## Phase 11: SSH Command Configuration Parity

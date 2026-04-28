@@ -3093,6 +3093,7 @@ fn push_to_http_url(
     let mut set_upstream_after_push = args.set_upstream;
     let mut remote_have: std::collections::BTreeSet<ObjectId> =
         remote_ref_map.values().copied().collect();
+    let mut atomic_pre_reject_ref: Option<String> = None;
 
     if effective_mirror {
         let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
@@ -3242,13 +3243,17 @@ fn push_to_http_url(
                     && !remote_ref.starts_with("refs/tags/")
                     && !is_ancestor(repo, old, local_oid)?
                 {
-                    bail!(
+                    if args.atomic {
+                        atomic_pre_reject_ref.get_or_insert(remote_ref.clone());
+                    } else {
+                        bail!(
                         "Updates were rejected because the remote contains work that you do not\n\
                          have locally. This is usually caused by another repository pushing to\n\
                          the same ref. If you want to integrate the remote changes, use\n\
                          'git pull' before pushing again.\n\
                          See the 'Note about fast-forwards' in 'git push --help' for details."
                     );
+                    }
                 }
             }
 
@@ -3275,6 +3280,10 @@ fn push_to_http_url(
             println!("Everything up-to-date");
         }
         return Ok(());
+    }
+
+    if let Some(rejected_ref) = atomic_pre_reject_ref.as_deref() {
+        report_atomic_http_pre_reject(url, args, &updates, rejected_ref)?;
     }
 
     if !args.no_verify {
@@ -4549,6 +4558,45 @@ fn maybe_print_http_push_post_summary(args: &Args, config: &ConfigSet, pack_data
     } else {
         eprintln!("POST git-receive-pack ({} bytes)", pack_data.len());
     }
+}
+
+fn report_atomic_http_pre_reject(
+    url: &str,
+    args: &Args,
+    updates: &[RefUpdate],
+    rejected_ref: &str,
+) -> Result<()> {
+    if !args.quiet {
+        eprintln!("To {}", scrub_push_url_credentials(url));
+        for update in updates {
+            let src = update
+                .local_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("refs/heads/"))
+                .or_else(|| {
+                    update
+                        .local_ref
+                        .as_deref()
+                        .and_then(|r| r.strip_prefix("refs/tags/"))
+                })
+                .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)"));
+            let dst = update
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .or_else(|| update.remote_ref.strip_prefix("refs/tags/"))
+                .unwrap_or(update.remote_ref.as_str());
+            if update.remote_ref == rejected_ref {
+                eprintln!(" ! [rejected] {src} -> {dst} (non-fast-forward)");
+            } else {
+                eprintln!(" ! [remote rejected] {src} -> {dst} (atomic push failed)");
+            }
+        }
+        eprintln!(
+            "error: failed to push some refs to '{}'",
+            scrub_push_url_credentials(url)
+        );
+    }
+    bail!("atomic push failed")
 }
 
 fn push_negotiate_enabled(config: &ConfigSet) -> bool {
