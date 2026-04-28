@@ -1,0 +1,18 @@
+{
+  "name": "github-cors-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vercel-deployable CORS proxy for Git smart HTTP requests.",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy",
+    "deploy:prod": "vercel deploy --prod",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@vercel/node": "^3.2.0",
+    "typescript": "^5.6.0",
+    "vercel": "^39.0.0"
+  }
+}

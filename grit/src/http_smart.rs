@@ -12,12 +12,13 @@ use anyhow::{bail, Context, Result};
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
+use grit_lib::pkt_line;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::smart_protocol;
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
-use crate::pkt_line;
 
 const SERVICE: &str = "git-upload-pack";
 
@@ -100,78 +101,6 @@ fn http_post_discovery(
     client.post_with_git_protocol(url, content_type, accept, body, git_protocol_header)
 }
 
-fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
-    let mut cur = Cursor::new(body);
-    let first = match pkt_line::read_packet(&mut cur)? {
-        None => bail!("empty v2 capability block"),
-        Some(pkt_line::Packet::Data(s)) => s,
-        Some(other) => bail!("expected version line, got {other:?}"),
-    };
-    if first != "version 2" {
-        bail!("expected 'version 2', got {first:?}");
-    }
-    let mut caps = vec![first];
-    loop {
-        match pkt_line::read_packet(&mut cur)? {
-            None => bail!("unexpected EOF in v2 capabilities"),
-            Some(pkt_line::Packet::Flush) => break,
-            Some(pkt_line::Packet::Data(s)) => caps.push(s),
-            Some(other) => bail!("unexpected packet in v2 caps: {other:?}"),
-        }
-    }
-    Ok(caps)
-}
-
-fn parse_v0_v1_advertisement(
-    body: &[u8],
-) -> Result<(Vec<LsRefEntry>, std::collections::HashSet<String>)> {
-    let mut cur = Cursor::new(body);
-    let mut refs = Vec::new();
-    let mut caps = std::collections::HashSet::new();
-    let mut first_ref_line = true;
-    loop {
-        match pkt_line::read_packet(&mut cur)? {
-            None => break,
-            Some(pkt_line::Packet::Flush) => break,
-            Some(pkt_line::Packet::Data(line)) => {
-                let line = line.trim_end_matches('\n');
-                if line.starts_with("version ") {
-                    crate::trace_packet::trace_packet_git('<', line);
-                    continue;
-                }
-                let (payload, cap_part) = match line.split_once('\0') {
-                    Some((p, c)) => (p.trim(), Some(c)),
-                    None => (line.trim(), None),
-                };
-                let (oid_hex, refname) = payload
-                    .split_once('\t')
-                    .or_else(|| payload.split_once(' '))
-                    .ok_or_else(|| anyhow::anyhow!("malformed v0/v1 advertisement: {line}"))?;
-                let oid = ObjectId::from_hex(oid_hex.trim())
-                    .with_context(|| format!("bad oid in v0/v1 advertisement: {oid_hex}"))?;
-                let refname = refname.trim();
-                if refname.is_empty() {
-                    continue;
-                }
-                if first_ref_line {
-                    if let Some(raw_caps) = cap_part {
-                        for cap in raw_caps.split_whitespace() {
-                            caps.insert(cap.to_string());
-                        }
-                    }
-                    first_ref_line = false;
-                }
-                refs.push(LsRefEntry {
-                    name: refname.to_string(),
-                    oid,
-                });
-            }
-            Some(other) => bail!("unexpected packet in v0/v1 advertisement: {other:?}"),
-        }
-    }
-    Ok((refs, caps))
-}
-
 enum HttpDiscovery {
     V2 {
         caps: Vec<String>,
@@ -184,26 +113,27 @@ enum HttpDiscovery {
 }
 
 fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
-    let mut cur = Cursor::new(pkt_body);
-    let first = match pkt_line::read_packet(&mut cur)? {
-        None => bail!("empty smart-http advertisement"),
-        Some(pkt_line::Packet::Data(s)) => s,
-        Some(other) => bail!("unexpected first advertisement packet: {other:?}"),
-    };
-    if first == "version 2" {
-        let caps = read_v2_caps(pkt_body)?;
-        let object_format = caps
-            .iter()
-            .find_map(|c| c.strip_prefix("object-format="))
-            .unwrap_or("sha1")
-            .to_string();
-        return Ok(HttpDiscovery::V2 {
+    match smart_protocol::parse_upload_pack_advertisement(pkt_body)? {
+        smart_protocol::UploadPackAdvertisement::V2 {
             caps,
             object_format,
-        });
+        } => Ok(HttpDiscovery::V2 {
+            caps,
+            object_format,
+        }),
+        smart_protocol::UploadPackAdvertisement::V0V1 {
+            refs, capabilities, ..
+        } => Ok(HttpDiscovery::V0V1 {
+            advertised: refs
+                .into_iter()
+                .map(|entry| LsRefEntry {
+                    name: entry.name,
+                    oid: entry.oid,
+                })
+                .collect(),
+            caps: capabilities,
+        }),
     }
-    let (advertised, caps) = parse_v0_v1_advertisement(pkt_body)?;
-    Ok(HttpDiscovery::V0V1 { advertised, caps })
 }
 
 fn trace_http_v0_v1_negotiated(client: &crate::http_client::HttpClientContext) {
@@ -213,15 +143,16 @@ fn trace_http_v0_v1_negotiated(client: &crate::http_client::HttpClientContext) {
 }
 
 fn cap_lines_for_client_request(caps: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in caps {
-        if line.starts_with("agent=") {
-            out.push(line.clone());
-        } else if let Some(fmt) = line.strip_prefix("object-format=") {
-            out.push(format!("object-format={fmt}"));
-        }
-    }
-    out
+    smart_protocol::capability_lines_for_client_request(caps)
+}
+
+fn build_ls_refs_request(caps: &[String], object_format: &str) -> Result<Vec<u8>> {
+    Ok(smart_protocol::build_ls_refs_v2_request(
+        object_format,
+        &cap_lines_for_client_request(caps),
+        true,
+        true,
+    )?)
 }
 
 fn skip_to_flush(r: &mut Cursor<&[u8]>) -> Result<()> {
@@ -362,16 +293,7 @@ pub fn http_ls_refs(
         HttpDiscovery::V0V1 { advertised, .. } => return Ok(advertised),
     };
 
-    let mut req = Vec::new();
-    pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
-    pkt_line::write_line_to_vec(&mut req, &format!("object-format={object_format}"))?;
-    for line in cap_lines_for_client_request(&caps) {
-        pkt_line::write_line_to_vec(&mut req, &line)?;
-    }
-    pkt_line::write_delim(&mut req)?;
-    pkt_line::write_line_to_vec(&mut req, "peel")?;
-    pkt_line::write_line_to_vec(&mut req, "symrefs")?;
-    pkt_line::write_flush(&mut req)?;
+    let req = build_ls_refs_request(&caps, &object_format)?;
 
     let post_url = format!("{base}/{SERVICE}");
     let resp = http_post(
@@ -415,16 +337,7 @@ pub fn http_negotiate_only_common(
         bail!("server does not support wait-for-done");
     }
 
-    let mut req = Vec::new();
-    pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
-    pkt_line::write_line_to_vec(&mut req, &format!("object-format={object_format}"))?;
-    for line in cap_lines_for_client_request(&caps) {
-        pkt_line::write_line_to_vec(&mut req, &line)?;
-    }
-    pkt_line::write_delim(&mut req)?;
-    pkt_line::write_line_to_vec(&mut req, "peel")?;
-    pkt_line::write_line_to_vec(&mut req, "symrefs")?;
-    pkt_line::write_flush(&mut req)?;
+    let req = build_ls_refs_request(&caps, &object_format)?;
 
     let post_url = format!("{base}/{SERVICE}");
     let resp = http_post(
@@ -464,26 +377,13 @@ pub fn http_negotiate_only_common(
 }
 
 fn parse_ls_refs_v2_response(data: &[u8]) -> Result<Vec<LsRefEntry>> {
-    let mut cur = Cursor::new(data);
-    let mut out = Vec::new();
-    loop {
-        let pkt = match pkt_line::read_packet(&mut cur)? {
-            None => break,
-            Some(pkt_line::Packet::Flush) => break,
-            Some(pkt_line::Packet::Data(line)) => line,
-            Some(other) => bail!("unexpected ls-refs packet: {other:?}"),
-        };
-        let (oid_hex, rest) = pkt
-            .split_once(' ')
-            .ok_or_else(|| anyhow::anyhow!("bad ls-refs line: {pkt}"))?;
-        let oid = ObjectId::from_hex(oid_hex.trim())?;
-        let name = rest.split_whitespace().next().unwrap_or(rest).to_string();
-        if name.is_empty() {
-            continue;
-        }
-        out.push(LsRefEntry { name, oid });
-    }
-    Ok(out)
+    Ok(smart_protocol::parse_ls_refs_v2_response(data)?
+        .into_iter()
+        .map(|entry| LsRefEntry {
+            name: entry.name,
+            oid: entry.oid,
+        })
+        .collect())
 }
 
 fn collect_wants_from_advertised(
@@ -979,16 +879,7 @@ pub fn http_fetch_pack(
     };
 
     let advertised = {
-        let mut req = Vec::new();
-        pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
-        pkt_line::write_line_to_vec(&mut req, &format!("object-format={object_format}"))?;
-        for line in cap_lines_for_client_request(&caps) {
-            pkt_line::write_line_to_vec(&mut req, &line)?;
-        }
-        pkt_line::write_delim(&mut req)?;
-        pkt_line::write_line_to_vec(&mut req, "peel")?;
-        pkt_line::write_line_to_vec(&mut req, "symrefs")?;
-        pkt_line::write_flush(&mut req)?;
+        let req = build_ls_refs_request(&caps, &object_format)?;
 
         let post_url = format!("{base}/{SERVICE}");
         let resp = http_post(

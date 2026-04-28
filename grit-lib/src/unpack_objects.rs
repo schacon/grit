@@ -18,9 +18,14 @@ use flate2::{Decompress, FlushDecompress, Status};
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::gitmodules;
-use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::objects::Object;
+use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::odb::Odb;
+use crate::storage::{object_id_for, ObjectReader, ObjectWriter};
 
 /// Options controlling `unpack-objects` behaviour.
 #[derive(Debug, Default)]
@@ -65,7 +70,40 @@ struct PendingDelta {
 ///   unresolvable delta chains.
 /// - [`Error::Io`] — I/O failure reading from `reader`.
 /// - [`Error::Zlib`] — decompression failure.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) -> Result<usize> {
+    struct LocalOdbStore<'a>(&'a Odb);
+
+    impl ObjectReader for LocalOdbStore<'_> {
+        fn read_object(&self, oid: &ObjectId) -> Result<Object> {
+            self.0.read(oid)
+        }
+
+        fn has_object(&self, oid: &ObjectId) -> Result<bool> {
+            Ok(self.0.exists(oid))
+        }
+    }
+
+    impl ObjectWriter for LocalOdbStore<'_> {
+        fn write_object(&mut self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
+            self.0.write_local(kind, data)
+        }
+    }
+
+    let mut store = LocalOdbStore(odb);
+    unpack_objects_into_store(reader, &mut store, opts)
+}
+
+/// Unpack a pack stream into a storage-agnostic object store.
+///
+/// Reads the complete pack from `reader`, validates the trailing SHA-1 checksum,
+/// resolves deltas, and writes each object through `store` unless
+/// [`UnpackOptions::dry_run`] is set.
+pub fn unpack_objects_into_store(
+    reader: &mut dyn Read,
+    store: &mut impl ObjectWriter,
+    opts: &UnpackOptions,
+) -> Result<usize> {
     /// Blobs larger than this stay on disk only (after write) so huge packs do
     /// not retain every blob in RAM. Smaller objects are kept for delta bases
     /// and `--strict` graph walks without extra ODB reads.
@@ -104,8 +142,8 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
             1..=4 => {
                 let kind = type_code_to_kind(type_code)?;
                 let data = rd.decompress(size)?;
-                let oid = write_or_hash(kind, &data, odb, opts.dry_run)?;
-                let entry = packed_entry_after_write(kind, data, oid, odb, opts, MAX_RETAIN_BYTES);
+                let oid = write_or_hash(kind, &data, store, opts.dry_run)?;
+                let entry = packed_entry_after_write(kind, data, oid, opts, MAX_RETAIN_BYTES);
                 by_offset.insert(obj_offset, entry.clone());
                 by_oid.insert(oid, entry);
                 count += 1;
@@ -168,12 +206,13 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
                 if let Some(base_off) = delta.base_offset {
                     by_offset
                         .get(&base_off)
-                        .map(|e| entry_object_bytes(e, odb).map(|d| (e.kind(), d)))
+                        .map(|e| entry_object_bytes(e, store).map(|d| (e.kind(), d)))
                 } else if let Some(ref base_id) = delta.base_oid {
                     if let Some(e) = by_oid.get(base_id) {
-                        Some(entry_object_bytes(e, odb).map(|d| (e.kind(), d)))
+                        Some(entry_object_bytes(e, store).map(|d| (e.kind(), d)))
                     } else if !opts.dry_run {
-                        odb.read(base_id)
+                        store
+                            .read_object(base_id)
                             .ok()
                             .map(|obj| Ok((obj.kind, Cow::Owned(obj.data))))
                     } else {
@@ -186,15 +225,9 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
             match base_res {
                 Some(Ok((base_kind, base_data))) => {
                     let result = apply_delta(base_data.as_ref(), &delta.delta_data)?;
-                    let oid = write_or_hash(base_kind, &result, odb, opts.dry_run)?;
-                    let new_entry = packed_entry_after_write(
-                        base_kind,
-                        result,
-                        oid,
-                        odb,
-                        opts,
-                        MAX_RETAIN_BYTES,
-                    );
+                    let oid = write_or_hash(base_kind, &result, store, opts.dry_run)?;
+                    let new_entry =
+                        packed_entry_after_write(base_kind, result, oid, opts, MAX_RETAIN_BYTES);
                     by_offset.insert(delta.offset, new_entry.clone());
                     by_oid.insert(oid, new_entry);
                     count += 1;
@@ -220,12 +253,15 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
             let kind = entry.kind();
             let data = match entry {
                 PackedObjectEntry::InMemory { data, .. } => data.clone(),
-                PackedObjectEntry::BlobOnDisk { oid: blob_oid } => odb.read(blob_oid)?.data,
+                PackedObjectEntry::BlobOnDisk { oid: blob_oid } => {
+                    store.read_object(blob_oid)?.data
+                }
             };
             dot_fsck_map.insert(*oid, (kind, data));
         }
+        #[cfg(not(target_arch = "wasm32"))]
         gitmodules::verify_packed_dot_special(&dot_fsck_map)?;
-        strict_verify_packed_references_map(Some(odb), &by_oid)?;
+        strict_verify_packed_references_map(Some(&*store), &by_oid)?;
     }
 
     Ok(count)
@@ -251,7 +287,6 @@ fn packed_entry_after_write(
     kind: ObjectKind,
     data: Vec<u8>,
     oid: ObjectId,
-    _odb: &Odb,
     opts: &UnpackOptions,
     max_retain: usize,
 ) -> PackedObjectEntry {
@@ -262,15 +297,18 @@ fn packed_entry_after_write(
     }
 }
 
-fn entry_object_bytes<'a>(entry: &'a PackedObjectEntry, odb: &Odb) -> Result<Cow<'a, [u8]>> {
+fn entry_object_bytes<'a>(
+    entry: &'a PackedObjectEntry,
+    store: &impl ObjectReader,
+) -> Result<Cow<'a, [u8]>> {
     match entry {
         PackedObjectEntry::InMemory { data, .. } => Ok(Cow::Borrowed(data.as_slice())),
-        PackedObjectEntry::BlobOnDisk { oid } => Ok(Cow::Owned(odb.read(oid)?.data)),
+        PackedObjectEntry::BlobOnDisk { oid } => Ok(Cow::Owned(store.read_object(oid)?.data)),
     }
 }
 
-fn strict_verify_packed_references_map(
-    odb: Option<&Odb>,
+fn strict_verify_packed_references_map<S: ObjectReader>(
+    store: Option<&S>,
     pack: &HashMap<ObjectId, PackedObjectEntry>,
 ) -> Result<()> {
     for entry in pack.values() {
@@ -279,7 +317,7 @@ fn strict_verify_packed_references_map(
             PackedObjectEntry::InMemory { kind, data } => match kind {
                 ObjectKind::Tree => {
                     for e in parse_tree(data)? {
-                        if !strict_ref_resolves_map(&e.oid, pack, odb) {
+                        if !strict_ref_resolves_map(&e.oid, pack, store) {
                             return Err(Error::CorruptObject(format!(
                                 "strict: missing object {} referenced by tree",
                                 e.oid.to_hex()
@@ -289,14 +327,14 @@ fn strict_verify_packed_references_map(
                 }
                 ObjectKind::Commit => {
                     let c = parse_commit(data)?;
-                    if !strict_ref_resolves_map(&c.tree, pack, odb) {
+                    if !strict_ref_resolves_map(&c.tree, pack, store) {
                         return Err(Error::CorruptObject(format!(
                             "strict: missing tree {} referenced by commit",
                             c.tree.to_hex()
                         )));
                     }
                     for p in &c.parents {
-                        if !strict_ref_resolves_map(p, pack, odb) {
+                        if !strict_ref_resolves_map(p, pack, store) {
                             return Err(Error::CorruptObject(format!(
                                 "strict: missing parent {} referenced by commit",
                                 p.to_hex()
@@ -306,7 +344,7 @@ fn strict_verify_packed_references_map(
                 }
                 ObjectKind::Tag => {
                     let t = parse_tag(data)?;
-                    if !strict_ref_resolves_map(&t.object, pack, odb) {
+                    if !strict_ref_resolves_map(&t.object, pack, store) {
                         return Err(Error::CorruptObject(format!(
                             "strict: missing object {} referenced by tag",
                             t.object.to_hex()
@@ -320,14 +358,15 @@ fn strict_verify_packed_references_map(
     Ok(())
 }
 
-fn strict_ref_resolves_map(
+fn strict_ref_resolves_map<S: ObjectReader>(
     oid: &ObjectId,
     pack: &HashMap<ObjectId, PackedObjectEntry>,
-    odb: Option<&Odb>,
+    store: Option<&S>,
 ) -> bool {
-    pack.contains_key(oid) || odb.is_some_and(|o| o.exists(oid))
+    pack.contains_key(oid) || store.is_some_and(|s| s.has_object(oid).unwrap_or(false))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn strict_ref_resolves(
     oid: &ObjectId,
     pack: &std::collections::HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
@@ -341,6 +380,7 @@ fn strict_ref_resolves(
 ///
 /// Use [`None`] for `odb` when indexing or unpacking in a context with no repository (Git allows
 /// `index-pack --strict` outside a work tree when the pack is self-contained).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn strict_verify_packed_references(
     odb: Option<&Odb>,
     pack: &HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
@@ -395,11 +435,13 @@ pub fn strict_verify_packed_references(
 /// applying a push to the permanent ODB.
 ///
 /// Thin-pack bases may be resolved from `odb` when they are not present in the pack.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pack_bytes_to_object_map(data: &[u8], odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
     let rd = PackReader::new(data.to_vec());
     build_pack_object_map(rd, odb)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_pack_object_map(mut rd: PackReader, odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
     let sig = rd.read_exact(4)?;
     if sig != b"PACK" {
@@ -531,13 +573,16 @@ fn build_pack_object_map(mut rd: PackReader, odb: &Odb) -> Result<HashMap<Object
 
 /// Either write `data` as a loose object (if `!dry_run`) or just compute its
 /// [`ObjectId`] without touching the filesystem.
-fn write_or_hash(kind: ObjectKind, data: &[u8], odb: &Odb, dry_run: bool) -> Result<ObjectId> {
+fn write_or_hash(
+    kind: ObjectKind,
+    data: &[u8],
+    store: &mut impl ObjectWriter,
+    dry_run: bool,
+) -> Result<ObjectId> {
     if dry_run {
-        Ok(Odb::hash_object_data(kind, data))
+        Ok(object_id_for(kind, data))
     } else {
-        // Always materialize into this ODB: objects reachable only via alternates must still be
-        // written locally (matches git unpack-objects; t5519-push-alternates).
-        odb.write_local(kind, data)
+        store.write_object(kind, data)
     }
 }
 
@@ -555,11 +600,13 @@ fn type_code_to_kind(code: u8) -> Result<ObjectKind> {
 }
 
 /// Low-level cursor over a buffered pack byte stream (in-memory pack parsing).
+#[cfg(not(target_arch = "wasm32"))]
 struct PackReader {
     data: Vec<u8>,
     pos: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PackReader {
     fn new(data: Vec<u8>) -> Self {
         Self { data, pos: 0 }

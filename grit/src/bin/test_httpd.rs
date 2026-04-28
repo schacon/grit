@@ -12,6 +12,7 @@
 //! Usage:
 //!   test-httpd --root /path/to/docroot [--auth user:pass] [--port 0]
 //!   [--proxy] [--proxy-auth proxuser:proxpass]
+//!   [--cors]
 //!
 //! On startup, prints "READY <port>" to stdout, then serves until killed.
 
@@ -22,10 +23,14 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static CORS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
+    CORS_ENABLED.store(config.cors, Ordering::Relaxed);
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port)).unwrap_or_else(|e| {
         eprintln!("Failed to bind: {e}");
@@ -86,6 +91,8 @@ struct Config {
     /// Path to git-http-backend (auto-detected if not specified)
     git_http_backend: PathBuf,
     access_log: PathBuf,
+    /// When set, emit permissive CORS headers and answer OPTIONS preflight requests.
+    cors: bool,
 }
 
 fn find_git_http_backend() -> PathBuf {
@@ -121,6 +128,7 @@ fn parse_args(args: &[String]) -> Config {
     let mut proxy_auth_pass = None;
     let mut pid_file = None;
     let mut git_http_backend = find_git_http_backend();
+    let mut cors = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -158,6 +166,9 @@ fn parse_args(args: &[String]) -> Config {
                 i += 1;
                 git_http_backend = PathBuf::from(&args[i]);
             }
+            "--cors" => {
+                cors = true;
+            }
             other => {
                 eprintln!("Unknown argument: {other}");
                 std::process::exit(1);
@@ -178,6 +189,7 @@ fn parse_args(args: &[String]) -> Config {
         pid_file,
         git_http_backend,
         access_log,
+        cors,
     }
 }
 
@@ -409,6 +421,11 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
             format!("?{}", req.query)
         }
     );
+
+    if req.method.eq_ignore_ascii_case("OPTIONS") && config.cors {
+        log_access(config, &req.method, &req.path, &req.query, 204);
+        return send_response(&mut stream, 204, "No Content", &[], b"");
+    }
 
     let needs_auth = if req.path.starts_with("/auth-push/") {
         req.path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
@@ -1028,6 +1045,7 @@ fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Res
     for (k, v) in &extra_headers {
         response.push_str(&format!("{k}: {v}\r\n"));
     }
+    append_cors_headers(&mut response);
     response.push_str(&format!("Content-Length: {}\r\n", body.len()));
     response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
@@ -1051,6 +1069,7 @@ fn send_response(
     for (k, v) in headers {
         response.push_str(&format!("{k}: {v}\r\n"));
     }
+    append_cors_headers(&mut response);
     response.push_str(&format!("Content-Length: {}\r\n", body.len()));
     response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
@@ -1061,4 +1080,18 @@ fn send_response(
     stream.write_all(body).map_err(|e| e.to_string())?;
     stream.flush().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn append_cors_headers(response: &mut String) {
+    if !CORS_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    response.push_str("Access-Control-Allow-Origin: *\r\n");
+    response.push_str("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
+    response.push_str(
+        "Access-Control-Allow-Headers: Authorization, Content-Type, Git-Protocol, Accept\r\n",
+    );
+    response.push_str(
+        "Access-Control-Expose-Headers: Content-Type, Git-Protocol, WWW-Authenticate\r\n",
+    );
 }
