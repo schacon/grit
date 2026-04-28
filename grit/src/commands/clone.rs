@@ -2397,16 +2397,7 @@ fn is_ssh_url(url: &str) -> bool {
 fn run_ssh_clone(args: Args) -> Result<()> {
     let spec = crate::ssh_transport::parse_ssh_url(&args.repository)?;
     let Some(src_git_dir) = crate::ssh_transport::try_local_git_dir(&spec) else {
-        crate::ssh_transport::unresolved_ssh_clone_invoke_git_ssh(
-            &spec,
-            args.upload_pack.as_deref(),
-            args.ipv4,
-            args.ipv6,
-        )?;
-        bail!(
-            "ssh: could not resolve '{}' to a local repository",
-            args.repository
-        );
+        return run_ssh_network_clone(args, &spec);
     };
 
     let source = Repository::open(&src_git_dir, None).with_context(|| {
@@ -3020,6 +3011,257 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn default_branch_from_upload_pack_advertisement(
+    remote_heads: &[(String, ObjectId)],
+    head_symref: Option<&str>,
+    head_oid: Option<ObjectId>,
+) -> Option<String> {
+    if let Some(branch) = head_symref
+        .and_then(|sym| sym.strip_prefix("refs/heads/"))
+        .map(ToOwned::to_owned)
+    {
+        return Some(branch);
+    }
+    if let Some(head_oid) = head_oid {
+        if let Some((name, _)) = remote_heads.iter().find(|(_, oid)| *oid == head_oid) {
+            return name.strip_prefix("refs/heads/").map(ToOwned::to_owned);
+        }
+    }
+    remote_heads
+        .iter()
+        .find_map(|(name, _)| name.strip_prefix("refs/heads/").map(ToOwned::to_owned))
+}
+
+fn run_ssh_network_clone(args: Args, spec: &crate::ssh_transport::SshUrl) -> Result<()> {
+    if args.separate_git_dir.is_some() {
+        bail!("--separate-git-dir is not supported for SSH network clones");
+    }
+    if args.shared {
+        bail!("--shared is not supported for SSH network clones");
+    }
+    if !args.reference.is_empty() || !args.reference_if_able.is_empty() {
+        bail!("--reference is not supported for SSH network clones");
+    }
+    if args.revision.is_some() {
+        bail!("--revision is not supported for SSH network clones");
+    }
+
+    let remote_name = resolve_remote_name(&args)?;
+    let path_for_basename = PathBuf::from(&spec.path);
+    let target_name = args.directory.clone().unwrap_or_else(|| {
+        let base = path_for_basename
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let base = base
+            .strip_suffix(".git")
+            .unwrap_or(&base)
+            .trim_end_matches('/')
+            .to_string();
+        if args.bare && !args.mirror {
+            format!("{base}.git")
+        } else {
+            base
+        }
+    });
+    let target_path = PathBuf::from(&target_name);
+    if target_path.exists() && !path_is_empty_directory(&target_path) {
+        bail!(
+            "destination path '{}' already exists and is not an empty directory",
+            target_path.display()
+        );
+    }
+    if !args.quiet {
+        if args.bare {
+            eprintln!("Cloning into bare repository '{}'...", target_name);
+        } else {
+            eprintln!("Cloning into '{}'...", target_name);
+        }
+    }
+
+    let initial_fallback = default_head_branch_fallback();
+    let initial_branch = args
+        .branch
+        .as_deref()
+        .unwrap_or(initial_fallback.as_str())
+        .to_string();
+    fs::create_dir_all(&target_path)
+        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    let ref_storage = resolved_clone_ref_storage(&args)?;
+    let template_dir = args.template.as_ref().map(PathBuf::from);
+    let dest = if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
+        init_bare_clone_minimal(&target_path, &initial_branch, ref_storage).with_context(|| {
+            format!(
+                "failed to initialize bare clone '{}'",
+                target_path.display()
+            )
+        })?;
+        Repository::open(&target_path, None)
+            .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else {
+        init_repository(
+            &target_path,
+            args.bare,
+            &initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    };
+
+    let refspec_for_fetch: Vec<String> = if args.single_branch {
+        if let Some(ref branch) = args.branch {
+            vec![format!("refs/heads/{branch}")]
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let filter_active = clone_pack_filter_active(&args, None);
+    let (remote_heads, remote_tags, head_symref, head_oid) =
+        crate::fetch_transport::with_packet_trace_identity("clone", || {
+            crate::fetch_transport::fetch_via_ssh_upload_pack_skipping(
+                &dest.git_dir,
+                spec,
+                args.upload_pack.as_deref(),
+                &refspec_for_fetch,
+                filter_active,
+            )
+        })
+        .with_context(|| format!("ssh clone failed for '{}'", args.repository))?;
+
+    let default_branch = args.branch.clone().or_else(|| {
+        default_branch_from_upload_pack_advertisement(
+            &remote_heads,
+            head_symref.as_deref(),
+            head_oid,
+        )
+    });
+
+    if args.bare {
+        for (refname, oid) in &remote_heads {
+            clone_write_direct_ref(&dest.git_dir, refname, &oid.to_hex())?;
+        }
+        if !args.no_tags {
+            for (refname, oid) in &remote_tags {
+                clone_write_direct_ref(&dest.git_dir, refname, &oid.to_hex())?;
+            }
+        }
+        setup_origin_remote_bare_url(&dest.git_dir, &args.repository, &remote_name)?;
+        if let Some(branch) = default_branch {
+            fs::write(
+                dest.git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
+        } else if let Some(oid) = head_oid {
+            fs::write(dest.git_dir.join("HEAD"), format!("{}\n", oid.to_hex()))?;
+        }
+    } else {
+        for (refname, oid) in &remote_heads {
+            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+            let dst_ref = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join(branch);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+        }
+        if !args.no_tags {
+            for (refname, oid) in &remote_tags {
+                clone_write_direct_ref(&dest.git_dir, refname, &oid.to_hex())?;
+            }
+        }
+        let refspec = if args.single_branch {
+            let branch = default_branch
+                .as_deref()
+                .unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        setup_origin_remote_url(&dest.git_dir, &args.repository, &remote_name, &refspec)?;
+        if let Some(ref branch) = default_branch {
+            let origin_head = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join("HEAD");
+            if let Some(parent) = origin_head.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(
+                &origin_head,
+                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
+            )?;
+            let remote_ref = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join(branch);
+            if remote_ref.exists() {
+                let oid = fs::read_to_string(&remote_ref)
+                    .context("reading remote-tracking ref")?
+                    .trim()
+                    .to_string();
+                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
+                if let Some(parent) = local_ref_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&local_ref_path, format!("{oid}\n"))?;
+                fs::write(
+                    dest.git_dir.join("HEAD"),
+                    format!("ref: refs/heads/{branch}\n"),
+                )?;
+                setup_branch_tracking(&dest.git_dir, branch, &remote_name)
+                    .context("setting up branch tracking")?;
+            }
+        }
+    }
+
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
+    if !args.config.is_empty() {
+        apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+    apply_sticky_recursive_clone(&dest.git_dir, args.recurse_submodules)?;
+    if args.no_tags {
+        let config_path = dest.git_dir.join("config");
+        let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+            Some(c) => c,
+            None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+        };
+        config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
+        config.write().context("writing config")?;
+    }
+
+    if !args.bare && !args.no_checkout {
+        if head_points_to_missing_ref(&dest) {
+            checkout_head_allow_unborn(&dest).context("checking out HEAD")?;
+        } else {
+            checkout_head(&dest).context("checking out HEAD")?;
+        }
+        run_post_checkout_after_clone(&dest)?;
+    }
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::init_clone_sparse_checkout(&dest, !args.no_checkout)
+            .context("initializing sparse-checkout")?;
+        crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
+    }
+    if !args.quiet && !args.no_checkout {
+        eprintln!("done.");
+    }
+    if args.recurse_submodules && !args.bare {
+        if let Some(ref wt) = dest.work_tree {
+            clone_submodules(wt, &dest, &args).context("cloning submodules")?;
+        }
+    }
     Ok(())
 }
 

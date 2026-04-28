@@ -97,6 +97,9 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Reused existing upload-pack negotiation for v0/v1 and v2 fetch over SSH streams.
 - Preserved the local SSH shortcut for test harness URLs that resolve to local repositories.
 - Validation: `t5510-fetch` remains 199/215 and `t5700-protocol-v1` returned 0/0 warning from harness selection/status.
+- Added live SSH clone over external `git-upload-pack` for unresolved SSH URLs.
+- The live SSH clone path initializes the destination repository, fetches over SSH, writes remote-tracking refs, configures origin, and checks out the selected/default branch when possible.
+- Validation: `t5601-clone` remains 64/115 and `t5603-clone-dirname` remains 25/47 with broader existing failures.
 
 ## HTTP Challenge Plumbing
 
