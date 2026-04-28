@@ -334,7 +334,7 @@ Tasks:
   - [x] Git-compatible precedence with `http.proxy`
 - [x] Implement `http.proxyAuthMethod`.
 - [x] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
-- [ ] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
+- [x] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
 - [ ] Audit current manual HTTP forward proxy path for HTTPS behavior and document any limitation.
 - [x] Add `remote.<name>.proxy` if required by tests encountered in this phase.
 - [x] Make proxy auth redaction match `GIT_TRACE_REDACT`.
@@ -342,13 +342,13 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
-- [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
-- [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
+- [~] `./scripts/run-tests.sh t5564-http-proxy.sh` (7/8; SOCKS Unix socket clone remains)
+- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; current failure is harness `git-remote-http` lookup)
+- [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 
 Definition of done:
 
-- [ ] `t5564-http-proxy` no longer times out and has clear pass/fail counts.
+- [x] `t5564-http-proxy` no longer times out and has clear pass/fail counts.
 - [ ] Proxy credentials are never leaked in default traces.
 
 ## Phase 9: HTTP Cookies, TLS, and Split HTTP Stack
@@ -415,12 +415,12 @@ Primary files:
 
 Tasks:
 
-- [ ] Re-run unauthenticated HTTP baseline and fix regressions.
+- [~] Re-run unauthenticated HTTP baseline and fix regressions.
 - [ ] Re-run authenticated HTTP tests and fix regressions.
 - [ ] Verify auth state sharing across:
-  - [ ] discovery GET
-  - [ ] ls-refs POST
-  - [ ] fetch POST
+- [x] discovery GET
+- [x] ls-refs POST
+- [x] fetch POST
   - [ ] receive-pack discovery
   - [ ] receive-pack POST
 - [ ] Verify redirect/auth behavior in `t5551-http-fetch-smart`.
@@ -428,19 +428,19 @@ Tasks:
 - [ ] Audit URL credential scrubbing in:
   - [ ] push output
   - [ ] fetch/clone errors
-  - [ ] trace output
+- [x] trace output
   - [ ] credential helper inputs
 
 Validation:
 
-- [ ] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
-- [ ] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
-- [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
-- [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh`
-- [ ] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh`
-- [ ] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
-- [ ] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
+- [x] `cargo build --release -p grit-rs`
+- [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
+- [~] `./scripts/run-tests.sh t5549-fetch-push-http.sh` (0/3)
+- [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (currently `in_scope=skip`)
+- [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
+- [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
+- [~] `./scripts/run-tests.sh t5542-push-http-shallow.sh` (1/3)
+- [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; harness `git-remote-http` lookup)
 
 Definition of done:
 

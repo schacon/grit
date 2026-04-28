@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -2409,6 +2409,17 @@ fn fill_proxy_password_via_askpass(url: &mut Url) -> Result<()> {
         s
     };
     let prompt = format!("Password for '{display}': ");
+    let cache = PROXY_ASKPASS_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(pass) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&display)
+        .cloned()
+    {
+        url.set_password(Some(&pass))
+            .map_err(|_| anyhow::anyhow!("could not set proxy password in URL"))?;
+        return Ok(());
+    }
     let out = Command::new(&askpass)
         .arg(&prompt)
         .output()
@@ -2422,8 +2433,14 @@ fn fill_proxy_password_via_askpass(url: &mut Url) -> Result<()> {
     }
     url.set_password(Some(&pass))
         .map_err(|_| anyhow::anyhow!("could not set proxy password in URL"))?;
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(display, pass);
     Ok(())
 }
+
+static PROXY_ASKPASS_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 
 fn run_askpass(prompt: &str) -> Result<String> {
     let askpass = std::env::var("GIT_ASKPASS").unwrap_or_default();

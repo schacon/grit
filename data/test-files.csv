@@ -984,7 +984,7 @@ t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
 t5561-http-backend	t5	yes	14	0	14	false	ok	0
 t5562-http-backend-content-length	t5	yes	16	16	0	true	ok	0
 t5563-simple-http-auth	t5	skip	17	0	0	false	ok	0
-t5564-http-proxy	t5	yes	0	0	0	false	timeout	0
+t5564-http-proxy	t5	yes	8	7	1	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	0	0	0	false	ok	0
 t5571-pre-push-hook	t5	yes	11	11	0	true	ok	0
@@ -992,7 +992,7 @@ t5572-pull-submodule	t5	yes	69	12	57	false	ok	0
 t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	skip	8	0	0	false	ok	0
-t5581-http-curl-verbose	t5	yes	2	0	2	false	ok	0
+t5581-http-curl-verbose	t5	yes	2	1	1	false	ok	0
 t5582-fetch-negative-refspec	t5	yes	16	10	6	false	ok	0
 t5583-push-branches	t5	yes	8	8	0	true	ok	0
 t5600-clone-fail-cleanup	t5	yes	14	8	6	false	ok	0

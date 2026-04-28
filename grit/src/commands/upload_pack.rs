@@ -34,6 +34,14 @@ pub struct Args {
     /// Only advertise refs and capabilities, then exit.
     #[arg(long)]
     pub advertise_refs: bool,
+
+    /// Smart-HTTP discovery mode; equivalent to advertising refs for git-http-backend.
+    #[arg(long = "http-backend-info-refs", hide = true)]
+    pub http_backend_info_refs: bool,
+
+    /// Smart-HTTP stateless RPC mode; accepted for compatibility.
+    #[arg(long = "stateless-rpc", hide = true)]
+    pub stateless_rpc: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -58,9 +66,11 @@ pub fn run(args: Args) -> Result<()> {
     trace2_transfer::emit_negotiated_version_from_git_protocol_env();
 
     let server_proto = protocol_wire::server_protocol_version_from_git_protocol_env();
+    let advertise_only = args.advertise_refs || args.http_backend_info_refs;
+
     if server_proto == 2 {
         let caps = ServerCaps::load(&repo.git_dir);
-        if args.advertise_refs {
+        if advertise_only {
             let mut out = io::stdout();
             caps.advertise(&mut out)?;
             out.flush()?;
@@ -70,24 +80,28 @@ pub fn run(args: Args) -> Result<()> {
         let mut input = stdin.lock();
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        caps.advertise(&mut out)?;
-        out.flush()?;
+        if !args.stateless_rpc {
+            caps.advertise(&mut out)?;
+            out.flush()?;
+        }
         drop(out);
         return serve_loop(&mut input, &repo.git_dir, &caps);
     }
 
-    if args.advertise_refs {
+    if advertise_only {
         return advertise_refs_with_caps(&repo, server_proto);
     }
 
     let mut out = io::stdout();
-    if server_proto == 1 {
-        pkt_line::write_line(&mut out, "version 1")?;
+    if !args.stateless_rpc {
+        if server_proto == 1 {
+            pkt_line::write_line(&mut out, "version 1")?;
+            out.flush()?;
+        }
+        write_ref_advertisement(&mut out, &repo.git_dir)?;
+        pkt_line::write_flush(&mut out)?;
         out.flush()?;
     }
-    write_ref_advertisement(&mut out, &repo.git_dir)?;
-    pkt_line::write_flush(&mut out)?;
-    out.flush()?;
 
     let mut stdin = io::stdin();
     let mut wants: Vec<ObjectId> = Vec::new();

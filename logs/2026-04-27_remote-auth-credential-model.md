@@ -118,6 +118,18 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Confirmed existing curl trace redaction already covers `Authorization`, `Proxy-Authorization`, cookie values, and auth-like extra headers by default.
 - Validation: `cargo fmt`, `cargo check -p grit-rs`, and `cargo build --release -p grit-rs` passed; manual HTTP trace/error smoke with URL userinfo passed.
 
+## HTTP Proxy and Smart Regression Sweep
+
+- Accepted Git transport's internal `pack-objects --all-progress-implied` flag.
+- Implemented `unpack-objects --pack_header=<version>,<count>` by reconstructing the consumed PACK header before unpacking the remaining stream.
+- Fixed `test-httpd` smart backend lookup for colon-separated `GIT_EXEC_PATH` and Homebrew/system backend locations.
+- Added `upload-pack --http-backend-info-refs` and `--stateless-rpc` compatibility.
+- Fixed stateless upload-pack responses so HTTP v2 POST responses are not prefixed with capability advertisements.
+- Kept v0/v1 stateless HTTP POSTs from sending `Git-Protocol: version=2` after a v0 discovery response.
+- Cached proxy askpass results in-process so a clone prompts once for a proxy URL even when it constructs multiple HTTP contexts.
+- Cleared inherited `GIT_PROTOCOL` from `test-httpd` CGI children unless the request explicitly supplies a `Git-Protocol` header.
+- Validation: `t5564-http-proxy` now reports 7/8 instead of timing out; `t5555-http-smart-common` passes 10/10; `t5581-http-curl-verbose` reports 1/2 with a current harness `git-remote-http` lookup issue; `t5549`, `t5539`, and `t5542` still show broader HTTP smart/shallow failures.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.

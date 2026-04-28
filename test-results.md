@@ -62,6 +62,17 @@
 - HTTP access errors, curl request-start traces (when `GIT_TRACE_REDACT` is not `0`), and trace2 `git-remote-https` child-start URLs now scrub URL username/password fields before display.
 - Existing curl trace redaction already covers `Authorization`, `Proxy-Authorization`, cookie values, and auth-like `http.extraHeader` values by default.
 
+**2026-04-28 (remote auth / HTTP proxy and smart regression sweep)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed (local harness uses the debug helper when present)
+- `./scripts/run-tests.sh --timeout 60 t5564-http-proxy.sh`: 7/8 passed; no timeout, proxy `407`, authenticated proxy clone, proxy askpass, and proxy redaction pass. Remaining failure: SOCKS Unix socket clone gets an empty v0 stateless upload-pack response.
+- `./scripts/run-tests.sh --timeout 90 t5581-http-curl-verbose.sh t5555-http-smart-common.sh`: `t5581` 1/2, `t5555` 10/10. `t5581` currently selects system Git for HTTP clone and fails before curl output because the temporary `GIT_EXEC_PATH` lacks `git-remote-http`.
+- `./scripts/run-tests.sh --timeout 90 t5549-fetch-push-http.sh t5541-http-push-smart.sh t5539-fetch-http-shallow.sh t5542-push-http-shallow.sh`: `t5549` 0/3, `t5539` 1/8, `t5542` 1/3; `t5541` skipped by current `data/test-files.csv` scope.
+- Implemented upload-pack compatibility for smart-HTTP `--http-backend-info-refs` and `--stateless-rpc`, fixed stateless v2 responses so `ls-refs`/fetch responses are not prefixed by capability advertisements, avoided leaking v2 `Git-Protocol` into v0 HTTP POSTs, fixed Homebrew/system `git-http-backend` lookup in `test-httpd`, and cached proxy askpass results per process.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
