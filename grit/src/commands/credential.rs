@@ -226,8 +226,7 @@ impl Credential {
         if self.password_expired(now_utc) {
             return false;
         }
-        self.get("password").is_some_and(|s| !s.is_empty())
-            || self.get("credential").is_some_and(|s| !s.is_empty())
+        self.has_key("password") || self.has_key("credential")
     }
 
     fn target_url(&self) -> Option<String> {

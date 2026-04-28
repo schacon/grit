@@ -62,7 +62,7 @@ Definition of done:
 - [x] Multi-valued credential attributes survive helper round trips.
 - [x] The model can represent helper-provided `authtype` + `credential` without username/password.
 
-## Phase 2: Credential Helper Semantics [~]
+## Phase 2: Credential Helper Semantics
 
 Dependency: Phase 1.
 
@@ -103,12 +103,12 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`
-- [ ] `./scripts/run-tests.sh t0303-credential-external.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0303-credential-external.sh`
 
 Definition of done:
 
 - [x] `t0300-credentials` is fully passing.
-- [ ] `t0303-credential-external` remains passing.
+- [x] `t0303-credential-external` remains passing.
 - [x] Credential helpers can return Bearer-style credentials for later HTTP use.
 
 ## Phase 3: Credential Store Parity
@@ -146,13 +146,13 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [ ] `./scripts/run-tests.sh t0302-credential-store.sh`
-- [ ] `./scripts/run-tests.sh t0300-credentials.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0302-credential-store.sh`
+- [x] `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh`
 
 Definition of done:
 
-- [ ] `t0302-credential-store` is fully passing.
-- [ ] Store helper behavior remains compatible with credential helper chaining.
+- [x] `t0302-credential-store` is fully passing.
+- [x] Store helper behavior remains compatible with credential helper chaining.
 
 ## Phase 4: Credential Cache Daemon
 

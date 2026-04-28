@@ -178,6 +178,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Made helper-advertised capabilities, not caller-requested capabilities, determine capability lines in filled credential output.
 - Added credential-specific URL parsing and matching for decoded path/host components, wildcard host scopes, username and no-username scope comparisons, bare query/fragment path markers, and partial URL config keys.
 - Validation: `./scripts/run-tests.sh --timeout 120 t0300-credentials.sh` now passes 56/56.
+- Brought `t0303-credential-external` into scope and validated it remains 23/23.
+- Brought `t0302-credential-store` into scope.
+- Credential-store now stores explicit empty `username=`/`password=` pairs, replaces existing stored credentials by identity fields when approving, and respects a supplied password only for reject/erase matching.
+- Validation: `./scripts/run-tests.sh --timeout 120 t0302-credential-store.sh` now passes 65/65.
 
 ## HTTP Challenge Plumbing
 

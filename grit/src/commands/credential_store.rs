@@ -100,18 +100,10 @@ impl StoredCredential {
             return None;
         }
         let (username, password) = match userinfo {
-            Some(userinfo) => {
-                if userinfo.is_empty() {
-                    return None;
-                }
-                match userinfo.split_once(':') {
-                    Some((user, pass)) if !user.is_empty() && !pass.is_empty() => {
-                        (Some(user.to_string()), Some(pass.to_string()))
-                    }
-                    Some(_) => return None,
-                    None => (Some(userinfo.to_string()), None),
-                }
-            }
+            Some(userinfo) => match userinfo.split_once(':') {
+                Some((user, pass)) => (Some(user.to_string()), Some(pass.to_string())),
+                None => (Some(userinfo.to_string()), None),
+            },
             None => (None, None),
         };
         if username.is_none() || password.is_none() {
@@ -126,7 +118,7 @@ impl StoredCredential {
         })
     }
 
-    fn matches_query(&self, query: &BTreeMap<String, String>) -> bool {
+    fn matches_query(&self, query: &BTreeMap<String, String>, include_password: bool) -> bool {
         if query
             .get("protocol")
             .is_some_and(|protocol| protocol != &self.protocol)
@@ -141,6 +133,13 @@ impl StoredCredential {
                 return false;
             }
         }
+        if include_password {
+            if let Some(password) = query.get("password") {
+                if self.password.as_deref() != Some(password.as_str()) {
+                    return false;
+                }
+            }
+        }
         if let Some(path) = query.get("path").filter(|value| !value.is_empty()) {
             if self.path.as_deref() != Some(path.as_str()) {
                 return false;
@@ -150,8 +149,13 @@ impl StoredCredential {
     }
 }
 
-fn credential_matches_line(line: &str, creds: &BTreeMap<String, String>) -> bool {
-    StoredCredential::parse(line).is_some_and(|stored| stored.matches_query(creds))
+fn credential_matches_line(
+    line: &str,
+    creds: &BTreeMap<String, String>,
+    include_password: bool,
+) -> bool {
+    StoredCredential::parse(line)
+        .is_some_and(|stored| stored.matches_query(creds, include_password))
 }
 
 fn output_stored_credential(
@@ -188,7 +192,7 @@ fn to_url_line(creds: &BTreeMap<String, String>) -> Option<String> {
     let password = creds.get("password").map(|s| s.as_str()).unwrap_or("");
     let path = creds.get("path").map(|s| s.as_str()).unwrap_or("");
 
-    let userinfo = if !username.is_empty() && !password.is_empty() {
+    let userinfo = if creds.contains_key("username") && creds.contains_key("password") {
         format!("{username}:{password}@")
     } else if !username.is_empty() {
         format!("{username}@")
@@ -240,7 +244,7 @@ pub fn run(args: Args) -> Result<()> {
                     let Some(stored) = StoredCredential::parse(&line) else {
                         continue;
                     };
-                    if stored.matches_query(&creds) {
+                    if stored.matches_query(&creds, false) {
                         output_stored_credential(&mut out, &stored, &creds)?;
                         return Ok(());
                     }
@@ -259,7 +263,7 @@ pub fn run(args: Args) -> Result<()> {
             }
             let mut lines = read_credential_lines(&path)?
                 .into_iter()
-                .filter(|line| !credential_matches_line(line, &creds))
+                .filter(|line| !credential_matches_line(line, &creds, false))
                 .collect::<Vec<_>>();
             lines.push(url_line);
             write_credential_lines(&path, &lines)?;
@@ -277,7 +281,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 let lines = read_credential_lines(&path)?
                     .into_iter()
-                    .filter(|line| !credential_matches_line(line, &creds))
+                    .filter(|line| !credential_matches_line(line, &creds, true))
                     .collect::<Vec<_>>();
                 write_credential_lines(&path, &lines)?;
             }
