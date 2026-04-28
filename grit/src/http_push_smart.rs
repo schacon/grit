@@ -90,6 +90,9 @@ fn parse_v0_v1_advertisement(
                 if line.starts_with("version ") {
                     continue;
                 }
+                if line.starts_with("shallow ") {
+                    continue;
+                }
                 let (payload, cap_part) = match line.split_once('\0') {
                     Some((p, c)) => (p.trim(), Some(c)),
                     None => (line.trim(), None),

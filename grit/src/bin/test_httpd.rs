@@ -23,6 +23,8 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use flate2::read::GzDecoder;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
@@ -938,7 +940,20 @@ fn run_smart_http_cgi_output(
     if let Some(ct) = req.headers.get("content-type") {
         cmd.env("CONTENT_TYPE", ct);
     }
-    cmd.env("CONTENT_LENGTH", req.body.len().to_string());
+    let mut cgi_body = req.body.clone();
+    if req
+        .headers
+        .get("content-encoding")
+        .is_some_and(|value| value.eq_ignore_ascii_case("gzip"))
+    {
+        let mut decoder = GzDecoder::new(req.body.as_slice());
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .map_err(|e| format!("Failed to decode gzip request body: {e}"))?;
+        cgi_body = decoded;
+    }
+    cmd.env("CONTENT_LENGTH", cgi_body.len().to_string());
 
     if let Some(proto) = req.headers.get("git-protocol") {
         cmd.env("GIT_PROTOCOL", proto);
@@ -962,7 +977,7 @@ fn run_smart_http_cgi_output(
 
     // Send request body to CGI stdin
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(&req.body);
+        let _ = stdin.write_all(&cgi_body);
     }
 
     let output = child

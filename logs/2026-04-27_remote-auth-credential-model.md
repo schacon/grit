@@ -142,6 +142,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Emitted `write_pack_file/wrote` trace2 data for HTTP push packs from the generated pack header object count.
 - Added initial `push.negotiate` handling: protocol-v2 pushes use local parent commits as common bases for thin-pack object counts, while non-v2 negotiation emits Git-compatible warnings and proceeds.
 - Validation: `t5549-fetch-push-http` now passes 3/3; `t5555-http-smart-common`, `t5564-http-proxy`, and `t5581-http-curl-verbose` remain fully passing.
+- Ignored `shallow <oid>` lines while parsing HTTP receive-pack advertisements.
+- Stripped leading `+` before resolving HTTP push source refspecs.
+- Decoded gzip request bodies in the lightweight HTTP server before passing them to `git-http-backend`, which fixes large receive-pack POSTs.
+- Validation: `t5542-push-http-shallow` now passes 3/3; `t5549`, `t5555`, `t5564`, and `t5581` remain fully passing.
 
 ## HTTP Challenge Plumbing
 
