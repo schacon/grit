@@ -101,6 +101,13 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - The live SSH clone path initializes the destination repository, fetches over SSH, writes remote-tracking refs, configures origin, and checks out the selected/default branch when possible.
 - Validation: `t5601-clone` remains 64/115 and `t5603-clone-dirname` remains 25/47 with broader existing failures.
 
+## SSH Push Hardening
+
+- Allowed `--receive-pack` to flow through SSH push instead of rejecting it before transport selection.
+- Kept `--receive-pack` rejected for HTTP and local native push paths where it is still unsupported.
+- Passed custom receive-pack command names into the SSH service spawner.
+- Validation: `t5406-remote-rejects` passed 3/3; `t5545-push-options` remains 2/13 with broader existing failures.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.

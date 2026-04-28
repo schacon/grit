@@ -374,20 +374,6 @@ fn override_ssh_variant() -> Option<SshVariant> {
     })
 }
 
-fn core_ssh_command() -> Option<String> {
-    ConfigSet::load(None, true)
-        .ok()
-        .and_then(|set| set.get("core.sshCommand"))
-        .filter(|cmd| !cmd.trim().is_empty())
-}
-
-fn shell_ssh_command() -> Option<String> {
-    std::env::var_os("GIT_SSH_COMMAND")
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string_lossy().into_owned())
-        .or_else(core_ssh_command)
-}
-
 fn basename_cmd(cmd: &str) -> &str {
     Path::new(cmd.trim())
         .file_name()
@@ -518,8 +504,6 @@ fn protocol_version_for_remote_cmd(remote_cmd_name: Option<&str>) -> u8 {
 }
 
 /// Build argv for `GIT_SSH` (no shell): program, options…, host, `git-upload-pack 'path'`.
-///
-/// Defaults to `ssh` when `GIT_SSH` is unset, matching the live spawn path.
 pub fn build_git_ssh_argv(
     host: &str,
     port: Option<&str>,
@@ -528,7 +512,10 @@ pub fn build_git_ssh_argv(
     ipv4: bool,
     ipv6: bool,
 ) -> Result<Vec<OsString>> {
-    let ssh = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let ssh = match std::env::var("GIT_SSH") {
+        Ok(s) if !s.is_empty() => s,
+        _ => bail!("GIT_SSH not set"),
+    };
 
     let quoted_path = sq_quote_shell_arg(remote_repo_path);
     let remote_cmd = remote_upload_pack_cmd(upload_pack, &quoted_path);
@@ -560,11 +547,11 @@ pub fn build_git_ssh_argv(
 }
 
 /// Spawn SSH running `git-receive-pack '<path>'` for a smart push transport.
-pub fn spawn_git_ssh_receive_pack(spec: &SshUrl) -> Result<Child> {
+pub fn spawn_git_ssh_receive_pack(spec: &SshUrl, receive_pack: Option<&str>) -> Result<Child> {
     spawn_git_ssh_service(
         &spec.ssh_host,
         spec.port.as_deref(),
-        Some("git-receive-pack"),
+        Some(receive_pack.unwrap_or("git-receive-pack")),
         &spec.path,
         false,
         false,
@@ -595,13 +582,14 @@ fn spawn_git_ssh_service(
     let remote_cmd = remote_upload_pack_cmd(remote_cmd_name, &quoted_path);
     let proto = protocol_version_for_remote_cmd(remote_cmd_name);
 
-    if let Some(cmd) = shell_ssh_command() {
-        let mut variant = determine_ssh_variant(cmd.as_str(), true);
+    if let Some(cmd_os) = std::env::var_os("GIT_SSH_COMMAND").filter(|v| !v.is_empty()) {
+        let cmd = cmd_os.to_string_lossy();
+        let mut variant = determine_ssh_variant(cmd.as_ref(), true);
         if variant == SshVariant::Auto {
-            let words = shell_words::split(cmd.as_str())
-                .map_err(|_| anyhow::anyhow!("SSH command: missing closing quote"))?;
+            let words = shell_words::split(cmd.as_ref())
+                .map_err(|_| anyhow::anyhow!("GIT_SSH_COMMAND: missing closing quote"))?;
             let Some(prog) = words.first() else {
-                bail!("empty SSH command");
+                bail!("empty GIT_SSH_COMMAND");
             };
             let mut probe_args: Vec<OsString> =
                 words[1..].iter().map(|s| OsString::from(s)).collect();
@@ -645,7 +633,7 @@ fn spawn_git_ssh_service(
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .context("failed to spawn SSH command");
+            .context("failed to spawn GIT_SSH_COMMAND");
     }
 
     let ssh = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
@@ -683,7 +671,7 @@ fn spawn_git_ssh_service(
         .with_context(|| format!("failed to execute SSH command '{ssh}'"))
 }
 
-/// Run `GIT_SSH_COMMAND` / `core.sshCommand` via shell when clone cannot resolve locally.
+/// Run `GIT_SSH_COMMAND` via shell when clone cannot resolve locally (matches Git).
 pub fn unresolved_ssh_clone_invoke_git_ssh_command(
     host: &str,
     port: Option<&str>,
@@ -692,20 +680,21 @@ pub fn unresolved_ssh_clone_invoke_git_ssh_command(
     ipv4: bool,
     ipv6: bool,
 ) -> Result<()> {
-    let Some(cmd) = shell_ssh_command() else {
+    let Some(cmd_os) = std::env::var_os("GIT_SSH_COMMAND").filter(|v| !v.is_empty()) else {
         return Ok(());
     };
+    let cmd = cmd_os.to_string_lossy();
 
     let quoted_path = sq_quote_shell_arg(remote_repo_path);
     let remote_cmd = remote_upload_pack_cmd(upload_pack, &quoted_path);
     let proto = protocol_wire::effective_client_protocol_version();
 
-    let mut variant = determine_ssh_variant(cmd.as_str(), true);
+    let mut variant = determine_ssh_variant(cmd.as_ref(), true);
     if variant == SshVariant::Auto {
-        let words = shell_words::split(cmd.as_str())
-            .map_err(|_| anyhow::anyhow!("SSH command: missing closing quote"))?;
+        let words = shell_words::split(cmd.as_ref())
+            .map_err(|_| anyhow::anyhow!("GIT_SSH_COMMAND: missing closing quote"))?;
         let Some(prog) = words.first() else {
-            bail!("empty SSH command");
+            bail!("empty GIT_SSH_COMMAND");
         };
         let mut probe_args: Vec<OsString> = words[1..].iter().map(|s| OsString::from(s)).collect();
         push_ssh_options(
@@ -745,7 +734,7 @@ pub fn unresolved_ssh_clone_invoke_git_ssh_command(
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .status()
-        .context("failed to run SSH command")?;
+        .context("failed to run GIT_SSH_COMMAND")?;
     if status.success() {
         return Ok(());
     }
@@ -768,11 +757,15 @@ pub(crate) fn unresolved_ssh_clone_invoke_git_ssh(
         ipv6,
     )?;
 
-    if shell_ssh_command().is_some() {
+    let ssh_cmd_set = std::env::var_os("GIT_SSH_COMMAND").is_some_and(|v| v != OsString::new());
+    if ssh_cmd_set {
         return Ok(());
     }
 
-    let ssh = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let ssh = match std::env::var("GIT_SSH") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return Ok(()),
+    };
 
     let argv = build_git_ssh_argv(
         &spec.ssh_host,
