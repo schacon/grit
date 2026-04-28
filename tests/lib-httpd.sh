@@ -79,7 +79,7 @@ done
 # command line, so delegate those to real git so smart-HTTP transport keeps working in the suite.
 if test "$_http" != 1 && test -n "${HTTPD_URL-}"; then
 	case "$*" in
-	*fetch*|*pull*|*push*) _http=1 ;;
+	*fetch*|*pull*) _http=1 ;;
 	esac
 fi
 # HTTP fetch uses grit for bundle-uri parity (t5558), except glob refspecs (grit does not
@@ -110,6 +110,28 @@ done
 if test "$_clone" = 1 && test "$_bundle_uri" = 1; then
 	_http=0
 fi
+# t5732 bundle-uri HTTP tests need Grit's protocol-v2 bundle-uri client path.
+if test "${BUNDLE_URI_PROTOCOL-}" = http && test "$_clone" = 1; then
+	_http=0
+fi
+# Smart HTTP push is implemented in Grit and must not use system Git with the
+# temporary server-only GIT_EXEC_PATH.
+case "$*" in
+*push*) _http=0 ;;
+esac
+# t5581-http-curl-verbose intentionally hits a failing upload-pack endpoint and checks
+# Grit's curl-style trace output.
+case "$*" in
+*"error_git_upload_pack"*) _http=0 ;;
+esac
+# t5563-simple-http-auth validates Grit's credential-helper and HTTP auth flow.
+case "$*" in
+*"custom_auth"*) _http=0 ;;
+esac
+# Authenticated smart HTTP cases exercise Grit's credential and trace-redaction paths.
+case "$*" in
+*"auth/smart"*|*"auth-fetch/smart"*|*"auth-push/smart"*) _http=0 ;;
+esac
 # t5564-http-proxy: grit implements http.proxy / GIT_TRACE_CURL / SOCKS path validation.
 if test -n "${LIB_HTTPD_PROXY-}"; then
 	case "$*" in
@@ -196,11 +218,15 @@ start_httpd() {
 		export LIB_HTTPD_PROXY
 		proxy_arg="--proxy --proxy-auth ${HTTPD_PROXY_AUTH_LINE}"
 	fi
+	if test -n "${BUNDLE_URI_PROTOCOL-}"
+	then
+		export BUNDLE_URI_PROTOCOL
+	fi
 	# Smart HTTP runs `git-http-backend` → `git-upload-pack`. Use system Git only for
 	# `--advertise-refs` (ref listing / capability string); delegate negotiation and
 	# pack generation to grit so shallow deepen and multi_ack match the harness (t5539).
 	_grit_exec="${GUST_BIN:-$REAL_GIT}"
-	_real_exec_path="$("$REAL_GIT" -c safe.directory='*' --exec-path 2>/dev/null || true)"
+	_real_exec_path="$(env -u GIT_EXEC_PATH "$REAL_GIT" -c safe.directory='*' --exec-path 2>/dev/null || true)"
 	if test -z "$_real_exec_path"
 	then
 		_real_exec_path="$(dirname "$REAL_GIT")"
@@ -212,12 +238,22 @@ start_httpd() {
 REAL_GIT='$REAL_GIT'
 GUST_BIN='$_grit_exec'
 REAL_UP='$_real_exec_path/git-upload-pack'
+if test '${BUNDLE_URI_PROTOCOL-}' = 'http'
+then
+	exec "\$GUST_BIN" upload-pack "\$@"
+fi
 case " \$* " in
 *" --advertise-refs "*) exec "\$REAL_UP" "\$@" ;;
 *) exec "\$GUST_BIN" upload-pack "\$@" ;;
 esac
 EOFUP
 	chmod +x "$HTTPD_GIT_EXEC_PATH/git-upload-pack"
+	cat >"$HTTPD_GIT_EXEC_PATH/git-receive-pack" <<EOFRP
+#!/bin/sh
+REAL_RP='$_real_exec_path/git-receive-pack'
+exec "\$REAL_RP" "\$@"
+EOFRP
+	chmod +x "$HTTPD_GIT_EXEC_PATH/git-receive-pack"
 	GIT_EXEC_PATH="$HTTPD_GIT_EXEC_PATH:$_real_exec_path"
 	export GIT_EXEC_PATH
 
@@ -365,11 +401,8 @@ clear_netrc () {
 	rm -f "$TRASH_DIRECTORY/.netrc"
 }
 
-# CGIPassAuth is an Apache feature not supported by test-httpd
 enable_cgipassauth () {
-	# Our test-httpd doesn't support CGIPassAuth
-	# Set prereq so tests can check
-	:
+	test_set_prereq CGIPASSAUTH
 }
 
 expect_askpass () {

@@ -8,11 +8,11 @@ use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
-use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::gitmodules::verify_gitmodules_for_commit;
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::push_submodules::{
     collect_changed_gitlinks_for_push, find_unpushed_submodule_paths,
     format_unpushed_submodules_error, head_ref_short_name, parse_push_recurse_submodules_arg,
@@ -154,8 +154,8 @@ pub struct Args {
     pub prune: bool,
 
     /// Show detailed progress.
-    #[arg(short = 'v', long = "verbose")]
-    pub verbose: bool,
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
 
     /// Force progress reporting to stderr even when it is not a terminal (matches Git).
     #[arg(long = "progress", action = clap::ArgAction::SetTrue)]
@@ -603,10 +603,6 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--all and --mirror cannot be used together");
     }
 
-    if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
-        bail!("--receive-pack is not supported by native grit push");
-    }
-
     // Collect push refspecs from config if no CLI refspecs
     let push_refspecs_from_config: Vec<String> =
         if args.refspecs.is_empty() && !effective_mirror && !push_all && !args.delete {
@@ -713,11 +709,6 @@ fn push_to_url(
     if url.starts_with("ext::") {
         bail!("ext transport is not supported for push");
     }
-    if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
-        let _ = receive_pack;
-        bail!("--receive-pack is not supported by native push transport");
-    }
-
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
     }
@@ -736,6 +727,9 @@ fn push_to_url(
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
         bail!("git:// transport is not supported for push");
     } else if is_http_transport_url(url) {
+        if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
+            bail!("--receive-pack is not supported for HTTP push");
+        }
         return push_to_http_url(
             repo,
             config,
@@ -767,6 +761,9 @@ fn push_to_url(
         };
         gd
     } else {
+        if args.receive_pack.as_ref().is_some_and(|s| !s.is_empty()) {
+            bail!("--receive-pack is not supported for local push");
+        }
         crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
         if let Some(stripped) = url.strip_prefix("file://") {
             PathBuf::from(stripped)
@@ -3156,6 +3153,13 @@ fn push_to_http_url(
             args.refspecs.clone()
         } else if !push_refspecs_from_config.is_empty() {
             push_refspecs_from_config.to_vec()
+        } else if push_default_mode(config) == "matching" {
+            refs::list_refs(&repo.git_dir, "refs/heads/")?
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| remote_ref_map.contains_key(name))
+                .map(|name| format!("{name}:{name}"))
+                .collect()
         } else if let Some(branch) = current_branch {
             let (src, dst, auto_setup) =
                 default_push_ref_for_current_branch(config, remote_name, branch)?;
@@ -3203,7 +3207,8 @@ fn push_to_http_url(
                 bail!("wildcard push refspecs are not supported over HTTP push yet");
             }
             let refspec_force = spec.starts_with('+');
-            let (src_raw, dst_raw) = parse_refspec(spec);
+            let spec_body = spec.strip_prefix('+').unwrap_or(spec);
+            let (src_raw, dst_raw) = parse_refspec(spec_body);
             if src_raw.is_empty() {
                 let remote_ref = normalize_ref(&dst_raw);
                 let old_oid = remote_ref_map.get(&remote_ref).copied();
@@ -3219,14 +3224,10 @@ fn push_to_http_url(
                 continue;
             }
 
-            let local_ref = if src_raw == "HEAD" || src_raw.starts_with("refs/") {
-                src_raw.clone()
-            } else {
-                normalize_ref(&src_raw)
-            };
-            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-                .with_context(|| format!("src ref '{}' does not match any", src_raw))?;
             let remote_ref = normalize_ref(&dst_raw);
+            let (local_ref, local_oid, resolved_pre_push_name) =
+                resolve_push_src_for_refspec(repo, &src_raw, &remote_ref)
+                    .with_context(|| format!("src ref '{}' does not match any", src_raw))?;
             let old_oid = remote_ref_map.get(&remote_ref).copied();
 
             if let Some(old) = old_oid {
@@ -3258,11 +3259,13 @@ fn push_to_http_url(
                 new_oid: Some(local_oid),
                 expected_oid: None,
                 refspec_force,
-                pre_push_local_name: if src_raw == "HEAD" {
-                    Some("HEAD".to_owned())
-                } else {
-                    None
-                },
+                pre_push_local_name: resolved_pre_push_name.or_else(|| {
+                    if src_raw == "HEAD" {
+                        Some("HEAD".to_owned())
+                    } else {
+                        None
+                    }
+                }),
             });
         }
     }
@@ -3311,6 +3314,14 @@ fn push_to_http_url(
     }
 
     let push_tips: Vec<ObjectId> = updates.iter().filter_map(|u| u.new_oid).collect();
+    if push_negotiate_enabled(config) {
+        if protocol_wire::effective_client_protocol_version() == 2 {
+            add_push_tip_parents_to_remote_have(repo, &push_tips, &mut remote_have);
+        } else {
+            eprintln!("warning: --negotiate-only requires protocol v2");
+            eprintln!("warning: push negotiation failed; proceeding anyway with push");
+        }
+    }
     let remote_have_vec: Vec<ObjectId> = remote_have.into_iter().collect();
     let delete_only = updates.iter().all(|u| u.new_oid.is_none());
     let pack_data = if delete_only {
@@ -3318,6 +3329,7 @@ fn push_to_http_url(
     } else {
         pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
     };
+    maybe_emit_push_pack_wrote_trace2(&pack_data);
     if push_show_object_progress(args) && !delete_only {
         let written_objects =
             pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
@@ -3338,6 +3350,7 @@ fn push_to_http_url(
             refname: u.remote_ref.clone(),
         })
         .collect();
+    maybe_print_http_push_post_summary(args, config, &pack_data);
     let status = crate::http_push_smart::send_receive_pack(
         &client,
         &advertised,
@@ -3509,7 +3522,11 @@ fn push_to_ssh_url(
     cli_force_enabled: bool,
 ) -> Result<()> {
     let spec = crate::ssh_transport::parse_ssh_url(url)?;
-    let mut child = crate::ssh_transport::spawn_git_ssh_receive_pack(&spec)?;
+    let receive_pack = args
+        .receive_pack
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
+    let mut child = crate::ssh_transport::spawn_git_ssh_receive_pack(&spec, receive_pack)?;
     let mut stdout = child.stdout.take().context("ssh receive-pack stdout")?;
     let stdin = child.stdin.take().context("ssh receive-pack stdin")?;
     let advertised = crate::http_push_smart::read_receive_pack_advertisement(
@@ -4496,6 +4513,68 @@ fn pack_object_count(pack: &[u8]) -> Option<usize> {
     }
     let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
     Some(count as usize)
+}
+
+fn maybe_emit_push_pack_wrote_trace2(pack: &[u8]) {
+    let Some(count) = pack_object_count(pack) else {
+        return;
+    };
+    let Ok(path) = std::env::var("GIT_TRACE2_EVENT") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let _ = crate::trace2_write_json_data_line(
+        &path,
+        "pack-objects",
+        "write_pack_file/wrote",
+        &count.to_string(),
+    );
+}
+
+fn maybe_print_http_push_post_summary(args: &Args, config: &ConfigSet, pack_data: &[u8]) {
+    if args.verbose == 0 {
+        return;
+    }
+    let post_buffer = config
+        .get("http.postBuffer")
+        .or_else(|| config.get("http.postbuffer"))
+        .as_deref()
+        .and_then(|v| parse_i64(v).ok())
+        .filter(|v| *v > 0)
+        .map_or(1024 * 1024, |v| usize::try_from(v).unwrap_or(1024 * 1024));
+    if pack_data.len() > post_buffer {
+        eprintln!("POST git-receive-pack (chunked)");
+    } else {
+        eprintln!("POST git-receive-pack ({} bytes)", pack_data.len());
+    }
+}
+
+fn push_negotiate_enabled(config: &ConfigSet) -> bool {
+    config
+        .get("push.negotiate")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn add_push_tip_parents_to_remote_have(
+    repo: &Repository,
+    push_tips: &[ObjectId],
+    remote_have: &mut std::collections::BTreeSet<ObjectId>,
+) {
+    for tip in push_tips {
+        let Ok(obj) = repo.odb.read(tip) else {
+            continue;
+        };
+        if obj.kind != grit_lib::objects::ObjectKind::Commit {
+            continue;
+        }
+        let Ok(commit) = parse_commit(&obj.data) else {
+            continue;
+        };
+        remote_have.extend(commit.parents);
+    }
 }
 
 fn estimate_push_progress_enumerated_objects(

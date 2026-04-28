@@ -94,6 +94,11 @@ pub fn run(args: Args) -> Result<()> {
         return run_http_ls_remote(&repo_path_str, &args);
     }
 
+    if crate::ssh_transport::is_configured_ssh_url(&repo_path_str) {
+        crate::protocol::check_protocol_allowed("ssh", None)?;
+        return run_ssh_ls_remote(&repo_path_str, &args);
+    }
+
     // Check if the path is a bundle file
     if is_bundle_file(&effective_path) {
         return run_bundle_ls_remote(&effective_path, &args);
@@ -210,6 +215,35 @@ fn run_http_ls_remote(repo_url: &str, args: &Args) -> Result<()> {
         }
     });
 
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
+    Ok(())
+}
+
+fn run_ssh_ls_remote(repo_url: &str, args: &Args) -> Result<()> {
+    let spec = crate::ssh_transport::parse_ssh_url(repo_url)?;
+    let upload = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
+    let mut child = crate::ssh_transport::spawn_git_ssh_upload_pack(&spec, upload)?;
+    let mut stdin = child.stdin.take().context("ssh upload-pack stdin")?;
+    let mut stdout = child.stdout.take().context("ssh upload-pack stdout")?;
+    let entries = read_ls_remote_upload_pack_output(
+        &mut stdin,
+        &mut stdout,
+        &std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned()),
+        args,
+    )?;
+    drop(stdin);
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("ssh upload-pack exited with status {status}");
+    }
+    if entries.is_empty() || args.quiet {
+        return Ok(());
+    }
     for entry in &entries {
         if let Some(target) = &entry.symref_target {
             println!("ref: {target}\t{}", entry.name);

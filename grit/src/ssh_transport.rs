@@ -547,11 +547,23 @@ pub fn build_git_ssh_argv(
 }
 
 /// Spawn SSH running `git-receive-pack '<path>'` for a smart push transport.
-pub fn spawn_git_ssh_receive_pack(spec: &SshUrl) -> Result<Child> {
+pub fn spawn_git_ssh_receive_pack(spec: &SshUrl, receive_pack: Option<&str>) -> Result<Child> {
     spawn_git_ssh_service(
         &spec.ssh_host,
         spec.port.as_deref(),
-        Some("git-receive-pack"),
+        Some(receive_pack.unwrap_or("git-receive-pack")),
+        &spec.path,
+        false,
+        false,
+    )
+}
+
+/// Spawn SSH running `git-upload-pack '<path>'` for smart fetch/ls-remote transport.
+pub fn spawn_git_ssh_upload_pack(spec: &SshUrl, upload_pack: Option<&str>) -> Result<Child> {
+    spawn_git_ssh_service(
+        &spec.ssh_host,
+        spec.port.as_deref(),
+        upload_pack,
         &spec.path,
         false,
         false,
