@@ -342,14 +342,14 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5564-http-proxy.sh` (7/8; SOCKS Unix socket clone remains)
+- [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
 - [~] `./scripts/run-tests.sh t5581-http-curl-verbose.sh` (1/2; current failure is harness `git-remote-http` lookup)
 - [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 
 Definition of done:
 
 - [x] `t5564-http-proxy` no longer times out and has clear pass/fail counts.
-- [ ] Proxy credentials are never leaked in default traces.
+- [x] Proxy credentials are never leaked in default traces.
 
 ## Phase 9: HTTP Cookies, TLS, and Split HTTP Stack
 
@@ -392,7 +392,7 @@ Validation:
 - [ ] `./scripts/run-tests.sh t5732-protocol-v2-bundle-uri-http.sh`
 - [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh`
 - [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
-- [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
+- [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
 
 Definition of done:
 

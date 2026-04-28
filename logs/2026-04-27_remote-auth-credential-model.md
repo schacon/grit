@@ -129,6 +129,9 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Cached proxy askpass results in-process so a clone prompts once for a proxy URL even when it constructs multiple HTTP contexts.
 - Cleared inherited `GIT_PROTOCOL` from `test-httpd` CGI children unless the request explicitly supplies a `Git-Protocol` header.
 - Validation: `t5564-http-proxy` now reports 7/8 instead of timing out; `t5555-http-smart-common` passes 10/10; `t5581-http-curl-verbose` reports 1/2 with a current harness `git-remote-http` lookup issue; `t5549`, `t5539`, and `t5542` still show broader HTTP smart/shallow failures.
+- Fixed SOCKS-over-Unix direct HTTP request construction so inserted headers are CRLF-delimited instead of concatenated onto the previous header.
+- This restored parseable `Git-Protocol` and `Content-Length` headers for SOCKS smart HTTP discovery and stateless POSTs.
+- Validation: `t5564-http-proxy` now passes 8/8; `t5555-http-smart-common` remains 10/10; `t5581-http-curl-verbose` remains 1/2 with the known harness `git-remote-http` lookup issue.
 
 ## HTTP Challenge Plumbing
 

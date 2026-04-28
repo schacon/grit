@@ -73,6 +73,16 @@
 - `./scripts/run-tests.sh --timeout 90 t5549-fetch-push-http.sh t5541-http-push-smart.sh t5539-fetch-http-shallow.sh t5542-push-http-shallow.sh`: `t5549` 0/3, `t5539` 1/8, `t5542` 1/3; `t5541` skipped by current `data/test-files.csv` scope.
 - Implemented upload-pack compatibility for smart-HTTP `--http-backend-info-refs` and `--stateless-rpc`, fixed stateless v2 responses so `ls-refs`/fetch responses are not prefixed by capability advertisements, avoided leaking v2 `Git-Protocol` into v0 HTTP POSTs, fixed Homebrew/system `git-http-backend` lookup in `test-httpd`, and cached proxy askpass results per process.
 
+**2026-04-28 (remote auth / SOCKS proxy completion)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo build -p grit-rs --bin test-httpd`: passed
+- `./scripts/run-tests.sh --timeout 60 t5564-http-proxy.sh`: 8/8 passed
+- `./scripts/run-tests.sh --timeout 90 t5555-http-smart-common.sh t5581-http-curl-verbose.sh`: `t5555` 10/10, `t5581` 1/2
+- Fixed SOCKS-over-Unix HTTP request construction so inserted headers are separate CRLF-delimited header lines instead of being appended to the previous header; this made `Git-Protocol` and `Content-Length` parse correctly for direct SOCKS GET/POST requests.
+
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 
 - `cargo check -p grit-rs`: passed
