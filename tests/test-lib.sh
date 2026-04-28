@@ -951,7 +951,7 @@ test_have_prereq () {
 	GZIP)      command -v gzip >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
 	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; missing_prereq=$_p; return 1 ;;
 	CURL)      command -v curl >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
-	CGIPASSAUTH) missing_prereq=$_p; return 1 ;; # Not supported by test-httpd
+	CGIPASSAUTH) eval "test \"\${_prereq_${_p}:-}\" = set" && return 0; missing_prereq=$_p; return 1 ;;
 	*)
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"

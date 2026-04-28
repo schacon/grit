@@ -219,7 +219,7 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5563-simple-http-auth.sh` (officially skipped by `CGIPASSAUTH`; temporary no-skip run passes 17/17)
+- [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [ ] `./scripts/run-tests.sh t0300-credentials.sh`
 
 Definition of done:
@@ -260,7 +260,7 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5563-simple-http-auth.sh` (officially skipped by `CGIPASSAUTH`; temporary no-skip run passes 17/17)
+- [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 - [ ] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
 
@@ -299,7 +299,7 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5563-simple-http-auth.sh` (officially skipped by `CGIPASSAUTH`; temporary no-skip run passes 17/17)
+- [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
 - [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:

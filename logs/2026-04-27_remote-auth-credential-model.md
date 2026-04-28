@@ -152,7 +152,8 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Approved proactively supplied credentials on first-request success, matching helper `store` expectations.
 - Folded custom auth continuation response lines in the test HTTP server before sending headers.
 - Parsed `status=... response=...` custom auth challenge lines so multistage auth gets the next challenge after an intermediate 401.
-- Validation: a temporary no-skip run of `t5563-simple-http-auth.sh` passes 17/17; official harness remains skipped by the hardcoded `CGIPASSAUTH` prereq in `tests/test-lib.sh`. Nearby official HTTP checks `t5555`, `t5564`, `t5581`, `t5549`, and `t5542` remain fully passing.
+- Enabled `CGIPASSAUTH` when `lib-httpd.sh` explicitly sets the prereq and moved `t5563-simple-http-auth` into scope.
+- Validation: `./scripts/run-tests.sh --timeout 120 t5563-simple-http-auth.sh` passes 17/17. Nearby official HTTP checks `t5555`, `t5564`, `t5581`, `t5549`, and `t5542` remain fully passing.
 
 ## HTTP Challenge Plumbing
 
