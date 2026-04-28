@@ -163,6 +163,11 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Fixed curl trace output for `GIT_TRACE_REDACT=0` to include the actual `Authorization` header value instead of a placeholder.
 - Made the lightweight HTTP access log include an Apache-like byte-count field so `strip_access_log` preserves status codes.
 - Validation: focused `t5551-http-fetch-smart` auth/redaction cases pass through Grit; official `t5551` is now in-scope at 29/37 with remaining real failures in empty SHA-256 clone object-format support, not auth.
+- Accepted repeated `-v` for `git push`.
+- Expanded default `push.default=matching` for HTTP remotes instead of bailing in the default-refspec path.
+- Emitted Git-style `POST git-receive-pack` summaries for verbose HTTP pushes, including chunked requests.
+- Sent a valid empty pack for HTTP receive-pack updates when the remote already has all pushed objects, fixing URL-scrub porcelain pushes.
+- Validation: focused `t5541-http-push-smart` auth/chunked/scrubbing slice passes; official `t5541` is now in-scope at 20/21 with only atomic collateral reporting remaining.
 
 ## HTTP Challenge Plumbing
 

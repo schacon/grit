@@ -416,14 +416,14 @@ Primary files:
 Tasks:
 
 - [~] Re-run unauthenticated HTTP baseline and fix regressions.
-- [ ] Re-run authenticated HTTP tests and fix regressions.
+- [~] Re-run authenticated HTTP tests and fix regressions.
 - [ ] Verify auth state sharing across:
 - [x] discovery GET
 - [x] ls-refs POST
 - [x] fetch POST
   - [ ] receive-pack discovery
   - [ ] receive-pack POST
-- [ ] Verify redirect/auth behavior in `t5551-http-fetch-smart`.
+- [~] Verify redirect/auth behavior in `t5551-http-fetch-smart` (auth/redaction cases pass; redirect cases remain expected failures).
 - [ ] Verify shallow HTTP fetch/push behavior was not broken by auth changes.
 - [ ] Audit URL credential scrubbing in:
   - [ ] push output
@@ -436,15 +436,15 @@ Validation:
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
 - [x] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
-- [ ] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (currently `in_scope=skip`)
-- [ ] `./scripts/run-tests.sh t5541-http-push-smart.sh` (currently `in_scope=skip`)
+- [~] `./scripts/run-tests.sh t5551-http-fetch-smart.sh` (29/37; auth/redaction subset passes, SHA-256 empty clone remains)
+- [~] `./scripts/run-tests.sh t5541-http-push-smart.sh` (20/21; remaining failure is atomic collateral reporting)
 - [~] `./scripts/run-tests.sh t5539-fetch-http-shallow.sh` (1/8)
 - [x] `./scripts/run-tests.sh t5542-push-http-shallow.sh`
 - [x] `./scripts/run-tests.sh t5581-http-curl-verbose.sh`
 
 Definition of done:
 
-- [ ] Smart HTTP auth is integrated across fetch, clone, ls-remote, and push.
+- [~] Smart HTTP auth is integrated across fetch, clone, ls-remote, and push.
 - [ ] Any remaining HTTP failures are documented as non-auth transport gaps.
 
 ## Phase 11: SSH Command Configuration Parity
