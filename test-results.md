@@ -63,6 +63,7 @@
 - HTTP client now honors `http.sslVerify=false` and `GIT_SSL_NO_VERIFY` by disabling rustls certificate verification; CA file/path and client cert/key options remain unsupported with the current HTTP stack
 - HTTP client now honors `http_proxy`, `https_proxy`, `all_proxy`, and `no_proxy` for requests without `http.proxy`, while keeping configured `http.proxy` precedence
 - HTTP client now parses `http.proxyAuthMethod` and `GIT_HTTP_PROXY_AUTHMETHOD`; Basic/anyauth proxy credentials remain supported and unsupported methods are reported instead of silently downgraded
+- HTTP fetch and push now honor `remote.<name>.proxy` as a per-remote override before falling back to `http.proxy` and environment proxy variables
 
 **2026-04-13 (t5322 / pack-objects sparse --revs)**
 

@@ -276,10 +276,20 @@ fn resolve_git_protocol_header(config: &ConfigSet) -> Option<String> {
 impl HttpClientContext {
     /// Build transport from merged Git config (`http.proxy`, etc.).
     pub fn from_config_set(config: &ConfigSet) -> Result<Self> {
+        Self::from_config_set_with_proxy_override(config, None)
+    }
+
+    /// Build transport from merged Git config with an optional per-remote proxy override.
+    pub fn from_config_set_with_proxy_override(
+        config: &ConfigSet,
+        proxy_override: Option<String>,
+    ) -> Result<Self> {
         let trace_curl = trace_curl_from_env();
-        let proxy_raw = config.get("http.proxy");
+        let proxy_raw = proxy_override
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| config.get("http.proxy"));
         let proxy_auth_method = proxy_auth_method(config);
-        let transport = build_transport(config, &proxy_auth_method)?;
+        let transport = build_transport(config, &proxy_auth_method, proxy_raw.as_deref())?;
         let ssl_verify = ssl_verify_enabled(config);
         let git_protocol_header = resolve_git_protocol_header(config);
         let post_buffer = config
@@ -2077,9 +2087,9 @@ fn trace_component_enabled(components: &str, want: &str) -> bool {
 }
 
 fn trace_curl_from_env() -> Option<TraceCurl> {
-    let Ok(raw) = std::env::var("GIT_TRACE_CURL") else {
-        return None;
-    };
+    let raw = std::env::var("GIT_TRACE_CURL")
+        .ok()
+        .or_else(|| std::env::var("GIT_CURL_VERBOSE").ok())?;
     let raw = raw.trim();
     if raw.is_empty() || raw == "0" || raw.eq_ignore_ascii_case("false") {
         return None;
@@ -2185,9 +2195,13 @@ fn ureq_agent(ssl_verify: bool, proxy: Option<ureq::Proxy>) -> ureq::Agent {
     builder.build()
 }
 
-fn build_transport(config: &ConfigSet, proxy_auth_method: &ProxyAuthMethod) -> Result<Transport> {
+fn build_transport(
+    config: &ConfigSet,
+    proxy_auth_method: &ProxyAuthMethod,
+    proxy_raw: Option<&str>,
+) -> Result<Transport> {
     let ssl_verify = ssl_verify_enabled(config);
-    let Some(raw_proxy) = config.get("http.proxy") else {
+    let Some(raw_proxy) = proxy_raw else {
         return Ok(Transport::Ureq(ureq_agent(ssl_verify, None)));
     };
     let raw_proxy = raw_proxy.trim();

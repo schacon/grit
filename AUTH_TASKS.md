@@ -336,7 +336,7 @@ Tasks:
 - [x] Implement `GIT_HTTP_PROXY_AUTHMETHOD`.
 - [ ] Handle proxy `407` / `Proxy-Authenticate` enough for tests.
 - [ ] Audit current manual HTTP forward proxy path for HTTPS behavior and document any limitation.
-- [ ] Add `remote.<name>.proxy` if required by tests encountered in this phase.
+- [x] Add `remote.<name>.proxy` if required by tests encountered in this phase.
 - [x] Make proxy auth redaction match `GIT_TRACE_REDACT`.
 
 Validation:
