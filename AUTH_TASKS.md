@@ -291,7 +291,7 @@ Tasks:
 - [x] Implement proactive auto:
   - [x] allow helper-selected auth scheme
   - [x] fall back to Basic only when Git would
-- [~] Parse and implement `http.emptyAuth`.
+- [x] Parse and implement `http.emptyAuth`.
 - [x] Ensure proactive auth is disabled by default.
 - [x] Ensure credentials are not sent over plain HTTP unexpectedly beyond Git-compatible behavior.
 - [x] Update trace redaction for proactive auth headers.
@@ -305,6 +305,7 @@ Validation:
 Definition of done:
 
 - [x] Proactive Basic and auto auth cases in `t5563-simple-http-auth` pass.
+- [x] `http.emptyAuth` sends an empty Basic credential without prompting in the current HTTP stack.
 - [x] Auth trace output remains redacted by default.
 
 ## Phase 8: HTTP Request Configuration Parity

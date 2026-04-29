@@ -187,6 +187,13 @@
 - `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`: 81/81 passed
 - SSH clone now cleans up the destination after remote upload-pack failure, and SSH fetch does not send protocol-v2 `ls-refs` to a child process that did not advertise v2.
 
+**2026-04-29 (remote auth / HTTP empty auth)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 150 t5563-simple-http-auth.sh`: 17/17 passed
+- `http.emptyAuth` now sends an empty Basic credential without askpass prompting in the current HTTP stack; this covers the no-username/no-password path Grit can support without libcurl Negotiate.
+
 **2026-04-29 (remote auth / SSH receive-pack validation)**
 
 - `cargo build --release -p grit-rs`: passed

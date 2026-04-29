@@ -409,7 +409,7 @@ impl HttpClientContext {
         let mut auth = self
             .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.needs_basic_prompt() {
+        if auth.needs_basic_prompt() && !self.empty_auth {
             let mut username = auth.username().unwrap_or_default().to_string();
             if username.is_empty() {
                 username = self.askpass_username(url)?;
@@ -544,7 +544,7 @@ impl HttpClientContext {
         let mut auth = self
             .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.needs_basic_prompt() {
+        if auth.needs_basic_prompt() && !self.empty_auth {
             let mut username = auth.username().unwrap_or_default().to_string();
             if username.is_empty() {
                 username = self.askpass_username(url)?;
@@ -885,7 +885,16 @@ impl HttpClientContext {
     }
 
     fn proactive_authorization_header(&self, url: &str) -> Result<Option<String>> {
-        if self.empty_auth || self.proactive_auth == ProactiveAuth::None {
+        if self.empty_auth {
+            let header = AuthCredentials::Basic {
+                username: String::new(),
+                password: String::new(),
+            }
+            .authorization_header();
+            self.trace_auth_header(&header);
+            return Ok(Some(header));
+        }
+        if self.proactive_auth == ProactiveAuth::None {
             return Ok(None);
         }
         let challenges = match self.proactive_auth {
