@@ -206,6 +206,7 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - `t5814` failures are the enabled ext fetch/push cases. The disabled clone/fetch/push policy cases pass, so the remaining failure surface is ext transport implementation, not protocol allow/deny classification.
 - Audited URL rewrite ordering: fetch and push classify/check the rewritten URL, while clone and ls-remote do not currently apply rewrite rules.
 - Audited credential helper output redaction: helper stdout is parsed into credential fields and is not traced; helper stderr is inherited as external helper-owned output, matching Git's trust boundary.
+- Audited SSH spawn safety: SSH URL parsing rejects empty hosts, `-`-prefixed hosts, and `-`-prefixed remote paths before subprocess spawn; `GIT_SSH_COMMAND` shell invocations quote the parsed host and remote command.
 - Documented the SSH auth boundary: SSH authentication, host keys, agents, and `~/.ssh/config` remain delegated to the external SSH implementation.
 - Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5813-proto-disable-ssh.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5813` 81/81, `t5814` 19/27, and `t5815` 8/8. `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh` reported 2/2.
 
@@ -221,6 +222,7 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - `t5547-push-quarantine` now passes 6/6.
 - `t5409-colorize-remote-messages` now passes 11/11.
 - Fixed receive-pack hook cwd so remote pre/post-receive hooks run from `$GIT_DIR` and can see `hooks/...` paths like Git.
+- Documented receive-pack protocol behavior: automatic protocol v2 is suppressed for receive-pack, matching Git's current upload-pack-only automatic v2 behavior; v2 push remains deferred until tests require it.
 - `t5545-push-options` improved to 12/13; direct and HTTP push-option propagation pass, and the remaining submodule case fails on strict gitlink/object validation rather than push-option env propagation.
 - Brought `t5548-push-porcelain` into scope; it is currently 5/25. The failures are broad local/HTTP push porcelain formatting, not SSH-specific receive-pack behavior.
 - Validation: `cargo check -p grit-rs` and `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh t5547-push-quarantine.sh t5409-colorize-remote-messages.sh` reported `t5545` 12/13, `t5547` 6/6, and `t5409` 11/11. `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh` reported 5/25.

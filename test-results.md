@@ -177,7 +177,7 @@
 - `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh`: 2/2 passed
 - `./scripts/run-tests.sh --timeout 150 t5814-proto-disable-ext.sh`: 19/27
 - HTTP, SSH, and submodule protocol allow/deny policy are green. The remaining `t5814` failures are enabled `ext::` fetch/push behavior; disabled clone/fetch/push policy paths pass and the residual gap is ext transport support, not auth classification.
-- URL rewrites for fetch/push are checked after rewrite, while clone/ls-remote do not currently apply rewrite rules; helper stdout is parsed and helper stderr remains external helper-owned output like Git.
+- URL rewrites for fetch/push are checked after rewrite, while clone/ls-remote do not currently apply rewrite rules; helper stdout is parsed and helper stderr remains external helper-owned output like Git. SSH URL parsing rejects empty or option-looking hosts/paths before spawn, and shell SSH invocations quote parsed host and remote command.
 
 **2026-04-29 (remote auth / SSH command validation)**
 
@@ -201,7 +201,7 @@
 - `./scripts/run-tests.sh --timeout 150 t5409-colorize-remote-messages.sh`: 11/11 passed
 - `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh`: 12/13
 - `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh`: 5/25
-- Direct and HTTP push-option propagation now pass through pre/post-receive hooks; the remaining `t5545` failure is the submodule case, which fails on strict gitlink/object validation during the parent push. The `t5548` failures are broad local/HTTP push porcelain formatting. Quarantine, remote message colorization, and remote reject validation remain green.
+- Direct and HTTP push-option propagation now pass through pre/post-receive hooks; the remaining `t5545` failure is the submodule case, which fails on strict gitlink/object validation during the parent push. Automatic protocol v2 is suppressed for receive-pack, so v2 push remains an explicit future transport feature rather than a current auth blocker. The `t5548` failures are broad local/HTTP push porcelain formatting. Quarantine, remote message colorization, and remote reject validation remain green.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

@@ -548,7 +548,7 @@ Tasks:
 
 - [ ] Re-check `push_to_ssh_url` against current receive-pack tests.
 - [x] Confirm `--receive-pack` handling matches Git.
-- [ ] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it.
+- [x] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it. (automatic v2 is suppressed for receive-pack; push remains v0/v1 unless future tests require v2 push)
 - [ ] Validate sideband stderr/progress propagation.
 - [~] Validate push options over SSH. (`t5545-push-options` is 12/13; direct and HTTP push-option propagation pass, remaining failure is submodule gitlink/object validation)
 - [ ] Validate atomic push over SSH.
@@ -569,7 +569,7 @@ Validation:
 Definition of done:
 
 - [~] SSH push behavior is covered by the same receive-pack expectations as local/HTTP push where applicable. (`t5547`, `t5406`, and `t5409` pass; `t5545` push-option env propagation passes outside the remaining submodule object gap)
-- [ ] Any remaining SSH push v2 limitation is documented.
+- [x] Any remaining SSH push v2 limitation is documented.
 
 ## Phase 14: Protocol Policy and Security Audit
 
@@ -591,7 +591,7 @@ Tasks:
 - [~] Verify `GIT_PROTOCOL_FROM_USER` behavior. (`t5812` HTTP and `t5813` SSH pass; `t5814` ext disabled cases pass, enabled fetch/push remains transport-limited)
 - [x] Ensure URL rewrites do not bypass protocol policy. (fetch/push classify after rewrite; clone/ls-remote do not currently apply rewrite rules)
 - [x] Ensure submodule URL handling uses the same protocol classification as top-level operations.
-- [ ] Ensure SSH path/host safety checks remain enforced before spawning subprocesses.
+- [x] Ensure SSH path/host safety checks remain enforced before spawning subprocesses. (`parse_ssh_url` rejects empty hosts, `-`-prefixed hosts, and `-`-prefixed paths; shell SSH command paths quote host and remote command)
 - [~] Ensure HTTP credentials are not sent to a different origin after redirects unless Git would do so. (`t5551` redirect/auth cases remain expected failures)
 - [~] Audit trace redaction:
   - [x] `Authorization`
