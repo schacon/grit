@@ -5738,7 +5738,7 @@ fn write_git_binary_patch(
         } else {
             (b'a' - 27 + chunk.len() as u8) as char
         };
-        let encoded = crate::git_binary_base85::encode(chunk);
+        let encoded = grit_lib::git_binary_base85::encode(chunk);
         writeln!(out, "{len_char}{encoded}")?;
     }
     writeln!(out)?;
@@ -5760,7 +5760,7 @@ fn write_git_binary_patch(
             } else {
                 (b'a' - 27 + chunk.len() as u8) as char
             };
-            let encoded = crate::git_binary_base85::encode(chunk);
+            let encoded = grit_lib::git_binary_base85::encode(chunk);
             writeln!(out, "{len_char}{encoded}")?;
         }
         writeln!(out)?;
