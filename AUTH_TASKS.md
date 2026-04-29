@@ -220,7 +220,7 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
-- [ ] `./scripts/run-tests.sh t0300-credentials.sh`
+- [x] `./scripts/run-tests.sh t0300-credentials.sh`
 
 Definition of done:
 
@@ -242,7 +242,7 @@ Tasks:
 - [x] Represent resolved HTTP auth as an enum rather than Basic-only username/password:
   - [x] Basic from username/password
   - [x] pre-encoded `authtype` + `credential`
-  - [ ] empty auth if supported later
+  - [x] empty auth
 - [x] Build `Authorization: <authtype> <credential>` from helper-provided credentials.
 - [x] Preserve Basic `Authorization` generation for username/password.
 - [x] Implement invalid credential retry/reject behavior:
@@ -261,8 +261,8 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
-- [ ] `./scripts/run-tests.sh t5555-http-smart-common.sh`
-- [ ] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
+- [x] `./scripts/run-tests.sh t5555-http-smart-common.sh`
+- [x] `./scripts/run-tests.sh t5549-fetch-push-http.sh`
 
 Definition of done:
 
@@ -632,8 +632,8 @@ Primary files:
 
 Tasks:
 
-- [ ] For each auth test that becomes reliable, decide whether to flip `in_scope=skip` to `in_scope=yes`.
-- [ ] Refresh dashboards by running the relevant harness command or `python3 scripts/generate-dashboard-from-test-files.py`.
+- [x] For each auth test that becomes reliable, decide whether to flip `in_scope=skip` to `in_scope=yes`.
+- [x] Refresh dashboards by running the relevant harness command or `python3 scripts/generate-dashboard-from-test-files.py`.
 - [ ] Update `plan.md` checkbox/status for completed auth work.
 - [ ] Update `progress.md` counts after any `plan.md` checkbox changes.
 - [ ] Update `test-results.md` after meaningful cargo/harness runs.
@@ -642,13 +642,13 @@ Tasks:
 
 Validation:
 
-- [ ] `./scripts/run-tests.sh t0300-credentials.sh`
-- [ ] `./scripts/run-tests.sh t0301-credential-cache.sh`
-- [ ] `./scripts/run-tests.sh t0302-credential-store.sh`
-- [ ] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
-- [ ] `./scripts/run-tests.sh t5564-http-proxy.sh`
-- [ ] `./scripts/run-tests.sh t5812-proto-disable-http.sh`
-- [ ] `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`
+- [x] `./scripts/run-tests.sh t0300-credentials.sh`
+- [x] `./scripts/run-tests.sh t0301-credential-cache.sh`
+- [x] `./scripts/run-tests.sh t0302-credential-store.sh`
+- [x] `./scripts/run-tests.sh t5563-simple-http-auth.sh`
+- [x] `./scripts/run-tests.sh t5564-http-proxy.sh`
+- [x] `./scripts/run-tests.sh t5812-proto-disable-http.sh`
+- [x] `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`
 
 Definition of done:
 
@@ -659,11 +659,11 @@ Definition of done:
 
 Complete when all of the following are true:
 
-- [ ] Credential protocol support is Git-compatible for core helper workflows.
-- [ ] `credential-store` is fully passing.
-- [ ] `credential-cache` is fully passing or explicitly deferred with an accepted reason.
-- [ ] Smart HTTP auth supports Basic, helper-provided Bearer/pre-encoded credentials, challenge-aware helper calls, reject/approve, proactive auth, proxy auth, redaction, and shared bundle-uri client behavior.
-- [ ] Live SSH clone/fetch/ls-remote run over external SSH upload-pack instead of requiring local resolution.
+- [x] Credential protocol support is Git-compatible for core helper workflows.
+- [x] `credential-store` is fully passing.
+- [x] `credential-cache` is fully passing or explicitly deferred with an accepted reason.
+- [x] Smart HTTP auth supports Basic, helper-provided Bearer/pre-encoded credentials, challenge-aware helper calls, reject/approve, proactive auth, proxy auth, redaction, and shared bundle-uri client behavior.
+- [x] Live SSH clone/fetch/ls-remote run over external SSH upload-pack instead of requiring local resolution.
 - [ ] SSH push is validated against receive-pack behavior and documented limitations.
 - [ ] Protocol allow/deny and submodule transport policy remain correct.
 - [ ] `data/test-files.csv`, dashboards, `plan.md`, `progress.md`, and `test-results.md` are current.

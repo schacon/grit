@@ -262,3 +262,9 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Kept Basic/anyauth proxy credentials supported and fail clearly for unsupported proxy auth methods.
 - Added `remote.<name>.proxy` override support for HTTP fetch and push before falling back to `http.proxy` or environment proxy variables.
 - Audited HTTP proxy HTTPS behavior: the manual HTTP proxy transport uses absolute-form requests over plain TCP and is suitable for HTTP remotes; HTTPS origins through an HTTP proxy still require CONNECT tunneling and TLS, which remains a documented transport limitation.
+
+## Scope and Validation Reconciliation
+
+- Reconciled auth checklist validation items with current `data/test-files.csv`: `t0300`, `t0301`, `t0302`, `t0303`, `t5549`, `t5555`, `t5563`, `t5564`, `t5812`, and `t5813` are in scope and fully passing.
+- Marked empty HTTP auth as part of the resolved HTTP auth representation after the no-prompt empty Basic path landed.
+- Marked final auth milestone items complete for credential core workflows, credential-store, credential-cache, smart HTTP auth features, and live SSH clone/fetch/ls-remote; remaining auth plan work is now concentrated in documented HTTP transport gaps, broader SSH push validation, protocol-ext transport limits, and cleanup/status synchronization.

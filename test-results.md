@@ -194,6 +194,11 @@
 - `./scripts/run-tests.sh --timeout 150 t5563-simple-http-auth.sh`: 17/17 passed
 - `http.emptyAuth` now sends an empty Basic credential without askpass prompting in the current HTTP stack; this covers the no-username/no-password path Grit can support without libcurl Negotiate.
 
+**2026-04-29 (remote auth / scope reconciliation)**
+
+- Current `data/test-files.csv` has these auth-related suites in scope and fully passing: `t0300-credentials` 56/56, `t0301-credential-cache` 52/52, `t0302-credential-store` 65/65, `t0303-credential-external` 23/23, `t5549-fetch-push-http` 3/3, `t5555-http-smart-common` 10/10, `t5563-simple-http-auth` 17/17, `t5564-http-proxy` 8/8, `t5812-proto-disable-http` 29/29, and `t5813-proto-disable-ssh` 81/81.
+- Reconciled `AUTH_TASKS.md` validation and final milestone checkboxes for the completed credential, smart HTTP auth, and live SSH upload-pack work.
+
 **2026-04-29 (remote auth / SSH receive-pack validation)**
 
 - `cargo build --release -p grit-rs`: passed
