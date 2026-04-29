@@ -209,6 +209,12 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Documented the SSH auth boundary: SSH authentication, host keys, agents, and `~/.ssh/config` remain delegated to the external SSH implementation.
 - Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5813-proto-disable-ssh.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5813` 81/81, `t5814` 19/27, and `t5815` 8/8. `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh` reported 2/2.
 
+## SSH Command Validation
+
+- Fixed `t5602-clone-remote-exec` by avoiding protocol-v2 `ls-refs` fallback unless an SSH child actually advertised v2.
+- SSH clone now removes the destination directory after remote upload-pack failure, allowing follow-up clone attempts in the same test to invoke the requested upload-pack command.
+- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5602-clone-remote-exec.sh t5507-remote-environment.sh t5813-proto-disable-ssh.sh` reported `t5602` 3/3, `t5507` 5/5, and `t5813` 81/81.
+
 ## SSH Receive-Pack Validation
 
 - Re-ran receive-pack hardening checks after protocol policy work.

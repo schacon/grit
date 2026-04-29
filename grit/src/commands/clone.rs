@@ -3139,17 +3139,25 @@ fn run_ssh_network_clone(args: Args, spec: &crate::ssh_transport::SshUrl) -> Res
         Vec::new()
     };
     let filter_active = clone_pack_filter_active(&args, None);
-    let (remote_heads, remote_tags, head_symref, head_oid) =
-        crate::fetch_transport::with_packet_trace_identity("clone", || {
-            crate::fetch_transport::fetch_via_ssh_upload_pack_skipping(
-                &dest.git_dir,
-                spec,
-                args.upload_pack.as_deref(),
-                &refspec_for_fetch,
-                filter_active,
-            )
-        })
-        .with_context(|| format!("ssh clone failed for '{}'", args.repository))?;
+    let fetch_result = crate::fetch_transport::with_packet_trace_identity("clone", || {
+        crate::fetch_transport::fetch_via_ssh_upload_pack_skipping(
+            &dest.git_dir,
+            spec,
+            args.upload_pack.as_deref(),
+            &refspec_for_fetch,
+            filter_active,
+        )
+    });
+    let (remote_heads, remote_tags, head_symref, head_oid) = match fetch_result {
+        Ok(result) => result,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&target_path);
+            if let Some(ref sep_git) = args.separate_git_dir {
+                let _ = fs::remove_dir_all(sep_git);
+            }
+            return Err(e).with_context(|| format!("ssh clone failed for '{}'", args.repository));
+        }
+    };
 
     let default_branch = args.branch.clone().or_else(|| {
         default_branch_from_upload_pack_advertisement(

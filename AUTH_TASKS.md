@@ -479,9 +479,9 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [ ] `./scripts/run-tests.sh t5601-clone.sh`
-- [ ] `./scripts/run-tests.sh t5602-clone-remote-exec.sh`
-- [ ] `./scripts/run-tests.sh t5507-remote-environment.sh`
-- [ ] `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5602-clone-remote-exec.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5507-remote-environment.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`
 
 Definition of done:
 
@@ -526,12 +526,12 @@ Validation:
 - [ ] `./scripts/run-tests.sh t5510-fetch.sh`
 - [ ] `./scripts/run-tests.sh t5512-ls-remote.sh`
 - [ ] `./scripts/run-tests.sh t5700-protocol-v1.sh`
-- [ ] `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`
 
 Definition of done:
 
 - [x] SSH clone/fetch work through an external SSH process for non-local remotes.
-- [ ] Grit still delegates actual SSH authentication to the user's SSH implementation.
+- [x] Grit still delegates actual SSH authentication to the user's SSH implementation.
 
 ## Phase 13: SSH Receive-Pack Hardening
 

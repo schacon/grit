@@ -1896,7 +1896,6 @@ pub fn fetch_via_ssh_upload_pack_skipping(
     let mut child = crate::ssh_transport::spawn_git_ssh_upload_pack(spec, upload_pack_cmd)?;
     let mut stdin = child.stdin.take().context("ssh upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("ssh upload-pack stdout")?;
-    let client_proto = protocol_wire::effective_client_protocol_version();
 
     let (mut advertised, mut head_symref, saw_v1, saw_v2, server_sid) =
         read_advertisement(&mut stdout)?;
@@ -1910,8 +1909,7 @@ pub fn fetch_via_ssh_upload_pack_skipping(
     }
 
     let mut use_v2_fetch = saw_v2;
-    let try_v2_ls_refs = saw_v2 || (client_proto == 2 && advertised.is_empty());
-    if try_v2_ls_refs {
+    if saw_v2 {
         let (v2_refs, v2_head_symref) =
             v2_ls_refs_for_fetch(&mut stdin, &mut stdout, true, refspecs, &[])?;
         use_v2_fetch = true;

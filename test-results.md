@@ -179,6 +179,14 @@
 - HTTP, SSH, and submodule protocol allow/deny policy are green. The remaining `t5814` failures are enabled `ext::` fetch/push behavior; disabled clone/fetch/push policy paths pass and the residual gap is ext transport support, not auth classification.
 - URL rewrites for fetch/push are checked after rewrite, while clone/ls-remote do not currently apply rewrite rules; helper stdout is parsed and helper stderr remains external helper-owned output like Git.
 
+**2026-04-29 (remote auth / SSH command validation)**
+
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh --timeout 150 t5602-clone-remote-exec.sh`: 3/3 passed
+- `./scripts/run-tests.sh --timeout 150 t5507-remote-environment.sh`: 5/5 passed
+- `./scripts/run-tests.sh --timeout 150 t5813-proto-disable-ssh.sh`: 81/81 passed
+- SSH clone now cleans up the destination after remote upload-pack failure, and SSH fetch does not send protocol-v2 `ls-refs` to a child process that did not advertise v2.
+
 **2026-04-29 (remote auth / SSH receive-pack validation)**
 
 - `cargo build --release -p grit-rs`: passed
