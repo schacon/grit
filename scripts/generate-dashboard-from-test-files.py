@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/progress/index.html, docs/testfiles.html, and docs/test-progress.svg from data/test-files.csv."""
+"""Generate dashboard docs from data/test-files.csv."""
 
 from __future__ import annotations
 
