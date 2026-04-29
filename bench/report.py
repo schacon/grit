@@ -307,7 +307,7 @@ def generate_html(benchmarks):
 </head>
 <body>
 
-<div class="nav"><a href="index.html">← Test Coverage</a></div>
+<div class="nav"><a href="progress/">← Test Coverage</a></div>
 
 <h1>Grit <span>vs</span> Git</h1>
 <p class="subtitle">Performance benchmarks — {now}</p>

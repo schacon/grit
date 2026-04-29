@@ -17,7 +17,7 @@ Runnable **library examples** (repos, object database, index, `rev-list`, cherry
 
 ![Harness test progress](docs/test-progress.svg)
 
-See the **[project dashboard](https://schacon.github.io/grit)** (generated from `data/test-files.csv` via `scripts/run-tests.sh`). The same numbers drive the static SVG above: run `python3 scripts/generate-dashboard-from-test-files.py` (or any full harness run that regenerates the dashboards) to refresh [`docs/test-progress.svg`](docs/test-progress.svg).
+See the **[project progress dashboard](https://schacon.github.io/grit/progress/)** (generated from `data/test-files.csv` via `scripts/run-tests.sh`). The same numbers drive the static SVG above: run `python3 scripts/generate-dashboard-from-test-files.py` (or any full harness run that regenerates the dashboards) to refresh [`docs/test-progress.svg`](docs/test-progress.svg).
 
 ## Test
 
