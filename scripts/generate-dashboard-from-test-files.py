@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate docs/progress/index.html, docs/testfiles.html, and docs/test-progress.svg from data/test-files.csv."""
+"""Generate dashboard docs from data/test-files.csv."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ DATA = REPO / "data" / "test-files.csv"
 OUT_INDEX = REPO / "docs" / "progress" / "index.html"
 OUT_FILES = REPO / "docs" / "testfiles.html"
 OUT_SVG = REPO / "docs" / "test-progress.svg"
+OUT_HOME = REPO / "docs" / "index.html"
 
 # Published site root (GitHub Pages) for absolute og/twitter image URLs on index.html.
 GITHUB_PAGES_SITE = "https://schacon.github.io/grit"
@@ -31,6 +32,19 @@ GROUP_DESC: dict[str, str] = {
     "t7": "Porcelainish commands concerning the working tree",
     "t8": "Porcelainish commands concerning forensics",
     "t9": "Git tools",
+}
+
+HOME_GROUP_LABELS: dict[str, str] = {
+    "t0": "basics",
+    "t1": "database",
+    "t2": "worktree",
+    "t3": "ls-files",
+    "t4": "diff",
+    "t5": "fetch/push",
+    "t6": "revisions",
+    "t7": "porcelain",
+    "t8": "forensics",
+    "t9": "tools",
 }
 
 
@@ -236,8 +250,138 @@ def generate_progress_svg(rows: list[dict[str, str]]) -> str:
 """
 
 
+def group_summaries(rows: list[dict[str, str]]) -> dict[str, dict[str, int]]:
+    """Return aggregate test/file counts for each in-scope test group."""
+    groups: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if r.get("in_scope", "yes").strip().lower() == "skip":
+            continue
+        g = r.get("group") or "t?"
+        if g not in groups:
+            groups[g] = {"tests": 0, "pass": 0, "files": 0, "full": 0}
+        try:
+            tt = int(r.get("tests_total") or 0)
+            pl = int(r.get("passed_last") or 0)
+        except ValueError:
+            tt, pl = 0, 0
+        groups[g]["tests"] += tt
+        groups[g]["pass"] += pl
+        groups[g]["files"] += 1
+        if (r.get("fully_passing") or "").lower() == "true" and tt > 0:
+            groups[g]["full"] += 1
+    return groups
+
+
+def generate_homepage_progress_section(rows: list[dict[str, str]]) -> str:
+    """Generate the homepage progress section from the same harness metrics."""
+    stats = harness_summary(rows)
+    total_tests = int(stats["total_tests"])
+    total_pass = int(stats["total_pass"])
+    pass_rate = float(stats["pass_rate"])
+    groups = group_summaries(rows)
+
+    suite_html = ""
+    for g in sorted(groups.keys(), key=lambda x: (len(x), x)):
+        st = groups[g]
+        pc = pct(st["pass"], st["tests"])
+        label = f"{g} {HOME_GROUP_LABELS.get(g, GROUP_DESC.get(g, 'tests').lower())}"
+        suite_html += f"""
+              <div class="suite-stat" style="--pct: {pc}%">
+                <span>{html.escape(label)}</span><strong>{pc}%</strong>
+              </div>"""
+
+    return f"""      <section class="wrap section progress-section" id="progress">
+        <div class="split">
+          <div>
+            <span class="num">Current status</span>
+            <h2>Passing the Git Test Suite</h2>
+            <p class="section-intro">
+              Grit is tracked against the upstream Git harness. The generated
+              dashboard shows pass rate by family, skipped files, and per-file
+              status.
+            </p>
+            <ul class="list">
+              <li>
+                140+ Git commands are implemented in the
+                <code>grit-rs</code> CLI.
+              </li>
+              <li>
+                grit-lib covers
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/objects/"
+                  >objects</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/pack/"
+                  >packs</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/index/"
+                  >index</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/refs/">refs</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/rev_parse/"
+                  >revisions</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/diff/">diff</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/merge_file/"
+                  >merge</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/config/"
+                  >config</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/ignore/"
+                  >ignore rules</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/hooks/"
+                  >hooks</a
+                >, and
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/">more</a>.
+              </li>
+              <li>
+                Development is agent-driven, with logs and generated progress
+                checked into the repo.
+              </li>
+            </ul>
+          </div>
+          <a
+            class="progress-card"
+            href="progress/"
+            aria-label="Open progress dashboard"
+          >
+            <div class="big-stat">{pass_rate}%</div>
+            <div class="bar" aria-hidden="true"><span style="width: {pass_rate}%"></span></div>
+            <div class="suite-grid" aria-label="Pass rate by Git test suite">{suite_html}
+            </div>
+            <p>
+              Latest generated harness pass rate: {total_pass:,} of
+              {total_tests:,} in-scope tests. Open the dashboard for exact
+              counts.
+            </p>
+          </a>
+        </div>
+      </section>"""
+
+
+def update_homepage_index(rows: list[dict[str, str]]) -> None:
+    """Replace the progress section in docs/index.html with generated metrics."""
+    text = OUT_HOME.read_text(encoding="utf-8")
+    start_marker = '      <section class="wrap section progress-section" id="progress">'
+    end_marker = '\n\n      <section class="wrap section" id="why">'
+    start = text.find(start_marker)
+    if start == -1:
+        raise RuntimeError(f"Could not find progress section start in {OUT_HOME}")
+    end = text.find(end_marker, start)
+    if end == -1:
+        raise RuntimeError(f"Could not find progress section end in {OUT_HOME}")
+    updated = (
+        text[:start]
+        + generate_homepage_progress_section(rows)
+        + text[end:]
+    )
+    OUT_HOME.write_text(updated, encoding="utf-8")
+
+
 def generate_index(rows: list[dict[str, str]]) -> str:
-    in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
     stats = harness_summary(rows)
     total_tests = int(stats["total_tests"])
     total_pass = int(stats["total_pass"])
@@ -252,21 +396,7 @@ def generate_index(rows: list[dict[str, str]]) -> str:
     time_el = generated_time_element(now)
     sha_l = sha_link_html(sha, sha_full)
 
-    groups: dict[str, dict[str, int]] = {}
-    for r in in_scope:
-        g = r.get("group") or "t?"
-        if g not in groups:
-            groups[g] = {"tests": 0, "pass": 0, "files": 0, "full": 0}
-        try:
-            tt = int(r.get("tests_total") or 0)
-            pl = int(r.get("passed_last") or 0)
-        except ValueError:
-            tt, pl = 0, 0
-        groups[g]["tests"] += tt
-        groups[g]["pass"] += pl
-        groups[g]["files"] += 1
-        if (r.get("fully_passing") or "").lower() == "true" and tt > 0:
-            groups[g]["full"] += 1
+    groups = group_summaries(rows)
 
     skipped_by_group: dict[str, int] = {}
     for r in rows:
@@ -784,9 +914,11 @@ def main() -> None:
     OUT_INDEX.write_text(generate_index(rows), encoding="utf-8")
     OUT_FILES.write_text(generate_testfiles(rows), encoding="utf-8")
     OUT_SVG.write_text(generate_progress_svg(rows), encoding="utf-8")
+    update_homepage_index(rows)
     print(f"Wrote {OUT_INDEX}")
     print(f"Wrote {OUT_FILES}")
     print(f"Wrote {OUT_SVG}")
+    print(f"Updated {OUT_HOME}")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::pkt_line;
 use crate::protocol_wire;
+use grit_lib::pkt_line;
 
 /// Parsed `git://host[:port]/path` (path includes leading `/`).
 pub struct GitDaemonUrl {

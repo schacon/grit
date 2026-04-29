@@ -1653,7 +1653,7 @@ fn bump_committer_if_replay_matches_source(
     raw_message: &Option<Vec<u8>>,
 ) -> Result<()> {
     let (author_raw, committer_raw) =
-        crate::git_commit_encoding::identity_raw_for_serialized_commit(encoding, author, committer);
+        grit_lib::commit_encoding::identity_raw_for_serialized_commit(encoding, author, committer);
     let trial = CommitData {
         tree: tree_oid,
         parents: parents.to_vec(),
@@ -1725,7 +1725,7 @@ fn create_cherry_pick_commit(
         .get("i18n.commitEncoding")
         .or_else(|| config.get("i18n.commitencoding"));
     let (stored_msg, encoding, raw_message) =
-        crate::git_commit_encoding::finalize_stored_commit_message(
+        grit_lib::commit_encoding::finalize_stored_commit_message(
             message.to_owned(),
             commit_enc.as_deref(),
         );
@@ -1741,10 +1741,9 @@ fn create_cherry_pick_commit(
         &raw_message,
     )?;
 
-    let (author_raw, committer_raw) =
-        crate::git_commit_encoding::identity_raw_for_serialized_commit(
-            &encoding, &author, &committer,
-        );
+    let (author_raw, committer_raw) = grit_lib::commit_encoding::identity_raw_for_serialized_commit(
+        &encoding, &author, &committer,
+    );
 
     let commit_data = CommitData {
         tree: tree_oid,

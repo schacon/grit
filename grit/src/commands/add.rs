@@ -355,7 +355,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 .with_context(|| format!("cannot read pathspec file '{}'", file.display()))?
         };
         args.pathspec =
-            crate::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
+            grit_lib::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
     }
 
     // --dry-run is incompatible with interactive modes
@@ -885,7 +885,7 @@ fn pathspec_matches_index_path(spec: &str, resolved_under_cwd: &str, index_path:
         return index_path == resolved_under_cwd
             || index_path.starts_with(&format!("{resolved_under_cwd}/"));
     }
-    crate::pathspec::pathspec_matches(spec, index_path)
+    grit_lib::pathspec::pathspec_matches(spec, index_path)
 }
 
 /// `true` when some stage-0 index path matches the pathspec and is allowed to update without `--sparse`.
@@ -1053,7 +1053,7 @@ pub(crate) fn stage_pathspecs_for_commit(
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
 
-        if !crate::pathspec::has_glob_chars(&resolved) {
+        if !grit_lib::pathspec::has_glob_chars(&resolved) {
             reject_skip_worktree(&index, resolved.as_bytes())?;
             let abs_path = work_tree.join(&resolved);
             let meta = match fs::symlink_metadata(&abs_path) {
@@ -1331,7 +1331,7 @@ fn run_refresh(
                     continue;
                 }
                 let path_str = String::from_utf8_lossy(&ie.path);
-                if !crate::pathspec::pathspec_matches(pathspec, path_str.as_ref()) {
+                if !grit_lib::pathspec::pathspec_matches(pathspec, path_str.as_ref()) {
                     continue;
                 }
                 matched_any = true;
@@ -2972,7 +2972,7 @@ pub(crate) fn expand_glob_pathspec(
     work_tree: &Path,
     precompose_unicode: bool,
 ) -> Vec<String> {
-    if !crate::pathspec::has_glob_chars(pathspec) {
+    if !grit_lib::pathspec::has_glob_chars(pathspec) {
         return vec![pathspec.to_owned()];
     }
 

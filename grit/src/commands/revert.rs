@@ -1234,19 +1234,18 @@ fn create_revert_commit(
         .get("i18n.commitEncoding")
         .or_else(|| config.get("i18n.commitencoding"));
     let (stored_msg, encoding, raw_message) =
-        crate::git_commit_encoding::finalize_stored_commit_message(
+        grit_lib::commit_encoding::finalize_stored_commit_message(
             message.to_owned(),
             commit_enc.as_deref(),
         );
 
     let author_line = format_ident(&author, now);
     let committer_line = format_ident(&committer, now);
-    let (author_raw, committer_raw) =
-        crate::git_commit_encoding::identity_raw_for_serialized_commit(
-            &encoding,
-            &author_line,
-            &committer_line,
-        );
+    let (author_raw, committer_raw) = grit_lib::commit_encoding::identity_raw_for_serialized_commit(
+        &encoding,
+        &author_line,
+        &committer_line,
+    );
 
     let commit_data = CommitData {
         tree: tree_oid,

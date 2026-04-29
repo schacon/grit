@@ -954,7 +954,7 @@ pub(crate) fn path_matches_any_pathspec(specs: &[String], rel: &str) -> bool {
 fn pathspecs_have_glob(specs: &[String]) -> bool {
     specs.iter().any(|s| {
         let (_, pat) = parse_magic(s);
-        crate::pathspec::has_glob_chars(pat)
+        grit_lib::pathspec::has_glob_chars(pat)
     })
 }
 
@@ -971,7 +971,7 @@ pub(crate) fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> b
     }
     if specs.iter().any(|s| {
         let (_, pat) = parse_magic(s);
-        crate::pathspec::has_glob_chars(pat)
+        grit_lib::pathspec::has_glob_chars(pat)
     }) {
         // Glob pathspecs can match deep paths (`*ut` → `d1/ut`); recurse into every directory.
         return true;
@@ -1017,12 +1017,12 @@ fn pathspec_enters_directory(spec: &str, dir_rel: &str) -> bool {
     }
     if let Some(pref) = magic.prefix.as_deref() {
         let full = format!("{pref}{pat}");
-        if !crate::pathspec::has_glob_chars(&full) {
+        if !grit_lib::pathspec::has_glob_chars(&full) {
             return full == d || full.starts_with(&format!("{d}/"));
         }
         return lib_pathspec_matches(spec, &format!("{d}/x"));
     }
-    if !crate::pathspec::has_glob_chars(pat) {
+    if !grit_lib::pathspec::has_glob_chars(pat) {
         return pat == d || pat.starts_with(&format!("{d}/"));
     }
     lib_pathspec_matches(spec, &format!("{d}/x"))
@@ -1039,7 +1039,7 @@ fn pathspec_covers_descendants(spec: &str, dir_repo_rel: &str) -> bool {
     if let Some(r) = pat.strip_prefix(":/") {
         pat = r;
     }
-    if magic.icase || crate::pathspec::has_glob_chars(pat) {
+    if magic.icase || grit_lib::pathspec::has_glob_chars(pat) {
         return false;
     }
     let full = if let Some(pref) = magic.prefix.as_deref() {
@@ -1059,7 +1059,7 @@ fn pathspec_targets_under_prefix(spec: &str, dir_rel: &str) -> bool {
     if let Some(r) = pat.strip_prefix(":/") {
         pat = r;
     }
-    if magic.icase || crate::pathspec::has_glob_chars(pat) {
+    if magic.icase || grit_lib::pathspec::has_glob_chars(pat) {
         return false;
     }
     let tail = if let Some(p) = magic.prefix.as_deref() {

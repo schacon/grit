@@ -4,14 +4,24 @@
 
 use std::path::{Path, PathBuf};
 
+/// Errors returned by Git-compatible path helper routines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitPathError {
+    /// Normalization would escape above the root.
+    EscapesRoot,
+    /// A relative URL cannot be resolved against the provided remote URL.
+    InvalidRelativeUrl,
+}
+
 #[inline]
 fn is_dir_sep(c: u8) -> bool {
     c == b'/'
 }
 
 /// Purely textual path normalization matching Git's `normalize_path_copy`.
-/// Returns `Err(())` when `..` would escape above the root (Git returns -1).
-pub fn normalize_path_copy(src: &str) -> Result<String, ()> {
+/// Returns [`GitPathError::EscapesRoot`] when `..` would escape above the root
+/// (Git returns -1).
+pub fn normalize_path_copy(src: &str) -> Result<String, GitPathError> {
     let is_abs = src.starts_with('/');
     let raw_ends_dir = {
         let stripped = src.trim_end_matches('/');
@@ -45,7 +55,7 @@ pub fn normalize_path_copy(src: &str) -> Result<String, ()> {
         }
         if part == ".." {
             if stack.pop().is_none() {
-                return Err(());
+                return Err(GitPathError::EscapesRoot);
             }
         } else {
             stack.push(part.to_string());
@@ -108,8 +118,8 @@ pub fn strip_path_suffix(path: &str, suffix: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&path[..off]).into_owned())
 }
 
-/// Git's `longest_ancestor_length` — normalizes `path` and each colon-separated prefix.
-pub fn longest_ancestor_length(path: &str, prefixes_colon_sep: &str) -> Result<i32, ()> {
+/// Git's `longest_ancestor_length` - normalizes `path` and each colon-separated prefix.
+pub fn longest_ancestor_length(path: &str, prefixes_colon_sep: &str) -> Result<i32, GitPathError> {
     let path = normalize_path_copy(path)?;
     if path == "/" {
         return Ok(-1);
@@ -238,7 +248,7 @@ fn find_last_dir_sep(path: &str) -> Option<usize> {
     path.rfind('/')
 }
 
-fn chop_last_dir(remoteurl: &mut String, is_relative: bool) -> Result<bool, ()> {
+fn chop_last_dir(remoteurl: &mut String, is_relative: bool) -> Result<bool, GitPathError> {
     if let Some(pos) = find_last_dir_sep(remoteurl.as_str()) {
         remoteurl.truncate(pos);
         return Ok(false);
@@ -248,7 +258,7 @@ fn chop_last_dir(remoteurl: &mut String, is_relative: bool) -> Result<bool, ()> 
         return Ok(true);
     }
     if is_relative || remoteurl == "." {
-        return Err(());
+        return Err(GitPathError::InvalidRelativeUrl);
     }
     *remoteurl = ".".to_string();
     Ok(false)
@@ -277,7 +287,11 @@ fn ends_with_slash(url: &str) -> bool {
 }
 
 /// Git's `relative_url` from `remote.c` (POSIX; no DOS drive handling).
-pub fn relative_url(remote_url: &str, url: &str, up_path: Option<&str>) -> Result<String, ()> {
+pub fn relative_url(
+    remote_url: &str,
+    url: &str,
+    up_path: Option<&str>,
+) -> Result<String, GitPathError> {
     if !url_is_local_not_ssh(url) || url.starts_with('/') {
         return Ok(url.to_string());
     }
@@ -285,7 +299,7 @@ pub fn relative_url(remote_url: &str, url: &str, up_path: Option<&str>) -> Resul
     let mut remoteurl = remote_url.to_string();
     let len = remoteurl.len();
     if len == 0 {
-        return Err(());
+        return Err(GitPathError::InvalidRelativeUrl);
     }
     if remoteurl.ends_with('/') {
         remoteurl.truncate(len - 1);
@@ -334,6 +348,8 @@ pub fn relative_url(remote_url: &str, url: &str, up_path: Option<&str>) -> Resul
     }
 }
 
+/// Whether `path` is an absolute Unix-style path.
+#[must_use]
 pub fn is_absolute_path_unix(path: &str) -> bool {
     path.starts_with('/')
 }
@@ -341,6 +357,7 @@ pub fn is_absolute_path_unix(path: &str) -> bool {
 /// Like Git's `strbuf_realpath` / `test-tool path-utils real_path`: resolve symlinks by
 /// walking path components (so symlink targets are interpreted at each step), then if the
 /// leaf is missing, resolve the longest existing prefix and append the remainder.
+#[must_use]
 pub fn real_path_resolving(path: &str) -> PathBuf {
     let abs = if path.starts_with('/') {
         path.to_string()
@@ -392,7 +409,7 @@ pub fn real_path_resolving(path: &str) -> PathBuf {
     resolved
 }
 
-/// Git's `abspath_part_inside_repo` from `setup.c` (POSIX).
+/// Git `setup.c` `abspath_part_inside_repo` (POSIX).
 ///
 /// Strips the work tree from an absolute, normalized path, preserving symlink path
 /// components when they are still under the work tree as a string prefix.
@@ -426,13 +443,8 @@ pub fn abspath_part_inside_repo(path: &str, work_tree: &Path) -> Option<String> 
     let wt_canon = std::fs::canonicalize(work_tree).ok()?;
     let mut cum = String::new();
     for seg in p.split('/').filter(|s| !s.is_empty()) {
-        if cum.is_empty() {
-            cum.push('/');
-            cum.push_str(seg);
-        } else {
-            cum.push('/');
-            cum.push_str(seg);
-        }
+        cum.push('/');
+        cum.push_str(seg);
         let rp = std::fs::canonicalize(Path::new(&cum)).ok()?;
         if rp == wt_canon {
             if p.len() == cum.len() {

@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// Arguments for `grit serve-v2`.
 #[derive(Debug, ClapArgs)]

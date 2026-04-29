@@ -4,7 +4,7 @@
 //! `insteadOf` rules only, while push prefers `pushInsteadOf` and falls back
 //! to `insteadOf`.
 
-use grit_lib::config::ConfigSet;
+use crate::config::ConfigSet;
 
 fn rewrite_by_suffix(config: &ConfigSet, url: &str, suffix: &str) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
@@ -23,7 +23,7 @@ fn rewrite_by_suffix(config: &ConfigSet, url: &str, suffix: &str) -> Option<Stri
             continue;
         }
         let match_len = instead_of.len();
-        if best.as_ref().map_or(true, |(len, _)| match_len > *len) {
+        if best.as_ref().is_none_or(|(len, _)| match_len > *len) {
             best = Some((match_len, base.to_owned()));
         }
     }

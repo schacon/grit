@@ -21,7 +21,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 const USTAR_MAX: u64 = 0o777_7777_7777;

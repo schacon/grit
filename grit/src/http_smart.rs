@@ -18,7 +18,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 const SERVICE: &str = "git-upload-pack";
 

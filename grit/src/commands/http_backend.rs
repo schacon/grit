@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::grit_exe;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// HTTP smart service endpoint kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -9,6 +9,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use grit_lib::git_path;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{IsTerminal, Read, Write};
@@ -20,7 +21,6 @@ mod branch_tracking;
 mod bundle_uri;
 mod bundle_uri_test_tool;
 mod commands;
-mod dotfile;
 mod editor;
 mod explicit_exit;
 mod ext_transport;
@@ -28,11 +28,8 @@ mod fetch_submodule_record;
 mod fetch_submodule_recurse;
 mod fetch_transport;
 mod file_upload_pack_v2;
-mod git_binary_base85;
 mod git_column;
-mod git_commit_encoding;
 mod git_daemon_url;
-mod git_path;
 mod grit_exe;
 mod http_bundle_uri;
 mod http_client;
@@ -53,8 +50,6 @@ mod test_tool_pack_deltas;
 mod test_tool_run_command;
 mod trace2_transfer;
 mod trace_packet;
-mod transport_path;
-mod url_rewrite;
 mod wire_trace;
 
 /// Return the version string, e.g. `"2.47.0.grit"`.
@@ -1020,7 +1015,8 @@ fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
         std::fs::read(&pathspec_source)?
     };
 
-    let items: Vec<String> = pathspec::parse_pathspecs_from_source(&data, pathspec_file_nul)?;
+    let items: Vec<String> =
+        grit_lib::pathspec::parse_pathspecs_from_source(&data, pathspec_file_nul)?;
 
     for item in items {
         println!("{item}");
@@ -5658,7 +5654,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
 fn normalize_path_simple(path: &str) -> String {
     match git_path::normalize_path_copy(path) {
         Ok(s) => s,
-        Err(()) => "++failed++".to_string(),
+        Err(_) => "++failed++".to_string(),
     }
 }
 
@@ -5898,7 +5894,7 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                     expect = 0;
                     continue;
                 }
-                let hit = dotfile::dotfile_matches(subcmd, arg);
+                let hit = grit_lib::dotfile::dotfile_matches(subcmd, arg);
                 if expect != (hit as i32) {
                     res = 1;
                 }

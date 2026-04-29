@@ -919,7 +919,7 @@ fn sanitize_set_paths(
     if !prefix.is_empty() && cone {
         for a in args.iter_mut() {
             if let Some(p) =
-                crate::git_path::prefix_path_gently(&prefix, a, repo.work_tree.as_ref().unwrap())
+                grit_lib::git_path::prefix_path_gently(&prefix, a, repo.work_tree.as_ref().unwrap())
             {
                 *a = p;
             }
@@ -967,7 +967,7 @@ fn normalize_cone_input_line(line: &str) -> Result<String> {
         s = unquote_c_style(&s)?;
     }
     s = s.trim_end_matches('/').to_string();
-    let normalized = crate::git_path::normalize_path_copy(&s)
+    let normalized = grit_lib::git_path::normalize_path_copy(&s)
         .map_err(|_| anyhow::anyhow!("could not normalize path {s}"))?;
     Ok(normalized.trim_start_matches('/').to_string())
 }

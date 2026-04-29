@@ -4,45 +4,13 @@
 //! `receive.unpacklimit` / `transfer.unpacklimit`, and enforce `receive.maxInputSize`.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::config::{parse_git_config_int_strict, ConfigSet};
+use grit_lib::config::ConfigSet;
+use grit_lib::receive_pack::{max_input_size_from_config, should_use_unpack_objects};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::grit_exe;
-
-/// Effective `receive.unpacklimit` / `transfer.unpacklimit` / default (100), matching Git
-/// `receive-pack` (`receive` wins when set non-negative).
-pub fn receive_unpack_limit(cfg: &ConfigSet) -> i32 {
-    let recv = cfg
-        .get("receive.unpacklimit")
-        .and_then(|v| parse_git_config_int_strict(&v).ok());
-    let xfer = cfg
-        .get("transfer.unpacklimit")
-        .and_then(|v| parse_git_config_int_strict(&v).ok());
-    match (recv, xfer) {
-        (Some(r), _) if r >= 0 => r as i32,
-        (_, Some(t)) if t >= 0 => t as i32,
-        _ => 100,
-    }
-}
-
-/// `receive.maxInputSize` as a byte cap (`0` or unset = unlimited).
-pub fn max_input_size_from_config(cfg: &ConfigSet) -> Option<u64> {
-    match cfg.get_i64("receive.maxinputsize") {
-        None => None,
-        Some(Ok(v)) if v <= 0 => None,
-        Some(Ok(v)) => Some(v as u64),
-        Some(Err(_)) => None,
-    }
-}
-
-pub fn pack_object_count(pack: &[u8]) -> Option<u32> {
-    if pack.len() < 12 || &pack[0..4] != b"PACK" {
-        return None;
-    }
-    Some(u32::from_be_bytes(pack[8..12].try_into().ok()?))
-}
 
 /// Ingest a pack into `git_dir` using the same unpack path as Git `receive-pack`.
 ///
@@ -54,13 +22,9 @@ pub fn ingest_received_pack(
     remote_cfg: &ConfigSet,
     strict: bool,
 ) -> Result<()> {
-    let unpack_limit = receive_unpack_limit(remote_cfg);
     let max_input_bytes = max_input_size_from_config(remote_cfg);
-    let nr_objects = pack_object_count(pack).unwrap_or(0);
-    let use_unpack_objects =
-        i64::from(unpack_limit) > 0 && (nr_objects as i64) < i64::from(unpack_limit);
 
-    if use_unpack_objects {
+    if should_use_unpack_objects(pack, remote_cfg) {
         ingest_via_unpack_objects_subprocess(git_dir, pack, max_input_bytes, strict)
     } else {
         ingest_via_index_pack_subprocess(git_dir, pack, max_input_bytes)

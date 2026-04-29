@@ -19,9 +19,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::commands::serve_v2::{serve_loop, ServerCaps};
-use crate::pkt_line;
 use crate::protocol_wire;
 use crate::trace2_transfer;
+use grit_lib::pkt_line;
 
 /// Arguments for `grit upload-pack`.
 #[derive(Debug, ClapArgs)]

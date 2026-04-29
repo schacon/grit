@@ -12,7 +12,6 @@ use grit_lib::repo::Repository;
 
 use super::merge::{remerge_merge_tree, ConflictDescription};
 use super::show::write_diff_header_with_remerge;
-use crate::pathspec::pathspec_matches;
 
 /// Options for remerge-diff output (subset of `show` / `log` / `diff-tree`).
 pub(crate) struct RemergeDiffOptions<'a> {
@@ -29,9 +28,10 @@ fn path_matches_pathspecs(pathspecs: &[String], path: &str) -> bool {
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs
-        .iter()
-        .any(|spec| pathspec_matches(spec, path) || pathspec_matches(spec, &format!("a/{path}")))
+    pathspecs.iter().any(|spec| {
+        grit_lib::pathspec::pathspec_matches(spec, path)
+            || grit_lib::pathspec::pathspec_matches(spec, &format!("a/{path}"))
+    })
 }
 
 fn conflict_desc_matches_pathspecs(d: &ConflictDescription, pathspecs: &[String]) -> bool {

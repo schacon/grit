@@ -5470,11 +5470,11 @@ fn filter_combined_paths(
                 if spec == &"." || spec.is_empty() {
                     return true;
                 }
-                crate::pathspec::pathspec_matches(spec, path)
+                grit_lib::pathspec::pathspec_matches(spec, path)
             });
             let excluded = exclude_inners
                 .iter()
-                .any(|inner| crate::pathspec::pathspec_matches(inner, path));
+                .any(|inner| grit_lib::pathspec::pathspec_matches(inner, path));
             included && !excluded
         })
         .collect()
@@ -5509,11 +5509,11 @@ fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> 
                 if spec == &"." || spec.is_empty() {
                     return true;
                 }
-                crate::pathspec::pathspec_matches(spec, path)
+                grit_lib::pathspec::pathspec_matches(spec, path)
             });
             let excluded = exclude_inners
                 .iter()
-                .any(|inner| crate::pathspec::pathspec_matches(inner, path));
+                .any(|inner| grit_lib::pathspec::pathspec_matches(inner, path));
             included && !excluded
         })
         .collect()
@@ -5738,7 +5738,7 @@ fn write_git_binary_patch(
         } else {
             (b'a' - 27 + chunk.len() as u8) as char
         };
-        let encoded = crate::git_binary_base85::encode(chunk);
+        let encoded = grit_lib::git_binary_base85::encode(chunk);
         writeln!(out, "{len_char}{encoded}")?;
     }
     writeln!(out)?;
@@ -5760,7 +5760,7 @@ fn write_git_binary_patch(
             } else {
                 (b'a' - 27 + chunk.len() as u8) as char
             };
-            let encoded = crate::git_binary_base85::encode(chunk);
+            let encoded = grit_lib::git_binary_base85::encode(chunk);
             writeln!(out, "{len_char}{encoded}")?;
         }
         writeln!(out)?;

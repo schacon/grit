@@ -5,7 +5,8 @@
 //!
 //! See git-config(1) for the upstream semantics.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+use grit_lib::protocol::ProtocolPolicyInputs;
 use std::path::Path;
 
 /// Check whether a given protocol (e.g. "file", "git", "ssh", "https") is
@@ -23,74 +24,14 @@ use std::path::Path;
 /// `protocol.<name>.allow=user` matches Git: allowed when `GIT_PROTOCOL_FROM_USER` is
 /// unset, empty, or not one of the explicit deny values (`0`, `false`, `no`, `off`).
 pub fn check_protocol_allowed(protocol: &str, git_dir: Option<&Path>) -> Result<()> {
-    // 1. GIT_ALLOW_PROTOCOL overrides everything
-    if let Ok(val) = std::env::var("GIT_ALLOW_PROTOCOL") {
-        let allowed: Vec<&str> = val
-            .split([':', ','])
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect();
-        if allowed.contains(&protocol) {
-            return Ok(());
-        }
-        bail!(
-            "protocol '{}' is not allowed by GIT_ALLOW_PROTOCOL",
-            protocol
-        );
-    }
-
-    // 2. Check protocol.<name>.allow in config
-    let specific = read_config_value(&format!("protocol.{}.allow", protocol), git_dir);
-    if let Some(ref val) = specific {
-        return check_allow_value(protocol, val);
-    }
-
-    // 3. Check protocol.allow blanket
-    let blanket = read_config_value("protocol.allow", git_dir);
-    if let Some(ref val) = blanket {
-        return check_allow_value(protocol, val);
-    }
-
-    // 4. Built-in defaults (`transport.c` `get_protocol_config`)
-    let p = protocol.to_ascii_lowercase();
-    match p.as_str() {
-        "http" | "https" | "git" | "ssh" => Ok(()),
-        "ext" => bail!("protocol '{}' is not allowed", protocol),
-        _ => check_allow_value(protocol, "user"),
-    }
-}
-
-fn check_allow_value(protocol: &str, value: &str) -> Result<()> {
-    match value.to_lowercase().as_str() {
-        "always" => Ok(()),
-        "never" => bail!("protocol '{}' is not allowed", protocol),
-        "user" => {
-            if protocol_from_user() {
-                Ok(())
-            } else {
-                bail!("protocol '{}' is not allowed", protocol)
-            }
-        }
-        other => bail!(
-            "unknown protocol.allow value '{}' for protocol '{}'",
-            other,
-            protocol
-        ),
-    }
-}
-
-fn protocol_from_user() -> bool {
-    match std::env::var("GIT_PROTOCOL_FROM_USER") {
-        Err(_) => true,
-        Ok(v) => {
-            let v = v.trim().to_ascii_lowercase();
-            if v.is_empty() {
-                true
-            } else {
-                !matches!(v.as_str(), "0" | "false" | "no" | "off")
-            }
-        }
-    }
+    let inputs = ProtocolPolicyInputs {
+        git_allow_protocol: std::env::var("GIT_ALLOW_PROTOCOL").ok(),
+        git_protocol_from_user: std::env::var("GIT_PROTOCOL_FROM_USER").ok(),
+        specific_allow: read_config_value(&format!("protocol.{}.allow", protocol), git_dir),
+        blanket_allow: read_config_value("protocol.allow", git_dir),
+    };
+    grit_lib::protocol::check_protocol_allowed_with(protocol, &inputs)
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
 }
 
 /// Read a git config value. Tries `-c` overrides from process env first,

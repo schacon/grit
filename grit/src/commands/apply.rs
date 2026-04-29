@@ -1799,7 +1799,7 @@ fn decode_binary_patch_line(line: &str, out: &mut Vec<u8>) -> Result<()> {
     };
     let expected_len = decode_binary_line_len(len_ch)?;
     let body = chars.as_str().as_bytes();
-    let decoded = crate::git_binary_base85::decode_body(body, expected_len)
+    let decoded = grit_lib::git_binary_base85::decode_body(body, expected_len)
         .context("invalid binary patch base85")?;
     out.extend_from_slice(&decoded);
     Ok(())
@@ -2059,7 +2059,7 @@ fn compact_rename_path(old: &str, new: &str) -> String {
 
 /// Normalize `--directory` like Git (`strbuf_normalize_path` + trailing `/` when non-empty).
 fn normalize_apply_directory(raw: &str) -> Result<String> {
-    let normalized = crate::git_path::normalize_path_copy(raw)
+    let normalized = grit_lib::git_path::normalize_path_copy(raw)
         .map_err(|_| anyhow::anyhow!("unable to normalize directory: '{raw}'"))?;
     if normalized.is_empty() {
         return Ok(String::new());

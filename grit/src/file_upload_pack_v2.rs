@@ -11,8 +11,8 @@ use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
 use crate::grit_exe::{grit_executable, strip_trace2_env};
-use crate::pkt_line;
 use crate::wire_trace;
+use grit_lib::pkt_line;
 
 fn trace_packet_git(direction: char, payload: &str) {
     let identity = crate::trace_packet::negotiation_packet_label();
