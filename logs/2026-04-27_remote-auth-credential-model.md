@@ -209,6 +209,14 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Documented the SSH auth boundary: SSH authentication, host keys, agents, and `~/.ssh/config` remain delegated to the external SSH implementation.
 - Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5812-proto-disable-http.sh t5813-proto-disable-ssh.sh t5814-proto-disable-ext.sh t5815-submodule-protos.sh` reported `t5812` 29/29, `t5813` 81/81, `t5814` 19/27, and `t5815` 8/8. `./scripts/run-tests.sh --timeout 150 t5581-http-curl-verbose.sh` reported 2/2.
 
+## SSH Receive-Pack Validation
+
+- Re-ran receive-pack hardening checks after protocol policy work.
+- `t5547-push-quarantine` now passes 6/6.
+- `t5409-colorize-remote-messages` now passes 11/11.
+- `t5545-push-options` remains 5/13; remaining failures are positive push-option propagation through receive hooks.
+- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh t5409-colorize-remote-messages.sh t5545-push-options.sh` reported `t5547` 6/6, `t5409` 11/11, and `t5545` 5/13.
+
 ## HTTP Challenge Plumbing
 
 - Added header retention to raw HTTP responses.

@@ -549,7 +549,7 @@ Tasks:
 - [x] Confirm `--receive-pack` handling matches Git.
 - [ ] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it.
 - [ ] Validate sideband stderr/progress propagation.
-- [ ] Validate push options over SSH.
+- [~] Validate push options over SSH. (`t5545-push-options` remains 5/13; remaining failures are positive push-option propagation)
 - [ ] Validate atomic push over SSH.
 - [ ] Validate porcelain output over SSH.
 - [x] Validate hook/error propagation.
@@ -560,14 +560,14 @@ Validation:
 
 - [x] `cargo build --release -p grit-rs`
 - [~] `./scripts/run-tests.sh t5545-push-options.sh`
-- [ ] `./scripts/run-tests.sh t5547-push-quarantine.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh`
 - [ ] `./scripts/run-tests.sh t5548-push-porcelain.sh`
 - [x] `./scripts/run-tests.sh t5406-remote-rejects.sh`
-- [ ] `./scripts/run-tests.sh t5409-colorize-remote-messages.sh`
+- [x] `./scripts/run-tests.sh --timeout 150 t5409-colorize-remote-messages.sh`
 
 Definition of done:
 
-- [ ] SSH push behavior is covered by the same receive-pack expectations as local/HTTP push where applicable.
+- [~] SSH push behavior is covered by the same receive-pack expectations as local/HTTP push where applicable. (`t5547`, `t5406`, and `t5409` pass; `t5545` push-options remains partial)
 - [ ] Any remaining SSH push v2 limitation is documented.
 
 ## Phase 14: Protocol Policy and Security Audit
