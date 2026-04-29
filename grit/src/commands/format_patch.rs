@@ -27,8 +27,8 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use crate::git_commit_encoding::commit_message_unicode_for_display;
 use crate::ident::{read_git_identity_name_env, GitIdentityNameEnv};
+use grit_lib::commit_encoding::commit_message_unicode_for_display;
 
 /// Arguments for `grit format-patch`.
 #[derive(Debug, ClapArgs)]
@@ -1048,7 +1048,7 @@ fn format_cover_letter(
         );
         let first_line = display_msg.lines().next().unwrap_or("");
         let decoded_author =
-            crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author);
+            grit_lib::commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author);
         let author_name = if let Some(bracket) = decoded_author.find('<') {
             decoded_author[..bracket].trim()
         } else {
@@ -1506,13 +1506,13 @@ fn mailbox_for_from_header(commit: &CommitData, mode: &FromHeaderMode) -> String
     match mode {
         FromHeaderMode::Omit => String::new(),
         FromHeaderMode::Author => format_ident(
-            &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author),
+            &grit_lib::commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author),
         ),
         FromHeaderMode::Committer => format_ident(
-            &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.committer),
+            &grit_lib::commit_encoding::decode_rfc2047_mailbox_from_line(&commit.committer),
         ),
         FromHeaderMode::Custom(s) => {
-            format_ident(&crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(s))
+            format_ident(&grit_lib::commit_encoding::decode_rfc2047_mailbox_from_line(s))
         }
     }
 }
@@ -1611,7 +1611,7 @@ fn rfc2047_encode_with_charset(name: &str, charset_label: &str) -> String {
     let bytes = if charset_label.eq_ignore_ascii_case("UTF-8") {
         name.as_bytes().to_vec()
     } else {
-        match crate::git_commit_encoding::encode_unicode(charset_label, name) {
+        match grit_lib::commit_encoding::encode_unicode(charset_label, name) {
             Some(mut raw) => {
                 while raw.last() == Some(&b'\n') {
                     raw.pop();

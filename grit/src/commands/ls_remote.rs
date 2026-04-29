@@ -11,7 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// Arguments for `grit ls-remote`.
 #[derive(Debug, ClapArgs)]

@@ -567,7 +567,7 @@ pub fn run(args: Args) -> Result<()> {
             // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
             // configured remote name (matches Git: t5507-remote-environment).
             remote_is_configured_name = false;
-            let rewritten = crate::url_rewrite::rewrite_push_url(&config, r);
+            let rewritten = grit_lib::url_rewrite::rewrite_push_url(&config, r);
             path_style_remote = url_looks_like_local_path(&rewritten);
             remote_name_owned = r.clone();
             urls = vec![rewritten];
@@ -1712,9 +1712,11 @@ fn push_to_url(
                 .context("copying submodule objects to remote")?,
         );
         if push_show_object_progress(args) && !copied_objects.is_empty() && !thin_pack.is_empty() {
-            let written_objects = pack_object_count(&thin_pack).unwrap_or_else(|| {
-                estimate_push_progress_enumerated_objects(repo, remote_name, &updates)
-            });
+            let written_objects = grit_lib::receive_pack::pack_object_count(&thin_pack)
+                .map(|count| count as usize)
+                .unwrap_or_else(|| {
+                    estimate_push_progress_enumerated_objects(repo, remote_name, &updates)
+                });
             let enumerated_objects =
                 estimate_push_progress_enumerated_objects(repo, remote_name, &updates)
                     .max(written_objects);
@@ -3340,8 +3342,9 @@ fn push_to_http_url(
     };
     maybe_emit_push_pack_wrote_trace2(&pack_data);
     if push_show_object_progress(args) && !delete_only {
-        let written_objects =
-            pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
+        let written_objects = grit_lib::receive_pack::pack_object_count(&pack_data)
+            .map(|count| count as usize)
+            .unwrap_or_else(|| push_tips.len().max(1));
         maybe_print_push_object_progress(
             true,
             written_objects.max(push_tips.len()),
@@ -3793,8 +3796,9 @@ fn push_to_ssh_url(
         pack_objects::build_thin_push_pack_from_remote_oids(repo, &push_tips, &remote_have_vec)?
     };
     if push_show_object_progress(args) && !delete_only {
-        let written_objects =
-            pack_object_count(&pack_data).unwrap_or_else(|| push_tips.len().max(1));
+        let written_objects = grit_lib::receive_pack::pack_object_count(&pack_data)
+            .map(|count| count as usize)
+            .unwrap_or_else(|| push_tips.len().max(1));
         maybe_print_push_object_progress(
             true,
             written_objects.max(push_tips.len()),
@@ -3979,7 +3983,7 @@ fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<Str
     }
 
     if let Some(url) = config.get(&format!("remote.{remote_name}.url")) {
-        let rewritten = crate::url_rewrite::rewrite_push_url(config, &url);
+        let rewritten = grit_lib::url_rewrite::rewrite_push_url(config, &url);
         return Ok((
             vec![rewritten.clone()],
             url_looks_like_local_path(&rewritten),
@@ -4516,16 +4520,8 @@ fn maybe_print_push_object_progress(
     );
 }
 
-fn pack_object_count(pack: &[u8]) -> Option<usize> {
-    if pack.len() < 12 || &pack[..4] != b"PACK" {
-        return None;
-    }
-    let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
-    Some(count as usize)
-}
-
 fn maybe_emit_push_pack_wrote_trace2(pack: &[u8]) {
-    let Some(count) = pack_object_count(pack) else {
+    let Some(count) = grit_lib::receive_pack::pack_object_count(pack) else {
         return;
     };
     let Ok(path) = std::env::var("GIT_TRACE2_EVENT") else {

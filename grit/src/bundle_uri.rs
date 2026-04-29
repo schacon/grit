@@ -19,7 +19,7 @@ use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 use url::Url;
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 thread_local! {
     static HTTP_BUNDLE_CACHE: RefCell<HashMap<String, Vec<u8>>> = RefCell::new(HashMap::new());

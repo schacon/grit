@@ -35,12 +35,12 @@ cargo build --release -p grit-rs
 
 ## Testing pipeline (harness)
 
-Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`**. Per-file status and last-run counts live in **`data/test-files.csv`** (tab-separated). Dashboards **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`** (README progress badge) are generated from that CSV.
+Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`**. Per-file status and last-run counts live in **`data/test-files.csv`** (tab-separated). Dashboards **`docs/index.html`** (homepage progress section), **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`** (README progress badge) are generated from that CSV.
 
 **Flow:**
 
 1. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
-2. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**.
+2. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** progress metrics, **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**.
 
 To skip a file manually, set **`in_scope`** to **`skip`** on its row in `data/test-files.csv`. Skipped files are omitted from runs and from aggregate counts on the main dashboard.
 
@@ -67,7 +67,7 @@ Read **TESTING.md** for the full strategy. The short version:
 
 1. Pick **one test file** that isn't fully passing
 2. Run it, study the failures
-3. Fix the Rust code (`grit/src/` or `grit-lib/src/`)
+3. Fix the Rust code in `grit-lib/src/` by default; use `grit/src/` only for CLI parsing, process setup, user-facing output, or thin command wiring.
 4. Rebuild (`cargo build --release -p grit-rs`)
 5. Re-run until fully passing
 6. Refresh results: `./scripts/run-tests.sh <file>.sh` (updates `data/test-files.csv` and dashboards)
@@ -167,6 +167,9 @@ grit/
 - Documentation and comments **must** be kept up-to-date with code changes.
 - Avoid implicitly using the current time like `std::time::SystemTime::now()`, instead pass the current time as argument.
 - Keep public API surfaces small. Use `#[must_use]` where return values matter.
+- Prefer implementing core Git behavior in `grit-lib` even when only one CLI command currently needs it. If code parses Git data, walks repository state, mutates objects/index/refs/worktrees, evaluates config semantics, formats Git-compatible records, or implements transport/protocol rules, it belongs in the library unless there is a clear CLI-only reason.
+- Keep `grit/src` focused on argument parsing, environment/process setup, terminal/editor interaction, exit-code mapping, and converting library results into stdout/stderr. When adding command behavior, first design the typed library API, then call it from the CLI wrapper.
+- Do not add reusable domain helpers under the binary crate as a staging area. If a helper would be useful to tests, another command, or a future embedding caller, add it to an appropriate `grit-lib/src` module with narrow visibility and lift to `pub` only as needed.
 
 ## Library Crate Layout and Public API
 

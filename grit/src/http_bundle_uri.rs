@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use std::io::Cursor;
 
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 const SERVICE: &str = "git-upload-pack";
 

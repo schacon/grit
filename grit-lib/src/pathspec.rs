@@ -188,7 +188,6 @@ fn icase_global() -> bool {
 /// Validates global pathspec environment flags the same way Git does.
 ///
 /// Returns an error message suitable for `bail!` when flags are incompatible.
-#[must_use]
 pub fn validate_global_pathspec_flags() -> Result<(), String> {
     let lit = literal_global();
     let glob = glob_global();
@@ -282,8 +281,8 @@ fn parse_element_magic(elem: &str) -> (PathspecMagic, &str) {
     if !elem.starts_with(':') || literal_global() {
         return (PathspecMagic::default(), elem);
     }
-    if elem.starts_with(":(") {
-        return parse_long_magic(&elem[2..]).unwrap_or((PathspecMagic::default(), elem));
+    if let Some(rest) = elem.strip_prefix(":(") {
+        return parse_long_magic(rest).unwrap_or((PathspecMagic::default(), elem));
     }
     parse_short_magic(elem)
 }

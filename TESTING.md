@@ -4,7 +4,7 @@
 
 Grit uses the upstream Git test suite as ground truth. Harness files live under `tests/` (ported from `git/t/`) and run through `scripts/run-tests.sh` with the grit binary copied into `tests/grit` and exposed as `git` via the harness.
 
-The **single source of truth** for per-file harness status is **`data/test-files.csv`**. There are no intermediate TSVs (no `file-results.tsv`, no per-command aggregates). After each run, **`docs/progress/index.html`** (summary + progress by group), **`docs/testfiles.html`** (per-file table, filterable by group), and **`docs/test-progress.svg`** (overall pass-rate badge for the README) are regenerated from that CSV.
+The **single source of truth** for per-file harness status is **`data/test-files.csv`**. There are no intermediate TSVs (no `file-results.tsv`, no per-command aggregates). After each run, **`docs/index.html`** (homepage progress card), **`docs/progress/index.html`** (summary + progress by group), **`docs/testfiles.html`** (per-file table, filterable by group), and **`docs/test-progress.svg`** (overall pass-rate badge for the README) are regenerated from that CSV.
 
 ## Running tests
 
@@ -40,7 +40,7 @@ Re-run **`python3 scripts/generate-test-files-catalog.py`** if you add or rename
 | `scripts/generate-test-files-catalog.py`        | Scan `tests/t*.sh`, merge **`data/test-files.csv`** (preserves `in_scope` and prior run columns where possible). |
 | `scripts/run-tests.sh`                          | Select files to run, execute harness, invoke apply + dashboard.                                                  |
 | `scripts/apply-test-run-results.py`             | Merge one batch of run lines into **`data/test-files.csv`**, then call the dashboard generator.                  |
-| `scripts/generate-dashboard-from-test-files.py` | Read CSV only; write **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**.        |
+| `scripts/generate-dashboard-from-test-files.py` | Read CSV only; write **`docs/index.html`**, **`docs/progress/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**. |
 
 ## Data pipeline (step by step)
 

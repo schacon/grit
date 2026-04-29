@@ -12,7 +12,7 @@ use grit_lib::objects::ObjectId;
 
 use crate::fetch_transport;
 use crate::grit_exe::grit_executable;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// Parsed `ext::<command> <args>...` URL (without the `ext::` prefix).
 pub struct RemoteExtSpec {

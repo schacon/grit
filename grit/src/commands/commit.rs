@@ -377,7 +377,7 @@ pub fn run(mut args: Args) -> Result<()> {
             fs::read(psf).with_context(|| format!("cannot read pathspec file '{psf}'"))?
         };
         args.pathspec =
-            crate::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
+            grit_lib::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
     }
 
     // Validate conflicting options
@@ -1194,13 +1194,13 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     let mut committer_raw = Vec::new();
     if let Some(ref enc_label) = encoding {
-        author_raw = crate::git_commit_encoding::encode_header_text(enc_label, &author)
+        author_raw = grit_lib::commit_encoding::encode_header_text(enc_label, &author)
             .ok_or_else(|| anyhow::anyhow!("unsupported i18n.commitencoding: {enc_label}"))?;
-        committer_raw = crate::git_commit_encoding::encode_header_text(enc_label, &committer)
+        committer_raw = grit_lib::commit_encoding::encode_header_text(enc_label, &committer)
             .ok_or_else(|| anyhow::anyhow!("unsupported i18n.commitencoding: {enc_label}"))?;
         if raw_message.is_none() {
             raw_message = Some(
-                crate::git_commit_encoding::encode_unicode(
+                grit_lib::commit_encoding::encode_unicode(
                     enc_label,
                     message.trim_end_matches('\n'),
                 )
@@ -1813,7 +1813,7 @@ fn commit_patch_pathspec_targets(work_tree: &Path, pathspecs: &[String]) -> Resu
 
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
-        if !crate::pathspec::has_glob_chars(&resolved) {
+        if !grit_lib::pathspec::has_glob_chars(&resolved) {
             let abs_path = work_tree.join(&resolved);
             if fs::symlink_metadata(&abs_path).is_ok() {
                 out.push(resolved);
@@ -2230,7 +2230,7 @@ fn apply_pathspec_to_index(
 
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
-        if !crate::pathspec::has_glob_chars(&resolved) {
+        if !grit_lib::pathspec::has_glob_chars(&resolved) {
             reject_skip_worktree(&index, resolved.as_bytes())?;
             let abs_path = work_tree.join(&resolved);
             if let Ok(meta) = fs::symlink_metadata(&abs_path) {

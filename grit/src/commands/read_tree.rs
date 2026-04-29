@@ -21,8 +21,6 @@ use grit_lib::submodule_gitdir::{
 };
 use grit_lib::write_tree::write_tree_from_index;
 
-use crate::dotfile;
-
 /// Arguments for `grit read-tree`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -153,14 +151,14 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         let Ok(s) = std::str::from_utf8(name) else {
             return Ok(());
         };
-        if dotfile::is_hfs_dot_gitmodules(s)
-            || dotfile::is_ntfs_dot_gitmodules(s)
-            || dotfile::is_hfs_dot_gitattributes(s)
-            || dotfile::is_ntfs_dot_gitattributes(s)
-            || dotfile::is_hfs_dot_gitignore(s)
-            || dotfile::is_ntfs_dot_gitignore(s)
-            || dotfile::is_hfs_dot_mailmap(s)
-            || dotfile::is_ntfs_dot_mailmap(s)
+        if grit_lib::dotfile::is_hfs_dot_gitmodules(s)
+            || grit_lib::dotfile::is_ntfs_dot_gitmodules(s)
+            || grit_lib::dotfile::is_hfs_dot_gitattributes(s)
+            || grit_lib::dotfile::is_ntfs_dot_gitattributes(s)
+            || grit_lib::dotfile::is_hfs_dot_gitignore(s)
+            || grit_lib::dotfile::is_ntfs_dot_gitignore(s)
+            || grit_lib::dotfile::is_hfs_dot_mailmap(s)
+            || grit_lib::dotfile::is_ntfs_dot_mailmap(s)
         {
             bail!("invalid path '{}'", String::from_utf8_lossy(name));
         }

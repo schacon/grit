@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::grit_exe::grit_executable;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// Arguments for `grit daemon`.
 #[derive(Debug, ClapArgs)]

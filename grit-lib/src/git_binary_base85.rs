@@ -1,7 +1,26 @@
 //! Base-85 codec for `GIT binary patch` sections (matches `git/base85.c`).
 
+use thiserror::Error;
+
 const EN85: &[u8; 85] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+
+/// Errors returned while decoding a Git binary-patch base85 line.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum DecodeError {
+    /// The encoded line ended before all required base85 digits were read.
+    #[error("truncated base85 line")]
+    TruncatedLine,
+    /// The encoded line contained a byte outside Git's base85 alphabet.
+    #[error("invalid base85 alphabet byte {0}")]
+    InvalidAlphabetByte(u8),
+    /// The decoded base85 accumulator overflowed `u32`.
+    #[error("base85 overflow")]
+    Overflow,
+    /// The encoded line contained extra data after the expected output length.
+    #[error("trailing base85 data")]
+    TrailingData,
+}
 
 fn prep_decode_table() -> [u8; 256] {
     let mut de85 = [0u8; 256];
@@ -12,6 +31,7 @@ fn prep_decode_table() -> [u8; 256] {
 }
 
 /// Encode bytes using Git's base-85 alphabet (matches `encode_85` in `git/base85.c`).
+#[must_use]
 pub fn encode(mut data: &[u8]) -> String {
     let mut result = String::new();
     while !data.is_empty() {
@@ -32,15 +52,15 @@ pub fn encode(mut data: &[u8]) -> String {
             acc /= 85;
             buf[i] = EN85[val];
         }
-        result.push_str(std::str::from_utf8(&buf).expect("EN85 is ASCII"));
+        result.extend(buf.iter().map(|b| char::from(*b)));
     }
     result
 }
 
-/// Decode the base-85 body of one binary patch line (after the length prefix).
+/// Decode the base-85 body of one binary patch line.
 ///
 /// `out_len` is the number of raw (compressed) bytes this line contributes.
-pub fn decode_body(buffer: &[u8], mut out_len: usize) -> anyhow::Result<Vec<u8>> {
+pub fn decode_body(buffer: &[u8], mut out_len: usize) -> Result<Vec<u8>, DecodeError> {
     static DE85: std::sync::OnceLock<[u8; 256]> = std::sync::OnceLock::new();
     let de85 = DE85.get_or_init(prep_decode_table);
 
@@ -50,31 +70,27 @@ pub fn decode_body(buffer: &[u8], mut out_len: usize) -> anyhow::Result<Vec<u8>>
     while out_len > 0 {
         let mut acc: u32 = 0;
         for _ in 0..4 {
-            let ch = *buffer
-                .get(pos)
-                .ok_or_else(|| anyhow::anyhow!("truncated base85 line"))?;
+            let ch = *buffer.get(pos).ok_or(DecodeError::TruncatedLine)?;
             pos += 1;
             let de = de85[ch as usize];
             if de == 0 {
-                anyhow::bail!("invalid base85 alphabet byte {ch}");
+                return Err(DecodeError::InvalidAlphabetByte(ch));
             }
             acc = acc
                 .checked_mul(85)
                 .and_then(|a| a.checked_add(u32::from(de - 1)))
-                .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
+                .ok_or(DecodeError::Overflow)?;
         }
-        let ch = *buffer
-            .get(pos)
-            .ok_or_else(|| anyhow::anyhow!("truncated base85 line"))?;
+        let ch = *buffer.get(pos).ok_or(DecodeError::TruncatedLine)?;
         pos += 1;
         let de = de85[ch as usize];
         if de == 0 {
-            anyhow::bail!("invalid base85 alphabet byte {ch}");
+            return Err(DecodeError::InvalidAlphabetByte(ch));
         }
         acc = acc
             .checked_mul(85)
             .and_then(|a| a.checked_add(u32::from(de - 1)))
-            .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
+            .ok_or(DecodeError::Overflow)?;
 
         let chunk = out_len.min(4);
         out_len -= chunk;
@@ -86,7 +102,7 @@ pub fn decode_body(buffer: &[u8], mut out_len: usize) -> anyhow::Result<Vec<u8>>
     }
 
     if pos != buffer.len() {
-        anyhow::bail!("trailing base85 data");
+        return Err(DecodeError::TrailingData);
     }
     Ok(dst)
 }

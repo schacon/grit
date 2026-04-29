@@ -924,7 +924,7 @@ fn fetch_remote(
     } else {
         bail!("fatal: '{remote_name}' does not appear to be a git repository");
     };
-    let url = crate::url_rewrite::rewrite_fetch_url(config, &raw_url);
+    let url = grit_lib::url_rewrite::rewrite_fetch_url(config, &raw_url);
 
     let is_ext_url = url.starts_with("ext::");
     if is_ext_url {
@@ -5038,7 +5038,9 @@ fn resolve_fetch_display_url(
                     let mut sb = String::new();
                     let base_s = base.to_string_lossy();
                     let remote_s = canon_remote.to_string_lossy();
-                    if let Some(rel) = crate::git_path::relative_path(&remote_s, &base_s, &mut sb) {
+                    if let Some(rel) =
+                        grit_lib::git_path::relative_path(&remote_s, &base_s, &mut sb)
+                    {
                         let mut s = normalize_fetch_url_display(rel);
                         if let Some(prefix) = s.strip_suffix("/.git") {
                             s = normalize_fetch_url_display(prefix);
@@ -5059,7 +5061,7 @@ fn resolve_fetch_display_url(
                 let mut sb = String::new();
                 let base_s = base.to_string_lossy();
                 let canon_s = canon.to_string_lossy();
-                if let Some(rel) = crate::git_path::relative_path(&canon_s, &base_s, &mut sb) {
+                if let Some(rel) = grit_lib::git_path::relative_path(&canon_s, &base_s, &mut sb) {
                     let mut s = normalize_fetch_url_display(rel);
                     if let Some(prefix) = s.strip_suffix("/.git") {
                         s = normalize_fetch_url_display(prefix);

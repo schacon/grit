@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 const SERVICE: &str = "git-receive-pack";
 

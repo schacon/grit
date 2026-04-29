@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::commands::archive::{
     archive_bytes_for_repo, parse_archive_argv, tar_filters_from_config, token_format, ArchiveToken,
 };
-use crate::pkt_line;
+use grit_lib::pkt_line;
 
 /// Arguments for `grit upload-archive`.
 #[derive(Debug, ClapArgs)]

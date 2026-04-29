@@ -1,7 +1,7 @@
 //! Git-compatible `.git*` / NTFS / HFS path checks (`path.c`, `utf8.c`).
 
 /// HFS+ ignores certain Unicode code points when comparing (subset of `utf8.c`).
-fn next_hfs_char(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<char> {
+fn next_hfs_char(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<char> {
     loop {
         let ch = chars.next()?;
         match ch {
@@ -37,23 +37,31 @@ fn is_hfs_dot_generic(path: &str, needle: &str) -> bool {
     }
     match next_hfs_char(&mut chars) {
         None => true,
-        Some(ch) if ch == '/' => true,
+        Some('/') => true,
         Some(_) => false,
     }
 }
 
+/// Whether `path` matches `.gitmodules` under Git's HFS+ equivalence rules.
+#[must_use]
 pub fn is_hfs_dot_gitmodules(path: &str) -> bool {
     is_hfs_dot_generic(path, "gitmodules")
 }
 
+/// Whether `path` matches `.gitignore` under Git's HFS+ equivalence rules.
+#[must_use]
 pub fn is_hfs_dot_gitignore(path: &str) -> bool {
     is_hfs_dot_generic(path, "gitignore")
 }
 
+/// Whether `path` matches `.gitattributes` under Git's HFS+ equivalence rules.
+#[must_use]
 pub fn is_hfs_dot_gitattributes(path: &str) -> bool {
     is_hfs_dot_generic(path, "gitattributes")
 }
 
+/// Whether `path` matches `.mailmap` under Git's HFS+ equivalence rules.
+#[must_use]
 pub fn is_hfs_dot_mailmap(path: &str) -> bool {
     is_hfs_dot_generic(path, "mailmap")
 }
@@ -87,7 +95,7 @@ fn is_ntfs_dot_generic(name: &str, dotgit_name: &str, short_prefix: &str) -> boo
     if b.len() >= 8
         && name[..6].eq_ignore_ascii_case(&dotgit_name[..6])
         && b[6] == b'~'
-        && (b[7] >= b'1' && b[7] <= b'4')
+        && (b'1'..=b'4').contains(&b[7])
     {
         return only_spaces_and_periods(name, 8);
     }
@@ -110,9 +118,7 @@ fn is_ntfs_dot_generic(name: &str, dotgit_name: &str, short_prefix: &str) -> boo
                 return false;
             }
             saw_tilde = true;
-        } else if i >= 6 {
-            return false;
-        } else if c & 0x80 != 0 {
+        } else if i >= 6 || c & 0x80 != 0 {
             return false;
         } else {
             let sc = short_prefix.as_bytes().get(i).copied().unwrap_or(0);
@@ -125,22 +131,32 @@ fn is_ntfs_dot_generic(name: &str, dotgit_name: &str, short_prefix: &str) -> boo
     only_spaces_and_periods(name, i)
 }
 
+/// Whether `name` matches `.gitmodules` under Git's NTFS equivalence rules.
+#[must_use]
 pub fn is_ntfs_dot_gitmodules(name: &str) -> bool {
     is_ntfs_dot_generic(name, "gitmodules", "gi7eba")
 }
 
+/// Whether `name` matches `.gitignore` under Git's NTFS equivalence rules.
+#[must_use]
 pub fn is_ntfs_dot_gitignore(name: &str) -> bool {
     is_ntfs_dot_generic(name, "gitignore", "gi250a")
 }
 
+/// Whether `name` matches `.gitattributes` under Git's NTFS equivalence rules.
+#[must_use]
 pub fn is_ntfs_dot_gitattributes(name: &str) -> bool {
     is_ntfs_dot_generic(name, "gitattributes", "gi7d29")
 }
 
+/// Whether `name` matches `.mailmap` under Git's NTFS equivalence rules.
+#[must_use]
 pub fn is_ntfs_dot_mailmap(name: &str) -> bool {
     is_ntfs_dot_generic(name, "mailmap", "maba30")
 }
 
+/// Dispatch a `test-tool path-utils` dotfile predicate by subcommand name.
+#[must_use]
 pub fn dotfile_matches(subcmd: &str, path: &str) -> bool {
     match subcmd {
         "is_dotgitmodules" => is_hfs_dot_gitmodules(path) || is_ntfs_dot_gitmodules(path),

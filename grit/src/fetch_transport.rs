@@ -27,10 +27,10 @@ use crate::file_upload_pack_v2::{
     write_v2_fetch_request,
 };
 use crate::grit_exe::{grit_executable, strip_trace2_env};
-use crate::pkt_line;
 use crate::protocol_wire;
 use crate::trace2_transfer;
 use crate::wire_trace;
+use grit_lib::pkt_line;
 
 /// Shallow/deepen options forwarded to local `upload-pack` negotiation.
 #[derive(Debug, Clone, Default)]

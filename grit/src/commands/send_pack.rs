@@ -18,10 +18,10 @@ use std::process::{Child, Command, Stdio};
 
 use crate::fetch_transport::parse_leading_shell_env_assignments;
 use crate::grit_exe::{grit_executable, strip_trace2_env};
-use crate::pkt_line::{read_packet, write_flush, Packet};
 use crate::protocol_wire;
 use crate::trace2_transfer;
 use crate::wire_trace;
+use grit_lib::pkt_line::{read_packet, write_flush, Packet};
 
 /// Upstream `git send-pack` usage synopsis (exit 129 when options are incompatible).
 const SEND_PACK_USAGE: &str = "usage: git send-pack [--mirror] [--dry-run] [--force]\n\

@@ -2991,7 +2991,7 @@ fn format_long(
             format!("{comment_line}\t")
         };
         let copts = ColumnOptions {
-            width: None,
+            width: Some(crate::git_column::term_columns_minus_one()),
             padding: 1,
             indent: column_indent,
             nl: "\n".to_owned(),
@@ -3024,7 +3024,7 @@ fn format_long(
             format!("{comment_line}\t")
         };
         let copts = ColumnOptions {
-            width: None,
+            width: Some(crate::git_column::term_columns_minus_one()),
             padding: 1,
             indent: column_indent,
             nl: "\n".to_owned(),
@@ -3544,8 +3544,8 @@ fn status_path_matches(path: &str, pathspecs: &[String]) -> bool {
     }
     let normalized = path.trim_end_matches('/');
     pathspecs.iter().any(|spec| {
-        crate::pathspec::pathspec_matches(spec, path)
-            || crate::pathspec::pathspec_matches(spec, normalized)
+        grit_lib::pathspec::pathspec_matches(spec, path)
+            || grit_lib::pathspec::pathspec_matches(spec, normalized)
     })
 }
 
@@ -3558,19 +3558,19 @@ fn pathspec_may_match_directory(rel_dir: &str, pathspecs: &[String]) -> bool {
         return true;
     }
     pathspecs.iter().any(|spec| {
-        if crate::pathspec::has_glob_chars(spec) {
+        if grit_lib::pathspec::has_glob_chars(spec) {
             return true;
         }
         let spec_norm = spec.trim_end_matches('/');
         spec_norm == rel_dir
             || spec_norm.starts_with(&format!("{rel_dir}/"))
             || rel_dir.starts_with(&format!("{spec_norm}/"))
-            || crate::pathspec::pathspec_matches(spec, rel_dir)
+            || grit_lib::pathspec::pathspec_matches(spec, rel_dir)
     })
 }
 
 fn status_pathspecs_contain_glob(pathspecs: &[String]) -> bool {
     pathspecs
         .iter()
-        .any(|s| crate::pathspec::has_glob_chars(s.as_str()))
+        .any(|s| grit_lib::pathspec::has_glob_chars(s.as_str()))
 }

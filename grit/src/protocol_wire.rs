@@ -3,6 +3,7 @@
 use std::process::Command;
 
 use crate::protocol;
+use grit_lib::protocol::ClientProtocolVersionInputs;
 
 /// Client-side `protocol.version` from `-c` / env / config (default **2**, matching Git).
 ///
@@ -11,9 +12,7 @@ pub fn effective_client_protocol_version() -> u8 {
     // Match `git/protocol.c` `get_protocol_version_config`: repo config (including `-c`) wins over
     // `GIT_TEST_PROTOCOL_VERSION`, so `git -c protocol.version=1` still uses v1 when the test
     // harness pins the default to v0 via env.
-    if let Some(v) = protocol::check_config_param("protocol.version") {
-        return parse_protocol_version_digit(&v).unwrap_or(2);
-    }
+    let config_param_version = protocol::check_config_param("protocol.version");
     let git_dir = std::env::var("GIT_DIR")
         .ok()
         .map(std::path::PathBuf::from)
@@ -22,73 +21,28 @@ pub fn effective_client_protocol_version() -> u8 {
                 .ok()
                 .map(|r| r.git_dir)
         });
-    if let Some(ref dir) = git_dir {
+    let repo_config_version = if let Some(ref dir) = git_dir {
         if let Ok(set) = grit_lib::config::ConfigSet::load(Some(dir.as_path()), true) {
-            if let Some(v) = set.get("protocol.version") {
-                return parse_protocol_version_digit(&v).unwrap_or(2);
-            }
+            set.get("protocol.version")
+        } else {
+            None
         }
-    }
-    if let Some(raw) = std::env::var("GIT_TEST_PROTOCOL_VERSION")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
-        return parse_protocol_version_digit(&raw).unwrap_or(2);
-    }
-    2
-}
-
-fn parse_protocol_version_digit(s: &str) -> Option<u8> {
-    match s.trim() {
-        "0" => Some(0),
-        "1" => Some(1),
-        "2" => Some(2),
-        _ => None,
-    }
+    } else {
+        None
+    };
+    let inputs = ClientProtocolVersionInputs {
+        config_param_version,
+        repo_config_version,
+        git_test_protocol_version: std::env::var("GIT_TEST_PROTOCOL_VERSION").ok(),
+    };
+    grit_lib::protocol::effective_client_protocol_version_from_inputs(&inputs)
 }
 
 /// Server: highest `version=N` from `GIT_PROTOCOL` (`version=0|1|2`), or **0** if unset.
 pub fn server_protocol_version_from_git_protocol_env() -> u8 {
-    let Ok(raw) = std::env::var("GIT_PROTOCOL") else {
-        return 0;
-    };
-    let mut best = 0u8;
-    for part in raw.split(':') {
-        let Some(rest) = part.strip_prefix("version=") else {
-            continue;
-        };
-        let v = rest.parse::<u8>().unwrap_or(0);
-        if v > best {
-            best = v;
-        }
-    }
-    best
-}
-
-fn strip_protocol_version_entries(s: &str) -> String {
-    s.split(':')
-        .filter(|p| !p.trim_start().starts_with("version="))
-        .filter(|p| !p.is_empty())
-        .collect::<Vec<_>>()
-        .join(":")
-}
-
-fn merged_git_protocol_value(client_wants: u8, existing: Option<String>) -> Option<String> {
-    if client_wants == 0 {
-        return None;
-    }
-    let entry = format!("version={client_wants}");
-    Some(match existing {
-        Some(ref e) if !e.is_empty() => {
-            let base = strip_protocol_version_entries(e.trim());
-            if base.is_empty() {
-                entry
-            } else {
-                format!("{base}:{entry}")
-            }
-        }
-        _ => entry,
-    })
+    grit_lib::protocol::server_protocol_version_from_git_protocol(
+        std::env::var("GIT_PROTOCOL").ok().as_deref(),
+    )
 }
 
 /// When spawning `upload-pack` / `receive-pack`, merge `GIT_PROTOCOL` so the server negotiates v1/v2.
@@ -97,8 +51,9 @@ fn merged_git_protocol_value(client_wants: u8, existing: Option<String>) -> Opti
 /// parent process cannot pin v2 when the child explicitly uses `protocol.version=1` (e.g.
 /// `submodule update --remote` local fetch).
 pub fn merge_git_protocol_env_for_child(cmd: &mut Command, client_wants: u8) {
+    let existing = std::env::var("GIT_PROTOCOL").ok();
     if let Some(merged) =
-        merged_git_protocol_value(client_wants, std::env::var("GIT_PROTOCOL").ok())
+        grit_lib::protocol::merged_git_protocol_value(client_wants, existing.as_deref())
     {
         cmd.env("GIT_PROTOCOL", merged);
     }

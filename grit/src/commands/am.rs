@@ -2183,16 +2183,16 @@ fn create_am_commit(
 You may want to amend it after fixing the message, or set the config\n\
 variable i18n.commitEncoding to the encoding your project uses.\n"
         );
-        if let Some(raw) = crate::git_commit_encoding::encode_unicode(enc, &message) {
+        if let Some(raw) = grit_lib::commit_encoding::encode_unicode(enc, &message) {
             (message.clone(), None, Some(raw))
         } else {
-            crate::git_commit_encoding::finalize_stored_commit_message(
+            grit_lib::commit_encoding::finalize_stored_commit_message(
                 message,
                 commit_enc.as_deref(),
             )
         }
     } else {
-        crate::git_commit_encoding::finalize_stored_commit_message(message, commit_enc.as_deref())
+        grit_lib::commit_encoding::finalize_stored_commit_message(message, commit_enc.as_deref())
     };
 
     let commit_data = CommitData {
@@ -3301,7 +3301,7 @@ fn parse_mbox_with_opts(
             }
 
             if let Some(value) = line_no_cr.strip_prefix("From: ") {
-                author = crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(value.trim());
+                author = grit_lib::commit_encoding::decode_rfc2047_mailbox_from_line(value.trim());
                 last_header = "from".to_string();
             } else if let Some(value) = line_no_cr.strip_prefix("Date: ") {
                 date = value.trim().to_string();

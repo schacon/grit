@@ -20,7 +20,7 @@
 #
 # Skipped files (in_scope=skip in data/test-files.csv) are never run.
 # After each test file finishes, its row in data/test-files.csv is updated;
-# when the run completes, docs/progress/index.html + docs/testfiles.html are regenerated once.
+# when the run completes, docs/index.html + dashboard docs are regenerated once.
 
 set -euo pipefail
 

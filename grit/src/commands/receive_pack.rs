@@ -24,9 +24,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::grit_exe;
-use crate::pkt_line::{read_packet, write_flush, write_packet_raw, Packet};
 use crate::trace2_transfer;
 use crate::wire_trace;
+use grit_lib::pkt_line::{read_packet, write_flush, write_packet_raw, Packet};
 
 /// Arguments for `grit receive-pack`.
 #[derive(Debug, ClapArgs)]

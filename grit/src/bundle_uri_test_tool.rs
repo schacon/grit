@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::git_path;
+use grit_lib::git_path;
 
 /// Prototype base URI used by the Git test helper (`test-bundle-uri.c`).
 const TEST_BASE_URI: &str = "<uri>";
@@ -142,7 +142,7 @@ fn bundle_list_update(key: &str, value: &str, list: &mut BundleList) -> BundleUp
             let base = list.base_uri.as_deref().unwrap_or(TEST_BASE_URI);
             let resolved = match git_path::relative_url(base, value, None) {
                 Ok(u) => u,
-                Err(()) => {
+                Err(_) => {
                     eprintln!("fatal: cannot strip one component off url '{base}'");
                     std::process::exit(128);
                 }
