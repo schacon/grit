@@ -220,9 +220,10 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Re-ran receive-pack hardening checks after protocol policy work.
 - `t5547-push-quarantine` now passes 6/6.
 - `t5409-colorize-remote-messages` now passes 11/11.
-- `t5545-push-options` remains 5/13; remaining failures are positive push-option propagation through receive hooks.
+- Fixed receive-pack hook cwd so remote pre/post-receive hooks run from `$GIT_DIR` and can see `hooks/...` paths like Git.
+- `t5545-push-options` improved to 12/13; direct and HTTP push-option propagation pass, and the remaining submodule case fails on strict gitlink/object validation rather than push-option env propagation.
 - Brought `t5548-push-porcelain` into scope; it is currently 5/25. The failures are broad local/HTTP push porcelain formatting, not SSH-specific receive-pack behavior.
-- Validation: `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh t5409-colorize-remote-messages.sh t5545-push-options.sh` reported `t5547` 6/6, `t5409` 11/11, and `t5545` 5/13. `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh` reported 5/25.
+- Validation: `cargo check -p grit-rs` and `cargo build --release -p grit-rs` passed; `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh t5547-push-quarantine.sh t5409-colorize-remote-messages.sh` reported `t5545` 12/13, `t5547` 6/6, and `t5409` 11/11. `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh` reported 5/25.
 
 ## HTTP Challenge Plumbing
 

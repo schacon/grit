@@ -469,6 +469,8 @@ pub struct RunHookOptions<'a> {
     pub stdin_data: Option<&'a [u8]>,
     /// Extra environment variables for each hook subprocess.
     pub env_vars: &'a [(&'a str, &'a str)],
+    /// Override the hook process working directory.
+    pub cwd: Option<&'a Path>,
     /// Commit-style env (`GIT_INDEX_FILE`, `GIT_PREFIX`, author exports, …) merged after `env_vars`.
     pub commit_env: Option<&'a CommitHookEnv<'a>>,
 }
@@ -496,10 +498,13 @@ pub fn run_hook_opts(
         return Ok(HookResult::NotFound);
     }
 
-    let work_dir: PathBuf = match repo {
-        Some(r) => r.work_tree.clone().unwrap_or_else(|| r.git_dir.clone()),
-        None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-    };
+    let work_dir: PathBuf = opts.cwd.map_or_else(
+        || match repo {
+            Some(r) => r.work_tree.clone().unwrap_or_else(|| r.git_dir.clone()),
+            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        },
+        Path::to_path_buf,
+    );
     let work_dir = work_dir.as_path();
     let git_dir_for_configured = repo.map(|r| r.git_dir.as_path());
 
@@ -535,8 +540,12 @@ pub fn run_hook_opts(
                     continue;
                 };
                 let gd = r.git_dir.as_path();
+                let effective_argv0 = path
+                    .parent()
+                    .map(|hooks_dir| hook_argv0(r, hooks_dir, hook_name, work_dir))
+                    .unwrap_or_else(|| argv0.clone());
                 match spawn_traditional_hook(
-                    argv0,
+                    &effective_argv0,
                     args,
                     work_dir,
                     gd,
@@ -647,6 +656,7 @@ pub fn run_commit_hook(
             path_to_stdin: None,
             stdin_data,
             env_vars: &[],
+            cwd: None,
             commit_env: Some(commit_env),
         },
         None,
@@ -677,6 +687,7 @@ pub fn run_hook(
             path_to_stdin: None,
             stdin_data,
             env_vars: &[],
+            cwd: None,
             commit_env: None,
         },
         None,
@@ -712,6 +723,7 @@ pub fn run_hook_in_git_dir(
             path_to_stdin: None,
             stdin_data,
             env_vars,
+            cwd: Some(repo.git_dir.as_path()),
             commit_env: None,
         },
         Some(&mut captured),
@@ -744,6 +756,7 @@ pub fn run_hook_with_env(
             path_to_stdin: None,
             stdin_data,
             env_vars,
+            cwd: None,
             commit_env: None,
         },
         Some(&mut captured),

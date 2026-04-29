@@ -199,9 +199,9 @@
 - `cargo build --release -p grit-rs`: passed
 - `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh`: 6/6 passed
 - `./scripts/run-tests.sh --timeout 150 t5409-colorize-remote-messages.sh`: 11/11 passed
-- `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh`: 5/13
+- `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh`: 12/13
 - `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh`: 5/25
-- The remaining `t5545` failures are positive push-option propagation cases. The `t5548` failures are broad local/HTTP push porcelain formatting. Quarantine, remote message colorization, and remote reject validation remain green.
+- Direct and HTTP push-option propagation now pass through pre/post-receive hooks; the remaining `t5545` failure is the submodule case, which fails on strict gitlink/object validation during the parent push. The `t5548` failures are broad local/HTTP push porcelain formatting. Quarantine, remote message colorization, and remote reject validation remain green.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

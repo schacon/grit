@@ -550,7 +550,7 @@ Tasks:
 - [x] Confirm `--receive-pack` handling matches Git.
 - [ ] Confirm protocol v2 receive-pack rejection is correct, or implement v2 push if tests require it.
 - [ ] Validate sideband stderr/progress propagation.
-- [~] Validate push options over SSH. (`t5545-push-options` remains 5/13; remaining failures are positive push-option propagation)
+- [~] Validate push options over SSH. (`t5545-push-options` is 12/13; direct and HTTP push-option propagation pass, remaining failure is submodule gitlink/object validation)
 - [ ] Validate atomic push over SSH.
 - [~] Validate porcelain output over SSH. (`t5548-push-porcelain` is 5/25; failures are broad local/HTTP porcelain formatting)
 - [x] Validate hook/error propagation.
@@ -560,7 +560,7 @@ Tasks:
 Validation:
 
 - [x] `cargo build --release -p grit-rs`
-- [~] `./scripts/run-tests.sh t5545-push-options.sh`
+- [~] `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh` (12/13; remaining submodule failure is not push-option env propagation)
 - [x] `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh`
 - [~] `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh` (5/25; broad push porcelain formatting gaps)
 - [x] `./scripts/run-tests.sh t5406-remote-rejects.sh`
@@ -568,7 +568,7 @@ Validation:
 
 Definition of done:
 
-- [~] SSH push behavior is covered by the same receive-pack expectations as local/HTTP push where applicable. (`t5547`, `t5406`, and `t5409` pass; `t5545` push-options remains partial)
+- [~] SSH push behavior is covered by the same receive-pack expectations as local/HTTP push where applicable. (`t5547`, `t5406`, and `t5409` pass; `t5545` push-option env propagation passes outside the remaining submodule object gap)
 - [ ] Any remaining SSH push v2 limitation is documented.
 
 ## Phase 14: Protocol Policy and Security Audit
