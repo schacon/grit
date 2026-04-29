@@ -185,7 +185,8 @@
 - `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh`: 6/6 passed
 - `./scripts/run-tests.sh --timeout 150 t5409-colorize-remote-messages.sh`: 11/11 passed
 - `./scripts/run-tests.sh --timeout 150 t5545-push-options.sh`: 5/13
-- The remaining `t5545` failures are positive push-option propagation cases. Quarantine, remote message colorization, and remote reject validation remain green.
+- `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh`: 5/25
+- The remaining `t5545` failures are positive push-option propagation cases. The `t5548` failures are broad local/HTTP push porcelain formatting. Quarantine, remote message colorization, and remote reject validation remain green.
 
 **2026-04-27 (remote auth / HTTP challenge plumbing)**
 

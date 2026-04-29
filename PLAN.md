@@ -667,7 +667,7 @@ commit → check it off → move on.
 - [x] `t5318-pack-objects-revs-exclude` — pack-objects `--revs` with `^ref` exclusion and `--stdin-packs` (9/9)
 - [ ] `t5304-prune` █████░░░░░░░░░░░░░░░ 8/32 (24 left) — prune
 - [ ] `t5531-deep-submodule-push` ███░░░░░░░░░░░░░░░░░ 5/29 (24 left) — test push with submodules
-- [ ] `t5548-push-porcelain` ░░░░░░░░░░░░░░░░░░░░ 1/25 (24 left) — Test git push porcelain output
+- [ ] `t5548-push-porcelain` ████░░░░░░░░░░░░░░░░ 5/25 (20 left) — Test git push porcelain output
 - [ ] `t5512-ls-remote` ███████░░░░░░░░░░░░░ 15/40 (25 left) — git ls-remote
 - [ ] `t5302-pack-index` ████░░░░░░░░░░░░░░░░ 8/36 (28 left) — pack index with 64-bit offsets and object CRC
 - [ ] `t5801-remote-helpers` ██░░░░░░░░░░░░░░░░░░ 5/35 (30 left) — Test remote-helper import and export commands

@@ -551,7 +551,7 @@ Tasks:
 - [ ] Validate sideband stderr/progress propagation.
 - [~] Validate push options over SSH. (`t5545-push-options` remains 5/13; remaining failures are positive push-option propagation)
 - [ ] Validate atomic push over SSH.
-- [ ] Validate porcelain output over SSH.
+- [~] Validate porcelain output over SSH. (`t5548-push-porcelain` is 5/25; failures are broad local/HTTP porcelain formatting)
 - [x] Validate hook/error propagation.
 - [ ] Scrub credentials/userinfo-like data in displayed SSH URLs where applicable.
 - [ ] Confirm child process cleanup on dry-run, rejected updates, and failed remote status.
@@ -561,7 +561,7 @@ Validation:
 - [x] `cargo build --release -p grit-rs`
 - [~] `./scripts/run-tests.sh t5545-push-options.sh`
 - [x] `./scripts/run-tests.sh --timeout 150 t5547-push-quarantine.sh`
-- [ ] `./scripts/run-tests.sh t5548-push-porcelain.sh`
+- [~] `./scripts/run-tests.sh --timeout 150 t5548-push-porcelain.sh` (5/25; broad push porcelain formatting gaps)
 - [x] `./scripts/run-tests.sh t5406-remote-rejects.sh`
 - [x] `./scripts/run-tests.sh --timeout 150 t5409-colorize-remote-messages.sh`
 
