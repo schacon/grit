@@ -261,3 +261,4 @@ Claimed Phase 1 in `AUTH_TASKS.md`: replace the flat `BTreeMap` credential handl
 - Added `http.proxyAuthMethod` and `GIT_HTTP_PROXY_AUTHMETHOD` parsing.
 - Kept Basic/anyauth proxy credentials supported and fail clearly for unsupported proxy auth methods.
 - Added `remote.<name>.proxy` override support for HTTP fetch and push before falling back to `http.proxy` or environment proxy variables.
+- Audited HTTP proxy HTTPS behavior: the manual HTTP proxy transport uses absolute-form requests over plain TCP and is suitable for HTTP remotes; HTTPS origins through an HTTP proxy still require CONNECT tunneling and TLS, which remains a documented transport limitation.
