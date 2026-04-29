@@ -438,10 +438,13 @@ fn parse_v0_v1_advertisement(
                     }
                     first_ref_line = false;
                 }
-                refs.push(ReceivePackAdvertisedRef {
-                    name: refname.trim().to_string(),
-                    oid,
-                });
+                let refname = refname.trim();
+                if !(oid.is_zero() && refname == "capabilities^{}") {
+                    refs.push(ReceivePackAdvertisedRef {
+                        name: refname.to_string(),
+                        oid,
+                    });
+                }
             }
             Some(other) => {
                 return Err(Error::Message(format!(
@@ -638,4 +641,131 @@ fn parse_report_status_body(body: &[u8]) -> Result<PushStatusReport> {
         statuses,
         sideband_stderr: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::{serialize_commit, CommitData};
+    use crate::refs;
+    use crate::repo::init_repository;
+    use crate::unpack_objects::{unpack_objects, UnpackOptions};
+    use crate::write_tree::write_tree_from_index;
+
+    fn make_commit(repo: &Repository) -> Result<ObjectId> {
+        use crate::index::{Index, IndexEntry, MODE_REGULAR};
+
+        let blob_oid = repo.odb.write(ObjectKind::Blob, b"push me\n")?;
+        let path = b"file.txt".to_vec();
+        let entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: blob_oid,
+            flags: path.len().min(0xfff) as u16,
+            flags_extended: None,
+            path,
+            base_index_pos: 0,
+        };
+        let mut index = Index::new();
+        index.add_or_replace(entry);
+        repo.write_index(&mut index)?;
+        let index = repo.load_index()?;
+        let tree = write_tree_from_index(&repo.odb, &index, "")?;
+        let commit = CommitData {
+            tree,
+            parents: Vec::new(),
+            author: "Example <example@example.com> 1700000000 +0000".to_owned(),
+            committer: "Example <example@example.com> 1700000000 +0000".to_owned(),
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            encoding: None,
+            message: "pushable commit\n".to_owned(),
+            raw_message: None,
+        };
+        let oid = repo
+            .odb
+            .write(ObjectKind::Commit, &serialize_commit(&commit))?;
+        refs::write_ref(&repo.git_dir, "refs/heads/main", &oid)?;
+        Ok(oid)
+    }
+
+    #[test]
+    fn build_receive_pack_request_formats_update_and_pack() -> Result<()> {
+        let advertised = ReceivePackAdvertisement {
+            protocol_version: 0,
+            refs: Vec::new(),
+            capabilities: ["report-status".to_owned(), "side-band-64k".to_owned()]
+                .into_iter()
+                .collect(),
+            object_format: "sha1".to_owned(),
+            service_url: "https://example.test/repo.git/git-receive-pack".to_owned(),
+        };
+        let new_oid = ObjectId::from_hex("1111111111111111111111111111111111111111")?;
+        let pack_data = empty_packfile_v2_bytes();
+        let command = PushCommand {
+            old_oid: None,
+            new_oid: Some(new_oid),
+            refname: "refs/heads/main".to_owned(),
+        };
+
+        let (request, sideband) = build_receive_pack_request(&advertised, &[command], &pack_data)?;
+
+        assert!(sideband);
+        let first_packet_len = usize::from_str_radix(
+            std::str::from_utf8(&request[..4]).map_err(|err| Error::Message(err.to_string()))?,
+            16,
+        )
+        .map_err(|err| Error::Message(err.to_string()))?;
+        let first_packet = std::str::from_utf8(&request[4..first_packet_len])
+            .map_err(|err| Error::Message(err.to_string()))?;
+        assert!(first_packet.contains("0000000000000000000000000000000000000000"));
+        assert!(first_packet.contains("1111111111111111111111111111111111111111"));
+        assert!(first_packet.contains(" refs/heads/main\0"));
+        assert!(first_packet.contains("report-status"));
+        assert!(first_packet.contains("side-band-64k"));
+        assert!(request.ends_with(&pack_data));
+        Ok(())
+    }
+
+    #[test]
+    fn build_push_pack_round_trips_with_unpack_objects() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let repo = init_repository(root.path(), false, "main", None, "files")?;
+        let tip = make_commit(&repo)?;
+
+        let pack = build_push_pack(&repo, tip, &[])?;
+
+        let remote_root = tempfile::tempdir()?;
+        let remote = init_repository(remote_root.path(), true, "main", None, "files")?;
+        let mut pack_reader = pack.as_slice();
+        let count = unpack_objects(&mut pack_reader, &remote.odb, &UnpackOptions::default())?;
+
+        assert!(count >= 3);
+        assert!(remote.odb.exists(&tip));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_report_status_reads_remote_results() -> Result<()> {
+        let mut body = Vec::new();
+        pkt_line::write_line_to_vec(&mut body, "unpack ok")?;
+        pkt_line::write_line_to_vec(&mut body, "ok refs/heads/main")?;
+        pkt_line::write_flush(&mut body)?;
+
+        let report = parse_report_status_body(&body)?;
+
+        assert!(report.unpack_ok);
+        assert_eq!(report.statuses.len(), 1);
+        assert!(report.statuses[0].ok);
+        assert_eq!(report.statuses[0].refname, "refs/heads/main");
+        Ok(())
+    }
 }
