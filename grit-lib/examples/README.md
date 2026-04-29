@@ -108,6 +108,20 @@ Implements a minimal **cherry-pick**: `main` and `topic` diverge such that `topi
 
 ---
 
+## `ex-grit-push`
+
+Implements a small `ex-grit-push` command: discover the current repository, resolve a branch, and push it to an HTTP(S) URL with `grit_lib::http_push::push_branch_http`.
+
+Run it from inside a repository:
+
+```bash
+cargo run -p grit-lib --example ex-grit-push -- main https://example.com/repo.git
+```
+
+**Interesting bits:** public library-driven smart HTTP push, branch-to-URL arguments, and a concise status summary from the remote `receive-pack`.
+
+---
+
 ## See also
 
 - API reference: `cargo doc -p grit-lib --open`

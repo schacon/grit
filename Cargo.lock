@@ -510,6 +510,7 @@ dependencies = [
 name = "grit-lib"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "encoding_rs",
  "filetime",
  "flate2",
@@ -525,6 +526,7 @@ dependencies = [
  "thiserror",
  "time",
  "unicode-width",
+ "ureq",
  "url",
 ]
 

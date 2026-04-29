@@ -32,3 +32,5 @@ encoding_rs = "0.8.35"
 icu_normalizer.workspace = true
 url.workspace = true
 filetime.workspace = true
+base64.workspace = true
+ureq.workspace = true

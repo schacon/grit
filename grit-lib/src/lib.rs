@@ -52,6 +52,7 @@ pub mod git_path;
 pub mod gitmodules;
 pub mod hide_refs;
 pub mod hooks;
+pub mod http_push;
 pub mod ident;
 pub mod ident_config;
 pub mod ident_resolve;
