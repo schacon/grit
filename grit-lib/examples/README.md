@@ -110,7 +110,7 @@ Implements a minimal **cherry-pick**: `main` and `topic` diverge such that `topi
 
 ## `ex-grit-push`
 
-Implements a small `ex-grit-push` command: discover the current repository, resolve a branch, and push it to an HTTP(S) URL with `grit_lib::http_push::push_branch_http`.
+Implements a small `ex-grit-push` command: discover the current repository, resolve a branch, and push it to an HTTP(S) URL with `grit_lib::http_push::push_branch`.
 
 Run it from inside a repository:
 
