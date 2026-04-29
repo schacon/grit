@@ -425,7 +425,7 @@ Tasks:
   - [ ] receive-pack discovery
   - [ ] receive-pack POST
 - [~] Verify redirect/auth behavior in `t5551-http-fetch-smart` (auth/redaction cases pass; redirect cases remain expected failures).
-- [ ] Verify shallow HTTP fetch/push behavior was not broken by auth changes.
+- [x] Verify shallow HTTP fetch/push behavior was not broken by auth changes. (`t5542` passes; `t5539` remaining failures are shallow/deepen transport state, not auth)
 - [ ] Audit URL credential scrubbing in:
   - [ ] push output
   - [ ] fetch/clone errors
@@ -446,7 +446,7 @@ Validation:
 Definition of done:
 
 - [x] Smart HTTP auth is integrated across fetch, clone, ls-remote, and push.
-- [ ] Any remaining HTTP failures are documented as non-auth transport gaps.
+- [x] Any remaining HTTP failures are documented as non-auth transport gaps. (`t5551`, `t5539`, and HTTP proxy HTTPS limitations are tracked as redirect/SHA-256, shallow/deepen, and CONNECT/TLS transport gaps)
 
 ## Phase 11: SSH Command Configuration Parity
 

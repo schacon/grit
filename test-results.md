@@ -198,6 +198,7 @@
 
 - Current `data/test-files.csv` has these auth-related suites in scope and fully passing: `t0300-credentials` 56/56, `t0301-credential-cache` 52/52, `t0302-credential-store` 65/65, `t0303-credential-external` 23/23, `t5549-fetch-push-http` 3/3, `t5555-http-smart-common` 10/10, `t5563-simple-http-auth` 17/17, `t5564-http-proxy` 8/8, `t5812-proto-disable-http` 29/29, and `t5813-proto-disable-ssh` 81/81.
 - Reconciled `AUTH_TASKS.md` validation and final milestone checkboxes for the completed credential, smart HTTP auth, and live SSH upload-pack work.
+- Remaining HTTP failures are documented as transport gaps rather than auth blockers: `t5551-http-fetch-smart` is 29/31 with redirect/SHA-256 empty clone behavior left, `t5539-fetch-http-shallow` is 4/8 with shallow/deepen state left, and HTTPS remotes through an HTTP proxy still need CONNECT/TLS support.
 
 **2026-04-29 (remote auth / SSH receive-pack validation)**
 
