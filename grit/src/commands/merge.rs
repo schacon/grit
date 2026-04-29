@@ -8417,7 +8417,7 @@ fn read_merge_message_from_file(path: &Path, config: &ConfigSet) -> Result<Strin
     let enc_name = config
         .get("i18n.commitEncoding")
         .or_else(|| config.get("i18n.commitencoding"));
-    Ok(crate::git_commit_encoding::decode_bytes(
+    Ok(grit_lib::commit_encoding::decode_bytes(
         enc_name.as_deref(),
         &bytes,
     ))
@@ -8445,7 +8445,7 @@ fn finalize_merge_commit_message(msg: String, config: &ConfigSet) -> MergeCommit
             raw_message: None,
         };
     };
-    let Some(raw) = crate::git_commit_encoding::encode_unicode(&label, &msg) else {
+    let Some(raw) = grit_lib::commit_encoding::encode_unicode(&label, &msg) else {
         return MergeCommitMessage {
             message: msg,
             encoding: None,

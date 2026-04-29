@@ -2266,10 +2266,9 @@ fn commit_from_merged_index(
     let author = rebase_replayed_author_line(source_author_line, replay_opts, now)?;
     let committer = rebase_replayed_committer_line(config, source_author_line, replay_opts, now)?;
     let (message, encoding, raw_message) = finalize_message_for_commit_encoding(message, config);
-    let (author_raw, committer_raw) =
-        crate::git_commit_encoding::identity_raw_for_serialized_commit(
-            &encoding, &author, &committer,
-        );
+    let (author_raw, committer_raw) = grit_lib::commit_encoding::identity_raw_for_serialized_commit(
+        &encoding, &author, &committer,
+    );
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
@@ -4948,7 +4947,7 @@ fn cherry_pick_for_rebase(
         let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
         let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
         let (author_raw, committer_raw) =
-            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                 &encoding, &author, &committer,
             );
         let commit_data = CommitData {
@@ -5047,7 +5046,7 @@ fn cherry_pick_for_rebase(
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                     let (author_raw, committer_raw) =
-                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                        grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                             &encoding, &author, &committer,
                         );
                     let commit_data = CommitData {
@@ -5080,7 +5079,7 @@ fn cherry_pick_for_rebase(
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                     let (author_raw, committer_raw) =
-                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                        grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                             &encoding, &author, &committer,
                         );
                     let commit_data = CommitData {
@@ -5114,7 +5113,7 @@ fn cherry_pick_for_rebase(
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                     let (author_raw, committer_raw) =
-                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                        grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                             &encoding, &author, &committer,
                         );
                     let commit_data = CommitData {
@@ -5182,7 +5181,7 @@ fn cherry_pick_for_rebase(
                 let committer =
                     rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                 let (author_raw, committer_raw) =
-                    crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                    grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                         &encoding, &author, &committer,
                     );
                 let commit_data = CommitData {
@@ -5472,10 +5471,9 @@ fn cherry_pick_for_rebase(
 
     let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
     let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
-    let (author_raw, committer_raw) =
-        crate::git_commit_encoding::identity_raw_for_serialized_commit(
-            &encoding, &author, &committer,
-        );
+    let (author_raw, committer_raw) = grit_lib::commit_encoding::identity_raw_for_serialized_commit(
+        &encoding, &author, &committer,
+    );
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
@@ -6079,7 +6077,7 @@ fn do_continue() -> Result<()> {
             now_continue,
         )?;
         let (author_raw, committer_raw) =
-            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                 &encoding, &author, &committer,
             );
         let commit_data = CommitData {
@@ -6126,7 +6124,7 @@ fn do_continue() -> Result<()> {
             now_continue,
         )?;
         let (author_raw, committer_raw) =
-            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            grit_lib::commit_encoding::identity_raw_for_serialized_commit(
                 &encoding, &author, &committer,
             );
         let commit_data = CommitData {
@@ -6409,7 +6407,7 @@ fn cleanup_rebase_state(git_dir: &Path) {
 
 fn commit_message_unicode(commit: &CommitData) -> String {
     if let Some(raw) = &commit.raw_message {
-        return crate::git_commit_encoding::decode_bytes(commit.encoding.as_deref(), raw);
+        return grit_lib::commit_encoding::decode_bytes(commit.encoding.as_deref(), raw);
     }
     commit.message.clone()
 }
@@ -6431,7 +6429,7 @@ fn finalize_message_for_commit_encoding(
     let Some(label) = commit_enc else {
         return (unicode, None, None);
     };
-    let Some(raw) = crate::git_commit_encoding::encode_unicode(&label, &unicode) else {
+    let Some(raw) = grit_lib::commit_encoding::encode_unicode(&label, &unicode) else {
         return (unicode, None, None);
     };
     (unicode, Some(label), Some(raw))
@@ -6481,10 +6479,10 @@ fn read_rebase_continue_message(
         .or_else(|| config.get("i18n.commitencoding"));
     let unicode = match enc_name.as_deref() {
         Some(e) if !e.eq_ignore_ascii_case("utf-8") && !e.eq_ignore_ascii_case("utf8") => {
-            crate::git_commit_encoding::decode_bytes(Some(e), &bytes)
+            grit_lib::commit_encoding::decode_bytes(Some(e), &bytes)
         }
         _ => String::from_utf8(bytes.clone()).unwrap_or_else(|_| {
-            crate::git_commit_encoding::decode_bytes(enc_name.as_deref(), &bytes)
+            grit_lib::commit_encoding::decode_bytes(enc_name.as_deref(), &bytes)
         }),
     };
     Ok(finalize_message_for_commit_encoding(unicode, config))
