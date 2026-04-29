@@ -485,7 +485,8 @@
         border: 1px solid rgba(112, 92, 70, 0.24);
         border-radius: 0.18rem;
         background:
-          linear-gradient(90deg, rgba(23, 18, 13, 0.035) 1px, transparent 1px) 0 0 / 1.9rem 1.9rem,
+          linear-gradient(90deg, rgba(23, 18, 13, 0.035) 1px, transparent 1px) 0
+            0 / 1.9rem 1.9rem,
           #fffaf2;
         box-shadow:
           0 20px 45px rgba(63, 45, 24, 0.13),
@@ -524,6 +525,17 @@
       }
       .editor-letter p:last-child {
         margin-bottom: 0;
+      }
+      .editor-letter a {
+        color: #9f3d22;
+        font-weight: 700;
+        text-decoration: underline;
+        text-decoration-color: rgba(159, 61, 34, 0.34);
+        text-underline-offset: 0.16em;
+      }
+      .editor-letter a:hover {
+        color: #bf3d17;
+        text-decoration-color: rgba(191, 61, 23, 0.6);
       }
       .card {
         border: 1px solid var(--line);
@@ -565,17 +577,27 @@
         font-size: 0.93rem;
       }
       .list li {
-        display: flex;
-        gap: 0.58rem;
+        position: relative;
+        padding-left: 1.05rem;
       }
       .list li::before {
         content: "";
-        flex: 0 0 0.38rem;
+        position: absolute;
+        left: 0;
+        top: 0.55rem;
         width: 0.38rem;
         height: 0.38rem;
-        margin-top: 0.55rem;
         border-radius: 50%;
         background: var(--accent);
+      }
+      .list a {
+        color: var(--accent-dark);
+        text-decoration: underline;
+        text-decoration-color: rgba(191, 61, 23, 0.28);
+        text-underline-offset: 0.14em;
+      }
+      .list a:hover {
+        text-decoration-color: rgba(191, 61, 23, 0.58);
       }
       .progress-section {
         margin-top: -1.2rem;
@@ -592,7 +614,9 @@
       }
       .progress-section h2 {
         max-width: none;
-        font-size: clamp(1.75rem, 3.15vw, 2.62rem);
+        font-size: clamp(1.55rem, 2.75vw, 2.28rem);
+        font-weight: 760;
+        letter-spacing: -0.045em;
         white-space: nowrap;
       }
       .progress-section .section-intro {
@@ -888,8 +912,36 @@ grit-lib = <span class="string">"0.1"</span>
                 <code>grit-rs</code> CLI.
               </li>
               <li>
-                grit-lib covers objects, packs, index, refs, revisions, diff,
-                merge, config, ignore rules, hooks, and more.
+                grit-lib covers
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/objects/"
+                  >objects</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/pack/"
+                  >packs</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/index/"
+                  >index</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/refs/">refs</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/rev_parse/"
+                  >revisions</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/diff/">diff</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/merge_file/"
+                  >merge</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/config/"
+                  >config</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/ignore/"
+                  >ignore rules</a
+                >,
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/hooks/"
+                  >hooks</a
+                >, and
+                <a href="https://docs.rs/grit-lib/latest/grit_lib/">more</a>.
               </li>
               <li>
                 Development is agent-driven, with logs and generated progress
@@ -950,20 +1002,32 @@ grit-lib = <span class="string">"0.1"</span>
             <span class="num">Letter from the editor</span>
             <h2 id="editor-letter-title">Why this exists.</h2>
             <p>
-              Git is still the common database of software work. It stores the
-              history, the branches, the patches, and a surprising amount of the
-              social contract. But most tools meet it through command output.
+              For
+              <a
+                href="https://github.com/libgit2/libgit2/commit/4b7483a285024937df9623c3543390e717e2338a"
+                >over 15 years</a
+              >, I've wanted a full implementation of git that was available as
+              a nice, reentrant library. Not a fork-exec'd wrapper around the
+              command line, but a real library that didn't
+              <code>die</code>
+              whenever it got scared.
             </p>
             <p>
-              Grit is an attempt to make that database feel available as code:
-              typed, testable, safe Rust code. The CLI matters because behavior
-              matters. The library matters because reuse matters more.
+              When I read about the Anthropic experiment to build a
+              <a
+                href="https://www.anthropic.com/engineering/building-c-compiler"
+                >C compiler</a
+              >
+              from scratch using agents and test suites, I thought that was a
+              pretty cool idea. Maybe I could do that to make the library of my
+              dreams, in Rust.
             </p>
             <p>
-              The bet is simple: if agents can rebuild Git carefully enough to
-              pass Git's own tests, then the result is not just a clone. It is a
-              map of Git's behavior that other tools can build on.
+              So here we are. Grit is the result of that experiment: an
+              agent-driven reimplementation of Git in Rust, built to pass Git's
+              own test suite. Hopefully I can get it to the finish line.
             </p>
+            <p>Love, Scott</p>
           </article>
         </div>
       </section>
@@ -976,67 +1040,241 @@ grit-lib = <span class="string">"0.1"</span>
         </p>
         <div class="grid capabilities">
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 17h10a4 4 0 0 0 .4-8 5.5 5.5 0 0 0-10.6-1.5A4.8 4.8 0 0 0 7 17Z"/></svg></span><h3>Objects</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <path
+                    d="M7 17h10a4 4 0 0 0 .4-8 5.5 5.5 0 0 0-10.6-1.5A4.8 4.8 0 0 0 7 17Z"
+                  /></svg
+              ></span>
+              <h3>Objects</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/odb.rs">Read and write loose objects</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/examples/odb_blob.rs">Hash blobs, trees, commits, and tags</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/objects.rs">Parse object IDs and payloads</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/odb.rs"
+                  >Read and write loose objects</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/examples/odb_blob.rs"
+                  >Hash blobs, trees, commits, and tags</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/objects.rs"
+                  >Parse object IDs and payloads</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 5h10M7 19h10M12 5v14"/></svg></span><h3>Index</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <path d="M7 5h10M7 19h10M12 5v14" /></svg
+              ></span>
+              <h3>Index</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/index.rs">Load and write the staging area</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/examples/index_add.rs">Add, replace, sort, and refresh entries</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/write_tree.rs">Build trees from the index</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/index.rs"
+                  >Load and write the staging area</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/examples/index_add.rs"
+                  >Add, replace, sort, and refresh entries</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/write_tree.rs"
+                  >Build trees from the index</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 6h8M7 8l5 8M17 8l-5 8"/></svg></span><h3>Refs</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <circle cx="6" cy="6" r="2" />
+                  <circle cx="18" cy="6" r="2" />
+                  <circle cx="12" cy="18" r="2" />
+                  <path d="M8 6h8M7 8l5 8M17 8l-5 8" /></svg
+              ></span>
+              <h3>Refs</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/refs.rs">Read, write, delete, and list refs</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/state.rs">Resolve HEAD and symbolic refs</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/reflog.rs">Append and expire reflogs</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/refs.rs"
+                  >Read, write, delete, and list refs</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/state.rs"
+                  >Resolve HEAD and symbolic refs</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/reflog.rs"
+                  >Append and expire reflogs</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h10M7 12h7M7 17h10"/><path d="M4 7h.01M4 12h.01M4 17h.01"/></svg></span><h3>Revisions</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <path d="M7 7h10M7 12h7M7 17h10" />
+                  <path d="M4 7h.01M4 12h.01M4 17h.01" /></svg
+              ></span>
+              <h3>Revisions</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/rev_parse.rs">Parse names like <code>HEAD~3</code></a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/examples/rev_list.rs">Walk commit graphs</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/merge_base.rs">Compute merge bases and ancestry</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/rev_parse.rs"
+                  >Parse names like <code>HEAD~3</code></a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/examples/rev_list.rs"
+                  >Walk commit graphs</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/merge_base.rs"
+                  >Compute merge bases and ancestry</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 8h8M10 4v8M6 17h8"/></svg></span><h3>Diffs</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24"><path d="M6 8h8M10 4v8M6 17h8" /></svg
+              ></span>
+              <h3>Diffs</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/diff.rs">Diff trees, index, and worktree</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/diff.rs">Detect renames and copies</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/patch_ids.rs">Generate patches and patch IDs</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/diff.rs"
+                  >Diff trees, index, and worktree</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/diff.rs"
+                  >Detect renames and copies</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/patch_ids.rs"
+                  >Generate patches and patch IDs</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h4c2.6 0 4.1 2.2 5.8 5"/><path d="M5 17h4c2.6 0 4.1-2.2 5.8-5"/><path d="M13 12h6"/><path d="M16 9l3 3-3 3"/></svg></span><h3>Merges</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <path d="M5 7h4c2.6 0 4.1 2.2 5.8 5" />
+                  <path d="M5 17h4c2.6 0 4.1-2.2 5.8-5" />
+                  <path d="M13 12h6" />
+                  <path d="M16 9l3 3-3 3" /></svg
+              ></span>
+              <h3>Merges</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/merge_file.rs">Three-way line merges</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/fmt_merge_msg.rs">Conflict styles and merge messages</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/examples/cherry_pick.rs">Cherry-pick detection helpers</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/merge_file.rs"
+                  >Three-way line merges</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/fmt_merge_msg.rs"
+                  >Conflict styles and merge messages</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/examples/cherry_pick.rs"
+                  >Cherry-pick detection helpers</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 8h14M7 12h10M9 16h6"/><rect x="4" y="5" width="16" height="14" rx="2"/></svg></span><h3>Config</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon" aria-hidden="true"
+                ><svg viewBox="0 0 24 24">
+                  <path d="M5 8h14M7 12h10M9 16h6" />
+                  <rect x="4" y="5" width="16" height="14" rx="2" /></svg
+              ></span>
+              <h3>Config</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/config.rs">Load multi-scope Git config</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/src/config.rs">Parse typed values</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit-lib/examples/ignore_match.rs">Match ignore and sparse patterns</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/config.rs"
+                  >Load multi-scope Git config</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/src/config.rs"
+                  >Parse typed values</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit-lib/examples/ignore_match.rs"
+                  >Match ignore and sparse patterns</a
+                >
+              </li>
             </ul>
           </article>
           <article class="card capability-card">
-            <div class="cap-head"><span class="cap-icon cap-letter" aria-hidden="true">$</span><h3>CLI</h3></div>
+            <div class="cap-head">
+              <span class="cap-icon cap-letter" aria-hidden="true">$</span>
+              <h3>CLI</h3>
+            </div>
             <ul>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit/src/commands/mod.rs">140+ Git commands implemented</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/grit/src/commands/status.rs">Status, log, diff, add, commit, fetch, push</a></li>
-              <li><a href="https://github.com/schacon/grit/blob/main/scripts/run-tests.sh">Harness-tested Git compatibility</a></li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit/src/commands/mod.rs"
+                  >140+ Git commands implemented</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/grit/src/commands/status.rs"
+                  >Status, log, diff, add, commit, fetch, push</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/schacon/grit/blob/main/scripts/run-tests.sh"
+                  >Harness-tested Git compatibility</a
+                >
+              </li>
             </ul>
           </article>
         </div>
