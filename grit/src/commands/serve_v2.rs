@@ -7,10 +7,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::merge_base;
 use grit_lib::objects::{self, parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -362,6 +364,8 @@ fn cmd_fetch(
     let mut have_oids: Vec<ObjectId> = Vec::new();
     let mut client_shallow_oids: HashSet<ObjectId> = HashSet::new();
     let mut depth_request: Option<usize> = None;
+    let mut deepen_since: Option<i64> = None;
+    let mut deepen_not: Vec<ObjectId> = Vec::new();
     let mut deepen_relative = false;
     let mut filter_spec: Option<String> = None;
     let mut wait_for_done = false;
@@ -406,7 +410,20 @@ fn cmd_fetch(
                     client_shallow_oids.insert(oid);
                 }
             }
-            s if s.starts_with("deepen-since ") || s.starts_with("deepen-not ") => {}
+            s if s.starts_with("deepen-since ") => {
+                let date = s.strip_prefix("deepen-since ").unwrap_or("").trim();
+                if let Ok((timestamp, _)) = parse_date_basic(date) {
+                    deepen_since = Some(timestamp as i64);
+                } else if let Ok(timestamp) = date.parse::<i64>() {
+                    deepen_since = Some(timestamp);
+                }
+            }
+            s if s.starts_with("deepen-not ") => {
+                let rev = s.strip_prefix("deepen-not ").unwrap_or("").trim();
+                if let Ok(oid) = ObjectId::from_hex(rev).or_else(|_| resolve_revision(&repo, rev)) {
+                    deepen_not.push(oid);
+                }
+            }
             s if s.starts_with("want-ref ") => {}
             s if s.starts_with("filter ") => {
                 if !caps.advertise_filter {
@@ -455,8 +472,40 @@ fn cmd_fetch(
         return Ok(());
     }
 
+    let client_shallow_vec = client_shallow_oids.iter().copied().collect::<Vec<_>>();
+    let mut new_shallow = Vec::new();
+    if let Some(depth) = depth_request {
+        new_shallow = grit_lib::rev_list::shallow_grafts_for_upload_pack_deepen(
+            &repo,
+            &wants,
+            &client_shallow_vec,
+            depth,
+        );
+    } else if deepen_since.is_some() || !deepen_not.is_empty() {
+        new_shallow = grit_lib::rev_list::shallow_grafts_for_upload_pack_rev_list(
+            &repo,
+            &wants,
+            &client_shallow_vec,
+            deepen_since,
+            &deepen_not,
+        )?;
+    }
+    if depth_request.is_some() || deepen_since.is_some() || !deepen_not.is_empty() {
+        let new_shallow_set: HashSet<ObjectId> = new_shallow.iter().copied().collect();
+        pkt_line::write_line(out, "shallow-info")?;
+        for oid in &new_shallow {
+            pkt_line::write_line(out, &format!("shallow {}", oid.to_hex()))?;
+        }
+        for oid in &client_shallow_vec {
+            if !new_shallow_set.contains(oid) {
+                pkt_line::write_line(out, &format!("unshallow {}", oid.to_hex()))?;
+            }
+        }
+        pkt_line::write_delim(out)?;
+    }
+
     pkt_line::write_line(out, "packfile")?;
-    let thin = !have_oids.is_empty();
+    let thin = !have_oids.is_empty() && client_shallow_oids.is_empty();
     let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
         git_dir,
         thin,
@@ -467,7 +516,11 @@ fn cmd_fetch(
             .stdin
             .take()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
-        let mut exclude_commits = have_commits.clone();
+        let mut exclude_commits = if client_shallow_oids.is_empty() {
+            have_commits.clone()
+        } else {
+            Vec::new()
+        };
         if let Some(mut depth) = depth_request {
             if deepen_relative && !client_shallow_oids.is_empty() {
                 let base =

@@ -2577,6 +2577,12 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
         std::env::set_var("GIT_NAMESPACE", ns);
     }
     if !opts.config_overrides.is_empty() {
+        if opts.config_overrides.iter().any(|kv| {
+            let lower = kv.to_ascii_lowercase();
+            kv.contains('\n') || lower.contains("%0a")
+        }) {
+            eprintln!("warning: skipping credential lookup for key with newline");
+        }
         let extra: String = opts
             .config_overrides
             .iter()

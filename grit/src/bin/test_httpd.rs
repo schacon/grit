@@ -23,6 +23,8 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use flate2::read::GzDecoder;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
@@ -90,9 +92,11 @@ struct Config {
 
 fn find_git_http_backend() -> PathBuf {
     if let Ok(exec_path) = std::env::var("GIT_EXEC_PATH") {
-        let candidate = Path::new(&exec_path).join("git-http-backend");
-        if candidate.exists() {
-            return candidate;
+        for path in std::env::split_paths(&exec_path) {
+            let candidate = path.join("git-http-backend");
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
 
@@ -101,6 +105,8 @@ fn find_git_http_backend() -> PathBuf {
         "/usr/libexec/git-core/git-http-backend",
         "/usr/local/lib/git-core/git-http-backend",
         "/usr/local/libexec/git-core/git-http-backend",
+        "/opt/homebrew/opt/git/libexec/git-core/git-http-backend",
+        "/opt/homebrew/libexec/git-core/git-http-backend",
     ];
     for c in &candidates {
         if Path::new(c).exists() {
@@ -329,8 +335,7 @@ fn redirect_target(path: &str) -> Option<(u16, String)> {
             return Some((301, format!("/smart/{repo}/info/refs")));
         }
     }
-    if path.starts_with(LOOP_DEEP_PREFIX) {
-        let rest = &path[LOOP_DEEP_PREFIX.len()..];
+    if let Some(rest) = path.strip_prefix(LOOP_DEEP_PREFIX) {
         return Some((302, format!("/{rest}")));
     }
     if let Some(rest) = path.strip_prefix("/loop-redir/") {
@@ -351,9 +356,9 @@ fn send_redirect(stream: &mut TcpStream, status: u16, location: &str) -> Result<
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
     let line = if query.is_empty() {
-        format!("{} {} HTTP/1.1 {}", method, path, status)
+        format!("{} {} HTTP/1.1 {} 1", method, path, status)
     } else {
-        format!("{} {}?{} HTTP/1.1 {}", method, path, query, status)
+        format!("{} {}?{} HTTP/1.1 {} 1", method, path, query, status)
     };
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
@@ -452,6 +457,17 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
             return r;
         }
     }
+    if req.path.starts_with("/custom_auth/") {
+        let r = handle_custom_auth_smart(&mut stream, &req, config);
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
+        return r;
+    }
     // Route: /one_time_script/<repo> -> git-http-backend CGI output transformed once.
     if req.path.starts_with("/one_time_script/") {
         let r = handle_one_time_script_smart(&mut stream, &req, config);
@@ -463,6 +479,18 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
             if r.is_ok() { 200 } else { 500 },
         );
         return r;
+    }
+    if req.path.starts_with("/error_git_upload_pack/smart/")
+        && (req.path.contains("git-upload-pack") || req.query.contains("service=git-upload-pack"))
+    {
+        log_access(config, &req.method, &req.path, &req.query, 500);
+        return send_response(
+            &mut stream,
+            500,
+            "Intentional Breakage",
+            &[],
+            b"Intentional Breakage\n",
+        );
     }
     // Route parity with upstream apache test CGI shims:
     // - /smart/incomplete_length/.../git-upload-pack -> truncated pkt-line length header
@@ -495,6 +523,17 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
+        if std::env::var("BUNDLE_URI_PROTOCOL").ok().as_deref() == Some("http") {
+            let r = handle_smart_http_grit_upload_pack(&mut stream, &req, config, "/smart");
+            log_access(
+                config,
+                &req.method,
+                &req.path,
+                &req.query,
+                if r.is_ok() { 200 } else { 500 },
+            );
+            return r;
+        }
         let r = handle_smart_http(&mut stream, &req, config);
         log_access(
             config,
@@ -831,6 +870,74 @@ fn handle_smart_http_with_path(
     parse_and_send_cgi_response(stream, &output)
 }
 
+fn handle_smart_http_grit_upload_pack(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<(), String> {
+    let repo_path = smart_repo_path(req, config, prefix)?;
+    let Some(grit) = std::env::var_os("GUST_BIN") else {
+        return Err("GUST_BIN is not set".to_string());
+    };
+    let mut cmd = Command::new(grit);
+    cmd.arg("upload-pack")
+        .arg("--stateless-rpc")
+        .arg(repo_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let discovery_get =
+        req.query.contains("service=git-upload-pack") && req.method.eq_ignore_ascii_case("GET");
+    if discovery_get {
+        cmd.arg("--http-backend-info-refs");
+    }
+    if let Some(proto) = req.headers.get("git-protocol") {
+        cmd.env("GIT_PROTOCOL", proto);
+    } else {
+        cmd.env_remove("GIT_PROTOCOL");
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn grit upload-pack: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(&req.body);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for grit upload-pack: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("grit upload-pack failed: {}", err.trim()));
+    }
+    send_response(
+        stream,
+        200,
+        "OK",
+        &[(
+            "Content-Type",
+            if discovery_get {
+                "application/x-git-upload-pack-advertisement"
+            } else {
+                "application/x-git-upload-pack-result"
+            },
+        )],
+        &output.stdout,
+    )
+}
+
+fn smart_repo_path(req: &Request, config: &Config, prefix: &str) -> Result<PathBuf, String> {
+    let smart_path = req
+        .path
+        .strip_prefix(prefix)
+        .ok_or_else(|| "bad smart path".to_string())?;
+    let repo_part = smart_path
+        .strip_suffix("/info/refs")
+        .or_else(|| smart_path.strip_suffix("/git-upload-pack"))
+        .ok_or_else(|| format!("bad smart service path {}", req.path))?;
+    Ok(config.root.join(repo_part.trim_start_matches('/')))
+}
+
 fn one_time_script_path(config: &Config) -> std::path::PathBuf {
     config.root.parent().map_or_else(
         || config.root.join("one-time-script"),
@@ -881,6 +988,110 @@ fn apply_one_time_script(script_path: &Path, input: &[u8]) -> Result<Vec<u8>, St
     Ok(output.stdout)
 }
 
+fn handle_custom_auth_smart(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let auth_id = custom_auth_id(req, config).unwrap_or_else(|| "default".to_string());
+    let (status, headers) = custom_auth_challenge(config, &auth_id)?;
+    if status != 200 {
+        return send_response_raw(
+            stream,
+            status,
+            status_text(status),
+            &headers,
+            b"Authentication required\n",
+        );
+    }
+    handle_smart_http_with_path(stream, req, config, "/custom_auth")
+}
+
+fn custom_auth_id(req: &Request, config: &Config) -> Option<String> {
+    let auth = req.headers.get("authorization")?.trim();
+    let root = config.root.parent().unwrap_or(&config.root);
+    let valid = fs::read_to_string(root.join("custom-auth.valid")).ok()?;
+    valid.lines().find_map(|line| {
+        let mut id = None;
+        let mut creds = None;
+        for part in line.split_whitespace() {
+            if let Some(rest) = part.strip_prefix("id=") {
+                id = Some(rest);
+            }
+        }
+        if let Some((_, rest)) = line.split_once("creds=") {
+            creds = Some(rest.trim());
+        }
+        (creds == Some(auth)).then(|| id.unwrap_or("default").to_string())
+    })
+}
+
+fn custom_auth_challenge(config: &Config, id: &str) -> Result<(u16, Vec<String>), String> {
+    let root = config.root.parent().unwrap_or(&config.root);
+    let path = root.join("custom-auth.challenge");
+    let raw = fs::read_to_string(&path).unwrap_or_default();
+    let mut fallback_status: Option<u16> = None;
+    let mut fallback_headers: Vec<String> = Vec::new();
+    let mut selected_status: Option<u16> = None;
+    let mut selected_headers: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let Some((line_id, rest)) = line
+            .strip_prefix("id=")
+            .and_then(|value| value.split_once(' '))
+        else {
+            continue;
+        };
+        let target = if line_id == id {
+            Some((&mut selected_status, &mut selected_headers))
+        } else if line_id == "default" {
+            Some((&mut fallback_status, &mut fallback_headers))
+        } else {
+            None
+        };
+        let Some((status_slot, headers_slot)) = target else {
+            continue;
+        };
+        let response_part = if let Some(value) = rest.strip_prefix("status=") {
+            let (status, trailing) = value.split_once(' ').unwrap_or((value, ""));
+            *status_slot = status.trim().parse::<u16>().ok();
+            trailing.trim_start().strip_prefix("response=")
+        } else {
+            rest.strip_prefix("response=")
+        };
+        if let Some(value) = response_part {
+            if value.starts_with(' ') || value.starts_with('\t') {
+                if let Some(prev) = headers_slot.last_mut() {
+                    let continuation = value.trim();
+                    if !continuation.is_empty() {
+                        prev.push(' ');
+                        prev.push_str(continuation);
+                    }
+                }
+            } else {
+                headers_slot.push(value.to_string());
+            }
+        }
+    }
+    Ok((
+        selected_status.or(fallback_status).unwrap_or(401),
+        if selected_headers.is_empty() {
+            fallback_headers
+        } else {
+            selected_headers
+        },
+    ))
+}
+
+fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        500 => "Internal Server Error",
+        _ => "Status",
+    }
+}
+
 fn run_smart_http_cgi_output(
     req: &Request,
     config: &Config,
@@ -918,11 +1129,25 @@ fn run_smart_http_cgi_output(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    cmd.env_remove("GIT_PROTOCOL");
 
     if let Some(ct) = req.headers.get("content-type") {
         cmd.env("CONTENT_TYPE", ct);
     }
-    cmd.env("CONTENT_LENGTH", req.body.len().to_string());
+    let mut cgi_body = req.body.clone();
+    if req
+        .headers
+        .get("content-encoding")
+        .is_some_and(|value| value.eq_ignore_ascii_case("gzip"))
+    {
+        let mut decoder = GzDecoder::new(req.body.as_slice());
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .map_err(|e| format!("Failed to decode gzip request body: {e}"))?;
+        cgi_body = decoded;
+    }
+    cmd.env("CONTENT_LENGTH", cgi_body.len().to_string());
 
     if let Some(proto) = req.headers.get("git-protocol") {
         cmd.env("GIT_PROTOCOL", proto);
@@ -946,7 +1171,7 @@ fn run_smart_http_cgi_output(
 
     // Send request body to CGI stdin
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(&req.body);
+        let _ = stdin.write_all(&cgi_body);
     }
 
     let output = child
@@ -1055,6 +1280,29 @@ fn send_response(
     response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
 
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| e.to_string())?;
+    stream.write_all(body).map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn send_response_raw(
+    stream: &mut TcpStream,
+    status: u16,
+    status_text: &str,
+    headers: &[String],
+    body: &[u8],
+) -> Result<(), String> {
+    let mut response = format!("HTTP/1.1 {status} {status_text}\r\n");
+    for header in headers {
+        response.push_str(header);
+        response.push_str("\r\n");
+    }
+    response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    response.push_str("Connection: close\r\n");
+    response.push_str("\r\n");
     stream
         .write_all(response.as_bytes())
         .map_err(|e| e.to_string())?;

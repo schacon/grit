@@ -1,17 +1,17 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-10
+**Updated:** 2026-04-28
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   374 |
+| Completed   |   381 |
 | In progress |     6 |
-| Remaining   |   392 |
+| Remaining   |   385 |
 | **Total**   |   772 |
 
-Task lines in `PLAN.md`: 374 completed (`[x]`), 6 in progress (`[~]`), 392 remaining (`[ ]`).
+Task lines in `PLAN.md`: 381 completed (`[x]`), 6 in progress (`[~]`), 385 remaining (`[ ]`).
 
 ## In progress
 
@@ -19,6 +19,13 @@ Task lines in `PLAN.md`: 374 completed (`[x]`), 6 in progress (`[~]`), 392 remai
 
 ## Recently completed
 
+- `t0300-credentials` — 56/56 tests pass (credential helper protocol: helper argv/stdin/stdout framing, capability filtering, URL parsing/matching, prompt behavior, expiry/metadata handling).
+- `t0301-credential-cache` — 52/52 tests pass (cache daemon semantics: overwrite/erase matching, empty credentials, authtype capability filtering, socket selection/cleanup).
+- `t0302-credential-store` — 65/65 tests pass (store helper lookup/write order, empty credentials, overwrite and password-sensitive erase behavior, XDG/home file handling).
+- `t5541-http-push-smart` — 21/21 tests pass (smart HTTP push verbosity, default matching expansion, empty-pack updates, atomic pre-rejection reporting).
+- `t5542-push-http-shallow` — 3/3 tests pass (HTTP shallow push force/refspec handling, shallow advertisement parsing, gzip receive-pack request handling).
+- `t5564-http-proxy` — 8/8 tests pass (HTTP proxy, proxy auth, SOCKS-over-Unix smart HTTP request construction, trace redaction).
+- `t5813-proto-disable-ssh` — 81/81 tests pass (SSH protocol allow/deny policy, SSH URL classification, local SSH test-wrapper shortcuts preserving SSH policy checks).
 - `t5517-push-mirror` — 13/13 tests pass (`push`: `remote.<name>.mirror` enables full mirror push including ref deletion; mirror skips non-FF branch/tag rejection; refspecs with mirror remote fail like Git; `--receive-pack` delegates after mirror validation)
 - `t5546-receive-limits` — 17/17 tests pass (local `push`: thin pack + shared receive ingest honoring `receive.maxInputSize`, `receive.unpacklimit` vs `transfer.unpacklimit`; `unpack-objects` `--max-input-size`; `index-pack` `--max-input-size`)
 - `t6132-pathspec-exclude` — 31/31 tests pass (exclude pathspec lists: `matches_pathspec_list` in grit-lib; cwd-relative resolution for short/long magic; implicit cwd positive for `PATHSPEC_PREFER_CWD` commands; `log` honors `--format` with `--oneline`; archive subtrees from cwd; add staging for all-exclude pathspecs; `diff` parses `--cached` when mixed with rev args; `grep --untracked` + magic pathspec argv fixes)

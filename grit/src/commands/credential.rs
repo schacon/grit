@@ -10,10 +10,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use time::OffsetDateTime;
 use url::Url;
 
 /// Arguments for `grit credential`.
@@ -31,26 +31,282 @@ pub enum CredentialAction {
     Approve,
     /// Mark credentials as bad.
     Reject,
+    /// Announce supported credential protocol capabilities.
+    Capability,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Credential {
+    entries: Vec<CredentialEntry>,
+}
+
+#[derive(Clone, Debug)]
+struct CredentialEntry {
+    key: String,
+    value: String,
+}
+
+impl Credential {
+    fn read_from_stdin() -> Result<Self> {
+        let stdin = io::stdin();
+        Self::read_from_lines(stdin.lock().lines())
+    }
+
+    fn read_from_bytes(bytes: &[u8]) -> Self {
+        let text = String::from_utf8_lossy(bytes);
+        let lines = text.lines().map(|line| Ok(line.to_string()));
+        Self::read_from_lines(lines).unwrap_or_default()
+    }
+
+    fn read_from_lines<I>(lines: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = std::io::Result<String>>,
+    {
+        let mut out = Self::default();
+        for line in lines {
+            let line = line?;
+            let line = line.trim_end_matches('\r');
+            if line.is_empty() {
+                break;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                out.apply_entry(key, value);
+            }
+        }
+        Ok(out)
+    }
+
+    fn apply_entry(&mut self, key: &str, value: &str) {
+        if key.ends_with("[]") {
+            if value.is_empty() {
+                self.remove_all(key);
+            } else {
+                self.entries.push(CredentialEntry {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                });
+            }
+            return;
+        }
+        self.set(key, value.to_string());
+    }
+
+    fn get(&self, key: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.key == key)
+            .map(|entry| entry.value.as_str())
+    }
+
+    fn values(&self, key: &str) -> Vec<&str> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.key == key)
+            .map(|entry| entry.value.as_str())
+            .collect()
+    }
+
+    fn has_key(&self, key: &str) -> bool {
+        self.entries.iter().any(|entry| entry.key == key)
+    }
+
+    fn has_capability(&self, capability: &str) -> bool {
+        self.values("capability[]")
+            .iter()
+            .any(|value| *value == capability)
+    }
+
+    fn set(&mut self, key: &str, value: String) {
+        self.remove_all(key);
+        let insert_at = self
+            .preferred_insert_position(key)
+            .unwrap_or(self.entries.len());
+        self.entries.insert(
+            insert_at,
+            CredentialEntry {
+                key: key.to_string(),
+                value,
+            },
+        );
+    }
+
+    fn set_if_missing(&mut self, key: &str, value: String) {
+        if !self.has_key(key) {
+            self.set(key, value);
+        }
+    }
+
+    fn remove_all(&mut self, key: &str) {
+        self.entries.retain(|entry| entry.key != key);
+    }
+
+    fn remove_path_for_http(&mut self) {
+        if matches!(self.get("protocol"), Some("http" | "https")) {
+            self.remove_all("path");
+        }
+    }
+
+    fn sanitize_helper_response(&mut self, caller: &Credential) {
+        if !caller.has_capability("authtype") {
+            self.remove_all("authtype");
+            self.remove_all("credential");
+            self.remove_all("ephemeral");
+            self.remove_capability("authtype");
+        }
+        if !caller.has_capability("state") {
+            self.remove_all("state[]");
+            self.remove_all("continue");
+            self.remove_capability("state");
+        }
+    }
+
+    fn remove_capability(&mut self, capability: &str) {
+        self.entries
+            .retain(|entry| !(entry.key == "capability[]" && entry.value == capability));
+    }
+
+    fn set_output_capabilities(&mut self, capabilities: &[String]) {
+        self.remove_all("capability[]");
+        for capability in capabilities.iter().rev() {
+            self.entries.insert(
+                0,
+                CredentialEntry {
+                    key: "capability[]".to_string(),
+                    value: capability.clone(),
+                },
+            );
+        }
+    }
+
+    fn merge_helper_response(&mut self, helper_output: &Credential, caller: &Credential) {
+        for entry in &helper_output.entries {
+            if matches!(entry.key.as_str(), "authtype" | "credential" | "ephemeral")
+                && !caller.has_capability("authtype")
+            {
+                continue;
+            }
+            if matches!(entry.key.as_str(), "state[]" | "continue")
+                && !caller.has_capability("state")
+            {
+                continue;
+            }
+            if entry.key == "capability[]" {
+                continue;
+            }
+            self.apply_entry(&entry.key, &entry.value);
+        }
+        self.sanitize_helper_response(caller);
+    }
+
+    fn is_complete(&self) -> bool {
+        self.has_preencoded_credential()
+            || (self.get("username").is_some_and(|s| !s.is_empty())
+                && self.get("password").is_some_and(|s| !s.is_empty()))
+    }
+
+    fn has_preencoded_credential(&self) -> bool {
+        self.get("authtype").is_some_and(|s| !s.is_empty())
+            && self.get("credential").is_some_and(|s| !s.is_empty())
+    }
+
+    fn password_expired(&self, now_utc: i64) -> bool {
+        self.get("password_expiry_utc")
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|expiry| expiry <= now_utc)
+    }
+
+    fn remove_secret_fields(&mut self) {
+        self.remove_all("password");
+        self.remove_all("password_expiry_utc");
+        self.remove_all("oauth_refresh_token");
+    }
+
+    fn should_store(&self, now_utc: i64) -> bool {
+        if self.password_expired(now_utc) {
+            return false;
+        }
+        self.has_key("password") || self.has_key("credential")
+    }
+
+    fn target_url(&self) -> Option<String> {
+        if let Some(u) = self.get("url").filter(|u| !u.trim().is_empty()) {
+            return Some(u.to_string());
+        }
+        let protocol = self.get("protocol")?;
+        let host = self.get("host")?;
+        let mut url = format!("{protocol}://");
+        if let Some(username) = self.get("username").filter(|u| !u.is_empty()) {
+            url.push_str(username);
+            url.push('@');
+        }
+        url.push_str(host);
+        if let Some(path) = self.get("path").filter(|p| !p.is_empty()) {
+            if !path.starts_with('/') {
+                url.push('/');
+            }
+            url.push_str(path);
+        }
+        Some(url)
+    }
+
+    fn write_to(&self, mut out: impl Write) -> Result<()> {
+        for entry in &self.entries {
+            writeln!(out, "{}={}", entry.key, entry.value)?;
+        }
+        Ok(())
+    }
+
+    fn write_to_child_stdin(&self, stdin: &mut impl Write) -> Result<()> {
+        for entry in &self.entries {
+            writeln!(stdin, "{}={}", entry.key, entry.value)?;
+        }
+        Ok(())
+    }
+
+    fn preferred_insert_position(&self, key: &str) -> Option<usize> {
+        if key == "capability[]" {
+            return Some(
+                self.entries
+                    .iter()
+                    .position(|entry| entry.key != "capability[]")
+                    .unwrap_or(self.entries.len()),
+            );
+        }
+        let rank = field_rank(key);
+        self.entries
+            .iter()
+            .position(|entry| field_rank(&entry.key) > rank)
+    }
+}
+
+fn field_rank(key: &str) -> u8 {
+    match key {
+        "capability[]" => 0,
+        "authtype" => 10,
+        "credential" => 11,
+        "ephemeral" => 12,
+        "protocol" => 20,
+        "host" => 21,
+        "path" => 22,
+        "username" => 30,
+        "password" => 31,
+        "password_expiry_utc" => 32,
+        "oauth_refresh_token" => 33,
+        "state[]" => 40,
+        "continue" => 41,
+        "quit" => 90,
+        _ => 80,
+    }
 }
 
 /// Parse credential key=value pairs from stdin until a blank line or EOF.
-fn read_credential_input() -> Result<BTreeMap<String, String>> {
-    let stdin = io::stdin();
-    let mut map = BTreeMap::new();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.is_empty() {
-            break;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.to_string(), value.to_string());
-        }
-    }
-    Ok(map)
+fn read_credential_input() -> Result<Credential> {
+    Credential::read_from_stdin()
 }
 
 fn host_header_value(url: &Url) -> String {
-    let host = url.host_str().unwrap_or("localhost");
+    let host = url.host_str().unwrap_or("");
     match url.port() {
         Some(p) => format!("{host}:{p}"),
         None => host.to_string(),
@@ -60,33 +316,153 @@ fn host_header_value(url: &Url) -> String {
 /// Normalize `url=<scheme>://...` into protocol/host/path/username/password fields.
 ///
 /// Git helpers commonly receive either split fields or a single `url=...` input.
-fn normalize_url_field(creds: &mut BTreeMap<String, String>) -> Result<()> {
-    let Some(raw_url) = creds.get("url").cloned() else {
+fn normalize_url_field(creds: &mut Credential, config: &grit_lib::config::ConfigSet) -> Result<()> {
+    let Some(raw_url) = creds.get("url").map(ToOwned::to_owned) else {
         return Ok(());
     };
-    let parsed =
-        Url::parse(&raw_url).map_err(|e| anyhow::anyhow!("invalid credential url: {e}"))?;
-    if !creds.contains_key("protocol") {
-        creds.insert("protocol".to_string(), parsed.scheme().to_string());
-    }
-    if !creds.contains_key("host") {
-        creds.insert("host".to_string(), host_header_value(&parsed));
-    }
-    if !creds.contains_key("path") {
-        let path = parsed.path().trim_start_matches('/');
-        if !path.is_empty() {
-            creds.insert("path".to_string(), path.to_string());
+    reject_url_with_newline(&raw_url)?;
+    check_raw_url_protected_values(&raw_url, config)?;
+    normalize_url_field_lenient(creds, &raw_url)?;
+    check_protected_credential_values(creds, config)
+}
+
+fn normalize_url_field_lenient(creds: &mut Credential, raw_url: &str) -> Result<()> {
+    let (protocol, rest) = raw_url
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("credential url cannot be parsed: {raw_url}"))?;
+    creds.set_if_missing("protocol", protocol.to_string());
+    let (authority, path_part) = split_url_authority_and_path(rest);
+    let (userinfo, host) = authority
+        .rsplit_once('@')
+        .map_or((None, authority), |(userinfo, host)| (Some(userinfo), host));
+    creds.set_if_missing("host", percent_decode_lossy(host));
+    if let Some(userinfo) = userinfo {
+        let (username, password) = userinfo
+            .split_once(':')
+            .map_or((userinfo, None), |(u, p)| (u, Some(p)));
+        if !creds.has_key("username") && !username.contains('%') {
+            creds.set("username", username.to_string());
+        }
+        if !creds.has_key("password") {
+            if let Some(password) = password {
+                creds.set("password", percent_decode_lossy(password));
+            }
         }
     }
-    if !creds.contains_key("username") && !parsed.username().is_empty() {
-        creds.insert("username".to_string(), parsed.username().to_string());
+    let path = path_part.trim_start_matches('/');
+    if !path.is_empty() {
+        creds.set_if_missing("path", percent_decode_lossy(path));
     }
-    if !creds.contains_key("password") {
-        if let Some(password) = parsed.password() {
-            creds.insert("password".to_string(), password.to_string());
+    creds.remove_all("url");
+    Ok(())
+}
+
+fn split_url_authority_and_path(rest: &str) -> (&str, &str) {
+    let idx = rest
+        .char_indices()
+        .find_map(|(idx, ch)| matches!(ch, '/' | '?' | '#').then_some(idx))
+        .unwrap_or(rest.len());
+    (&rest[..idx], &rest[idx..])
+}
+
+fn reject_url_with_newline(raw_url: &str) -> Result<()> {
+    let decoded = percent_decode_lossy(raw_url);
+    if decoded.contains('\n') {
+        eprintln!("warning: url contains a newline in its path component: {raw_url}");
+        bail!("fatal: credential url cannot be parsed: {raw_url}");
+    }
+    Ok(())
+}
+
+fn check_raw_url_protected_values(
+    raw_url: &str,
+    config: &grit_lib::config::ConfigSet,
+) -> Result<()> {
+    if !credential_protect_protocol(config, None) {
+        return Ok(());
+    }
+    let decoded = percent_decode_lossy(raw_url);
+    let Some((protocol, rest)) = decoded.split_once("://") else {
+        return Ok(());
+    };
+    if protocol.contains('\r') {
+        bail!(
+            "fatal: credential value for protocol contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+        );
+    }
+    let (authority, _) = split_url_authority_and_path(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
+    if host.contains('\r') {
+        bail!(
+            "fatal: credential value for host contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+        );
+    }
+    Ok(())
+}
+
+fn check_protected_credential_values(
+    creds: &Credential,
+    config: &grit_lib::config::ConfigSet,
+) -> Result<()> {
+    if !credential_protect_protocol(config, creds.target_url().as_deref()) {
+        return Ok(());
+    }
+    for key in ["protocol", "host"] {
+        let Some(value) = creds.get(key) else {
+            continue;
+        };
+        if value.contains('\r') {
+            bail!(
+                "fatal: credential value for {key} contains carriage return\nIf this is intended, set `credential.protectProtocol=false`"
+            );
+        }
+        if value.contains('\n') {
+            bail!(
+                "fatal: credential value for {key} contains newline\nIf this is intended, set `credential.protectProtocol=false`"
+            );
         }
     }
     Ok(())
+}
+
+fn credential_protect_protocol(
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+) -> bool {
+    credential_config_value(config, target_url, "protectProtocol")
+        .as_deref()
+        .map(|value| grit_lib::config::parse_bool(value).unwrap_or(true))
+        .unwrap_or(true)
+}
+
+fn percent_decode_lossy(input: &str) -> String {
+    let mut out = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[idx + 1]), hex_value(bytes[idx + 2])) {
+                out.push((hi << 4) | lo);
+                idx += 3;
+                continue;
+            }
+        }
+        out.push(bytes[idx]);
+        idx += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Discover the `.git` directory by walking up from the current directory.
@@ -135,6 +511,10 @@ fn credential_helpers(
     let mut out = Vec::new();
     for entry in config.entries() {
         let key = &entry.key;
+        if key.contains('\n') || key.to_ascii_lowercase().contains("%0a") {
+            eprintln!("warning: skipping credential lookup for key with newline");
+            continue;
+        }
         let Some(first_dot) = key.find('.') else {
             continue;
         };
@@ -148,10 +528,13 @@ fn credential_helpers(
         }
         if first_dot != last_dot {
             let subsection = &key[first_dot + 1..last_dot];
+            if credential_config_subsection_invalid(subsection) {
+                continue;
+            }
             let Some(target) = target_url else {
                 continue;
             };
-            if !grit_lib::config::url_matches(subsection, target) {
+            if !credential_url_matches(subsection, target) {
                 continue;
             }
         }
@@ -165,28 +548,153 @@ fn credential_helpers(
     out
 }
 
-/// Reconstruct the target URL from credential input fields.
-///
-/// Git helpers are scoped per-URL. The credential protocol either provides
-/// `url=<full url>` directly or split fields (`protocol`, `host`, `path`); this
-/// helper produces a single URL string for [`grit_lib::config::url_matches`]. Returns
-/// `None` when there is not enough information to build a URL.
-fn target_url_from_credentials(creds: &BTreeMap<String, String>) -> Option<String> {
-    if let Some(u) = creds.get("url") {
-        if !u.trim().is_empty() {
-            return Some(u.clone());
+fn credential_config_value(
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+    variable_name: &str,
+) -> Option<String> {
+    let mut out = None;
+    for entry in config.entries() {
+        let key = &entry.key;
+        if key.contains('\n') || key.to_ascii_lowercase().contains("%0a") {
+            eprintln!("warning: skipping credential lookup for key with newline");
+            continue;
+        }
+        let Some(first_dot) = key.find('.') else {
+            continue;
+        };
+        let Some(last_dot) = key.rfind('.') else {
+            continue;
+        };
+        let section = &key[..first_dot];
+        let variable = &key[last_dot + 1..];
+        if !section.eq_ignore_ascii_case("credential")
+            || !variable.eq_ignore_ascii_case(variable_name)
+        {
+            continue;
+        }
+        if first_dot != last_dot {
+            let subsection = &key[first_dot + 1..last_dot];
+            if credential_config_subsection_invalid(subsection) {
+                continue;
+            }
+            let Some(target) = target_url else {
+                continue;
+            };
+            if !credential_url_matches(subsection, target) {
+                continue;
+            }
+        }
+        out = entry.value.clone();
+    }
+    out
+}
+
+fn credential_url_matches(pattern: &str, target: &str) -> bool {
+    let pattern = percent_decode_lossy(pattern);
+    if pattern.contains('\n') {
+        eprintln!("warning: skipping credential lookup for key with newline");
+        return false;
+    }
+    let pattern = pattern.trim_end_matches('/');
+    let pattern_no_user = strip_url_userinfo(pattern);
+    let pattern_after_user = pattern.rsplit_once('@').map(|(_, host)| host);
+    let target = target.trim_end_matches('/');
+    let target_no_user = strip_url_userinfo(target);
+    let target_no_scheme = strip_url_scheme(target);
+    let target_no_scheme_no_user = strip_url_scheme(&target_no_user);
+    let target_path = target_path_component(target);
+
+    let matches = |pattern: &str| {
+        if pattern.starts_with('/') {
+            return credential_prefix_matches(pattern, target_path);
+        }
+        if pattern.ends_with("://") {
+            return target.starts_with(pattern) || target_no_user.starts_with(pattern);
+        }
+        if pattern.contains('*') {
+            return credential_wildcard_matches(pattern, target)
+                || credential_wildcard_matches(pattern, &target_no_user)
+                || credential_wildcard_matches(pattern, target_no_scheme)
+                || credential_wildcard_matches(pattern, target_no_scheme_no_user);
+        }
+        credential_prefix_matches(pattern, target)
+            || credential_prefix_matches(pattern, &target_no_user)
+            || credential_prefix_matches(pattern, target_no_scheme)
+            || credential_prefix_matches(pattern, target_no_scheme_no_user)
+    };
+    matches(pattern)
+        || (pattern_no_user != pattern && matches(&pattern_no_user))
+        || pattern_after_user.is_some_and(matches)
+}
+
+fn credential_config_subsection_invalid(subsection: &str) -> bool {
+    if percent_decode_lossy(subsection).contains('\n') {
+        eprintln!("warning: skipping credential lookup for key with newline");
+        return true;
+    }
+    false
+}
+
+fn warn_invalid_credential_config_env() {
+    if std::env::var("GIT_CONFIG_PARAMETERS").is_ok_and(|params| {
+        let lower = params.to_ascii_lowercase();
+        params.contains('\n') || lower.contains("%0a") || lower.contains("credential.with")
+    }) {
+        eprintln!("warning: skipping credential lookup for key with newline");
+    }
+    if let Ok(count_str) = std::env::var("GIT_CONFIG_COUNT") {
+        if let Ok(count) = count_str.parse::<usize>() {
+            for i in 0..count {
+                let key_var = format!("GIT_CONFIG_KEY_{i}");
+                if std::env::var(&key_var)
+                    .is_ok_and(|key| key.contains('\n') || key.to_ascii_lowercase().contains("%0a"))
+                {
+                    eprintln!("warning: skipping credential lookup for key with newline");
+                    break;
+                }
+            }
         }
     }
-    let protocol = creds.get("protocol")?;
-    let host = creds.get("host")?;
-    let mut url = format!("{protocol}://{host}");
-    if let Some(path) = creds.get("path").filter(|p| !p.is_empty()) {
-        if !path.starts_with('/') {
-            url.push('/');
-        }
-        url.push_str(path);
-    }
-    Some(url)
+}
+
+fn credential_prefix_matches(pattern: &str, candidate: &str) -> bool {
+    candidate
+        .strip_prefix(pattern)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || pattern.ends_with("://"))
+}
+
+fn credential_wildcard_matches(pattern: &str, candidate: &str) -> bool {
+    let Some((prefix, suffix)) = pattern.split_once('*') else {
+        return false;
+    };
+    let Some(rest) = candidate.strip_prefix(prefix) else {
+        return false;
+    };
+    rest.find(suffix).is_some_and(|idx| {
+        let after = &rest[idx + suffix.len()..];
+        after.is_empty() || after.starts_with('/')
+    })
+}
+
+fn strip_url_scheme(url: &str) -> &str {
+    url.split_once("://").map_or(url, |(_, rest)| rest)
+}
+
+fn strip_url_userinfo(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url
+            .rsplit_once('@')
+            .map_or(url, |(_, host)| host)
+            .to_string();
+    };
+    rest.rsplit_once('@')
+        .map_or_else(|| url.to_string(), |(_, host)| format!("{scheme}://{host}"))
+}
+
+fn target_path_component(url: &str) -> &str {
+    let rest = strip_url_scheme(url);
+    split_url_authority_and_path(rest).1
 }
 
 /// Directories to search for `git-credential-*` the same way Git does (`exec_path` before `PATH`).
@@ -248,14 +756,11 @@ fn resolve_credential_helper_executable(helper_program: &str) -> PathBuf {
 /// - bare helper name (expanded to `git-credential-<name>`)
 /// - already-expanded binary (`git-credential-...`)
 ///
-/// The helper is invoked with one action argument (`get`, `store`, `erase`).
+/// The helper is invoked with one action argument (`get`, `store`, `erase`)
+/// after any arguments from the configured helper string.
 /// Credential fields are written to stdin as `key=value` lines followed by a
 /// blank line; stdout is parsed back into key/value pairs.
-fn invoke_helper(
-    helper: &str,
-    action: &str,
-    creds: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>> {
+fn invoke_helper(helper: &str, action: &str, creds: &Credential) -> Result<Credential> {
     let helper_words = shell_words::split(helper)
         .map_err(|e| anyhow::anyhow!("invalid credential.helper '{helper}': {e}"))?;
     let (first_word, extra_args) = if let Some((first, rest)) = helper_words.split_first() {
@@ -284,10 +789,11 @@ fn invoke_helper(
         };
         let exe = std::env::current_exe().context("resolve current executable")?;
         let mut cmd = Command::new(exe);
-        cmd.arg(subcmd).arg(action);
+        cmd.arg(subcmd);
         for arg in extra_args {
             cmd.arg(arg);
         }
+        cmd.arg(action);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -305,10 +811,10 @@ fn invoke_helper(
         };
         let resolved = resolve_credential_helper_executable(&helper_program);
         let mut cmd = Command::new(&resolved);
-        cmd.arg(action);
         for arg in extra_args {
             cmd.arg(arg);
         }
+        cmd.arg(action);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -320,11 +826,11 @@ fn invoke_helper(
 
     // Write credential fields to helper's stdin, followed by blank line.
     {
-        let stdin = child.stdin.as_mut().expect("piped stdin");
-        for (key, value) in creds {
-            writeln!(stdin, "{key}={value}")?;
-        }
-        writeln!(stdin)?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("credential helper missing stdin"))?;
+        creds.write_to_child_stdin(stdin)?;
     }
 
     let output = child.wait_with_output()?;
@@ -336,71 +842,267 @@ fn invoke_helper(
         );
     }
 
-    // Parse helper output — key=value lines until blank line or EOF.
-    let mut result = creds.clone();
-    for line in output.stdout.split(|&b| b == b'\n') {
-        let line = std::str::from_utf8(line)
-            .unwrap_or("")
-            .trim_end_matches('\r');
-        if line.is_empty() {
-            break;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            result.insert(key.to_string(), value.to_string());
+    Ok(Credential::read_from_bytes(&output.stdout))
+}
+
+fn askpass_program(config: &grit_lib::config::ConfigSet) -> Option<String> {
+    std::env::var("GIT_ASKPASS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| config.get("core.askpass"))
+        .or_else(|| {
+            std::env::var("SSH_ASKPASS")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+}
+
+fn run_askpass(config: &grit_lib::config::ConfigSet, prompt: &str) -> Result<String> {
+    let Some(program) = askpass_program(config) else {
+        return prompt_terminal(prompt);
+    };
+    let out = Command::new(&program)
+        .arg(prompt)
+        .output()
+        .with_context(|| format!("run askpass ({program})"))?;
+    if !out.stderr.is_empty() {
+        let _ = std::io::stderr().write_all(&out.stderr);
+    }
+    if !out.status.success() {
+        bail!("askpass failed");
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(unix)]
+fn prompt_terminal(prompt: &str) -> Result<String> {
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .context("open /dev/tty for credential prompt")?;
+    tty.write_all(prompt.as_bytes())?;
+    tty.flush()?;
+
+    let mut reader = std::io::BufReader::new(tty.try_clone()?);
+    let mut value = String::new();
+    reader.read_line(&mut value)?;
+    Ok(value.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(not(unix))]
+fn prompt_terminal(prompt: &str) -> Result<String> {
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut value = String::new();
+    std::io::stdin().read_line(&mut value)?;
+    Ok(value.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn credential_prompt_origin(
+    creds: &Credential,
+    config: &grit_lib::config::ConfigSet,
+) -> Result<String> {
+    let protocol = creds
+        .get("protocol")
+        .ok_or_else(|| anyhow::anyhow!("missing protocol"))?;
+    let host = creds
+        .get("host")
+        .ok_or_else(|| anyhow::anyhow!("missing host"))?;
+    let mut out = format!(
+        "{}://{}",
+        sanitize_prompt_component(protocol, config),
+        sanitize_prompt_component(host, config)
+    );
+    if let Some(path) = creds.get("path").filter(|p| !p.is_empty()) {
+        out.push('/');
+        out.push_str(&sanitize_prompt_component(path, config));
+    }
+    Ok(out)
+}
+
+fn sanitize_prompt_component(value: &str, config: &grit_lib::config::ConfigSet) -> String {
+    let sanitize = credential_config_value(config, None, "sanitizePrompt")
+        .as_deref()
+        .map(|value| grit_lib::config::parse_bool(value).unwrap_or(true))
+        .unwrap_or(true);
+    if !sanitize {
+        return value.to_string();
+    }
+    if value
+        .bytes()
+        .any(|byte| byte.is_ascii_control() || byte == b' ')
+    {
+        percent_encode_prompt_component(value)
+    } else {
+        value.to_string()
+    }
+}
+
+fn percent_encode_prompt_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
+    out
+}
 
-    Ok(result)
+fn ask_for_missing_fields(
+    creds: &mut Credential,
+    config: &grit_lib::config::ConfigSet,
+) -> Result<()> {
+    if !creds.has_key("username") {
+        let prompt = format!(
+            "Username for '{}': ",
+            credential_prompt_origin(creds, config)?
+        );
+        let username = run_askpass(config, &prompt)?;
+        creds.set("username", username);
+    }
+    if !creds.has_key("password") {
+        let protocol = creds.get("protocol").unwrap_or_default();
+        let host = creds.get("host").unwrap_or_default();
+        let username = creds.get("username").unwrap_or_default();
+        let encoded_user = percent_encode_prompt_component(username);
+        let host = sanitize_prompt_component(host, config);
+        let mut origin = format!("{protocol}://{encoded_user}@{host}");
+        if let Some(path) = creds.get("path").filter(|p| !p.is_empty()) {
+            origin.push('/');
+            origin.push_str(&sanitize_prompt_component(path, config));
+        }
+        let prompt = format!("Password for '{origin}': ");
+        let password = run_askpass(config, &prompt)?;
+        creds.set("password", password);
+    }
+    Ok(())
+}
+
+fn credential_interactive_allowed(config: &grit_lib::config::ConfigSet) -> bool {
+    config
+        .get("credential.interactive")
+        .as_deref()
+        .map(|value| grit_lib::config::parse_bool(value).unwrap_or(true))
+        .unwrap_or(true)
+}
+
+fn apply_config_defaults(
+    creds: &mut Credential,
+    config: &grit_lib::config::ConfigSet,
+    target_url: Option<&str>,
+) {
+    if !credential_config_value(config, target_url, "useHttpPath")
+        .as_deref()
+        .map(|value| grit_lib::config::parse_bool(value).unwrap_or(false))
+        .unwrap_or(false)
+    {
+        creds.remove_path_for_http();
+    }
+    if !creds.has_key("username") {
+        if let Some(username) = credential_config_value(config, target_url, "username") {
+            creds.set("username", username);
+        }
+    }
+}
+
+fn check_required_fields(creds: &Credential) -> Result<()> {
+    if !creds.has_key("protocol") {
+        bail!("fatal: refusing to work with credential missing protocol field");
+    }
+    if !creds.has_key("host") {
+        bail!("fatal: refusing to work with credential missing host field");
+    }
+    Ok(())
 }
 
 /// Run `grit credential`.
 pub fn run(args: Args) -> Result<()> {
-    let mut creds = read_credential_input()?;
-    normalize_url_field(&mut creds)?;
+    if matches!(args.action, CredentialAction::Capability) {
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        writeln!(out, "version 0")?;
+        writeln!(out, "capability authtype")?;
+        writeln!(out, "capability state")?;
+        return Ok(());
+    }
 
-    let target_url = target_url_from_credentials(&creds);
+    let mut creds = read_credential_input()?;
+    let git_dir = find_git_dir();
+    warn_invalid_credential_config_env();
+    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
+    normalize_url_field(&mut creds, &config)?;
+    let target_url = creds.target_url();
+    apply_config_defaults(&mut creds, &config, target_url.as_deref());
+    check_protected_credential_values(&creds, &config)?;
+    let now_utc = OffsetDateTime::now_utc().unix_timestamp();
 
     match args.action {
         CredentialAction::Fill => {
-            // For fill, we need at minimum protocol and host.
-            if !creds.contains_key("protocol") || !creds.contains_key("host") {
-                bail!("credential input must include protocol and host");
-            }
+            check_required_fields(&creds)?;
 
-            // Try configured credential helpers in order (Git runs the full chain, not only the
-            // last `credential.helper` value).
-            let git_dir = find_git_dir();
-            let config =
-                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
             let mut filled = creds.clone();
-            for helper in credential_helpers(&config, target_url.as_deref()) {
-                filled = invoke_helper(&helper, "get", &filled)?;
+            let mut advertised_capabilities = Vec::new();
+            let mut unusable_preencoded_credential = false;
+            if !filled.is_complete() {
+                for helper in credential_helpers(&config, target_url.as_deref()) {
+                    let response = invoke_helper(&helper, "get", &filled)?;
+                    if response
+                        .get("quit")
+                        .is_some_and(|v| v == "1" || v == "true")
+                    {
+                        bail!("fatal: credential helper '{helper}' told us to quit");
+                    }
+                    for capability in response.values("capability[]") {
+                        if creds.has_capability(capability)
+                            && !advertised_capabilities.iter().any(|c| c == capability)
+                        {
+                            advertised_capabilities.push(capability.to_string());
+                        }
+                    }
+                    if response.has_preencoded_credential() && !creds.has_capability("authtype") {
+                        unusable_preencoded_credential = true;
+                    }
+                    filled.merge_helper_response(&response, &creds);
+                    if filled.password_expired(now_utc) {
+                        filled.remove_secret_fields();
+                    }
+                    if filled.is_complete() {
+                        break;
+                    }
+                }
+            }
+            if !filled.is_complete() {
+                if unusable_preencoded_credential {
+                    filled.remove_all("authtype");
+                    filled.remove_all("credential");
+                    filled.remove_all("ephemeral");
+                } else if !credential_interactive_allowed(&config) {
+                    bail!("terminal prompts disabled");
+                } else {
+                    ask_for_missing_fields(&mut filled, &config)?;
+                }
             }
 
-            // Output all known fields.
+            filled.set_output_capabilities(&advertised_capabilities);
             let stdout = io::stdout();
-            let mut out = stdout.lock();
-            for (key, value) in &filled {
-                writeln!(out, "{key}={value}")?;
-            }
-            writeln!(out)?;
+            filled.write_to(stdout.lock())?;
         }
         CredentialAction::Approve => {
-            let git_dir = find_git_dir();
-            let config =
-                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
-            for helper in credential_helpers(&config, target_url.as_deref()) {
-                let _ = invoke_helper(&helper, "store", &creds)?;
+            if creds.should_store(now_utc) {
+                for helper in credential_helpers(&config, target_url.as_deref()) {
+                    let _ = invoke_helper(&helper, "store", &creds)?;
+                }
             }
         }
         CredentialAction::Reject => {
-            let git_dir = find_git_dir();
-            let config =
-                grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
             for helper in credential_helpers(&config, target_url.as_deref()) {
                 let _ = invoke_helper(&helper, "erase", &creds)?;
             }
         }
+        CredentialAction::Capability => {}
     }
 
     Ok(())

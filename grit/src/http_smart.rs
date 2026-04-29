@@ -4,6 +4,7 @@
 //! lines compatible with `test_remote_https_urls` in the test harness.
 
 use std::collections::HashSet;
+use std::fs::OpenOptions;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -46,7 +47,8 @@ pub fn trace2_child_start_git_remote_https(url: &str) {
         }
     }
     let now = crate::trace2_json_now();
-    let esc = url.replace('\\', "\\\\").replace('"', "\\\"");
+    let safe_url = crate::http_client::scrub_url_credentials(url);
+    let esc = safe_url.replace('\\', "\\\\").replace('"', "\\\"");
     let line = format!(
         r#"{{"event":"child_start","sid":"grit-0","time":"{}","argv":["git-remote-https","{}"]}}"#,
         now, esc
@@ -62,15 +64,150 @@ pub(crate) fn agent_header() -> String {
     format!("grit/{}", crate::version_string())
 }
 
+fn trace_http_dest() -> Option<String> {
+    let Ok(dest) = std::env::var("GRIT_TRACE_HTTP") else {
+        return None;
+    };
+    if dest.is_empty() || dest == "0" || dest.eq_ignore_ascii_case("false") {
+        return None;
+    }
+    Some(if dest == "1" {
+        "/dev/stderr".to_string()
+    } else {
+        dest
+    })
+}
+
+fn trace_http_line(line: impl AsRef<str>) {
+    let Some(dest) = trace_http_dest() else {
+        return;
+    };
+    let line = line.as_ref();
+    if dest == "/dev/stderr" {
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(err, "{line}");
+        return;
+    }
+    if let Ok(mut out) = OpenOptions::new().create(true).append(true).open(&dest) {
+        let _ = writeln!(out, "{line}");
+    }
+}
+
+fn trace_http_payload(prefix: &str, payload: &[u8]) {
+    if trace_http_dest().is_none() {
+        return;
+    }
+    let mut pos = 0usize;
+    let mut seen_pack = false;
+    while pos + 4 <= payload.len() {
+        let len_hex = &payload[pos..pos + 4];
+        let Ok(len_str) = std::str::from_utf8(len_hex) else {
+            trace_http_line(format!("{prefix} raw {} bytes", payload.len() - pos));
+            return;
+        };
+        let Ok(len) = usize::from_str_radix(len_str, 16) else {
+            trace_http_line(format!("{prefix} raw {} bytes", payload.len() - pos));
+            return;
+        };
+        pos += 4;
+        match len {
+            0 => {
+                trace_http_line(format!("{prefix} 0000 flush"));
+                continue;
+            }
+            1 => {
+                trace_http_line(format!("{prefix} 0001 delim"));
+                continue;
+            }
+            2 => {
+                trace_http_line(format!("{prefix} 0002 response-end"));
+                continue;
+            }
+            n if n < 4 => {
+                trace_http_line(format!("{prefix} invalid pkt-len {n}"));
+                return;
+            }
+            n if pos + (n - 4) <= payload.len() => {
+                let data = &payload[pos..pos + (n - 4)];
+                pos += n - 4;
+                trace_http_packet_data(prefix, data, &mut seen_pack);
+            }
+            n => {
+                trace_http_line(format!(
+                    "{prefix} truncated pkt-len {n} with {} bytes remaining",
+                    payload.len().saturating_sub(pos)
+                ));
+                return;
+            }
+        }
+    }
+    if pos < payload.len() {
+        trace_http_line(format!(
+            "{prefix} trailing raw {} bytes",
+            payload.len() - pos
+        ));
+    }
+}
+
+fn trace_http_packet_data(prefix: &str, data: &[u8], seen_pack: &mut bool) {
+    if data.first() == Some(&1) {
+        let band = &data[1..];
+        if !*seen_pack && band.starts_with(b"PACK") {
+            *seen_pack = true;
+            trace_http_line(format!(
+                "{prefix} sideband[1] PACK data {} bytes",
+                band.len()
+            ));
+        } else if *seen_pack {
+            trace_http_line(format!(
+                "{prefix} sideband[1] pack data {} bytes",
+                band.len()
+            ));
+        } else {
+            trace_http_line(format!("{prefix} sideband[1] {} bytes", band.len()));
+        }
+        return;
+    }
+    if data.first() == Some(&2) || data.first() == Some(&3) {
+        let channel = data[0];
+        let msg = String::from_utf8_lossy(&data[1..])
+            .replace('\n', "\\n")
+            .replace('\r', "\\r");
+        trace_http_line(format!("{prefix} sideband[{channel}] {msg}"));
+        return;
+    }
+    if !*seen_pack && data.starts_with(b"PACK") {
+        *seen_pack = true;
+        trace_http_line(format!("{prefix} PACK data {} bytes", data.len()));
+        return;
+    }
+    if *seen_pack {
+        trace_http_line(format!("{prefix} pack data {} bytes", data.len()));
+        return;
+    }
+    let text = String::from_utf8_lossy(data)
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\0', "\\0");
+    trace_http_line(format!("{prefix} {text}"));
+}
+
 fn http_get(client: &crate::http_client::HttpClientContext, url: &str) -> Result<Vec<u8>> {
-    client.get(url)
+    trace_http_line(format!("> GET {url}"));
+    if let Some(v) = client.git_protocol_header() {
+        trace_http_line(format!("> Git-Protocol: {v}"));
+    }
+    let body = client.get(url)?;
+    trace_http_line(format!("< GET {url} body {} bytes", body.len()));
+    trace_http_payload("<", &body);
+    Ok(body)
 }
 
 fn http_get_discovery(
     client: &crate::http_client::HttpClientContext,
     url: &str,
 ) -> Result<Vec<u8>> {
-    client.get(url)
+    http_get(client, url)
 }
 
 fn http_post(
@@ -80,13 +217,23 @@ fn http_post(
     accept: &str,
     body: &[u8],
 ) -> Result<Vec<u8>> {
-    client.post_with_git_protocol(
+    trace_http_line(format!("> POST {url}"));
+    trace_http_line(format!("> Content-Type: {content_type}"));
+    trace_http_line(format!("> Accept: {accept}"));
+    if let Some(v) = client.git_protocol_header() {
+        trace_http_line(format!("> Git-Protocol: {v}"));
+    }
+    trace_http_payload(">", body);
+    let resp = client.post_with_git_protocol(
         url,
         content_type,
         accept,
         body,
         client.git_protocol_header(),
-    )
+    )?;
+    trace_http_line(format!("< POST {url} body {} bytes", resp.len()));
+    trace_http_payload("<", &resp);
+    Ok(resp)
 }
 
 fn http_post_discovery(
@@ -97,7 +244,18 @@ fn http_post_discovery(
     body: &[u8],
     git_protocol_header: Option<&str>,
 ) -> Result<Vec<u8>> {
-    client.post_with_git_protocol(url, content_type, accept, body, git_protocol_header)
+    trace_http_line(format!("> POST {url}"));
+    trace_http_line(format!("> Content-Type: {content_type}"));
+    trace_http_line(format!("> Accept: {accept}"));
+    if let Some(v) = git_protocol_header {
+        trace_http_line(format!("> Git-Protocol: {v}"));
+    }
+    trace_http_payload(">", body);
+    let resp =
+        client.post_with_git_protocol(url, content_type, accept, body, git_protocol_header)?;
+    trace_http_line(format!("< POST {url} body {} bytes", resp.len()));
+    trace_http_payload("<", &resp);
+    Ok(resp)
 }
 
 fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
@@ -192,6 +350,11 @@ fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
     };
     if first == "version 2" {
         let caps = read_v2_caps(pkt_body)?;
+        crate::trace_packet::trace_packet_git('<', "version 2");
+        for cap in &caps {
+            crate::trace_packet::trace_packet_git('<', cap);
+        }
+        crate::trace_packet::trace_packet_git('<', "0000");
         let object_format = caps
             .iter()
             .find_map(|c| c.strip_prefix("object-format="))
@@ -257,6 +420,8 @@ pub struct HttpFetchOptions {
     pub filter_spec: Option<String>,
     /// Request full-object transfer without have/common negotiation (`--refetch`).
     pub refetch: bool,
+    /// Suppress protocol-v2 bundle-uri discovery because the caller supplied an explicit URI.
+    pub bundle_uri_override: bool,
 }
 
 fn requested_depth(opts: &HttpFetchOptions) -> Option<usize> {
@@ -267,7 +432,11 @@ fn append_fetch_request_extensions_v0_v1(
     req: &mut Vec<u8>,
     caps: &std::collections::HashSet<String>,
     options: &HttpFetchOptions,
+    local_shallow_oids: &[ObjectId],
 ) -> Result<()> {
+    for oid in local_shallow_oids {
+        pkt_line::write_line_to_vec(req, &format!("shallow {}", oid.to_hex()))?;
+    }
     if let Some(depth) = requested_depth(options) {
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
     }
@@ -312,8 +481,14 @@ fn append_fetch_request_extensions_v2(
     req: &mut Vec<u8>,
     caps: &[String],
     options: &HttpFetchOptions,
+    local_shallow_oids: &[ObjectId],
 ) -> Result<()> {
     let features = v2_fetch_features(caps);
+    if features.contains("shallow") {
+        for oid in local_shallow_oids {
+            pkt_line::write_line_to_vec(req, &format!("shallow {}", oid.to_hex()))?;
+        }
+    }
     if let Some(depth) = requested_depth(options) {
         pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
     }
@@ -374,12 +549,13 @@ pub fn http_ls_refs(
     pkt_line::write_flush(&mut req)?;
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
 
     parse_ls_refs_v2_response(&resp)
@@ -427,12 +603,13 @@ pub fn http_negotiate_only_common(
     pkt_line::write_flush(&mut req)?;
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
     let advertised = parse_ls_refs_v2_response(&resp)?;
 
@@ -597,6 +774,84 @@ fn has_fetch_request_extensions(options: &HttpFetchOptions) -> bool {
             .is_some_and(|v| !v.trim().is_empty())
 }
 
+fn read_local_shallow_oids(local_git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let shallow_path = local_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for line in std::fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            out.push(oid);
+        }
+    }
+    Ok(out)
+}
+
+fn apply_shallow_updates(
+    local_git_dir: &Path,
+    shallow: &[ObjectId],
+    unshallow: &[ObjectId],
+) -> Result<()> {
+    if shallow.is_empty() && unshallow.is_empty() {
+        return Ok(());
+    }
+    let mut boundaries: HashSet<ObjectId> = read_local_shallow_oids(local_git_dir)?
+        .into_iter()
+        .collect();
+    for oid in shallow {
+        boundaries.insert(*oid);
+    }
+    for oid in unshallow {
+        boundaries.remove(oid);
+    }
+
+    let shallow_path = local_git_dir.join("shallow");
+    if boundaries.is_empty() {
+        let _ = std::fs::remove_file(shallow_path);
+        return Ok(());
+    }
+
+    let mut lines = boundaries
+        .into_iter()
+        .map(|oid| oid.to_hex())
+        .collect::<Vec<_>>();
+    lines.sort();
+    let mut contents = lines.join("\n");
+    contents.push('\n');
+    std::fs::write(&shallow_path, contents)
+        .with_context(|| format!("write {}", shallow_path.display()))?;
+    Ok(())
+}
+
+fn read_shallow_info_section(r: &mut impl Read) -> Result<(Vec<ObjectId>, Vec<ObjectId>)> {
+    let mut shallow = Vec::new();
+    let mut unshallow = Vec::new();
+    loop {
+        match pkt_line::read_packet(r)? {
+            None | Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Delim) => continue,
+            Some(pkt_line::Packet::Data(line)) => {
+                if let Some(rest) = line.strip_prefix("shallow ") {
+                    let oid = ObjectId::from_hex(rest.trim())
+                        .with_context(|| format!("parse shallow oid {}", rest.trim()))?;
+                    shallow.push(oid);
+                } else if let Some(rest) = line.strip_prefix("unshallow ") {
+                    let oid = ObjectId::from_hex(rest.trim())
+                        .with_context(|| format!("parse unshallow oid {}", rest.trim()))?;
+                    unshallow.push(oid);
+                }
+            }
+            Some(other) => bail!("unexpected shallow-info packet: {other:?}"),
+        }
+    }
+    Ok((shallow, unshallow))
+}
+
 fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
     if let Some(star_pos) = pattern.find('*') {
         let prefix = &pattern[..star_pos];
@@ -729,13 +984,14 @@ fn fetch_pack_v0_v1_stateless_http(
         Some(negotiator)
     };
 
+    let local_shallow_oids = read_local_shallow_oids(local_git_dir)?;
     let mut req = Vec::new();
     let first = wants[0];
     pkt_line::write_line_to_vec(&mut req, &format!("want {}{}", first.to_hex(), fetch_caps))?;
     for w in wants.iter().skip(1) {
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
     }
-    append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
+    append_fetch_request_extensions_v0_v1(&mut req, caps, options, &local_shallow_oids)?;
     // Protocol v0/v1 request framing: terminate the `want` section before `have` / `done`.
     pkt_line::write_flush(&mut req)?;
     if let Some(negotiator) = negotiator.as_mut() {
@@ -753,12 +1009,13 @@ fn fetch_pack_v0_v1_stateless_http(
     };
 
     let post_url = format!("{base}/{SERVICE}");
-    let resp = http_post(
+    let resp = http_post_discovery(
         client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
         &req,
+        None,
     )?;
 
     let mut cur = Cursor::new(resp.as_slice());
@@ -798,17 +1055,18 @@ fn fetch_pack_v0_v1_stateless_http(
         for w in wants.iter().skip(1) {
             pkt_line::write_line_to_vec(&mut retry_req, &format!("want {}", w.to_hex()))?;
         }
-        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options)?;
+        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options, &local_shallow_oids)?;
         pkt_line::write_flush(&mut retry_req)?;
         pkt_line::write_line_to_vec(&mut retry_req, "done")?;
         pkt_line::write_flush(&mut retry_req)?;
 
-        let retry_resp = http_post(
+        let retry_resp = http_post_discovery(
             client,
             &post_url,
             &format!("application/x-{SERVICE}-request"),
             &format!("application/x-{SERVICE}-result"),
             &retry_req,
+            None,
         )?;
         let mut retry_cur = Cursor::new(retry_resp.as_slice());
         let mut retry_first_pkt = None::<String>;
@@ -978,6 +1236,25 @@ pub fn http_fetch_pack(
         }
     };
 
+    if !options.bundle_uri_override
+        && crate::file_upload_pack_v2::server_advertises_bundle_uri(&caps)
+        && crate::file_upload_pack_v2::transfer_bundle_uri_enabled()
+    {
+        let cap_send = crate::file_upload_pack_v2::cap_lines_for_bundle_request(&caps);
+        let mut req = Vec::new();
+        crate::file_upload_pack_v2::write_bundle_uri_command(&mut req, &cap_send)?;
+        let post_url = format!("{base}/{SERVICE}");
+        let resp = http_post(
+            client,
+            &post_url,
+            &format!("application/x-{SERVICE}-request"),
+            &format!("application/x-{SERVICE}-result"),
+            &req,
+        )?;
+        let mut cur = Cursor::new(resp.as_slice());
+        crate::file_upload_pack_v2::drain_bundle_uri_response(&mut cur)?;
+    }
+
     let advertised = {
         let mut req = Vec::new();
         pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
@@ -1105,6 +1382,7 @@ pub fn http_fetch_pack(
         }
     }
 
+    let local_shallow_oids = read_local_shallow_oids(local_git_dir)?;
     let write_fetch_request = |include_done: bool| -> Result<Vec<u8>> {
         let mut req = Vec::new();
         pkt_line::write_line_to_vec(&mut req, "command=fetch")?;
@@ -1116,7 +1394,7 @@ pub fn http_fetch_pack(
         for w in &wants {
             pkt_line::write_line_to_vec(&mut req, &format!("want {} {}", w.to_hex(), fetch_caps))?;
         }
-        append_fetch_request_extensions_v2(&mut req, &caps, options)?;
+        append_fetch_request_extensions_v2(&mut req, &caps, options, &local_shallow_oids)?;
         for h in &pending_haves {
             let trace = format!("clone> have {}", h.to_hex());
             trace_clone_negotiation_line(&trace);
@@ -1148,19 +1426,26 @@ pub fn http_fetch_pack(
             &req,
         )?;
         let mut cur = Cursor::new(resp.as_slice());
-        let first = match pkt_line::read_packet(&mut cur)? {
-            Some(pkt_line::Packet::Data(s)) => s,
-            _ => String::new(),
-        };
-        if first == "packfile" {
-            let mut pack_buf = Vec::new();
-            read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
-            unpack_packfile(&pack_buf)?;
-            crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
-            return Ok((remote_heads, remote_tags, all_advertised));
-        }
-        if first == "acknowledgments" {
-            skip_to_flush(&mut cur)?;
+        loop {
+            let pkt = match pkt_line::read_packet(&mut cur)? {
+                None => break,
+                Some(pkt_line::Packet::Flush) => break,
+                Some(pkt_line::Packet::Delim) => continue,
+                Some(pkt_line::Packet::Data(s)) => s,
+                Some(other) => bail!("unexpected fetch response: {other:?}"),
+            };
+            if pkt == "acknowledgments" {
+                skip_to_flush(&mut cur)?;
+            } else if pkt == "shallow-info" {
+                let (shallow, unshallow) = read_shallow_info_section(&mut cur)?;
+                apply_shallow_updates(local_git_dir, &shallow, &unshallow)?;
+            } else if pkt == "packfile" {
+                let mut pack_buf = Vec::new();
+                read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
+                unpack_packfile(&pack_buf)?;
+                crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
+                return Ok((remote_heads, remote_tags, all_advertised));
+            }
         }
     }
 
@@ -1184,6 +1469,9 @@ pub fn http_fetch_pack(
         };
         if pkt == "acknowledgments" {
             skip_to_flush(&mut cur)?;
+        } else if pkt == "shallow-info" {
+            let (shallow, unshallow) = read_shallow_info_section(&mut cur)?;
+            apply_shallow_updates(local_git_dir, &shallow, &unshallow)?;
         } else if pkt == "packfile" {
             let mut pack_buf = Vec::new();
             read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;

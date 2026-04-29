@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -19,18 +19,80 @@ use flate2::Compression;
 use grit_lib::config::{parse_bool, parse_i64, ConfigSet};
 use url::Url;
 
+#[derive(Debug)]
+struct NoCertificateVerification;
+
+impl ureq::rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[ureq::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &ureq::rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: ureq::rustls::pki_types::UnixTime,
+    ) -> std::result::Result<ureq::rustls::client::danger::ServerCertVerified, ureq::rustls::Error>
+    {
+        Ok(ureq::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _dss: &ureq::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        ureq::rustls::client::danger::HandshakeSignatureValid,
+        ureq::rustls::Error,
+    > {
+        Ok(ureq::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &ureq::rustls::pki_types::CertificateDer<'_>,
+        _dss: &ureq::rustls::DigitallySignedStruct,
+    ) -> std::result::Result<
+        ureq::rustls::client::danger::HandshakeSignatureValid,
+        ureq::rustls::Error,
+    > {
+        Ok(ureq::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<ureq::rustls::SignatureScheme> {
+        vec![
+            ureq::rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            ureq::rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            ureq::rustls::SignatureScheme::ED25519,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA256,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA384,
+            ureq::rustls::SignatureScheme::RSA_PSS_SHA512,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            ureq::rustls::SignatureScheme::RSA_PKCS1_SHA512,
+        ]
+    }
+}
+
 /// Pre-built ureq agent or SOCKS-over-Unix tunnel for `http.proxy`.
 #[derive(Clone)]
 pub struct HttpClientContext {
     transport: Transport,
     trace_curl: Option<TraceCurl>,
     proxy_raw: Option<String>,
+    proxy_auth_method: ProxyAuthMethod,
+    ssl_verify: bool,
     git_protocol_header: Option<String>,
     post_buffer: usize,
     credential_use_http_path: bool,
     credential_username: Option<String>,
-    cookie_header: Option<String>,
+    cookies: Vec<CookieSpec>,
+    cookie_file_path: Option<PathBuf>,
+    save_cookies: bool,
+    extra_headers: Vec<ExtraHeaderRule>,
     smart_http_enabled: bool,
+    proactive_auth: ProactiveAuth,
+    empty_auth: bool,
     auth_cache: Arc<Mutex<Option<AuthCredentials>>>,
 }
 
@@ -59,6 +121,106 @@ struct TraceCurl {
 enum TraceCurlDest {
     Stderr,
     File(String),
+}
+
+#[derive(Clone)]
+struct ExtraHeaderRule {
+    pattern: Option<String>,
+    header: Option<(String, String)>,
+}
+
+#[derive(Clone, Debug)]
+struct CookieSpec {
+    name_value: String,
+    domain: Option<String>,
+    include_subdomains: bool,
+    path: Option<String>,
+    secure: bool,
+    expires_at: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProactiveAuth {
+    None,
+    Basic,
+    Auto,
+}
+
+#[derive(Clone, Debug)]
+enum ProxyAuthMethod {
+    AnyAuth,
+    Basic,
+    Unsupported(String),
+}
+
+fn parse_proactive_auth(value: Option<String>) -> ProactiveAuth {
+    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
+        Some(value) if value == "basic" => ProactiveAuth::Basic,
+        Some(value) if value == "auto" => ProactiveAuth::Auto,
+        _ => ProactiveAuth::None,
+    }
+}
+
+fn proxy_auth_method(config: &ConfigSet) -> ProxyAuthMethod {
+    let raw = std::env::var("GIT_HTTP_PROXY_AUTHMETHOD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| config.get("http.proxyAuthMethod"))
+        .unwrap_or_else(|| "anyauth".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "anyauth" => ProxyAuthMethod::AnyAuth,
+        "basic" => ProxyAuthMethod::Basic,
+        other => ProxyAuthMethod::Unsupported(other.to_string()),
+    }
+}
+
+fn ensure_supported_proxy_auth_method(method: &ProxyAuthMethod, proxy_url: &Url) -> Result<()> {
+    if proxy_url.username().is_empty() {
+        return Ok(());
+    }
+    match method {
+        ProxyAuthMethod::AnyAuth | ProxyAuthMethod::Basic => Ok(()),
+        ProxyAuthMethod::Unsupported(method) => {
+            bail!("unsupported HTTP proxy authentication method '{method}'")
+        }
+    }
+}
+
+impl CookieSpec {
+    fn matches_url(&self, url: Option<&Url>) -> bool {
+        if self.is_expired() {
+            return false;
+        }
+        let Some(url) = url else {
+            return self.domain.is_none() && self.path.is_none() && !self.secure;
+        };
+        if self.secure && url.scheme() != "https" {
+            return false;
+        }
+        if let Some(domain) = self.domain.as_deref() {
+            let Some(host) = url.host_str() else {
+                return false;
+            };
+            if self.include_subdomains {
+                if host != domain && !host.ends_with(&format!(".{domain}")) {
+                    return false;
+                }
+            } else if host != domain {
+                return false;
+            }
+        }
+        if let Some(path) = self.path.as_deref() {
+            if !url.path().starts_with(path) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_expired(&self) -> bool {
+        self.expires_at
+            .is_some_and(|expiry| time::OffsetDateTime::now_utc().unix_timestamp() >= expiry)
+    }
 }
 
 /// Validate `http.proxy` from `git clone -c http.proxy=...` before clap runs, so invalid URLs
@@ -114,9 +276,21 @@ fn resolve_git_protocol_header(config: &ConfigSet) -> Option<String> {
 impl HttpClientContext {
     /// Build transport from merged Git config (`http.proxy`, etc.).
     pub fn from_config_set(config: &ConfigSet) -> Result<Self> {
+        Self::from_config_set_with_proxy_override(config, None)
+    }
+
+    /// Build transport from merged Git config with an optional per-remote proxy override.
+    pub fn from_config_set_with_proxy_override(
+        config: &ConfigSet,
+        proxy_override: Option<String>,
+    ) -> Result<Self> {
         let trace_curl = trace_curl_from_env();
-        let proxy_raw = config.get("http.proxy");
-        let transport = build_transport(config)?;
+        let proxy_raw = proxy_override
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| config.get("http.proxy"));
+        let proxy_auth_method = proxy_auth_method(config);
+        let transport = build_transport(config, &proxy_auth_method, proxy_raw.as_deref())?;
+        let ssl_verify = ssl_verify_enabled(config);
         let git_protocol_header = resolve_git_protocol_header(config);
         let post_buffer = config
             .get("http.postBuffer")
@@ -132,20 +306,45 @@ impl HttpClientContext {
         let credential_username = config
             .get("credential.username")
             .filter(|s| !s.trim().is_empty());
-        let cookie_header = build_cookie_header(config)?;
+        let cookie_file_path = config
+            .get("http.cookieFile")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let cookies = build_cookie_specs(config)?;
+        let save_cookies = cookie_file_path.is_some()
+            && config
+                .get("http.saveCookies")
+                .as_deref()
+                .map(|value| parse_bool(value).unwrap_or(false))
+                .unwrap_or(false);
+        let extra_headers = extra_header_rules_from_config(config);
         let smart_http_enabled = std::env::var("GIT_SMART_HTTP")
             .ok()
             .is_none_or(|v| v.trim() != "0");
+        let proactive_auth = parse_proactive_auth(config.get("http.proactiveAuth"));
+        let empty_auth = config
+            .get("http.emptyAuth")
+            .as_deref()
+            .map(|value| parse_bool(value).unwrap_or(false))
+            .unwrap_or(false);
         Ok(Self {
             transport,
             trace_curl,
             proxy_raw,
+            proxy_auth_method,
+            ssl_verify,
             git_protocol_header,
             post_buffer,
             credential_use_http_path,
             credential_username,
-            cookie_header,
+            cookies,
+            cookie_file_path,
+            save_cookies,
+            extra_headers,
             smart_http_enabled,
+            proactive_auth,
+            empty_auth,
             auth_cache: Arc::new(Mutex::new(None)),
         })
     }
@@ -187,42 +386,81 @@ impl HttpClientContext {
         if let Some(v) = git_protocol_header {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
-        self.trace_cookie_header();
-        let cached_auth = self.cached_authorization_header();
-        let mut first = self.http_get_once(url, cached_auth.as_deref(), git_protocol_header)?;
+        let cookie_header = self.cookie_header_for_url(url);
+        self.trace_cookie_header(cookie_header.as_deref());
+        let extra_headers = self.extra_headers_for_url(url);
+        self.trace_extra_headers(&extra_headers);
+        let request_auth = match self.cached_authorization_header() {
+            Some(header) => Some(header),
+            None => self.proactive_authorization_header(url)?,
+        };
+        let first = self.http_get_once(url, request_auth.as_deref(), git_protocol_header)?;
+        self.save_response_cookies(&first)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
                 return Err(http_access_error(url, first.status));
             }
+            self.approve_cached_auth_for_url(url);
             return Ok(first.body);
         }
+        let auth_challenges = first.www_authenticate_challenges();
 
         let mut auth = self
-            .credentials_from_fill(url)?
+            .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.username.is_empty() {
-            auth.username = self.askpass_username(url)?;
-        }
-        if auth.password.is_empty() {
-            auth.password = self.askpass_password(url, &auth.username)?;
+        if auth.needs_basic_prompt() && !self.empty_auth {
+            let mut username = auth.username().unwrap_or_default().to_string();
+            if username.is_empty() {
+                username = self.askpass_username(url)?;
+            }
+            let password = self.askpass_password(url, &username)?;
+            auth = AuthCredentials::Basic { username, password };
         }
 
-        self.trace_auth_header();
-        let retry =
-            self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
+        let auth_header = auth.authorization_header();
+        self.trace_auth_header(&auth_header);
+        let retry = self.http_get_once(url, Some(&auth_header), git_protocol_header)?;
+        self.save_response_cookies(&retry)?;
         let mut credential_input = self.credential_input_for_url(url)?;
-        credential_input.insert("username".to_string(), auth.username.clone());
-        credential_input.insert("password".to_string(), auth.password.clone());
+        auth.add_to_credential_input(&mut credential_input);
+        let mut reject_extras = auth.credential_extras();
+        reject_extras.extend(credential_challenge_extras(&auth_challenges));
         self.trace_response_status(retry.status, &retry.reason);
+        if retry.status == 401 && auth.should_continue() {
+            let next_challenges = retry.www_authenticate_challenges();
+            if let Some(next_auth) =
+                self.credentials_from_fill_continue(url, &next_challenges, &auth)?
+            {
+                let next_auth_header = next_auth.authorization_header();
+                self.trace_auth_header(&next_auth_header);
+                let retry2 =
+                    self.http_get_once(url, Some(&next_auth_header), git_protocol_header)?;
+                self.save_response_cookies(&retry2)?;
+                let mut credential_input = self.credential_input_for_url(url)?;
+                next_auth.add_to_credential_input(&mut credential_input);
+                let mut reject_extras = next_auth.credential_extras();
+                reject_extras.extend(credential_challenge_extras(&next_challenges));
+                self.trace_response_status(retry2.status, &retry2.reason);
+                if retry2.status >= 400 {
+                    let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
+                    self.clear_cached_auth();
+                    return Err(http_access_error(url, retry2.status));
+                }
+                let approve_extras = next_auth.credential_extras();
+                let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
+                self.store_cached_auth(next_auth);
+                return Ok(retry2.body);
+            }
+        }
         if retry.status >= 400 {
-            let _ = self.run_credential_action("reject", &credential_input);
+            let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
         self.store_cached_auth(auth);
-        first.body.clear();
         Ok(retry.body)
     }
 
@@ -261,7 +499,10 @@ impl HttpClientContext {
         if let Some(v) = git_protocol_header {
             self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
         }
-        self.trace_cookie_header();
+        let cookie_header = self.cookie_header_for_url(url);
+        self.trace_cookie_header(cookie_header.as_deref());
+        let extra_headers = self.extra_headers_for_url(url);
+        self.trace_extra_headers(&extra_headers);
         let (payload, gzip_enabled) = self.encode_post_payload(body)?;
         if gzip_enabled {
             self.trace_outgoing_header("Content-Encoding: gzip");
@@ -273,59 +514,105 @@ impl HttpClientContext {
         } else {
             self.trace_outgoing_header(&format!("Content-Length: {}", payload.len()));
         }
+        self.trace_rpc_post_size(url, payload.len(), chunked);
 
-        let cached_auth = self.cached_authorization_header();
-        let mut first = self.http_post_once(
+        let request_auth = match self.cached_authorization_header() {
+            Some(header) => Some(header),
+            None => self.proactive_authorization_header(url)?,
+        };
+        let first = self.http_post_once(
             url,
             content_type,
             accept,
             &payload,
-            cached_auth.as_deref(),
+            request_auth.as_deref(),
             gzip_enabled,
             chunked,
             git_protocol_header,
         )?;
+        self.save_response_cookies(&first)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
                 return Err(http_access_error(url, first.status));
             }
+            self.approve_cached_auth_for_url(url);
             return Ok(first.body);
         }
+        let auth_challenges = first.www_authenticate_challenges();
 
         let mut auth = self
-            .credentials_from_fill(url)?
+            .credentials_from_fill(url, &auth_challenges)?
             .unwrap_or(self.default_auth_for_url(url)?);
-        if auth.username.is_empty() {
-            auth.username = self.askpass_username(url)?;
+        if auth.needs_basic_prompt() && !self.empty_auth {
+            let mut username = auth.username().unwrap_or_default().to_string();
+            if username.is_empty() {
+                username = self.askpass_username(url)?;
+            }
+            let password = self.askpass_password(url, &username)?;
+            auth = AuthCredentials::Basic { username, password };
         }
-        if auth.password.is_empty() {
-            auth.password = self.askpass_password(url, &auth.username)?;
-        }
-        self.trace_auth_header();
+        let auth_header = auth.authorization_header();
+        self.trace_auth_header(&auth_header);
 
         let retry = self.http_post_once(
             url,
             content_type,
             accept,
             &payload,
-            Some(&auth.authorization_header()),
+            Some(&auth_header),
             gzip_enabled,
             chunked,
             git_protocol_header,
         )?;
+        self.save_response_cookies(&retry)?;
         let mut credential_input = self.credential_input_for_url(url)?;
-        credential_input.insert("username".to_string(), auth.username.clone());
-        credential_input.insert("password".to_string(), auth.password.clone());
+        auth.add_to_credential_input(&mut credential_input);
+        let mut reject_extras = auth.credential_extras();
+        reject_extras.extend(credential_challenge_extras(&auth_challenges));
         self.trace_response_status(retry.status, &retry.reason);
+        if retry.status == 401 && auth.should_continue() {
+            let next_challenges = retry.www_authenticate_challenges();
+            if let Some(next_auth) =
+                self.credentials_from_fill_continue(url, &next_challenges, &auth)?
+            {
+                let next_auth_header = next_auth.authorization_header();
+                self.trace_auth_header(&next_auth_header);
+                let retry2 = self.http_post_once(
+                    url,
+                    content_type,
+                    accept,
+                    &payload,
+                    Some(&next_auth_header),
+                    gzip_enabled,
+                    chunked,
+                    git_protocol_header,
+                )?;
+                self.save_response_cookies(&retry2)?;
+                let mut credential_input = self.credential_input_for_url(url)?;
+                next_auth.add_to_credential_input(&mut credential_input);
+                let mut reject_extras = next_auth.credential_extras();
+                reject_extras.extend(credential_challenge_extras(&next_challenges));
+                self.trace_response_status(retry2.status, &retry2.reason);
+                if retry2.status >= 400 {
+                    let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
+                    self.clear_cached_auth();
+                    return Err(http_access_error(url, retry2.status));
+                }
+                let approve_extras = next_auth.credential_extras();
+                let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
+                self.store_cached_auth(next_auth);
+                return Ok(retry2.body);
+            }
+        }
         if retry.status >= 400 {
-            let _ = self.run_credential_action("reject", &credential_input);
+            let _ = self.run_credential_action("reject", &credential_input, &reject_extras);
             self.clear_cached_auth();
             return Err(http_access_error(url, retry.status));
         }
-        let _ = self.run_credential_action("approve", &credential_input);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
         self.store_cached_auth(auth);
-        first.body.clear();
         Ok(retry.body)
     }
 
@@ -336,7 +623,19 @@ impl HttpClientContext {
         git_protocol_header: Option<&str>,
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
-        match &self.transport {
+        let extra_headers = self.extra_headers_for_url(&request_url);
+        let cookie_header = self.cookie_header_for_url(&request_url);
+        let env_transport = if self.proxy_raw.is_none() {
+            env_proxy_for_url(&request_url)
+                .map(|proxy| {
+                    build_transport_from_proxy(&proxy, self.ssl_verify, &self.proxy_auth_method)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let transport = env_transport.as_ref().unwrap_or(&self.transport);
+        match transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
                     .get(&request_url)
@@ -344,16 +643,20 @@ impl HttpClientContext {
                 if let Some(v) = git_protocol_header {
                     req = req.set("Git-Protocol", v);
                 }
-                if let Some(cookie) = self.cookie_header.as_deref() {
+                if let Some(cookie) = cookie_header.as_deref() {
                     req = req.set("Cookie", cookie);
                 }
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
                 }
+                for (name, value) in &extra_headers {
+                    req = req.set(name, value);
+                }
                 match req.call() {
                     Ok(resp) => {
                         let status = resp.status();
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut body = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut body)
@@ -361,11 +664,13 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status,
                             reason,
+                            headers,
                             body,
                         })
                     }
                     Err(ureq::Error::Status(code, resp)) => {
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut body = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut body)
@@ -373,10 +678,11 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status: code,
                             reason,
+                            headers,
                             body,
                         })
                     }
-                    Err(err) => Err(anyhow::anyhow!("GET {url}: {err}")),
+                    Err(err) => Err(http_request_error("GET", &request_url, err)),
                 }
             }
             Transport::HttpForward {
@@ -389,7 +695,8 @@ impl HttpClientContext {
                     proxy_basic.as_deref(),
                     auth_header,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -399,7 +706,8 @@ impl HttpClientContext {
                     &request_url,
                     auth_header,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -419,7 +727,19 @@ impl HttpClientContext {
         git_protocol_header: Option<&str>,
     ) -> Result<RawHttpResponse> {
         let request_url = discovery_url_for_mode(url, self.smart_http_enabled);
-        match &self.transport {
+        let extra_headers = self.extra_headers_for_url(&request_url);
+        let cookie_header = self.cookie_header_for_url(&request_url);
+        let env_transport = if self.proxy_raw.is_none() {
+            env_proxy_for_url(&request_url)
+                .map(|proxy| {
+                    build_transport_from_proxy(&proxy, self.ssl_verify, &self.proxy_auth_method)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let transport = env_transport.as_ref().unwrap_or(&self.transport);
+        match transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
                     .post(&request_url)
@@ -432,11 +752,14 @@ impl HttpClientContext {
                 if gzip_enabled {
                     req = req.set("Content-Encoding", "gzip");
                 }
-                if let Some(cookie) = self.cookie_header.as_deref() {
+                if let Some(cookie) = cookie_header.as_deref() {
                     req = req.set("Cookie", cookie);
                 }
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
+                }
+                for (name, value) in &extra_headers {
+                    req = req.set(name, value);
                 }
                 let send_result = if chunked {
                     let mut cur = std::io::Cursor::new(body);
@@ -448,6 +771,7 @@ impl HttpClientContext {
                     Ok(resp) => {
                         let status = resp.status();
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut out = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut out)
@@ -455,11 +779,13 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status,
                             reason,
+                            headers,
                             body: out,
                         })
                     }
                     Err(ureq::Error::Status(code, resp)) => {
                         let reason = resp.status_text().to_string();
+                        let headers = response_headers(&resp);
                         let mut out = Vec::new();
                         resp.into_reader()
                             .read_to_end(&mut out)
@@ -467,10 +793,11 @@ impl HttpClientContext {
                         Ok(RawHttpResponse {
                             status: code,
                             reason,
+                            headers,
                             body: out,
                         })
                     }
-                    Err(err) => Err(anyhow::anyhow!("POST {url}: {err}")),
+                    Err(err) => Err(http_request_error("POST", &request_url, err)),
                 }
             }
             Transport::HttpForward {
@@ -488,7 +815,8 @@ impl HttpClientContext {
                     gzip_enabled,
                     chunked,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
@@ -503,7 +831,8 @@ impl HttpClientContext {
                     gzip_enabled,
                     chunked,
                     git_protocol_header,
-                    self.cookie_header.as_deref(),
+                    cookie_header.as_deref(),
+                    &extra_headers,
                     self.smart_http_enabled,
                 )?;
                 http_over_socks_unix(socket_path, &request_url, &req)
@@ -517,6 +846,14 @@ impl HttpClientContext {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.as_ref().map(AuthCredentials::authorization_header)
+    }
+
+    fn cached_auth_credentials(&self) -> Option<AuthCredentials> {
+        let guard = self
+            .auth_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clone()
     }
 
     fn store_cached_auth(&self, auth: AuthCredentials) {
@@ -535,6 +872,48 @@ impl HttpClientContext {
         *guard = None;
     }
 
+    fn approve_cached_auth_for_url(&self, url: &str) {
+        let Some(auth) = self.cached_auth_credentials() else {
+            return;
+        };
+        let Ok(mut credential_input) = self.credential_input_for_url(url) else {
+            return;
+        };
+        auth.add_to_credential_input(&mut credential_input);
+        let approve_extras = auth.credential_extras();
+        let _ = self.run_credential_action("approve", &credential_input, &approve_extras);
+    }
+
+    fn proactive_authorization_header(&self, url: &str) -> Result<Option<String>> {
+        if self.empty_auth {
+            let header = AuthCredentials::Basic {
+                username: String::new(),
+                password: String::new(),
+            }
+            .authorization_header();
+            self.trace_auth_header(&header);
+            return Ok(Some(header));
+        }
+        if self.proactive_auth == ProactiveAuth::None {
+            return Ok(None);
+        }
+        let challenges = match self.proactive_auth {
+            ProactiveAuth::Basic => vec!["Basic".to_string()],
+            ProactiveAuth::Auto => Vec::new(),
+            ProactiveAuth::None => return Ok(None),
+        };
+        let Some(auth) = self.credentials_from_fill(url, &challenges)? else {
+            return Ok(None);
+        };
+        if auth.needs_basic_prompt() || auth.should_continue() {
+            return Ok(None);
+        }
+        let header = auth.authorization_header();
+        self.trace_auth_header(&header);
+        self.store_cached_auth(auth);
+        Ok(Some(header))
+    }
+
     fn encode_post_payload(&self, body: &[u8]) -> Result<(Vec<u8>, bool)> {
         if body.len() <= 1024 {
             return Ok((body.to_vec(), false));
@@ -545,7 +924,7 @@ impl HttpClientContext {
         Ok((payload, true))
     }
 
-    fn trace_auth_header(&self) {
+    fn trace_auth_header(&self, header: &str) {
         let Some(ref t) = self.trace_curl else {
             return;
         };
@@ -553,9 +932,14 @@ impl HttpClientContext {
             return;
         }
         if t.redact {
-            t.write_line("=> Send header: Authorization: Basic <redacted>\n");
+            let scheme = header
+                .split_once(' ')
+                .map_or("Authorization", |(scheme, _)| scheme);
+            t.write_line(&format!(
+                "=> Send header: Authorization: {scheme} <redacted>\n"
+            ));
         } else {
-            t.write_line("=> Send header: Authorization: Basic <not-redacted>\n");
+            t.write_line(&format!("=> Send header: Authorization: {header}\n"));
         }
     }
 
@@ -592,6 +976,7 @@ impl HttpClientContext {
         &self,
         action: &str,
         input: &BTreeMap<String, String>,
+        extras: &[(String, String)],
     ) -> Result<BTreeMap<String, String>> {
         let exe = std::env::current_exe().context("resolve current executable for credential")?;
         let mut child = Command::new(exe)
@@ -607,6 +992,9 @@ impl HttpClientContext {
                 .stdin
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("credential {action}: missing stdin"))?;
+            for (k, v) in extras {
+                writeln!(stdin, "{k}={v}")?;
+            }
             for (k, v) in input {
                 writeln!(stdin, "{k}={v}")?;
             }
@@ -630,9 +1018,32 @@ impl HttpClientContext {
         Ok(map)
     }
 
-    fn credentials_from_fill(&self, url: &str) -> Result<Option<AuthCredentials>> {
+    fn credentials_from_fill(
+        &self,
+        url: &str,
+        auth_challenges: &[String],
+    ) -> Result<Option<AuthCredentials>> {
         let input = self.credential_input_for_url(url)?;
-        let filled = self.run_credential_action("fill", &input)?;
+        let extras = credential_fill_extras(auth_challenges);
+        let filled = self.run_credential_action("fill", &input, &extras)?;
+        if let (Some(authtype), Some(credential)) =
+            (filled.get("authtype"), filled.get("credential"))
+        {
+            if !authtype.is_empty() && !credential.is_empty() {
+                return Ok(Some(AuthCredentials::preencoded_from_fields(
+                    authtype.clone(),
+                    credential.clone(),
+                    filled.get("username").cloned(),
+                    filled
+                        .get("ephemeral")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                    filled.get("state[]").cloned().into_iter().collect(),
+                    filled
+                        .get("continue")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                )));
+            }
+        }
         let username = filled
             .get("username")
             .cloned()
@@ -642,13 +1053,45 @@ impl HttpClientContext {
         if username.is_empty() && password.is_empty() {
             return Ok(None);
         }
-        Ok(Some(AuthCredentials { username, password }))
+        Ok(Some(AuthCredentials::Basic { username, password }))
+    }
+
+    fn credentials_from_fill_continue(
+        &self,
+        url: &str,
+        auth_challenges: &[String],
+        previous: &AuthCredentials,
+    ) -> Result<Option<AuthCredentials>> {
+        let mut input = self.credential_input_for_url(url)?;
+        previous.add_to_fill_input(&mut input);
+        let mut extras = credential_fill_extras(auth_challenges);
+        extras.extend(previous.state_extras());
+        let filled = self.run_credential_action("fill", &input, &extras)?;
+        if let (Some(authtype), Some(credential)) =
+            (filled.get("authtype"), filled.get("credential"))
+        {
+            if !authtype.is_empty() && !credential.is_empty() {
+                return Ok(Some(AuthCredentials::preencoded_from_fields(
+                    authtype.clone(),
+                    credential.clone(),
+                    filled.get("username").cloned(),
+                    filled
+                        .get("ephemeral")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                    filled.get("state[]").cloned().into_iter().collect(),
+                    filled
+                        .get("continue")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on")),
+                )));
+            }
+        }
+        Ok(None)
     }
 
     fn default_auth_for_url(&self, url: &str) -> Result<AuthCredentials> {
         let input = self.credential_input_for_url(url)?;
         let username = input.get("username").cloned().unwrap_or_default();
-        Ok(AuthCredentials {
+        Ok(AuthCredentials::Basic {
             username,
             password: String::new(),
         })
@@ -679,6 +1122,11 @@ impl HttpClientContext {
             return;
         }
         let shown_url = discovery_url_for_mode(url, smart_http_enabled);
+        let shown_url = if t.redact {
+            scrub_url_credentials(&shown_url)
+        } else {
+            shown_url
+        };
         t.write_line(&format!("=> Send header: {method} {shown_url} HTTP/1.1\n"));
     }
 
@@ -692,6 +1140,30 @@ impl HttpClientContext {
         t.write_line(&format!("<= Recv header: HTTP/1.1 {status} {text}\n"));
     }
 
+    fn trace_rpc_post_size(&self, url: &str, len: usize, chunked: bool) {
+        let Some(ref t) = self.trace_curl else {
+            return;
+        };
+        if !trace_component_enabled(&t.components, "http") {
+            return;
+        }
+        let service = if url.ends_with("/git-receive-pack") {
+            Some("git-receive-pack")
+        } else if url.ends_with("/git-upload-pack") {
+            Some("git-upload-pack")
+        } else {
+            None
+        };
+        let Some(service) = service else {
+            return;
+        };
+        if chunked {
+            t.write_line(&format!("== Info: POST {service} (chunked)\n"));
+        } else {
+            t.write_line(&format!("== Info: POST {service} ({len} bytes)\n"));
+        }
+    }
+
     fn trace_outgoing_header(&self, line: &str) {
         let Some(ref t) = self.trace_curl else {
             return;
@@ -702,8 +1174,22 @@ impl HttpClientContext {
         t.write_line(&format!("=> Send header: {line}\n"));
     }
 
-    fn trace_cookie_header(&self) {
-        let Some(cookie) = self.cookie_header.as_deref() else {
+    fn cookie_header_for_url(&self, url: &str) -> Option<String> {
+        if self.cookies.is_empty() {
+            return None;
+        }
+        let parsed = Url::parse(url).ok();
+        let parts = self
+            .cookies
+            .iter()
+            .filter(|cookie| cookie.matches_url(parsed.as_ref()))
+            .map(|cookie| cookie.name_value.clone())
+            .collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
+
+    fn trace_cookie_header(&self, cookie: Option<&str>) {
+        let Some(cookie) = cookie else {
             return;
         };
         let Some(ref t) = self.trace_curl else {
@@ -718,6 +1204,73 @@ impl HttpClientContext {
         } else {
             t.write_line(&format!("=> Send header: Cookie: {cookie}\n"));
         }
+    }
+
+    fn extra_headers_for_url(&self, url: &str) -> Vec<(String, String)> {
+        let mut headers = Vec::new();
+        for rule in &self.extra_headers {
+            let matches = rule
+                .pattern
+                .as_deref()
+                .is_none_or(|pattern| grit_lib::config::url_matches(pattern, url));
+            if !matches {
+                continue;
+            }
+            match &rule.header {
+                Some(header) => headers.push(header.clone()),
+                None => headers.clear(),
+            }
+        }
+        headers
+    }
+
+    fn trace_extra_headers(&self, extra_headers: &[(String, String)]) {
+        let Some(ref t) = self.trace_curl else {
+            return;
+        };
+        if !trace_component_enabled(&t.components, "http") {
+            return;
+        }
+        for (name, value) in extra_headers {
+            let rendered = if t.redact && header_should_redact(name) {
+                format!("{name}: <redacted>")
+            } else {
+                format!("{name}: {value}")
+            };
+            t.write_line(&format!("=> Send header: {rendered}\n"));
+        }
+    }
+
+    fn save_response_cookies(&self, response: &RawHttpResponse) -> Result<()> {
+        if !self.save_cookies {
+            return Ok(());
+        }
+        let Some(path) = self.cookie_file_path.as_ref() else {
+            return Ok(());
+        };
+        let values = response
+            .headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("set-cookie"))
+            .map(|(_, value)| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if values.is_empty() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create cookie directory {}", parent.display()))?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("open cookie file {}", path.display()))?;
+        for value in values {
+            writeln!(file, "Set-Cookie: {value}")?;
+        }
+        Ok(())
     }
 
     fn trace_proxy_auth_header(&self) {
@@ -778,23 +1331,242 @@ impl TraceCurl {
     }
 }
 
+fn response_headers(resp: &ureq::Response) -> Vec<(String, String)> {
+    let mut seen = std::collections::BTreeSet::new();
+    resp.headers_names()
+        .into_iter()
+        .filter(|name| seen.insert(name.to_ascii_lowercase()))
+        .flat_map(|name| {
+            let key = name.to_ascii_lowercase();
+            resp.all(&name)
+                .into_iter()
+                .map(move |value| (key.clone(), value.to_string()))
+        })
+        .collect()
+}
+
+fn extra_header_rules_from_config(config: &ConfigSet) -> Vec<ExtraHeaderRule> {
+    let mut rules = Vec::new();
+    for entry in config.entries() {
+        let Some((pattern, variable)) = parse_http_config_key(&entry.key) else {
+            continue;
+        };
+        if !variable.eq_ignore_ascii_case("extraheader") {
+            continue;
+        }
+        let pattern = pattern.map(ToOwned::to_owned);
+        let Some(raw) = entry.value.as_deref() else {
+            rules.push(ExtraHeaderRule {
+                pattern,
+                header: None,
+            });
+            continue;
+        };
+        if raw.trim().is_empty() {
+            rules.push(ExtraHeaderRule {
+                pattern,
+                header: None,
+            });
+            continue;
+        }
+        if let Some((name, value)) = raw.split_once(':') {
+            let name = name.trim();
+            if !name.is_empty() {
+                rules.push(ExtraHeaderRule {
+                    pattern,
+                    header: Some((name.to_string(), value.trim_start().to_string())),
+                });
+            }
+        }
+    }
+    rules
+}
+
+fn parse_http_config_key(key: &str) -> Option<(Option<&str>, &str)> {
+    let first_dot = key.find('.')?;
+    let section = &key[..first_dot];
+    if !section.eq_ignore_ascii_case("http") {
+        return None;
+    }
+    let rest = &key[first_dot + 1..];
+    if let Some(last_dot) = rest.rfind('.') {
+        let subsection = &rest[..last_dot];
+        let variable = &rest[last_dot + 1..];
+        if subsection.is_empty() || variable.is_empty() {
+            None
+        } else {
+            Some((Some(subsection), variable))
+        }
+    } else if rest.is_empty() {
+        None
+    } else {
+        Some((None, rest))
+    }
+}
+
+fn header_should_redact(name: &str) -> bool {
+    name.eq_ignore_ascii_case("authorization")
+        || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("cookie")
+}
+
 struct RawHttpResponse {
     status: u16,
     reason: String,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
+impl RawHttpResponse {
+    fn www_authenticate_challenges(&self) -> Vec<String> {
+        self.headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("www-authenticate"))
+            .map(|(_, value)| value.clone())
+            .collect()
+    }
+}
+
 #[derive(Clone)]
-struct AuthCredentials {
-    username: String,
-    password: String,
+enum AuthCredentials {
+    Basic {
+        username: String,
+        password: String,
+    },
+    Preencoded {
+        authtype: String,
+        credential: String,
+        username: Option<String>,
+        ephemeral: bool,
+        state: Vec<String>,
+        continue_auth: bool,
+    },
 }
 
 impl AuthCredentials {
+    fn preencoded_from_fields(
+        authtype: String,
+        credential: String,
+        username: Option<String>,
+        ephemeral: bool,
+        state: Vec<String>,
+        continue_auth: bool,
+    ) -> Self {
+        Self::Preencoded {
+            authtype,
+            credential,
+            username,
+            ephemeral,
+            state,
+            continue_auth,
+        }
+    }
+
     fn authorization_header(&self) -> String {
-        let cred = format!("{}:{}", self.username, self.password);
-        let encoded = base64::engine::general_purpose::STANDARD.encode(cred.as_bytes());
-        format!("Basic {encoded}")
+        match self {
+            Self::Basic { username, password } => {
+                let cred = format!("{username}:{password}");
+                let encoded = base64::engine::general_purpose::STANDARD.encode(cred.as_bytes());
+                format!("Basic {encoded}")
+            }
+            Self::Preencoded {
+                authtype,
+                credential,
+                ..
+            } => format!("{authtype} {credential}"),
+        }
+    }
+
+    fn username(&self) -> Option<&str> {
+        match self {
+            Self::Basic { username, .. } => Some(username),
+            Self::Preencoded { username, .. } => username.as_deref(),
+        }
+    }
+
+    fn should_continue(&self) -> bool {
+        matches!(
+            self,
+            Self::Preencoded {
+                continue_auth: true,
+                ..
+            }
+        )
+    }
+
+    fn needs_basic_prompt(&self) -> bool {
+        matches!(self, Self::Basic { username, password } if username.is_empty() || password.is_empty())
+    }
+
+    fn credential_extras(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Basic { .. } => Vec::new(),
+            Self::Preencoded { state, .. } => {
+                let mut out = vec![("capability[]".to_string(), "authtype".to_string())];
+                if !state.is_empty() {
+                    out.push(("capability[]".to_string(), "state".to_string()));
+                    out.extend(
+                        state
+                            .iter()
+                            .map(|value| ("state[]".to_string(), value.clone())),
+                    );
+                }
+                out
+            }
+        }
+    }
+
+    fn state_extras(&self) -> Vec<(String, String)> {
+        match self {
+            Self::Preencoded { state, .. } => state
+                .iter()
+                .map(|value| ("state[]".to_string(), value.clone()))
+                .collect(),
+            Self::Basic { .. } => Vec::new(),
+        }
+    }
+
+    fn add_to_fill_input(&self, input: &mut BTreeMap<String, String>) {
+        match self {
+            Self::Preencoded {
+                authtype, username, ..
+            } => {
+                input.insert("authtype".to_string(), authtype.clone());
+                if let Some(username) = username {
+                    input.insert("username".to_string(), username.clone());
+                }
+            }
+            Self::Basic { username, .. } => {
+                if !username.is_empty() {
+                    input.insert("username".to_string(), username.clone());
+                }
+            }
+        }
+    }
+
+    fn add_to_credential_input(&self, input: &mut BTreeMap<String, String>) {
+        match self {
+            Self::Basic { username, password } => {
+                input.insert("username".to_string(), username.clone());
+                input.insert("password".to_string(), password.clone());
+            }
+            Self::Preencoded {
+                authtype,
+                credential,
+                username,
+                ephemeral,
+                ..
+            } => {
+                input.insert("authtype".to_string(), authtype.clone());
+                input.insert("credential".to_string(), credential.clone());
+                if let Some(username) = username {
+                    input.insert("username".to_string(), username.clone());
+                }
+                if *ephemeral {
+                    input.insert("ephemeral".to_string(), "1".to_string());
+                }
+            }
+        }
     }
 }
 
@@ -814,6 +1586,7 @@ fn build_proxy_get_request(
     auth_header: Option<&str>,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
@@ -839,6 +1612,9 @@ fn build_proxy_get_request(
     if let Some(cookie) = cookie_header {
         s.push_str(&format!("Cookie: {cookie}\r\n"));
     }
+    for (name, value) in extra_headers {
+        s.push_str(&format!("{name}: {value}\r\n"));
+    }
     s.push_str("\r\n");
     Ok(s.into_bytes())
 }
@@ -854,6 +1630,7 @@ fn build_proxy_post_request(
     chunked: bool,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
@@ -880,6 +1657,9 @@ fn build_proxy_post_request(
     if let Some(cookie) = cookie_header {
         head.push_str(&format!("Cookie: {cookie}\r\n"));
     }
+    for (name, value) in extra_headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
     if gzip_enabled {
         head.push_str("Content-Encoding: gzip\r\n");
     }
@@ -903,6 +1683,7 @@ fn build_get_request(
     auth_header: Option<&str>,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
@@ -910,30 +1691,31 @@ fn build_get_request(
     let host = host_header_value(&parsed);
     let request_path_q = discovery_url_for_mode(&path_q, smart_http_enabled);
     let mut s = format!(
-        "GET {request_path_q} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         User-Agent: {}\r\n\
-         Connection: close\r\n\
-         Accept: */*\r\n\
-         \r\n",
+        "GET {request_path_q} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
         crate::http_smart::agent_header()
     );
     if let Some(v) = git_protocol_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+            s.insert_str(pos, &format!("\r\nGit-Protocol: {v}"));
         }
     }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Authorization: {a}\r\n"));
+            s.insert_str(pos, &format!("\r\nAuthorization: {a}"));
         }
     }
     if let Some(cookie) = cookie_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
-            s.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
+            s.insert_str(pos, &format!("\r\nCookie: {cookie}"));
+        }
+    }
+    for (name, value) in extra_headers {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = s.find(marker) {
+            s.insert_str(pos, &format!("\r\n{name}: {value}"));
         }
     }
     Ok(s.into_bytes())
@@ -949,6 +1731,7 @@ fn build_post_request(
     chunked: bool,
     git_protocol_header: Option<&str>,
     cookie_header: Option<&str>,
+    extra_headers: &[(String, String)],
     smart_http_enabled: bool,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
@@ -956,48 +1739,48 @@ fn build_post_request(
     let host = host_header_value(&parsed);
     let request_path_q = discovery_url_for_mode(&path_q, smart_http_enabled);
     let mut head = format!(
-        "POST {request_path_q} HTTP/1.1\r\n\
-         Host: {host}\r\n\
-         Content-Type: {content_type}\r\n\
-         Accept: {accept}\r\n\
-         User-Agent: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
+        "POST {request_path_q} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {content_type}\r\nAccept: {accept}\r\nUser-Agent: {}\r\nConnection: close\r\n\r\n",
         crate::http_smart::agent_header()
     );
     if let Some(v) = git_protocol_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+            head.insert_str(pos, &format!("\r\nGit-Protocol: {v}"));
         }
     }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Authorization: {a}\r\n"));
+            head.insert_str(pos, &format!("\r\nAuthorization: {a}"));
         }
     }
     if let Some(cookie) = cookie_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Cookie: {cookie}\r\n"));
+            head.insert_str(pos, &format!("\r\nCookie: {cookie}"));
+        }
+    }
+    for (name, value) in extra_headers {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = head.find(marker) {
+            head.insert_str(pos, &format!("\r\n{name}: {value}"));
         }
     }
     if gzip_enabled {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, "Content-Encoding: gzip\r\n");
+            head.insert_str(pos, "\r\nContent-Encoding: gzip");
         }
     }
     if chunked {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, "Transfer-Encoding: chunked\r\n");
+            head.insert_str(pos, "\r\nTransfer-Encoding: chunked");
         }
     } else {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
-            head.insert_str(pos, &format!("Content-Length: {}\r\n", body.len()));
+            head.insert_str(pos, &format!("\r\nContent-Length: {}", body.len()));
         }
     }
     let mut out = head.into_bytes();
@@ -1025,6 +1808,22 @@ fn append_chunked_body(out: &mut Vec<u8>, body: &[u8]) {
         offset = end;
     }
     out.extend_from_slice(b"0\r\n\r\n");
+}
+
+fn credential_fill_extras(auth_challenges: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(2 + auth_challenges.len());
+    out.push(("capability[]".to_string(), "authtype".to_string()));
+    out.push(("capability[]".to_string(), "state".to_string()));
+    out.extend(credential_challenge_extras(auth_challenges));
+    out
+}
+
+fn credential_challenge_extras(auth_challenges: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::with_capacity(auth_challenges.len());
+    for challenge in auth_challenges {
+        out.push(("wwwauth[]".to_string(), challenge.clone()));
+    }
+    out
 }
 
 fn url_path_and_query(url: &Url) -> String {
@@ -1130,6 +1929,15 @@ fn read_http_response(r: &mut impl Read) -> Result<RawHttpResponse> {
         if line.is_empty() {
             break;
         }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some((_, value)) = headers.last_mut() {
+                if !value.is_empty() {
+                    value.push(' ');
+                }
+                value.push_str(line.trim());
+            }
+            continue;
+        }
         if let Some((k, v)) = line.split_once(':') {
             headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
@@ -1170,6 +1978,7 @@ fn read_http_response(r: &mut impl Read) -> Result<RawHttpResponse> {
     Ok(RawHttpResponse {
         status,
         reason,
+        headers,
         body,
     })
 }
@@ -1187,34 +1996,19 @@ fn read_response_body(mut reader: impl Read, context: &'static str) -> Result<Ve
     Ok(out)
 }
 
-fn build_cookie_header(config: &ConfigSet) -> Result<Option<String>> {
+fn build_cookie_specs(config: &ConfigSet) -> Result<Vec<CookieSpec>> {
     let Some(path_raw) = config.get("http.cookieFile") else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let path_raw = path_raw.trim();
     if path_raw.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let lines = read_cookie_file_lines(path_raw)?;
-    if lines.is_empty() {
-        return Ok(None);
-    }
-    let mut parts = Vec::new();
-    for line in lines {
-        let v = line.trim();
-        if v.is_empty() {
-            continue;
-        }
-        if let Some(stripped) = strip_cookie_value(v) {
-            if !stripped.is_empty() {
-                parts.push(stripped);
-            }
-        }
-    }
-    if parts.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(parts.join("; ")))
+    Ok(lines
+        .iter()
+        .filter_map(|line| parse_cookie_spec(line))
+        .collect())
 }
 
 fn read_cookie_file_lines(path_raw: &str) -> Result<Vec<String>> {
@@ -1235,14 +2029,79 @@ fn read_cookie_file_lines(path_raw: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn strip_cookie_value(line: &str) -> Option<String> {
-    if let Some(v) = line.strip_prefix("Set-Cookie:") {
-        return Some(v.trim().to_string());
+fn parse_cookie_spec(line: &str) -> Option<CookieSpec> {
+    parse_netscape_cookie(line).or_else(|| parse_header_cookie(line))
+}
+
+fn parse_netscape_cookie(line: &str) -> Option<CookieSpec> {
+    let cols: Vec<&str> = line.split('\t').collect();
+    if cols.len() < 7 {
+        return None;
     }
-    if let Some(v) = line.strip_prefix("set-cookie:") {
-        return Some(v.trim().to_string());
+    let domain = cols[0].trim().trim_start_matches('.').to_ascii_lowercase();
+    if domain.is_empty() {
+        return None;
     }
-    Some(line.trim().to_string())
+    let include_subdomains =
+        cols[1].trim().eq_ignore_ascii_case("TRUE") || cols[0].starts_with('.');
+    let path = cols[2].trim();
+    let secure = cols[3].trim().eq_ignore_ascii_case("TRUE");
+    let expires_at = cols[4].trim().parse::<i64>().ok().filter(|v| *v > 0);
+    let name = cols[5].trim();
+    let value = cols[6].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(CookieSpec {
+        name_value: format!("{name}={value}"),
+        domain: Some(domain),
+        include_subdomains,
+        path: (!path.is_empty()).then(|| path.to_string()),
+        secure,
+        expires_at,
+    })
+}
+
+fn parse_header_cookie(line: &str) -> Option<CookieSpec> {
+    let raw = line
+        .strip_prefix("Set-Cookie:")
+        .or_else(|| line.strip_prefix("set-cookie:"))
+        .unwrap_or(line)
+        .trim();
+    let mut parts = raw.split(';').map(str::trim);
+    let name_value = parts.next()?.to_string();
+    if !name_value.contains('=') {
+        return None;
+    }
+    let mut cookie = CookieSpec {
+        name_value,
+        domain: None,
+        include_subdomains: false,
+        path: None,
+        secure: false,
+        expires_at: None,
+    };
+    for attr in parts {
+        if attr.eq_ignore_ascii_case("secure") {
+            cookie.secure = true;
+            continue;
+        }
+        if let Some((key, value)) = attr.split_once('=') {
+            if key.eq_ignore_ascii_case("domain") {
+                let domain = value.trim().trim_start_matches('.').to_ascii_lowercase();
+                if !domain.is_empty() {
+                    cookie.include_subdomains = true;
+                    cookie.domain = Some(domain);
+                }
+            } else if key.eq_ignore_ascii_case("path") {
+                let path = value.trim();
+                if !path.is_empty() {
+                    cookie.path = Some(path.to_string());
+                }
+            }
+        }
+    }
+    Some(cookie)
 }
 
 fn redact_cookie_header(cookie: &str) -> String {
@@ -1287,9 +2146,9 @@ fn trace_component_enabled(components: &str, want: &str) -> bool {
 }
 
 fn trace_curl_from_env() -> Option<TraceCurl> {
-    let Ok(raw) = std::env::var("GIT_TRACE_CURL") else {
-        return None;
-    };
+    let raw = std::env::var("GIT_TRACE_CURL")
+        .ok()
+        .or_else(|| std::env::var("GIT_CURL_VERBOSE").ok())?;
     let raw = raw.trim();
     if raw.is_empty() || raw == "0" || raw.eq_ignore_ascii_case("false") {
         return None;
@@ -1308,18 +2167,133 @@ fn trace_curl_from_env() -> Option<TraceCurl> {
     })
 }
 
+fn env_proxy_for_url(url: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok()?;
+    if no_proxy_matches(&parsed) {
+        return None;
+    }
+    let scheme = parsed.scheme();
+    let candidates: &[&str] = match scheme {
+        "https" => &["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"],
+        "http" => &["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"],
+        _ => &["all_proxy", "ALL_PROXY"],
+    };
+    candidates.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+}
+
+fn no_proxy_matches(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let port = url.port_or_known_default();
+    let raw = std::env::var("no_proxy")
+        .or_else(|_| std::env::var("NO_PROXY"))
+        .unwrap_or_default();
+    raw.split(',').map(str::trim).any(|entry| {
+        if entry.is_empty() {
+            return false;
+        }
+        if entry == "*" {
+            return true;
+        }
+        let entry = entry.to_ascii_lowercase();
+        if let Some((entry_host, entry_port)) = entry.rsplit_once(':') {
+            if entry_port.chars().all(|c| c.is_ascii_digit())
+                && entry_port.parse::<u16>().ok() != port
+            {
+                return false;
+            }
+            return no_proxy_host_matches(&host, entry_host);
+        }
+        no_proxy_host_matches(&host, &entry)
+    })
+}
+
+fn no_proxy_host_matches(host: &str, entry: &str) -> bool {
+    let entry = entry.trim_start_matches('.');
+    host == entry || host.ends_with(&format!(".{entry}"))
+}
+
+pub(crate) fn scrub_url_credentials(url: &str) -> String {
+    if let Ok(mut parsed) = Url::parse(url) {
+        let _ = parsed.set_username("");
+        let _ = parsed.set_password(None);
+        return parsed.to_string();
+    }
+    url.to_string()
+}
+
 fn http_access_error(url: &str, status: u16) -> anyhow::Error {
+    let url = scrub_url_credentials(url);
     anyhow::anyhow!("unable to access '{url}': The requested URL returned error: {status}")
 }
 
-fn build_transport(config: &ConfigSet) -> Result<Transport> {
-    let Some(raw_proxy) = config.get("http.proxy") else {
-        return Ok(Transport::Ureq(ureq::Agent::new()));
+fn http_request_error(method: &str, url: &str, err: impl std::fmt::Display) -> anyhow::Error {
+    let safe_url = scrub_url_credentials(url);
+    let mut message = err.to_string();
+    if safe_url != url {
+        message = message.replace(url, &safe_url);
+    }
+    anyhow::anyhow!("{method} {safe_url}: {message}")
+}
+
+fn ssl_verify_enabled(config: &ConfigSet) -> bool {
+    if std::env::var("GIT_SSL_NO_VERIFY")
+        .ok()
+        .is_some_and(|value| {
+            !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+    {
+        return false;
+    }
+    config
+        .get("http.sslVerify")
+        .as_deref()
+        .map(|value| parse_bool(value).unwrap_or(true))
+        .unwrap_or(true)
+}
+
+fn ureq_agent(ssl_verify: bool, proxy: Option<ureq::Proxy>) -> ureq::Agent {
+    let mut builder = ureq::AgentBuilder::new();
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(proxy);
+    }
+    if !ssl_verify {
+        let tls_config = ureq::rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+            .with_no_client_auth();
+        builder = builder.tls_config(Arc::new(tls_config));
+    }
+    builder.build()
+}
+
+fn build_transport(
+    config: &ConfigSet,
+    proxy_auth_method: &ProxyAuthMethod,
+    proxy_raw: Option<&str>,
+) -> Result<Transport> {
+    let ssl_verify = ssl_verify_enabled(config);
+    let Some(raw_proxy) = proxy_raw else {
+        return Ok(Transport::Ureq(ureq_agent(ssl_verify, None)));
     };
     let raw_proxy = raw_proxy.trim();
     if raw_proxy.is_empty() {
-        return Ok(Transport::Ureq(ureq::Agent::new()));
+        return Ok(Transport::Ureq(ureq_agent(ssl_verify, None)));
     }
+    build_transport_from_proxy(raw_proxy, ssl_verify, proxy_auth_method)
+}
+
+fn build_transport_from_proxy(
+    raw_proxy: &str,
+    ssl_verify: bool,
+    proxy_auth_method: &ProxyAuthMethod,
+) -> Result<Transport> {
     validate_proxy_url(raw_proxy)?;
     let with_scheme = if raw_proxy.contains("://") {
         raw_proxy.to_string()
@@ -1337,6 +2311,7 @@ fn build_transport(config: &ConfigSet) -> Result<Transport> {
     if scheme == "http" {
         let mut p = parsed.clone();
         fill_proxy_password_via_askpass(&mut p)?;
+        ensure_supported_proxy_auth_method(proxy_auth_method, &p)?;
         let proxy_host = p
             .host_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid proxy URL '{raw_proxy}'"))?
@@ -1351,11 +2326,12 @@ fn build_transport(config: &ConfigSet) -> Result<Transport> {
     }
 
     let proxy_url = normalize_proxy_url_for_ureq(raw_proxy, &parsed)?;
+    let parsed_proxy_url =
+        Url::parse(&proxy_url).map_err(|_| anyhow::anyhow!("Invalid proxy URL '{raw_proxy}'"))?;
+    ensure_supported_proxy_auth_method(proxy_auth_method, &parsed_proxy_url)?;
     let proxy =
         ureq::Proxy::new(&proxy_url).with_context(|| format!("invalid proxy URL '{raw_proxy}'"))?;
-    Ok(Transport::Ureq(
-        ureq::AgentBuilder::new().proxy(proxy).build(),
-    ))
+    Ok(Transport::Ureq(ureq_agent(ssl_verify, Some(proxy))))
 }
 
 fn proxy_basic_token(url: &Url) -> Result<Option<String>> {
@@ -1487,6 +2463,17 @@ fn fill_proxy_password_via_askpass(url: &mut Url) -> Result<()> {
         s
     };
     let prompt = format!("Password for '{display}': ");
+    let cache = PROXY_ASKPASS_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(pass) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&display)
+        .cloned()
+    {
+        url.set_password(Some(&pass))
+            .map_err(|_| anyhow::anyhow!("could not set proxy password in URL"))?;
+        return Ok(());
+    }
     let out = Command::new(&askpass)
         .arg(&prompt)
         .output()
@@ -1500,8 +2487,14 @@ fn fill_proxy_password_via_askpass(url: &mut Url) -> Result<()> {
     }
     url.set_password(Some(&pass))
         .map_err(|_| anyhow::anyhow!("could not set proxy password in URL"))?;
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(display, pass);
     Ok(())
 }
+
+static PROXY_ASKPASS_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 
 fn run_askpass(prompt: &str) -> Result<String> {
     let askpass = std::env::var("GIT_ASKPASS").unwrap_or_default();

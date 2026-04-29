@@ -1141,10 +1141,10 @@ fn read_directory_recursive(
 
     let meta = fs::symlink_metadata(abs).map_err(Error::Io)?;
     ucd.stat_data = stat_data_from_meta(&meta);
-    if use_disk {
-        if rel.is_empty() || !ucd.untracked.is_empty() || ucd.dirs.iter().any(|d| d.recurse) {
-            ucd.exclude_oid = parent_exclude_oid;
-        }
+    if use_disk
+        && (rel.is_empty() || !ucd.untracked.is_empty() || ucd.dirs.iter().any(|d| d.recurse))
+    {
+        ucd.exclude_oid = parent_exclude_oid;
     }
     ucd.valid = true;
     // Match Git's in-memory read_directory behavior: `check_only` directories are kept in

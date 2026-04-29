@@ -1,7 +1,8 @@
 //! Smart HTTP client for protocol v2 `bundle-uri` (test-tool / harness).
 
 use anyhow::{bail, Context, Result};
-use std::io::{Cursor, Read};
+use grit_lib::config::ConfigSet;
+use std::io::Cursor;
 
 use crate::pkt_line;
 
@@ -79,25 +80,11 @@ pub fn fetch_bundle_uri_lines_http(repo_url: &str) -> Result<Vec<(String, String
         refs_url.push_str(&format!("service={SERVICE}"));
     }
 
-    let agent = format!("grit/{}", crate::version_string());
-    let resp = ureq::get(&refs_url)
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent)
-        .call()
+    let config = ConfigSet::load(None, true).unwrap_or_default();
+    let client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+    let body = client
+        .get_with_git_protocol(&refs_url, Some("version=2"))
         .with_context(|| format!("GET {refs_url}"))?;
-
-    if resp.status() >= 400 {
-        bail!(
-            "info/refs request failed: HTTP {} {}",
-            resp.status(),
-            resp.status_text()
-        );
-    }
-
-    let mut body = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut body)
-        .context("read info/refs body")?;
 
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
     let caps = read_v2_caps(pkt_body)?;
@@ -118,26 +105,15 @@ pub fn fetch_bundle_uri_lines_http(repo_url: &str) -> Result<Vec<(String, String
     pkt_line::write_flush(&mut request)?;
 
     let post_url = format!("{base}/{SERVICE}");
-    let post = ureq::post(&post_url)
-        .set("Content-Type", &format!("application/x-{SERVICE}-request"))
-        .set("Accept", &format!("application/x-{SERVICE}-result"))
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent)
-        .send_bytes(&request)
+    let out_body = client
+        .post_with_git_protocol(
+            &post_url,
+            &format!("application/x-{SERVICE}-request"),
+            &format!("application/x-{SERVICE}-result"),
+            &request,
+            Some("version=2"),
+        )
         .with_context(|| format!("POST {post_url}"))?;
-
-    if post.status() >= 400 {
-        bail!(
-            "upload-pack POST failed: HTTP {} {}",
-            post.status(),
-            post.status_text()
-        );
-    }
-
-    let mut out_body = Vec::new();
-    post.into_reader()
-        .read_to_end(&mut out_body)
-        .context("read bundle-uri response")?;
 
     let mut pairs = Vec::new();
     let mut cur = Cursor::new(&out_body);
