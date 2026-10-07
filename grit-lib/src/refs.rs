@@ -2105,7 +2105,7 @@ mod read_raw_ref_tests {
         fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
         let oid_a = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
         let oid_b = ObjectId::from_hex("0000000000000000000000000000000000000002").unwrap();
-        fs::write(git_dir.join("refs/heads/old"), format!("{oid_a}\n")).unwrap();
+        fs::write(git_dir.join("refs/heads/a-first"), format!("{oid_b}\n")).unwrap();
         write_packed_refs_file(
             git_dir,
             &[
@@ -2122,7 +2122,7 @@ mod read_raw_ref_tests {
             ],
         )
         .unwrap();
-        assert!(!git_dir.join("refs/heads/old").exists());
+        assert!(!git_dir.join("refs/heads/a-first").exists());
         let body = fs::read_to_string(git_dir.join("packed-refs")).unwrap();
         assert!(body.contains("refs/heads/a-first"));
         assert!(body.find("a-first").unwrap() < body.find("z-last").unwrap());
