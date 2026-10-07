@@ -43,6 +43,7 @@ pub mod schema;
 pub mod serve_request;
 pub mod shell;
 pub mod stats;
+pub mod synth;
 
 pub use compare::compare_reports;
 pub use schema::{BenchReport, ScenarioResult};

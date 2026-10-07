@@ -234,6 +234,11 @@ enum Cmd {
         #[arg(long, default_value = "0.10")]
         tolerance: f64,
     },
+    /// Deterministic synthetic repository fixtures for benchmarks
+    Fixture {
+        #[command(subcommand)]
+        fixture: FixtureCmd,
+    },
     /// Internal: hyperfine `--prepare` hook for add benchmarks
     #[command(hide = true)]
     PrepareAdd {

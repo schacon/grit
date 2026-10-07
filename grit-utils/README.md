@@ -13,6 +13,10 @@ Utility crate for the Grit workspace. The primary binary is **`grit-bench`**, a 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
 
+# Deterministic synthetic benchmark repo (grit-lib backed, seeded)
+./target/release/grit-bench fixture synth --tier S --out /tmp/synth-s
+./target/release/grit-bench fixture synth --tier M --out /tmp/synth-m --format json
+
 # Status scenarios (dirty + clean) at selected file counts
 ./target/release/grit-bench status --sizes 100,1000 --format text
 
@@ -138,6 +142,16 @@ Hot-path scenarios set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to an emp
 **L / H fixtures:** `N=10000` with 100 directories and 1000 commits of history; `N=100000` with 1000 directories. Criterion micro-benchmarks for the same shapes live in `grit-lib/benches/hot_paths.rs`.
 
 Fixtures are synthetic repos with `N` tracked text files under `/tmp/grit-bench-scratch`.
+
+### Synthetic fixture tiers (`fixture synth`)
+
+| Tier | Files | Commits | Refs | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `S` | 2 000 | 500 | 1 000 | CI integration test |
+| `M` | 20 000 | 5 000 | 10 000 | medium benchmarks |
+| `L` | 100 000 | 50 000 | 100 000 | deep history, ~1 GiB+ uncompressed pack, loose objects + checked-out worktree |
+
+The same tier and seed always produce the same `HEAD` OID. Generation time is printed to stderr; `--format json` adds structured fields including `generation_ms` and `pack_uncompressed_bytes`.
 
 ## Development
 
