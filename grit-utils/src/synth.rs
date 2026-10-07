@@ -33,6 +33,7 @@ pub enum SynthTier {
 /// Resolved numeric targets for a tier.
 #[derive(Debug, Clone, Copy)]
 pub struct TierSpec {
+    pub tier: SynthTier,
     pub file_count: usize,
     pub commit_count: usize,
     pub ref_count: usize,
@@ -48,6 +49,7 @@ impl SynthTier {
     pub fn spec(self) -> TierSpec {
         match self {
             SynthTier::S => TierSpec {
+                tier: self,
                 file_count: 2_000,
                 commit_count: 500,
                 ref_count: 1_000,
@@ -57,6 +59,7 @@ impl SynthTier {
                 seed: 0x312_0001,
             },
             SynthTier::M => TierSpec {
+                tier: self,
                 file_count: 20_000,
                 commit_count: 5_000,
                 ref_count: 10_000,
@@ -66,6 +69,7 @@ impl SynthTier {
                 seed: 0x312_0002,
             },
             SynthTier::L => TierSpec {
+                tier: self,
                 file_count: 100_000,
                 commit_count: 50_000,
                 ref_count: 100_000,
@@ -169,13 +173,13 @@ pub fn generate_synth_repo(out: &Path, tier: SynthTier) -> Result<SynthReport> {
 
 fn generate_into_repo(repo: &Repository, spec: TierSpec) -> Result<ObjectId> {
     let mut rng = DetRng::new(spec.seed);
-    let paths = file_paths(spec.file_count);
+    let paths = file_paths(spec.tier, spec.file_count);
     let mut file_oids: Vec<ObjectId> = Vec::with_capacity(paths.len());
     let mut index = Index::new();
     index.hash_algo = repo.odb.hash_algo();
 
     for (i, path) in paths.iter().enumerate() {
-        let body = blob_body(i as u32, 0, spec.blob_body_bytes);
+        let body = blob_body(spec.tier, i as u32, 0, spec.blob_body_bytes);
         let oid = repo
             .odb
             .write(ObjectKind::Blob, &body)
@@ -190,7 +194,12 @@ fn generate_into_repo(repo: &Repository, spec: TierSpec) -> Result<ObjectId> {
         if commit_idx > 0 {
             for _ in 0..spec.edits_per_commit {
                 let fi = rng.next_usize(paths.len());
-                let body = blob_body(fi as u32, commit_idx as u32, spec.blob_body_bytes);
+                let body = blob_body(
+                    spec.tier,
+                    fi as u32,
+                    commit_idx as u32,
+                    spec.blob_body_bytes,
+                );
                 let oid = repo
                     .odb
                     .write(ObjectKind::Blob, &body)
@@ -335,18 +344,65 @@ fn synth_index_entry(path: &[u8], oid: ObjectId, size: usize) -> IndexEntry {
     }
 }
 
-fn file_paths(count: usize) -> Vec<Vec<u8>> {
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        let dir = i / 100;
-        let file = i % 100;
-        out.push(format!("data/d{dir:04}/f{file:04}.txt").into_bytes());
+fn file_paths(tier: SynthTier, count: usize) -> Vec<Vec<u8>> {
+    match tier {
+        SynthTier::S | SynthTier::M => {
+            let mut out = Vec::with_capacity(count);
+            for i in 0..count {
+                let dir = i / 100;
+                let file = i % 100;
+                out.push(format!("data/d{dir:04}/f{file:04}.txt").into_bytes());
+            }
+            out
+        }
+        SynthTier::L => {
+            let wide_count = count * 2 / 3;
+            let mut out = Vec::with_capacity(count);
+            for i in 0..wide_count {
+                let dir = i / 1000;
+                let file = i % 1000;
+                out.push(format!("wide/w{dir:05}/f{file:04}.txt").into_bytes());
+            }
+            for j in 0..(count - wide_count) {
+                let i = wide_count + j;
+                let seg = |k: usize| format!("{:02x}", (i.wrapping_mul(0x9e37) >> (k * 4)) & 0xff);
+                out.push(
+                    format!(
+                        "deep/{}/{}/{}/{}/{}/{}/{}/{}/leaf_{j:05}.txt",
+                        seg(0),
+                        seg(1),
+                        seg(2),
+                        seg(3),
+                        seg(4),
+                        seg(5),
+                        seg(6),
+                        seg(7),
+                    )
+                    .into_bytes(),
+                );
+            }
+            out
+        }
     }
-    out
 }
 
-fn blob_body(file_id: u32, version: u32, body_bytes: usize) -> Vec<u8> {
-    let mut s = format!("synth file={file_id} ver={version}\n");
+fn blob_body(tier: SynthTier, file_id: u32, version: u32, body_bytes: usize) -> Vec<u8> {
+    let mut s = match tier {
+        SynthTier::L => {
+            let line_count = 32usize;
+            let mut lines: Vec<String> = (0..line_count)
+                .map(|ln| format!("file={file_id} line={ln} seed=0"))
+                .collect();
+            for churn in 0..3usize {
+                let ln = ((file_id as usize + version as usize + churn) % (line_count - 2)) + 1;
+                lines[ln] = format!("file={file_id} line={ln} ver={version} churn={churn}");
+            }
+            let mut joined = lines.join("\n");
+            joined.push('\n');
+            joined
+        }
+        SynthTier::S | SynthTier::M => format!("synth file={file_id} ver={version}\n"),
+    };
     if s.len() < body_bytes {
         s.push_str(&"x".repeat(body_bytes - s.len()));
     }
@@ -390,11 +446,63 @@ fn run_git_ok(git: &Path, dir: &Path, args: &[&str]) -> Result<()> {
 }
 
 fn git_output(git: &Path, dir: &Path, args: &[&str]) -> Result<String> {
-    run_git_ok(git, dir, args)?;
     let out = std::process::Command::new(git)
         .args(args)
         .current_dir(dir)
         .output()
         .with_context(|| format!("git {}", args.join(" ")))?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    fn path_component_depth(path: &[u8]) -> usize {
+        path.iter().filter(|&&b| b == b'/').count() + 1
+    }
+
+    #[test]
+    fn l_tier_paths_are_deep_and_wide() {
+        let paths = file_paths(SynthTier::L, 10_000);
+        let max_depth = paths
+            .iter()
+            .map(|p| path_component_depth(p))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_depth >= 10,
+            "expected deep hierarchy, max depth was {max_depth}"
+        );
+        let wide_shallow = paths
+            .iter()
+            .filter(|p| path_component_depth(p) <= 3)
+            .count();
+        assert!(
+            wide_shallow > 5_000,
+            "expected wide shallow files, got {wide_shallow}"
+        );
+    }
+
+    #[test]
+    fn l_tier_blobs_have_multiline_churn() {
+        let body = blob_body(SynthTier::L, 7, 42, 800);
+        let text = String::from_utf8(body).expect("utf-8");
+        assert!(text.lines().count() >= 20, "expected many lines for blame");
+        assert!(text.contains("ver=42"));
+        assert!(text.contains("churn=0"));
+    }
+
+    #[test]
+    fn s_tier_keeps_shallow_layout() {
+        let paths = file_paths(SynthTier::S, 100);
+        assert!(paths.iter().all(|p| path_component_depth(p) == 3));
+    }
 }
