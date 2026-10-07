@@ -149,9 +149,12 @@ pub fn write_pack_index_v2(
         let crc = crc32fast::hash(&pack_bytes[start..end]);
         buf.extend_from_slice(&crc.to_be_bytes());
     }
-    for e in entries {
-        let v = u32::try_from(e.offset).unwrap_or(0x8000_0000);
+    let (offsets32, large_offsets) = pack_index_v2_offset_tables(entries);
+    for v in offsets32 {
         buf.extend_from_slice(&v.to_be_bytes());
+    }
+    for lo in large_offsets {
+        buf.extend_from_slice(&lo.to_be_bytes());
     }
     buf.extend_from_slice(&pack_bytes[pack_bytes.len() - hash_bytes..]);
     let idx_hash = match hash_bytes {
@@ -249,6 +252,27 @@ pub fn whole_pack_uncompressed_size(pack: &[u8], hash_algo: HashAlgo) -> Result<
     Ok(total)
 }
 
+/// Build the v2 index 32-bit offset column and optional 64-bit large-offset table.
+///
+/// Offsets below `0x8000_0000` are stored literally. Larger offsets (or any offset
+/// that would set the high bit) are stored as `0x8000_0000 | index` into `large`,
+/// followed by the real offset in the 64-bit table (Git pack index v2).
+#[must_use]
+pub fn pack_index_v2_offset_tables(entries: &[PackIndexWriteEntry]) -> (Vec<u32>, Vec<u64>) {
+    let mut offsets32 = Vec::with_capacity(entries.len());
+    let mut large = Vec::new();
+    for e in entries {
+        if e.offset < 0x8000_0000 {
+            offsets32.push(e.offset as u32);
+        } else {
+            let idx = u32::try_from(large.len()).unwrap_or(u32::MAX);
+            offsets32.push(0x8000_0000 | idx);
+            large.push(e.offset);
+        }
+    }
+    (offsets32, large)
+}
+
 fn packed_type_to_kind(pt: PackedType) -> Result<ObjectKind> {
     match pt {
         PackedType::Commit => Ok(ObjectKind::Commit),
@@ -270,7 +294,7 @@ mod tests {
     use crate::transfer::{build_pack, PackBuildOptions};
 
     #[test]
-    fn install_pack_round_trips_with_git_fsck() {
+    fn install_pack_passes_git_verify_pack() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let odb = Odb::new(tmp.path());
         let blob = odb
@@ -286,7 +310,7 @@ mod tests {
             },
         )
         .expect("build");
-        let (_pack_path, idx_path) = install_pack_stream(
+        let (pack_path, idx_path) = install_pack_stream(
             tmp.path(),
             &pack,
             InstallPackOptions {
@@ -297,6 +321,50 @@ mod tests {
         .expect("install");
         let idx = read_pack_index(&idx_path).expect("read idx");
         assert_eq!(idx.entries.len(), 1);
+        let pack_str = pack_path.to_str().expect("pack path utf-8");
+        let out = grit_test_support::git_cmd(&["verify-pack", "-s", pack_str])
+            .in_dir(tmp.path())
+            .exec();
+        assert!(out.ok(), "{}", out.dump("git verify-pack"));
+        assert_eq!(
+            idx.find_offset(&blob),
+            Some(idx.entries[0].offset),
+            "idx offset matches blob"
+        );
+    }
+
+    #[test]
+    fn pack_index_v2_large_offset_table_round_trips() {
+        let entries = vec![
+            PackIndexWriteEntry {
+                oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+                offset: 100,
+            },
+            PackIndexWriteEntry {
+                oid: ObjectId::from_hex("0000000000000000000000000000000000000002").unwrap(),
+                offset: 0x8000_0000 + 512,
+            },
+            PackIndexWriteEntry {
+                oid: ObjectId::from_hex("0000000000000000000000000000000000000003").unwrap(),
+                offset: (1u64 << 33) + 99,
+            },
+        ];
+        let (offsets32, large) = pack_index_v2_offset_tables(&entries);
+        assert_eq!(offsets32[0], 100);
+        assert_eq!(offsets32[1], 0x8000_0000);
+        assert_eq!(offsets32[2], 0x8000_0001);
+        assert_eq!(large, vec![0x8000_0000 + 512, (1u64 << 33) + 99]);
+        let mut decoded_large = 0usize;
+        for (i, raw) in offsets32.iter().enumerate() {
+            let off = if (*raw & 0x8000_0000) == 0 {
+                u64::from(*raw)
+            } else {
+                let slot = decoded_large;
+                decoded_large += 1;
+                large[slot]
+            };
+            assert_eq!(off, entries[i].offset, "entry {i}");
+        }
     }
 
     #[test]

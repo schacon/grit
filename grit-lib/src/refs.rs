@@ -1067,17 +1067,34 @@ pub fn write_packed_refs_file(git_dir: &Path, records: &[PackedRefRecord]) -> Re
         ensure_refname_safe_for_storage(&rec.refname)?;
     }
     let packed_path = git_dir.join("packed-refs");
-    let mut out = String::from("# pack-refs with: peeled fully-peeled sorted\n");
-    for rec in sorted {
-        out.push_str(&rec.oid.to_string());
-        out.push(' ');
-        out.push_str(&rec.refname);
-        out.push('\n');
+    let mut body = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+    for rec in &sorted {
+        body.push_str(&rec.oid.to_string());
+        body.push(' ');
+        body.push_str(&rec.refname);
+        body.push('\n');
         if let Some(peeled) = rec.peeled {
-            out.push('^');
-            out.push_str(&peeled.to_string());
-            out.push('\n');
+            body.push('^');
+            body.push_str(&peeled.to_string());
+            body.push('\n');
         }
+    }
+    let tmp = packed_path.with_extension("new");
+    {
+        use std::io::Write as _;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(Error::Io)?;
+        file.write_all(body.as_bytes()).map_err(Error::Io)?;
+        file.sync_all().map_err(Error::Io)?;
+    }
+    fs::rename(&tmp, &packed_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        Error::Io(e)
+    })?;
+    for rec in &sorted {
         let storage_dir = ref_storage_dir(git_dir, &rec.refname);
         let stor = crate::ref_namespace::storage_ref_name(&rec.refname);
         let loose = storage_dir.join(stor);
@@ -1085,7 +1102,6 @@ pub fn write_packed_refs_file(git_dir: &Path, records: &[PackedRefRecord]) -> Re
             fs::remove_file(&loose).map_err(Error::Io)?;
         }
     }
-    fs::write(&packed_path, out).map_err(Error::Io)?;
     Ok(())
 }
 
@@ -2097,6 +2113,27 @@ mod ref_storage_traversal_guard_tests {
 mod read_raw_ref_tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn write_packed_refs_file_survives_publish_failure() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        fs::write(git_dir.join("refs/heads/keep"), format!("{oid}\n")).unwrap();
+        fs::create_dir_all(git_dir.join("packed-refs")).unwrap();
+        let err = write_packed_refs_file(
+            git_dir,
+            &[PackedRefRecord {
+                refname: "refs/heads/keep".into(),
+                oid,
+                peeled: None,
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Io(_)));
+        assert!(git_dir.join("refs/heads/keep").is_file());
+    }
 
     #[test]
     fn write_packed_refs_file_replaces_loose_and_sorts() {
