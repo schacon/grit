@@ -19,6 +19,7 @@ use grit_lib::write_tree::{write_tree_from_index, write_tree_update_index, Write
 
 /// Benchmark fixture size tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Serialize)]
+#[value(rename_all = "uppercase")]
 #[serde(rename_all = "UPPERCASE")]
 pub enum SynthTier {
     /// CI-sized repo (~2k files, ~500 commits, ~1k refs).
