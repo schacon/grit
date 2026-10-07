@@ -241,6 +241,7 @@ pub(crate) mod pack_objects;
 pub(crate) mod pack_receive;
 pub(crate) mod pack_rev;
 pub(crate) mod pack_store;
+pub(crate) mod pack_write;
 pub(crate) mod pack_zlib;
 pub mod parallel;
 pub(crate) mod patch_ids;
