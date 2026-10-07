@@ -51,10 +51,8 @@ impl Default for InstallPackOptions {
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] when the stream is malformed or contains delta objects.
-pub fn enumerate_whole_pack_entries(
-    pack: &[u8],
-    hash_algo: HashAlgo,
-) -> Result<Vec<PackIndexWriteEntry>> {
+/// Validate a PACK header and return `(body_end, object_count)` for `hash_algo`.
+fn validated_pack_body(pack: &[u8], hash_algo: HashAlgo) -> Result<(usize, usize)> {
     let hash_bytes = hash_algo.len();
     if pack.len() < 12 + hash_bytes {
         return Err(Error::CorruptObject("pack file too small".into()));
@@ -70,6 +68,15 @@ pub fn enumerate_whole_pack_entries(
     }
     let count = u32::from_be_bytes(pack[8..12].try_into().unwrap_or([0; 4])) as usize;
     let body_end = pack.len() - hash_bytes;
+    Ok((body_end, count))
+}
+
+pub fn enumerate_whole_pack_entries(
+    pack: &[u8],
+    hash_algo: HashAlgo,
+) -> Result<Vec<PackIndexWriteEntry>> {
+    let hash_bytes = hash_algo.len();
+    let (body_end, count) = validated_pack_body(pack, hash_algo)?;
     let mut pos = 12usize;
     let mut out = Vec::with_capacity(count);
     while pos < body_end {
@@ -216,9 +223,10 @@ pub fn install_pack_stream(
 #[must_use = "callers use this for size reporting"]
 pub fn whole_pack_uncompressed_size(pack: &[u8], hash_algo: HashAlgo) -> Result<u64> {
     let hash_bytes = hash_algo.len();
-    let body_end = pack.len() - hash_bytes;
+    let (body_end, header_count) = validated_pack_body(pack, hash_algo)?;
     let mut pos = 12usize;
     let mut total = 0u64;
+    let mut seen = 0usize;
     while pos < body_end {
         let (packed_type, size) = parse_pack_object_header(pack, &mut pos)?;
         match packed_type {
@@ -229,6 +237,7 @@ pub fn whole_pack_uncompressed_size(pack: &[u8], hash_algo: HashAlgo) -> Result<
                 dec.read_to_end(&mut tmp)
                     .map_err(|e| Error::Zlib(e.to_string()))?;
                 pos += dec.total_in() as usize;
+                seen += 1;
             }
             PackedType::RefDelta => {
                 pos += hash_bytes;
@@ -237,6 +246,7 @@ pub fn whole_pack_uncompressed_size(pack: &[u8], hash_algo: HashAlgo) -> Result<
                 dec.read_to_end(&mut tmp)
                     .map_err(|e| Error::Zlib(e.to_string()))?;
                 pos += dec.total_in() as usize;
+                seen += 1;
             }
             PackedType::OfsDelta => {
                 let obj_start = pos;
@@ -246,8 +256,14 @@ pub fn whole_pack_uncompressed_size(pack: &[u8], hash_algo: HashAlgo) -> Result<
                 dec.read_to_end(&mut tmp)
                     .map_err(|e| Error::Zlib(e.to_string()))?;
                 pos += dec.total_in() as usize;
+                seen += 1;
             }
         }
+    }
+    if seen != header_count {
+        return Err(Error::CorruptObject(format!(
+            "pack header object count {header_count} != scanned {seen}"
+        )));
     }
     Ok(total)
 }
@@ -365,6 +381,31 @@ mod tests {
             };
             assert_eq!(off, entries[i].offset, "entry {i}");
         }
+    }
+
+    #[test]
+    fn whole_pack_uncompressed_size_rejects_malformed_input() {
+        use crate::error::Error;
+        let err = whole_pack_uncompressed_size(&[], HashAlgo::Sha1).unwrap_err();
+        assert!(matches!(err, Error::CorruptObject(_)));
+        let truncated = b"PACK";
+        let err = whole_pack_uncompressed_size(truncated, HashAlgo::Sha1).unwrap_err();
+        assert!(matches!(err, Error::CorruptObject(_)));
+        let bad_sig = b"NOPE\x00\x00\x00\x02\x00\x00\x00\x00";
+        let err = whole_pack_uncompressed_size(bad_sig, HashAlgo::Sha1).unwrap_err();
+        assert!(matches!(err, Error::CorruptObject(_)));
+    }
+
+    #[test]
+    fn whole_pack_uncompressed_size_empty_pack_is_zero() {
+        let mut pack = Vec::from(b"PACK" as &[u8]);
+        pack.extend_from_slice(&2u32.to_be_bytes());
+        pack.extend_from_slice(&0u32.to_be_bytes());
+        pack.extend_from_slice(&[0u8; 20]);
+        assert_eq!(
+            whole_pack_uncompressed_size(&pack, HashAlgo::Sha1).unwrap(),
+            0
+        );
     }
 
     #[test]
