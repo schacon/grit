@@ -123,6 +123,10 @@ harness = false
 name = "refs_files"
 harness = false
 
+[[bench]]
+name = "refs_reftable"
+harness = false
+
 [dev-dependencies]
 criterion.workspace = true
 grit-test-support = { path = "../grit-test-support" }

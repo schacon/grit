@@ -25,10 +25,12 @@
 //! footer
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{Read, Write};
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1063,7 +1065,7 @@ impl WriterState {
 
 /// Reads a single reftable file from a byte buffer.
 pub struct ReftableReader {
-    data: Vec<u8>,
+    data: Arc<[u8]>,
     version: u8,
     block_size: u32,
     min_update_index: u64,
@@ -1090,6 +1092,11 @@ struct Footer {
 impl ReftableReader {
     /// Open a reftable from bytes.
     pub fn new(data: Vec<u8>) -> Result<Self> {
+        Self::from_arc(Arc::from(data))
+    }
+
+    /// Open a reftable from shared bytes (avoids cloning table payloads).
+    pub fn from_arc(data: Arc<[u8]>) -> Result<Self> {
         if data.len() < HEADER_SIZE + FOOTER_V1_SIZE {
             // Could be an empty table (header + footer only = 24 + 68 = 92)
             if data.len() < HEADER_SIZE {
@@ -1162,6 +1169,27 @@ impl ReftableReader {
     /// Read all ref records from the table.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
         let mut refs = Vec::new();
+        self.for_each_ref(|rec| {
+            refs.push(rec.clone());
+            ControlFlow::<()>::Continue(())
+        })?;
+        Ok(refs)
+    }
+
+    /// Visit ref records in sorted name order, optionally bounded by `lower` (inclusive)
+    /// and `upper_exclusive` (exclusive). When `upper_exclusive` is `None`, iteration
+    /// continues through the last ref block.
+    pub fn for_each_ref(&self, f: impl FnMut(&RefRecord) -> ControlFlow<()>) -> Result<()> {
+        self.for_each_ref_in_range("", None, f)
+    }
+
+    /// Visit ref records with name `>= lower` and `< upper_exclusive` when set.
+    pub fn for_each_ref_in_range(
+        &self,
+        lower: &str,
+        upper_exclusive: Option<&str>,
+        mut f: impl FnMut(&RefRecord) -> ControlFlow<()>,
+    ) -> Result<()> {
         let footer_size = if self.version == 2 {
             72
         } else {
@@ -1169,7 +1197,6 @@ impl ReftableReader {
         };
         let file_end = self.data.len() - footer_size;
 
-        // Determine where ref blocks end
         let ref_end = if self.ref_index_position > 0 {
             self.ref_index_position as usize
         } else if self.log_position > 0 {
@@ -1178,13 +1205,13 @@ impl ReftableReader {
             file_end
         };
 
-        let mut pos = 0usize;
-        // Skip the file header — the first ref block shares the header's physical
-        // block, starting at the header size (24 for v1, 28 for v2).
         let header_len = self.header_len();
-        if pos < header_len {
-            pos = header_len;
-        }
+        let mut pos = if self.ref_index_position > 0 && !lower.is_empty() {
+            self.locate_ref_block_via_index(lower.as_bytes())?
+                .unwrap_or(header_len)
+        } else {
+            header_len
+        };
 
         while pos < ref_end {
             if pos >= self.data.len() {
@@ -1192,31 +1219,21 @@ impl ReftableReader {
             }
             let block_type = self.data[pos];
             if block_type == 0 {
-                // Padding — skip to next block boundary
                 if self.block_size > 0 {
                     let bs = self.block_size as usize;
                     pos = ((pos / bs) + 1) * bs;
                     continue;
-                } else {
-                    break;
                 }
+                break;
             }
             if block_type != BLOCK_TYPE_REF {
                 break;
             }
 
             let block_len = read_u24(&self.data, pos + 1);
-            // Determine the data range for this block
-            let block_data_start = pos + 4; // after type(1) + len(3)
-
-            // The first block's block_len includes the file header.
+            let block_data_start = pos + 4;
             let is_first = pos == header_len;
-            let records_end = if is_first {
-                // block_len is from file start
-                block_len
-            } else {
-                pos + block_len
-            };
+            let records_end = if is_first { block_len } else { pos + block_len };
 
             if records_end > ref_end {
                 break;
@@ -1225,7 +1242,6 @@ impl ReftableReader {
             let restart_table_start =
                 restart_table_start_for_block(&self.data, records_end, block_data_start)?;
 
-            // Read records from block_data_start to restart_table_start
             let mut rpos = block_data_start;
             let mut prev_name = Vec::<u8>::new();
 
@@ -1238,24 +1254,30 @@ impl ReftableReader {
                     self.hash_size(),
                 )?;
                 prev_name = rec.name.as_bytes().to_vec();
-                refs.push(rec);
+                if rec.name.as_str() < lower {
+                    rpos = new_pos;
+                    continue;
+                }
+                if let Some(upper) = upper_exclusive {
+                    if rec.name.as_str() >= upper {
+                        return Ok(());
+                    }
+                }
+                if f(&rec).is_break() {
+                    return Ok(());
+                }
                 rpos = new_pos;
             }
 
-            // Advance to next block
             if self.block_size > 0 {
                 let bs = self.block_size as usize;
-                if is_first {
-                    pos = bs;
-                } else {
-                    pos += bs;
-                }
+                pos = if is_first { bs } else { pos + bs };
             } else {
                 pos = records_end;
             }
         }
 
-        Ok(refs)
+        Ok(())
     }
 
     /// Look up a single ref by name.
@@ -1467,6 +1489,12 @@ impl ReftableReader {
     /// Byte offset of the top-level ref index section, or 0 if none.
     pub fn ref_index_offset(&self) -> u64 {
         self.ref_index_position
+    }
+
+    /// Effective ref payload size for compaction heuristics (file size minus header overhead).
+    pub fn payload_size(&self) -> u64 {
+        let overhead = if self.version == 2 { 28 } else { 24 };
+        self.data.len().saturating_sub(overhead) as u64
     }
 }
 
@@ -1743,6 +1771,139 @@ fn reftable_hash_size_for_git_dir(git_dir: &Path) -> usize {
     }
 }
 
+/// Exclusive upper bound for ref names sharing a prefix without a trailing slash
+/// (e.g. `refs/heads/b05` → `refs/heads/b06`).
+fn prefix_upper_exclusive(prefix: &str) -> Option<String> {
+    if prefix.is_empty() || prefix.ends_with('/') {
+        return None;
+    }
+    let mut end = prefix.as_bytes().to_vec();
+    while let Some(last) = end.last_mut() {
+        if *last == b'/' {
+            break;
+        }
+        if *last < 0xff {
+            *last += 1;
+            return String::from_utf8(end).ok();
+        }
+        *last = 0;
+        end.pop();
+    }
+    None
+}
+
+/// Compaction segment `[start, end)` in table index space (git `suggest_compaction_segment`).
+fn suggest_compaction_segment(sizes: &[u64]) -> (usize, usize) {
+    let n = sizes.len();
+    if n <= 1 {
+        return (0, 0);
+    }
+    let mut seg_end = 0usize;
+    let mut bytes = 0u64;
+    let mut i = n - 1;
+    while i > 0 {
+        if sizes[i - 1] < sizes[i].saturating_mul(2) {
+            seg_end = i + 1;
+            bytes = sizes[i];
+            break;
+        }
+        i -= 1;
+    }
+    if seg_end == 0 {
+        return (0, 0);
+    }
+    let mut seg_start = 0usize;
+    i = seg_end.saturating_sub(1);
+    while i > 0 {
+        let curr = bytes;
+        bytes = bytes.saturating_add(sizes[i - 1]);
+        if sizes[i - 1] < curr.saturating_mul(2) {
+            seg_start = i - 1;
+        }
+        i -= 1;
+    }
+    if seg_end <= seg_start + 1 {
+        return (0, 0);
+    }
+    (seg_start, seg_end)
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct StackCacheKey {
+    reftable_dir: PathBuf,
+    tables_list_len: u64,
+    tables_list_modified: i64,
+}
+
+struct CachedStackTables {
+    #[allow(dead_code)]
+    key: StackCacheKey,
+    #[allow(dead_code)]
+    table_names: Vec<String>,
+    readers: Vec<ReftableReader>,
+}
+
+static STACK_TABLE_CACHE: OnceLock<Mutex<HashMap<StackCacheKey, Arc<CachedStackTables>>>> =
+    OnceLock::new();
+
+fn stack_table_cache() -> &'static Mutex<HashMap<StackCacheKey, Arc<CachedStackTables>>> {
+    STACK_TABLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn invalidate_stack_table_cache(reftable_dir: &Path) {
+    let Ok(mut guard) = stack_table_cache().lock() else {
+        return;
+    };
+    guard.retain(|k, _| k.reftable_dir != reftable_dir);
+}
+
+fn tables_list_cache_key(reftable_dir: &Path) -> Result<StackCacheKey> {
+    let tables_list = reftable_dir.join("tables.list");
+    let meta = fs::metadata(&tables_list).map_err(Error::Io)?;
+    Ok(StackCacheKey {
+        reftable_dir: reftable_dir.to_path_buf(),
+        tables_list_len: meta.len(),
+        tables_list_modified: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    })
+}
+
+fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables>> {
+    let key = tables_list_cache_key(reftable_dir)?;
+    if let Ok(guard) = stack_table_cache().lock() {
+        if let Some(hit) = guard.get(&key) {
+            return Ok(Arc::clone(hit));
+        }
+    }
+
+    let tables_list = reftable_dir.join("tables.list");
+    let content = fs::read_to_string(&tables_list).map_err(Error::Io)?;
+    let table_names: Vec<String> = content
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_owned())
+        .collect();
+    let mut readers = Vec::with_capacity(table_names.len());
+    for name in &table_names {
+        let path = reftable_dir.join(name);
+        let data = fs::read(&path).map_err(Error::Io)?;
+        readers.push(ReftableReader::from_arc(Arc::from(data))?);
+    }
+    let cached = Arc::new(CachedStackTables {
+        key: key.clone(),
+        table_names,
+        readers,
+    });
+    if let Ok(mut guard) = stack_table_cache().lock() {
+        guard.insert(key, Arc::clone(&cached));
+    }
+    Ok(cached)
+}
+
 /// Manages the `$GIT_DIR/reftable/` directory and `tables.list` stack.
 ///
 /// The stack provides a merged view of all tables, with later tables
@@ -1880,29 +2041,148 @@ impl ReftableStack {
     /// Later tables override earlier ones. Deletion records cause the
     /// ref to be omitted from the result.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
-
-        for name in &self.table_names {
-            let path = self.reftable_dir.join(name);
-            let data = match fs::read(&path) {
-                Ok(data) => data,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(Error::Io(err)),
-            };
-            let reader = ReftableReader::new(data)?;
-            for rec in reader.read_refs()? {
+        for reader in &cached.readers {
+            reader.for_each_ref(|rec| {
                 match &rec.value {
                     RefValue::Deletion => {
                         merged.remove(&rec.name);
                     }
                     _ => {
-                        merged.insert(rec.name.clone(), rec);
+                        merged.insert(rec.name.clone(), rec.clone());
                     }
                 }
-            }
+                ControlFlow::<()>::Continue(())
+            })?;
+        }
+        Ok(merged.into_values().collect())
+    }
+
+    /// List direct ref names and oids under `prefix`, using cached table bytes and
+    /// index/restart seeking when the stack is a single table.
+    pub fn list_refs_under_prefix(
+        &self,
+        git_dir: &Path,
+        prefix: &str,
+    ) -> Result<Vec<(String, ObjectId)>> {
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let lower = prefix;
+        let upper = prefix_upper_exclusive(prefix);
+        let mut out = Vec::new();
+
+        if cached.readers.len() == 1 {
+            let reader = &cached.readers[0];
+            reader.for_each_ref_in_range(lower, upper.as_deref(), |rec| {
+                if prefix.ends_with('/') && !rec.name.starts_with(prefix) {
+                    return ControlFlow::<()>::Continue(());
+                }
+                push_list_ref_entry(git_dir, rec, &mut out);
+                ControlFlow::<()>::Continue(())
+            })?;
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            return Ok(out);
         }
 
-        Ok(merged.into_values().collect())
+        let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
+        for reader in &cached.readers {
+            reader.for_each_ref_in_range(lower, upper.as_deref(), |rec| {
+                if prefix.ends_with('/') && !rec.name.starts_with(prefix) {
+                    return ControlFlow::<()>::Continue(());
+                }
+                match &rec.value {
+                    RefValue::Deletion => {
+                        merged.remove(&rec.name);
+                    }
+                    _ => {
+                        merged.insert(rec.name.clone(), rec.clone());
+                    }
+                }
+                ControlFlow::<()>::Continue(())
+            })?;
+        }
+        for rec in merged.into_values() {
+            push_list_ref_entry(git_dir, &rec, &mut out);
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
+    fn table_payload_sizes(&self) -> Result<Vec<u64>> {
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        Ok(cached
+            .readers
+            .iter()
+            .map(ReftableReader::payload_size)
+            .collect())
+    }
+
+    fn auto_compact_geometric(&mut self, opts: &WriteOptions) -> Result<()> {
+        if !opts.autocompaction_enabled {
+            return Ok(());
+        }
+        let sizes = self.table_payload_sizes()?;
+        let (start, end) = suggest_compaction_segment(&sizes);
+        if end <= start + 1 {
+            return Ok(());
+        }
+        self.compact_range(start, end - 1, opts)
+    }
+
+    fn compact_range(&mut self, first: usize, last: usize, opts: &WriteOptions) -> Result<()> {
+        let guard = self.acquire_tables_list_lock()?;
+        self.reload_table_names();
+        if first >= self.table_names.len() || last >= self.table_names.len() || first > last {
+            return Ok(());
+        }
+        let compact_names: Vec<String> = self.table_names[first..=last].to_vec();
+        let prefix_stack = Self {
+            reftable_dir: self.reftable_dir.clone(),
+            table_names: compact_names.clone(),
+        };
+        let refs = prefix_stack.read_refs()?;
+        let logs = prefix_stack.read_all_logs()?;
+
+        let mut min_idx = u64::MAX;
+        let mut max_idx = 0u64;
+        for name in &compact_names {
+            let path = self.reftable_dir.join(name);
+            let data = fs::read(&path).map_err(Error::Io)?;
+            let reader = ReftableReader::new(data)?;
+            min_idx = min_idx.min(reader.min_update_index());
+            max_idx = max_idx.max(reader.max_update_index());
+        }
+        if min_idx == u64::MAX {
+            min_idx = 0;
+        }
+
+        let wopts = WriteOptions {
+            hash_size: self.hash_size(),
+            ..opts.clone()
+        };
+        let mut writer = ReftableWriter::new(wopts, min_idx, max_idx);
+        for rec in refs {
+            writer.add_ref(rec)?;
+        }
+        for log in logs {
+            writer.add_log(log)?;
+        }
+        let data = writer.finish()?;
+        let filename = self.write_table_file(&data, max_idx)?;
+
+        let mut new_names: Vec<String> = self.table_names[..first].to_vec();
+        new_names.push(filename.clone());
+        new_names.extend_from_slice(&self.table_names[last + 1..]);
+        self.table_names = new_names;
+        self.write_tables_list_locked(&guard)?;
+        invalidate_stack_table_cache(&self.reftable_dir);
+        for old in &compact_names {
+            if old == &filename {
+                continue;
+            }
+            let _ = fs::remove_file(self.reftable_dir.join(old));
+        }
+        Ok(())
     }
 
     /// Resolve the current oid for `name`, or `None` when the ref is absent or deleted.
@@ -1916,15 +2196,8 @@ impl ReftableStack {
 
     /// Look up a single ref across all tables (most recent wins).
     pub fn lookup_ref(&self, name: &str) -> Result<Option<RefRecord>> {
-        // Search tables in reverse (newest first)
-        for table_name in self.table_names.iter().rev() {
-            let path = self.reftable_dir.join(table_name);
-            let data = match fs::read(&path) {
-                Ok(data) => data,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(Error::Io(err)),
-            };
-            let reader = ReftableReader::new(data)?;
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        for reader in cached.readers.iter().rev() {
             if let Some(rec) = reader.lookup_ref(name)? {
                 return match rec.value {
                     RefValue::Deletion => Ok(None),
@@ -2115,7 +2388,7 @@ impl ReftableStack {
         // second table until explicit `pack-refs`.
         if table_has_deletion && self.table_names.len() > 2 {
             self.compact_prefix_preserving_newest(opts)?;
-        } else if self.table_names.len() > 3 && opts.autocompaction_enabled {
+        } else if opts.autocompaction_enabled {
             if self
                 .table_names
                 .iter()
@@ -2123,7 +2396,7 @@ impl ReftableStack {
             {
                 self.compact_unlocked_suffix()?;
             } else {
-                self.compact()?;
+                self.auto_compact_geometric(opts)?;
             }
         }
 
@@ -2303,7 +2576,7 @@ impl ReftableStack {
     /// compacted table layout stable for large `update-ref --stdin` batches.
     pub fn write_transaction(
         &mut self,
-        updates: Vec<ReftableTransactionUpdate>,
+        mut updates: Vec<ReftableTransactionUpdate>,
         opts: &WriteOptions,
     ) -> Result<()> {
         if updates.is_empty() {
@@ -2319,7 +2592,7 @@ impl ReftableStack {
     pub(crate) fn write_transaction_under_lock(
         &mut self,
         guard: &TablesListLock,
-        updates: Vec<ReftableTransactionUpdate>,
+        mut updates: Vec<ReftableTransactionUpdate>,
         opts: &WriteOptions,
     ) -> Result<()> {
         if updates.is_empty() {
@@ -2347,7 +2620,6 @@ impl ReftableStack {
         let update_index = self.max_update_index_unlocked()? + 1;
         let mut writer = ReftableWriter::new(opts.clone(), update_index, update_index);
 
-        let mut updates = updates;
         updates.sort_by(|a, b| a.refname.cmp(&b.refname));
         for update in &updates {
             if let Some(value) = &update.value {
@@ -2399,17 +2671,15 @@ impl ReftableStack {
     /// new table. Re-reads the stack under the lock to avoid racing.
     pub(crate) fn maybe_auto_compact(&mut self, opts: &WriteOptions) -> Result<()> {
         self.reload_table_names();
-        let has_locked = self
+        if self
             .table_names
             .iter()
-            .any(|name| self.table_is_locked(name));
-        if self.table_names.len() > 3 && opts.autocompaction_enabled {
-            if has_locked {
-                self.compact_unlocked_suffix()?;
-            } else {
-                self.compact()?;
-            }
+            .any(|name| self.table_is_locked(name))
+        {
+            self.compact_unlocked_suffix()?;
+            return Ok(());
         }
+        self.auto_compact_geometric(opts)?;
         Ok(())
     }
 
@@ -2536,6 +2806,7 @@ impl ReftableStack {
         // Drop does not try to remove the (now-renamed) path.
         fs::rename(&guard.path, &tables_list).map_err(Error::Io)?;
         guard.disarm();
+        invalidate_stack_table_cache(&self.reftable_dir);
         Ok(())
     }
 
@@ -2889,30 +3160,23 @@ pub fn reftable_read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Optio
     }
 }
 
+fn push_list_ref_entry(git_dir: &Path, rec: &RefRecord, out: &mut Vec<(String, ObjectId)>) {
+    match &rec.value {
+        RefValue::Val1(oid) => out.push((rec.name.clone(), *oid)),
+        RefValue::Val2(oid, _) => out.push((rec.name.clone(), *oid)),
+        RefValue::Symref(target) => {
+            if let Ok(oid) = reftable_resolve_ref(git_dir, target) {
+                out.push((rec.name.clone(), oid));
+            }
+        }
+        RefValue::Deletion => {}
+    }
+}
+
 /// List all refs in a reftable repo under a given prefix.
 pub fn reftable_list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
     let stack = ReftableStack::open(git_dir)?;
-    let refs = stack.read_refs()?;
-    let mut result = Vec::new();
-    for rec in refs {
-        let matches_prefix = rec.name.starts_with(prefix)
-            || (prefix.ends_with('/') && rec.name == prefix.trim_end_matches('/'));
-        if matches_prefix {
-            match rec.value {
-                RefValue::Val1(oid) => result.push((rec.name, oid)),
-                RefValue::Val2(oid, _) => result.push((rec.name, oid)),
-                RefValue::Symref(target) => {
-                    // Try to resolve the symref
-                    if let Ok(oid) = reftable_resolve_ref(git_dir, &target) {
-                        result.push((rec.name, oid));
-                    }
-                }
-                RefValue::Deletion => {}
-            }
-        }
-    }
-    result.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(result)
+    stack.list_refs_under_prefix(git_dir, prefix)
 }
 
 /// Read reflog entries for a ref from the reftable stack.
@@ -3574,6 +3838,26 @@ pub(crate) fn parse_identity_string(identity: &str) -> (String, String, u64, i16
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggest_compaction_segment_matches_geometric_break() {
+        assert_eq!(suggest_compaction_segment(&[10]), (0, 0));
+        assert_eq!(suggest_compaction_segment(&[64, 32, 16]), (0, 0));
+        let (start, end) = suggest_compaction_segment(&[64, 32, 16, 8, 4, 3, 1]);
+        assert!(
+            end > start + 1,
+            "expected compaction segment, got {start}..{end}"
+        );
+    }
+
+    #[test]
+    fn prefix_upper_exclusive_for_seek_end() {
+        assert_eq!(
+            prefix_upper_exclusive("refs/heads/b05").as_deref(),
+            Some("refs/heads/b06")
+        );
+        assert!(prefix_upper_exclusive("refs/heads/").is_none());
+    }
 
     #[test]
     fn test_varint_roundtrip() {
