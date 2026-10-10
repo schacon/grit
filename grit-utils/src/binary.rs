@@ -233,39 +233,34 @@ mod tests {
         );
     }
 
+    fn init_temp_repo_with_branch(branch: &str) -> (TempDir, String) {
+        let dir = TempDir::new().expect("tempdir");
+        let repo = dir.path();
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .status()
+                .expect("git");
+            assert!(status.success(), "git {}", args.join(" "));
+        };
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        fs::write(repo.join("README"), "bench\n").expect("readme");
+        run(&["add", "README"]);
+        run(&["commit", "-m", "init"]);
+        let tip = rev_parse_commit(repo, "HEAD").expect("head");
+        run(&["branch", branch, &tip]);
+        (dir, tip)
+    }
+
     #[test]
     fn grit_source_commit_honors_bench_branch() {
-        let dir = TempDir::new().expect("temp repo");
-        let repo = dir.path();
-        Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(repo)
-            .status()
-            .expect("git init");
-        Command::new("git")
-            .args(["config", "user.email", "bench@example.com"])
-            .current_dir(repo)
-            .status()
-            .expect("git config email");
-        Command::new("git")
-            .args(["config", "user.name", "Bench"])
-            .current_dir(repo)
-            .status()
-            .expect("git config name");
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(repo)
-            .status()
-            .expect("empty commit");
-        let branch = "factory/refs-bench-test";
-        Command::new("git")
-            .args(["branch", branch])
-            .current_dir(repo)
-            .status()
-            .expect("create branch");
-        let expected = rev_parse_commit(repo, &format!("refs/heads/{branch}")).expect("branch tip");
+        let branch = "factory/bench-branch-for-test";
+        let (dir, expected) = init_temp_repo_with_branch(branch);
         assert_eq!(
-            grit_source_commit_from(repo, Some(branch)).as_deref(),
+            grit_source_commit_from(dir.path(), Some(branch)).as_deref(),
             Some(expected.as_str())
         );
     }
