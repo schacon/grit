@@ -208,11 +208,11 @@ No GitHub issues were filed from this factory run (`file_bug_report` is dogfoodi
 
 ### Object reads
 
-The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. The committed baseline is **`grit-utils/baselines/refs-before.json`**.
+The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. The committed baseline is **`grit-utils/baselines/refs-after.json`** (files-backend listing and batch `update-ref` optimizations on the 100k-ref fixtures).
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
-GRIT_BENCH_BRANCH=factory/refs-bench-774 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-before.json
+GRIT_BENCH_BRANCH=factory/files-refs-perf-782 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-after.json
 ```
 
 Set `GRIT_BENCH_BRANCH` to the GitButler branch you are benchmarking so `grit_commit` in the JSON matches that branch tip (required on `gitbutler/workspace` checkouts).
@@ -275,7 +275,7 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 | object_reads | 8 | 234.49× | 4569.02× |
 | odb_backend | 6 | 14.90× | 98.20× |
 | pick | 4 | 8.63× | 17.09× |
-| refs | 10 | 2.05× | 4509.07× |
+| refs | 10 | 1.28× | 2.50× |
 | status | 4 | 6.17× | 48.09× |
 | switch | 4 | 3.61× | 22.50× |
 
@@ -378,16 +378,16 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 
 | Scenario | Fixture | Git mean (ms) | Grit mean (ms) | Grit / Git | Spread |
 | --- | --- | ---: | ---: | ---: | --- |
-| `for-each-ref-all-refs-100k-loose` | refs-100k-loose | 1,266 | 1,331 | 1.05× | ±25.7 ms |
-| `for-each-ref-prefix-b05-refs-100k-loose` | refs-100k-loose | 412 | 864 | 2.10× | ±22.1 ms |
-| `update-ref-create-100k-refs-100k-loose` | refs-100k-loose | 3,311 | 7,159 | 2.16× | ±67.9 ms |
-| `update-ref-delete-1k-refs-100k-loose` | refs-100k-loose | 65.2 | 64.9 | 1.00× | ±19.2 ms |
-| `update-ref-update-1k-refs-100k-loose` | refs-100k-loose | 95.1 | 112 | 1.18× | ±35.3 ms |
-| `for-each-ref-all-refs-100k-packed` | refs-100k-packed | 862 | 595 | 0.69× | ±23.8 ms |
-| `for-each-ref-prefix-b05-refs-100k-packed` | refs-100k-packed | 10.5 | 89.6 | 8.53× | ±9.36 ms |
-| `update-ref-create-100k-refs-100k-packed` | refs-100k-packed | 3,733 | 7,452 | 2.00× | ±84.4 ms |
-| `update-ref-delete-1k-refs-100k-packed` | refs-100k-packed | 53.1 | 161,057 | 3030.60× | ±6,691 ms |
-| `update-ref-update-1k-refs-100k-packed` | refs-100k-packed | 40.8 | 184,128 | 4509.07× | ±3,251 ms |
+| `for-each-ref-all-refs-100k-loose` | refs-100k-loose | 1,305 | 989 | 0.76× | ±28.5 ms |
+| `for-each-ref-prefix-b05-refs-100k-loose` | refs-100k-loose | 422 | 143 | 0.34× | ±15.2 ms |
+| `update-ref-create-100k-refs-100k-loose` | refs-100k-loose | 3,325 | 5,486 | 1.65× | ±72.0 ms |
+| `update-ref-delete-1k-refs-100k-loose` | refs-100k-loose | 42.9 | 52.2 | 1.22× | ±1.93 ms |
+| `update-ref-update-1k-refs-100k-loose` | refs-100k-loose | 73.6 | 64.8 | 0.88× | ±1.43 ms |
+| `for-each-ref-all-refs-100k-packed` | refs-100k-packed | 979 | 759 | 0.77× | ±57.0 ms |
+| `for-each-ref-prefix-b05-refs-100k-packed` | refs-100k-packed | 12.8 | 17.2 | 1.34× | ±2.01 ms |
+| `update-ref-create-100k-refs-100k-packed` | refs-100k-packed | 4,370 | 6,961 | 1.59× | ±378 ms |
+| `update-ref-delete-1k-refs-100k-packed` | refs-100k-packed | 60.1 | 150 | 2.50× | ±17.8 ms |
+| `update-ref-update-1k-refs-100k-packed` | refs-100k-packed | 51.8 | 96.5 | 1.86× | ±10.1 ms |
 
 ### status
 
