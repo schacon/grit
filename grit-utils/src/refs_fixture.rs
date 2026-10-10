@@ -350,11 +350,21 @@ fn remove_dir_contents(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn clear_refs_subdir_or_file(git_dir: &Path, name: &str) -> Result<()> {
+    let path = git_dir.join("refs").join(name);
+    if path.is_dir() {
+        remove_dir_contents(&path)?;
+    } else if path.exists() {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
 /// Strip branch/tag refs while keeping objects (detached `HEAD` at base commit).
 pub fn strip_refs_to_empty(git_dir: &Path, base_commit: &str) -> Result<()> {
     let _ = fs::remove_file(grit_lib::refs::store::paths::packed_refs_path(git_dir));
-    remove_dir_contents(&git_dir.join("refs/heads"))?;
-    remove_dir_contents(&git_dir.join("refs/tags"))?;
+    clear_refs_subdir_or_file(git_dir, "heads")?;
+    clear_refs_subdir_or_file(git_dir, "tags")?;
     if git_dir.join("reftable").is_dir() {
         remove_dir_robust(&git_dir.join("reftable"));
         fs::create_dir_all(git_dir.join("reftable"))?;
