@@ -213,8 +213,10 @@ The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-drive
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
-./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-before.json
+GRIT_BENCH_BRANCH=factory/refs-bench-774 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-before.json
 ```
+
+Set `GRIT_BENCH_BRANCH` to the GitButler branch you are benchmarking so `grit_commit` in the JSON matches that branch tip (required on `gitbutler/workspace` checkouts).
 
 Driver **`for-each-ref`** output is checked against git byte-for-byte in `grit-utils` integration tests (1 000-ref fixture).
 
