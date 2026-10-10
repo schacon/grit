@@ -6,7 +6,8 @@ use super::upload_pack_policy::{
 };
 use super::{
     advertised_refs, check_object_format, head_info, parse_oid, read_packet, write_flush,
-    write_line, AdvertisedRef, Packet, ProtocolVersion, Result, ServeError, ServeOptions,
+    write_line, write_v2_fetch_line, AdvertisedRef, Packet, ProtocolVersion, Result, ServeError,
+    ServeOptions,
 };
 use crate::config::ConfigSet;
 use crate::objects::{ObjectId, ObjectKind};
@@ -17,12 +18,18 @@ use crate::pack_objects::build_pack_for_upload;
 use crate::pack_objects::{write_upload_pack_stream, PackBuildOptions, PackProgress};
 >>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 use crate::repo::Repository;
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
 <<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 use crate::rev_list::ObjectFilter;
 use crate::transfer::PackBuildOptions;
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
 ||||||| Common ancestor
+||||||| Common ancestor
+=======
+use crate::serve::shallow_upload::{compute_shallow_response, ShallowRequest};
+use crate::serve::upload_pack_policy::{resolve_want_ref, UploadPackPolicy};
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 use crate::shallow::INFINITE_DEPTH;
 use crate::transfer::{build_pack, PackBuildOptions};
 =======
@@ -141,6 +148,7 @@ fn serve_v0(
     let Some(request) = read_v0_request(repo, input, &config, &policy)? else {
         return Ok(());
     };
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     if request.filter.is_some() {
         validate_wants_filtered(repo, &request.wants)?;
     } else {
@@ -161,6 +169,58 @@ fn serve_v0(
             write_v0_shallow_lines(output, sh)?;
             write_flush(output)?;
             output.flush()?;
+||||||| Common ancestor
+    let allowed = allowed_wants(&refs, head.oid);
+    if let Some(bad) = request.wants.iter().find(|w| !allowed.contains(w)) {
+        return Err(ServeError::NotOurRef(*bad));
+    }
+
+    let mut stash: Option<Packet> = None;
+    if opts.stateless_rpc && request.is_shallow() {
+        let next = read_packet_stash(input, &mut stash)?;
+        if next.is_none() {
+            if request.deepen == Some(INFINITE_DEPTH) {
+                write_v0_unshallow_info(output, &request.client_shallow)?;
+            } else {
+                let bounds = shallow_boundaries_for_deepen(repo, &request.wants, request.deepen)?;
+                write_v0_shallow_info(output, &bounds)?;
+            }
+            return Ok(());
+        }
+        if let Some(pkt) = next {
+            stash = Some(pkt);
+=======
+    let allowed = allowed_wants(&refs, head.oid);
+    if let Some(bad) = request.wants.iter().find(|w| !allowed.contains(w)) {
+        return Err(ServeError::NotOurRef(*bad));
+    }
+
+    let mut stash: Option<Packet> = None;
+    if opts.stateless_rpc && request.is_shallow() {
+        let next = read_packet_stash(input, &mut stash)?;
+        if next.is_none() {
+            let shallow_req = ShallowRequest {
+                client_shallow: request.client_shallow.clone(),
+                depth: request.deepen,
+                deepen_since: None,
+                deepen_not: Vec::new(),
+                deepen_relative: request.deepen_relative,
+            };
+            let shallow_resp = compute_shallow_response(repo, &request.wants, &shallow_req)?;
+            if request.deepen == Some(INFINITE_DEPTH) {
+                write_v0_unshallow_info(output, &shallow_resp.unshallow)?;
+            } else {
+                write_v0_shallow_info(output, &shallow_resp.shallow)?;
+                for oid in &shallow_resp.unshallow {
+                    write_line(output, &format!("unshallow {}", oid.to_hex()))?;
+                }
+                write_flush(output)?;
+            }
+            return Ok(());
+        }
+        if let Some(pkt) = next {
+            stash = Some(pkt);
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
         }
     }
 
@@ -222,6 +282,7 @@ fn serve_v0(
         None => write_line(output, "NAK")?,
     }
     let sideband = request.caps.contains("side-band-64k");
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
 <<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
     let pack = build_response_pack_from_v0(
         repo,
@@ -248,14 +309,45 @@ fn serve_v0(
     };
     write_pack(output, &pack, sideband)
 =======
+||||||| Common ancestor
+=======
+    let shallow_req = ShallowRequest {
+        client_shallow: request.client_shallow.clone(),
+        depth: request.deepen,
+        deepen_since: None,
+        deepen_not: Vec::new(),
+        deepen_relative: request.deepen_relative,
+    };
+    let shallow_resp = if request.is_shallow() {
+        compute_shallow_response(repo, &request.wants, &shallow_req)?
+    } else {
+        Default::default()
+    };
+    if request.is_shallow() {
+        if request.deepen == Some(INFINITE_DEPTH) {
+            write_v0_unshallow_info(output, &shallow_resp.unshallow)?;
+        } else {
+            write_v0_shallow_info(output, &shallow_resp.shallow)?;
+            for oid in &shallow_resp.unshallow {
+                write_line(output, &format!("unshallow {}", oid.to_hex()))?;
+            }
+            write_flush(output)?;
+        }
+        output.flush()?;
+    }
+    let mut pack_wants = request.wants.clone();
+    pack_wants.extend(shallow_resp.extra_wants.clone());
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
     stream_response_pack(
         repo,
         &refs,
-        &request.wants,
+        &pack_wants,
         &common,
         &request.caps,
         output,
         sideband,
+        &shallow_resp.pack_shallow_grafts,
+        &shallow_resp.have_shallow_grafts,
     )
 >>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 }
@@ -316,8 +408,29 @@ fn write_v0_advertisement(
 struct V0Request {
     wants: Vec<ObjectId>,
     caps: HashSet<String>,
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     shallow: ShallowRequest,
     filter: Option<ObjectFilter>,
+||||||| Common ancestor
+    client_shallow: Vec<ObjectId>,
+    deepen: Option<u32>,
+}
+
+impl V0Request {
+    fn is_shallow(&self) -> bool {
+        self.deepen.is_some() || !self.client_shallow.is_empty()
+    }
+=======
+    client_shallow: Vec<ObjectId>,
+    deepen: Option<u32>,
+    deepen_relative: bool,
+}
+
+impl V0Request {
+    fn is_shallow(&self) -> bool {
+        self.deepen.is_some() || !self.client_shallow.is_empty()
+    }
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 }
 
 fn read_v0_request(
@@ -328,8 +441,17 @@ fn read_v0_request(
 ) -> Result<Option<V0Request>> {
     let mut wants = Vec::new();
     let mut caps = HashSet::new();
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let mut shallow = ShallowRequest::default();
     let mut filter: Option<ObjectFilter> = None;
+||||||| Common ancestor
+    let mut client_shallow = Vec::new();
+    let mut deepen = None;
+=======
+    let mut client_shallow = Vec::new();
+    let mut deepen = None;
+    let mut deepen_relative = false;
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
     loop {
         match read_packet(input)? {
             None | Some(Packet::Flush) => break,
@@ -339,7 +461,13 @@ fn read_v0_request(
                     let hex = parts.next().unwrap_or_default();
                     wants.push(parse_oid(repo, hex)?);
                     if wants.len() == 1 {
-                        caps.extend(parts.filter(|c| !c.is_empty()).map(str::to_owned));
+                        for cap in parts.filter(|c| !c.is_empty()) {
+                            if cap == "deepen-relative" {
+                                deepen_relative = true;
+                            } else {
+                                caps.insert(cap.to_owned());
+                            }
+                        }
                     }
                     continue;
                 }
@@ -365,8 +493,17 @@ fn read_v0_request(
     Ok(Some(V0Request {
         wants,
         caps,
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
         shallow,
         filter,
+||||||| Common ancestor
+        client_shallow,
+        deepen,
+=======
+        client_shallow,
+        deepen,
+        deepen_relative,
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
     }))
 }
 
@@ -492,9 +629,19 @@ fn serve_v2(
             write_line(output, &format!("agent={}", opts.agent))?;
         }
         write_line(output, "ls-refs=unborn")?;
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
         let policy = upload_policy(repo);
         let fetch_caps = policy.v2_fetch_features().join(" ");
         write_line(output, &format!("fetch={fetch_caps}"))?;
+||||||| Common ancestor
+        write_line(output, "fetch")?;
+=======
+        let config =
+            ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
+        let policy = UploadPackPolicy::from_config(&config);
+        let fetch_caps = policy.v2_fetch_features().join(" ");
+        write_line(output, &format!("fetch={fetch_caps}"))?;
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
         write_line(
             output,
             &format!("object-format={}", repo.odb().hash_algo().name()),
@@ -640,17 +787,30 @@ fn fetch_v2(
     let mut done = false;
     let mut caps = HashSet::new();
     let mut deepen = None;
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let mut deepen_since = None;
     let mut deepen_not: Vec<ObjectId> = Vec::new();
     let mut deepen_relative = false;
     let mut filter_spec: Option<String> = None;
     let mut want_ref_names: Vec<String> = Vec::new();
+||||||| Common ancestor
+=======
+    let mut client_shallow = Vec::new();
+    let mut deepen_relative = false;
+    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
+    let policy = UploadPackPolicy::from_config(&config);
+    let mut filter_spec: Option<String> = None;
+    let mut want_ref_names: Vec<String> = Vec::new();
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
     for arg in args {
         if let Some(hex) = arg.strip_prefix("want ") {
             wants.push(parse_oid(repo, hex.trim())?);
         } else if let Some(hex) = arg.strip_prefix("have ") {
             haves.push(parse_oid(repo, hex.trim())?);
-        } else if arg.starts_with("shallow ") {
+        } else if let Some(rest) = arg.strip_prefix("shallow ") {
+            client_shallow.push(parse_oid(repo, rest.trim())?);
+        } else if let Some(spec) = arg.strip_prefix("filter ") {
+            filter_spec = Some(spec.trim().to_owned());
         } else if let Some(rest) = arg.strip_prefix("deepen ") {
             deepen = Some(
                 rest.trim()
@@ -675,9 +835,34 @@ fn fetch_v2(
             deepen_relative = true;
         } else if matches!(
             arg.as_str(),
-            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" | "sideband-all"
+            "thin-pack"
+                | "no-progress"
+                | "include-tag"
+                | "ofs-delta"
+                | "sideband-all"
+                | "deepen-relative"
         ) {
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
             caps.insert(arg.clone());
+||||||| Common ancestor
+            caps.insert(arg.clone());
+        } else if arg.starts_with("deepen-since ") || arg.starts_with("deepen-not ") {
+            return Err(ServeError::Protocol(format!(
+                "unsupported shallow extension '{arg}'"
+            )));
+=======
+            if arg == "deepen-relative" {
+                deepen_relative = true;
+            } else {
+                caps.insert(arg.clone());
+            }
+        } else if let Some(name) = arg.strip_prefix("want-ref ") {
+            want_ref_names.push(name.trim().to_owned());
+        } else if arg.starts_with("deepen-since ") || arg.starts_with("deepen-not ") {
+            return Err(ServeError::Protocol(format!(
+                "unsupported shallow extension '{arg}'"
+            )));
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
         } else {
             return Err(ServeError::Protocol(format!(
                 "unsupported fetch argument '{arg}'"
@@ -686,6 +871,7 @@ fn fetch_v2(
     }
 
     let refs = advertised_refs(repo, &opts.hidden_refs)?;
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let head = head_info(repo);
     for name in want_ref_names {
         wants.push(resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?);
@@ -700,6 +886,34 @@ fn fetch_v2(
         validate_wants_filtered(repo, &wants)?;
     } else {
         validate_wants(repo, &refs, head.oid, &wants, &policy)?;
+||||||| Common ancestor
+    let allowed = allowed_wants(&refs, head_info(repo).oid);
+    if let Some(bad) = wants.iter().find(|w| !allowed.contains(w)) {
+        return Err(ServeError::NotOurRef(*bad));
+=======
+    if !want_ref_names.is_empty() {
+        if !policy.ref_in_want {
+            return Err(ServeError::Protocol(
+                "want-ref not supported (uploadpack.allowRefInWant is false)".into(),
+            ));
+        }
+        for name in want_ref_names {
+            wants.push(resolve_want_ref(repo, &refs, &opts.hidden_refs, &name)?);
+        }
+    }
+
+    if let Some(spec) = filter_spec {
+        if !policy.allow_filter {
+            write_line(output, "ERR filter not allowed by uploadpack.allowFilter")?;
+            return write_flush(output);
+        }
+        policy.parse_filter(&config, &spec)?;
+    }
+
+    let allowed = allowed_wants(&refs, head_info(repo).oid);
+    if let Some(bad) = wants.iter().find(|w| !allowed.contains(w)) {
+        return Err(ServeError::NotOurRef(*bad));
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
     }
 
     let sideband_all = caps.contains("sideband-all");
@@ -708,6 +922,8 @@ fn fetch_v2(
         .into_iter()
         .filter(|h| seen.insert(*h) && repo.odb().exists(h))
         .collect();
+
+    let sideband_all = caps.contains("sideband-all");
 
     if !done {
         write_v2_fetch_line(output, "acknowledgments", sideband_all)?;
@@ -720,6 +936,7 @@ fn fetch_v2(
         return write_flush(output);
     }
 
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let client_shallow: Vec<ObjectId> = args
         .iter()
         .filter_map(|a| a.strip_prefix("shallow "))
@@ -783,23 +1000,63 @@ fn write_v0_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Res
 =======
     let shallow = deepen.is_some();
     if shallow {
+||||||| Common ancestor
+    let client_shallow: Vec<ObjectId> = args
+        .iter()
+        .filter_map(|a| a.strip_prefix("shallow "))
+        .map(|hex| parse_oid(repo, hex.trim()))
+        .collect::<Result<Vec<_>>>()?;
+    let shallow = deepen.is_some();
+    if shallow {
+=======
+    let shallow_req = ShallowRequest {
+        client_shallow,
+        depth: deepen,
+        deepen_since: None,
+        deepen_not: Vec::new(),
+        deepen_relative,
+    };
+    let shallow_active = shallow_req.is_active();
+    let shallow_resp = if shallow_active {
+        compute_shallow_response(repo, &wants, &shallow_req)?
+    } else {
+        Default::default()
+    };
+    if shallow_active {
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
         if deepen == Some(INFINITE_DEPTH) {
-            write_v2_unshallow_info(output, &client_shallow)?;
+            write_v2_unshallow_info(output, &shallow_resp.unshallow, sideband_all)?;
         } else {
-            let bounds = shallow_boundaries_for_deepen(repo, &wants, deepen)?;
-            write_v2_shallow_info(output, &bounds)?;
+            write_v2_shallow_update(output, &shallow_resp, sideband_all)?;
         }
     }
-    write_line(output, "packfile")?;
-    if shallow {
-        let mut haves = common.to_vec();
-        if deepen != Some(INFINITE_DEPTH) {
-            haves.extend(deepen_haves_excluding_history(repo, &wants, deepen)?);
-        }
-        let _ = client_shallow;
-        stream_response_pack(repo, &refs, &wants, &haves, &caps, output, true)
+    write_v2_fetch_line(output, "packfile", sideband_all)?;
+    if shallow_active {
+        let mut pack_wants = wants.clone();
+        pack_wants.extend(shallow_resp.extra_wants.clone());
+        stream_response_pack(
+            repo,
+            &refs,
+            &pack_wants,
+            &common,
+            &caps,
+            output,
+            true,
+            &shallow_resp.pack_shallow_grafts,
+            &shallow_resp.have_shallow_grafts,
+        )
     } else {
-        stream_response_pack(repo, &refs, &wants, &common, &caps, output, true)
+        stream_response_pack(
+            repo,
+            &refs,
+            &wants,
+            &common,
+            &caps,
+            output,
+            true,
+            &HashSet::new(),
+            &HashSet::new(),
+        )
     }
 }
 
@@ -829,11 +1086,37 @@ fn write_v0_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Res
         write_v2_section_delim(output)?;
     }
 
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let mut pack_wants = wants;
     pack_wants.extend(shallow_resp.extra_wants);
     pack_wants.sort();
     pack_wants.dedup();
+||||||| Common ancestor
+fn write_v2_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Result<()> {
+    write_line(output, "shallow-info")?;
+    for oid in boundaries {
+        write_line(output, &format!("shallow {}", oid.to_hex()))?;
+    }
+    write_v2_section_delim(output)
+}
+=======
+fn write_v2_shallow_update(
+    output: &mut dyn Write,
+    update: &crate::serve::shallow_upload::ShallowResponse,
+    sideband_all: bool,
+) -> Result<()> {
+    write_v2_fetch_line(output, "shallow-info", sideband_all)?;
+    for oid in &update.shallow {
+        write_v2_fetch_line(output, &format!("shallow {}", oid.to_hex()), sideband_all)?;
+    }
+    for oid in &update.unshallow {
+        write_v2_fetch_line(output, &format!("unshallow {}", oid.to_hex()), sideband_all)?;
+    }
+    write_v2_section_delim(output)
+}
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
     let have_shallow: HashSet<ObjectId> = client_shallow.iter().copied().collect();
     let pack = build_response_pack(ResponsePackInput {
         repo,
@@ -849,6 +1132,25 @@ fn write_v0_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Res
     // Protocol v2 always side-band-64k frames the packfile section payload (band 1),
     // even when `sideband-all` was not negotiated.
     write_pack(output, &pack, true)
+||||||| Common ancestor
+fn write_v2_unshallow_info(output: &mut dyn Write, grafts: &[ObjectId]) -> Result<()> {
+    write_line(output, "shallow-info")?;
+    for oid in grafts {
+        write_line(output, &format!("unshallow {}", oid.to_hex()))?;
+    }
+    write_v2_section_delim(output)
+=======
+fn write_v2_unshallow_info(
+    output: &mut dyn Write,
+    grafts: &[ObjectId],
+    sideband_all: bool,
+) -> Result<()> {
+    write_v2_fetch_line(output, "shallow-info", sideband_all)?;
+    for oid in grafts {
+        write_v2_fetch_line(output, &format!("unshallow {}", oid.to_hex()), sideband_all)?;
+    }
+    write_v2_section_delim(output)
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 }
 
 fn write_v2_section_delim(output: &mut dyn Write) -> Result<()> {
@@ -856,6 +1158,7 @@ fn write_v2_section_delim(output: &mut dyn Write) -> Result<()> {
     Ok(())
 }
 
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
 /// Write one v2 fetch response line, using sideband channel 1 when `sideband-all` was negotiated.
 fn write_v2_fetch_line(output: &mut dyn Write, line: &str, sideband_all: bool) -> Result<()> {
     if sideband_all {
@@ -903,6 +1206,75 @@ fn build_deepen_pack(
 
 /// Build the pack answering a fetch, adding annotated tags when `include-tag`
 =======
+||||||| Common ancestor
+/// Shallow graft oids reported in the `shallow-info` section for a `deepen` request.
+///
+/// Git marks the fetched tip commits themselves as shallow boundaries when the
+/// history is truncated (see the `.git/shallow` file after `git fetch --depth 1`).
+fn shallow_boundaries_for_deepen(
+    repo: &Repository,
+    wants: &[ObjectId],
+    deepen: Option<u32>,
+) -> Result<Vec<ObjectId>> {
+    let Some(depth) = deepen.filter(|d| *d != INFINITE_DEPTH && *d > 0) else {
+        return Ok(Vec::new());
+    };
+    let _ = depth;
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for &want in wants {
+        let tip = super::peel_tag(repo, want)?;
+        if seen.insert(tip) {
+            out.push(tip);
+        }
+    }
+    Ok(out)
+}
+
+fn commit_parents(odb: &crate::odb::Odb, oid: &ObjectId) -> Option<Vec<ObjectId>> {
+    let obj = odb.read(oid).ok()?;
+    if obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    let commit = crate::objects::parse_commit(&obj.data).ok()?;
+    Some(commit.parents)
+}
+
+fn deepen_haves_excluding_history(
+    repo: &Repository,
+    wants: &[ObjectId],
+    deepen: Option<u32>,
+) -> Result<Vec<ObjectId>> {
+    let Some(depth) = deepen.filter(|d| *d != INFINITE_DEPTH && *d > 0) else {
+        return Ok(Vec::new());
+    };
+    let mut haves = Vec::new();
+    let mut seen = HashSet::new();
+    for &want in wants {
+        let tip = super::peel_tag(repo, want)?;
+        let mut queue = VecDeque::from([(tip, 1u32)]);
+        while let Some((commit, d)) = queue.pop_front() {
+            let Some(parents) = commit_parents(&repo.odb, &commit) else {
+                continue;
+            };
+            if d >= depth {
+                for p in parents {
+                    if seen.insert(p) {
+                        haves.push(p);
+                    }
+                }
+            } else {
+                for p in parents {
+                    queue.push_back((p, d + 1));
+                }
+            }
+        }
+    }
+    Ok(haves)
+}
+
+=======
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 /// Stream the pack answering a fetch, adding annotated tags when `include-tag`
 >>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 /// was negotiated.
@@ -936,6 +1308,8 @@ fn stream_response_pack(
     caps: &HashSet<String>,
     output: &mut dyn Write,
     sideband: bool,
+    source_shallow: &HashSet<ObjectId>,
+    have_shallow: &HashSet<ObjectId>,
 ) -> Result<()> {
     let mut pack_wants = wants.to_vec();
     if caps.contains("include-tag") {
@@ -976,7 +1350,8 @@ fn stream_response_pack(
             repo,
             &pack_wants,
             common,
-            &HashSet::new(),
+            source_shallow,
+            have_shallow,
             None,
             &pack_opts,
             &mut progress,
@@ -984,13 +1359,15 @@ fn stream_response_pack(
         )
         .map_err(ServeError::from)?;
         framed.finish().map_err(ServeError::from)?;
-        write_flush(output)
+        write_flush(output)?;
+        output.flush().map_err(ServeError::from)
     } else {
         write_upload_pack_stream(
             repo,
             &pack_wants,
             common,
-            &HashSet::new(),
+            source_shallow,
+            have_shallow,
             None,
             &pack_opts,
             &mut progress,

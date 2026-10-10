@@ -725,6 +725,7 @@ fn write_fake_ssh(grit_bin: &Path, dir: &Path) -> Option<PathBuf> {
     let script = dir.join("fake-ssh.sh");
     let body = format!(
         r#"#!/bin/sh
+<<<<<<< New base: lib: stream upload-pack responses and add pack reuse scaffold
 # Git probes ssh configuration with `-G` before the real upload-pack invocation.
 if [ "$1" = "-G" ]; then
   exec ssh "$@"
@@ -745,6 +746,46 @@ while [ $# -gt 0 ]; do
   shift
 done
 exec sh -c "$*"
+||||||| Common ancestor
+cmd=
+for cmd in "$@"; do :; done
+case "$cmd" in
+  "git-upload-pack "*)
+    path="${{cmd#git-upload-pack }}"
+    path="${{path#\'}}"; path="${{path%\'}}"
+    path="${{path#\"}}"; path="${{path%\"}}"
+    exec "{grit}" upload-pack "$path"
+    ;;
+  *) exec sh -c "$cmd" ;;
+esac
+=======
+cmd=
+for arg do
+  case "$arg" in
+    git-upload-pack|git-upload-pack\ *)
+      cmd=$arg
+      break
+      ;;
+  esac
+done
+case "$cmd" in
+  git-upload-pack\ *)
+    path="${{cmd#git-upload-pack }}"
+    ;;
+  git-upload-pack)
+    path=$2
+    ;;
+  *)
+    path=
+    ;;
+esac
+path="${{path#\'}}"; path="${{path%\'}}"
+path="${{path#\"}}"; path="${{path%\"}}"
+if test -n "$path"; then
+  exec "{grit}" upload-pack "$path"
+fi
+exec "$@"
+>>>>>>> Current commit: fix: enable pack reuse streaming, v2 sideband-all shallow fetch, and deepen pack
 "#,
         grit = grit_bin.display()
     );

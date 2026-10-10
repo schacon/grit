@@ -1,7 +1,5 @@
 //! Shallow/deepen handling for [`super::upload_pack`].
 
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use crate::objects::{ObjectId, ObjectKind};
@@ -39,7 +37,9 @@ pub(crate) struct ShallowResponse {
     pub unshallow: Vec<ObjectId>,
     /// Extra commit tips to include in the pack (parents of unshallowed commits).
     pub extra_wants: Vec<ObjectId>,
-    /// Shallow grafts for `pack-objects` (do not walk past these commits' parents).
+    /// Shallow grafts on the `have` side (client shallow boundaries for this request).
+    pub have_shallow_grafts: HashSet<ObjectId>,
+    /// Shallow grafts for `pack-objects` send side (do not walk past these commits' parents).
     pub pack_shallow_grafts: HashSet<ObjectId>,
 }
 
@@ -69,19 +69,16 @@ pub(crate) fn compute_shallow_response(
     let mut new_shallow = Vec::new();
     if let Some(depth) = req.depth.filter(|d| *d > 0 && *d != INFINITE_DEPTH) {
         let depth = usize::try_from(depth).unwrap_or(usize::MAX);
-        new_shallow = if req.deepen_relative {
-            match relative_deepen_depth(repo, wants, &req.client_shallow, depth) {
-                Some(target) => shallow_grafts_for_upload_pack_target_depth(
-                    repo,
-                    wants,
-                    &req.client_shallow,
-                    target,
-                ),
-                None => Vec::new(),
+        let depth = if req.deepen_relative {
+            match relative_deepen_depth_for_request(repo, wants, &req.client_shallow, depth) {
+                Some(d) => d,
+                None => return Ok(out),
             }
         } else {
-            shallow_grafts_for_upload_pack_deepen(repo, wants, &req.client_shallow, depth)
+            depth
         };
+        new_shallow =
+            shallow_grafts_for_upload_pack_deepen(repo, wants, &req.client_shallow, depth);
     } else if req.deepen_since.is_some() || !req.deepen_not.is_empty() {
         new_shallow = shallow_grafts_for_upload_pack_rev_list(
             repo,
@@ -114,6 +111,7 @@ pub(crate) fn compute_shallow_response(
         }
     }
 
+    out.have_shallow_grafts = client_set;
     out.pack_shallow_grafts = server_shallow;
     out.pack_shallow_grafts.extend(out.shallow.iter().copied());
     for oid in &req.client_shallow {
@@ -142,7 +140,8 @@ fn parents_in_repo(repo: &Repository, oid: ObjectId) -> crate::error::Result<boo
     Ok(true)
 }
 
-fn relative_deepen_depth(
+/// Mirrors Git `get_shallows_depth` + `deepen_relative` depth adjustment.
+pub(crate) fn relative_deepen_depth_for_request(
     repo: &Repository,
     wants: &[ObjectId],
     client_shallow: &[ObjectId],
