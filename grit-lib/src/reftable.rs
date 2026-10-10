@@ -1843,6 +1843,7 @@ struct CachedStackTables {
     readers: Vec<ReftableReader>,
 }
 
+// hygiene: process-wide reftable table cache keyed by tables.list identity (cleared on writes)
 static STACK_TABLE_CACHE: OnceLock<Mutex<HashMap<StackCacheKey, Arc<CachedStackTables>>>> =
     OnceLock::new();
 
