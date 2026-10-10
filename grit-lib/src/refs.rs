@@ -585,22 +585,17 @@ pub fn verify_ref_transaction_batch(
     git_dir: &Path,
     items: &[RefBatchItem],
 ) -> std::result::Result<(), RefnameUnavailable> {
-    let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
-    for i in 0..names.len() {
-        for j in (i + 1)..names.len() {
-            let (a, b) = (names[i], names[j]);
-            let (parent, child) = if refname_is_strict_prefix(a, b) {
-                (a, b)
-            } else if refname_is_strict_prefix(b, a) {
-                (b, a)
-            } else {
-                continue;
-            };
-            return Err(RefnameUnavailable::SameBatch {
-                refname: child.to_owned(),
-                other: parent.to_owned(),
-            });
-        }
+    if let Some((parent, child)) =
+        batch_refname_prefix_conflict(items.iter().map(|i| i.name.as_str()))
+    {
+        return Err(RefnameUnavailable::SameBatch {
+            refname: child,
+            other: parent,
+        });
+    }
+
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::verify_ref_transaction_batch_reftable(git_dir, items);
     }
 
     let extras: BTreeSet<String> = items.iter().map(|i| i.name.clone()).collect();
@@ -615,6 +610,24 @@ pub fn verify_ref_transaction_batch(
         verify_refname_available_for_create(git_dir, &item.name, &extras, &empty_skip)?;
     }
     Ok(())
+}
+
+/// First strict prefix conflict in a batch, if any (sorted adjacent scan).
+pub(crate) fn batch_refname_prefix_conflict<'a>(
+    names: impl Iterator<Item = &'a str>,
+) -> Option<(String, String)> {
+    let mut sorted: Vec<&str> = names.collect();
+    sorted.sort_unstable();
+    for pair in sorted.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if refname_is_strict_prefix(a, b) {
+            return Some((a.to_owned(), b.to_owned()));
+        }
+        if refname_is_strict_prefix(b, a) {
+            return Some((b.to_owned(), a.to_owned()));
+        }
+    }
+    None
 }
 
 fn refname_is_strict_prefix(parent: &str, child: &str) -> bool {

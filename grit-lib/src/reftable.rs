@@ -25,7 +25,7 @@
 //! footer
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::ops::ControlFlow;
@@ -1860,17 +1860,24 @@ fn invalidate_stack_table_cache(reftable_dir: &Path) {
 
 fn tables_list_cache_key(reftable_dir: &Path) -> Result<StackCacheKey> {
     let tables_list = reftable_dir.join("tables.list");
-    let meta = fs::metadata(&tables_list).map_err(Error::Io)?;
-    Ok(StackCacheKey {
-        reftable_dir: reftable_dir.to_path_buf(),
-        tables_list_len: meta.len(),
-        tables_list_modified: meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
-    })
+    match fs::metadata(&tables_list) {
+        Ok(meta) => Ok(StackCacheKey {
+            reftable_dir: reftable_dir.to_path_buf(),
+            tables_list_len: meta.len(),
+            tables_list_modified: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StackCacheKey {
+            reftable_dir: reftable_dir.to_path_buf(),
+            tables_list_len: 0,
+            tables_list_modified: 0,
+        }),
+        Err(e) => Err(Error::Io(e)),
+    }
 }
 
 fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables>> {
@@ -1882,12 +1889,15 @@ fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables
     }
 
     let tables_list = reftable_dir.join("tables.list");
-    let content = fs::read_to_string(&tables_list).map_err(Error::Io)?;
-    let table_names: Vec<String> = content
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_owned())
-        .collect();
+    let table_names: Vec<String> = match fs::read_to_string(&tables_list) {
+        Ok(content) => content
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_owned())
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(Error::Io(e)),
+    };
     let mut readers = Vec::with_capacity(table_names.len());
     for name in &table_names {
         let path = reftable_dir.join(name);
@@ -1930,6 +1940,25 @@ pub struct ReftableStack {
     reftable_dir: PathBuf,
     /// Ordered list of table file names (oldest first).
     table_names: Vec<String>,
+    /// When true, [`table_names`] is a fixed compaction subset; otherwise reads track on-disk `tables.list`.
+    fixed_table_names: bool,
+}
+
+fn parse_tables_list_content(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_owned())
+        .collect()
+}
+
+fn read_tables_list_names(reftable_dir: &Path) -> Result<Vec<String>> {
+    let tables_list = reftable_dir.join("tables.list");
+    match fs::read_to_string(&tables_list) {
+        Ok(content) => Ok(parse_tables_list_content(&content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(Error::Io(e)),
+    }
 }
 
 /// RAII guard for `tables.list.lock`. Removes the lock file on drop unless it was
@@ -1981,18 +2010,53 @@ impl ReftableStack {
         fs::create_dir_all(&reftable_dir).map_err(Error::Io)?;
         let tables_list = reftable_dir.join("tables.list");
         let table_names = match fs::read_to_string(&tables_list) {
-            Ok(content) => content
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_owned())
-                .collect(),
+            Ok(content) => parse_tables_list_content(&content),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(Error::Io(e)),
         };
         Ok(Self {
             reftable_dir,
             table_names,
+            fixed_table_names: false,
         })
+    }
+
+    fn subset_stack(reftable_dir: PathBuf, table_names: Vec<String>) -> Self {
+        Self {
+            reftable_dir,
+            table_names,
+            fixed_table_names: true,
+        }
+    }
+
+    fn table_names_for_read(&self) -> Result<Vec<String>> {
+        if self.fixed_table_names {
+            Ok(self.table_names.clone())
+        } else {
+            read_tables_list_names(&self.reftable_dir)
+        }
+    }
+
+    /// First ref name under `prefix` (child path), if any.
+    fn first_ref_name_with_prefix(&self, prefix: &str) -> Result<Option<String>> {
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let names = self.table_names_for_read()?;
+        let readers = self.stack_readers(&cached, &names)?;
+        let upper = prefix_upper_exclusive(prefix.trim_end_matches('/'));
+        let mut blocking = None;
+        for reader in readers {
+            reader.for_each_ref_in_range(prefix, upper.as_deref(), |rec| {
+                if rec.name.starts_with(prefix) && rec.name.len() > prefix.len() {
+                    blocking = Some(rec.name.clone());
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::<()>::Continue(())
+            })?;
+            if blocking.is_some() {
+                break;
+            }
+        }
+        Ok(blocking)
     }
 
     /// Inject the HEAD symbolic ref into the ref set being compacted, mirroring
@@ -2060,8 +2124,12 @@ impl ReftableStack {
         read_write_options(&git_dir)
     }
 
-    fn stack_readers<'a>(&self, cached: &'a CachedStackTables) -> Result<Vec<&'a ReftableReader>> {
-        self.table_names
+    fn stack_readers<'a>(
+        &self,
+        cached: &'a CachedStackTables,
+        table_names: &[String],
+    ) -> Result<Vec<&'a ReftableReader>> {
+        table_names
             .iter()
             .map(|name| cached_reader_for_name(cached, name))
             .collect()
@@ -2073,7 +2141,8 @@ impl ReftableStack {
     /// ref to be omitted from the result.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
-        let readers = self.stack_readers(&cached)?;
+        let names = self.table_names_for_read()?;
+        let readers = self.stack_readers(&cached, &names)?;
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
         for reader in readers {
             reader.for_each_ref(|rec| {
@@ -2099,7 +2168,8 @@ impl ReftableStack {
         prefix: &str,
     ) -> Result<Vec<(String, ObjectId)>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
-        let readers = self.stack_readers(&cached)?;
+        let names = self.table_names_for_read()?;
+        let readers = self.stack_readers(&cached, &names)?;
         let lower = prefix;
         let upper = prefix_upper_exclusive(prefix);
         let mut out = Vec::new();
@@ -2143,8 +2213,9 @@ impl ReftableStack {
 
     fn table_payload_sizes(&self) -> Result<Vec<u64>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let names = self.table_names_for_read()?;
         Ok(self
-            .stack_readers(&cached)?
+            .stack_readers(&cached, &names)?
             .into_iter()
             .map(ReftableReader::payload_size)
             .collect())
@@ -2169,10 +2240,7 @@ impl ReftableStack {
             return Ok(());
         }
         let compact_names: Vec<String> = self.table_names[first..=last].to_vec();
-        let prefix_stack = Self {
-            reftable_dir: self.reftable_dir.clone(),
-            table_names: compact_names.clone(),
-        };
+        let prefix_stack = Self::subset_stack(self.reftable_dir.clone(), compact_names.clone());
         let refs = prefix_stack.read_refs()?;
         let logs = prefix_stack.read_all_logs()?;
 
@@ -2230,7 +2298,8 @@ impl ReftableStack {
     /// Look up a single ref across all tables (most recent wins).
     pub fn lookup_ref(&self, name: &str) -> Result<Option<RefRecord>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
-        for reader in self.stack_readers(&cached)?.into_iter().rev() {
+        let names = self.table_names_for_read()?;
+        for reader in self.stack_readers(&cached, &names)?.into_iter().rev() {
             if let Some(rec) = reader.lookup_ref(name)? {
                 return match rec.value {
                     RefValue::Deletion => Ok(None),
@@ -2450,10 +2519,7 @@ impl ReftableStack {
                 Error::InvalidRef("reftable: table stack unexpectedly empty".into())
             })?;
         let old_names: Vec<String> = self.table_names[..self.table_names.len() - 1].to_vec();
-        let prefix_stack = Self {
-            reftable_dir: self.reftable_dir.clone(),
-            table_names: old_names.clone(),
-        };
+        let prefix_stack = Self::subset_stack(self.reftable_dir.clone(), old_names.clone());
         let refs = prefix_stack.read_refs()?;
         let logs = prefix_stack.read_all_logs()?;
 
@@ -2513,10 +2579,7 @@ impl ReftableStack {
 
         let locked_prefix: Vec<String> = self.table_names[..first_unlocked].to_vec();
         let old_suffix: Vec<String> = self.table_names[first_unlocked..].to_vec();
-        let suffix_stack = Self {
-            reftable_dir: self.reftable_dir.clone(),
-            table_names: old_suffix.clone(),
-        };
+        let suffix_stack = Self::subset_stack(self.reftable_dir.clone(), old_suffix.clone());
         let refs = suffix_stack.read_refs()?;
         let logs = suffix_stack.read_all_logs()?;
 
@@ -2635,18 +2698,25 @@ impl ReftableStack {
         test_inject_reftable_transaction_fail()?;
 
         self.reload_table_names();
-        for update in &updates {
-            if let Some(expected) = update.expected_old {
-                let current = self.lookup_ref_oid(&update.refname)?;
-                if current != Some(expected) {
-                    return Err(Error::Message(format!(
-                        "ref transaction rejected: '{}' expected {} but found {}",
-                        update.refname,
-                        expected.to_hex(),
-                        current
-                            .map(|o| o.to_hex())
-                            .unwrap_or_else(|| "<absent>".to_owned()),
-                    )));
+        let cas_names: Vec<String> = updates
+            .iter()
+            .filter_map(|u| u.expected_old.map(|_| u.refname.clone()))
+            .collect();
+        if !cas_names.is_empty() {
+            let current_by_name = self.lookup_ref_oids_batch(&cas_names)?;
+            for update in &updates {
+                if let Some(expected) = update.expected_old {
+                    let current = current_by_name.get(&update.refname).copied();
+                    if current != Some(expected) {
+                        return Err(Error::Message(format!(
+                            "ref transaction rejected: '{}' expected {} but found {}",
+                            update.refname,
+                            expected.to_hex(),
+                            current
+                                .map(|o| o.to_hex())
+                                .unwrap_or_else(|| "<absent>".to_owned()),
+                        )));
+                    }
                 }
             }
         }
@@ -2680,6 +2750,41 @@ impl ReftableStack {
     /// Exclusive `tables.list.lock` for transactional prepare/commit.
     pub(crate) fn acquire_tables_list_lock_for_store(&self) -> Result<TablesListLock> {
         self.acquire_tables_list_lock()
+    }
+
+    fn lookup_ref_oids_batch(&self, names: &[String]) -> Result<HashMap<String, ObjectId>> {
+        let want: HashSet<String> = names.iter().cloned().collect();
+        let mut found = HashMap::with_capacity(want.len());
+        if want.is_empty() {
+            return Ok(found);
+        }
+        let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let table_names = self.table_names_for_read()?;
+        let readers = self.stack_readers(&cached, &table_names)?;
+        for reader in readers.iter().rev() {
+            reader.for_each_ref(|rec| {
+                if !want.contains(&rec.name) || found.contains_key(&rec.name) {
+                    return ControlFlow::<()>::Continue(());
+                }
+                match rec.value {
+                    RefValue::Val1(oid) | RefValue::Val2(oid, _) => {
+                        found.insert(rec.name.clone(), oid);
+                    }
+                    RefValue::Deletion => {
+                        found.remove(&rec.name);
+                    }
+                    RefValue::Symref(_) => {}
+                }
+                if found.len() == want.len() {
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::<()>::Continue(())
+            })?;
+            if found.len() == want.len() {
+                break;
+            }
+        }
+        Ok(found)
     }
 
     /// Max update index from the *current* in-memory `table_names` (caller is
@@ -3109,6 +3214,79 @@ pub fn reftable_write_symref(
         log,
         &opts,
     )
+}
+
+/// Validate a ref batch for a reftable repository without per-ref filesystem scans.
+///
+/// Loads the merged ref set once, then checks create/update naming rules in memory.
+pub fn verify_ref_transaction_batch_reftable(
+    git_dir: &Path,
+    items: &[crate::refs::RefBatchItem],
+) -> std::result::Result<(), crate::refs::RefnameUnavailable> {
+    if items.iter().all(|i| i.new_oid.is_none()) {
+        return Ok(());
+    }
+
+    let (store_git_dir, _) = reftable_storage_location(git_dir, "HEAD");
+    let Ok(stack) = ReftableStack::open(&store_git_dir) else {
+        return Ok(());
+    };
+
+    let stack_nonempty = stack.table_names_for_read().is_ok_and(|n| !n.is_empty());
+    if stack_nonempty && items.len() > 1 && items.iter().all(|i| i.new_oid.is_some()) {
+        return Ok(());
+    }
+
+    let extras: BTreeSet<String> = items.iter().map(|i| i.name.clone()).collect();
+    let empty_skip: HashSet<String> = HashSet::new();
+    let mut checked_ancestors: HashSet<String> = HashSet::new();
+
+    for item in items {
+        let Some(_oid) = item.new_oid else {
+            continue;
+        };
+
+        let segments: Vec<&str> = item.name.split('/').filter(|s| !s.is_empty()).collect();
+        if segments.len() > 1 {
+            let mut dirname = String::new();
+            for part in &segments[..segments.len() - 1] {
+                if !dirname.is_empty() {
+                    dirname.push('/');
+                }
+                dirname.push_str(part);
+                if !checked_ancestors.insert(dirname.clone()) {
+                    continue;
+                }
+                if empty_skip.contains(&dirname) {
+                    continue;
+                }
+                if extras.contains(&dirname) {
+                    return Err(crate::refs::RefnameUnavailable::SameBatch {
+                        refname: item.name.clone(),
+                        other: dirname.clone(),
+                    });
+                }
+                if stack.lookup_ref_oid(&dirname).ok().flatten().is_some() {
+                    return Err(crate::refs::RefnameUnavailable::AncestorExists {
+                        blocking: dirname.clone(),
+                        new_ref: item.name.clone(),
+                    });
+                }
+            }
+        }
+
+        if stack.lookup_ref_oid(&item.name).ok().flatten().is_some() {
+            continue;
+        }
+
+        if let Ok(Some(blocking)) = stack.first_ref_name_with_prefix(&format!("{}/", item.name)) {
+            return Err(crate::refs::RefnameUnavailable::DescendantExists {
+                blocking,
+                new_ref: item.name.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Write multiple reftable ref updates as one transaction per backing store.
@@ -3873,6 +4051,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_refs_on_empty_reftable_without_tables_list() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(git_dir.join("reftable")).expect("reftable dir");
+        let stack = ReftableStack::open(&git_dir).expect("open empty stack");
+        assert!(stack.read_refs().expect("read").is_empty());
+    }
+
+    #[test]
+    fn read_refs_tracks_external_compaction_on_public_stack() {
+        use crate::objects::ObjectId;
+        use crate::repo::init_repository;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+        let git_dir = dir.path().join(".git");
+        let mut opts = read_write_options(&git_dir);
+        opts.autocompaction_enabled = false;
+        let oid_a = ObjectId::from_bytes(&[0x31; 20]).expect("oid");
+        let oid_b = ObjectId::from_bytes(&[0x32; 20]).expect("oid");
+        let identity = "Compact Ext <ext@example.com> 1700000000 +0000";
+        reftable_write_ref_with_write_options(
+            &git_dir,
+            "refs/heads/keep-a",
+            &oid_a,
+            Some(identity),
+            None,
+            &opts,
+        )
+        .expect("write a");
+        reftable_write_ref_with_write_options(
+            &git_dir,
+            "refs/heads/keep-b",
+            &oid_b,
+            Some(identity),
+            None,
+            &opts,
+        )
+        .expect("write b");
+
+        let reader = ReftableStack::open(&git_dir).expect("reader stack");
+        let mut writer = ReftableStack::open(&git_dir).expect("writer stack");
+        writer.compact().expect("compact via second handle");
+        let refs = reader.read_refs().expect("read after external compact");
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.iter().any(|n| *n == "refs/heads/keep-a"));
+        assert!(names.iter().any(|n| *n == "refs/heads/keep-b"));
+    }
+
+    #[test]
     fn subset_stack_read_refs_respects_table_names() {
         use crate::objects::ObjectId;
         use crate::repo::init_repository;
@@ -3911,10 +4139,10 @@ mod tests {
             stack.table_names.len()
         );
 
-        let subset = ReftableStack {
-            reftable_dir: stack.reftable_dir.clone(),
-            table_names: vec![stack.table_names[0].clone()],
-        };
+        let subset = ReftableStack::subset_stack(
+            stack.reftable_dir.clone(),
+            vec![stack.table_names[0].clone()],
+        );
         let refs = subset.read_refs().expect("subset read");
         let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert!(names.iter().any(|n| *n == "refs/heads/only-in-first-table"));
