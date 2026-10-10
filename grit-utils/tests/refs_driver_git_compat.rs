@@ -22,7 +22,7 @@ fn git_env(cmd: &mut Command) {
         .env("GIT_CONFIG_SYSTEM", "/dev/null");
 }
 
-fn init_refs_fixture(git: &Path, dir: &Path) {
+fn init_refs_fixture(git: &Path, dir: &Path, start_index: usize) {
     std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
     assert!(Command::new(git)
         .args([
@@ -55,15 +55,20 @@ fn init_refs_fixture(git: &Path, dir: &Path) {
         use std::io::Write;
         let stdin = child.stdin.as_mut().unwrap();
         for i in 0..REF_COUNT {
-            writeln!(stdin, "create refs/heads/b{i:05} {commit_oid}").unwrap();
+            writeln!(
+                stdin,
+                "create refs/heads/b{:05} {commit_oid}",
+                start_index + i
+            )
+            .unwrap();
         }
     }
     assert!(child.wait().unwrap().success());
 }
 
-fn git_for_each_ref(git: &Path, dir: &Path) -> Vec<u8> {
+fn git_for_each_ref(git: &Path, dir: &Path, pattern: &[&str]) -> Vec<u8> {
     let mut cmd = Command::new(git);
-    cmd.args(["for-each-ref"]).current_dir(dir);
+    cmd.arg("for-each-ref").args(pattern).current_dir(dir);
     git_env(&mut cmd);
     let out = cmd.output().unwrap();
     assert!(
@@ -74,11 +79,16 @@ fn git_for_each_ref(git: &Path, dir: &Path) -> Vec<u8> {
     out.stdout
 }
 
-fn grit_for_each_ref(dir: &Path) -> Vec<u8> {
-    let out = Command::new(bench_exe())
-        .args(["refs-driver", "for-each-ref", dir.to_str().unwrap()])
-        .output()
-        .unwrap();
+fn grit_for_each_ref(dir: &Path, pattern: Option<&str>) -> Vec<u8> {
+    let mut args = vec![
+        "refs-driver".to_string(),
+        "for-each-ref".to_string(),
+        dir.to_string_lossy().into_owned(),
+    ];
+    if let Some(p) = pattern {
+        args.push(p.to_string());
+    }
+    let out = Command::new(bench_exe()).args(&args).output().unwrap();
     assert!(
         out.status.success(),
         "{}",
@@ -93,8 +103,33 @@ fn refs_driver_for_each_ref_matches_git_on_1k_fixture() {
     let root = TempDir::new().unwrap();
     let repo = root.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
-    init_refs_fixture(&git, &repo);
-    let git_out = git_for_each_ref(&git, &repo);
-    let grit_out = grit_for_each_ref(&repo);
+    init_refs_fixture(&git, &repo, 0);
+    let git_out = git_for_each_ref(&git, &repo, &[]);
+    let grit_out = grit_for_each_ref(&repo, None);
     assert_eq!(grit_out, git_out);
+}
+
+#[test]
+fn refs_driver_for_each_ref_prefix_b05_matches_git() {
+    let git = system_git();
+    let root = TempDir::new().unwrap();
+    let repo = root.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    init_refs_fixture(&git, &repo, 5000);
+    let pattern = "refs/heads/b05*";
+    let git_out = git_for_each_ref(&git, &repo, &[pattern]);
+    let grit_out = grit_for_each_ref(&repo, Some(pattern));
+    assert_eq!(
+        grit_out, git_out,
+        "for-each-ref {pattern} must match git byte-for-byte"
+    );
+    let line_count = std::str::from_utf8(&git_out)
+        .expect("utf-8")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .count();
+    assert_eq!(
+        line_count, REF_COUNT,
+        "expected {REF_COUNT} refs for {pattern}"
+    );
 }
