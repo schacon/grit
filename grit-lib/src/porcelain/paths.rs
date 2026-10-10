@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
     diff_index_to_tree, diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions, DiffStatus,
@@ -121,7 +121,8 @@ pub fn remove_paths(repo: &Repository, opts: &RemoveOptions) -> Result<RemoveOut
 ///
 /// # Errors
 ///
-/// Returns [`Error::Message`] for untracked sources or invalid destinations, or I/O failures.
+/// Returns [`Error::InvalidPath`] when `src` or `dst` is absolute or contains `..`,
+/// [`Error::Message`] for untracked sources or invalid destinations, or I/O failures.
 pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result<MoveOutcome> {
     let work_tree = repo
         .work_tree
@@ -169,13 +170,10 @@ pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result
     }
 
     let force_clear_worktree = if force {
-        Some(worktree_paths_to_clear(work_tree, &index, &final_dst))
+        worktree_paths_to_clear(work_tree, &index, &final_dst)
     } else {
-        None
+        Vec::new()
     };
-    if force {
-        clear_destination_index(&mut index, &final_dst);
-    }
 
     let old_paths: Vec<Vec<u8>> = renames
         .iter()
@@ -189,21 +187,26 @@ pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result
         new_entries.push(entry_with_relpath(old.clone(), to));
     }
 
+    let cleared_backup = if force && !force_clear_worktree.is_empty() {
+        backup_and_remove_worktree_paths(work_tree, &force_clear_worktree)?
+    } else {
+        Vec::new()
+    };
+
+    if let Err(err) = rename_worktree_paths(work_tree, &src, &final_dst, &renames) {
+        restore_worktree_backups(work_tree, &cleared_backup)?;
+        return Err(err);
+    }
+
+    if force {
+        clear_destination_index(&mut index, &final_dst);
+    }
+
     let old_refs: Vec<&[u8]> = old_paths.iter().map(|p| p.as_slice()).collect();
     index.remove_paths_and_insert(old_refs, new_entries);
 
     repo.flush_index_update(&mut lock, &mut index)?;
-
-    let worktree_result = (|| -> Result<()> {
-        if let Some(paths) = force_clear_worktree {
-            remove_worktree_paths(work_tree, &paths)?;
-        }
-        rename_worktree_paths(work_tree, &src, &final_dst, &renames)
-    })();
-    match worktree_result {
-        Ok(()) => repo.finish_index_update(&mut lock, true)?,
-        Err(err) => return Err(err),
-    }
+    repo.finish_index_update(&mut lock, true)?;
 
     Ok(MoveOutcome {
         from: src,
@@ -346,43 +349,200 @@ fn path_or_ancestor_modified(path: &str, modified: &HashSet<String>) -> bool {
         .any(|m| m.starts_with(path) && m.as_bytes().get(path.len()) == Some(&b'/'))
 }
 
-fn normalize_repo_path(path: &str) -> String {
-    path.trim_start_matches("./").replace('\\', "/")
+#[derive(Debug, Clone)]
+enum WorktreePathBackup {
+    File {
+        rel: String,
+        bytes: Vec<u8>,
+        #[cfg(unix)]
+        mode: u32,
+    },
+    Symlink {
+        rel: String,
+        target: PathBuf,
+    },
 }
 
-fn normalize_and_validate_repo_relative(work_tree: &Path, path: &str) -> Result<String> {
-    let cleaned = path.trim_start_matches("./").replace('\\', "/");
-    if cleaned.is_empty() {
-        return Err(Error::PathError("empty path".into()));
+impl WorktreePathBackup {
+    fn rel(&self) -> &str {
+        match self {
+            Self::File { rel, .. } | Self::Symlink { rel, .. } => rel,
+        }
+    }
+}
+
+fn snapshot_worktree_path(work_tree: &Path, path: &str) -> Result<Option<WorktreePathBackup>> {
+    let abs = work_tree.join(path);
+    if abs.is_symlink() {
+        let target = fs::read_link(&abs)
+            .map_err(|e| Error::PathError(format!("reading symlink '{path}': {e}")))?;
+        return Ok(Some(WorktreePathBackup::Symlink {
+            rel: path.to_string(),
+            target,
+        }));
+    }
+    if abs.is_file() {
+        let bytes =
+            fs::read(&abs).map_err(|e| Error::PathError(format!("reading '{path}': {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&abs)
+                .map_err(|e| Error::PathError(format!("reading metadata for '{path}': {e}")))?
+                .permissions()
+                .mode()
+                & 0o7777;
+            return Ok(Some(WorktreePathBackup::File {
+                rel: path.to_string(),
+                bytes,
+                mode,
+            }));
+        }
+        #[cfg(not(unix))]
+        {
+            return Ok(Some(WorktreePathBackup::File {
+                rel: path.to_string(),
+                bytes,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn remove_backed_up_worktree_path(work_tree: &Path, backup: &WorktreePathBackup) -> Result<()> {
+    let path = backup.rel();
+    let abs = work_tree.join(path);
+    fs::remove_file(&abs).map_err(|e| Error::PathError(format!("removing '{path}': {e}")))?;
+    remove_empty_parent_dirs(work_tree, &abs);
+    Ok(())
+}
+
+fn backup_and_remove_worktree_paths(
+    work_tree: &Path,
+    paths: &[String],
+) -> Result<Vec<WorktreePathBackup>> {
+    let mut snapshots = Vec::with_capacity(paths.len());
+    for path in paths {
+        if let Some(backup) = snapshot_worktree_path(work_tree, path)? {
+            snapshots.push(backup);
+        }
     }
 
-    let rel = if cleaned.starts_with('/') {
-        let normalized = crate::git_path::normalize_path_copy(&cleaned).map_err(|_| {
-            Error::PathError(format!("path '{path}' escapes repository work tree"))
-        })?;
-        crate::git_path::abspath_part_inside_repo(&normalized, work_tree).ok_or_else(|| {
-            Error::PathError(format!("path '{path}' is outside repository work tree"))
-        })?
-    } else {
-        crate::git_path::normalize_path_copy(&cleaned).map_err(|_| {
-            Error::PathError(format!("path '{path}' escapes repository work tree"))
-        })?
-    };
+    let mut removed: Vec<WorktreePathBackup> = Vec::new();
+    for backup in &snapshots {
+        match remove_backed_up_worktree_path(work_tree, backup) {
+            Ok(()) => removed.push(backup.clone()),
+            Err(err) => {
+                let _ = restore_worktree_backups(work_tree, &removed);
+                return Err(err);
+            }
+        }
+    }
+    Ok(snapshots)
+}
 
+fn restore_worktree_backups(work_tree: &Path, backups: &[WorktreePathBackup]) -> Result<()> {
+    for backup in backups {
+        match backup {
+            WorktreePathBackup::File {
+                rel,
+                bytes,
+                #[cfg(unix)]
+                mode,
+            } => {
+                let abs = work_tree.join(rel);
+                if let Some(parent) = abs.parent() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        Error::PathError(format!("creating parent for '{rel}': {e}"))
+                    })?;
+                }
+                fs::write(&abs, bytes)
+                    .map_err(|e| Error::PathError(format!("restoring '{rel}': {e}")))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = fs::metadata(&abs)
+                        .map_err(|e| {
+                            Error::PathError(format!("reading metadata for '{rel}': {e}"))
+                        })?
+                        .permissions();
+                    perms.set_mode(*mode);
+                    fs::set_permissions(&abs, perms).map_err(|e| {
+                        Error::PathError(format!("restoring mode for '{rel}': {e}"))
+                    })?;
+                }
+            }
+            #[cfg(not(unix))]
+            WorktreePathBackup::File { rel, bytes } => {
+                let abs = work_tree.join(rel);
+                if let Some(parent) = abs.parent() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        Error::PathError(format!("creating parent for '{rel}': {e}"))
+                    })?;
+                }
+                fs::write(&abs, bytes)
+                    .map_err(|e| Error::PathError(format!("restoring '{rel}': {e}")))?;
+            }
+            WorktreePathBackup::Symlink { rel, target } => {
+                let abs = work_tree.join(rel);
+                if let Some(parent) = abs.parent() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        Error::PathError(format!("creating parent for '{rel}': {e}"))
+                    })?;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::symlink;
+                    symlink(target, &abs)
+                        .map_err(|e| Error::PathError(format!("restoring symlink '{rel}': {e}")))?;
+                }
+                #[cfg(not(unix))]
+                {
+                    return Err(Error::Message(format!(
+                        "cannot restore symlink '{rel}' on this platform"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Normalize a repository-relative path for rm/mv, rejecting escapes and absolutes.
+///
+/// Absolute paths (including paths inside the work tree) and any `..` segment
+/// are rejected before normalization so callers cannot bypass prefix checks.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidPath`] when `path` is empty, absolute, or contains `..`.
+fn normalize_and_validate_repo_relative(_work_tree: &Path, path: &str) -> Result<String> {
+    if path.is_empty() {
+        return Err(Error::InvalidPath("empty path".into()));
+    }
+    if Path::new(path).is_absolute() {
+        return Err(Error::InvalidPath(format!(
+            "'{path}' is outside repository"
+        )));
+    }
+    let with_slashes = path.replace('\\', "/");
+    if with_slashes.starts_with('/') {
+        return Err(Error::InvalidPath(format!(
+            "'{path}' is outside repository"
+        )));
+    }
+    for component in Path::new(&with_slashes).components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(Error::InvalidPath(format!(
+                "'{path}' is outside repository"
+            )));
+        }
+    }
+    let rel = with_slashes.trim_start_matches("./");
     if rel.is_empty() {
-        return Err(Error::PathError(format!(
-            "path '{path}' is outside repository work tree"
-        )));
+        return Err(Error::InvalidPath("empty path".into()));
     }
-
-    let abs = work_tree.join(&rel);
-    if crate::git_path::strip_worktree_prefix(&abs, work_tree).is_none() {
-        return Err(Error::PathError(format!(
-            "path '{path}' is outside repository work tree"
-        )));
-    }
-
-    Ok(rel)
+    Ok(rel.to_string())
 }
 
 fn index_paths_under(index: &Index, prefix: &str, include_exact: bool) -> Vec<String> {
@@ -459,18 +619,6 @@ fn clear_destination_index(index: &mut Index, dst: &str) {
     } else {
         index.remove_paths(paths.iter().map(|p| p.as_bytes()));
     }
-}
-
-fn remove_worktree_paths(work_tree: &Path, paths: &[String]) -> Result<()> {
-    for path in paths {
-        let abs = work_tree.join(path);
-        if abs.is_file() || abs.is_symlink() {
-            fs::remove_file(&abs)
-                .map_err(|e| Error::PathError(format!("removing '{path}': {e}")))?;
-            remove_empty_parent_dirs(work_tree, &abs);
-        }
-    }
-    Ok(())
 }
 
 fn is_subdirectory(candidate: &str, parent_dir: &str) -> bool {
@@ -576,6 +724,36 @@ fn entry_with_relpath(mut entry: IndexEntry, path: &str) -> IndexEntry {
     let path_len = entry.path.len().min(0xFFF) as u16;
     entry.flags = (entry.flags & !0x0FFF) | path_len;
     entry
+}
+
+#[cfg(test)]
+mod path_validation_tests {
+    use super::normalize_and_validate_repo_relative;
+    use crate::error::Error;
+
+    #[test]
+    fn rejects_absolute_paths() {
+        let wt = std::env::temp_dir();
+        let err =
+            normalize_and_validate_repo_relative(&wt, "/tmp/repo/destination").expect_err("abs");
+        assert!(matches!(err, Error::InvalidPath(_)));
+    }
+
+    #[test]
+    fn rejects_internal_parent_components() {
+        let wt = std::env::temp_dir();
+        let err = normalize_and_validate_repo_relative(&wt, "dir/../source").expect_err("..");
+        assert!(matches!(err, Error::InvalidPath(_)));
+    }
+
+    #[test]
+    fn accepts_simple_relative_paths() {
+        let wt = std::env::temp_dir();
+        assert_eq!(
+            normalize_and_validate_repo_relative(&wt, "./nested/file.txt").expect("ok"),
+            "nested/file.txt"
+        );
+    }
 }
 
 #[cfg(test)]

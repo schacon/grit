@@ -353,7 +353,7 @@ fn mv_rejects_destination_outside_work_tree() {
 
     let repo = grit_repo(repo_dir);
     let err = move_path(&repo, "tracked", "../escaped", false).expect_err("mv outside repo");
-    assert!(matches!(err, grit_lib::error::Error::PathError(_)));
+    assert!(matches!(err, grit_lib::error::Error::InvalidPath(_)));
     assert!(repo_dir.join("tracked").is_file());
     let index = repo.load_index().expect("index");
     assert!(index.get("tracked".as_bytes(), 0).is_some());
@@ -442,6 +442,167 @@ fn mv_force_refused_when_index_lock_held_externally() {
     assert_eq!(index_before.entries(), index_after.entries());
     assert!(index_after.get("source".as_bytes(), 0).is_some());
     assert!(index_after.get("destination".as_bytes(), 0).is_some());
+}
+
+#[test]
+fn mv_rejects_in_repo_absolute_destination() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo_dir.join("source"), "payload\n").unwrap();
+    std::fs::write(repo_dir.join("destination"), "dest\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let repo = grit_repo(repo_dir);
+    let abs_dst = repo_dir.join("destination");
+    let err = move_path(&repo, "source", abs_dst.to_str().expect("utf8 path"), false)
+        .expect_err("absolute destination");
+    assert!(matches!(err, grit_lib::error::Error::InvalidPath(_)));
+
+    assert!(repo_dir.join("source").is_file());
+    assert!(repo_dir.join("destination").is_file());
+    assert!(
+        git_porcelain(repo_dir).trim().is_empty(),
+        "index must be unchanged:\n{}",
+        git_porcelain(repo_dir)
+    );
+}
+
+#[test]
+fn mv_rejects_parent_component_in_source() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(repo_dir.join("dir")).unwrap();
+    std::fs::write(repo_dir.join("source"), "payload\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let repo = grit_repo(repo_dir);
+    let err = move_path(&repo, "dir/../source", "moved", false).expect_err(".. source");
+    assert!(matches!(err, grit_lib::error::Error::InvalidPath(_)));
+
+    assert!(repo_dir.join("source").is_file());
+    assert!(!repo_dir.join("moved").exists());
+    assert!(
+        git_porcelain(repo_dir).trim().is_empty(),
+        "index must be unchanged:\n{}",
+        git_porcelain(repo_dir)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn mv_force_failure_restores_destination_and_index() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(repo_dir.join("locked")).unwrap();
+    std::fs::write(repo_dir.join("locked/source"), "from\n").unwrap();
+    std::fs::write(repo_dir.join("destination"), "to\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let mut perms = std::fs::metadata(repo_dir.join("locked"))
+        .expect("locked meta")
+        .permissions();
+    perms.set_mode(0o555);
+    std::fs::set_permissions(repo_dir.join("locked"), perms).expect("chmod locked");
+
+    let repo = grit_repo(repo_dir);
+    let err = move_path(&repo, "locked/source", "destination", true).expect_err("forced mv");
+    assert!(
+        matches!(err, grit_lib::error::Error::PathError(_)),
+        "unexpected error: {err:?}"
+    );
+
+    assert!(repo_dir.join("locked/source").is_file());
+    assert!(repo_dir.join("destination").is_file());
+    assert!(
+        git_porcelain(repo_dir).trim().is_empty(),
+        "index and worktree must match pre-mv state:\n{}",
+        git_porcelain(repo_dir)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn mv_force_failure_restores_executable_destination_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(repo_dir.join("locked")).unwrap();
+    std::fs::write(repo_dir.join("locked/source"), "from\n").unwrap();
+    std::fs::write(repo_dir.join("destination"), "#!/bin/sh\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut dest_mode = std::fs::metadata(repo_dir.join("destination"))
+            .expect("destination meta")
+            .permissions();
+        dest_mode.set_mode(0o755);
+        std::fs::set_permissions(repo_dir.join("destination"), dest_mode)
+            .expect("chmod destination");
+    }
+    commit_all(repo_dir, "init");
+
+    let mut locked_mode = std::fs::metadata(repo_dir.join("locked"))
+        .expect("locked meta")
+        .permissions();
+    locked_mode.set_mode(0o555);
+    std::fs::set_permissions(repo_dir.join("locked"), locked_mode).expect("chmod locked");
+
+    let repo = grit_repo(repo_dir);
+    move_path(&repo, "locked/source", "destination", true).expect_err("forced mv");
+
+    let mode = std::fs::metadata(repo_dir.join("destination"))
+        .expect("destination meta")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o755, "executable bit must be preserved on rollback");
+    assert!(
+        git_porcelain(repo_dir).trim().is_empty(),
+        "worktree must be clean after rollback:\n{}",
+        git_porcelain(repo_dir)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn mv_force_partial_destination_cleanup_restores_removed_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(repo_dir.join("source")).unwrap();
+    std::fs::write(repo_dir.join("source/root.txt"), "root\n").unwrap();
+    std::fs::create_dir_all(repo_dir.join("target/source")).unwrap();
+    std::fs::write(repo_dir.join("target/source/a"), "a\n").unwrap();
+    std::fs::create_dir_all(repo_dir.join("target/source/locked")).unwrap();
+    std::fs::write(repo_dir.join("target/source/locked/b"), "b\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let mut locked_mode = std::fs::metadata(repo_dir.join("target/source/locked"))
+        .expect("locked meta")
+        .permissions();
+    locked_mode.set_mode(0o555);
+    std::fs::set_permissions(repo_dir.join("target/source/locked"), locked_mode)
+        .expect("chmod locked");
+
+    let repo = grit_repo(repo_dir);
+    move_path(&repo, "source", "target", true).expect_err("forced mv into occupied tree");
+
+    assert!(repo_dir.join("target/source/a").is_file());
+    assert!(repo_dir.join("target/source/locked/b").is_file());
+    assert!(repo_dir.join("source/root.txt").is_file());
+    assert!(
+        git_porcelain(repo_dir).trim().is_empty(),
+        "index and worktree must be unchanged:\n{}",
+        git_porcelain(repo_dir)
+    );
 }
 
 #[test]
