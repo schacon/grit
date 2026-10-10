@@ -209,12 +209,18 @@ No GitHub issues were filed from this factory run (`file_bug_report` is dogfoodi
 
 ### Refs
 
-The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. The committed baseline is **`grit-utils/baselines/refs-after.json`** (files-backend listing and batch `update-ref` optimizations on the 100k-ref fixtures).
+The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. Initial packed/loose listing baselines are in **`grit-utils/baselines/refs-before.json`**; files-backend listing and batch **`update-ref`** optimizations on the 100k-ref fixtures are in **`grit-utils/baselines/refs-after.json`**; reftable timings (Git **≥ 2.45**) are in **`grit-utils/baselines/refs-after-reftable.json`**.
+
+Criterion micro-benchmarks for the reftable backend: **`cargo bench -p grit-lib --bench refs_reftable`** (`for_each_ref_100k`, `prefix_seek`, `transaction_create_10k`).
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
+GRIT_BENCH_BRANCH=factory/refs-bench-774 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-before.json
 GRIT_BENCH_BRANCH=factory/files-refs-perf-782 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-after.json
+GRIT_BENCH_BRANCH=factory/reftable-refs-perf-783 GRIT_BENCH_REFS_ONLY=reftable ./target/release/grit-bench refs --git "$(command -v git)" --format json --output grit-utils/baselines/refs-after-reftable.json
 ```
+
+Use a **≥ 2.45** system **`git`** (or an explicit `--git` path) when refreshing the reftable baseline; older git skips the reftable fixture.
 
 Set `GRIT_BENCH_BRANCH` to the GitButler branch you are benchmarking so `grit_commit` in the JSON matches that branch tip (required on `gitbutler/workspace` checkouts).
 
@@ -232,17 +238,6 @@ cargo build --release -p grit-cli -p grit-utils
 ```
 
 **Measured outcomes:** the Object reads table below is generated from committed `grit-utils/baselines/odb-read.json` (hyperfine **≥5** runs per scenario, grit vs system git medians and peak RSS). Refresh with two invocations and `grit-bench compare run1.json run2.json --tolerance 0.10` before updating the baseline file and running `make docs`.
-
-### Refs
-
-The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. The committed baseline is **`grit-utils/baselines/refs-after.json`**.
-
-Reproduce:
-
-```bash
-cargo build --release -p grit-cli -p grit-utils
-./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-after.json
-```
 
 ## grit-bench: network (clone, fetch, push, ls-remote)
 
