@@ -3,18 +3,16 @@
 //! Holds object metadata (not payloads) during planning; reads object bytes from the
 //! [`Odb`] on demand when encoding.
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
-use crate::delta_encode::encode_prefix_extension_delta;
+use crate::delta_encode::{encode_prefix_extension_delta, DeltaIndex};
 use crate::error::{Error, Result};
 use crate::hash::HashingWriter;
-use crate::objects::{parse_commit, parse_tag, parse_tree, HashAlgo, Object, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::repo::Repository;
 use crate::rev_list::ObjectFilter;
@@ -120,22 +118,28 @@ impl PackBuildOptions {
 }
 
 /// Extended options for [`PackObjects`].
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct PackObjectsOptions {
     /// Core pack-objects behaviour flags.
     pub build: PackBuildOptions,
-    /// Override parallel delta-search workers (`None` = resolve [`crate::parallel::ParallelOp::PackDeltaSearch`] / `pack.threads`).
-    pub search_threads: Option<usize>,
-    /// Override parallel pack-write workers (`None` = resolve [`crate::parallel::ParallelOp::PackWrite`] / `pack.threads` from the repo config attached to the [`Odb`]).
-    pub write_threads: Option<usize>,
+    /// Parallel delta-search worker threads (`1` = single-threaded, the default).
+    pub delta_threads: usize,
+}
+
+impl Default for PackObjectsOptions {
+    fn default() -> Self {
+        Self {
+            build: PackBuildOptions::default(),
+            delta_threads: 1,
+        }
+    }
 }
 
 impl From<PackBuildOptions> for PackObjectsOptions {
     fn from(build: PackBuildOptions) -> Self {
         Self {
             build,
-            search_threads: None,
-            write_threads: None,
+            delta_threads: 1,
         }
     }
 }
@@ -149,6 +153,14 @@ pub struct PackStats {
     pub pack_bytes: u64,
     /// Objects written as `OFS_DELTA` or `REF_DELTA`.
     pub delta_count: u32,
+    /// Pack body bytes copied verbatim from an existing on-disk pack (reuse path).
+    pub verbatim_reuse_bytes: u64,
+    /// Objects emitted via verbatim pack reuse (whole or delta copy/rewrite).
+    pub verbatim_reuse_objects: u32,
+    /// Delta entries whose OFS base distance was rewritten for the output pack.
+    pub pack_ofs_fixup_objects: u32,
+    /// OFS deltas converted to REF deltas for thin packs.
+    pub pack_ref_from_ofs_objects: u32,
 }
 
 /// Progress hook for long pack builds.
@@ -286,7 +298,6 @@ impl<'a> PackObjects<'a> {
             &have_closure,
             &opts,
             &selection.blob_name_hashes,
-            self.opts.search_threads,
         )?;
         self.fire(PackProgress::PlannedDeltas);
         write_delta_pack_stream(self.source_odb, &plan, &opts, w, None)
@@ -399,6 +410,23 @@ pub fn write_upload_pack_stream(
     progress: &mut dyn FnMut(PackProgress),
     w: &mut dyn Write,
 ) -> Result<PackStats> {
+    if filter.is_some() {
+        let pack = build_pack_with_shallow_and_filter(
+            repo.odb(),
+            wants,
+            haves,
+            have_shallow,
+            source_shallow,
+            filter,
+            opts,
+        )?;
+        let len = pack.len() as u64;
+        w.write_all(&pack).map_err(Error::Io)?;
+        return Ok(PackStats {
+            pack_bytes: len,
+            ..PackStats::default()
+        });
+    }
     if opts.use_bitmaps {
         if let Some(stats) = crate::pack_reuse::try_write_streaming_pack(
             repo,
@@ -414,7 +442,7 @@ pub fn write_upload_pack_stream(
         }
     }
     let _ = progress;
-    PackObjects::new(&repo.odb, PackObjectsOptions::from(*opts))
+    PackObjects::new(repo.odb(), PackObjectsOptions::from(*opts))
         .wants(wants)
         .haves(haves)
         .source_shallow_grafts(source_shallow)
@@ -477,6 +505,10 @@ fn write_whole_object_pack_stream(
         object_count: count,
         pack_bytes: counted.bytes(),
         delta_count: 0,
+        verbatim_reuse_bytes: 0,
+        verbatim_reuse_objects: 0,
+        pack_ofs_fixup_objects: 0,
+        pack_ref_from_ofs_objects: 0,
     })
 }
 
@@ -495,12 +527,16 @@ pub(crate) fn write_delta_pack_stream(
     let counted = ByteCountWriter::new(w);
     let mut hasher = HashingWriter::new(algo, counted);
     write_pack_header(&mut hasher, count)?;
-    write_planned_entries(&mut hasher, odb, plan, opts, 12, reuse)?;
+    let reuse_stats = write_planned_entries(&mut hasher, odb, plan, opts, 12, reuse)?;
     let (counted, _) = hasher.finish().map_err(Error::Io)?;
     Ok(PackStats {
         object_count: count,
         pack_bytes: counted.bytes(),
         delta_count,
+        verbatim_reuse_bytes: reuse_stats.verbatim_reuse_bytes,
+        verbatim_reuse_objects: reuse_stats.verbatim_reuse_objects,
+        pack_ofs_fixup_objects: reuse_stats.pack_ofs_fixup_objects,
+        pack_ref_from_ofs_objects: reuse_stats.pack_ref_from_ofs_objects,
     })
 }
 
@@ -538,7 +574,7 @@ fn write_planned_entries(
     opts: &PackBuildOptions,
     pack_body_start: u64,
     mut reuse: Option<&mut crate::pack_reuse::StreamingReuse>,
-) -> Result<()> {
+) -> Result<crate::pack_reuse::ReuseWriteStats> {
     let algo = odb.hash_algo();
     let payloads: HashMap<ObjectId, &[u8]> = plan
         .entries
@@ -560,13 +596,22 @@ fn write_planned_entries(
                 }
             }
             let mut chunk = Vec::new();
-            write_whole_pack_object(&mut chunk, odb, entry.oid, entry.kind, &entry.data, opts)?;
+            write_whole_pack_object(
+                &mut chunk,
+                odb,
+                entry.oid,
+                entry.kind,
+                &entry.data,
+                opts,
+            )?;
             w.write_all(&chunk).map_err(Error::Io)?;
             body_written += chunk.len() as u64;
             oid_to_offset.insert(entry.oid, start);
             continue;
         }
-        let base_oid = entry.base.expect("base set above");
+        let Some(base_oid) = entry.base else {
+            continue;
+        };
         let in_pack_offset = oid_to_offset.get(&base_oid).copied();
         if let Some(reuse) = reuse.as_mut() {
             if let Some(n) =
@@ -587,12 +632,24 @@ fn write_planned_entries(
                 })?;
                 encode_pack_object_header(&mut chunk, 6, delta_len);
                 encode_ofs_delta_distance(&mut chunk, dist);
+                if let Some(reuse) = reuse.as_mut() {
+                    reuse.record_ofs_fixup();
+                }
             } else {
                 encode_pack_object_header(&mut chunk, 7, delta_len);
                 chunk.extend_from_slice(base_oid.as_bytes());
             }
             chunk.extend_from_slice(&pack_bytes[*zlib_start..*zlib_end]);
+            if let Some(reuse) = reuse.as_mut() {
+                reuse.record_verbatim_zlib((zlib_end - zlib_start) as u64);
+            }
         } else {
+            let target_data = entry.data.as_slice();
+            if target_data.is_empty() {
+                return Err(Error::CorruptObject(
+                    "delta entry missing payload".to_owned(),
+                ));
+            }
             let delta = if let Some(reused) = &entry.reused_delta {
                 reused.clone()
             } else {
@@ -601,8 +658,8 @@ fn write_planned_entries(
                 } else {
                     odb.read(&base_oid)?.data
                 };
-                if entry.data.starts_with(&base_data) && entry.data.len() > base_data.len() {
-                    encode_prefix_extension_delta(&base_data, &entry.data)?
+                if target_data.starts_with(&base_data) && target_data.len() > base_data.len() {
+                    encode_prefix_extension_delta(&base_data, target_data)?
                 } else {
                     let base_ref = payloads
                         .get(&base_oid)
@@ -611,7 +668,7 @@ fn write_planned_entries(
                     delta_index_by_base
                         .entry(base_oid)
                         .or_insert_with(|| DeltaIndex::new(base_ref))
-                        .encode(&entry.data, 0)
+                        .encode(target_data, 0)
                         .ok_or_else(|| {
                             Error::CorruptObject("failed to encode pack delta for object".into())
                         })?
@@ -638,7 +695,7 @@ fn write_planned_entries(
         body_written += chunk.len() as u64;
         oid_to_offset.insert(entry.oid, start);
     }
-    Ok(())
+    Ok(reuse.as_mut().map(|r| r.take_stats()).unwrap_or_default())
 }
 
 /// Serialize a precomputed object list into a pack (used by [`build_pack`] and filtered bundles).
@@ -656,119 +713,8 @@ pub fn build_pack_from_send_list(
     if !opts.delta {
         return serialize_pack(odb, send, opts);
     }
-    let plan = plan_deltas(odb, send, have_closure, opts, blob_name_hashes, Some(1))?;
-    crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, Some(1))
-}
-
-/// Like [`build_pack`] with an explicit pack-write worker override for tests and embedders.
-///
-/// `write_threads` replaces config-derived `pack.threads` when set.
-pub fn build_pack_with_write_threads(
-    odb: &Odb,
-    wants: &[ObjectId],
-    haves: &[ObjectId],
-    opts: &PackBuildOptions,
-    write_threads: Option<usize>,
-) -> Result<Vec<u8>> {
-    let have_closure = reachable_closure(odb, haves, &HashSet::new(), true, &HashSet::new())?;
-    let selection = crate::pack_object_select::enumerate_pack_objects(
-        odb,
-        wants,
-        haves,
-        &crate::pack_object_select::PackEnumerateOptions {
-            filter: None,
-            shallow_grafts: &HashSet::new(),
-            have_shallow_grafts: Some(&HashSet::new()),
-            use_bitmaps: opts.use_bitmaps,
-            exclude_objects: Some(&have_closure),
-        },
-    )?;
-    build_pack_from_send_list_with_parallel_threads(
-        odb,
-        &selection.send,
-        &selection.have_closure,
-        opts,
-        &selection.blob_name_hashes,
-        None,
-        write_threads,
-    )
-}
-
-/// Like [`build_pack`] with explicit delta-search and pack-write worker overrides.
-pub fn build_pack_with_parallel_threads(
-    odb: &Odb,
-    wants: &[ObjectId],
-    haves: &[ObjectId],
-    opts: &PackBuildOptions,
-    search_threads: Option<usize>,
-    write_threads: Option<usize>,
-) -> Result<Vec<u8>> {
-    let have_closure = reachable_closure(odb, haves, &HashSet::new(), true, &HashSet::new())?;
-    let selection = crate::pack_object_select::enumerate_pack_objects(
-        odb,
-        wants,
-        haves,
-        &crate::pack_object_select::PackEnumerateOptions {
-            filter: None,
-            shallow_grafts: &HashSet::new(),
-            have_shallow_grafts: Some(&HashSet::new()),
-            use_bitmaps: opts.use_bitmaps,
-            exclude_objects: Some(&have_closure),
-        },
-    )?;
-    build_pack_from_send_list_with_parallel_threads(
-        odb,
-        &selection.send,
-        &selection.have_closure,
-        opts,
-        &selection.blob_name_hashes,
-        search_threads,
-        write_threads,
-    )
-}
-
-/// Serialize a precomputed object list with an explicit pack-write worker count.
-pub fn build_pack_from_send_list_with_write_threads(
-    odb: &Odb,
-    send: &[ObjectId],
-    have_closure: &HashSet<ObjectId>,
-    opts: &PackBuildOptions,
-    blob_name_hashes: &HashMap<ObjectId, u32>,
-    write_threads: Option<usize>,
-) -> Result<Vec<u8>> {
-    build_pack_from_send_list_with_parallel_threads(
-        odb,
-        send,
-        have_closure,
-        opts,
-        blob_name_hashes,
-        None,
-        write_threads,
-    )
-}
-
-/// Serialize a precomputed object list with explicit delta-search and write parallelism.
-pub fn build_pack_from_send_list_with_parallel_threads(
-    odb: &Odb,
-    send: &[ObjectId],
-    have_closure: &HashSet<ObjectId>,
-    opts: &PackBuildOptions,
-    blob_name_hashes: &HashMap<ObjectId, u32>,
-    search_threads: Option<usize>,
-    write_threads: Option<usize>,
-) -> Result<Vec<u8>> {
-    if !opts.delta {
-        return serialize_pack(odb, send, opts);
-    }
-    let plan = plan_deltas(
-        odb,
-        send,
-        have_closure,
-        opts,
-        blob_name_hashes,
-        search_threads,
-    )?;
-    crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, write_threads)
+    let plan = plan_deltas(odb, send, have_closure, opts, blob_name_hashes)?;
+    serialize_pack_with_deltas(odb, &plan, opts)
 }
 
 /// Build a pack for local fetch: enumerate haves on `have_odb`, read payloads from `source_odb`.
@@ -808,14 +754,16 @@ fn collect_reachable_excluding(
                    visited: &mut HashSet<ObjectId>,
                    ordered: &mut Vec<ObjectId>|
      -> bool {
-        if !visited.insert(oid) {
+        if exclude.contains(&oid) {
             return false;
         }
-        if !exclude.contains(&oid) {
+        if visited.insert(oid) {
             ordered.push(oid);
+            queue.push_back(oid);
+            true
+        } else {
+            false
         }
-        queue.push_back(oid);
-        true
     };
 
     for &root in roots {
@@ -918,7 +866,7 @@ fn write_whole_pack_object(
     data: &[u8],
     opts: &PackBuildOptions,
 ) -> Result<()> {
-    if opts.reuse_objects && odb.hash_algo() == HashAlgo::Sha1 {
+    if opts.reuse_objects {
         if let Some(raw) = crate::pack::packed_full_object_slice(odb.objects_dir(), &oid)? {
             buf.extend_from_slice(&raw);
             return Ok(());
@@ -950,10 +898,11 @@ pub(crate) fn append_whole_objects_from_odb(
 
 /// A single object to write, either whole or as a delta against a chosen base.
 pub(crate) struct PlannedEntry {
+    /// Object to emit.
     pub(crate) oid: ObjectId,
+    /// Git object kind for `oid`.
     pub(crate) kind: ObjectKind,
-    /// Object payload, kept so the serializer can re-hash/compress without a
-    /// second odb read.
+    /// Object payload for delta planning and serialization.
     pub(crate) data: Vec<u8>,
     /// `Some(base_oid)` when this entry is a (blob) delta against `base_oid`.
     /// The base may be an in-pack object or — for thin packs — an external base
@@ -970,15 +919,23 @@ pub(crate) struct PlannedEntry {
 /// The full delta plan: the ordered entries to emit plus the set of external
 /// (thin) bases that were referenced but deliberately not emitted.
 pub(crate) struct DeltaPlan {
-    entries: Vec<PlannedEntry>,
+    pub(crate) entries: Vec<PlannedEntry>,
     #[allow(dead_code)]
     external_bases: HashSet<ObjectId>,
 }
 
+/// Length of the common prefix of `a` and `b`.
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
 /// Select blob deltas for `send` and produce an ordered emit plan.
 ///
-/// Windowed delta search via [`crate::pack_delta::search_windowed_blob_deltas`], depth-limited
-/// via [`crate::pack::apply_delta_depth_limit`]. Trees and
+/// A lift of the CLI's `optimize_blob_deltas`: a size-sorted prefix/LCP window
+/// heuristic over blobs, depth-limited via [`crate::pack::apply_delta_depth_limit`]. Trees and
 /// commits are emitted whole (matching the CLI's blob-only delta selection).
 /// Correctness (re-indexability) is preserved because every chosen base is acyclic
 /// and either in-pack or, for thin packs, peer-held.
@@ -1005,14 +962,17 @@ pub(crate) fn plan_deltas(
     have_closure: &HashSet<ObjectId>,
     opts: &PackBuildOptions,
     blob_name_hashes: &HashMap<ObjectId, u32>,
-    search_threads: Option<usize>,
 ) -> Result<DeltaPlan> {
-    // Load every object once. The plan keeps payloads so the serializer needn't
-    // re-read; for the typical pack sizes this is the same data the whole-object
-    // path would touch anyway.
-    let mut objects: HashMap<ObjectId, Object> = HashMap::new();
+    let mut objects: HashMap<ObjectId, crate::objects::Object> = HashMap::new();
+    let mut kinds: HashMap<ObjectId, ObjectKind> = HashMap::new();
+    let mut blob_data: HashMap<ObjectId, Vec<u8>> = HashMap::new();
     for &oid in send {
-        objects.insert(oid, odb.read(&oid)?);
+        let obj = odb.read(&oid)?;
+        kinds.insert(oid, obj.kind);
+        objects.insert(oid, obj.clone());
+        if obj.kind == ObjectKind::Blob && !obj.data.is_empty() {
+            blob_data.insert(oid, obj.data);
+        }
     }
 
     let in_pack: HashSet<ObjectId> = send.iter().copied().collect();
@@ -1061,36 +1021,24 @@ pub(crate) fn plan_deltas(
         .collect();
 
     if opts.window > 0 && opts.max_depth > 0 {
-        crate::pack_delta::extend_send_order_blob_deltas(
-            send,
-            &objects,
-            blob_name_hashes,
-            &islands,
-            &mut delta_to_base,
-            &reuse_delta_bases,
-            odb.hash_algo().len(),
-        );
-        let skip_targets: HashSet<ObjectId> = delta_to_base.keys().copied().collect();
-        let window_found = crate::pack_delta::search_windowed_blob_deltas(
-            odb,
-            crate::pack_delta::DeltaSearchInput {
-                objects: &objects,
-                blob_name_hashes,
-                islands: &islands,
-                skip_targets: &skip_targets,
-                skip_as_target: &reuse_delta_bases,
-                warmup_delta_edges: &delta_to_base,
-                opts,
-            },
-            search_threads,
-        )?;
-        for (target, base) in window_found {
-            delta_to_base.entry(target).or_insert(base);
-        }
+        // Blobs in the pack, smallest-first (size-sorted window proximity).
+        let mut blobs: Vec<ObjectId> = blob_data.keys().copied().collect();
+        blobs.sort_by(|a, b| {
+            let sa = blob_data[a].len();
+            let sb = blob_data[b].len();
+            sa.cmp(&sb).then_with(|| {
+                blob_name_hashes
+                    .get(a)
+                    .copied()
+                    .unwrap_or(0)
+                    .cmp(&blob_name_hashes.get(b).copied().unwrap_or(0))
+            })
+        });
 
+        // Optional thin bases: blobs present only on the peer that a packed blob
+        // could delta against. We load them lazily and cache by oid.
+        let mut external_blob_data: HashMap<ObjectId, Vec<u8>> = HashMap::new();
         if opts.thin {
-            let hash_len = odb.hash_algo().len();
-            let mut external_blob_data: HashMap<ObjectId, Vec<u8>> = HashMap::new();
             for &oid in have_closure {
                 if in_pack.contains(&oid) {
                     continue;
@@ -1101,57 +1049,93 @@ pub(crate) fn plan_deltas(
                     }
                 }
             }
-            for &t in send {
-                if delta_to_base.contains_key(&t) || reuse_delta_bases.contains(&t) {
+        }
+
+        for (i, &t) in blobs.iter().enumerate() {
+            // A reused on-disk delta already covers this target.
+            if delta_to_base.contains_key(&t) {
+                continue;
+            }
+            // Do not replace a reuse base with a fresh delta encoding.
+            if reuse_delta_bases.contains(&t) {
+                continue;
+            }
+            let t_data = &blob_data[&t];
+
+            // (base, common, base_len, external). When islands are active the
+            // selection additionally prefers a base in a dominating island via
+            // `delta_cmp`, matching the CLI's `island_delta_cmp` bias.
+            let mut best: Option<(ObjectId, usize, usize, bool)> = None;
+
+            // Consider larger in-pack blobs within the window (closest in size).
+            // `blobs` is ascending by size, so later entries are the larger bases.
+            for &b in blobs.iter().skip(i + 1).take(opts.window) {
+                // Island rule: never base `t` on a blob in a non-superset island.
+                if !islands.in_same_island(&t, &b) {
                     continue;
                 }
-                let obj = &objects[&t];
-                if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
+                let b_data = &blob_data[&b];
+                if b_data.len() <= t_data.len() {
                     continue;
                 }
-                let t_data = &obj.data;
-                let max_size = t_data.len().saturating_div(2).saturating_sub(hash_len);
-                if max_size == 0 {
-                    continue;
+                let common = if b_data.starts_with(t_data) {
+                    t_data.len()
+                } else {
+                    common_prefix_len(t_data, b_data)
+                };
+                if common > 64 && common.saturating_mul(2) >= t_data.len() {
+                    let better = best.is_none_or(|(prev_b, bc, bl, _)| {
+                        // Prefer a strictly dominating island first (Git's
+                        // `island_delta_cmp`), then more common prefix, then the
+                        // smaller (closer-in-size) base.
+                        if islands.is_active() {
+                            let cmp = islands.delta_cmp(&b, &prev_b);
+                            if cmp < 0 {
+                                return true;
+                            }
+                            if cmp > 0 {
+                                return false;
+                            }
+                        }
+                        common > bc || (common == bc && b_data.len() < bl)
+                    });
+                    if better {
+                        best = Some((b, common, b_data.len(), false));
+                    }
                 }
-                let mut best: Option<(ObjectId, usize)> = None;
+            }
+
+            // Thin: also consider peer-held external bases. An external base may
+            // be SMALLER than the target (the common "target extends an earlier
+            // version" case) — that is still a cheap delta and, because external
+            // bases are never emitted, can never form an in-pack chain cycle. We
+            // only switch to a thin base when no equally-good in-pack base exists.
+            if opts.thin {
                 for (&b, b_data) in &external_blob_data {
+                    if b == t {
+                        continue;
+                    }
+                    // External (peer-held) bases participate in island rules too.
                     if !islands.in_same_island(&t, &b) {
                         continue;
                     }
-                    let sizediff = if b_data.len() < t_data.len() {
-                        t_data.len() - b_data.len()
-                    } else {
-                        0
-                    };
-                    if sizediff >= max_size || t_data.len() < b_data.len() / 32 {
-                        continue;
-                    }
-                    let delta_size = if t_data.starts_with(b_data) && t_data.len() > b_data.len() {
-                        encode_prefix_extension_delta(b_data, t_data)
-                            .ok()
-                            .map(|d| d.len())
-                    } else {
-                        crate::delta_encode::DeltaIndex::new(b_data)
-                            .encode(t_data, max_size)
-                            .map(|d| d.len())
-                    };
-                    let Some(ds) = delta_size else {
-                        continue;
-                    };
-                    let better = best.is_none_or(|(_, prev)| ds < prev);
-                    if better {
-                        best = Some((b, ds));
+                    let common = common_prefix_len(t_data, b_data);
+                    if common > 64 && common.saturating_mul(2) >= t_data.len() {
+                        let better = best.is_none_or(|(_, bc, bl, ext)| {
+                            common > bc || (common == bc && ext && b_data.len() < bl)
+                        });
+                        if better {
+                            best = Some((b, common, b_data.len(), true));
+                        }
                     }
                 }
-                if let Some((base, _)) = best {
-                    delta_to_base.insert(t, base);
+            }
+
+            if let Some((base, _, _, external)) = best {
+                delta_to_base.insert(t, base);
+                if external {
                     external_bases.insert(base);
-                    if let Some(d) = external_blob_data.get(&base) {
-                        objects
-                            .entry(base)
-                            .or_insert_with(|| Object::new(ObjectKind::Blob, d.clone()));
-                    }
+                    let _ = external_blob_data.get(&base);
                 }
             }
         }
@@ -1177,11 +1161,11 @@ pub(crate) fn plan_deltas(
     // the base has not yet been written.
     let mut entries: Vec<PlannedEntry> = Vec::with_capacity(send.len());
     for &oid in send {
-        let obj = &objects[&oid];
+        let kind = kinds[&oid];
         entries.push(PlannedEntry {
             oid,
-            kind: obj.kind,
-            data: obj.data.clone(),
+            kind,
+            data: objects[&oid].data.clone(),
             base: delta_to_base.get(&oid).copied(),
             reused_delta: None,
             reused_delta_zlib: reused_zlib.get(&oid).cloned(),
@@ -1210,7 +1194,10 @@ fn load_islands_for_pack(
     let Some(git_dir) = odb.config_git_dir() else {
         return crate::delta_islands::DeltaIslands::default();
     };
-    let Ok(repo) = crate::repo::Repository::open(git_dir, &RepositoryOptions::empty()) else {
+    let Ok(repo) = crate::repo::Repository::open(
+        git_dir,
+        &crate::environment::RepositoryOptions::empty(),
+    ) else {
         return crate::delta_islands::DeltaIslands::default();
     };
     let env = crate::environment::Environment::empty();

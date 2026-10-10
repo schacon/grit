@@ -11,9 +11,9 @@ use crate::ewah_bitmap::Bitmap;
 use crate::midx::{read_midx_btmp_ranges, read_midx_pack_idx_names, read_midx_preferred_idx_name};
 use crate::objects::ObjectId;
 use crate::pack::{
-    find_position_by_pack_offset, pack_entry_raw_end, parse_pack_object_header,
-    read_local_pack_indexes_cached, read_pack_bytes_cached, read_packed_delta_dependency,
-    PackedDeltaDependency, PackedType,
+    find_position_by_pack_offset, pack_entry_raw_end, pack_entry_zlib_start,
+    parse_pack_object_header, read_local_pack_indexes_cached, read_pack_bytes_cached,
+    read_packed_delta_dependency, PackedDeltaDependency, PackedType,
 };
 use crate::pack_index::PackIndex;
 use crate::pack_map::PackData;
@@ -32,12 +32,73 @@ struct BitmappedPack {
     bitmap_nr: u32,
 }
 
+/// Counters updated while streaming reused pack bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReuseWriteStats {
+    /// Pack body bytes copied verbatim from an existing on-disk pack.
+    pub verbatim_reuse_bytes: u64,
+    /// Objects emitted via verbatim pack reuse.
+    pub verbatim_reuse_objects: u32,
+    /// Reused OFS deltas with remapped base offsets.
+    pub pack_ofs_fixup_objects: u32,
+    /// OFS deltas converted to REF deltas for thin packs.
+    pub pack_ref_from_ofs_objects: u32,
+}
+
+impl ReuseWriteStats {
+    fn note_ofs_fixup(&mut self) {
+        self.pack_ofs_fixup_objects += 1;
+        self.verbatim_reuse_objects += 1;
+    }
+
+    fn note_ref_from_ofs(&mut self) {
+        self.pack_ref_from_ofs_objects += 1;
+        self.verbatim_reuse_objects += 1;
+    }
+
+    fn note_verbatim_slice(&mut self, bytes: u64) {
+        self.verbatim_reuse_bytes += bytes;
+        self.verbatim_reuse_objects += 1;
+    }
+}
+
 /// Active verbatim reuse context while streaming a pack body.
 pub struct StreamingReuse {
     pack: BitmappedPack,
     reuse_bits: Bitmap,
     index: Arc<crate::pack_bitmap::BitmapIndex>,
     source_to_output: HashMap<u64, u64>,
+    stats: ReuseWriteStats,
+}
+
+impl StreamingReuse {
+    #[must_use]
+    pub(crate) fn take_stats(&mut self) -> ReuseWriteStats {
+        std::mem::take(&mut self.stats)
+    }
+
+    fn note_verbatim(&mut self, bytes: u64) {
+        self.stats.verbatim_reuse_bytes += bytes;
+        self.stats.verbatim_reuse_objects += 1;
+    }
+
+    fn note_ofs_fixup(&mut self) {
+        self.stats.pack_ofs_fixup_objects += 1;
+        self.stats.verbatim_reuse_objects += 1;
+    }
+
+    fn note_ref_from_ofs(&mut self) {
+        self.stats.pack_ref_from_ofs_objects += 1;
+        self.stats.verbatim_reuse_objects += 1;
+    }
+
+    pub(crate) fn record_ofs_fixup(&mut self) {
+        self.note_ofs_fixup();
+    }
+
+    pub(crate) fn record_verbatim_zlib(&mut self, zlib_bytes: u64) {
+        self.stats.verbatim_reuse_bytes += zlib_bytes;
+    }
 }
 
 impl StreamingReuse {
@@ -47,6 +108,7 @@ impl StreamingReuse {
             reuse_bits,
             index: Arc::clone(send_set.bitmap_index()),
             source_to_output: HashMap::new(),
+            stats: ReuseWriteStats::default(),
         }
     }
 
@@ -79,6 +141,7 @@ impl StreamingReuse {
             Ok(n) => n,
             Err(_) => return Ok(None),
         };
+        self.note_verbatim(written);
         if let Some(entry_off) = self.pack.idx.find_offset(oid) {
             self.source_to_output.insert(entry_off, out_offset);
         }
@@ -111,6 +174,7 @@ impl StreamingReuse {
         let hb = self.pack.idx.hash_bytes();
         let written = match write_one_reused(
             w,
+            &mut self.stats,
             &self.pack,
             pack_bytes,
             entry_off,
@@ -143,31 +207,33 @@ pub fn try_write_streaming_pack(
     w: &mut dyn Write,
 ) -> Result<Option<PackStats>> {
     let Some((send_set, have_closure)) =
-        try_bitmap_reachable_for_upload(&repo.odb, wants, haves, filter, shallow_grafts)?
+        try_bitmap_reachable_for_upload(repo.odb(), wants, haves, filter, shallow_grafts)?
     else {
         return Ok(None);
     };
     let index = send_set.bitmap_index();
-    let objects_dir = repo.odb.objects_dir();
+    let objects_dir = repo.odb().objects_dir();
     let packs = resolve_bitmapped_packs(objects_dir, index, allow_multi_pack_reuse(repo))?;
-    if packs.is_empty() || !send_set.extended_objects().is_empty() {
+    if packs.is_empty() {
         return Ok(None);
     }
-    let pack = packs.into_iter().next().expect("non-empty");
+    let Some(pack) = packs.into_iter().next() else {
+        return Ok(None);
+    };
     let send: Vec<ObjectId> = send_set.iter_grouped_by_kind().collect();
     progress(PackProgress::Enumerated { total: send.len() });
 
     let send_bits = send_set.reuse_send_bits();
-    let reuse_bits = compute_reuse_bits(&pack, &send_bits, &send_set)?;
+    let reuse_bits = compute_reuse_bits(&pack, &send_bits, &send_set, opts)?;
 
     let blob_name_hashes =
         crate::pack_object_select::blob_name_hashes_for_send(index, &send, &have_closure);
     let plan =
-        crate::pack_objects::plan_deltas(&repo.odb, &send, &have_closure, opts, &blob_name_hashes)?;
+        crate::pack_objects::plan_deltas(repo.odb(), &send, &have_closure, opts, &blob_name_hashes)?;
     progress(PackProgress::PlannedDeltas);
 
     let mut reuse = StreamingReuse::new(pack, reuse_bits, &send_set);
-    let stats = write_delta_pack_stream(&repo.odb, &plan, opts, w, Some(&mut reuse))?;
+    let stats = write_delta_pack_stream(repo.odb(), &plan, opts, w, Some(&mut reuse))?;
     Ok(Some(stats))
 }
 
@@ -262,6 +328,7 @@ fn compute_reuse_bits(
     pack: &BitmappedPack,
     send_bits: &Bitmap,
     send_set: &ReachableSet,
+    opts: &PackBuildOptions,
 ) -> Result<Bitmap> {
     let mut reuse = Bitmap::new();
     let pack_bytes = pack.pack_bytes.as_ref();
@@ -290,7 +357,33 @@ fn compute_reuse_bits(
                     changed = true;
                 }
                 PackedType::OfsDelta | PackedType::RefDelta => {
-                    let _ = (hb, send_set);
+                    // Streaming delta reuse is only enabled for thin packs; incremental
+                    // OFS fixups use on-disk zlib reuse during planning instead.
+                    if !opts.thin {
+                        continue;
+                    }
+                    let Some(base_oid) = delta_base_oid(&pack.idx, pack_bytes, entry_off, hb)?
+                    else {
+                        continue;
+                    };
+                    let Some(base_pos) = send_set.bitmap_index().position_of(&base_oid) else {
+                        continue;
+                    };
+                    if !reuse.get(base_pos as usize) {
+                        continue;
+                    }
+                    let Some(base_off) = pack.idx.find_offset(&base_oid) else {
+                        continue;
+                    };
+                    let mut bp = base_off as usize;
+                    let Ok((base_ty, _)) = parse_pack_object_header(pack_bytes, &mut bp) else {
+                        continue;
+                    };
+                    if matches!(base_ty, PackedType::OfsDelta | PackedType::RefDelta) {
+                        continue;
+                    }
+                    reuse.set(pos as usize);
+                    changed = true;
                 }
             }
         }
@@ -318,7 +411,8 @@ fn delta_base_oid(
     entry_off: u64,
     _hb: usize,
 ) -> Result<Option<ObjectId>> {
-    let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off)? else {
+    let hb = idx.oid_at(0).len();
+    let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off, hb)? else {
         return Ok(None);
     };
     Ok(Some(match dep {
@@ -351,6 +445,7 @@ fn write_whole_reused(
 
 fn write_one_reused(
     w: &mut dyn Write,
+    stats: &mut ReuseWriteStats,
     pack: &BitmappedPack,
     pack_bytes: &[u8],
     entry_off: u64,
@@ -371,17 +466,21 @@ fn write_one_reused(
             return Err(Error::CorruptObject("pack reuse CRC mismatch".to_owned()));
         }
     }
+    let hash_bytes = pack.idx.oid_at(0).len();
     let mut p = entry_off as usize;
     let (ty, size) = parse_pack_object_header(pack_bytes, &mut p)?;
+    let zlib_start = pack_entry_zlib_start(pack_bytes, entry_off, hash_bytes)?;
     match ty {
         PackedType::OfsDelta if opts.use_ofs_delta => {
-            let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off)? else {
-                w.write_all(slice).map_err(Error::Io)?;
-                return Ok(slice.len() as u64);
+            let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off, hash_bytes)? else {
+                return Err(Error::CorruptObject(
+                    "ofs-delta missing dependency for reuse".to_owned(),
+                ));
             };
             let PackedDeltaDependency::OfsBase { base_offset } = dep else {
-                w.write_all(slice).map_err(Error::Io)?;
-                return Ok(slice.len() as u64);
+                return Err(Error::CorruptObject(
+                    "expected ofs-delta dependency".to_owned(),
+                ));
             };
             if let Some(new_base) = offset_map.get(&base_offset).copied().or(in_pack_base) {
                 let dist = pack_offset
@@ -390,21 +489,36 @@ fn write_one_reused(
                 let mut out = Vec::new();
                 encode_pack_object_header(&mut out, 6, size as usize);
                 encode_ofs_delta_distance(&mut out, dist);
-                out.extend_from_slice(&pack_bytes[p..end]);
+                out.extend_from_slice(&pack_bytes[zlib_start..end]);
                 w.write_all(&out).map_err(Error::Io)?;
+                stats.note_ofs_fixup();
+                stats.verbatim_reuse_bytes += (end - zlib_start) as u64;
                 Ok(out.len() as u64)
             } else if opts.thin {
-                write_ref_delta_from_ofs(w, pack_bytes, entry_off, p, end, size, pack)
+                let n = write_ref_delta_from_ofs(w, pack_bytes, entry_off, end, size, pack)?;
+                stats.note_ref_from_ofs();
+                stats.verbatim_reuse_bytes += (end - zlib_start) as u64;
+                Ok(n)
             } else {
-                w.write_all(slice).map_err(Error::Io)?;
-                Ok(slice.len() as u64)
+                return Err(Error::CorruptObject(
+                    "ofs-delta reuse missing remapped base".to_owned(),
+                ));
             }
         }
         PackedType::OfsDelta if !opts.use_ofs_delta && opts.thin => {
-            write_ref_delta_from_ofs(w, pack_bytes, entry_off, p, end, size, pack)
+            let n = write_ref_delta_from_ofs(w, pack_bytes, entry_off, end, size, pack)?;
+            stats.note_ref_from_ofs();
+            stats.verbatim_reuse_bytes += (end - zlib_start) as u64;
+            Ok(n)
+        }
+        PackedType::RefDelta => {
+            w.write_all(slice).map_err(Error::Io)?;
+            stats.note_verbatim_slice(slice.len() as u64);
+            Ok(slice.len() as u64)
         }
         _ => {
             w.write_all(slice).map_err(Error::Io)?;
+            stats.note_verbatim_slice(slice.len() as u64);
             Ok(slice.len() as u64)
         }
     }
@@ -414,12 +528,13 @@ fn write_ref_delta_from_ofs(
     w: &mut dyn Write,
     pack_bytes: &[u8],
     entry_off: u64,
-    header_end: usize,
     end: usize,
     size: u64,
     pack: &BitmappedPack,
 ) -> Result<u64> {
-    let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off)? else {
+    let hash_bytes = pack.idx.oid_at(0).len();
+    let zlib_start = pack_entry_zlib_start(pack_bytes, entry_off, hash_bytes)?;
+    let Some(dep) = read_packed_delta_dependency(pack_bytes, entry_off, hash_bytes)? else {
         return Err(Error::CorruptObject("missing delta base".to_owned()));
     };
     let base_oid = match dep {
@@ -434,7 +549,7 @@ fn write_ref_delta_from_ofs(
     let mut out = Vec::new();
     encode_pack_object_header(&mut out, 7, size as usize);
     out.extend_from_slice(base_oid.as_bytes());
-    out.extend_from_slice(&pack_bytes[header_end..end]);
+    out.extend_from_slice(&pack_bytes[zlib_start..end]);
     w.write_all(&out).map_err(Error::Io)?;
     Ok(out.len() as u64)
 }

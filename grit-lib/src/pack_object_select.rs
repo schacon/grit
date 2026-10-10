@@ -3,14 +3,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
-use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery};
-use crate::environment::RepositoryOptions;
-||||||| Common ancestor
-use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery};
-=======
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
->>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
+use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;

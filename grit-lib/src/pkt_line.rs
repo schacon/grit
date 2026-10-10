@@ -172,7 +172,6 @@ pub fn write_sideband_channel1_64k(w: &mut impl Write, payload: &[u8]) -> io::Re
     Ok(())
 }
 
-<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 /// Stream `reader` on sideband channel 1 with 64k chunking (avoids loading whole packs).
 pub fn write_sideband_channel1_64k_reader(
     w: &mut impl Write,
@@ -193,8 +192,6 @@ pub fn write_sideband_channel1_64k_reader(
     Ok(())
 }
 
-||||||| Common ancestor
-=======
 /// Incrementally frame pack bytes on sideband channel 1 (64k pkt-lines).
 pub struct SidebandChannel1Writer<'a, W: Write + ?Sized + 'a> {
     inner: &'a mut W,
@@ -252,7 +249,6 @@ impl<'a, W: Write + ?Sized + 'a> Write for SidebandChannel1Writer<'a, W> {
     }
 }
 
->>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 /// Parse a 4-byte hexadecimal pkt-line length prefix.
 pub fn parse_hex_len(prefix: &[u8]) -> io::Result<usize> {
     let s = std::str::from_utf8(prefix)
