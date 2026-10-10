@@ -53,7 +53,7 @@ List entries:
 
 ```console
 $ grit stash list
-stash@{0} a1b2c3d: WIP on main: wip feature
+stash@{0} a1b2c3d: On main: wip feature
 ```
 
 Show the newest stash as a diffstat:
@@ -91,7 +91,7 @@ When something was stashed:
 ```json
 {
   "oid": "6e513d5cd6ab8d618238e22d7ca55d942b55964a",
-  "message": "WIP on main: wip feature"
+  "message": "On main: wip feature"
 }
 ```
 
@@ -106,7 +106,7 @@ When there was nothing to save:
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `oid` | string | Full object id of the stash commit (success object only). |
-| `message` | string | Reflog message Git would show after the colon (success object only). |
+| `message` | string | Reflog message (for `-m`, `On <branch>: …`; otherwise Git-style `WIP on …`). |
 | `stashed` | boolean | Present and `false` only on the empty-worktree result. |
 
 ### `grit stash list`
@@ -118,7 +118,7 @@ The JSON value is a top-level array (newest entry first):
   {
     "index": 0,
     "oid": "6e513d5cd6ab8d618238e22d7ca55d942b55964a",
-    "message": "WIP on main: second"
+    "message": "On main: second"
   }
 ]
 ```
@@ -166,10 +166,11 @@ With `--patch`, a `patch` object with the same shape as [`grit diff`](../diff/) 
 ```json
 {
   "index": 0,
-  "conflicts": false,
-  "conflict_paths": []
+  "conflicts": false
 }
 ```
+
+When `conflicts` is true, `conflict_paths` lists paths with unmerged index entries. On a clean apply or pop the field is omitted.
 
 Pop adds `dropped` (whether the entry was removed):
 

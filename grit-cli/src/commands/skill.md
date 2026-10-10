@@ -98,7 +98,7 @@ URLs can be `https://`, `ssh://`, `user@host:path`, `git://`, `file://` or a loc
 
 ## What grit doesn't do
 
-grit has no equivalent of `rebase`, `reset`, partial staging, interactive commands, annotated or signed tags, or conflict resolution. Use `grit commit --amend` (optional message, JSON `amended` field) to rewrite the tip commit. For `grit stash pop` with conflicts, use `git` to finish resolving. When a task needs something else on this list, use `git` on the same repository and come back to `grit` afterwards.
+grit has no equivalent of `rebase`, `reset`, partial staging, interactive commands, annotated or signed tags, or conflict resolution. Use `grit commit --amend` (optional message, JSON `amended` field) to rewrite the tip commit. For `grit stash pop` or `grit stash apply` with conflicts, use `git` to finish resolving. When a task needs something else on this list, use `git` on the same repository and come back to `grit` afterwards.
 
 ## More
 
