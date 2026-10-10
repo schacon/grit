@@ -596,51 +596,59 @@ pub fn verify_ref_transaction_batch(
     git_dir: &Path,
     items: &[RefBatchItem],
 ) -> std::result::Result<(), RefnameUnavailable> {
-    verify_ref_transaction_batch_with_snapshot(git_dir, items, None)
+    verify_ref_batch_same_batch_conflicts(items)?;
+    verify_ref_batch_create_availability(git_dir, items, None)
 }
 
-pub(crate) fn verify_ref_transaction_batch_with_snapshot(
+/// Reject parent/child ref pairs in the same batch (D/F conflicts).
+pub fn verify_ref_batch_same_batch_conflicts(
+    items: &[RefBatchItem],
+) -> std::result::Result<(), RefnameUnavailable> {
+    let in_batch: HashSet<&str> = items.iter().map(|i| i.name.as_str()).collect();
+    for item in items {
+        let mut prefix = String::new();
+        for segment in item.name.split('/').filter(|s| !s.is_empty()) {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            if prefix == item.name {
+                break;
+            }
+            if in_batch.contains(prefix.as_str()) {
+                return Err(RefnameUnavailable::SameBatch {
+                    refname: item.name.clone(),
+                    other: prefix,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_ref_batch_create_availability(
     git_dir: &Path,
     items: &[RefBatchItem],
     packed: Option<&PackedRefs>,
 ) -> std::result::Result<(), RefnameUnavailable> {
-    let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
-    for i in 0..names.len() {
-        for j in (i + 1)..names.len() {
-            let (a, b) = (names[i], names[j]);
-            let (parent, child) = if refname_is_strict_prefix(a, b) {
-                (a, b)
-            } else if refname_is_strict_prefix(b, a) {
-                (b, a)
-            } else {
-                continue;
-            };
-            return Err(RefnameUnavailable::SameBatch {
-                refname: child.to_owned(),
-                other: parent.to_owned(),
-            });
-        }
-    }
-
-    let all_creates = items.iter().all(|i| i.new_oid.is_some());
     let extras: BTreeSet<String> = items.iter().map(|i| i.name.clone()).collect();
     let empty_skip = HashSet::new();
+    let git_dir_canon = if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        fs::canonicalize(git_dir).unwrap_or_else(|_| git_dir.to_path_buf())
+    };
+    let all_creates = items.iter().all(|i| i.new_oid.is_some());
     if all_creates {
-        if let Some(packed) = packed {
-            if packed.map.is_empty() {
-                if let Some(first) = items.iter().find(|i| i.new_oid.is_some()) {
-                    verify_refname_available_for_create_with_packed(
-                        git_dir,
-                        &first.name,
-                        &extras,
-                        &empty_skip,
-                        &[],
-                    )?;
-                }
-                return Ok(());
-            }
+        let packed_empty = packed.is_none_or(PackedRefs::is_empty);
+        if packed_empty
+            && loose_ref_tree_empty(&git_dir_canon, "refs/heads")
+            && loose_ref_tree_empty(&git_dir_canon, "refs/tags")
+        {
+            return Ok(());
         }
     }
+    let mut raw_ref_cache: HashMap<String, RawRefLookup> = HashMap::new();
     let mut lazy_sorted: Option<Vec<String>> = None;
     for item in items {
         let Some(_oid) = item.new_oid else {
@@ -673,14 +681,28 @@ pub(crate) fn verify_ref_transaction_batch_with_snapshot(
         }
         let sorted_slice = lazy_sorted.as_deref().unwrap_or(&[]);
         verify_refname_available_for_create_with_packed(
-            git_dir,
+            &git_dir_canon,
             &item.name,
             &extras,
             &empty_skip,
             sorted_slice,
+            Some(&mut raw_ref_cache),
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn loose_ref_tree_empty_for_precheck(git_dir: &Path, prefix: &str) -> bool {
+    loose_ref_tree_empty(git_dir, prefix)
+}
+
+fn loose_ref_tree_empty(git_dir: &Path, prefix: &str) -> bool {
+    let path = git_dir.join(prefix.trim_end_matches('/'));
+    match fs::read_dir(&path) {
+        Ok(mut rd) => rd.next().is_none(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
 }
 
 fn first_packed_descendant(sorted_packed: &[String], refname: &str) -> Option<String> {
@@ -699,12 +721,8 @@ fn verify_refname_available_for_create_with_packed(
     extras: &BTreeSet<String>,
     skip: &HashSet<String>,
     sorted_packed: &[String],
+    mut raw_ref_cache: Option<&mut HashMap<String, RawRefLookup>>,
 ) -> std::result::Result<(), RefnameUnavailable> {
-    let git_dir = if git_dir.is_absolute() {
-        git_dir.to_path_buf()
-    } else {
-        fs::canonicalize(git_dir).unwrap_or_else(|_| git_dir.to_path_buf())
-    };
     let mut seen_dirnames: HashSet<String> = HashSet::new();
     let segments: Vec<&str> = refname.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() <= 1 {
@@ -725,15 +743,25 @@ fn verify_refname_available_for_create_with_packed(
                 continue;
             }
 
-            match read_raw_ref(&git_dir, &dirname) {
-                Ok(RawRefLookup::Exists) => {
+            let lookup = if let Some(cache) = raw_ref_cache.as_mut() {
+                if let Some(cached) = cache.get(&dirname) {
+                    *cached
+                } else {
+                    let v = read_raw_ref(git_dir, &dirname).unwrap_or(RawRefLookup::NotFound);
+                    cache.insert(dirname.clone(), v);
+                    v
+                }
+            } else {
+                read_raw_ref(git_dir, &dirname).unwrap_or(RawRefLookup::NotFound)
+            };
+            match lookup {
+                RawRefLookup::Exists => {
                     return Err(RefnameUnavailable::AncestorExists {
                         blocking: dirname.clone(),
                         new_ref: refname.to_owned(),
                     });
                 }
-                Ok(RawRefLookup::NotFound | RawRefLookup::IsDirectory) => {}
-                Err(_) => {}
+                RawRefLookup::NotFound | RawRefLookup::IsDirectory => {}
             }
 
             if extras.contains(&dirname) {
@@ -750,10 +778,10 @@ fn verify_refname_available_for_create_with_packed(
     leaf_dir.push('/');
 
     let stor = crate::ref_namespace::storage_ref_name(refname);
-    let storage_dir = ref_storage_dir(&git_dir, refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
     let loose_path = storage_dir.join(&stor);
     let under = if loose_path.is_dir() {
-        list_refs(&git_dir, &leaf_dir).unwrap_or_default()
+        list_refs(git_dir, &leaf_dir).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -819,12 +847,6 @@ fn verify_refname_available_for_create_with_packed(
     }
 
     Ok(())
-}
-
-fn refname_is_strict_prefix(parent: &str, child: &str) -> bool {
-    child.len() > parent.len()
-        && child.as_bytes().get(parent.len()) == Some(&b'/')
-        && child.starts_with(parent)
 }
 
 /// Removes `lock` on drop unless [`disarm`](Self::disarm) was called after a successful delete.
@@ -1033,18 +1055,23 @@ fn parse_packed_refs_to_map_with_prefix(
             continue;
         }
 
-        let (refname, oid) = parse_packed_ref_data_line(path, line, &ref_opts)?;
         if let Some(prefix) = prefix_trim {
+            let Some((_, refname)) = line.split_once(' ') else {
+                return Err(packed_refs_unexpected_line(path, line));
+            };
+            let refname = refname.trim();
             if let Some(upper) = &prefix_upper {
-                if refname.as_str() >= upper.as_str() {
+                if refname >= upper.as_str() {
                     break;
                 }
             }
-            if !ref_name_matches_list_prefix(&refname, prefix) {
+            if !ref_name_matches_list_prefix(refname, prefix) {
                 expect_peel = true;
                 continue;
             }
         }
+
+        let (refname, oid) = parse_packed_ref_data_line(path, line, &ref_opts)?;
         map.insert(refname, oid);
         expect_peel = true;
     }
@@ -1188,9 +1215,33 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     write_ref_at_storage(&storage_dir, refname, oid)
 }
 
+/// Tracks parent directories already created during a batch of loose-ref writes.
+#[derive(Default)]
+struct LooseRefBatchWriteCtx {
+    parents_ready: HashSet<PathBuf>,
+}
+
 /// Write a loose ref file under `storage_dir`: the body shared by [`write_ref`]
 /// and [`write_ref_cached`], run after the packed-refs namespace-conflict check.
 fn write_ref_at_storage(storage_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
+    write_ref_at_storage_inner(storage_dir, refname, oid, None)
+}
+
+fn write_ref_at_storage_batch(
+    storage_dir: &Path,
+    refname: &str,
+    oid: &ObjectId,
+    ctx: &mut LooseRefBatchWriteCtx,
+) -> Result<()> {
+    write_ref_at_storage_inner(storage_dir, refname, oid, Some(ctx))
+}
+
+fn write_ref_at_storage_inner(
+    storage_dir: &Path,
+    refname: &str,
+    oid: &ObjectId,
+    batch: Option<&mut LooseRefBatchWriteCtx>,
+) -> Result<()> {
     let stor = crate::ref_namespace::storage_ref_name(refname);
     let path = storage_dir.join(stor);
     // An empty directory left over from a previously deleted nested ref can sit exactly where
@@ -1199,14 +1250,18 @@ fn write_ref_at_storage(storage_dir: &Path, refname: &str, oid: &ObjectId) -> Re
     // should not fool create/update"); mirror that so the rename below does not hit "Is a
     // directory". Non-empty directories (containing files or `*.lock`) are left in place so the
     // subsequent write surfaces the conflict, matching Git's behaviour.
-    remove_empty_ref_directory(&path);
+    let path_exists = fs::symlink_metadata(&path).ok();
+    if batch.is_none() || path_exists.is_some() {
+        remove_empty_ref_directory(&path);
+    }
     // If a *non-empty* directory still sits where the ref file must go, locking cannot
     // proceed. Git reports this as a "non-empty directory ... blocking reference" rather
     // than letting the rename fail with a raw "Is a directory" I/O error (see t0600
     // "non-empty directory blocks create"). Mirror that message so callers display it
     // verbatim. This only applies to direct (non-deref) writes where `refname` is also the
     // user-visible ref; indirect symref writes are handled by the caller.
-    if fs::symlink_metadata(&path)
+    if path_exists
+        .as_ref()
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false)
     {
@@ -1217,15 +1272,25 @@ fn write_ref_at_storage(storage_dir: &Path, refname: &str, oid: &ObjectId) -> Re
         }
         .into());
     }
-    if path.is_file() && matches!(read_ref_file(&path), Err(Error::InvalidRef(_))) {
+    if batch.is_none()
+        && path.is_file()
+        && matches!(read_ref_file(&path), Err(Error::InvalidRef(_)))
+    {
         return Err(Error::InvalidRef(format!(
             "cannot update ref '{refname}': reference broken"
         )));
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        match batch {
+            Some(ctx) => {
+                if ctx.parents_ready.insert(parent.to_path_buf()) {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            None => fs::create_dir_all(parent)?,
+        }
     }
-    let content = format!("{oid}\n");
+    let hex = oid.to_hex();
     // Write via lock file for atomicity. Use `O_CREAT | O_EXCL` (create_new) so
     // that a pre-existing `<ref>.lock` surfaces an `AlreadyExists` error instead
     // of being silently clobbered, matching Git's `lock_ref_oid_basic`. Callers
@@ -1235,14 +1300,12 @@ fn write_ref_at_storage(storage_dir: &Path, refname: &str, oid: &ObjectId) -> Re
     let lock = lock_path_for_ref(&path);
     {
         use std::io::Write as _;
-        let file = fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&lock)?;
-        let mut file = io::BufWriter::new(file);
-        file.write_all(content.as_bytes())?;
-        file.flush().map_err(Error::Io)?;
-        drop(file);
+        file.write_all(hex.as_bytes())?;
+        file.write_all(b"\n")?;
     }
     fs::rename(&lock, &path)?;
     Ok(())
@@ -1377,10 +1440,24 @@ impl PackedRefs {
         Ok(Self { map })
     }
 
+    /// Empty snapshot (no packed refs loaded).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
     /// The packed value recorded for `refname`, if any.
     #[must_use]
     pub fn get(&self, refname: &str) -> Option<ObjectId> {
         self.map.get(refname).copied()
+    }
+
+    /// Whether the snapshot contains no packed refs.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Ref names from the snapshot, sorted for prefix searches.
@@ -1439,7 +1516,7 @@ pub fn resolve_ref_cached(
                 Ok(Ref::Symbolic(target)) => return Ok(resolve_ref(git_dir, &target).ok()),
                 Err(e) => return Err(e),
             }
-        } else if let Some(oid) = packed.get(*name) {
+        } else if let Some(oid) = packed.get(name) {
             return Ok(Some(oid));
         }
     }
@@ -1836,24 +1913,39 @@ pub fn apply_files_ref_batch(
     packed: &PackedRefs,
 ) -> Result<()> {
     let mut pending_packed_removals: HashSet<String> = HashSet::new();
+    let mut write_ctx = LooseRefBatchWriteCtx::default();
 
     for item in updates {
         match (item.new_oid, item.expected_old) {
-            (Some(oid), Some(expected)) => {
-                write_ref_cas_with_packed_snapshot(git_dir, &item.name, &oid, expected, &packed)?
+            (Some(oid), Some(_expected)) => {
+                write_ref_loose_overlay_batch(git_dir, &item.name, &oid, &mut write_ctx)?
             }
-            (Some(oid), None) => write_ref_cached(git_dir, &item.name, &oid, &packed)?,
-            (None, Some(expected)) => delete_ref_cas_with_packed_batch(
-                git_dir,
-                &item.name,
-                expected,
-                &packed,
-                &mut pending_packed_removals,
-            )?,
+            (Some(oid), None) => {
+                let storage_dir = ref_storage_dir(git_dir, &item.name);
+                write_ref_at_storage_batch(&storage_dir, &item.name, &oid, &mut write_ctx)?;
+            }
+            (None, Some(expected)) => {
+                if delete_packed_ref_batch_fast(
+                    git_dir,
+                    &item.name,
+                    expected,
+                    packed,
+                    &mut pending_packed_removals,
+                )? {
+                    continue;
+                }
+                delete_ref_cas_with_packed_batch(
+                    git_dir,
+                    &item.name,
+                    expected,
+                    packed,
+                    &mut pending_packed_removals,
+                )?;
+            }
             (None, None) => delete_ref_with_packed_batch(
                 git_dir,
                 &item.name,
-                &packed,
+                packed,
                 &mut pending_packed_removals,
             )?,
         }
@@ -1865,56 +1957,40 @@ pub fn apply_files_ref_batch(
     Ok(())
 }
 
-fn write_ref_cas_with_packed_snapshot(
+fn write_ref_loose_overlay_batch(
     git_dir: &Path,
     refname: &str,
     oid: &ObjectId,
+    write_ctx: &mut LooseRefBatchWriteCtx,
+) -> Result<()> {
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    write_ref_at_storage_batch(&storage_dir, refname, oid, write_ctx)
+}
+
+fn delete_packed_ref_batch_fast(
+    git_dir: &Path,
+    refname: &str,
     expected_old: ObjectId,
     packed: &PackedRefs,
-) -> Result<()> {
-    ensure_refname_safe_for_storage(refname)?;
+    pending_packed_removals: &mut HashSet<String>,
+) -> Result<bool> {
     let storage_dir = ref_storage_dir(git_dir, refname);
     let stor = crate::ref_namespace::storage_ref_name(refname);
     let path = storage_dir.join(&stor);
-    let had_loose = fs::symlink_metadata(&path)
+    if fs::symlink_metadata(&path)
         .map(|m| m.is_file())
-        .unwrap_or(false);
-    if !had_loose {
-        if fs::symlink_metadata(&path)
-            .map(|m| m.file_type().is_dir())
-            .unwrap_or(false)
-        {
-            let display = ref_path_for_display(&path);
-            return Err(crate::error::RefLockError::DirectoryInTheWay {
-                refname: refname.to_owned(),
-                path: display,
-            }
-            .into());
-        }
-    } else {
-        remove_empty_ref_directory(&path);
-    }
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let lock = lock_path_for_ref(&path);
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock)?;
-    let current = read_loose_or_packed_oid_with_snapshot(git_dir, refname, Some(packed))?;
-    if let Err(err) = verify_branch_cas(Some(expected_old), current, refname) {
-        abort_loose_ref_lock(&lock);
-        return Err(err);
-    }
-    let content = format!("{oid}\n");
+        .unwrap_or(false)
     {
-        use std::io::Write as _;
-        let mut file = fs::OpenOptions::new().write(true).open(&lock)?;
-        file.write_all(content.as_bytes())?;
+        return Ok(false);
     }
-    fs::rename(&lock, &path)?;
-    Ok(())
+    let Some(current) = packed.get(refname) else {
+        return Ok(false);
+    };
+    if current != expected_old {
+        return Ok(false);
+    }
+    pending_packed_removals.insert(refname.to_owned());
+    Ok(true)
 }
 
 fn delete_ref_cas_with_packed_batch(
@@ -1924,13 +2000,15 @@ fn delete_ref_cas_with_packed_batch(
     packed: &PackedRefs,
     pending_packed_removals: &mut HashSet<String>,
 ) -> Result<()> {
-    ensure_refname_safe_for_storage(refname)?;
     let current = read_loose_or_packed_oid_with_snapshot(git_dir, refname, Some(packed))?;
     verify_branch_cas(Some(expected_old), current, refname)?;
     let storage_dir = ref_storage_dir(git_dir, refname);
     let stor = crate::ref_namespace::storage_ref_name(refname);
     let path = storage_dir.join(&stor);
-    if fs::symlink_metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
+    if fs::symlink_metadata(&path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
         let lock = lock_path_for_ref(&path);
         if fs::symlink_metadata(&lock).is_ok() {
             return Err(Error::Io(io::Error::new(
@@ -3103,6 +3181,9 @@ fn loose_ref_file_direct_oid(path: &Path) -> Option<ObjectId> {
 /// start the walk at the parent directory (`refs/heads/`) and filter by prefix.
 fn loose_ref_list_walk_root(git_dir: &Path, prefix: &str) -> (PathBuf, String) {
     let trimmed = prefix.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return (git_dir.to_path_buf(), String::new());
+    }
     let direct = git_dir.join(trimmed);
     if direct.is_dir() {
         return (direct, format!("{trimmed}/"));

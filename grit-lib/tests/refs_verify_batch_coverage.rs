@@ -5,7 +5,9 @@
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 
+use grit_lib::gc::{update_refs, RefTransactionItem};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::resolve_ref;
 use grit_lib::refs::write_ref;
 use grit_lib::refs::{
     verify_ref_transaction_batch, verify_refname_available_for_create, RefBatchItem,
@@ -104,4 +106,37 @@ fn verify_refname_blocks_packed_descendant_without_loose_children() {
         verify_refname_available_for_create(&git_dir, "refs/heads/packed-parent", &extras, &skip)
             .unwrap_err();
     assert!(matches!(err, RefnameUnavailable::DescendantExists { .. }));
+}
+
+#[test]
+fn update_refs_create_batch_rejects_later_conflict_without_partial_write() {
+    let dir = tempdir().expect("tempdir");
+    init_repository(dir.path(), false, "main", None, "files").expect("init");
+    let git_dir = dir.path().join(".git");
+
+    fs::create_dir_all(git_dir.join("refs/heads/existing")).expect("dir");
+    fs::write(
+        git_dir.join("refs/heads/existing/child"),
+        format!("{}\n", oid(9).to_hex()),
+    )
+    .expect("child ref");
+
+    let items = vec![
+        RefTransactionItem {
+            name: "refs/heads/innocent".into(),
+            new_oid: Some(oid(10)),
+            expected_old: None,
+        },
+        RefTransactionItem {
+            name: "refs/heads/existing".into(),
+            new_oid: Some(oid(11)),
+            expected_old: None,
+        },
+    ];
+    let err = update_refs(&git_dir, &items).expect_err("descendant conflict");
+    let _ = err;
+    assert!(
+        resolve_ref(&git_dir, "refs/heads/innocent").is_err(),
+        "batch must not leave earlier creates on disk when a later create is rejected"
+    );
 }

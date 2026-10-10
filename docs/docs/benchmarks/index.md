@@ -275,7 +275,7 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 | object_reads | 8 | 234.49× | 4569.02× |
 | odb_backend | 6 | 14.90× | 98.20× |
 | pick | 4 | 8.63× | 17.09× |
-| refs | 10 | 1.28× | 2.50× |
+| refs | 10 | 0.84× | 1.95× |
 | status | 4 | 6.17× | 48.09× |
 | switch | 4 | 3.61× | 22.50× |
 
@@ -378,16 +378,16 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 
 | Scenario | Fixture | Git mean (ms) | Grit mean (ms) | Grit / Git | Spread |
 | --- | --- | ---: | ---: | ---: | --- |
-| `for-each-ref-all-refs-100k-loose` | refs-100k-loose | 1,305 | 989 | 0.76× | ±28.5 ms |
-| `for-each-ref-prefix-b05-refs-100k-loose` | refs-100k-loose | 422 | 143 | 0.34× | ±15.2 ms |
-| `update-ref-create-100k-refs-100k-loose` | refs-100k-loose | 3,325 | 5,486 | 1.65× | ±72.0 ms |
-| `update-ref-delete-1k-refs-100k-loose` | refs-100k-loose | 42.9 | 52.2 | 1.22× | ±1.93 ms |
-| `update-ref-update-1k-refs-100k-loose` | refs-100k-loose | 73.6 | 64.8 | 0.88× | ±1.43 ms |
-| `for-each-ref-all-refs-100k-packed` | refs-100k-packed | 979 | 759 | 0.77× | ±57.0 ms |
-| `for-each-ref-prefix-b05-refs-100k-packed` | refs-100k-packed | 12.8 | 17.2 | 1.34× | ±2.01 ms |
-| `update-ref-create-100k-refs-100k-packed` | refs-100k-packed | 4,370 | 6,961 | 1.59× | ±378 ms |
-| `update-ref-delete-1k-refs-100k-packed` | refs-100k-packed | 60.1 | 150 | 2.50× | ±17.8 ms |
-| `update-ref-update-1k-refs-100k-packed` | refs-100k-packed | 51.8 | 96.5 | 1.86× | ±10.1 ms |
+| `for-each-ref-all-refs-100k-loose` | refs-100k-loose | 1,732 | 1,225 | 0.71× | ±35.8 ms |
+| `for-each-ref-prefix-b05-refs-100k-loose` | refs-100k-loose | 550 | 173 | 0.31× | ±10.3 ms |
+| `update-ref-create-100k-refs-100k-loose` | refs-100k-loose | 4,435 | 2,925 | 0.66× | ±91.6 ms |
+| `update-ref-delete-1k-refs-100k-loose` | refs-100k-loose | 50.5 | 59.9 | 1.19× | ±3.65 ms |
+| `update-ref-update-1k-refs-100k-loose` | refs-100k-loose | 77.2 | 68.8 | 0.89× | ±4.93 ms |
+| `for-each-ref-all-refs-100k-packed` | refs-100k-packed | 1,219 | 729 | 0.60× | ±41.1 ms |
+| `for-each-ref-prefix-b05-refs-100k-packed` | refs-100k-packed | 12.8 | 15.8 | 1.24× | ±1.88 ms |
+| `update-ref-create-100k-refs-100k-packed` | refs-100k-packed | 4,799 | 3,765 | 0.78× | ±212 ms |
+| `update-ref-delete-1k-refs-100k-packed` | refs-100k-packed | 69.0 | 99.5 | 1.44× | ±34.7 ms |
+| `update-ref-update-1k-refs-100k-packed` | refs-100k-packed | 62.8 | 122 | 1.95× | ±41.2 ms |
 
 ### status
 
