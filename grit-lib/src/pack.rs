@@ -4025,7 +4025,11 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
 /// End offset (exclusive) of the raw packed bytes for the object at `entry_offset`.
 ///
 /// Uses the next larger pack offset from the index, or the pack trailer when this is the last object.
-fn pack_entry_raw_end(idx: &PackIndex, pack_bytes: &[u8], entry_offset: u64) -> Option<usize> {
+pub(crate) fn pack_entry_raw_end(
+    idx: &PackIndex,
+    pack_bytes: &[u8],
+    entry_offset: u64,
+) -> Option<usize> {
     let hb = idx.hash_bytes();
     let pack_end = pack_bytes.len().checked_sub(hb)?;
     let start = entry_offset as usize;

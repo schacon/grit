@@ -10,12 +10,24 @@ use super::{
 };
 use crate::config::ConfigSet;
 use crate::objects::{ObjectId, ObjectKind};
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 use crate::pack_objects::build_pack_for_upload;
+||||||| Common ancestor
+=======
+use crate::pack_objects::{write_upload_pack_stream, PackBuildOptions, PackProgress};
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 use crate::repo::Repository;
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 use crate::rev_list::ObjectFilter;
 use crate::transfer::PackBuildOptions;
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
+||||||| Common ancestor
+use crate::shallow::INFINITE_DEPTH;
+use crate::transfer::{build_pack, PackBuildOptions};
+=======
+use crate::shallow::INFINITE_DEPTH;
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 
 /// Capabilities offered in a v0/v1 advertisement, before the per-repository ones.
 const V0_CAPABILITIES: &[&str] = &[
@@ -210,6 +222,7 @@ fn serve_v0(
         None => write_line(output, "NAK")?,
     }
     let sideband = request.caps.contains("side-band-64k");
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
     let pack = build_response_pack_from_v0(
         repo,
         &refs,
@@ -219,6 +232,32 @@ fn serve_v0(
         shallow_resp.as_ref(),
     )?;
     write_pack(output, &pack, sideband)
+||||||| Common ancestor
+    let pack = if request.is_shallow() {
+        build_deepen_pack(
+            repo,
+            &refs,
+            &request.wants,
+            request.deepen,
+            &request.client_shallow,
+            &common,
+            &request.caps,
+        )?
+    } else {
+        build_response_pack(repo, &refs, &request.wants, &common, &request.caps)?
+    };
+    write_pack(output, &pack, sideband)
+=======
+    stream_response_pack(
+        repo,
+        &refs,
+        &request.wants,
+        &common,
+        &request.caps,
+        output,
+        sideband,
+    )
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 }
 
 /// Write the v0 ref advertisement: `HEAD` and every ref, capabilities on the
@@ -686,6 +725,7 @@ fn fetch_v2(
         .filter_map(|a| a.strip_prefix("shallow "))
         .map(|hex| parse_oid(repo, hex.trim()))
         .collect::<Result<Vec<_>>>()?;
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 
     let shallow_req = ShallowRequest {
         client_shallow: client_shallow.clone(),
@@ -700,6 +740,83 @@ fn fetch_v2(
     } else {
         Default::default()
     };
+||||||| Common ancestor
+    let shallow = deepen.is_some();
+    if shallow {
+        if deepen == Some(INFINITE_DEPTH) {
+            write_v2_unshallow_info(output, &client_shallow)?;
+        } else {
+            let bounds = shallow_boundaries_for_deepen(repo, &wants, deepen)?;
+            write_v2_shallow_info(output, &bounds)?;
+        }
+    }
+    let pack = if shallow {
+        build_deepen_pack(
+            repo,
+            &refs,
+            &wants,
+            deepen,
+            &client_shallow,
+            &common,
+            &caps,
+        )?
+    } else {
+        build_response_pack(repo, &refs, &wants, &common, &caps)?
+    };
+    write_line(output, "packfile")?;
+    write_pack(output, &pack, true)
+}
+
+fn read_packet_stash(input: &mut dyn Read, stash: &mut Option<Packet>) -> Result<Option<Packet>> {
+    if let Some(pkt) = stash.take() {
+        return Ok(Some(pkt));
+    }
+    read_packet(input)
+}
+
+fn write_v0_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Result<()> {
+    for oid in boundaries {
+        write_line(output, &format!("shallow {}", oid.to_hex()))?;
+    }
+    write_flush(output)
+}
+=======
+    let shallow = deepen.is_some();
+    if shallow {
+        if deepen == Some(INFINITE_DEPTH) {
+            write_v2_unshallow_info(output, &client_shallow)?;
+        } else {
+            let bounds = shallow_boundaries_for_deepen(repo, &wants, deepen)?;
+            write_v2_shallow_info(output, &bounds)?;
+        }
+    }
+    write_line(output, "packfile")?;
+    if shallow {
+        let mut haves = common.to_vec();
+        if deepen != Some(INFINITE_DEPTH) {
+            haves.extend(deepen_haves_excluding_history(repo, &wants, deepen)?);
+        }
+        let _ = client_shallow;
+        stream_response_pack(repo, &refs, &wants, &haves, &caps, output, true)
+    } else {
+        stream_response_pack(repo, &refs, &wants, &common, &caps, output, true)
+    }
+}
+
+fn read_packet_stash(input: &mut dyn Read, stash: &mut Option<Packet>) -> Result<Option<Packet>> {
+    if let Some(pkt) = stash.take() {
+        return Ok(Some(pkt));
+    }
+    read_packet(input)
+}
+
+fn write_v0_shallow_info(output: &mut dyn Write, boundaries: &[ObjectId]) -> Result<()> {
+    for oid in boundaries {
+        write_line(output, &format!("shallow {}", oid.to_hex()))?;
+    }
+    write_flush(output)
+}
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 
     if !shallow_resp.shallow.is_empty() || !shallow_resp.unshallow.is_empty() {
         write_v2_fetch_line(output, "shallow-info", sideband_all)?;
@@ -752,6 +869,7 @@ fn write_v2_fetch_line(output: &mut dyn Write, line: &str, sideband_all: bool) -
     }
 }
 
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 /// Inputs for [`build_response_pack`].
 struct ResponsePackInput<'a> {
     repo: &'a Repository,
@@ -765,7 +883,30 @@ struct ResponsePackInput<'a> {
 }
 
 /// Build the pack answering a fetch, adding annotated tags when `include-tag`
+||||||| Common ancestor
+fn build_deepen_pack(
+    repo: &Repository,
+    refs: &[AdvertisedRef],
+    wants: &[ObjectId],
+    deepen: Option<u32>,
+    client_shallow: &[ObjectId],
+    common: &[ObjectId],
+    caps: &HashSet<String>,
+) -> Result<Vec<u8>> {
+    let mut haves = common.to_vec();
+    if deepen != Some(INFINITE_DEPTH) {
+        haves.extend(deepen_haves_excluding_history(repo, wants, deepen)?);
+    }
+    let _ = client_shallow;
+    build_response_pack(repo, refs, wants, &haves, caps)
+}
+
+/// Build the pack answering a fetch, adding annotated tags when `include-tag`
+=======
+/// Stream the pack answering a fetch, adding annotated tags when `include-tag`
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 /// was negotiated.
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
 fn build_response_pack(input: ResponsePackInput<'_>) -> Result<Vec<u8>> {
     let mut pack_wants = input.wants.to_vec();
     if input.caps.contains("include-tag") {
@@ -775,6 +916,31 @@ fn build_response_pack(input: ResponsePackInput<'_>) -> Result<Vec<u8>> {
             input.wants,
             input.common,
         )?);
+||||||| Common ancestor
+fn build_response_pack(
+    repo: &Repository,
+    refs: &[AdvertisedRef],
+    wants: &[ObjectId],
+    common: &[ObjectId],
+    caps: &HashSet<String>,
+) -> Result<Vec<u8>> {
+    let mut pack_wants = wants.to_vec();
+    if caps.contains("include-tag") {
+        pack_wants.extend(included_tags(repo, refs, wants, common)?);
+=======
+fn stream_response_pack(
+    repo: &Repository,
+    refs: &[AdvertisedRef],
+    wants: &[ObjectId],
+    common: &[ObjectId],
+    caps: &HashSet<String>,
+    output: &mut dyn Write,
+    sideband: bool,
+) -> Result<()> {
+    let mut pack_wants = wants.to_vec();
+    if caps.contains("include-tag") {
+        pack_wants.extend(included_tags(repo, refs, wants, common)?);
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
     }
     pack_wants.sort();
     pack_wants.dedup();
@@ -785,6 +951,7 @@ fn build_response_pack(input: ResponsePackInput<'_>) -> Result<Vec<u8>> {
         use_ofs_delta: input.caps.contains("ofs-delta"),
         ..PackBuildOptions::default()
     };
+<<<<<<< New base: Merge branch 'factory/rev-list-limit-order-1067'
     Ok(build_pack_for_upload(
         input.repo,
         &pack_wants,
@@ -794,6 +961,45 @@ fn build_response_pack(input: ResponsePackInput<'_>) -> Result<Vec<u8>> {
         input.filter,
         &pack_opts,
     )?)
+||||||| Common ancestor
+    Ok(build_pack(
+        &repo.odb,
+        &pack_wants,
+        common,
+        &pack_opts,
+    )?)
+=======
+    let mut progress = |_ev: PackProgress| {};
+    if sideband {
+        let mut framed = crate::pkt_line::SidebandChannel1Writer::new(&mut *output);
+        write_upload_pack_stream(
+            repo,
+            &pack_wants,
+            common,
+            &HashSet::new(),
+            None,
+            &pack_opts,
+            &mut progress,
+            &mut framed,
+        )
+        .map_err(ServeError::from)?;
+        framed.finish().map_err(ServeError::from)?;
+        write_flush(output)
+    } else {
+        write_upload_pack_stream(
+            repo,
+            &pack_wants,
+            common,
+            &HashSet::new(),
+            None,
+            &pack_opts,
+            &mut progress,
+            output,
+        )
+        .map_err(ServeError::from)?;
+        Ok(())
+    }
+>>>>>>> Current commit: lib: stream upload-pack responses and add pack reuse scaffold
 }
 
 /// Annotated tags the client did not ask for but whose target commit is being
@@ -853,15 +1059,4 @@ fn commit_closure(
         queue.extend(commit.parents);
     }
     Ok(seen)
-}
-
-/// Write a pack, framed on side-band channel 1 when negotiated, then a flush.
-fn write_pack(output: &mut dyn Write, pack: &[u8], sideband: bool) -> Result<()> {
-    if sideband {
-        crate::pkt_line::write_sideband_channel1_64k(&mut &mut *output, pack)?;
-        write_flush(output)
-    } else {
-        output.write_all(pack)?;
-        Ok(())
-    }
 }

@@ -240,6 +240,7 @@ pub(crate) mod pack_name_hash;
 pub(crate) mod pack_object_select;
 pub(crate) mod pack_objects;
 pub(crate) mod pack_receive;
+pub mod pack_reuse;
 pub(crate) mod pack_rev;
 pub(crate) mod pack_store;
 pub mod pack_write;
