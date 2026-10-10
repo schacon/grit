@@ -2,15 +2,21 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod support;
+
 use std::fs;
+use std::ops::ControlFlow;
+use std::path::Path;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::reftable::{
     read_write_options, reftable_delete_ref, reftable_list_refs, reftable_write_ref, RefValue,
-    ReftableStack,
+    ReftableReader, ReftableStack,
 };
 use grit_lib::repo::init_repository;
 use tempfile::tempdir;
+
+use support::git_refs_verify;
 
 const IDENTITY: &str = "Stack Cov <stack@example.com> 1700000000 +0000";
 
@@ -21,6 +27,28 @@ fn oid(byte: u8) -> ObjectId {
 fn table_count(git_dir: &std::path::Path) -> usize {
     let list = fs::read_to_string(git_dir.join("reftable/tables.list")).expect("tables.list");
     list.lines().filter(|l| !l.is_empty()).count()
+}
+
+fn assert_reftable_tables_ref_update_indices_in_header(git_dir: &Path) {
+    let rt = git_dir.join("reftable");
+    let list = fs::read_to_string(rt.join("tables.list")).expect("tables.list");
+    for name in list.lines().filter(|l| !l.is_empty()) {
+        let data = fs::read(rt.join(name)).expect("table bytes");
+        let reader = ReftableReader::new(data).expect("reader");
+        let min = reader.min_update_index();
+        let max = reader.max_update_index();
+        reader
+            .for_each_ref(|rec| {
+                assert!(
+                    rec.update_index >= min && rec.update_index <= max,
+                    "ref {} update_index {} outside table {name} header [{min}, {max}]",
+                    rec.name,
+                    rec.update_index
+                );
+                ControlFlow::<()>::Continue(())
+            })
+            .expect("for_each_ref");
+    }
 }
 
 #[test]
@@ -247,4 +275,29 @@ fn stack_write_ref_deletion_value() {
         .expect("delete via stack");
     let listed = reftable_list_refs(&git_dir, "refs/heads/del-me").expect("list");
     assert!(listed.is_empty());
+}
+
+#[test]
+fn geometric_partial_compaction_ref_indices_within_table_headers() {
+    let dir = tempdir().expect("tempdir");
+    init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+    let git_dir = dir.path().join(".git");
+
+    for i in 0..80u32 {
+        reftable_write_ref(
+            &git_dir,
+            &format!("refs/heads/t05-{i:04}"),
+            &oid((i % 200) as u8),
+            Some(IDENTITY),
+            Some("geometric stack"),
+        )
+        .expect("write ref");
+    }
+
+    assert!(
+        table_count(&git_dir) >= 2,
+        "expected geometric stack with multiple tables"
+    );
+    assert_reftable_tables_ref_update_indices_in_header(&git_dir);
+    git_refs_verify(dir.path());
 }

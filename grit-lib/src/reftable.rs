@@ -1905,6 +1905,22 @@ fn load_cached_stack_tables(reftable_dir: &Path) -> Result<Arc<CachedStackTables
     Ok(cached)
 }
 
+fn cached_reader_for_name<'a>(
+    cached: &'a CachedStackTables,
+    table_name: &str,
+) -> Result<&'a ReftableReader> {
+    let idx = cached
+        .table_names
+        .iter()
+        .position(|n| n == table_name)
+        .ok_or_else(|| {
+            Error::InvalidRef(format!(
+                "reftable stack references missing table {table_name}"
+            ))
+        })?;
+    Ok(&cached.readers[idx])
+}
+
 /// Manages the `$GIT_DIR/reftable/` directory and `tables.list` stack.
 ///
 /// The stack provides a merged view of all tables, with later tables
@@ -1957,15 +1973,22 @@ impl ReftableStack {
     }
 
     /// Open an existing reftable stack.
+    ///
+    /// When `reftable/tables.list` is absent (empty reftable backend), the stack
+    /// starts with no tables, matching Git's layout before the first ref write.
     pub fn open(git_dir: &Path) -> Result<Self> {
         let reftable_dir = git_dir.join("reftable");
+        fs::create_dir_all(&reftable_dir).map_err(Error::Io)?;
         let tables_list = reftable_dir.join("tables.list");
-        let content = fs::read_to_string(&tables_list).map_err(Error::Io)?;
-        let table_names: Vec<String> = content
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.to_owned())
-            .collect();
+        let table_names = match fs::read_to_string(&tables_list) {
+            Ok(content) => content
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_owned())
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(Error::Io(e)),
+        };
         Ok(Self {
             reftable_dir,
             table_names,
@@ -2037,14 +2060,22 @@ impl ReftableStack {
         read_write_options(&git_dir)
     }
 
+    fn stack_readers<'a>(&self, cached: &'a CachedStackTables) -> Result<Vec<&'a ReftableReader>> {
+        self.table_names
+            .iter()
+            .map(|name| cached_reader_for_name(cached, name))
+            .collect()
+    }
+
     /// Read a merged view of all ref records.
     ///
     /// Later tables override earlier ones. Deletion records cause the
     /// ref to be omitted from the result.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let readers = self.stack_readers(&cached)?;
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
-        for reader in &cached.readers {
+        for reader in readers {
             reader.for_each_ref(|rec| {
                 match &rec.value {
                     RefValue::Deletion => {
@@ -2068,12 +2099,13 @@ impl ReftableStack {
         prefix: &str,
     ) -> Result<Vec<(String, ObjectId)>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
+        let readers = self.stack_readers(&cached)?;
         let lower = prefix;
         let upper = prefix_upper_exclusive(prefix);
         let mut out = Vec::new();
 
-        if cached.readers.len() == 1 {
-            let reader = &cached.readers[0];
+        if readers.len() == 1 {
+            let reader = readers[0];
             reader.for_each_ref_in_range(lower, upper.as_deref(), |rec| {
                 if prefix.ends_with('/') && !rec.name.starts_with(prefix) {
                     return ControlFlow::<()>::Continue(());
@@ -2086,7 +2118,7 @@ impl ReftableStack {
         }
 
         let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
-        for reader in &cached.readers {
+        for reader in readers {
             reader.for_each_ref_in_range(lower, upper.as_deref(), |rec| {
                 if prefix.ends_with('/') && !rec.name.starts_with(prefix) {
                     return ControlFlow::<()>::Continue(());
@@ -2111,9 +2143,9 @@ impl ReftableStack {
 
     fn table_payload_sizes(&self) -> Result<Vec<u64>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
-        Ok(cached
-            .readers
-            .iter()
+        Ok(self
+            .stack_readers(&cached)?
+            .into_iter()
             .map(ReftableReader::payload_size)
             .collect())
     }
@@ -2198,7 +2230,7 @@ impl ReftableStack {
     /// Look up a single ref across all tables (most recent wins).
     pub fn lookup_ref(&self, name: &str) -> Result<Option<RefRecord>> {
         let cached = load_cached_stack_tables(&self.reftable_dir)?;
-        for reader in cached.readers.iter().rev() {
+        for reader in self.stack_readers(&cached)?.into_iter().rev() {
             if let Some(rec) = reader.lookup_ref(name)? {
                 return match rec.value {
                     RefValue::Deletion => Ok(None),
@@ -3839,6 +3871,60 @@ pub(crate) fn parse_identity_string(identity: &str) -> (String, String, u64, i16
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subset_stack_read_refs_respects_table_names() {
+        use crate::objects::ObjectId;
+        use crate::repo::init_repository;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+        let git_dir = dir.path().join(".git");
+        let mut opts = read_write_options(&git_dir);
+        opts.autocompaction_enabled = false;
+        let oid_a = ObjectId::from_bytes(&[0x11; 20]).expect("oid");
+        let oid_b = ObjectId::from_bytes(&[0x22; 20]).expect("oid");
+        let identity = "Subset Stack <subset@example.com> 1700000000 +0000";
+        reftable_write_ref_with_write_options(
+            &git_dir,
+            "refs/heads/only-in-first-table",
+            &oid_a,
+            Some(identity),
+            None,
+            &opts,
+        )
+        .expect("first ref");
+        reftable_write_ref_with_write_options(
+            &git_dir,
+            "refs/heads/only-in-second-table",
+            &oid_b,
+            Some(identity),
+            None,
+            &opts,
+        )
+        .expect("second ref");
+
+        let stack = ReftableStack::open(&git_dir).expect("open");
+        assert!(
+            stack.table_names.len() >= 2,
+            "expected multiple tables without autocompaction, got {}",
+            stack.table_names.len()
+        );
+
+        let subset = ReftableStack {
+            reftable_dir: stack.reftable_dir.clone(),
+            table_names: vec![stack.table_names[0].clone()],
+        };
+        let refs = subset.read_refs().expect("subset read");
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.iter().any(|n| *n == "refs/heads/only-in-first-table"));
+        assert!(!names
+            .iter()
+            .any(|n| *n == "refs/heads/only-in-second-table"));
+
+        let full = stack.read_refs().expect("full read");
+        assert_eq!(full.len(), 2);
+    }
 
     #[test]
     fn suggest_compaction_segment_matches_geometric_break() {

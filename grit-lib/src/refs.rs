@@ -2941,6 +2941,7 @@ mod list_refs_glob_prefix_tests {
     }
 }
 
+#[cfg(test)]
 mod ref_storage_traversal_guard_tests {
     use super::*;
     use crate::objects::ObjectId;
