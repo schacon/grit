@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-10T16:51:11Z",
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16791945216,
+    "os": "linux",
+    "kernel": "Linux 6.12.94+",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.45.0",
+    "grit": "grit 0.5.4",
+    "grit_commit": "204aa83ab4e5797382f9aec3d9722e030f155ee4"
+  },
+  "scenarios": [
+    {
+      "id": "for-each-ref-all-refs-100k-reftable",
+      "group": "refs",
+      "fixture": "refs-100k-reftable",
+      "description": "for-each-ref-all-refs-100k-reftable",
+      "driver": "lib",
+      "git": {
+        "mean_ms": 863.6,
+        "median_ms": 863.6,
+        "stddev_ms": 0,
+        "min_ms": 863.6,
+        "max_ms": 863.6,
+        "runs_ms": [
+          863.6
+        ]
+      },
+      "grit": {
+        "mean_ms": 482.2,
+        "median_ms": 482.2,
+        "stddev_ms": 0,
+        "min_ms": 482.2,
+        "max_ms": 482.2,
+        "runs_ms": [
+          482.2
+        ]
+      },
+      "ratio": 0.5583603520148217
+    },
+    {
+      "id": "for-each-ref-prefix-b05-refs-100k-reftable",
+      "group": "refs",
+      "fixture": "refs-100k-reftable",
+      "description": "for-each-ref-prefix-b05-refs-100k-reftable",
+      "driver": "lib",
+      "git": {
+        "mean_ms": 9.63,
+        "median_ms": 9.63,
+        "stddev_ms": 0,
+        "min_ms": 9.63,
+        "max_ms": 9.63,
+        "runs_ms": [
+          9.63
+        ]
+      },
+      "grit": {
+        "mean_ms": 8.1,
+        "median_ms": 8.1,
+        "stddev_ms": 0,
+        "min_ms": 8.1,
+        "max_ms": 8.1,
+        "runs_ms": [
+          8.1
+        ]
+      },
+      "ratio": 0.8411214953271027
+    },
+    {
+      "id": "update-ref-update-1k-refs-100k-reftable",
+      "group": "refs",
+      "fixture": "refs-100k-reftable",
+      "description": "update-ref-update-1k-refs-100k-reftable",
+      "driver": "lib",
+      "git": {
+        "mean_ms": 18.8,
+        "median_ms": 18.8,
+        "stddev_ms": 0,
+        "min_ms": 18.8,
+        "max_ms": 18.8,
+        "runs_ms": [
+          18.8
+        ]
+      },
+      "grit": {
+        "mean_ms": 16.3,
+        "median_ms": 16.3,
+        "stddev_ms": 0,
+        "min_ms": 16.3,
+        "max_ms": 16.3,
+        "runs_ms": [
+          16.3
+        ]
+      },
+      "ratio": 0.8670212765957447
+    }
+  ]
+}

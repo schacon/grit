@@ -334,22 +334,25 @@ pub fn run_refs_suite(
     timestamp: time::OffsetDateTime,
 ) -> Result<BenchReport> {
     let mut scenarios = Vec::new();
-    add_fixture_scenarios(
-        hyperfine,
-        bench_exe,
-        git,
-        cfg,
-        RefsFixtureKind::Packed,
-        &mut scenarios,
-    )?;
-    add_fixture_scenarios(
-        hyperfine,
-        bench_exe,
-        git,
-        cfg,
-        RefsFixtureKind::Loose,
-        &mut scenarios,
-    )?;
+    let only = std::env::var("GRIT_BENCH_REFS_ONLY").ok();
+    if only.as_deref() != Some("reftable") {
+        add_fixture_scenarios(
+            hyperfine,
+            bench_exe,
+            git,
+            cfg,
+            RefsFixtureKind::Packed,
+            &mut scenarios,
+        )?;
+        add_fixture_scenarios(
+            hyperfine,
+            bench_exe,
+            git,
+            cfg,
+            RefsFixtureKind::Loose,
+            &mut scenarios,
+        )?;
+    }
     if git_supports_reftable(git) {
         add_fixture_scenarios(
             hyperfine,
