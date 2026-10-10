@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use crate::capped_run::{run_capped_shell_command, TerminationKind, EXIT_MEMORY_CAP, EXIT_TIMEOUT};
 use crate::hyperfine::{run_hyperfine, HyperfineResultEntry, HyperfineRun};
 use crate::schema::TimingStats;
+use crate::shell::shell_quote;
 use crate::stats::timing_from_hyperfine;
 
 /// Environment variable carrying the shell command for [`run_measure_rss_cli`].
@@ -130,13 +131,14 @@ pub fn bench_with_peak_rss(
     min_runs: u32,
     command_name: &str,
     env_prefix: Option<&str>,
+    prepare: Option<&str>,
 ) -> Result<(TimingStats, u64)> {
     let entry = run_hyperfine(
         hyperfine,
         &HyperfineRun {
             command: command.to_string(),
             working_directory: cwd.to_path_buf(),
-            prepare: None,
+            prepare: prepare.map(str::to_string),
             warmup,
             min_runs,
             command_name: Some(command_name.into()),
@@ -144,7 +146,13 @@ pub fn bench_with_peak_rss(
         },
     )?;
     let stats = timing_from_hyperfine(&entry);
-    let peak = peak_rss_for_command(&wrap_env(command, env_prefix), cwd, measure_helper)?;
+    let rss_cmd = measure_rss_command(command, env_prefix, prepare, cwd);
+    let peak = peak_rss_for_command(&rss_cmd, cwd, measure_helper).with_context(|| {
+        format!(
+            "measure-rss for {command_name} (cwd={}): {rss_cmd}",
+            cwd.display()
+        )
+    })?;
     Ok((stats, peak))
 }
 
@@ -153,6 +161,22 @@ fn wrap_env(command: &str, env_prefix: Option<&str>) -> String {
         Some(prefix) => format!("{prefix} {command}"),
         None => command.to_string(),
     }
+}
+
+/// Shell command for peak RSS measurement (re-run prepare when hyperfine used one).
+fn measure_rss_command(
+    command: &str,
+    env_prefix: Option<&str>,
+    prepare: Option<&str>,
+    cwd: &Path,
+) -> String {
+    let body = wrap_env(command, env_prefix);
+    let Some(prepare) = prepare else {
+        return body;
+    };
+    let prep = wrap_env(prepare, env_prefix);
+    let cwd_q = shell_quote(&cwd.to_string_lossy());
+    format!("{prep} && cd {cwd_q} && {body}")
 }
 
 /// Median wall time in milliseconds for a single command (no hyperfine).

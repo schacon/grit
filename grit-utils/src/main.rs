@@ -200,6 +200,17 @@ enum Cmd {
         git: PathBuf,
     },
     #[command(hide = true)]
+    PrepareRefs {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        work: PathBuf,
+        #[arg(long, value_parser = parse_refs_work_mode)]
+        mode: RefsWorkMode,
+    },
+    #[command(hide = true)]
     ServeGitHttp {
         #[arg(long)]
         root: PathBuf,
@@ -251,6 +262,25 @@ enum Cmd {
         work: PathBuf,
         #[arg(long, value_parser = parse_refs_work_mode)]
         mode: RefsWorkMode,
+    },
+}
+
+fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
+    match s {
+        "full" => Ok(RefsWorkMode::Full),
+        "empty" => Ok(RefsWorkMode::Empty),
+        other => Err(format!("expected full or empty, got {other}")),
+    }
+}
+
+#[derive(Subcommand)]
+enum RefsDriveCmd {
+    ForEachRef {
+        repo: PathBuf,
+        prefix: Option<String>,
+    },
+    UpdateRefStdin {
+        repo: PathBuf,
     },
 }
 
@@ -685,6 +715,7 @@ fn main() -> Result<()> {
         | Cmd::PreparePickSeries { .. }
         | Cmd::PrepareRevert { .. }
         | Cmd::PrepareCommit { .. }
+        | Cmd::PrepareRefs { .. }
         | Cmd::PrepareNetworkClone { .. }
         | Cmd::PrepareNetworkFetchIncr { .. }
         | Cmd::PrepareNetworkFetchNoop { .. }
@@ -692,7 +723,6 @@ fn main() -> Result<()> {
         | Cmd::ServeGitHttp { .. }
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
-        | Cmd::PrepareRefs { .. }
         | Cmd::RefsDriver { .. } => unreachable!(),
     };
 
@@ -700,7 +730,11 @@ fn main() -> Result<()> {
     write_output(&cli, &rendered)?;
     if !matches!(
         cli.command,
-        Cmd::Odb | Cmd::OdbBackend | Cmd::Bitmaps { .. } | Cmd::Network { .. } | Cmd::Refs
+        Cmd::Odb
+            | Cmd::OdbBackend
+            | Cmd::Refs
+            | Cmd::Bitmaps { .. }
+            | Cmd::Network { .. }
     ) {
         remove_dir_robust(&scratch_dir());
     }
