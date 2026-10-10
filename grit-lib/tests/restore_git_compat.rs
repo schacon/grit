@@ -339,6 +339,132 @@ fn restore_pathspec_no_match_errors() {
 }
 
 #[test]
+fn restore_worktree_pathspec_no_match_when_only_in_head() {
+    let (dir, repo) = init_repo();
+    fs::write(dir.path().join("f"), "content\n").unwrap();
+    git_cmd(dir.path(), &["add", "f"]);
+    git_cmd(dir.path(), &["commit", "-qm", "add f"]);
+    git_cmd(dir.path(), &["rm", "--cached", "f"]);
+
+    let err = restore_paths(
+        &repo,
+        &restore_opts(&["f"], false, false, RestoreSource::Index),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        grit_lib::error::Error::PathspecNoMatch { .. }
+    ));
+
+    let git_out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["restore", "--", "f"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git restore");
+    assert!(
+        !git_out.status.success(),
+        "git restore should fail for HEAD-only path: {}",
+        String::from_utf8_lossy(&git_out.stderr)
+    );
+}
+
+#[test]
+fn restore_pathspec_exclude_skips_excluded_paths() {
+    let (dir, repo) = init_repo();
+    fs::write(dir.path().join("keep"), "keep-v1\n").unwrap();
+    fs::write(dir.path().join("skip"), "skip-v1\n").unwrap();
+    git_cmd(dir.path(), &["add", "keep", "skip"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    fs::write(dir.path().join("keep"), "keep-dirty\n").unwrap();
+    fs::write(dir.path().join("skip"), "skip-dirty\n").unwrap();
+
+    restore_paths(
+        &repo,
+        &RestoreOptions {
+            pathspecs: vec![".".into(), ":!skip".into()],
+            pathspec_sources: vec![".".into(), ":!skip".into()],
+            source: RestoreSource::Index,
+            staged: false,
+            worktree: false,
+        },
+    )
+    .expect("restore with exclude");
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("keep")).unwrap(),
+        "keep-v1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("skip")).unwrap(),
+        "skip-dirty\n"
+    );
+
+    fs::write(dir.path().join("keep"), "keep-dirty\n").unwrap();
+    fs::write(dir.path().join("skip"), "skip-dirty\n").unwrap();
+    let git_out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["restore", ".", ":!skip"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git restore");
+    assert!(git_out.success());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("keep")).unwrap(),
+        "keep-v1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("skip")).unwrap(),
+        "skip-dirty\n"
+    );
+    git_fsck(dir.path());
+}
+
+#[test]
+fn restore_applies_index_gitattributes_without_worktree_copy() {
+    let (dir, repo) = init_repo();
+    fs::write(dir.path().join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+    fs::write(dir.path().join("data.txt"), b"hello\n").unwrap();
+    git_cmd(dir.path(), &["add", ".gitattributes", "data.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "attrs"]);
+    fs::remove_file(dir.path().join(".gitattributes")).unwrap();
+    fs::write(dir.path().join("data.txt"), b"dirty\n").unwrap();
+
+    restore_paths(
+        &repo,
+        &restore_opts(&["data.txt"], false, false, RestoreSource::Index),
+    )
+    .expect("restore with index attrs");
+
+    assert_eq!(fs::read(dir.path().join("data.txt")).unwrap(), b"hello\r\n");
+
+    fs::write(dir.path().join("data.txt"), b"dirty\n").unwrap();
+    git_cmd(dir.path(), &["restore", "data.txt"]);
+    assert_eq!(fs::read(dir.path().join("data.txt")).unwrap(), b"hello\r\n");
+    git_fsck(dir.path());
+}
+
+#[test]
+fn restore_staged_matches_path_only_in_head() {
+    let (dir, repo) = init_repo();
+    fs::write(dir.path().join("f"), "content\n").unwrap();
+    git_cmd(dir.path(), &["add", "f"]);
+    git_cmd(dir.path(), &["commit", "-qm", "add f"]);
+    git_cmd(dir.path(), &["rm", "--cached", "f"]);
+
+    restore_paths(
+        &repo,
+        &restore_opts(&["f"], true, false, RestoreSource::Index),
+    )
+    .expect("restore staged from HEAD");
+
+    assert!(!git_cmd(dir.path(), &["ls-files", "f"]).trim().is_empty());
+    git_fsck(dir.path());
+}
+
+#[test]
 fn restore_leaves_untracked_alone() {
     let (dir, repo) = init_repo();
     fs::write(dir.path().join("tracked.txt"), "t\n").unwrap();

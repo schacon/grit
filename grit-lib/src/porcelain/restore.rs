@@ -4,11 +4,15 @@
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::diff::refresh_index_stat_content_verified_with_rules;
+use crate::diff::{
+    entry_is_racy, hash_worktree_file, index_mtime_for_diff,
+    refresh_index_stat_content_verified_with_rules, stat_matches,
+};
 use crate::error::{Error, Result};
 use crate::index::index_file_mtime;
-use crate::index::{entry_from_metadata, Index, IndexEntry, MODE_GITLINK};
+use crate::index::{entry_from_metadata, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK};
 use crate::objects::{parse_commit, ObjectId};
 use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
 use crate::porcelain::checkout::{
@@ -76,43 +80,57 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
     }
 
     let mut index = repo.load_index()?;
-    let head_tree_oid = resolve_head_tree(repo)?;
-    let head_entries = if let Some(tree) = head_tree_oid {
-        flatten_tree_full(&repo.odb, &tree, "")?
-    } else {
-        Vec::new()
-    };
+
+    let restore_staged = opts.staged;
+    let restore_worktree = opts.worktree || !opts.staged;
+    let worktree_from_tree = matches!(opts.source, RestoreSource::Tree(_)) && !restore_staged;
 
     let explicit_source_entries = match opts.source {
         RestoreSource::Index => None,
         RestoreSource::Tree(oid) => Some(flatten_tree_full(&repo.odb, &oid, "")?),
     };
 
-    let restore_staged = opts.staged;
-    let restore_worktree = opts.worktree || !opts.staged;
+    let head_entries = if needs_head_tree_entries(restore_staged, opts.source) {
+        match resolve_head_tree(repo)? {
+            Some(tree) => flatten_tree_full(&repo.odb, &tree, "")?,
+            None => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
 
+    let select_all_tracked = pathspecs_select_all_tracked(&opts.pathspecs);
     let matched = collect_matched_paths(
         &index,
-        &head_entries,
+        head_entries.as_slice(),
         explicit_source_entries.as_deref(),
         &opts.pathspecs,
+        restore_staged,
+        worktree_from_tree,
+        opts.source,
+        select_all_tracked,
     );
-    validate_pathspecs(opts, &matched)?;
+    validate_pathspecs(opts, &matched, &index, select_all_tracked)?;
 
     let index_source_entries = index_source_tree(
         opts,
         restore_staged,
-        &head_entries,
+        head_entries.as_slice(),
         explicit_source_entries.as_deref(),
     );
 
     let mut outcome = RestoreOutcome::default();
+    let mut index_dirty = false;
 
-    let tracked_before_index_restore: HashSet<Vec<u8>> = matched
-        .iter()
-        .filter(|path| index.get(path.as_bytes(), 0).is_some())
-        .map(|path| path.as_bytes().to_vec())
-        .collect();
+    let tracked_before_index_restore: HashSet<Vec<u8>> = if restore_worktree {
+        matched
+            .iter()
+            .filter(|path| index.get(path.as_bytes(), 0).is_some())
+            .map(|path| path.as_bytes().to_vec())
+            .collect()
+    } else {
+        HashSet::new()
+    };
 
     if restore_staged {
         apply_index_restore(
@@ -121,6 +139,7 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
             &matched,
             &mut index,
             &mut outcome,
+            &mut index_dirty,
         )?;
     }
 
@@ -131,10 +150,12 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
             work_tree,
             worktree_from_tree,
             tree_source: explicit_source_entries.as_deref(),
+            pathspecs: &opts.pathspecs,
             matched: &matched,
             tracked_for_worktree_deletion: &tracked_before_index_restore,
             index_out: &mut index,
             outcome: &mut outcome,
+            index_dirty: &mut index_dirty,
         })?;
     }
 
@@ -142,14 +163,25 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
         if restore_staged && !restore_worktree {
             refresh_restored_index_stats(repo, work_tree, &mut index, &outcome)?;
         }
-        repo.write_index(&mut index)?;
+        if index_dirty {
+            repo.write_index(&mut index)?;
+        }
     }
 
-    outcome.restored.sort();
-    outcome.removed.sort();
-    outcome.restored.dedup();
-    outcome.removed.dedup();
+    if !outcome.restored.is_empty() {
+        outcome.restored.sort();
+        outcome.restored.dedup();
+    }
+    if !outcome.removed.is_empty() {
+        outcome.removed.sort();
+        outcome.removed.dedup();
+    }
     Ok(outcome)
+}
+
+fn pathspecs_select_all_tracked(pathspecs: &[String]) -> bool {
+    pathspecs.iter().any(|s| matches!(s.as_str(), "." | ":/."))
+        && !pathspecs.iter().any(|s| pathspec_is_exclude(s))
 }
 
 fn resolve_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
@@ -164,38 +196,62 @@ fn resolve_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
     }
 }
 
+fn needs_head_tree_entries(restore_staged: bool, source: RestoreSource) -> bool {
+    restore_staged && matches!(source, RestoreSource::Index)
+}
+
 fn collect_matched_paths(
     index: &Index,
     head_entries: &[FlatTreeEntry],
     source_entries: Option<&[FlatTreeEntry]>,
     pathspecs: &[String],
+    restore_staged: bool,
+    worktree_from_tree: bool,
+    source: RestoreSource,
+    select_all_tracked: bool,
 ) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let path = String::from_utf8_lossy(&entry.path);
-        if matches_pathspec_list(&path, pathspecs) {
-            paths.insert(path.into_owned());
-        }
-    }
-    for entry in head_entries {
-        if matches_pathspec_list(&entry.path, pathspecs) {
-            paths.insert(entry.path.clone());
+    let skip_index_union = select_all_tracked && !restore_staged && !worktree_from_tree;
+    if !skip_index_union {
+        for entry in &index.entries {
+            if entry.stage() != 0 {
+                continue;
+            }
+            let path = String::from_utf8_lossy(&entry.path);
+            if matches_pathspec_list(&path, pathspecs) {
+                paths.insert(path.into_owned());
+            }
         }
     }
-    if let Some(src) = source_entries {
-        for entry in src {
+    if restore_staged {
+        let staged_source = match source {
+            RestoreSource::Index => head_entries,
+            RestoreSource::Tree(_) => source_entries.unwrap_or(&[]),
+        };
+        for entry in staged_source {
             if matches_pathspec_list(&entry.path, pathspecs) {
                 paths.insert(entry.path.clone());
+            }
+        }
+    }
+    if worktree_from_tree {
+        if let Some(src) = source_entries {
+            for entry in src {
+                if matches_pathspec_list(&entry.path, pathspecs) {
+                    paths.insert(entry.path.clone());
+                }
             }
         }
     }
     paths
 }
 
-fn validate_pathspecs(opts: &RestoreOptions, matched: &BTreeSet<String>) -> Result<()> {
+fn validate_pathspecs(
+    opts: &RestoreOptions,
+    matched: &BTreeSet<String>,
+    index: &Index,
+    select_all_tracked: bool,
+) -> Result<()> {
     let sources = if opts.pathspec_sources.is_empty() {
         &opts.pathspecs
     } else {
@@ -205,9 +261,13 @@ fn validate_pathspecs(opts: &RestoreOptions, matched: &BTreeSet<String>) -> Resu
         if pathspec_is_exclude(label) {
             continue;
         }
-        let hits = matched
-            .iter()
-            .any(|p| matches_pathspec_list(p, std::slice::from_ref(resolved)));
+        let hits = if select_all_tracked && matches!(resolved.as_str(), "." | ":/.") {
+            index.entries.iter().any(|e| e.stage() == 0)
+        } else {
+            matched
+                .iter()
+                .any(|p| matches_pathspec_list(p, std::slice::from_ref(resolved)))
+        };
         if !hits {
             return Err(Error::PathspecNoMatch {
                 spec: label.clone(),
@@ -238,6 +298,7 @@ fn apply_index_restore(
     matched: &BTreeSet<String>,
     index: &mut Index,
     outcome: &mut RestoreOutcome,
+    index_dirty: &mut bool,
 ) -> Result<()> {
     for path in matched {
         let path_bytes = path.as_bytes();
@@ -251,9 +312,11 @@ fn apply_index_restore(
             let size = blob_index_size(repo, src)?;
             index.stage_file(index_entry_from_flat(path, src, size));
             outcome.restored.push(path.clone());
+            *index_dirty = true;
         } else if index.get(path_bytes, 0).is_some() {
             index.remove(path_bytes);
             outcome.removed.push(path.clone());
+            *index_dirty = true;
         }
     }
     Ok(())
@@ -264,10 +327,12 @@ struct WorktreeRestoreContext<'a> {
     work_tree: &'a Path,
     worktree_from_tree: bool,
     tree_source: Option<&'a [FlatTreeEntry]>,
+    pathspecs: &'a [String],
     matched: &'a BTreeSet<String>,
     tracked_for_worktree_deletion: &'a HashSet<Vec<u8>>,
     index_out: &'a mut Index,
     outcome: &'a mut RestoreOutcome,
+    index_dirty: &'a mut bool,
 }
 
 fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
@@ -276,81 +341,106 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         work_tree,
         worktree_from_tree,
         tree_source,
+        pathspecs,
         matched,
         tracked_for_worktree_deletion,
         index_out,
         outcome,
+        index_dirty,
     } = ctx;
-    let rules = WorktreeRules::from_repository(repo, index_out)?;
     let mut dir_cache = LeadingDirCache::new();
 
-    for path in matched {
-        let src = if worktree_from_tree {
-            tree_source
-                .and_then(|entries| flat_tree_lookup(entries, path))
-                .cloned()
-        } else {
-            index_out.get(path.as_bytes(), 0).map(index_entry_as_flat)
-        };
+    if !worktree_from_tree {
+        let config = repo.config()?;
+        let attr_index = index_out.gitattributes_snapshot();
+        let rules = WorktreeRules::from_parts(repo, &attr_index, Arc::clone(&config))?;
+        let index_mtime = index_mtime_for_diff(index_out, None);
+        let mut to_write: Vec<usize> = Vec::new();
+        for (pos, entry) in index_out.entries.iter().enumerate() {
+            if entry.stage() != 0 {
+                continue;
+            }
+            let path = match std::str::from_utf8(&entry.path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !matches_pathspec_list(path, pathspecs) {
+                continue;
+            }
+            if entry.mode == MODE_GITLINK {
+                continue;
+            }
+            if worktree_index_entry_up_to_date(repo, work_tree, entry, path, index_mtime, &rules)? {
+                continue;
+            }
+            to_write.push(pos);
+        }
+        if !to_write.is_empty() {
+            outcome.restored.reserve(to_write.len());
+        }
+        for pos in to_write {
+            let path = std::str::from_utf8(&index_out.entries[pos].path)
+                .map_err(|_| Error::Message("non-UTF-8 path in index".into()))?
+                .to_string();
+            let oid = index_out.entries[pos].oid;
+            let mode = index_out.entries[pos].mode;
+            restore_worktree_blob_from_index(
+                repo,
+                work_tree,
+                &path,
+                oid,
+                mode,
+                &rules,
+                &mut dir_cache,
+                index_out,
+                outcome,
+                index_dirty,
+            )?;
+        }
+        for path in matched {
+            if index_out.get(path.as_bytes(), 0).is_some() {
+                continue;
+            }
+            if !tracked_for_worktree_deletion.contains(path.as_bytes()) {
+                continue;
+            }
+            let abs = work_tree.join(path);
+            let Ok(meta) = fs::symlink_metadata(&abs) else {
+                continue;
+            };
+            if meta.is_dir() && !meta.file_type().is_symlink() {
+                continue;
+            }
+            if fs::remove_file(&abs).is_ok() {
+                remove_empty_parent_dirs(work_tree, &abs);
+                outcome.removed.push(path.clone());
+            }
+        }
+        return Ok(());
+    }
 
+    let rules = WorktreeRules::from_repository(repo, index_out)?;
+    for path in matched {
+        let src = tree_source
+            .and_then(|entries| flat_tree_lookup(entries, path))
+            .cloned();
         let abs = work_tree.join(path);
         match src {
             Some(entry) => {
-                if entry.mode == MODE_GITLINK {
-                    continue;
-                }
-                if !worktree_from_tree {
-                    if let Some(existing) = index_out.get(path.as_bytes(), 0) {
-                        if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
-                            &repo.odb,
-                            &repo.git_dir,
-                            work_tree,
-                            index_out,
-                            existing,
-                            &entry.oid,
-                            entry.mode,
-                            path,
-                            Some(rules.filter_process()),
-                        )? {
-                            continue;
-                        }
-                    }
-                }
-                let object = repo.odb.read(&entry.oid)?;
-                let worktree_bytes = worktree_bytes_from_index_blob(
+                let existing = index_out.get(path.as_bytes(), 0).cloned();
+                restore_worktree_entry(
                     repo,
-                    &rules,
+                    work_tree,
                     path,
-                    entry.mode,
-                    &object.data,
-                    &entry.oid,
-                    None,
+                    &entry,
+                    existing.as_ref(),
+                    true,
+                    &rules,
+                    &mut dir_cache,
+                    index_out,
+                    outcome,
+                    index_dirty,
                 )?;
-                let Some(bytes) = worktree_bytes else {
-                    return Err(Error::Message(format!(
-                        "filter delayed checkout for '{path}' is not supported by grit restore"
-                    )));
-                };
-                write_to_worktree_cached(work_tree, path, &bytes, entry.mode, &mut dir_cache)?;
-                let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
-                if worktree_from_tree {
-                    if let Some(existing) = index_out.get(path.as_bytes(), 0) {
-                        index_out.stage_file(entry_from_metadata(
-                            &meta,
-                            path.as_bytes(),
-                            existing.oid,
-                            existing.mode,
-                        ));
-                    }
-                } else {
-                    index_out.stage_file(entry_from_metadata(
-                        &meta,
-                        path.as_bytes(),
-                        entry.oid,
-                        entry.mode,
-                    ));
-                }
-                outcome.restored.push(path.clone());
             }
             None => {
                 if !tracked_for_worktree_deletion.contains(path.as_bytes()) {
@@ -370,6 +460,131 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn worktree_index_entry_up_to_date(
+    repo: &Repository,
+    work_tree: &Path,
+    entry: &IndexEntry,
+    path: &str,
+    index_mtime: Option<(u32, u32)>,
+    rules: &WorktreeRules,
+) -> Result<bool> {
+    if entry.mode != crate::index::MODE_REGULAR && entry.mode != MODE_EXECUTABLE {
+        return Ok(false);
+    }
+    let abs_path = work_tree.join(path);
+    let meta = match fs::symlink_metadata(&abs_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    if !meta.is_file() || !stat_matches(entry, &meta) {
+        return Ok(false);
+    }
+    if !entry_is_racy(entry, index_mtime) {
+        return Ok(true);
+    }
+    let wt_oid = hash_worktree_file(
+        &repo.odb,
+        &abs_path,
+        &meta,
+        rules.conversion(),
+        &rules.file_attrs(path, false),
+        path,
+        Some(entry),
+        Some(rules.filter_process()),
+    )?;
+    Ok(wt_oid == entry.oid)
+}
+
+fn restore_worktree_blob_from_index(
+    repo: &Repository,
+    work_tree: &Path,
+    path: &str,
+    oid: ObjectId,
+    mode: u32,
+    rules: &WorktreeRules,
+    dir_cache: &mut LeadingDirCache,
+    index_out: &mut Index,
+    outcome: &mut RestoreOutcome,
+    index_dirty: &mut bool,
+) -> Result<()> {
+    if mode == MODE_GITLINK {
+        return Ok(());
+    }
+    let object = repo.odb.read(&oid)?;
+    let worktree_bytes =
+        worktree_bytes_from_index_blob(repo, rules, path, mode, &object.data, &oid, None)?;
+    let Some(bytes) = worktree_bytes else {
+        return Err(Error::Message(format!(
+            "filter delayed checkout for '{path}' is not supported by grit restore"
+        )));
+    };
+    write_to_worktree_cached(work_tree, path, &bytes, mode, dir_cache)?;
+    let abs = work_tree.join(path);
+    let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+    index_out.add_or_replace(entry_from_metadata(&meta, path.as_bytes(), oid, mode));
+    *index_dirty = true;
+    outcome.restored.push(path.to_string());
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_worktree_entry(
+    repo: &Repository,
+    work_tree: &Path,
+    path: &str,
+    entry: &FlatTreeEntry,
+    existing_index: Option<&IndexEntry>,
+    worktree_from_tree: bool,
+    rules: &WorktreeRules,
+    dir_cache: &mut LeadingDirCache,
+    index_out: &mut Index,
+    outcome: &mut RestoreOutcome,
+    index_dirty: &mut bool,
+) -> Result<()> {
+    if entry.mode == MODE_GITLINK {
+        return Ok(());
+    }
+    let abs = work_tree.join(path);
+    let object = repo.odb.read(&entry.oid)?;
+    let worktree_bytes = worktree_bytes_from_index_blob(
+        repo,
+        rules,
+        path,
+        entry.mode,
+        &object.data,
+        &entry.oid,
+        None,
+    )?;
+    let Some(bytes) = worktree_bytes else {
+        return Err(Error::Message(format!(
+            "filter delayed checkout for '{path}' is not supported by grit restore"
+        )));
+    };
+    write_to_worktree_cached(work_tree, path, &bytes, entry.mode, dir_cache)?;
+    let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+    if worktree_from_tree {
+        if let Some(existing) = existing_index {
+            index_out.add_or_replace(entry_from_metadata(
+                &meta,
+                path.as_bytes(),
+                existing.oid,
+                existing.mode,
+            ));
+            *index_dirty = true;
+        }
+    } else {
+        index_out.add_or_replace(entry_from_metadata(
+            &meta,
+            path.as_bytes(),
+            entry.oid,
+            entry.mode,
+        ));
+        *index_dirty = true;
+    }
+    outcome.restored.push(path.to_string());
     Ok(())
 }
 

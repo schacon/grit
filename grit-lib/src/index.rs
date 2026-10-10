@@ -33,6 +33,10 @@ use crate::resolve_undo::{self, write_resolve_undo_payload, ResolveUndoRecord};
 use crate::rev_parse;
 use crate::untracked_cache;
 
+fn gitattributes_index_path(path: &[u8]) -> bool {
+    path == b".gitattributes" || path.ends_with(b"/.gitattributes")
+}
+
 /// File mode for a regular (non-executable) file.
 pub const MODE_REGULAR: u32 = 0o100644;
 /// File mode for an executable file.
@@ -704,6 +708,26 @@ impl Index {
             hash_algo: HashAlgo::Sha1,
             source_mtime: None,
         }
+    }
+
+    /// Index entries used for `.gitattributes` fallback when the worktree copy is missing.
+    ///
+    /// Contains only stage-0 paths named `.gitattributes` or `*/.gitattributes`, so callers
+    /// can pass attribute context without cloning unrelated tracked files.
+    #[must_use]
+    pub fn gitattributes_snapshot(&self) -> Self {
+        let mut snap = Self::new();
+        snap.version = self.version;
+        snap.hash_algo = self.hash_algo;
+        for entry in &self.entries {
+            if entry.stage() != 0 {
+                continue;
+            }
+            if gitattributes_index_path(&entry.path) {
+                snap.add_or_replace(entry.clone());
+            }
+        }
+        snap
     }
 
     /// Create a new, empty index at a fixed version without consulting
