@@ -313,7 +313,7 @@ impl Bundle {
             tmp.path().to_path_buf(),
             &repo.odb,
             &opts,
-            progress,
+            Some(progress),
         )
         .map_err(|e| BundleError::Io(e.to_string()))?;
         if self.header.filter.is_some() {
