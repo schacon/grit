@@ -60,6 +60,21 @@ Rev-list **ratios** can rise when system **`git`** speeds up between captures ev
 
 The rev-list gap is dominated by history/object enumeration in `grit-lib`, not bulk pack I/O; cat-file scenarios exercise ODB read and `read_info` paths directly.
 
+## grit-lib: parallel packed ODB reads
+
+Criterion group **`odb_read_parallel/packed_blobs`** (`cargo bench -p grit-lib --bench odb_read_parallel`) measures throughput when worker threads share one [`Odb`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html) and hold [`Odb::with_pack_read_context`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html#method.with_pack_read_context) for the worker lifetime. Each iteration reads a partition of **50 000** whole-object pack blobs (loose copies are removed after the fixture is packed). Baseline **`odb-read-parallel.json`** records factory VM medians on **4 logical CPUs**.
+
+| Threads | Median time (50k reads) | Throughput |
+| ------- | ----------------------: | ---------- |
+| 1 | ~68 ms | ~730 Kelem/s |
+| 4 | ~32 ms | ~1.56 Melem/s |
+
+**Speedup (4 vs 1 thread): ~2.1×** on the factory VM (2026-10-11). This exercises the explicit batch read-context API and shared [`PackStore`](https://docs.rs/grit-lib/latest/grit_lib/pack_store/struct.PackStore.html) catalog, not ad-hoc per-read context installation.
+
+```bash
+cargo bench -p grit-lib --bench odb_read_parallel -- packed_blobs
+```
+
 ## grit-bench: reachability bitmaps (`git.git`)
 
 Scenario group **`bitmaps`** measures rev-list counting and a full-ref stateless **`upload-pack`** clone against a bare clone of upstream **`git/git`** at a pinned tag (`v2.47.0` by default), prepared with **`git repack -adb`** and **`git commit-graph write --reachable`**. Library workloads run through hidden **`grit-bench drive`** commands (`rev-list-count`, `rev-list-count-objects`, `serve-clone`).

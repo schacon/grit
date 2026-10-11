@@ -346,14 +346,17 @@ pub fn build_parallel_packed_blob_fixture(count: usize) -> (TempDir, Odb, Vec<Ob
             chunk,
             &[],
             &PackBuildOptions {
-                delta: true,
-                max_depth: 64,
-                use_ofs_delta: true,
+                delta: false,
                 ..PackBuildOptions::default()
             },
         )
         .expect("build bench pack");
         install_indexed_pack(&objects, &format!("bench-{chunk_idx}"), &pack);
+    }
+    for oid in &oids {
+        let hex = oid.to_hex();
+        let loose = objects.join(&hex[..2]).join(&hex[2..]);
+        let _ = std::fs::remove_file(loose);
     }
     odb.invalidate_packs();
     (root, odb, oids)

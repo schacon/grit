@@ -57,18 +57,18 @@ impl ReadWorkerPool {
             run_txs.push(tx);
             let slice = Arc::clone(&partitions[t]);
             let odb_t = odb.clone();
-            workers.push(thread::spawn(move || loop {
-                match rx.recv() {
-                    Ok(PoolMsg::Run { ack }) => {
-                        odb_t.with_pack_read_context(|| {
+            workers.push(thread::spawn(move || {
+                odb_t.with_pack_read_context(|| loop {
+                    match rx.recv() {
+                        Ok(PoolMsg::Run { ack }) => {
                             for oid in slice.iter() {
                                 black_box(odb_t.read(oid).expect("read").data);
                             }
-                        });
-                        let _ = ack.send(());
+                            let _ = ack.send(());
+                        }
+                        Ok(PoolMsg::Shutdown) | Err(_) => break,
                     }
-                    Ok(PoolMsg::Shutdown) | Err(_) => break,
-                }
+                })
             }));
         }
         Self { workers, run_txs }
