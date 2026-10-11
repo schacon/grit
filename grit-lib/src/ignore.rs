@@ -442,12 +442,7 @@ fn load_gitignore_for_dir(
     }
 
     if let Some(ix) = index {
-        if let Some(entry) = ix.entries.iter().find(|e| {
-            e.stage() == 0
-                && std::str::from_utf8(&e.path)
-                    .map(|p| p == rel_key.as_str())
-                    .unwrap_or(false)
-        }) {
+        if let Some(entry) = ix.get(rel_key.as_bytes(), 0) {
             if let Ok(obj) = repo.odb.read(&entry.oid) {
                 if obj.kind == ObjectKind::Blob {
                     if let Ok(text) = std::str::from_utf8(&obj.data) {
@@ -700,12 +695,7 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
     let Some(index) = index else {
         return false;
     };
-    index.entries.iter().any(|entry| {
-        entry.stage() == 0
-            && std::str::from_utf8(&entry.path)
-                .map(|path| path == repo_rel_path)
-                .unwrap_or(false)
-    })
+    index.get(repo_rel_path.as_bytes(), 0).is_some()
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
@@ -1005,23 +995,25 @@ fn sparse_unanchored_basename_matches(pat: &str, path: &str) -> bool {
 /// Returns the submodule path if `repo_rel_path` names something inside a gitlink entry.
 #[must_use]
 pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<String> {
-    let mut best: Option<&str> = None;
-    for entry in &index.entries {
-        if entry.stage() != 0 || entry.mode != MODE_GITLINK {
-            continue;
-        }
-        let Ok(p) = std::str::from_utf8(&entry.path) else {
-            continue;
-        };
-        if repo_rel_path.len() > p.len()
-            && repo_rel_path.starts_with(p)
-            && repo_rel_path.as_bytes().get(p.len()) == Some(&b'/')
-            && best.is_none_or(|b| p.len() > b.len())
-        {
-            best = Some(p);
-        }
+    let bytes = repo_rel_path.as_bytes();
+    if bytes.is_empty() {
+        return None;
     }
-    best.map(std::string::ToString::to_string)
+    let mut best: Option<String> = None;
+    let mut end = 0usize;
+    while end < bytes.len() {
+        let Some(slash) = bytes[end..].iter().position(|&b| b == b'/') else {
+            break;
+        };
+        end += slash;
+        if let Some(entry) = index.get(&bytes[..end], 0) {
+            if entry.mode == MODE_GITLINK {
+                best = Some(String::from_utf8_lossy(&bytes[..end]).into_owned());
+            }
+        }
+        end += 1;
+    }
+    best
 }
 
 /// Convert a user-supplied path into a normalized repository-relative path.
@@ -1132,5 +1124,68 @@ mod gitignore_glob_tests {
             "foo/bar/*.c",
             "foo/bar/baz/x.c"
         ));
+    }
+}
+
+#[cfg(test)]
+mod index_lookup_scaling_tests {
+    use super::*;
+    use crate::index::{index_path_cmp, Index, IndexEntry, MODE_REGULAR};
+    use crate::objects::ObjectId;
+    use crate::repo::init_repository;
+    use crate::RefStorageFormat;
+    use tempfile::TempDir;
+
+    fn dummy_oid() -> ObjectId {
+        ObjectId::from_bytes(&[0u8; 20]).unwrap()
+    }
+
+    fn make_entry(path: &str) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: dummy_oid(),
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn tracked_check_path_index_lookups_sublinear_in_index_size() {
+        const N: usize = 100_000;
+        const M: usize = 1_000;
+        let dir = TempDir::new().unwrap();
+        let repo =
+            init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).unwrap();
+        let mut index = Index::new();
+        for i in 0..N {
+            index.add_or_replace(make_entry(&format!("tracked/{i:06}.txt")));
+        }
+        let mut matcher = IgnoreMatcher::default();
+        index_path_cmp::reset();
+        for i in 0..M {
+            let path = format!("untracked/{i:06}.txt");
+            let (ignored, _) = matcher
+                .check_path(&repo, Some(&index), &path, false)
+                .unwrap();
+            assert!(!ignored, "untracked path must not be ignored");
+        }
+        let cmps = index_path_cmp::take();
+        let log_n = (N as f64).log2().ceil() as usize;
+        let bound = 100 * M * log_n;
+        assert!(
+            cmps < bound,
+            "index path comparisons {cmps} should stay under {bound} (N={N}, M={M})"
+        );
     }
 }
