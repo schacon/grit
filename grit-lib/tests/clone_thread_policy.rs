@@ -119,7 +119,7 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
 
     let url = format!("http://127.0.0.1:{port}/repo.git");
     let dest = tmp.path().join("clone");
-    let policy = ThreadPolicy::with_threads_override(Some(5));
+    let policy = ThreadPolicy::with_threads_override(Some(1));
     let environment = Environment::from_vars(
         [
             (OsString::from("GIT_CONFIG_COUNT"), OsString::from("1")),
@@ -144,18 +144,14 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
     )
     .expect("http clone");
 
-    assert_eq!(outcome.repo.thread_policy().threads_override, Some(5));
+    assert_eq!(outcome.repo.thread_policy().threads_override, Some(1));
 
-    let avail = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
     let recorded = last_resolved_ingest_threads_for_tests()
         .expect("clone must run index-pack ingest while recording");
     set_ingest_thread_recording_for_tests(false);
     assert_eq!(
-        recorded,
-        5.min(avail),
-        "received-pack ingest must honor clone thread policy over pack.threads"
+        recorded, 1,
+        "received-pack ingest must honor clone thread policy (1) over pack.threads (2)"
     );
 
     let pack_dir = outcome.repo.git_dir.join("objects/pack");

@@ -5936,8 +5936,8 @@ pub fn shallow_grafts_for_upload_pack_deepen(
     let base = min_hit.unwrap_or(0);
     let target_depth = base.saturating_add(deepen);
 
-    let included = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
-    border_commits_not_in_client_shallow(repo, &included, &client_set)
+    let included_depths = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
+    border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
 }
 
 /// Shallow borders when the client sent `deepen-relative` and the caller already computed
@@ -5954,8 +5954,8 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     }
     let server_shallow = shallow_boundary_oids(&repo.git_dir);
     let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
-    let included = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
-    border_commits_not_in_client_shallow(repo, &included, &client_set)
+    let included_depths = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
+    border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
 }
 
 fn commit_parent_ids(repo: &Repository, oid: ObjectId) -> Vec<ObjectId> {
@@ -6011,7 +6011,7 @@ fn commits_within_parent_depth(
     wants: &[ObjectId],
     max_depth: usize,
     server_shallow: &HashSet<ObjectId>,
-) -> HashSet<ObjectId> {
+) -> HashMap<ObjectId, usize> {
     let mut best_depth: HashMap<ObjectId, usize> = HashMap::new();
     let mut q: VecDeque<(ObjectId, usize)> = VecDeque::new();
     for &w in wants {
@@ -6043,7 +6043,33 @@ fn commits_within_parent_depth(
             }
         }
     }
-    best_depth.into_keys().collect()
+    best_depth
+}
+
+/// Borders for `deepen N` when some included commit has a parent outside the set.
+fn border_commits_for_depth_fetch(
+    repo: &Repository,
+    included_depths: &HashMap<ObjectId, usize>,
+    target_depth: usize,
+    client_shallow: &HashSet<ObjectId>,
+) -> Vec<ObjectId> {
+    let included: HashSet<ObjectId> = included_depths.keys().copied().collect();
+    let mut out = Vec::new();
+    let mut seen_out = HashSet::new();
+    for &c in included.iter() {
+        if client_shallow.contains(&c) {
+            continue;
+        }
+        let parents = commit_parent_ids(repo, c);
+        let at_depth_limit = included_depths.get(&c).copied() == Some(target_depth);
+        let is_border =
+            parents.iter().any(|p| !included.contains(p)) || (parents.is_empty() && at_depth_limit);
+        if is_border && seen_out.insert(c) {
+            out.push(c);
+        }
+    }
+    out.sort();
+    out
 }
 
 fn border_commits_not_in_client_shallow(
@@ -6058,7 +6084,7 @@ fn border_commits_not_in_client_shallow(
             continue;
         }
         let parents = commit_parent_ids(repo, c);
-        let is_border = parents.is_empty() || parents.iter().any(|p| !included.contains(p));
+        let is_border = parents.iter().any(|p| !included.contains(p));
         if is_border && seen_out.insert(c) {
             out.push(c);
         }
