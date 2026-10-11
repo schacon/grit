@@ -25,6 +25,9 @@ use crate::transport_path::{
 #[derive(Debug, Error)]
 pub enum CloneError {
     /// Destination exists and is not empty.
+    ///
+    /// Grit does not create or modify the destination in this case; callers must not run
+    /// [`cleanup_failed_clone`] on the path.
     #[error("destination '{0}' already exists and is not empty")]
     DestNotEmpty(String),
     /// Underlying library failure.
@@ -33,6 +36,17 @@ pub enum CloneError {
     /// Remote resolution or transport failure.
     #[error(transparent)]
     Remote(#[from] crate::remote::RemoteError),
+}
+
+impl CloneError {
+    /// Whether [`cleanup_failed_clone`] may run after this failure.
+    ///
+    /// Returns `false` for [`CloneError::DestNotEmpty`], which rejects the destination before
+    /// any repository is initialized.
+    #[must_use]
+    pub fn should_cleanup_failed_clone(&self) -> bool {
+        !matches!(self, Self::DestNotEmpty(_))
+    }
 }
 
 /// Options for [`clone`].
@@ -289,4 +303,55 @@ fn pick_default_branch(repo: &Repository, remote_name: &str) -> Option<String> {
                 .filter(|b| *b != "HEAD")
                 .map(str::to_owned)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn dest_preexisted_empty_missing_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("nope");
+        assert!(!dest_preexisted_empty(&missing));
+    }
+
+    #[test]
+    fn dest_preexisted_empty_empty_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(dest_preexisted_empty(dir.path()));
+    }
+
+    #[test]
+    fn dest_preexisted_empty_nonempty_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("file"), b"x").expect("write");
+        assert!(!dest_preexisted_empty(dir.path()));
+    }
+
+    #[test]
+    fn dest_not_empty_skips_failed_clone_cleanup() {
+        assert!(!CloneError::DestNotEmpty("x".into()).should_cleanup_failed_clone());
+        assert!(CloneError::Library(Error::Message("x".into())).should_cleanup_failed_clone());
+    }
+
+    #[test]
+    fn clone_rejects_nonempty_destination_without_git_dir() {
+        let upstream = tempfile::tempdir().expect("upstream");
+        let dest = tempfile::tempdir().expect("dest");
+        fs::write(dest.path().join("notes.txt"), b"keep").expect("write");
+        let err = clone(
+            CloneOptions::new(
+                upstream.path().to_string_lossy(),
+                dest.path().to_path_buf(),
+            ),
+            &mut crate::fetch::NoProgress,
+            None,
+        )
+        .expect_err("non-empty dest");
+        assert!(matches!(err, CloneError::DestNotEmpty(_)));
+        assert!(dest.path().join("notes.txt").is_file());
+        assert!(!dest.path().join(".git").exists());
+    }
 }

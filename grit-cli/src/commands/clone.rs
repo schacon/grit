@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use grit_lib::clone::{
-    cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty,
+    cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty, CloneError,
     CloneOptions,
 };
 use grit_lib::porcelain::checkout::checkout_between_trees;
@@ -41,7 +41,13 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
     match clone_into(url, &path, &dir) {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
-            cleanup_failed_clone(&path, dest_preexisted_empty);
+            let skip_cleanup = matches!(
+                err.downcast_ref::<CloneError>(),
+                Some(CloneError::DestNotEmpty(_))
+            );
+            if !skip_cleanup {
+                cleanup_failed_clone(&path, dest_preexisted_empty);
+            }
             Err(err)
         }
     }
@@ -56,8 +62,7 @@ fn clone_into(url: &str, path: &Path, dir: &str) -> Result<CloneOutcome> {
         remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
         initial_branch: "main".to_owned(),
     };
-    let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))
-        .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+    let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))?;
 
     let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
     checkout_between_trees(&outcome.repo, None, &tree).context("could not check out files")?;
