@@ -4541,7 +4541,8 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 let idx_ent = index_entries.get(path.as_bytes()).copied();
 
                 // Staged mode (same blob as `HEAD`, different mode recorded in the index).
-                if trust_filemode && ie.oid == te.oid && ie.mode != te.mode {
+                // `core.filemode=false` does not discard an explicit index chmod vs HEAD.
+                if ie.oid == te.oid && ie.mode != te.mode {
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
