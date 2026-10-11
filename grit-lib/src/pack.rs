@@ -430,8 +430,8 @@ pub(crate) mod pack_cache {
         crate::pack_store::PackStore::with_current_or_implicit(f)
     }
 
-    pub(crate) fn clear_catalog_on(m: &Mutex<CatalogState>) {
-        let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+    pub(crate) fn clear_catalog_on(m: &std::sync::RwLock<CatalogState>) {
+        let mut g = m.write().unwrap_or_else(|e| e.into_inner());
         clear_inner(&mut g);
     }
 
@@ -499,22 +499,26 @@ pub(crate) mod pack_cache {
     }
 
     pub fn pack_object_count_validated(pack_path: &Path) -> bool {
-        with_current(|g| g.validated_pack_counts.contains(pack_path))
+        crate::pack_store::PackStore::active_for_reads()
+            .with_catalog_read(|g| g.validated_pack_counts.contains(pack_path))
     }
 
     pub fn mark_pack_object_count_validated(pack_path: &Path) {
-        with_current(|g| {
+        crate::pack_store::PackStore::active_for_reads().with_catalog(|g| {
             g.validated_pack_counts.insert(pack_path.to_path_buf());
         });
     }
 
     /// Get a parsed pack index from cache, parsing from disk only on cache miss.
     pub fn get_index(idx_path: &Path) -> Result<Arc<PackIndex>> {
-        if let Some(hit) = with_current(|g| g.by_idx.get(idx_path).map(|c| Arc::clone(&c.idx))) {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if let Some(hit) = store.with_catalog_read(|g| {
+            g.by_idx.get(idx_path).map(|c| Arc::clone(&c.idx))
+        }) {
             return Ok(hit);
         }
         let parsed = Arc::new(read_pack_index_no_verify(idx_path)?);
-        with_current(|g| {
+        store.with_catalog(|g| {
             g.by_idx.insert(
                 idx_path.to_path_buf(),
                 CachedIdx {
@@ -647,7 +651,10 @@ pub(crate) mod pack_cache {
     /// Get all `.idx` files for `objects_dir`, using the cached directory listing when present.
     pub fn get_dir_indexes(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
         let pack_dir = objects_dir.join("pack");
-        if let Some(hit) = with_current(|g| g.by_dir.get(&pack_dir).map(|c| c.indexes.clone())) {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if let Some(hit) = store.with_catalog_read(|g| {
+            g.by_dir.get(&pack_dir).map(|c| c.indexes.clone())
+        }) {
             return Ok(hit);
         }
         rescan_dir_indexes(objects_dir)
@@ -658,10 +665,12 @@ pub(crate) mod pack_cache {
     pub fn reprepare_dir_on_miss(objects_dir: &Path) -> Result<bool> {
         let pack_dir = objects_dir.join("pack");
         let dir_mt = dir_mtime(&pack_dir);
-        let needs_rescan = with_current(|g| match g.by_dir.get(&pack_dir) {
-            None => true,
-            Some(c) => c.dir_mtime != dir_mt,
-        });
+        let needs_rescan = crate::pack_store::PackStore::active_for_reads().with_catalog_read(
+            |g| match g.by_dir.get(&pack_dir) {
+                None => true,
+                Some(c) => c.dir_mtime != dir_mt,
+            },
+        );
         if !needs_rescan {
             return Ok(false);
         }
@@ -715,8 +724,10 @@ pub(crate) mod pack_cache {
     /// Cache hits skip `stat` for all pack basenames; in-process repack/gc clears the cache
     /// when packs change.
     pub fn get_pack_bytes(pack_path: &Path) -> Result<Arc<PackData>> {
-        if let Some(hit) = with_current(|g| g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes)))
-        {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if let Some(hit) = store.with_catalog_read(|g| {
+            g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes))
+        }) {
             return Ok(hit);
         }
         let (mtime, size) = file_signature(pack_path).ok_or_else(|| {
@@ -916,7 +927,11 @@ pub(crate) mod pack_cache {
     }
 
     fn pack_id_for_in_context(pack_path: &Path) -> u32 {
-        with_current(|g| {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if let Some(id) = store.with_catalog_read(|g| g.pack_ids.get(pack_path).copied()) {
+            return id;
+        }
+        store.with_catalog(|g| {
             if let Some(&id) = g.pack_ids.get(pack_path) {
                 return id;
             }

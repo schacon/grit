@@ -13,6 +13,7 @@ use fixture::build_parallel_packed_blob_fixture;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::pack::clear_pack_cache;
+use grit_lib::pack_store::PackStore;
 use tempfile::TempDir;
 
 struct ParallelReadFixture {
@@ -46,18 +47,28 @@ fn bench_parallel_reads(c: &mut Criterion) {
             |b, &thread_count| {
                 b.iter(|| {
                     let odb = fx.odb.clone();
+                    let store = Arc::clone(odb.pack_store().expect("pack store"));
                     let oids = fx.oids.clone();
                     let barrier = Arc::new(Barrier::new(thread_count));
                     std::thread::scope(|scope| {
-                        for _ in 0..thread_count {
+                        let chunk = oids.len().div_ceil(thread_count);
+                        for t in 0..thread_count {
+                            let start = t * chunk;
+                            if start >= oids.len() {
+                                break;
+                            }
+                            let end = (start + chunk).min(oids.len());
                             let b = Arc::clone(&barrier);
                             let odb_t = odb.clone();
-                            let sample = oids.clone();
+                            let pack_store = Arc::clone(&store);
+                            let slice = oids[start..end].to_vec();
                             scope.spawn(move || {
-                                b.wait();
-                                for oid in sample {
-                                    black_box(odb_t.read(&oid).expect("read").data);
-                                }
+                                PackStore::with_context(pack_store, || {
+                                    b.wait();
+                                    for oid in slice {
+                                        black_box(odb_t.read(&oid).expect("read").data);
+                                    }
+                                });
                             });
                         }
                     });

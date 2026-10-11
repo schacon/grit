@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[doc(hidden)]
 pub mod test_hooks {
@@ -48,7 +48,7 @@ pub mod test_hooks {
 /// Alternate object directories get separate stores retained on the parent [`Odb`](crate::odb::Odb).
 pub struct PackStore {
     objects_dir: PathBuf,
-    pack: Mutex<crate::pack::pack_cache::CatalogState>,
+    catalog: RwLock<crate::pack::pack_cache::CatalogState>,
     delta_bases: crate::pack::pack_cache::ShardedDeltaBaseLru,
     midx: Mutex<crate::midx::midx_cache::State>,
 }
@@ -73,7 +73,7 @@ impl PackStore {
     pub fn new(objects_dir: PathBuf) -> Self {
         Self {
             objects_dir,
-            pack: Mutex::new(crate::pack::pack_cache::CatalogState::default()),
+            catalog: RwLock::new(crate::pack::pack_cache::CatalogState::default()),
             delta_bases: crate::pack::pack_cache::ShardedDeltaBaseLru::new(),
             midx: Mutex::new(crate::midx::midx_cache::State::default()),
         }
@@ -84,7 +84,17 @@ impl PackStore {
         &self,
         f: impl FnOnce(&mut crate::pack::pack_cache::CatalogState) -> R,
     ) -> R {
-        f(&mut self.pack.lock().unwrap_or_else(|e| e.into_inner()))
+        f(&mut self
+            .catalog
+            .write()
+            .unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub(crate) fn with_catalog_read<R>(
+        &self,
+        f: impl FnOnce(&crate::pack::pack_cache::CatalogState) -> R,
+    ) -> R {
+        f(&self.catalog.read().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Sharded delta-base LRU (independent of the catalog mutex).
@@ -174,7 +184,7 @@ impl PackStore {
 
     /// Drop cached pack listings, indexes, pack bytes, and delta bases.
     pub fn invalidate_packs(&self) {
-        crate::pack::pack_cache::clear_catalog_on(&self.pack);
+        crate::pack::pack_cache::clear_catalog_on(&self.catalog);
         self.delta_bases.clear();
     }
 
