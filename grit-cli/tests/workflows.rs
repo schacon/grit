@@ -498,6 +498,107 @@ fn local_remote_clone_push_fetch_and_pull_workflow() -> TestResult {
     Ok(())
 }
 
+/// GitHub issue #948: refusing a non-empty destination must not delete existing data.
+#[test]
+fn clone_into_nonempty_destination_preserves_existing_files() -> TestResult {
+    let scratch = Scratch::new("clone-nonempty-948")?;
+    let src = scratch.child("src");
+    git_in(
+        scratch.path(),
+        &["init", "-q", "-b", "main", path_arg(&src)?.as_str()],
+    )?;
+    git_in(
+        &src,
+        &[
+            "-c",
+            "user.name=a",
+            "-c",
+            "user.email=a@e.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+    )?;
+
+    let dest = scratch.child("precious");
+    fs::create_dir_all(&dest)?;
+    write_file(&dest.join("notes.txt"), "my work\n")?;
+
+    let refused = gs(
+        scratch.path(),
+        &["clone", path_arg(&src)?.as_str(), path_arg(&dest)?.as_str()],
+    )?;
+    assert_ne!(refused.status, Some(0), "{}", refused.dump());
+    assert!(dest.is_dir(), "destination directory must remain");
+    assert_eq!(fs::read_to_string(dest.join("notes.txt"))?, "my work\n");
+    assert!(
+        !dest.join(".git").exists(),
+        "grit must not initialize a repo in a refused destination"
+    );
+
+    let json_refused = gs(
+        scratch.path(),
+        &[
+            "clone",
+            path_arg(&src)?.as_str(),
+            path_arg(&dest)?.as_str(),
+            "--json",
+        ],
+    )?;
+    assert_ne!(json_refused.status, Some(0), "{}", json_refused.dump());
+    assert!(dest.is_dir());
+    assert_eq!(fs::read_to_string(dest.join("notes.txt"))?, "my work\n");
+
+    Ok(())
+}
+
+/// GitHub issue #948: re-cloning into an existing clone directory must not remove it.
+#[test]
+fn clone_into_existing_clone_directory_preserves_repo() -> TestResult {
+    let scratch = Scratch::new("clone-existing-948")?;
+    let remote = scratch.child("remote.git");
+    let seed = scratch.child("seed");
+    fs::create_dir_all(&seed)?;
+    gs_ok(&seed, ["init", "."])?;
+    write_file(&seed.join("README.md"), "seed\n")?;
+    gs_ok(&seed, ["commit", "seed commit"])?;
+    gs_ok(
+        scratch.path(),
+        ["init", "--bare", path_arg(&remote)?.as_str()],
+    )?;
+    gs_ok(
+        &seed,
+        ["remote", "add", "origin", path_arg(&remote)?.as_str()],
+    )?;
+    gs_ok(&seed, ["push"])?;
+
+    let dest = scratch.child("c-abs");
+    gs_ok(
+        scratch.path(),
+        [
+            "clone",
+            path_arg(&remote)?.as_str(),
+            path_arg(&dest)?.as_str(),
+        ],
+    )?;
+    assert!(dest.join(".git").is_dir());
+
+    let refused = gs(
+        scratch.path(),
+        &[
+            "clone",
+            path_arg(&remote)?.as_str(),
+            path_arg(&dest)?.as_str(),
+        ],
+    )?;
+    assert_ne!(refused.status, Some(0), "{}", refused.dump());
+    assert!(dest.join(".git").is_dir(), "existing clone must remain");
+    assert_eq!(fs::read_to_string(dest.join("README.md"))?, "seed\n");
+    Ok(())
+}
+
 /// GitHub issue #934: clone must not ODB-read gitlink commit OIDs during checkout.
 #[test]
 fn clone_succeeds_with_uninitialized_gitlink() -> TestResult {
