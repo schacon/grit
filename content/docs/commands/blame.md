@@ -15,6 +15,8 @@ grit blame [--rev <commit>] [-L START,END] <file>
 
 Walks history for one file and prints each line with the commit that last modified it, the author, when that commit was made, and the line number in the blamed revision.
 
+Blame reuses parsed blob lines, tree path lookups, and parent/child line maps across the history walk so large files with deep history stay responsive. On this repository, blaming `grit-lib/src/pack.rs` (~4.6k lines, ~90 commits) completes in a few seconds on a release build; system `git blame` on the same path is still faster, and very large histories may take longer than `git`.
+
 ## Options
 
 | Option | Description |

@@ -13,7 +13,7 @@ use std::ops::RangeInclusive;
 use similar::Algorithm as SimilarAlgorithm;
 
 /// Diff algorithm used when mapping lines between blob revisions during blame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlameDiffAlgorithm {
     /// Default line diff (Myers); used when config does not specify an algorithm.
     Myers,
@@ -82,38 +82,48 @@ pub fn build_line_map(
     diff_algorithm: BlameDiffAlgorithm,
     indent_heuristic: bool,
 ) -> Vec<Option<usize>> {
-    // Ensure trailing newlines so `from_lines` splits consistently
-    let mut old_joined = old.join("\n");
-    old_joined.push('\n');
-    let mut new_joined = new.join("\n");
-    new_joined.push('\n');
-
     // `--indent-heuristic` / `diff.indentHeuristic` shifts ambiguous add/delete
     // runs like Git's xdiff, which changes which lines blame attributes (t4061).
-    let ops = crate::diff_indent_heuristic::diff_lines_ops_compacted(
-        &old_joined,
-        &new_joined,
+    let ops = crate::diff_indent_heuristic::diff_slice_ops_compacted(
+        old,
+        new,
         diff_algorithm.to_similar(),
         indent_heuristic,
     );
+    crate::diff_indent_heuristic::map_new_to_old_from_ops(&ops, new.len())
+}
 
-    let mut result = vec![None; new.len()];
-    for op in ops {
-        if let similar::DiffOp::Equal {
-            old_index,
-            new_index,
-            len,
-        } = op
-        {
-            for k in 0..len {
-                if new_index + k < result.len() {
-                    result[new_index + k] = Some(old_index + k);
-                }
-            }
-        }
+/// Greedily map unresolved new lines to identical old lines (lowest use count, then distance).
+fn fill_exact_text_relocate(
+    old: &[&str],
+    new: &[&str],
+    map: &mut [Option<usize>],
+    used_old: &mut [usize],
+) {
+    let mut by_content: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (idx, line) in old.iter().enumerate() {
+        by_content.entry(*line).or_default().push(idx);
     }
 
-    result
+    for new_idx in 0..map.len() {
+        if map[new_idx].is_some() {
+            continue;
+        }
+        let Some(candidates) = by_content.get(new[new_idx]) else {
+            continue;
+        };
+        let mut best: Option<(usize, usize, usize)> = None;
+        for &old_idx in candidates {
+            let candidate = (used_old[old_idx], old_idx.abs_diff(new_idx), old_idx);
+            if best.is_none_or(|b| candidate < b) {
+                best = Some(candidate);
+            }
+        }
+        if let Some((_, _, old_idx)) = best {
+            map[new_idx] = Some(old_idx);
+            used_old[old_idx] += 1;
+        }
+    }
 }
 
 /// Recover line mappings by exact text match when Myers left a line unresolved.
@@ -132,25 +142,7 @@ pub fn build_exact_relocate_line_map(
         }
     }
 
-    for new_idx in 0..fuzzy_map.len() {
-        if fuzzy_map[new_idx].is_some() {
-            continue;
-        }
-        let mut best: Option<(usize, usize, usize)> = None;
-        for old_idx in 0..old.len() {
-            if old[old_idx] != new[new_idx] {
-                continue;
-            }
-            let candidate = (used_old[old_idx], old_idx.abs_diff(new_idx), old_idx);
-            if best.is_none_or(|b| candidate < b) {
-                best = Some(candidate);
-            }
-        }
-        if let Some((_, _, old_idx)) = best {
-            fuzzy_map[new_idx] = Some(old_idx);
-            used_old[old_idx] += 1;
-        }
-    }
+    fill_exact_text_relocate(old, new, &mut fuzzy_map, &mut used_old);
 
     fuzzy_map
 }
@@ -267,25 +259,7 @@ pub fn build_fuzzy_line_map(
     // First, greedily recover exact-text matches among unresolved lines.
     // This is important for reorders where Myers may not anchor every moved
     // line and fuzzy similarity can otherwise pair the wrong include.
-    for new_idx in 0..fuzzy_map.len() {
-        if fuzzy_map[new_idx].is_some() {
-            continue;
-        }
-        let mut best: Option<(usize, usize, usize)> = None;
-        for old_idx in 0..old.len() {
-            if old[old_idx] != new[new_idx] {
-                continue;
-            }
-            let candidate = (used_old[old_idx], old_idx.abs_diff(new_idx), old_idx);
-            if best.is_none_or(|b| candidate < b) {
-                best = Some(candidate);
-            }
-        }
-        if let Some((_, _, old_idx)) = best {
-            fuzzy_map[new_idx] = Some(old_idx);
-            used_old[old_idx] += 1;
-        }
-    }
+    fill_exact_text_relocate(old, new, &mut fuzzy_map, &mut used_old);
 
     let mut anchors: Vec<(usize, usize)> = exact_map
         .iter()
@@ -580,6 +554,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::config::ConfigSet;
 use crate::crlf::{
@@ -941,6 +916,158 @@ fn read_blob_content_for_blame(
     Ok(String::from_utf8_lossy(&converted).into_owned())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BlobCacheKey {
+    oid: ObjectId,
+    path: String,
+    mode: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PathCacheKey {
+    tree: ObjectId,
+    path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PairMapCacheKey {
+    parent: ObjectId,
+    child: ObjectId,
+    diff_algorithm: BlameDiffAlgorithm,
+    indent_heuristic: bool,
+    fuzzy: bool,
+}
+
+#[derive(Clone)]
+struct PairMapCacheValue {
+    diff_line_map: Arc<Vec<Option<usize>>>,
+    line_map: Arc<Vec<Option<usize>>>,
+    stop_blame_on_current: Arc<Vec<bool>>,
+}
+
+/// Per-blame caches for blob lines, tree path resolution, and parent/child line maps.
+struct BlameSession<'a> {
+    odb: &'a Odb,
+    textconv_ctx: Option<&'a BlameTextconvContext>,
+    use_textconv: bool,
+    blob_lines: HashMap<BlobCacheKey, Arc<Vec<String>>>,
+    path_entries: HashMap<PathCacheKey, Option<(ObjectId, u32)>>,
+    pair_maps: HashMap<PairMapCacheKey, PairMapCacheValue>,
+}
+
+impl<'a> BlameSession<'a> {
+    fn new(
+        odb: &'a Odb,
+        textconv_ctx: Option<&'a BlameTextconvContext>,
+        use_textconv: bool,
+    ) -> Self {
+        Self {
+            odb,
+            textconv_ctx,
+            use_textconv,
+            blob_lines: HashMap::new(),
+            path_entries: HashMap::new(),
+            pair_maps: HashMap::new(),
+        }
+    }
+
+    fn line_refs(lines: &Arc<Vec<String>>) -> Vec<&str> {
+        lines.iter().map(String::as_str).collect()
+    }
+
+    fn load_blob_lines(
+        &mut self,
+        oid: ObjectId,
+        path: &str,
+        mode: u32,
+    ) -> Result<Arc<Vec<String>>> {
+        let key = BlobCacheKey {
+            oid,
+            path: path.to_owned(),
+            mode,
+        };
+        if let Some(lines) = self.blob_lines.get(&key) {
+            return Ok(Arc::clone(lines));
+        }
+        let content = read_blob_content_for_blame(
+            self.odb,
+            &oid,
+            path,
+            mode,
+            self.textconv_ctx,
+            self.use_textconv,
+        )?;
+        let parsed: Vec<String> = content_lines(&content)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let lines = Arc::new(parsed);
+        self.blob_lines.insert(key, Arc::clone(&lines));
+        Ok(lines)
+    }
+
+    fn resolve_path_in_tree(
+        &mut self,
+        tree_oid: ObjectId,
+        path: &str,
+    ) -> Result<Option<(ObjectId, u32)>> {
+        let key = PathCacheKey {
+            tree: tree_oid,
+            path: path.to_owned(),
+        };
+        if let Some(entry) = self.path_entries.get(&key) {
+            return Ok(*entry);
+        }
+        let resolved = resolve_path_in_tree_entry(self.odb, &tree_oid, path)?;
+        self.path_entries.insert(key, resolved);
+        Ok(resolved)
+    }
+
+    fn parent_child_line_maps(
+        &mut self,
+        parent_oid: ObjectId,
+        child_oid: ObjectId,
+        par_lines: &Arc<Vec<String>>,
+        cur_lines: &Arc<Vec<String>>,
+        diff_algorithm: BlameDiffAlgorithm,
+        indent_heuristic: bool,
+        is_ignored: bool,
+    ) -> PairMapCacheValue {
+        let key = PairMapCacheKey {
+            parent: parent_oid,
+            child: child_oid,
+            diff_algorithm,
+            indent_heuristic,
+            fuzzy: is_ignored,
+        };
+        if let Some(maps) = self.pair_maps.get(&key) {
+            return maps.clone();
+        }
+
+        let par_refs = Self::line_refs(par_lines);
+        let cur_refs = Self::line_refs(cur_lines);
+        let diff_line_map = build_line_map(&par_refs, &cur_refs, diff_algorithm, indent_heuristic);
+        let mut line_map = build_exact_relocate_line_map(&par_refs, &cur_refs, &diff_line_map);
+        if is_ignored {
+            line_map = build_fuzzy_line_map(&par_refs, &cur_refs, &line_map);
+        }
+        let stop_blame_on_current = if par_lines.len() == cur_lines.len() {
+            let xdiff_changed =
+                crate::diff::xdiff_new_line_changed_flags(&par_refs, &cur_refs, indent_heuristic);
+            blame_stops_on_current_commit(&diff_line_map, &line_map, &xdiff_changed)
+        } else {
+            Vec::new()
+        };
+        let value = PairMapCacheValue {
+            diff_line_map: Arc::new(diff_line_map),
+            line_map: Arc::new(line_map),
+            stop_blame_on_current: Arc::new(stop_blame_on_current),
+        };
+        self.pair_maps.insert(key, value.clone());
+        value
+    }
+}
+
 /// Walk history and attribute each line in a blob at `start_oid` to a commit.
 ///
 /// Lower-level building block; prefer [`blame_file`] for repository callers.
@@ -958,23 +1085,48 @@ pub fn compute_blame(
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
 ) -> Result<Vec<BlameLine>> {
+    let mut session = BlameSession::new(odb, textconv_ctx, use_textconv);
+    compute_blame_with_session(
+        odb,
+        start_oid,
+        file_path,
+        ignore_revs,
+        diff_algorithm,
+        textconv_ctx,
+        use_textconv,
+        copy_depth,
+        first_parent_only,
+        grafts,
+        indent_heuristic,
+        &mut session,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+fn compute_blame_with_session(
+    odb: &Odb,
+    start_oid: ObjectId,
+    file_path: &str,
+    ignore_revs: &HashSet<ObjectId>,
+    diff_algorithm: BlameDiffAlgorithm,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+    copy_depth: usize,
+    first_parent_only: bool,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
+    indent_heuristic: bool,
+    session: &mut BlameSession<'_>,
+) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = read_object_for_blame(odb, &start_oid, None)?;
         parse_commit(&obj.data)?
     };
 
-    let (blob_oid, blob_mode) = resolve_path_in_tree_entry(odb, &start_commit.tree, file_path)?
+    let (blob_oid, blob_mode) = session
+        .resolve_path_in_tree(start_commit.tree, file_path)?
         .ok_or_else(|| LibError::Message(format!("file '{file_path}' not found in revision")))?;
-    let content = read_blob_content_for_blame(
-        odb,
-        &blob_oid,
-        file_path,
-        blob_mode,
-        textconv_ctx,
-        use_textconv,
-    )?;
-    let lines = content_lines(&content);
-    let num_lines = lines.len();
+    let start_lines = session.load_blob_lines(blob_oid, file_path, blob_mode)?;
+    let num_lines = start_lines.len();
 
     if num_lines == 0 {
         return Ok(Vec::new());
@@ -992,7 +1144,7 @@ pub fn compute_blame(
 
     let mut result: Vec<BlameLine> = Vec::with_capacity(num_lines);
     // Store final content for output
-    let final_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    let final_lines: Vec<String> = (*start_lines).clone();
 
     let mut current_oid = start_oid;
     let mut current_blob_oid = blob_oid;
@@ -1024,36 +1176,21 @@ pub fn compute_blame(
         // If an ignored merge commit is encountered, try to continue blame
         // through the parent that actually contributed each line.
         if is_ignored && parents.len() > 1 {
-            let cur_content = read_blob_content_for_blame(
-                odb,
-                &current_blob_oid,
-                &current_path,
-                current_blob_mode,
-                textconv_ctx,
-                use_textconv,
-            )?;
-            let cur_lines = content_lines(&cur_content);
+            let cur_lines_arc =
+                session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
+            let cur_lines = BlameSession::line_refs(&cur_lines_arc);
 
             let mut parent_lines: Vec<Option<Vec<String>>> = Vec::new();
             let mut parent_blames: Vec<Option<Vec<BlameLine>>> = Vec::new();
             for parent_oid in &parents {
                 let parent_commit = get_commit(odb, *parent_oid, &mut commit_cache)?;
                 if let Some((p_blob_oid, p_blob_mode)) =
-                    resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?
+                    session.resolve_path_in_tree(parent_commit.tree, &current_path)?
                 {
-                    let p_content = read_blob_content_for_blame(
-                        odb,
-                        &p_blob_oid,
-                        &current_path,
-                        p_blob_mode,
-                        textconv_ctx,
-                        use_textconv,
-                    )?;
-                    let p_lines = content_lines(&p_content)
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    let p_blame = compute_blame(
+                    let p_lines_arc =
+                        session.load_blob_lines(p_blob_oid, &current_path, p_blob_mode)?;
+                    let p_lines = (*p_lines_arc).clone();
+                    let p_blame = compute_blame_with_session(
                         odb,
                         *parent_oid,
                         &current_path,
@@ -1065,6 +1202,7 @@ pub fn compute_blame(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
+                        session,
                     )?;
                     parent_lines.push(Some(p_lines));
                     parent_blames.push(Some(p_blame));
@@ -1164,7 +1302,10 @@ pub fn compute_blame(
         if all_parents_have_path {
             for p in &parents {
                 let pc = get_commit(odb, *p, &mut commit_cache)?;
-                if resolve_path_in_tree_entry(odb, &pc.tree, &current_path)?.is_none() {
+                if session
+                    .resolve_path_in_tree(pc.tree, &current_path)?
+                    .is_none()
+                {
                     all_parents_have_path = false;
                     break;
                 }
@@ -1172,51 +1313,41 @@ pub fn compute_blame(
         }
 
         if !first_parent_only && !is_ignored && all_parents_have_path {
-            let cur_content = read_blob_content_for_blame(
-                odb,
-                &current_blob_oid,
-                &current_path,
-                current_blob_mode,
-                textconv_ctx,
-                use_textconv,
-            )?;
-            let cur_lines = content_lines(&cur_content);
+            let cur_lines_arc =
+                session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
+            let cur_lines = BlameSession::line_refs(&cur_lines_arc);
 
             let mut parent_blobs: Vec<(ObjectId, ObjectId, u32)> =
                 Vec::with_capacity(parents.len());
-            let mut par_lines_vec: Vec<Vec<String>> = Vec::with_capacity(parents.len());
-            let mut maps: Vec<Vec<Option<usize>>> = Vec::with_capacity(parents.len());
+            let mut par_lines_vec: Vec<Arc<Vec<String>>> = Vec::with_capacity(parents.len());
+            let mut maps: Vec<Arc<Vec<Option<usize>>>> = Vec::with_capacity(parents.len());
 
             for &p in &parents {
                 let pc = get_commit(odb, p, &mut commit_cache)?;
-                let Some((blob, mode)) = resolve_path_in_tree_entry(odb, &pc.tree, &current_path)?
+                let Some((blob, mode)) = session.resolve_path_in_tree(pc.tree, &current_path)?
                 else {
                     return Err(LibError::Message(
                         "internal: missing blob in merge parent".to_string(),
                     ));
                 };
-                let par_content = read_blob_content_for_blame(
-                    odb,
-                    &blob,
-                    &current_path,
-                    mode,
-                    textconv_ctx,
-                    use_textconv,
-                )?;
-                let pl: Vec<String> = content_lines(&par_content)
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect();
-                let pl_refs: Vec<&str> = pl.iter().map(|s| s.as_str()).collect();
+                let pl_arc = session.load_blob_lines(blob, &current_path, mode)?;
                 let map_algo = if parents.len() > 2 {
                     BlameDiffAlgorithm::Patience
                 } else {
                     diff_algorithm
                 };
-                let map = build_line_map(&pl_refs, &cur_lines, map_algo, indent_heuristic);
+                let pair = session.parent_child_line_maps(
+                    blob,
+                    current_blob_oid,
+                    &pl_arc,
+                    &cur_lines_arc,
+                    map_algo,
+                    indent_heuristic,
+                    false,
+                );
                 parent_blobs.push((p, blob, mode));
-                par_lines_vec.push(pl);
-                maps.push(map);
+                par_lines_vec.push(pl_arc);
+                maps.push(pair.diff_line_map);
             }
 
             let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
@@ -1298,8 +1429,7 @@ pub fn compute_blame(
 
         let parent_oid = parents[0];
         let parent_commit = get_commit(odb, parent_oid, &mut commit_cache)?;
-        let parent_blob_entry =
-            resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?;
+        let parent_blob_entry = session.resolve_path_in_tree(parent_commit.tree, &current_path)?;
         let can_follow_rename = true;
 
         match parent_blob_entry {
@@ -1324,15 +1454,12 @@ pub fn compute_blame(
                 // If copy detection is enabled, try to track lines to source
                 // files in the parent tree.
                 if copy_depth >= 1 {
-                    let cur_content = read_blob_content_for_blame(
-                        odb,
-                        &current_blob_oid,
+                    let cur_lines_arc = session.load_blob_lines(
+                        current_blob_oid,
                         &current_path,
                         current_blob_mode,
-                        textconv_ctx,
-                        use_textconv,
                     )?;
-                    let cur_lines = content_lines(&cur_content);
+                    let cur_lines = BlameSession::line_refs(&cur_lines_arc);
                     let mut entries = Vec::new();
                     collect_tree_file_entries(odb, &parent_commit.tree, "", &mut entries)?;
                     let mut by_content: HashMap<String, Vec<(String, BlameLine)>> = HashMap::new();
@@ -1344,20 +1471,13 @@ pub fn compute_blame(
                         // in the current commit. Deeper -C levels may search
                         // broader history.
                         if copy_depth == 1
-                            && resolve_path_in_tree_entry(odb, &commit.tree, &path)?.is_some()
+                            && session.resolve_path_in_tree(commit.tree, &path)?.is_some()
                         {
                             continue;
                         }
 
-                        let source_content = read_blob_content_for_blame(
-                            odb,
-                            &oid,
-                            &path,
-                            mode,
-                            textconv_ctx,
-                            use_textconv,
-                        )?;
-                        let source_lines = content_lines(&source_content);
+                        let source_lines_arc = session.load_blob_lines(oid, &path, mode)?;
+                        let source_lines = BlameSession::line_refs(&source_lines_arc);
                         let overlap = cur_lines
                             .iter()
                             .filter(|line| source_lines.iter().any(|src| src == *line))
@@ -1366,7 +1486,7 @@ pub fn compute_blame(
                             continue;
                         }
 
-                        let source_blame = compute_blame(
+                        let source_blame = compute_blame_with_session(
                             odb,
                             parent_oid,
                             &path,
@@ -1378,6 +1498,7 @@ pub fn compute_blame(
                             first_parent_only,
                             grafts,
                             indent_heuristic,
+                            session,
                         )?;
                         for line in source_blame {
                             by_content
@@ -1477,43 +1598,23 @@ pub fn compute_blame(
             }
             Some((p_blob_oid, p_blob_mode)) => {
                 // Diff current vs parent
-                let cur_content = read_blob_content_for_blame(
-                    odb,
-                    &current_blob_oid,
-                    &current_path,
-                    current_blob_mode,
-                    textconv_ctx,
-                    use_textconv,
-                )?;
-                let par_content = read_blob_content_for_blame(
-                    odb,
-                    &p_blob_oid,
-                    &current_path,
-                    p_blob_mode,
-                    textconv_ctx,
-                    use_textconv,
-                )?;
-                let cur_lines = content_lines(&cur_content);
-                let par_lines = content_lines(&par_content);
-
-                // Build mapping: cur_line_idx → Option<parent_line_idx>
-                let diff_line_map =
-                    build_line_map(&par_lines, &cur_lines, diff_algorithm, indent_heuristic);
-                let mut line_map =
-                    build_exact_relocate_line_map(&par_lines, &cur_lines, &diff_line_map);
-                if is_ignored {
-                    line_map = build_fuzzy_line_map(&par_lines, &cur_lines, &line_map);
-                }
-                let stop_blame_on_current = if par_lines.len() == cur_lines.len() {
-                    let xdiff_changed = crate::diff::xdiff_new_line_changed_flags(
-                        &par_lines,
-                        &cur_lines,
-                        indent_heuristic,
-                    );
-                    blame_stops_on_current_commit(&diff_line_map, &line_map, &xdiff_changed)
-                } else {
-                    Vec::new()
-                };
+                let cur_lines_arc =
+                    session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
+                let par_lines_arc =
+                    session.load_blob_lines(p_blob_oid, &current_path, p_blob_mode)?;
+                let cur_lines = BlameSession::line_refs(&cur_lines_arc);
+                let par_lines = BlameSession::line_refs(&par_lines_arc);
+                let maps = session.parent_child_line_maps(
+                    p_blob_oid,
+                    current_blob_oid,
+                    &par_lines_arc,
+                    &cur_lines_arc,
+                    diff_algorithm,
+                    indent_heuristic,
+                    is_ignored,
+                );
+                let line_map = maps.line_map.as_slice();
+                let stop_blame_on_current = maps.stop_blame_on_current.as_slice();
                 let mut inserted_copy_source: Option<CopySourceBlameCache> = None;
                 if copy_depth >= 3 {
                     if let Some((source_path, source_blame)) = find_copy_source_blame(
@@ -1531,6 +1632,7 @@ pub fn compute_blame(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
+                        session,
                     )? {
                         let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
                         for line in source_blame {
@@ -1754,6 +1856,7 @@ fn find_copy_source_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
+    session: &mut BlameSession<'_>,
 ) -> Result<Option<(String, Vec<BlameLine>)>> {
     let mut entries = Vec::new();
     collect_tree_file_entries(odb, parent_tree_oid, "", &mut entries)?;
@@ -1764,9 +1867,8 @@ fn find_copy_source_blame(
         if (!include_current_path && path == exclude_path) || !is_regular_mode(*mode) {
             continue;
         }
-        let content =
-            read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
-        let lines = content_lines(&content);
+        let lines_arc = session.load_blob_lines(*oid, path, *mode)?;
+        let lines = BlameSession::line_refs(&lines_arc);
         let score = current_lines
             .iter()
             .filter(|line| lines.iter().any(|src| src == *line))
@@ -1784,7 +1886,7 @@ fn find_copy_source_blame(
         return Ok(None);
     }
 
-    let source_blame = compute_blame(
+    let source_blame = compute_blame_with_session(
         odb,
         parent_oid,
         &source_path,
@@ -1796,6 +1898,7 @@ fn find_copy_source_blame(
         first_parent_only,
         grafts,
         indent_heuristic,
+        session,
     )?;
     Ok(Some((source_path, source_blame)))
 }
