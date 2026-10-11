@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{compute_blame, BlameDiffAlgorithm};
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     detect_copies_with_policy, detect_renames_with_policy, diff_trees, zero_oid, DiffEntry,
     DiffStatus,
@@ -57,6 +57,19 @@ fn serial_policy() -> ThreadPolicy {
 
 fn parallel_policy() -> ThreadPolicy {
     forced_parallel_policy()
+}
+
+fn config_with_rename_limit(limit: i64) -> ConfigSet {
+    let content = format!("[diff]\n\trenameLimit = {limit}\n");
+    let file = ConfigFile::parse(
+        std::path::Path::new("test.cfg"),
+        &content,
+        ConfigScope::Local,
+    )
+    .expect("parse config");
+    let mut set = ConfigSet::new();
+    set.merge(&file);
+    set
 }
 
 fn assert_serial_parallel_rename_match(
@@ -278,6 +291,91 @@ fn asymmetric_matrix_exact_matches_still_pair() {
             .filter(|e| e.status == DiffStatus::Renamed)
             .count(),
         5
+    );
+}
+
+#[test]
+fn copy_mixed_exact_inexact_respects_rename_limit_like_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "diff.renameLimit", "3"]);
+
+    let exact_a = b"exact payload alpha\n";
+    let exact_b = b"exact payload beta\n";
+    let body_c: String = (1..=40)
+        .map(|i| format!("inexact-c line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body_d: String = (1..=40)
+        .map(|i| format!("inexact-d line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.join("exact-old-a.txt"), exact_a).unwrap();
+    std::fs::write(root.join("exact-old-b.txt"), exact_b).unwrap();
+    std::fs::write(root.join("inexact-old-c.txt"), format!("{body_c}\n")).unwrap();
+    std::fs::write(root.join("inexact-old-d.txt"), format!("{body_d}\n")).unwrap();
+    git_run(root, &["add", "."]);
+    git_run(root, &["commit", "-m", "base"]);
+
+    let mut edited_c = format!("{body_c}\n");
+    edited_c = edited_c.replacen("inexact-c line 10", "inexact-c line TEN", 1);
+    let mut edited_d = format!("{body_d}\n");
+    edited_d = edited_d.replacen("inexact-d line 20", "inexact-d line TWENTY", 1);
+
+    for name in [
+        "exact-old-a.txt",
+        "exact-old-b.txt",
+        "inexact-old-c.txt",
+        "inexact-old-d.txt",
+    ] {
+        std::fs::remove_file(root.join(name)).unwrap();
+    }
+    std::fs::write(root.join("exact-new-a.txt"), exact_a).unwrap();
+    std::fs::write(root.join("exact-new-b.txt"), exact_b).unwrap();
+    std::fs::write(root.join("inexact-new-c.txt"), &edited_c).unwrap();
+    std::fs::write(root.join("inexact-new-d.txt"), &edited_d).unwrap();
+    git_run(root, &["add", "-A"]);
+    git_run(root, &["commit", "-m", "renames"]);
+
+    let parent = rev_parse_tree(root, "HEAD~1^{tree}");
+    let commit = rev_parse_tree(root, "HEAD^{tree}");
+    let repo = Repository::discover(Some(root)).expect("open");
+    let raw = diff_trees(&repo.odb, Some(&parent), Some(&commit), "").expect("diff");
+    let source_tree = flatten_tree(&repo.odb, &parent);
+    let config = config_with_rename_limit(3);
+
+    let detected = detect_copies_with_policy(
+        &repo.odb,
+        None,
+        raw,
+        50,
+        false,
+        &source_tree,
+        &config,
+        &parallel_policy(),
+    );
+
+    let git_lines = git_rename_and_copy_lines(root, &parent, &commit);
+    let grit_lines = rename_and_copy_lines(&detected);
+    assert_eq!(
+        git_lines, grit_lines,
+        "mixed exact/inexact copy detection with renameLimit=3 must match git diff-tree -M50 -C50"
+    );
+    assert_eq!(
+        git_lines.len(),
+        4,
+        "expected four rename lines: {git_lines:?}"
+    );
+    assert!(
+        git_lines.iter().filter(|l| l.starts_with("R100")).count() >= 2,
+        "expected two exact renames: {git_lines:?}"
+    );
+    assert!(
+        git_lines
+            .iter()
+            .any(|l| l.starts_with("R0") && !l.starts_with("R100")),
+        "expected inexact rename scores: {git_lines:?}"
     );
 }
 

@@ -5268,86 +5268,19 @@ pub fn detect_copies_with_policy(
 
     let par_opts = diff_rename_parallel_options(config, thread_policy);
     let rename_limit = parse_rename_limit(config);
-    let skip_inexact =
-        !added.is_empty() && inexact_matrix_exceeds_limit(added.len(), sources.len(), rename_limit);
 
-    let source_contents = if skip_inexact {
-        vec![None; sources.len()]
-    } else {
-        parallel_load_optional_blobs(odb, sources.len(), par_opts, 0, |si| {
-            odb.read(&sources[si].1).ok().map(|obj| obj.data)
-        })
-    };
-
-    let mut result_entries: Vec<DiffEntry> = Vec::new();
-    let mut renamed_deleted: HashSet<usize> = HashSet::new();
-    let mut used_added2 = vec![false; added.len()];
-
-    if !added.is_empty() {
-        let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
-            read_added_entry_bytes(odb, &added[ai], work_root)
-        });
-
-        let est_bytes: usize = if skip_inexact {
-            added_contents
-                .iter()
-                .filter_map(|opt| opt.as_ref().map(|b| b.len()))
-                .sum()
-        } else {
-            source_contents
-                .iter()
-                .chain(added_contents.iter())
-                .filter_map(|opt| opt.as_ref().map(|b| b.len()))
-                .sum()
-        };
-
-        let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
-            odb,
-            sources.len(),
-            par_opts,
-            est_bytes,
-            |si| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
-                let (src_path, src_oid, _) = &sources[si];
-                let mut row: Vec<(u32, usize, usize)> = Vec::new();
-                for (ai, add) in added.iter().enumerate() {
-                    if add.new_path.as_deref() == Some(src_path.as_str()) {
-                        continue;
-                    }
-                    let add_oid = if add.new_oid != zero_oid() {
-                        add.new_oid
-                    } else if let Some(ref data) = added_contents[ai] {
-                        odb.hash(ObjectKind::Blob, data)
-                    } else {
-                        zero_oid()
-                    };
-                    if *src_oid == add_oid {
-                        row.push((100, si, ai));
-                        continue;
-                    }
-                    if skip_inexact {
-                        continue;
-                    }
-                    let score = match (&source_contents[si], &added_contents[ai]) {
-                        (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
-                        _ => 0,
-                    };
-                    if score >= threshold {
-                        row.push((score, si, ai));
-                    }
-                }
-                Ok(row)
-            },
-        )
-        .expect("copy score rows");
-        let mut scores: Vec<(u32, usize, usize)> = score_rows.into_iter().flatten().collect();
-
-        // Sort by score descending.
-        scores.sort_by_key(|a| std::cmp::Reverse(a.0));
-
-        // Build source->added mappings, each added file assigned to best source.
+    fn apply_copy_score_assignments(
+        scores: &[(u32, usize, usize)],
+        sources: &[(String, ObjectId, bool)],
+        added: &[DiffEntry],
+        source_tree_entries: &[(String, String, ObjectId)],
+        used_added2: &mut [bool],
+        renamed_deleted: &mut HashSet<usize>,
+        result_entries: &mut Vec<DiffEntry>,
+    ) {
         let mut used_added = vec![false; added.len()];
         let mut source_to_added: HashMap<usize, Vec<(usize, u32)>> = HashMap::new();
-        for &(score, si, ai) in &scores {
+        for &(score, si, ai) in scores {
             if used_added[ai] {
                 continue;
             }
@@ -5355,12 +5288,9 @@ pub fn detect_copies_with_policy(
             source_to_added.entry(si).or_default().push((ai, score));
         }
 
-        // For each deleted source, pick one assignment as Rename, rest as Copy.
         for (&si, assignments_for_src) in &source_to_added {
             let (_, _, is_deleted) = &sources[si];
             if *is_deleted && !assignments_for_src.is_empty() {
-                // Pick the last one (by path) as the rename target.
-                // Git tends to pick the rename as the last alphabetically.
                 let rename_ai = assignments_for_src
                     .iter()
                     .max_by_key(|(ai, _score)| added[*ai].path().to_string())
@@ -5394,7 +5324,6 @@ pub fn detect_copies_with_policy(
                 }
                 renamed_deleted.insert(si);
             } else {
-                // Non-deleted source: all assignments are copies.
                 for &(ai, score) in assignments_for_src {
                     let (ref src_path, _, _) = sources[si];
                     let add = &added[ai];
@@ -5417,6 +5346,129 @@ pub fn detect_copies_with_policy(
                     used_added2[ai] = true;
                 }
             }
+        }
+    }
+
+    fn added_entry_oid(
+        odb: &Odb,
+        add: &DiffEntry,
+        added_contents: &[Option<Vec<u8>>],
+        ai: usize,
+    ) -> ObjectId {
+        if add.new_oid != zero_oid() {
+            add.new_oid
+        } else if let Some(ref data) = added_contents[ai] {
+            odb.hash(ObjectKind::Blob, data)
+        } else {
+            zero_oid()
+        }
+    }
+
+    let mut result_entries: Vec<DiffEntry> = Vec::new();
+    let mut renamed_deleted: HashSet<usize> = HashSet::new();
+    let mut used_added2 = vec![false; added.len()];
+    let mut source_contents = vec![None; sources.len()];
+
+    if !added.is_empty() {
+        let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
+            read_added_entry_bytes(odb, &added[ai], work_root)
+        });
+
+        // Git always scores exact OID copy/rename pairs before applying renameLimit.
+        let mut exact_scores: Vec<(u32, usize, usize)> = Vec::new();
+        for (si, (src_path, src_oid, _)) in sources.iter().enumerate() {
+            for (ai, add) in added.iter().enumerate() {
+                if add.new_path.as_deref() == Some(src_path.as_str()) {
+                    continue;
+                }
+                let add_oid = added_entry_oid(odb, add, &added_contents, ai);
+                if *src_oid == add_oid && add_oid != zero_oid() {
+                    exact_scores.push((100, si, ai));
+                }
+            }
+        }
+        exact_scores.sort_by_key(|a| std::cmp::Reverse(a.0));
+        apply_copy_score_assignments(
+            &exact_scores,
+            &sources,
+            &added,
+            source_tree_entries,
+            &mut used_added2,
+            &mut renamed_deleted,
+            &mut result_entries,
+        );
+
+        let remaining_added: Vec<usize> = used_added2
+            .iter()
+            .enumerate()
+            .filter_map(|(i, used)| (!*used).then_some(i))
+            .collect();
+        let remaining_source_count = sources
+            .iter()
+            .enumerate()
+            .filter(|(si, (_, _, is_deleted))| !*is_deleted || !renamed_deleted.contains(si))
+            .count();
+
+        let skip_inexact = remaining_added.is_empty()
+            || inexact_matrix_exceeds_limit(
+                remaining_added.len(),
+                remaining_source_count,
+                rename_limit,
+            );
+
+        if !skip_inexact {
+            source_contents = parallel_load_optional_blobs(odb, sources.len(), par_opts, 0, |si| {
+                odb.read(&sources[si].1).ok().map(|obj| obj.data)
+            });
+
+            let est_bytes: usize = source_contents
+                .iter()
+                .chain(added_contents.iter())
+                .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+                .sum();
+
+            let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
+                odb,
+                sources.len(),
+                par_opts,
+                est_bytes,
+                |si| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
+                    if renamed_deleted.contains(&si) {
+                        return Ok(Vec::new());
+                    }
+                    let (src_path, _, _) = &sources[si];
+                    let mut row: Vec<(u32, usize, usize)> = Vec::new();
+                    for &ai in &remaining_added {
+                        let add = &added[ai];
+                        if add.new_path.as_deref() == Some(src_path.as_str()) {
+                            continue;
+                        }
+                        let score = match (&source_contents[si], &added_contents[ai]) {
+                            (Some(old_data), Some(new_data)) => {
+                                compute_similarity(old_data, new_data)
+                            }
+                            _ => 0,
+                        };
+                        if score >= threshold {
+                            row.push((score, si, ai));
+                        }
+                    }
+                    Ok(row)
+                },
+            )
+            .expect("copy score rows");
+            let mut inexact_scores: Vec<(u32, usize, usize)> =
+                score_rows.into_iter().flatten().collect();
+            inexact_scores.sort_by_key(|a| std::cmp::Reverse(a.0));
+            apply_copy_score_assignments(
+                &inexact_scores,
+                &sources,
+                &added,
+                source_tree_entries,
+                &mut used_added2,
+                &mut renamed_deleted,
+                &mut result_entries,
+            );
         }
     }
 
