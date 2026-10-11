@@ -345,11 +345,12 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     let precompose_unicode =
         effective_core_precomposeunicode_with_config(Some(&repo.git_dir), Some(rules.config()));
 
-    if effective_pathspecs.is_empty() && gitlinks.is_empty() && ignored_mode == IgnoredMode::No {
-        untracked = collect_untracked_parallel_top_level(
+    if effective_pathspecs.is_empty() {
+        let (mut par_untracked, mut par_ignored) = collect_untracked_parallel_top_level(
             repo,
             index,
             work_tree,
+            &gitlinks,
             ignored_mode,
             show_all,
             precompose_unicode,
@@ -358,9 +359,14 @@ pub(crate) fn collect_untracked_and_ignored_inner(
             effective_pathspecs,
         )?;
         if sort_paths {
-            untracked.sort_unstable();
+            par_untracked.sort_unstable();
+            par_ignored.sort_unstable();
         }
-        return Ok((untracked, ignored, UntrackedCollectMeta::default()));
+        return Ok((
+            par_untracked,
+            par_ignored,
+            UntrackedCollectMeta::default(),
+        ));
     }
 
     visit_untracked_node(
@@ -502,14 +508,14 @@ fn collect_untracked_parallel_top_level(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
+    gitlinks: &HashSet<String>,
     ignored_mode: IgnoredMode,
     show_all: bool,
     precompose_unicode: bool,
     tracked_paths: &crate::path_icase::Stage0TrackedPaths,
     matcher_template: &IgnoreMatcher,
     pathspecs: &[String],
-) -> Result<Vec<String>> {
-    let empty_gitlinks = HashSet::<String>::new();
+) -> Result<(Vec<String>, Vec<String>)> {
     let entries: Vec<DirEntry> = fs::read_dir(work_tree)
         .map_err(crate::error::Error::Io)?
         .filter_map(|e| e.ok())
@@ -540,14 +546,15 @@ fn collect_untracked_parallel_top_level(
     let threads = parallelism.threads();
 
     if !root_files.is_empty() {
-        let scan_root_file = |entry: &DirEntry, local_untracked: &mut Vec<String>| {
+        let scan_root_file = |entry: &DirEntry,
+                              local_untracked: &mut Vec<String>,
+                              local_ignored: &mut Vec<String>| {
             let mut matcher = matcher_template.clone();
-            let mut local_ignored = Vec::new();
             let _ = visit_untracked_dir_entry(
                 repo,
                 index,
                 work_tree,
-                &empty_gitlinks,
+                gitlinks,
                 &mut matcher,
                 ignored_mode,
                 show_all,
@@ -560,7 +567,7 @@ fn collect_untracked_parallel_top_level(
                 pathspecs,
                 None,
                 local_untracked,
-                &mut local_ignored,
+                local_ignored,
             )?;
             Ok::<(), crate::error::Error>(())
         };
@@ -568,14 +575,16 @@ fn collect_untracked_parallel_top_level(
             let est_bytes = root_files.len().saturating_mul(512);
             let per_file = try_par_hash_with(&root_files, threads, est_bytes, |entry| {
                 let mut local_untracked = Vec::new();
-                scan_root_file(entry, &mut local_untracked)?;
-                Ok(local_untracked)
+                let mut local_ignored = Vec::new();
+                scan_root_file(entry, &mut local_untracked, &mut local_ignored)?;
+                Ok((local_untracked, local_ignored))
             })
             .map_err(|e: ParallelHashError<crate::error::Error>| match e {
                 ParallelHashError::Task(err) => err,
             })?;
-            for mut local in per_file {
-                untracked.append(&mut local);
+            for (mut local_u, mut local_i) in per_file {
+                untracked.append(&mut local_u);
+                ignored.append(&mut local_i);
             }
         } else {
             let mut matcher = matcher_template.clone();
@@ -584,7 +593,7 @@ fn collect_untracked_parallel_top_level(
                     repo,
                     index,
                     work_tree,
-                    &empty_gitlinks,
+                    gitlinks,
                     &mut matcher,
                     ignored_mode,
                     show_all,
@@ -604,7 +613,7 @@ fn collect_untracked_parallel_top_level(
     }
 
     if root_dirs.is_empty() {
-        return Ok(untracked);
+        return Ok((untracked, ignored));
     }
 
     let dir_count = root_dirs.len();
@@ -617,7 +626,7 @@ fn collect_untracked_parallel_top_level(
             repo,
             index,
             work_tree,
-            &empty_gitlinks,
+            gitlinks,
             &mut matcher,
             ignored_mode,
             show_all,
@@ -632,16 +641,17 @@ fn collect_untracked_parallel_top_level(
             &mut local_untracked,
             &mut local_ignored,
         )?;
-        Ok(local_untracked)
+        Ok((local_untracked, local_ignored))
     })
     .map_err(|e: ParallelHashError<crate::error::Error>| match e {
         ParallelHashError::Task(err) => err,
     })?;
 
-    for mut local in per_dir {
-        untracked.append(&mut local);
+    for (mut local_u, mut local_i) in per_dir {
+        untracked.append(&mut local_u);
+        ignored.append(&mut local_i);
     }
-    Ok(untracked)
+    Ok((untracked, ignored))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1498,6 +1508,7 @@ pub fn status(
                 refresh_index_stat_in_pass: true,
                 config: repo_config.clone(),
                 stat_parallel_threads: opts.stat_parallel_threads,
+                thread_policy: Some(repo.thread_policy()),
                 worktree_rules: Some(Arc::clone(&worktree_rules)),
                 for_status: true,
                 ..Default::default()
