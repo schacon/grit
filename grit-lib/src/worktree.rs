@@ -75,6 +75,119 @@ pub fn is_bare_repository(common: &Path) -> bool {
     })
 }
 
+/// Where a local branch is checked out among registered worktrees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchWorktreeCheckout {
+    /// Short branch name (e.g. `feat`).
+    pub branch: String,
+    /// Working tree path for the checkout.
+    pub worktree_path: PathBuf,
+    /// Administrative git directory for that worktree.
+    pub admin_dir: PathBuf,
+}
+
+/// Administrative git directory for the worktree `repo` was opened from.
+#[must_use]
+pub fn worktree_admin_dir(repo: &Repository) -> PathBuf {
+    let common = common_git_dir(&repo.git_dir);
+    if repo.git_dir.starts_with(common.join("worktrees")) {
+        repo.git_dir.clone()
+    } else {
+        common
+    }
+}
+
+fn head_is_branch(head: &HeadState, branch_short_name: &str) -> bool {
+    match head {
+        HeadState::Branch {
+            short_name,
+            refname,
+            ..
+        } => {
+            short_name == branch_short_name || refname == &format!("refs/heads/{branch_short_name}")
+        }
+        _ => false,
+    }
+}
+
+fn admin_dirs_match(a: &Path, b: &Path) -> bool {
+    a.canonicalize()
+        .ok()
+        .zip(b.canonicalize().ok())
+        .is_some_and(|(x, y)| x == y)
+        || a == b
+}
+
+/// Find a worktree that has `branch_short_name` checked out, optionally skipping one admin dir.
+///
+/// `exclude_admin_dir` is typically the current worktree's admin dir so a switch to the branch
+/// already checked out here is allowed.
+pub fn find_worktree_with_branch_checked_out(
+    repo: &Repository,
+    branch_short_name: &str,
+    exclude_admin_dir: Option<&Path>,
+) -> Result<Option<BranchWorktreeCheckout>> {
+    for entry in list_worktrees(repo)? {
+        if exclude_admin_dir.is_some_and(|ex| admin_dirs_match(&entry.admin_dir, ex)) {
+            continue;
+        }
+        if head_is_branch(&entry.head, branch_short_name) {
+            return Ok(Some(BranchWorktreeCheckout {
+                branch: branch_short_name.to_owned(),
+                worktree_path: entry.path.clone(),
+                admin_dir: entry.admin_dir.clone(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Refuse when another worktree already has `branch_short_name` checked out.
+///
+/// # Errors
+///
+/// Returns [`Error::BranchCheckedOutInWorktree`] when a different worktree holds the branch.
+pub fn ensure_branch_not_checked_out_elsewhere(
+    repo: &Repository,
+    branch_short_name: &str,
+) -> Result<()> {
+    let exclude = worktree_admin_dir(repo);
+    if let Some(found) =
+        find_worktree_with_branch_checked_out(repo, branch_short_name, Some(&exclude))?
+    {
+        return Err(branch_checked_out_error(
+            branch_short_name,
+            &found.worktree_path,
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse when any worktree (including linked) has `branch_short_name` checked out.
+///
+/// # Errors
+///
+/// Returns [`Error::BranchCheckedOutInWorktree`] when any registered worktree holds the branch.
+pub fn ensure_branch_not_checked_out_in_any_worktree(
+    repo: &Repository,
+    branch_short_name: &str,
+) -> Result<()> {
+    if let Some(found) = find_worktree_with_branch_checked_out(repo, branch_short_name, None)? {
+        return Err(branch_checked_out_error(
+            branch_short_name,
+            &found.worktree_path,
+        ));
+    }
+    Ok(())
+}
+
+fn branch_checked_out_error(branch: &str, worktree_path: &Path) -> Error {
+    Error::BranchCheckedOutInWorktree {
+        branch: branch.to_owned(),
+        worktree_path: worktree_path.display().to_string(),
+    }
+}
+
 /// Enumerate the main and linked worktrees for `repo`.
 ///
 /// Order matches Git: main worktree first, then linked worktrees sorted by admin id.

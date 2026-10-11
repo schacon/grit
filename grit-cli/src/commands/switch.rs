@@ -13,6 +13,7 @@ use grit_lib::porcelain::checkout::checkout_tree_changes;
 use grit_lib::porcelain::worktree_guard::{ensure_no_untracked_overwrite, prepare_tree_switch};
 use grit_lib::refs;
 use grit_lib::state::resolve_head;
+use grit_lib::worktree;
 use serde::Serialize;
 
 use crate::context;
@@ -62,6 +63,11 @@ pub fn run(name: &str, create: bool) -> Result<SwitchOutcome> {
 
     let target_oid = refs::resolve_ref(&repo.git_dir, &branch_ref)
         .with_context(|| format!("no branch named '{name}'"))?;
+
+    if !create {
+        worktree::ensure_branch_not_checked_out_elsewhere(&repo, name)
+            .map_err(anyhow::Error::new)?;
+    }
 
     let target_tree = context::commit_tree(&repo, &target_oid)?;
     let head_tree = match head_oid {

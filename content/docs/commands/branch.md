@@ -22,7 +22,7 @@ With a name, creates a branch at the current commit. It doesn't switch to the ne
 
 Branch names follow the same rules as `git check-ref-format --branch` (no spaces, `..`, `~`, `.lock`, reserved names like `HEAD`, and other characters Git rejects). Invalid names fail before anything is written under `.git/refs`.
 
-With `-d`, deletes a branch. `grit` refuses if the branch has commits that aren't in the current branch, so you can't lose work by accident; `-D` deletes it anyway. You can't delete the branch you're on.
+With `-d`, deletes a branch. `grit` refuses if the branch has commits that aren't in the current branch, so you can't lose work by accident; `-D` deletes it anyway. You can't delete the branch you're on, or a branch that is checked out in any linked worktree (including worktrees added with `git worktree add`).
 
 ## Options
 

@@ -20,6 +20,8 @@ Switches to a local branch and updates the files in your working tree to match i
 
 `grit switch` won't run while you have uncommitted changes, staged or not, so that nothing gets carried over to the wrong branch by accident. Commit first. Untracked files stay where they are, unless the other branch has a file at the same path; then `grit` stops rather than overwrite it.
 
+A local branch can only be checked out in one worktree at a time (including linked worktrees created with `git worktree add`). Switching to a branch that is already checked out elsewhere fails.
+
 With `-c`, creates the branch at the current commit and switches to it.
 
 ## Options
