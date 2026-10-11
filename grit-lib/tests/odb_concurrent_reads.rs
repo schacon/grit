@@ -272,3 +272,48 @@ fn stale_read_after_invalidation() {
         "serial read after pack removal must miss"
     );
 }
+
+/// Two [`PackStore`] instances can share epoch 0; warming must not reuse the first store's TLS.
+#[test]
+fn pack_thread_local_warm_follows_active_store_on_one_thread() {
+    clear_pack_cache();
+    let tmp_a = TempDir::new().expect("tempdir a");
+    let tmp_b = TempDir::new().expect("tempdir b");
+    let objects_a = tmp_a.path().join("objects");
+    let objects_b = tmp_b.path().join("objects");
+    std::fs::create_dir_all(objects_a.join("pack")).expect("pack a");
+    std::fs::create_dir_all(objects_b.join("pack")).expect("pack b");
+    let odb_a = Odb::new(&objects_a);
+    let odb_b = Odb::new(&objects_b);
+    let oid_a = odb_a
+        .write(ObjectKind::Blob, b"store-a\n")
+        .expect("write a");
+    let oid_b = odb_b
+        .write(ObjectKind::Blob, b"store-b\n")
+        .expect("write b");
+    let pack_a = build_pack(
+        &odb_a,
+        &[oid_a],
+        &[],
+        &PackBuildOptions {
+            delta: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("pack a");
+    let pack_b = build_pack(
+        &odb_b,
+        &[oid_b],
+        &[],
+        &PackBuildOptions {
+            delta: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("pack b");
+    install_pack(&objects_a, "a", &pack_a);
+    install_pack(&objects_b, "b", &pack_b);
+    grit_lib::pack::read_object_from_packs(&objects_a, &oid_a).expect("prime legacy store a");
+    let got_b = odb_b.read(&oid_b).expect("read via odb b store");
+    assert_eq!(got_b.data, b"store-b\n");
+}

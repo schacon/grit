@@ -144,6 +144,12 @@ pub(crate) mod pack_cache {
         static PACK_DIR_LISTING_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// [`PackStore::cache_epoch`] last seen on this thread (cross-thread invalidation).
         static THREAD_WARM_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// [`PackStore`] address last warmed on this thread (distinct stores can share epoch 0).
+        static THREAD_WARM_STORE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn store_thread_local_key(store: &crate::pack_store::PackStore) -> usize {
+        store as *const crate::pack_store::PackStore as usize
     }
 
     pub(crate) fn clear_thread_local_dir_indexes() {
@@ -155,6 +161,7 @@ pub(crate) mod pack_cache {
         PACK_COUNT_VALIDATED.with(|cell| cell.borrow_mut().clear());
         PACK_DIR_LISTING_TRUSTED.set(false);
         THREAD_WARM_EPOCH.set(0);
+        THREAD_WARM_STORE.set(0);
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -163,16 +170,29 @@ pub(crate) mod pack_cache {
         THREAD_WARM_EPOCH.set(new_epoch);
     }
 
+    /// Whether this thread's warmed TLS matches `objects_dir` (epoch + store identity).
+    pub(crate) fn thread_local_listing_trusted_for(objects_dir: &Path) -> bool {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return false;
+        }
+        let store = crate::pack_store::PackStore::active_for_reads();
+        PACK_DIR_LISTING_TRUSTED.get()
+            && THREAD_WARM_EPOCH.get() == store.cache_epoch()
+            && THREAD_WARM_STORE.get() == store_thread_local_key(&store)
+    }
+
     pub(crate) fn sync_thread_local_with_store(store: &crate::pack_store::PackStore) {
         if !crate::pack_store::PackStore::has_context() {
             return;
         }
         let epoch = store.cache_epoch();
-        if THREAD_WARM_EPOCH.get() == epoch {
+        let store_key = store_thread_local_key(store);
+        if THREAD_WARM_EPOCH.get() == epoch && THREAD_WARM_STORE.get() == store_key {
             return;
         }
         clear_thread_local_dir_indexes();
         THREAD_WARM_EPOCH.set(epoch);
+        THREAD_WARM_STORE.set(store_key);
     }
 
     fn drop_thread_local_dir_listing(pack_dir: &Path) {
@@ -200,7 +220,11 @@ pub(crate) mod pack_cache {
             return;
         }
         let epoch = store.cache_epoch();
-        if THREAD_WARM_EPOCH.get() == epoch && PACK_DIR_LISTING_TRUSTED.get() {
+        let store_key = store_thread_local_key(store);
+        if THREAD_WARM_EPOCH.get() == epoch
+            && THREAD_WARM_STORE.get() == store_key
+            && PACK_DIR_LISTING_TRUSTED.get()
+        {
             return;
         }
         PACK_BYTES.with(|cell| cell.borrow_mut().clear());
@@ -233,6 +257,7 @@ pub(crate) mod pack_cache {
             });
             PACK_DIR_LISTING_TRUSTED.set(true);
             THREAD_WARM_EPOCH.set(store.cache_epoch());
+            THREAD_WARM_STORE.set(store_thread_local_key(store));
         });
     }
 

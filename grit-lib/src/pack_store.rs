@@ -204,10 +204,10 @@ impl PackStore {
 
     /// Drop cached pack listings, indexes, pack bytes, and delta bases.
     pub fn invalidate_packs(&self) {
-        let epoch = self.bump_cache_epoch();
-        crate::pack::pack_cache::clear_thread_local_after_invalidation(epoch);
         crate::pack::pack_cache::clear_catalog_on(&self.catalog);
         self.delta_bases.clear();
+        let epoch = self.bump_cache_epoch();
+        crate::pack::pack_cache::clear_thread_local_after_invalidation(epoch);
     }
 
     /// Drop MIDX bytes and tip cache under this store's `objects/pack/`.
