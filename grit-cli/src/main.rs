@@ -16,6 +16,7 @@ mod markdown;
 mod output;
 mod ref_name_messages;
 mod stdio;
+mod terminal_progress;
 mod ui;
 
 use anyhow::{bail, Result};

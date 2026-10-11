@@ -7,7 +7,7 @@ use grit_lib::clone::{
     cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty, CloneError,
     CloneOptions,
 };
-use grit_lib::porcelain::checkout::checkout_between_trees;
+use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
 use grit_lib::remote::DefaultHttpClientFactory;
 use serde::Serialize;
 
@@ -38,7 +38,7 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
     let dest_preexisted_empty = dest_preexisted_empty(&path);
 
     progress(mode, &format!("Cloning into '{dir}' ..."));
-    match clone_into(url, &path, &dir) {
+    match clone_into(url, &path, &dir, mode) {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             let skip_cleanup = matches!(
@@ -53,7 +53,7 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
     }
 }
 
-fn clone_into(url: &str, path: &Path, dir: &str) -> Result<CloneOutcome> {
+fn clone_into(url: &str, path: &Path, dir: &str, mode: OutputMode) -> Result<CloneOutcome> {
     let factory = DefaultHttpClientFactory;
     let clone_opts = CloneOptions {
         url: url.to_owned(),
@@ -66,7 +66,11 @@ fn clone_into(url: &str, path: &Path, dir: &str) -> Result<CloneOutcome> {
     let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))?;
 
     let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
-    checkout_between_trees(&outcome.repo, None, &tree).context("could not check out files")?;
+    let progress_enabled =
+        mode == OutputMode::Human && crate::terminal_progress::stderr_progress_enabled();
+    let mut progress = crate::terminal_progress::TerminalProgress::new(progress_enabled);
+    checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut progress)
+        .context("could not check out files")?;
 
     Ok(CloneOutcome {
         url: url.to_owned(),

@@ -26,19 +26,55 @@ use crate::index::{
     MODE_REGULAR, MODE_SYMLINK,
 };
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
+use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::worktree_rules::WorktreeRules;
 
+const CHECKOUT_FILE_PROGRESS_BATCH: u64 = 256;
+
+/// Batched file-count progress for the populated-tree checkout path.
+struct CheckoutFileProgress<'a> {
+    sink: &'a mut dyn ProgressSink,
+    pending: u64,
+}
+
+impl<'a> CheckoutFileProgress<'a> {
+    fn begin_populated(sink: &'a mut dyn ProgressSink) -> Self {
+        sink.start(ProgressPhase::CheckingOutFiles, None);
+        Self { sink, pending: 0 }
+    }
+
+    fn note_files(&mut self, count: u64) {
+        self.pending += count;
+        while self.pending >= CHECKOUT_FILE_PROGRESS_BATCH {
+            self.sink.inc(CHECKOUT_FILE_PROGRESS_BATCH);
+            self.pending -= CHECKOUT_FILE_PROGRESS_BATCH;
+        }
+    }
+
+    fn finish(self) {
+        if self.pending > 0 {
+            self.sink.inc(self.pending);
+        }
+        self.sink.finish();
+    }
+}
+
 /// Populate an empty work tree and index from `tree_oid` without building a full diff.
-fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()> {
+fn checkout_populated_tree(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    progress: &mut dyn ProgressSink,
+) -> Result<()> {
     let work_tree = repo
         .work_tree
         .clone()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
     let mut index = repo.load_index()?;
     if !index.entries.is_empty() {
-        return checkout_between_trees_slow(repo, None, Some(tree_oid));
+        return checkout_between_trees_slow(repo, None, Some(tree_oid), progress);
     }
+    let mut file_progress = CheckoutFileProgress::begin_populated(progress);
     let config = repo.config()?;
     let changes = diff_trees(&repo.odb, None, Some(tree_oid), "")?;
     let prospective_index = prospective_index_for_checkout(&index, &changes);
@@ -75,6 +111,7 @@ fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()>
                 let mut entry = entry_from_stat(&abs, path.as_bytes(), entry.oid, MODE_GITLINK)?;
                 entry.size = 0;
                 new_entries.push(entry);
+                file_progress.note_files(1);
                 continue;
             }
             let change = DiffEntry {
@@ -116,6 +153,7 @@ fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()>
                 entry.oid,
             )?;
             new_entries.push(index_entry);
+            file_progress.note_files(1);
         }
     }
 
@@ -127,10 +165,12 @@ fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()>
         &pending_delayed,
         &mut dir_cache,
         &mut new_entries,
+        Some(&mut file_progress),
     )?;
 
     index.remove_paths_and_insert([], new_entries);
     repo.write_index(&mut index)?;
+    file_progress.finish();
     Ok(())
 }
 
@@ -138,9 +178,10 @@ fn checkout_between_trees_slow(
     repo: &Repository,
     from: Option<&ObjectId>,
     to: Option<&ObjectId>,
+    progress: &mut dyn ProgressSink,
 ) -> Result<()> {
     let changes = diff_trees(&repo.odb, from, to, "")?;
-    checkout_tree_changes(repo, &changes)
+    checkout_tree_changes_with_progress(repo, &changes, progress)
 }
 
 /// Apply the change from tree `from` to tree `to` onto the working tree and
@@ -160,10 +201,24 @@ pub fn checkout_between_trees(
     from: Option<&ObjectId>,
     to: &ObjectId,
 ) -> Result<()> {
+    checkout_between_trees_with_progress(repo, from, to, &mut NullProgress)
+}
+
+/// Like [`checkout_between_trees`], reporting checkout progress to `progress`.
+///
+/// Populated-tree checkouts emit [`ProgressPhase::CheckingOutFiles`] with an
+/// unknown total; the slow diff-based path reports a total equal to the number
+/// of tree changes.
+pub fn checkout_between_trees_with_progress(
+    repo: &Repository,
+    from: Option<&ObjectId>,
+    to: &ObjectId,
+    progress: &mut dyn ProgressSink,
+) -> Result<()> {
     if from.is_none() {
-        return checkout_populated_tree(repo, to);
+        return checkout_populated_tree(repo, to, progress);
     }
-    checkout_between_trees_slow(repo, from, Some(to))
+    checkout_between_trees_slow(repo, from, Some(to), progress)
 }
 
 /// Replace the index and tracked worktree so they match `tree_oid` exactly.
@@ -278,6 +333,7 @@ pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<(
         &pending_delayed,
         &mut dir_cache,
         &mut new_entries,
+        None,
     )?;
 
     remove_empty_parent_dirs_batch(&work_tree, &deleted_abs_paths);
@@ -294,6 +350,14 @@ pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<(
 /// Callers such as `grit switch` can reuse one [`diff_trees`] result for both
 /// untracked guards and the mechanical apply.
 pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result<()> {
+    checkout_tree_changes_with_progress(repo, changes, &mut NullProgress)
+}
+
+fn checkout_tree_changes_with_progress(
+    repo: &Repository,
+    changes: &[DiffEntry],
+    progress: &mut dyn ProgressSink,
+) -> Result<()> {
     let work_tree = repo
         .work_tree
         .clone()
@@ -310,6 +374,11 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
     let mut deleted_abs_paths: Vec<PathBuf> = Vec::with_capacity(changes.len() / 8);
     let mut dir_cache = LeadingDirCache::new();
 
+    progress.start(
+        ProgressPhase::CheckingOutFiles,
+        Some(u64::try_from(changes.len()).unwrap_or(u64::MAX)),
+    );
+
     for change in changes {
         if change.status == DiffStatus::Deleted {
             if let Some(path) = &change.old_path {
@@ -323,10 +392,12 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
                 deleted_abs_paths.push(abs);
                 paths_to_remove.push(path.as_bytes().to_vec());
             }
+            progress.inc(1);
             continue;
         }
 
         let Some(path) = &change.new_path else {
+            progress.inc(1);
             continue;
         };
         let mode = parse_git_mode(&change.new_mode);
@@ -342,6 +413,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
                         entry_from_metadata(&meta, path.as_bytes(), change.new_oid, MODE_GITLINK);
                     entry.size = 0;
                     new_entries.push(entry);
+                    progress.inc(1);
                     continue;
                 }
             }
@@ -350,6 +422,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
             let mut entry = entry_from_stat(&abs, path.as_bytes(), change.new_oid, MODE_GITLINK)?;
             entry.size = 0;
             new_entries.push(entry);
+            progress.inc(1);
             continue;
         }
         if let Some(existing) = index.get(path.as_bytes(), 0) {
@@ -372,6 +445,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
                     change.new_oid,
                     mode,
                 ));
+                progress.inc(1);
                 continue;
             }
         }
@@ -392,6 +466,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
                 oid: change.new_oid,
                 change: change.clone(),
             });
+            progress.inc(1);
             continue;
         };
         let entry = write_checkout_entry(
@@ -404,6 +479,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
             change.new_oid,
         )?;
         new_entries.push(entry);
+        progress.inc(1);
     }
 
     finish_delayed_checkouts(
@@ -414,12 +490,14 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
         &pending_delayed,
         &mut dir_cache,
         &mut new_entries,
+        None,
     )?;
 
     remove_empty_parent_dirs_batch(&work_tree, &deleted_abs_paths);
 
     index.remove_paths_and_insert(paths_to_remove.iter().map(|p| p.as_slice()), new_entries);
     repo.write_index(&mut index)?;
+    progress.finish();
     Ok(())
 }
 
@@ -517,6 +595,7 @@ fn finish_delayed_checkouts(
     pending: &[DelayedCheckoutTarget],
     dir_cache: &mut LeadingDirCache,
     new_entries: &mut Vec<IndexEntry>,
+    mut file_progress: Option<&mut CheckoutFileProgress<'_>>,
 ) -> Result<()> {
     if delayed.entries.is_empty() {
         return Ok(());
@@ -539,6 +618,9 @@ fn finish_delayed_checkouts(
             )
             .map_err(|e| e.to_string())?;
             new_entries.push(entry);
+            if let Some(fp) = file_progress.as_deref_mut() {
+                fp.note_files(1);
+            }
             Ok(())
         },
     );
@@ -1130,9 +1212,29 @@ mod tests {
     use super::*;
     use crate::index::entry_from_stat;
     use crate::objects::ObjectKind;
+    use crate::progress::{ProgressPhase, ProgressSink};
     use crate::repo::init_repository;
     use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
     use tempfile::TempDir;
+
+    #[derive(Default)]
+    struct CheckoutProgressRecorder {
+        started: Vec<(ProgressPhase, Option<u64>)>,
+        file_units: u64,
+        finished: u32,
+    }
+
+    impl ProgressSink for CheckoutProgressRecorder {
+        fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+            self.started.push((phase, total));
+        }
+        fn inc(&mut self, units: u64) {
+            self.file_units += units;
+        }
+        fn finish(&mut self) {
+            self.finished += 1;
+        }
+    }
 
     fn commit_all(repo: &Repository, message: &str) -> ObjectId {
         use crate::objects::{serialize_commit, CommitData};
@@ -1207,6 +1309,72 @@ mod tests {
             !wt.join("sub").exists(),
             "gitlink directory should be removed on delete"
         );
+    }
+
+    #[test]
+    fn populated_checkout_reports_file_count() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let wt = repo.work_tree.as_ref().expect("wt");
+        for i in 0..300 {
+            fs::write(wt.join(format!("f{i}.txt")), format!("body {i}\n")).expect("write");
+        }
+        let tree = commit_all(&repo, "many files");
+        let mut index = Index::new();
+        repo.write_index(&mut index).expect("empty index");
+
+        let mut rec = CheckoutProgressRecorder::default();
+        checkout_between_trees_with_progress(&repo, None, &tree, &mut rec).expect("checkout");
+
+        let index = repo.load_index().expect("index after");
+        assert_eq!(rec.started, vec![(ProgressPhase::CheckingOutFiles, None)]);
+        assert_eq!(rec.finished, 1);
+        assert_eq!(
+            rec.file_units,
+            index.entries.len() as u64,
+            "progress file count should match index entries (one unit per checked-out path)"
+        );
+        assert_eq!(index.entries.len(), 300);
+    }
+
+    #[test]
+    fn slow_checkout_reports_total() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let wt = repo.work_tree.as_ref().expect("wt");
+        for d in 0..3 {
+            fs::write(wt.join(format!("a{d}.txt")), format!("v0 {d}\n")).expect("write");
+        }
+        let head = commit_all(&repo, "initial");
+        for d in 0..3 {
+            fs::write(wt.join(format!("a{d}.txt")), format!("v1 {d}\n")).expect("write");
+        }
+        let to_tree = commit_all(&repo, "updated");
+        let changes = diff_trees(&repo.odb, Some(&head), Some(&to_tree), "").expect("diff");
+
+        let mut rec = CheckoutProgressRecorder::default();
+        checkout_between_trees_with_progress(&repo, Some(&head), &to_tree, &mut rec)
+            .expect("checkout");
+
+        assert_eq!(rec.started.len(), 1);
+        assert_eq!(rec.started[0].0, ProgressPhase::CheckingOutFiles);
+        assert_eq!(rec.started[0].1, Some(changes.len() as u64));
+        assert_eq!(rec.file_units, changes.len() as u64);
+        assert_eq!(rec.finished, 1);
     }
 
     #[test]
