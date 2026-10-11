@@ -62,7 +62,7 @@ The rev-list gap is dominated by history/object enumeration in `grit-lib`, not b
 
 ## grit-lib: parallel packed ODB reads
 
-Criterion group **`odb_read_parallel/packed_blobs`** (`cargo bench -p grit-lib --bench odb_read_parallel`) measures throughput when worker threads share one [`Odb`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html) and hold [`Odb::with_pack_read_context`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html#method.with_pack_read_context) for the worker lifetime. Each iteration reads a partition of **50 000** whole-object pack blobs (**3072-byte** payload; loose copies are removed after packing so hits are pack-only). Baseline **`odb-read-parallel.json`** records Criterion central estimates on the factory VM (**4 logical CPUs**, Rust **1.85** stable).
+Criterion group **`odb_read_parallel/packed_blobs`** (`cargo bench -p grit-lib --bench odb_read_parallel`) measures throughput when worker threads share one [`Odb`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html) and hold [`Odb::with_pack_read_context`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html#method.with_pack_read_context) for the worker lifetime. Each iteration reads a partition of **50 000** whole-object pack blobs (**3072-byte** payload; loose copies are removed after packing so hits are pack-only). Baseline **`odb-read-parallel.json`** records Criterion central estimates on the factory VM (**4 logical CPUs**, Rust **1.99** stable).
 
 | Threads | Median time (50k reads) | Throughput |
 | ------- | ----------------------: | ---------- |
