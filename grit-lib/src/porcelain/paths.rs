@@ -10,6 +10,7 @@ use crate::diff::{
 use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_TREE};
 use crate::objects::{parse_commit, ObjectId};
+use crate::path_icase::paths_equal;
 use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
 use crate::porcelain::checkout::remove_empty_parent_dirs;
 use crate::repo::Repository;
@@ -163,7 +164,22 @@ pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result
 
     ensure_worktree_move_sources_exist(work_tree, &renames)?;
 
-    if !force && destination_exists(work_tree, &index, &final_dst, dst_is_dir_target) {
+    let ignorecase = repo
+        .config()
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.ignorecase").and_then(|r| r.ok()))
+        .unwrap_or(false);
+
+    if !force
+        && destination_exists(
+            work_tree,
+            &index,
+            &final_dst,
+            dst_is_dir_target,
+            ignorecase,
+            &renames,
+        )
+    {
         return Err(Error::Message(format!(
             "destination exists, source={src}, destination={final_dst}"
         )));
@@ -193,7 +209,7 @@ pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result
         Vec::new()
     };
 
-    if let Err(err) = rename_worktree_paths(work_tree, &src, &final_dst, &renames) {
+    if let Err(err) = rename_worktree_paths(work_tree, &src, &final_dst, &renames, ignorecase) {
         restore_worktree_backups(work_tree, &cleared_backup)?;
         return Err(err);
     }
@@ -593,12 +609,77 @@ fn resolve_move_destination(
     }
 }
 
-fn destination_exists(work_tree: &Path, index: &Index, dst: &str, _dst_was_dir: bool) -> bool {
+fn destination_exists(
+    work_tree: &Path,
+    index: &Index,
+    dst: &str,
+    _dst_was_dir: bool,
+    ignorecase: bool,
+    renames: &[(String, String)],
+) -> bool {
+    if ignorecase && case_only_rename_to(renames, dst) {
+        return index_has_unrelated_entries(index, dst, ignorecase, renames);
+    }
+
     let abs = work_tree.join(dst);
     if abs.exists() {
+        if ignorecase && rename_sources_cover_path(renames, dst) {
+            return index_has_unrelated_entries(index, dst, ignorecase, renames);
+        }
         return true;
     }
-    index.get(dst.as_bytes(), 0).is_some() || !index_paths_under(index, dst, false).is_empty()
+
+    index_has_unrelated_entries(index, dst, ignorecase, renames)
+}
+
+fn case_only_rename_to(renames: &[(String, String)], dst: &str) -> bool {
+    renames.iter().any(|(from, to)| {
+        to == dst && from != to && paths_equal(from.as_bytes(), to.as_bytes(), true)
+    })
+}
+
+fn rename_sources_cover_path(renames: &[(String, String)], path: &str) -> bool {
+    renames
+        .iter()
+        .any(|(from, _)| paths_equal(from.as_bytes(), path.as_bytes(), true))
+}
+
+fn index_has_unrelated_entries(
+    index: &Index,
+    dst: &str,
+    ignorecase: bool,
+    renames: &[(String, String)],
+) -> bool {
+    let rename_from: HashSet<&str> = renames.iter().map(|(from, _)| from.as_str()).collect();
+
+    if ignorecase {
+        return index.entries.iter().filter(|e| e.stage() == 0).any(|e| {
+            let path = String::from_utf8_lossy(&e.path);
+            if !index_path_at_destination(&path, dst) {
+                return false;
+            }
+            !rename_from.contains(path.as_ref())
+        });
+    }
+
+    let mut paths = index_paths_under(index, dst, true);
+    if paths.is_empty() && index.get(dst.as_bytes(), 0).is_some() {
+        paths.push(dst.to_string());
+    }
+    paths
+        .iter()
+        .any(|p| !rename_from.contains(p.as_str()))
+}
+
+fn index_path_at_destination(path: &str, dst: &str) -> bool {
+    if paths_equal(path.as_bytes(), dst.as_bytes(), true) {
+        return true;
+    }
+    if path == dst {
+        return true;
+    }
+    let plen = dst.len();
+    path.len() > plen && path.starts_with(dst) && path.as_bytes()[plen] == b'/'
 }
 
 fn worktree_paths_to_clear(work_tree: &Path, index: &Index, dst: &str) -> Vec<String> {
@@ -648,6 +729,28 @@ fn ensure_worktree_move_sources_exist(
     Ok(())
 }
 
+fn rename_worktree_entry(from: &Path, to: &Path, _ignorecase: bool) -> std::io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    let from_name = from.to_string_lossy();
+    let to_name = to.to_string_lossy();
+    if from_name.eq_ignore_ascii_case(to_name.as_ref()) {
+        let parent = to.parent().unwrap_or_else(|| Path::new("."));
+        let temp = parent.join(format!(
+            ".{}.grit-mv-{}",
+            to.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "mv".into()),
+            std::process::id()
+        ));
+        fs::rename(from, &temp)?;
+        fs::rename(&temp, to)?;
+        return Ok(());
+    }
+    fs::rename(from, to)
+}
+
 fn plan_index_renames(index: &Index, src: &str, final_dst: &str) -> Result<Vec<(String, String)>> {
     let src_paths = index_paths_under(index, src, true);
     let mut renames = Vec::with_capacity(src_paths.len());
@@ -670,6 +773,7 @@ fn rename_worktree_paths(
     src: &str,
     final_dst: &str,
     renames: &[(String, String)],
+    ignorecase: bool,
 ) -> Result<()> {
     if renames.len() == 1 && renames[0].0 == src {
         let from = work_tree.join(&renames[0].0);
@@ -679,7 +783,7 @@ fn rename_worktree_paths(
                 Error::PathError(format!("creating parent for '{}': {e}", renames[0].1))
             })?;
         }
-        fs::rename(&from, &to).map_err(|e| {
+        rename_worktree_entry(&from, &to, ignorecase).map_err(|e| {
             Error::PathError(format!(
                 "renaming '{}' -> '{}': {e}",
                 renames[0].0, renames[0].1
@@ -696,7 +800,7 @@ fn rename_worktree_paths(
             fs::create_dir_all(parent)
                 .map_err(|e| Error::PathError(format!("creating parent for '{final_dst}': {e}")))?;
         }
-        fs::rename(&src_abs, &dst_abs).map_err(|e| {
+        rename_worktree_entry(&src_abs, &dst_abs, ignorecase).map_err(|e| {
             Error::PathError(format!("renaming directory '{src}' -> '{final_dst}': {e}"))
         })?;
         remove_empty_parent_dirs(work_tree, &src_abs);
@@ -711,7 +815,7 @@ fn rename_worktree_paths(
                 .map_err(|e| Error::PathError(format!("creating parent for '{to}': {e}")))?;
         }
         if from_abs.exists() {
-            fs::rename(&from_abs, &to_abs)
+            rename_worktree_entry(&from_abs, &to_abs, ignorecase)
                 .map_err(|e| Error::PathError(format!("renaming '{from}' -> '{to}': {e}")))?;
             remove_empty_parent_dirs(work_tree, &from_abs);
         }
@@ -752,6 +856,75 @@ mod path_validation_tests {
         assert_eq!(
             normalize_and_validate_repo_relative(&wt, "./nested/file.txt").expect("ok"),
             "nested/file.txt"
+        );
+    }
+}
+
+#[cfg(test)]
+mod destination_exists_tests {
+    use super::{
+        case_only_rename_to, destination_exists, index_has_unrelated_entries,
+        rename_sources_cover_path,
+    };
+    use crate::index::Index;
+    use crate::index::IndexEntry;
+    use crate::objects::ObjectId;
+
+    fn dummy_entry(path: &str) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: ObjectId::from_bytes(&[0u8; 20]).unwrap(),
+            flags: 0,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn case_only_rename_helpers() {
+        let renames = vec![
+            ("README.md".into(), "readme.md".into()),
+            ("src/A.rs".into(), "src/a.rs".into()),
+        ];
+        assert!(case_only_rename_to(&renames, "readme.md"));
+        assert!(!case_only_rename_to(&renames, "other.md"));
+        assert!(rename_sources_cover_path(&renames, "README.md"));
+        assert!(!rename_sources_cover_path(&renames, "missing.md"));
+    }
+
+    #[test]
+    fn ignorecase_index_collision_allows_case_only_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wt = tmp.path();
+        std::fs::write(wt.join("README.md"), b"x\n").unwrap();
+        let mut index = Index::new();
+        index.push_entry_unsorted(dummy_entry("README.md"));
+        let renames = vec![("README.md".into(), "readme.md".into())];
+        assert!(
+            !destination_exists(wt, &index, "readme.md", false, true, &renames),
+            "case-only rename must not treat the source path as a blocking destination"
+        );
+    }
+
+    #[test]
+    fn ignorecase_index_blocks_unrelated_destination() {
+        let mut index = Index::new();
+        index.push_entry_unsorted(dummy_entry("README.md"));
+        index.push_entry_unsorted(dummy_entry("readme.md"));
+        let renames = vec![("README.md".into(), "readme.md".into())];
+        assert!(
+            index_has_unrelated_entries(&index, "readme.md", true, &renames),
+            "distinct index spellings at the same icase path must block"
         );
     }
 }

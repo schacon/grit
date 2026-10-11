@@ -606,6 +606,45 @@ fn mv_force_partial_destination_cleanup_restores_removed_files() {
 }
 
 #[test]
+fn mv_case_only_rename_with_ignorecase() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    git(repo_dir, &["config", "core.ignorecase", "true"]);
+    fs::write(repo_dir.join("README.md"), "hi\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let repo = grit_repo(repo_dir);
+    move_path(&repo, "README.md", "readme.md", false).expect("case-only mv");
+
+    assert!(repo_dir.join("readme.md").is_file());
+    assert!(!repo_dir.join("README.md").exists());
+
+    let index = repo.load_index().expect("index");
+    let entry = index
+        .get(b"readme.md", 0)
+        .expect("index tracks destination spelling");
+    assert_eq!(String::from_utf8_lossy(&entry.path), "readme.md");
+
+    if Command::new("git").output().is_ok() {
+        let ls = Command::new("git")
+            .current_dir(repo_dir)
+            .args(["ls-files"])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git ls-files");
+        assert!(ls.status.success());
+        assert_eq!(String::from_utf8_lossy(&ls.stdout).trim(), "readme.md");
+        let status = git_porcelain(repo_dir);
+        assert!(
+            git_diff_cached_rename(repo_dir) || status.contains("readme.md"),
+            "git should see a staged rename after case-only mv:\n{status}"
+        );
+    }
+}
+
+#[test]
 fn mv_destination_exists_refused() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_dir = tmp.path();
