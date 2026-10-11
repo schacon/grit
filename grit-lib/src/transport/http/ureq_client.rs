@@ -41,7 +41,7 @@
 //! those should implement [`HttpClient`] over their own stack.
 
 use std::env;
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -1005,6 +1005,7 @@ fn open_response_body(
     let www_authenticate = header_values(resp.headers(), "WWW-Authenticate");
     let set_cookie = header_values(resp.headers(), "Set-Cookie");
     let reader = resp.into_body().into_reader();
+    let buffered = BufReader::with_capacity(1024 * 1024, reader);
     Ok((
         RawResponseHead {
             status,
@@ -1012,7 +1013,7 @@ fn open_response_body(
             set_cookie,
             final_url,
         },
-        LowSpeedReader::new(Box::new(reader) as Box<dyn Read + Send>, timeouts),
+        LowSpeedReader::new(Box::new(buffered) as Box<dyn Read + Send>, timeouts),
     ))
 }
 

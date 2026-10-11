@@ -1021,7 +1021,7 @@ fn v2_wanted_ref_ad_line(line: &str) -> bool {
 pub(crate) fn read_v2_fetch_pack_response(
     reader: &mut dyn Read,
     out: &mut Vec<u8>,
-    pack_file: Option<&mut crate::pack_receive::TempPackReceive>,
+    pack_sink: Option<&mut crate::pack_receive::PackReceiveSink>,
     shallow_out: &mut ShallowUpdate,
     progress: &mut dyn Progress,
     sideband_all: bool,
@@ -1068,8 +1068,8 @@ pub(crate) fn read_v2_fetch_pack_response(
             h if h == crate::protocol_v2::FetchResponseSection::Packfile.header() => {
                 // The `packfile` section body is side-band-64k framed; reuse the
                 // shared demuxer (channel 1 = pack, channel 2 = progress, 3 = err).
-                if let Some(pf) = pack_file {
-                    pf.read_sideband(&mut *reader, progress)?;
+                if let Some(sink) = pack_sink {
+                    sink.read_sideband(&mut *reader, progress)?;
                 } else {
                     let mut target = crate::pack_receive::PackReceiveTarget::Memory(out);
                     read_sideband_pack(&mut *reader, &mut target, progress)?;
@@ -1158,12 +1158,7 @@ pub fn fetch_remote(
         let default_branch = conn
             .head_symref()
             .map(|t| t.strip_prefix("refs/heads/").unwrap_or(t).to_owned());
-        let mut advertised_peel = std::collections::HashMap::new();
-        for (n, oid) in conn.advertised_refs() {
-            if let Some(base) = n.strip_suffix("^{}") {
-                advertised_peel.insert(base.to_owned(), *oid);
-            }
-        }
+        let advertised_peel = conn.advertised_tag_peel().cloned().unwrap_or_default();
         let remote_refs: Vec<(String, ObjectId)> = conn
             .advertised_refs()
             .iter()
@@ -1248,6 +1243,8 @@ pub fn fetch_remote(
         &mut matched_oids,
         &mut seen_remote_ref,
     );
+    let following_tag_wants =
+        following_tag_wants_with_local_peel(&matched, &following_only, &local_odb);
 
     // The client's current shallow grafts (drives the wire `shallow <oid>` lines
     // and the "this is a shallow request" decisions in the negotiators).
@@ -1262,13 +1259,18 @@ pub fn fetch_remote(
         matched_oids
             .iter()
             .copied()
-            .filter(|oid| !following_only.contains(oid))
+            .filter(|oid| !following_only.contains(oid) || following_tag_wants.contains(oid))
             .collect()
     } else {
         matched_oids
             .iter()
             .copied()
-            .filter(|oid| !following_only.contains(oid) && !local_odb.exists(oid))
+            .filter(|oid| {
+                if following_only.contains(oid) {
+                    return following_tag_wants.contains(oid);
+                }
+                !local_odb.exists(oid)
+            })
             .collect()
     };
 
@@ -1604,8 +1606,10 @@ pub(crate) fn finish_initial_remote_fetch_layout(
 /// * `None` adds nothing.
 ///
 /// Returns the oids of tags added under `Following` — the caller must keep these
-/// out of the `want` list so an unreachable tag does not drag its target into
-/// the pack (which would make it look reachable and survive the prune).
+/// out of the default `want` list so an unreachable tag does not drag its target
+/// into the pack (which would make it look reachable and survive the prune).
+/// Annotated tags whose peeled commit is already local are still wanted via
+/// [`following_tag_wants_with_local_peel`].
 pub(crate) fn add_wire_tags(
     mode: crate::transfer::TagMode,
     remote_refs: &[(String, ObjectId)],
@@ -1643,6 +1647,28 @@ pub(crate) fn add_wire_tags(
         });
     }
     following_only
+}
+
+/// Under `TagMode::Following`, tag OIDs in `following_only` that should still
+/// be `want`ed: annotated tags pointing at a commit already present locally.
+pub(crate) fn following_tag_wants_with_local_peel(
+    matched: &[crate::transfer::MatchedRef],
+    following_only: &HashSet<ObjectId>,
+    local_odb: &crate::odb::Odb,
+) -> HashSet<ObjectId> {
+    let mut wants = HashSet::new();
+    for m in matched {
+        if !m.is_tag || !following_only.contains(&m.oid) {
+            continue;
+        }
+        let Some(peel) = m.advertised_peel else {
+            continue;
+        };
+        if local_odb.exists(&peel) && !local_odb.exists(&m.oid) {
+            wants.insert(m.oid);
+        }
+    }
+    wants
 }
 
 /// Drop provisional `Following` tags whose object (or peeled target) did not
@@ -1895,5 +1921,33 @@ mod fetch_advertised_ref_tests {
             "tag-only oid stays following-only (no upfront want)"
         );
         assert_eq!(matched.iter().filter(|m| m.is_tag).count(), 2);
+    }
+
+    #[test]
+    fn following_tag_wants_includes_annotated_tag_when_peel_is_local() {
+        use std::collections::HashSet;
+
+        let tag_obj = ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(git_dir.join("objects")).expect("objects");
+        let odb = crate::odb::Odb::new(git_dir.join("objects").as_path());
+        // Seed only the peeled commit (tag object absent).
+        let commit_bytes = b"tree 0000000000000000000000000000000000000000\nauthor T <t@example.com> 0 +0000\ncommitter T <t@example.com> 0 +0000\n\nx\n";
+        let commit = odb
+            .write_loose_materialize(crate::objects::ObjectKind::Commit, commit_bytes)
+            .expect("write commit");
+
+        let following_only = HashSet::from([tag_obj]);
+        let matched = vec![crate::transfer::MatchedRef {
+            remote_ref: "refs/tags/v".to_owned(),
+            local_ref: Some("refs/tags/v".to_owned()),
+            oid: tag_obj,
+            force: false,
+            is_tag: true,
+            advertised_peel: Some(commit),
+        }];
+        let wants = following_tag_wants_with_local_peel(&matched, &following_only, &odb);
+        assert!(wants.contains(&tag_obj));
     }
 }

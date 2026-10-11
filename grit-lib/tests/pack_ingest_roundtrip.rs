@@ -77,6 +77,16 @@ const INGEST_VARIANTS: &[IngestPackOptions] = &[
         threads: None,
         skip_post_index_verify: false,
     },
+    IngestPackOptions {
+        fix_thin: false,
+        threads: Some(1),
+        skip_post_index_verify: true,
+    },
+    IngestPackOptions {
+        fix_thin: false,
+        threads: Some(8),
+        skip_post_index_verify: true,
+    },
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -676,6 +686,29 @@ fn install_into_git_repo(
     install_pack_bytes(pack, &odb, opts)
         .unwrap_or_else(|e| panic!("install pack ({label}, {opts:?}): {e}"));
     (tmp, git_dir)
+}
+
+#[test]
+fn install_rejects_corrupt_trailer_with_skip_post_index_verify() {
+    let fx = shared_pack(PackShape::GitWhole, HashAlgo::Sha1).expect("fixture");
+    let mut corrupt = fx.bytes.clone();
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 0x55;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir_all(git_dir.join("objects")).expect("objects");
+    let odb = Odb::new(git_dir.join("objects").as_path()).with_config_git_dir(git_dir);
+    let opts = IngestPackOptions {
+        fix_thin: false,
+        threads: Some(4),
+        skip_post_index_verify: true,
+    };
+    let err = install_pack_bytes(corrupt, &odb, &opts).expect_err("corrupt pack trailer");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("checksum") || msg.contains("mismatch") || msg.contains("corrupt"),
+        "unexpected error: {msg}"
+    );
 }
 
 #[test]

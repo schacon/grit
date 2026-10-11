@@ -107,6 +107,12 @@ pub trait Connection {
     /// The negotiated protocol version (`0`, `1`, or `2`).
     fn protocol_version(&self) -> u8;
 
+    /// Peeled object ids for annotated tags from the v0/v1 ref advertisement
+    /// (`refs/tags/name` → commit oid), when captured on connect.
+    fn advertised_tag_peel(&self) -> Option<&std::collections::HashMap<String, ObjectId>> {
+        None
+    }
+
     /// Half-close the write side of the stream, signalling end-of-input to the
     /// server (the wire equivalent of the CLI's `drop(stdin)`).
     ///
@@ -151,6 +157,8 @@ pub trait Transport {
 pub struct Advertisement {
     /// Advertised refs (name -> oid), excluding `HEAD` and peeled/`capabilities` carriers.
     pub refs: Vec<(String, ObjectId)>,
+    /// Peeled targets for annotated tags (`refs/tags/name` → object oid).
+    pub advertised_peel: std::collections::HashMap<String, ObjectId>,
     /// Server capability tokens (split on whitespace from the first ref line).
     pub capabilities: Vec<String>,
     /// `HEAD` symref target, if advertised via `symref=HEAD:<target>`.
@@ -229,9 +237,14 @@ pub fn read_advertisement(reader: &mut dyn Read) -> Result<Advertisement> {
                         }
                     }
                 }
-                // The `0{hex} capabilities^{}` no-refs carrier and peeled `^{}` lines
-                // are not fetchable refs.
-                if refname == "capabilities^{}" || refname.ends_with("^{}") {
+                // The `0{hex} capabilities^{}` no-refs carrier is not a fetchable ref.
+                if refname == "capabilities^{}" {
+                    continue;
+                }
+                if let Some(base) = refname.strip_suffix("^{}") {
+                    if crate::refs::is_valid_fetch_advertised_ref(base) {
+                        adv.advertised_peel.insert(base.to_string(), oid);
+                    }
                     continue;
                 }
                 if refname == "HEAD" {
@@ -380,6 +393,10 @@ impl Connection for GitDaemonConnection {
 
     fn protocol_version(&self) -> u8 {
         self.adv.protocol_version
+    }
+
+    fn advertised_tag_peel(&self) -> Option<&std::collections::HashMap<String, ObjectId>> {
+        Some(&self.adv.advertised_peel)
     }
 
     fn finish_send(&mut self) {
@@ -901,6 +918,10 @@ impl Connection for SshConnection {
         self.adv.protocol_version
     }
 
+    fn advertised_tag_peel(&self) -> Option<&std::collections::HashMap<String, ObjectId>> {
+        Some(&self.adv.advertised_peel)
+    }
+
     fn finish_send(&mut self) {
         // Dropping the child's stdin closes the pipe, signalling EOF so the
         // remote `git-upload-pack` v2 `serve_loop` exits instead of blocking for
@@ -1180,6 +1201,12 @@ mod tests {
         // HEAD, capabilities and peeled lines excluded; main + v1 recorded.
         let names: Vec<&str> = adv.refs.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["refs/heads/main", "refs/tags/v1"]);
+        let commit = ObjectId::from_hex(main).unwrap();
+        assert_eq!(
+            adv.advertised_peel.get("refs/tags/v1"),
+            Some(&commit),
+            "peeled tag line must be recorded"
+        );
     }
 
     #[test]

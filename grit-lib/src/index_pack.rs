@@ -34,7 +34,8 @@ pub struct IngestPackOptions {
     pub fix_thin: bool,
     /// Worker threads for index-pack hashing (`None`/`Some(0)` → read `pack.threads` or all CPUs).
     pub threads: Option<usize>,
-    /// Skip the post-index full-pack verify pass (safe for packs already validated on the wire).
+    /// Skip the redundant post-index [`verify_pack_and_collect`] pass after the
+    /// pack trailer was validated during indexing. Does not disable trailer checks.
     pub skip_post_index_verify: bool,
 }
 
@@ -197,7 +198,7 @@ pub fn install_pack_path(
                 pack_bytes,
                 odb,
                 opts.index_parallelism(odb),
-                !opts.skip_post_index_verify,
+                verify_trailer,
             )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             (records, trailer)

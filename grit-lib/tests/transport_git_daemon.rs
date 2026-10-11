@@ -374,3 +374,82 @@ fn fetch_following_lightweight_tag_at_branch_tip_downloads_branch() {
         String::from_utf8_lossy(&fsck.stderr)
     );
 }
+
+/// After both sides already have `main`, a newly advertised annotated tag on the
+/// existing tip must be imported over git:// (Git `fetch` creates `refs/tags/*`).
+#[test]
+fn fetch_remote_following_imports_annotated_tag_on_existing_tip() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let base = tmp.path().join("base");
+    std::fs::create_dir_all(&base).unwrap();
+    let source = base.join("repo.git");
+    std::fs::create_dir_all(&source).unwrap();
+    git(&source, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(source.join("README"), b"paired tip\n").unwrap();
+    git(&source, &["add", "README"]);
+    git(&source, &["commit", "-q", "-m", "init"]);
+
+    let Some(port) = free_port() else {
+        eprintln!("SKIP: could not allocate a free port");
+        return;
+    };
+    let Some(child) = spawn_daemon(&base, port) else {
+        eprintln!("SKIP: `git daemon` is unavailable");
+        return;
+    };
+    let _guard = DaemonGuard(child);
+    if !wait_ready(port) {
+        eprintln!("SKIP: git daemon did not become ready on port {port}");
+        return;
+    }
+
+    let url = format!("git://127.0.0.1:{port}/repo.git");
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    git(&local, &["init", "-q", "-b", "main", "."]);
+    let local_git = local.join(".git");
+
+    let transport = GitDaemonTransport::new();
+    let mut conn = match transport.connect(&url, Service::UploadPack, &ConnectOptions::default()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("SKIP: could not connect to git daemon: {e}");
+            return;
+        }
+    };
+
+    let opts = FetchOptions {
+        refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
+        tags: TagMode::Following,
+        ..Default::default()
+    };
+    fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress).expect("initial fetch");
+
+    git(
+        &source,
+        &["tag", "-a", "annotated-paired", "-m", "on existing tip"],
+    );
+
+    let mut conn = transport
+        .connect(&url, Service::UploadPack, &ConnectOptions::default())
+        .expect("reconnect");
+    let outcome = fetch_remote(&local_git, &mut *conn, &opts, &mut NoProgress)
+        .expect("incremental fetch with new annotated tag");
+
+    let tag_update = outcome
+        .updates
+        .iter()
+        .find(|u| u.remote_ref == "refs/tags/annotated-paired")
+        .expect("annotated tag update");
+    assert_eq!(tag_update.mode, UpdateMode::New);
+
+    let tag_oid = rev_parse(&source, "refs/tags/annotated-paired");
+    assert_eq!(
+        resolve_ref(&local_git, "refs/tags/annotated-paired").expect("tag ref"),
+        tag_oid
+    );
+    assert!(
+        open_odb(&local_git).exists(&tag_oid),
+        "annotated tag object must be present locally"
+    );
+}

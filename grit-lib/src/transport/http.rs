@@ -781,7 +781,7 @@ pub fn http_fetch(
     client: std::sync::Arc<dyn HttpClient>,
     local_git_dir: &Path,
     repo_url: &str,
-    opts: &FetchOptions,
+    opts: &mut FetchOptions,
     progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     use crate::fetch::fetch_remote;
