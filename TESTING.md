@@ -104,9 +104,9 @@ Line coverage for the object-database modules is measured with [`cargo llvm-cov`
 make coverage
 ```
 
-This builds `grit` into `target/llvm-cov-target/` (integration tests such as `precompose_system_git_roundtrip` need that binary via `GRIT_BIN`), runs `cargo llvm-cov -p grit-lib --lib --tests`, prints a per-module table (module, lines, missed, %), and fails if any tracked file, module group, named aggregate, or the **core** set (odb + pack* + midx + commit-graph) is below its floor. HTML and lcov reports land under `target/llvm-cov/html` and `target/llvm-cov/lcov.info`.
+This builds `grit` and `grit-http-server` into `target/llvm-cov-target/` (integration tests such as `precompose_system_git_roundtrip` need the `grit` binary via `GRIT_BIN`; smart-HTTP tests locate `grit-http-server` next to the test executable in that target dir), runs `cargo llvm-cov -p grit-lib --features http-ureq --lib --tests`, prints a per-module table (module, lines, missed, %), and fails if any tracked file, module group, named aggregate, the **total** line count across all of `grit-lib/src`, or the **core** set (odb + pack* + midx + commit-graph) is below its floor. HTML and lcov reports land under `target/llvm-cov/html` and `target/llvm-cov/lcov.info`.
 
-**Module groups** in [`grit-lib/coverage-floors.toml`](grit-lib/coverage-floors.toml) include the ODB/pack/MIDX/commit-graph **core** groups plus refs-area groups (`refs`, `reflog`, `config`, `ignore`, `attributes`). The **refs-config** aggregate spans those five groups. Legacy `[core]` and newer `[aggregate.<name>]` tables are both supported by [`scripts/coverage.py`](scripts/coverage.py).
+**Module groups** in [`grit-lib/coverage-floors.toml`](grit-lib/coverage-floors.toml) include the ODB/pack/MIDX/commit-graph **core** groups, refs-area groups (`refs`, `reflog`, `config`, `ignore`, `attributes`), and history-area groups (`index`, `index-ext`, `diff`, `revwalk`, `revparse`, `merge`, `stash-notes-worktree`). The **refs-config** aggregate spans the refs-area groups; **history** spans the history-area groups. The `[total]` table sets a single floor over every `.rs` file under `grit-lib/src`. Legacy `[core]` and newer `[aggregate.<name>]` tables are both supported by [`scripts/coverage.py`](scripts/coverage.py).
 
 **Ratchet:** Floors are minimum allowed line-coverage percentages. After adding tests, raise floors with:
 
@@ -228,6 +228,65 @@ Detailed rows for remaining t1405 cases and other plan steps are filled in as la
 | `t0612-reftable-jgit.sh` | JGit reftable interoperability | — | skipped (no JGit harness in CI; on-disk format covered by `reftable_format.rs`) |
 | `t0614-refs-fsck.sh` | Refs verify / fsck diagnostics on loose and reftable backends | `grit-lib/tests/refs_fsck_coverage.rs`, `grit-lib/tests/reftable_format.rs` (`corruption_*`) | partial (repository-level `git fsck` parity deferred; ref-name and packed-refs checks covered) |
 | `t1460-refs-migrate.sh` | `git refs migrate` loose ↔ reftable | — | gap (no `grit refs migrate` CLI; reftable read/write in library only — defer until migrate command lands) |
+
+### Upstream test mapping: index, diff, revwalk, revparse, merge
+
+History-area upstream `t/` scripts are mapped in the subsections below as Rust coverage lands. Shared setup for rev-list, rev-parse, and commit DAG fixtures lives in [`grit-lib/tests/support/history_harness.rs`](grit-lib/tests/support/history_harness.rs): hermetic system `git` (`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` nulled, fixed identity, monotonic author/committer dates), [`commit_file`](grit-lib/tests/support/history_harness.rs), [`build_commit_dag`](grit-lib/tests/support/history_harness.rs), [`git_rev_list`](grit-lib/tests/support/history_harness.rs) / [`git_rev_parse`](grit-lib/tests/support/history_harness.rs), and [`skip_unless_git_at_least`](grit-lib/tests/support/history_harness.rs). Ref-backend helpers remain in [`refs_harness.rs`](grit-lib/tests/support/refs_harness.rs).
+
+#### Index
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Index extensions
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Sparse
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Diff: blobs and algorithms
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Diff: trees and renames
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Revwalk: ordering and limiting
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Revwalk: simplification and objects
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Rev-parse
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Merge
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Stash/notes/worktrees/patch-ids
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+
+#### Supporting
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
 
 ### Documentation site and rustdoc jobs
 

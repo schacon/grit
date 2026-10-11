@@ -174,6 +174,62 @@ minimum = 50.0
                 )
             )
 
+    def test_total_includes_omitted_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "grit-lib" / "src"
+            src.mkdir(parents=True)
+            (src / "lib.rs").write_text("mod included;\n", encoding="utf-8")
+            (src / "included.rs").write_text("pub fn covered() {}\n", encoding="utf-8")
+            (src / "orphan.rs").write_text("pub fn orphan() {}\n", encoding="utf-8")
+            stats = {"included.rs": cov.LineStats(count=1, covered=1)}
+            missing = cov.llvm_cov_missing_src_files(stats, src_root=src)
+            self.assertIn("orphan.rs", missing)
+            self.assertNotIn("included.rs", missing)
+            keys_only = cov.aggregate(list(stats.keys()), stats)
+            full_total = cov.library_total_stats(stats, src_root=src)
+            self.assertLess(full_total.percent, keys_only.percent)
+
+    def test_total_floor_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            floors_path = Path(tmp) / "floors.toml"
+            floors_path.write_text(
+                """
+[meta]
+updated = "test"
+
+[total]
+minimum = 99.0
+
+[core]
+groups = ["odb"]
+minimum = 50.0
+
+[group.odb]
+files = ["odb/mod.rs"]
+minimum = 50.0
+
+[file."odb/mod.rs"]
+minimum = 50.0
+""",
+                encoding="utf-8",
+            )
+            floors = cov.load_floors(floors_path)
+            self.assertEqual(floors.total_minimum, 99.0)
+            stats = cov.parse_coverage_json(_sample_json())
+            _table, failures = cov.check(floors, stats)
+            self.assertTrue(any("total:" in f for f in failures))
+
+    def test_update_ratchet_total_never_lowers(self) -> None:
+        floors_path = ROOT / "grit-lib" / "coverage-floors.toml"
+        floors = cov.load_floors(floors_path)
+        stats = cov.parse_coverage_json(_sample_json())
+        if floors.total_minimum is None:
+            floors.total_minimum = 90.0
+        else:
+            floors.total_minimum = max(floors.total_minimum, 90.0)
+        updated = cov.apply_update(floors, stats)
+        self.assertGreaterEqual(updated.total_minimum, floors.total_minimum)
+
     def test_aggregate_failure_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             floors_path = Path(tmp) / "floors.toml"

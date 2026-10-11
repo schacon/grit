@@ -139,3 +139,8 @@ harness = false
 criterion.workspace = true
 grit-test-support = { path = "../grit-test-support" }
 
+[[test]]
+name = "clone_layout"
+path = "tests/clone_layout.rs"
+required-features = ["http-ureq"]
+

@@ -7,13 +7,25 @@ import argparse
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+_MOD_DECL_RE = re.compile(
+    r"^\s*(?:pub(?:\(\s*crate\s*\))?\s+)?mod\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;",
+    re.MULTILINE,
+)
+_PATH_MOD_RE = re.compile(
+    r'#\[(?:\s*path\s*=\s*"([^"]+)"[^\]]*)\]\s*'
+    r"(?:\n\s*)*(?:pub(?:\(\s*crate\s*\))?\s+)?mod\s+[a-zA-Z_][a-zA-Z0-9_]*",
+    re.MULTILINE,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
+GRIT_LIB_SRC = ROOT / "grit-lib" / "src"
 FLOORS_PATH = ROOT / "grit-lib" / "coverage-floors.toml"
 LLVM_COV_TARGET = ROOT / "target" / "llvm-cov-target"
 DEFAULT_GRIT_BIN = LLVM_COV_TARGET / "debug" / ("grit.exe" if os.name == "nt" else "grit")
@@ -40,6 +52,7 @@ class Floors:
     meta: dict[str, str]
     core_groups: list[str]
     core_minimum: float
+    total_minimum: float | None
     aggregates: dict[str, tuple[list[str], float]]
     groups: dict[str, tuple[list[str], float | None]]
     files: dict[str, float]
@@ -56,6 +69,12 @@ def load_floors(path: Path) -> Floors:
     core = data.get("core", {})
     core_groups = [str(g) for g in core.get("groups", [])]
     core_minimum = float(core.get("minimum", 0.0))
+
+    total_section = data.get("total", {})
+    total_minimum_raw = total_section.get("minimum")
+    total_minimum = (
+        float(total_minimum_raw) if total_minimum_raw is not None else None
+    )
 
     aggregates: dict[str, tuple[list[str], float]] = {}
     for name, value in data.get("aggregate", {}).items():
@@ -76,10 +95,126 @@ def load_floors(path: Path) -> Floors:
         meta=meta,
         core_groups=core_groups,
         core_minimum=core_minimum,
+        total_minimum=total_minimum,
         aggregates=aggregates,
         groups=groups,
         files=files,
     )
+
+
+def _resolve_mod_file(parent_file: Path, name: str) -> Path | None:
+    """Resolve `mod name;` from `parent_file` the way Rust does."""
+    parent_dir = parent_file.parent
+    candidates = [
+        parent_dir / f"{name}.rs",
+        parent_dir / name / "mod.rs",
+    ]
+    if parent_file.name != "mod.rs":
+        module_dir = parent_dir / parent_file.stem
+        candidates.extend(
+            [
+                module_dir / f"{name}.rs",
+                module_dir / name / "mod.rs",
+            ]
+        )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def referenced_module_files(*, src_root: Path | None = None) -> set[str]:
+    """Rust module files reachable from `lib.rs` via `mod` / `#[path]` declarations."""
+    root = src_root or GRIT_LIB_SRC
+    lib = root / "lib.rs"
+    if not lib.is_file():
+        return set()
+
+    referenced: set[str] = set()
+    pending: list[Path] = [lib]
+    while pending:
+        path = pending.pop()
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel in referenced:
+            continue
+        referenced.add(rel)
+        text = path.read_text(encoding="utf-8")
+        for match in _MOD_DECL_RE.finditer(text):
+            child = _resolve_mod_file(path, match.group(1))
+            if child is not None:
+                pending.append(child)
+        for match in _PATH_MOD_RE.finditer(text):
+            child = (path.parent / match.group(1)).resolve()
+            try:
+                child.relative_to(root.resolve())
+            except ValueError:
+                continue
+            if child.is_file():
+                pending.append(child)
+    return referenced
+
+
+def grit_lib_src_rs_files(*, src_root: Path | None = None) -> list[str]:
+    """Every Rust source file under `grit-lib/src`, relative to that directory."""
+    root = src_root or GRIT_LIB_SRC
+    return sorted(
+        path.relative_to(root).as_posix() for path in root.rglob("*.rs")
+    )
+
+
+def count_source_lines_for_coverage(path: Path) -> int:
+    """Estimate instrumentable lines when llvm-cov omits a file from JSON."""
+    count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        count += 1
+    return count
+
+
+def llvm_cov_missing_src_files(
+    stats: dict[str, LineStats], *, src_root: Path | None = None
+) -> list[str]:
+    """Orphan or uncompiled sources missing from llvm-cov (not referenced module files)."""
+    root = src_root or GRIT_LIB_SRC
+    referenced = referenced_module_files(src_root=root)
+    missing: list[str] = []
+    for rel in grit_lib_src_rs_files(src_root=root):
+        if rel in stats:
+            continue
+        if rel in referenced:
+            # Compiled module omitted from JSON (zero regions) is not an orphan.
+            continue
+        path = root / rel
+        if count_source_lines_for_coverage(path) > 0:
+            missing.append(rel)
+    return missing
+
+
+def complete_library_stats(
+    stats: dict[str, LineStats], *, src_root: Path | None = None
+) -> dict[str, LineStats]:
+    """Merge llvm-cov stats with zero-covered placeholders for every tree file."""
+    root = src_root or GRIT_LIB_SRC
+    out = dict(stats)
+    for rel in grit_lib_src_rs_files(src_root=root):
+        if rel in out:
+            continue
+        line_count = count_source_lines_for_coverage(root / rel)
+        out[rel] = LineStats(count=line_count, covered=0)
+    return out
+
+
+def library_total_stats(
+    stats: dict[str, LineStats], *, src_root: Path | None = None
+) -> LineStats:
+    """Line coverage for all of `grit-lib/src`, not only llvm-cov JSON keys."""
+    complete = complete_library_stats(stats, src_root=src_root)
+    return aggregate(grit_lib_src_rs_files(src_root=src_root), complete)
 
 
 def parse_coverage_json(raw: str | bytes) -> dict[str, LineStats]:
@@ -175,6 +310,10 @@ def write_floors(path: Path, floors: Floors) -> None:
             "",
         ]
     )
+    if floors.total_minimum is not None:
+        lines.append("[total]")
+        lines.append(f"minimum = {floors.total_minimum}")
+        lines.append("")
     for name in sorted(floors.aggregates):
         group_names, minimum = floors.aggregates[name]
         lines.append(f"[aggregate.{name}]")
@@ -234,10 +373,18 @@ def apply_update(floors: Floors, stats: dict[str, LineStats]) -> Floors:
     meta = dict(floors.meta)
     meta["updated"] = meta.get("updated", "")
 
+    total_stats = library_total_stats(stats)
+    new_total_minimum = floors.total_minimum
+    if new_total_minimum is not None:
+        new_total_minimum = max(
+            new_total_minimum, ratchet_floor(total_stats.percent)
+        )
+
     return Floors(
         meta=meta,
         core_groups=floors.core_groups,
         core_minimum=new_core_minimum,
+        total_minimum=new_total_minimum,
         aggregates=new_aggregates,
         groups=new_groups,
         files=new_files,
@@ -255,7 +402,10 @@ def aggregate_group_files(
 
 
 def check(
-    floors: Floors, stats: dict[str, LineStats]
+    floors: Floors,
+    stats: dict[str, LineStats],
+    *,
+    validate_src_tree: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Return (table_lines, failure_messages)."""
     table: list[str] = []
@@ -313,6 +463,20 @@ def check(
                 f"aggregate {name}: {st.percent:.1f}% below floor {minimum:.1f}%"
             )
 
+    if validate_src_tree:
+        for rel in llvm_cov_missing_src_files(stats):
+            failures.append(f"missing coverage data for {rel}")
+
+    if floors.total_minimum is not None:
+        total_stats = library_total_stats(stats)
+        ok = total_stats.percent + 1e-9 >= floors.total_minimum
+        table.append(format_row("total", total_stats, floors.total_minimum, ok))
+        if not ok:
+            failures.append(
+                f"total: {total_stats.percent:.1f}% below floor "
+                f"{floors.total_minimum:.1f}%"
+            )
+
     return table, failures
 
 
@@ -360,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
         floors = apply_update(floors, stats)
         write_floors(args.floors, floors)
 
-    table, failures = check(floors, stats)
+    table, failures = check(floors, stats, validate_src_tree=True)
     for line in table:
         print(line)
 
@@ -380,6 +544,12 @@ __all__ = [
     "aggregate_group_files",
     "apply_update",
     "check",
+    "complete_library_stats",
+    "count_source_lines_for_coverage",
+    "grit_lib_src_rs_files",
+    "library_total_stats",
+    "llvm_cov_missing_src_files",
+    "referenced_module_files",
     "load_floors",
     "parse_coverage_json",
     "ratchet_floor",

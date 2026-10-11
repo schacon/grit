@@ -107,6 +107,12 @@ fn hermetic_git(worktree: &Path, args: &[&str]) -> Output {
 }
 
 fn null_device() -> &'static str {
+    null_device_for_tests()
+}
+
+/// Config-null path for hermetic git (`/dev/null` or `NUL`).
+#[must_use]
+pub fn null_device_for_tests() -> &'static str {
     if cfg!(windows) {
         "NUL"
     } else {
