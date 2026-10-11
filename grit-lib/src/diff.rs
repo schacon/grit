@@ -2497,108 +2497,76 @@ struct StagingHashJob {
 fn parallel_process_blob_worktree_jobs(
     odb: &Odb,
     jobs: &[StagingHashJob],
-    threads: usize,
+    thread_policy: &crate::parallel::ThreadPolicy,
+    config: &crate::config::ConfigSet,
     trust_filemode: bool,
     materialize_dirty_blobs: bool,
     conv: &crate::crlf::ConversionConfig,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
-    use std::sync::{Arc, Mutex};
+    use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 
     if jobs.is_empty() {
         return Ok(());
     }
-    let threads = threads.max(1);
-    let out: Arc<Mutex<Vec<(usize, DiffEntry)>>> = Arc::new(Mutex::new(Vec::new()));
-    let chunk_size = jobs.len().div_ceil(threads);
-    let conv = Arc::new(conv.clone());
+    let mut par_opts = thread_policy.resolve(ParallelOp::IndexRefresh, config);
+    par_opts.min_items = 0;
+    par_opts.min_total_bytes = None;
+    let est_bytes = jobs.len().saturating_mul(8192);
 
-    std::thread::scope(|scope| -> Result<()> {
-        let mut handles = Vec::new();
-        for chunk in jobs.chunks(chunk_size) {
-            let chunk: Vec<StagingHashJob> = chunk
-                .iter()
-                .map(|job| StagingHashJob {
-                    entry_index: job.entry_index,
-                    rel_path: job.rel_path.clone(),
-                    file_path: job.file_path.clone(),
-                    entry: job.entry.clone(),
-                    stat: job.stat,
-                    worktree_mode: job.worktree_mode,
-                    file_attrs: job.file_attrs.clone(),
-                })
-                .collect();
-            let out = Arc::clone(&out);
-            let conv = Arc::clone(&conv);
-            handles.push(scope.spawn(move || -> std::result::Result<(), Error> {
-                for job in chunk {
-                    let data = read_regular_worktree_blob_bytes(
-                        odb,
-                        &job.file_path,
-                        &conv,
-                        &job.file_attrs,
-                        &job.rel_path,
-                        Some(&job.entry),
-                        filter_process,
-                    )?;
-                    let worktree_oid = if materialize_dirty_blobs {
-                        odb.write_with_options(
-                            ObjectKind::Blob,
-                            &data,
-                            crate::odb::BULK_NEW_LOOSE_WRITE,
-                        )?
-                    } else {
-                        odb.hash(ObjectKind::Blob, &data)
-                    };
-                    let mut eff_oid = worktree_oid;
-                    if eff_oid != job.entry.oid {
-                        let raw_oid = odb.hash(ObjectKind::Blob, &data);
-                        if raw_oid == job.entry.oid {
-                            eff_oid = job.entry.oid;
-                        }
-                    }
-                    let worktree_mode = job.worktree_mode;
-                    let mode_differs = trust_filemode && worktree_mode != job.entry.mode;
-                    if eff_oid != job.entry.oid || mode_differs {
-                        let path_owned = job.rel_path.clone();
-                        let diff = DiffEntry {
-                            status: DiffStatus::Modified,
-                            old_path: Some(path_owned.clone()),
-                            new_path: Some(path_owned),
-                            old_mode: format_mode(job.entry.mode),
-                            new_mode: format_mode(worktree_mode),
-                            old_oid: job.entry.oid,
-                            new_oid: eff_oid,
-                            score: None,
-                        };
-                        out.lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .push((job.entry_index, diff));
-                    }
-                }
-                Ok(())
-            }));
-        }
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    return Err(Error::Message(
-                        "parallel blob worktree worker panicked".to_owned(),
-                    ));
-                }
+    let rows = try_par_map::<StagingHashJob, Option<(usize, DiffEntry)>, Error, _>(
+        jobs,
+        par_opts,
+        est_bytes,
+        |job| {
+        let data = read_regular_worktree_blob_bytes(
+            odb,
+            &job.file_path,
+            conv,
+            &job.file_attrs,
+            &job.rel_path,
+            Some(&job.entry),
+            filter_process,
+        )?;
+        let worktree_oid = if materialize_dirty_blobs {
+            odb.write_with_options(ObjectKind::Blob, &data, crate::odb::BULK_NEW_LOOSE_WRITE)?
+        } else {
+            odb.hash(ObjectKind::Blob, &data)
+        };
+        let mut eff_oid = worktree_oid;
+        if eff_oid != job.entry.oid {
+            let raw_oid = odb.hash(ObjectKind::Blob, &data);
+            if raw_oid == job.entry.oid {
+                eff_oid = job.entry.oid;
             }
         }
-        Ok(())
+        let mode_differs = trust_filemode && job.worktree_mode != job.entry.mode;
+        if eff_oid != job.entry.oid || mode_differs {
+            let path_owned = job.rel_path.clone();
+            Ok(Some((
+                job.entry_index,
+                DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path_owned.clone()),
+                    new_path: Some(path_owned),
+                    old_mode: format_mode(job.entry.mode),
+                    new_mode: format_mode(job.worktree_mode),
+                    old_oid: job.entry.oid,
+                    new_oid: eff_oid,
+                    score: None,
+                },
+            )))
+        } else {
+            Ok(None)
+        }
+        },
+    )
+    .map_err(|e| match e {
+        ParallelHashError::Task(err) => err,
     })?;
 
-    let mut rows = out
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .drain(..)
-        .collect::<Vec<_>>();
+    let mut rows: Vec<(usize, DiffEntry)> = rows.into_iter().flatten().collect();
     rows.sort_by_key(|(idx, _)| *idx);
     result.extend(rows.into_iter().map(|(_, d)| d));
     Ok(())
@@ -3243,7 +3211,8 @@ fn diff_index_to_worktree_inner(
         parallel_process_blob_worktree_jobs(
             odb,
             &staging_hash_jobs,
-            hash_threads,
+            &thread_policy,
+            &config,
             trust_filemode,
             materialize_dirty_blobs,
             &conv,
