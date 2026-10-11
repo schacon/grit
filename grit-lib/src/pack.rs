@@ -142,6 +142,8 @@ pub(crate) mod pack_cache {
         static PACK_COUNT_VALIDATED: std::cell::RefCell<HashSet<PathBuf>> =
             std::cell::RefCell::new(HashSet::new());
         static PACK_DIR_LISTING_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// [`PackStore::cache_epoch`] last seen on this thread (cross-thread invalidation).
+        static THREAD_WARM_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
 
     pub(crate) fn clear_thread_local_dir_indexes() {
@@ -152,6 +154,25 @@ pub(crate) mod pack_cache {
         PACK_IDS.with(|cell| cell.borrow_mut().clear());
         PACK_COUNT_VALIDATED.with(|cell| cell.borrow_mut().clear());
         PACK_DIR_LISTING_TRUSTED.set(false);
+        THREAD_WARM_EPOCH.set(0);
+    }
+
+    /// Drop thread-local pack caches after invalidation on this or another thread.
+    pub(crate) fn clear_thread_local_after_invalidation(new_epoch: u64) {
+        clear_thread_local_dir_indexes();
+        THREAD_WARM_EPOCH.set(new_epoch);
+    }
+
+    pub(crate) fn sync_thread_local_with_store(store: &crate::pack_store::PackStore) {
+        if !crate::pack_store::PackStore::has_context() {
+            return;
+        }
+        let epoch = store.cache_epoch();
+        if THREAD_WARM_EPOCH.get() == epoch {
+            return;
+        }
+        clear_thread_local_dir_indexes();
+        THREAD_WARM_EPOCH.set(epoch);
     }
 
     fn drop_thread_local_dir_listing(pack_dir: &Path) {
@@ -176,6 +197,10 @@ pub(crate) mod pack_cache {
     /// Seed thread-local pack caches from `store` (one catalog read lock; hot reads avoid the catalog).
     pub(crate) fn warm_thread_local_from_store(store: &crate::pack_store::PackStore) {
         if !crate::pack_store::PackStore::has_context() {
+            return;
+        }
+        let epoch = store.cache_epoch();
+        if THREAD_WARM_EPOCH.get() == epoch && PACK_DIR_LISTING_TRUSTED.get() {
             return;
         }
         PACK_BYTES.with(|cell| cell.borrow_mut().clear());
@@ -207,6 +232,7 @@ pub(crate) mod pack_cache {
                     .extend(g.validated_pack_counts.iter().cloned());
             });
             PACK_DIR_LISTING_TRUSTED.set(true);
+            THREAD_WARM_EPOCH.set(store.cache_epoch());
         });
     }
 
@@ -858,11 +884,14 @@ pub(crate) mod pack_cache {
     /// Get all `.idx` files for `objects_dir`, using the cached directory listing when present.
     pub fn get_dir_indexes(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
         let pack_dir = objects_dir.join("pack");
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if crate::pack_store::PackStore::has_context() {
+            sync_thread_local_with_store(&store);
+        }
         if let Some(hit) = cached_dir_indexes(objects_dir, &pack_dir) {
             return Ok(hit);
         }
         let dir_mt = dir_mtime(&pack_dir);
-        let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(hit) = store.with_catalog_read(|g| {
             g.by_dir
                 .get(&pack_dir)
@@ -1155,10 +1184,10 @@ pub(crate) mod pack_cache {
     }
 
     fn pack_id_for_in_context(pack_path: &Path) -> u32 {
+        let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(id) = PACK_IDS.with(|cell| cell.borrow().get(pack_path).copied()) {
             return id;
         }
-        let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(id) = store.with_catalog_read(|g| g.pack_ids.get(pack_path).copied()) {
             PACK_IDS.with(|cell| {
                 cell.borrow_mut().insert(pack_path.to_path_buf(), id);
@@ -2964,6 +2993,9 @@ pub(crate) fn try_read_object_from_packs_with_options(
     oid: &ObjectId,
     opts: PackLookupOptions,
 ) -> Result<Object> {
+    if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+        pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
+    }
     if let Some(obj) = pack_cache::try_read_from_hinted_pack(objects_dir, oid)? {
         return Ok(obj);
     }

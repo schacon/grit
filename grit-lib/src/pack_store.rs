@@ -10,6 +10,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 #[doc(hidden)]
@@ -48,6 +49,8 @@ pub mod test_hooks {
 /// Alternate object directories get separate stores retained on the parent [`Odb`](crate::odb::Odb).
 pub struct PackStore {
     objects_dir: PathBuf,
+    /// Bumped on every invalidation so other threads drop trusted thread-local pack caches.
+    cache_epoch: AtomicU64,
     catalog: RwLock<crate::pack::pack_cache::CatalogState>,
     delta_bases: crate::pack::pack_cache::ShardedDeltaBaseLru,
     midx: Mutex<crate::midx::midx_cache::State>,
@@ -73,10 +76,21 @@ impl PackStore {
     pub fn new(objects_dir: PathBuf) -> Self {
         Self {
             objects_dir,
+            cache_epoch: AtomicU64::new(0),
             catalog: RwLock::new(crate::pack::pack_cache::CatalogState::default()),
             delta_bases: crate::pack::pack_cache::ShardedDeltaBaseLru::new(),
             midx: Mutex::new(crate::midx::midx_cache::State::default()),
         }
+    }
+
+    /// Generation counter incremented when pack caches are invalidated.
+    #[must_use]
+    pub(crate) fn cache_epoch(&self) -> u64 {
+        self.cache_epoch.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn bump_cache_epoch(&self) -> u64 {
+        self.cache_epoch.fetch_add(1, Ordering::Release) + 1
     }
 
     /// Pack catalog (indexes, bytes, directory listings) for this store.
@@ -190,7 +204,8 @@ impl PackStore {
 
     /// Drop cached pack listings, indexes, pack bytes, and delta bases.
     pub fn invalidate_packs(&self) {
-        crate::pack::pack_cache::clear_thread_local_dir_indexes();
+        let epoch = self.bump_cache_epoch();
+        crate::pack::pack_cache::clear_thread_local_after_invalidation(epoch);
         crate::pack::pack_cache::clear_catalog_on(&self.catalog);
         self.delta_bases.clear();
     }

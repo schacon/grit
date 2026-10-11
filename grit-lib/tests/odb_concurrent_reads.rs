@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 
+use grit_lib::error::Error;
 use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -202,4 +203,72 @@ fn odb_concurrent_reads() {
 
     assert_eq!(test_hooks::legacy_stores_created(), 0);
     assert_eq!(test_hooks::implicit_stores_created(), 0);
+}
+
+/// Regression: a thread holding `with_pack_read_context` must not return bytes after another
+/// thread removed packs and called `Odb::invalidate_packs`.
+#[test]
+fn stale_read_after_invalidation() {
+    clear_pack_cache();
+    test_hooks::reset();
+
+    let root = TempDir::new().expect("tempdir");
+    let repo = init_repository(root.path(), false, "main", None, RefStorageFormat::Files)
+        .expect("init repo");
+    let objects = repo.git_dir.join("objects");
+    let oid = repo
+        .odb
+        .write(ObjectKind::Blob, b"only-in-pack\n")
+        .expect("write blob");
+    let pack = build_pack(
+        &repo.odb,
+        &[oid],
+        &[],
+        &PackBuildOptions {
+            delta: false,
+            ..PackBuildOptions::default()
+        },
+    )
+    .expect("build pack");
+    install_pack(&objects, "solo", &pack);
+    let hex = oid.to_hex();
+    let loose_path = objects.join(&hex[..2]).join(&hex[2..]);
+    let _ = fs::remove_file(&loose_path);
+
+    let odb = Odb::with_work_tree(&objects, root.path());
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let odb_reader = odb.clone();
+    let reader = std::thread::spawn(move || {
+        odb_reader.with_pack_read_context(|| {
+            let _ = odb_reader.read(&oid).expect("prime read inside context");
+            ready_tx.send(()).expect("ready");
+            done_rx.recv().expect("wait for invalidation");
+            match odb_reader.read(&oid) {
+                Err(Error::ObjectNotFound(_)) => false,
+                Ok(_) => true,
+                Err(other) => panic!("unexpected read error: {other}"),
+            }
+        })
+    });
+
+    ready_rx.recv().expect("reader warmed");
+    let pack_dir = objects.join("pack");
+    for entry in fs::read_dir(&pack_dir).expect("list pack dir") {
+        let path = entry.expect("entry").path();
+        if path.extension().is_some_and(|e| e == "pack" || e == "idx") {
+            fs::remove_file(path).expect("remove pack artifact");
+        }
+    }
+    odb.invalidate_packs();
+    done_tx.send(()).expect("release reader");
+    let stale_read = reader.join().expect("reader join");
+    assert!(
+        !stale_read,
+        "read after cross-thread invalidation must not return removed pack objects"
+    );
+    assert!(
+        matches!(odb.read(&oid), Err(Error::ObjectNotFound(_))),
+        "serial read after pack removal must miss"
+    );
 }
