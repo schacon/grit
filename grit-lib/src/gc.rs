@@ -440,7 +440,11 @@ mod update_refs_tests {
                 .output()
                 .expect("rev-parse")
                 .stdout;
-            String::from_utf8(hex).expect("utf8").trim().parse().expect("oid")
+            String::from_utf8(hex)
+                .expect("utf8")
+                .trim()
+                .parse()
+                .expect("oid")
         }
 
         let tmp = TempDir::new().expect("tempdir");

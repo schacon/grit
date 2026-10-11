@@ -11,8 +11,8 @@ use grit_lib::refs::{
     is_valid_ls_refs_advertised_name, is_valid_storable_ref_name, list_refs, list_refs_glob,
     lock_path_for_ref, pack_remote_tracking_refs_for_clone, packed_refs_entry_exists, read_head,
     read_log_refs_config, read_raw_ref, resolve_at_n_branch, resolve_ref_cached, resolve_ref_dwim,
-    should_autocreate_reflog, write_ref, write_ref_cached, write_ref_cas,
-    write_symbolic_ref, PackedRefs, RawRefLookup,
+    should_autocreate_reflog, write_ref, write_ref_cached, write_ref_cas, write_symbolic_ref,
+    PackedRefs, RawRefLookup,
 };
 use grit_lib::repo::init_repository;
 use tempfile::tempdir;

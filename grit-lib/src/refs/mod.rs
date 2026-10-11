@@ -1353,9 +1353,11 @@ impl PackedRefs {
         let packed_path = store::paths::packed_refs_path(&store);
         let data = match fs::read(&packed_path) {
             Ok(d) => d,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self {
-                map: HashMap::new(),
-            }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    map: HashMap::new(),
+                })
+            }
             Err(e) => return Err(Error::Io(e)),
         };
         let map = parse_packed_refs_to_map_with_names(&packed_path, &data, names)?;

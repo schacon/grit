@@ -720,8 +720,7 @@ fn negotiate_pack_v2(
         v2_local_haves(local_git_dir, wants)?
     };
 
-    let mut pack_receive =
-        crate::pack_receive::PackReceiveSink::create(local_odb.objects_dir())?;
+    let mut pack_receive = crate::pack_receive::PackReceiveSink::create(local_odb.objects_dir())?;
     let mut shallow_update = ShallowUpdate::default();
     if haves.is_empty() {
         // No local history to offer: single round, wants + done, read the pack.
@@ -829,9 +828,7 @@ fn finish_pack_sink(
             use std::io::Write;
             tmp.write_all(&bytes).map_err(crate::error::Error::Io)?;
             tmp.flush().map_err(crate::error::Error::Io)?;
-            let (_file, path) = tmp
-                .keep()
-                .map_err(|e| crate::error::Error::Io(e.error))?;
+            let (_file, path) = tmp.keep().map_err(|e| crate::error::Error::Io(e.error))?;
             Ok(Some(path))
         }
     }

@@ -13,18 +13,17 @@ use crate::reflog::{self, ReflogEntry};
 use crate::refs::{
     lock_path_for_ref, loose_ref_list_walk_root, prune_empty_loose_ref_parents,
     read_packed_refs_map, read_packed_refs_map_for_names, read_packed_refs_map_for_prefix,
-    read_ref_file,
-    remove_empty_ref_directory, remove_packed_ref, remove_packed_ref_under_lock, LogRefsConfig,
-    Ref,
+    read_ref_file, remove_empty_ref_directory, remove_packed_ref, remove_packed_ref_under_lock,
+    LogRefsConfig, Ref,
 };
 
 use super::apply::{apply_update, ref_lock_names_for_updates, simulate_batch_apply, RefBatchState};
-use super::transaction::expected_matches;
 use super::error::RefStoreError;
 use super::routing::{resolve_common_dir, route_ref_storage_with_namespace, RefStorageRoute};
+use super::transaction::expected_matches;
 use super::transaction::RefTransaction;
-use super::validation::{validate_storable_refname, verify_create_conflicts};
 use super::types::Expected;
+use super::validation::{validate_storable_refname, verify_create_conflicts};
 use super::{PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate};
 
 type StoreResult<T> = std::result::Result<T, RefStoreError>;
@@ -432,7 +431,9 @@ impl FilesRefStore {
         if update.flags.log_only {
             return Ok(());
         }
-        let actual = self.read_raw(&update.name).map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+        let actual = self
+            .read_raw(&update.name)
+            .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
         if !expected_matches(actual.as_ref(), &update.expected) {
             return Err(RefStoreError::ExpectedMismatch {
                 name: update.name.clone(),
@@ -454,11 +455,25 @@ impl FilesRefStore {
         Ok(())
     }
 
+    fn persist_one_ref_change(
+        &self,
+        name: &str,
+        after: &RefBatchState,
+        lock: &Path,
+        packed_lock_held: bool,
+    ) -> Result<()> {
+        let (_, path, _) = self.ref_lock_paths(name);
+        match after.refs.get(name) {
+            None => self.delete_loose_ref(name, lock, packed_lock_held),
+            Some(value) => FilesRefStore::write_loose_value(&path, lock, value),
+        }
+    }
+
     fn persist_state_diff(
         &self,
         before: &RefBatchState,
         after: &RefBatchState,
-        held_locks: &HashMap<String, PathBuf>,
+        held_locks: &mut HashMap<String, PathBuf>,
         packed_lock_held: bool,
         updates: &[RefUpdate],
     ) -> Result<()> {
@@ -477,38 +492,58 @@ impl FilesRefStore {
             }
         }
 
-        let mut ref_write_idx = 0usize;
+        let mut persisted_refs = HashSet::new();
+        for (idx, update) in updates.iter().enumerate() {
+            if update.flags.log_only {
+                continue;
+            }
+            let name = &update.name;
+            let b = before.refs.get(name);
+            let a = after.refs.get(name);
+            if b == a {
+                continue;
+            }
+            let (_, _, lock_path) = self.ref_lock_paths(name);
+            if let Some(parent) = lock_path.parent() {
+                fs::create_dir_all(parent).map_err(Error::Io)?;
+            }
+            self.acquire_ref_lock(&lock_path, name)
+                .map_err(Error::from)?;
+            let write_result = (|| {
+                self.recheck_update_at_commit(update, &batch_extras)
+                    .map_err(Error::from)?;
+                self.persist_one_ref_change(name, after, &lock_path, packed_lock_held)
+            })();
+            let _ = fs::remove_file(&lock_path);
+            write_result?;
+            persisted_refs.insert(name.clone());
+            crate::refs::test_ref_store_batch_pause_after_ref_write(idx);
+        }
+
         for name in before
             .refs
             .keys()
             .chain(after.refs.keys())
             .collect::<BTreeSet<_>>()
         {
-            let b = before.refs.get(name);
-            let a = after.refs.get(name);
-            if b == a && (a.is_none() || !held_locks.contains_key(name)) {
+            if persisted_refs.contains(name) {
                 continue;
             }
-            if let Some(update) = updates.iter().find(|u| u.name == *name) {
-                self.recheck_update_at_commit(update, &batch_extras)
-                    .map_err(Error::from)?;
+            let b = before.refs.get(name);
+            let a = after.refs.get(name);
+            if b == a {
+                continue;
             }
-            let lock = held_locks.get(name).ok_or_else(|| {
-                Error::Message(format!(
-                    "ref '{name}' changed at commit without a prepare-time lock"
-                ))
-            })?;
-            let (_, path, _) = self.ref_lock_paths(name);
-            match a {
-                None => {
-                    self.delete_loose_ref(name, lock, packed_lock_held)?;
-                }
-                Some(value) => {
-                    FilesRefStore::write_loose_value(&path, lock, value)?;
-                }
+            let (_, _, lock_path) = self.ref_lock_paths(name);
+            if let Some(parent) = lock_path.parent() {
+                fs::create_dir_all(parent).map_err(Error::Io)?;
             }
-            crate::refs::test_ref_store_batch_pause_after_ref_write(ref_write_idx);
-            ref_write_idx += 1;
+            self.acquire_ref_lock(&lock_path, name)
+                .map_err(Error::from)?;
+            let write_result =
+                self.persist_one_ref_change(name, after, &lock_path, packed_lock_held);
+            let _ = fs::remove_file(&lock_path);
+            write_result?;
         }
         let _ = self.refresh_packed_cache_if_stale();
         Ok(())
@@ -792,17 +827,31 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
 
         let packed_lock_held = batch.packed_lock.is_some();
 
+        for lock in batch.ref_locks.values() {
+            let _ = fs::remove_file(lock);
+        }
+        let mut ref_locks = HashMap::new();
         if let Err(err) = self.store.persist_state_diff(
             &batch.before_commit,
             &batch.after_commit,
-            &batch.ref_locks,
+            &mut ref_locks,
             packed_lock_held,
             &batch.updates,
         ) {
-            FilesRefStore::release_locks(&batch);
-            return Err(RefStoreError::Corrupt(err.to_string()));
+            for lock in ref_locks.values() {
+                let _ = fs::remove_file(lock);
+            }
+            if let Some(p) = &batch.packed_lock {
+                let _ = fs::remove_file(p);
+            }
+            return Err(match err {
+                Error::RefStore(store_err) => store_err,
+                other => RefStoreError::Corrupt(other.to_string()),
+            });
         }
-        FilesRefStore::release_locks(&batch);
+        if let Some(p) = &batch.packed_lock {
+            let _ = fs::remove_file(p);
+        }
         self.committed = true;
         Ok(())
     }
