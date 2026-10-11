@@ -1922,12 +1922,10 @@ fn blame_rename_threshold(config: &ConfigSet) -> u32 {
     {
         return 100;
     }
-    config
-        .get("diff.renameLimit")
-        .or_else(|| config.get("status.renameLimit"))
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(50)
-        .min(100)
+    // Git's `diff.renameLimit` / `status.renameLimit` cap rename *candidates*, not
+    // similarity (-M percentage). Until candidate limits are modeled in detect_renames,
+    // use Git's default rename similarity threshold.
+    50
 }
 
 fn blame_copy_depth(config: &ConfigSet) -> usize {

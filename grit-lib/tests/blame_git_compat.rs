@@ -357,6 +357,32 @@ fn blame_follows_rename_chain_like_git() {
 }
 
 #[test]
+fn blame_follows_rename_with_diff_rename_limit_200() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+    git_run(root, &["config", "diff.renameLimit", "200"]);
+
+    let lines: Vec<String> = (1..=20).map(|i| format!("line {i}")).collect();
+    std::fs::write(root.join("a.txt"), format!("{}\n", lines.join("\n"))).unwrap();
+    git_run(root, &["add", "a.txt"]);
+    git_run(root, &["commit", "-m", "add a"]);
+
+    let mut edited = lines.clone();
+    edited[4] = "line five".to_owned();
+    std::fs::write(root.join("a.txt"), format!("{}\n", edited.join("\n"))).unwrap();
+    git_run(root, &["mv", "a.txt", "b.txt"]);
+    git_run(root, &["add", "b.txt"]);
+    git_run(root, &["commit", "-m", "rename and edit line 5"]);
+
+    let repo = Repository::discover(Some(root)).expect("open");
+    let dir = repo.work_tree.as_deref().expect("worktree");
+    assert_blame_matches(&repo, dir, "b.txt", None, None);
+}
+
+#[test]
 fn blame_matches_git_porcelain_at_head_rev_and_line_range() {
     let (_tmp, repo, mid_rev) = build_blame_fixture();
     let dir = repo.work_tree.as_deref().expect("worktree");
