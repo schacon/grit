@@ -1081,6 +1081,9 @@ impl<'a> BlameSession<'a> {
     }
 }
 
+/// Rename similarity threshold for blame history walks (Git default `-M` percentage).
+const BLAME_RENAME_SIMILARITY: u32 = 50;
+
 /// Walk history and attribute each line in a blob at `start_oid` to a commit.
 ///
 /// Lower-level building block; prefer [`blame_file`] for repository callers.
@@ -1097,7 +1100,6 @@ pub fn compute_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
-    rename_threshold: u32,
 ) -> Result<Vec<BlameLine>> {
     let mut session = BlameSession::new(odb, textconv_ctx, use_textconv);
     compute_blame_with_session(
@@ -1216,12 +1218,7 @@ fn compute_blame_with_session(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
                         session,
-||||||| Common ancestor
-=======
-                        rename_threshold,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
                     )?;
                     parent_lines.push(Some(p_lines));
                     parent_blames.push(Some(p_blame));
@@ -1452,18 +1449,9 @@ fn compute_blame_with_session(
 
         let parent_oid = parents[0];
         let parent_commit = get_commit(odb, parent_oid, &mut commit_cache)?;
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
-        let parent_blob_entry = session.resolve_path_in_tree(parent_commit.tree, &current_path)?;
-        let can_follow_rename = true;
-||||||| Common ancestor
-        let parent_blob_entry =
-            resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?;
-        let can_follow_rename = true;
-=======
         let mut parent_blob_entry =
-            resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?;
+            session.resolve_path_in_tree(parent_commit.tree, &current_path)?;
         let mut parent_blob_path = current_path.clone();
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
 
         if parent_blob_entry.is_none() && !is_ignored {
             if let Some((renamed_path, renamed_mode)) = find_path_by_oid_in_tree(
@@ -1483,7 +1471,7 @@ fn compute_blame_with_session(
                 &parent_commit.tree,
                 &commit.tree,
                 &current_path,
-                rename_threshold,
+                BLAME_RENAME_SIMILARITY,
             )? {
                 let old_path = entry.old_path.clone().unwrap_or_default();
                 let p_blob_oid = entry.old_oid;
@@ -1548,12 +1536,7 @@ fn compute_blame_with_session(
                             first_parent_only,
                             grafts,
                             indent_heuristic,
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
                             session,
-||||||| Common ancestor
-=======
-                            rename_threshold,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
                         )?;
                         for line in source_blame {
                             by_content
@@ -1653,43 +1636,18 @@ fn compute_blame_with_session(
             }
             Some((p_blob_oid, p_blob_mode)) => {
                 // Diff current vs parent
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
                 let cur_lines_arc =
                     session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
-                let par_lines_arc =
-                    session.load_blob_lines(p_blob_oid, &current_path, p_blob_mode)?;
+                let par_lines_arc = session.load_blob_lines(
+                    p_blob_oid,
+                    &parent_blob_path,
+                    p_blob_mode,
+                )?;
                 let cur_lines = BlameSession::line_refs(&cur_lines_arc);
                 let par_lines = BlameSession::line_refs(&par_lines_arc);
                 let maps = session.parent_child_line_maps(
                     p_blob_oid,
-                    &current_path,
-||||||| Common ancestor
-                let cur_content = read_blob_content_for_blame(
-                    odb,
-                    &current_blob_oid,
-                    &current_path,
-                    current_blob_mode,
-                    textconv_ctx,
-                    use_textconv,
-                )?;
-                let par_content = read_blob_content_for_blame(
-                    odb,
-                    &p_blob_oid,
-                    &current_path,
-=======
-                let cur_content = read_blob_content_for_blame(
-                    odb,
-                    &current_blob_oid,
-                    &current_path,
-                    current_blob_mode,
-                    textconv_ctx,
-                    use_textconv,
-                )?;
-                let par_content = read_blob_content_for_blame(
-                    odb,
-                    &p_blob_oid,
                     &parent_blob_path,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
                     p_blob_mode,
                     current_blob_oid,
                     &current_path,
@@ -1719,12 +1677,7 @@ fn compute_blame_with_session(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
                         session,
-||||||| Common ancestor
-=======
-                        rename_threshold,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
                     )? {
                         let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
                         for line in source_blame {
@@ -1915,26 +1868,6 @@ fn compute_blame_with_session(
     Ok(result)
 }
 
-fn blame_rename_threshold(config: &ConfigSet) -> u32 {
-    if config
-        .get("diff.renames")
-        .is_some_and(|v| v.eq_ignore_ascii_case("false"))
-    {
-        return 100;
-    }
-    // Git's `diff.renameLimit` / `status.renameLimit` cap rename *candidates*, not
-    // similarity (-M percentage). Until candidate limits are modeled in detect_renames,
-    // use Git's default rename similarity threshold.
-    50
-}
-
-fn blame_copy_depth(config: &ConfigSet) -> usize {
-    config
-        .get("blame.copyLines")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0)
-}
-
 fn mode_from_diff_entry_mode(mode: &str) -> u32 {
     u32::from_str_radix(mode, 8).unwrap_or(0o100644)
 }
@@ -1992,12 +1925,7 @@ fn find_copy_source_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
     session: &mut BlameSession<'_>,
-||||||| Common ancestor
-=======
-    rename_threshold: u32,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
 ) -> Result<Option<(String, Vec<BlameLine>)>> {
     let mut entries = Vec::new();
     collect_tree_file_entries(odb, parent_tree_oid, "", &mut entries)?;
@@ -2039,12 +1967,7 @@ fn find_copy_source_blame(
         first_parent_only,
         grafts,
         indent_heuristic,
-<<<<<<< New base: fix: scope blame pair-map cache by path and textconv mode
         session,
-||||||| Common ancestor
-=======
-        rename_threshold,
->>>>>>> Current commit: Fixes #944: follow renames in blame and commit diff/show
     )?;
     Ok(Some((source_path, source_blame)))
 }
@@ -2168,8 +2091,6 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         .and_then(|v| v.ok())
         .unwrap_or(false);
     let ignore_revs = HashSet::new();
-    let rename_threshold = blame_rename_threshold(&config);
-    let copy_depth = blame_copy_depth(&config);
 
     let raw = compute_blame(
         &repo.odb,
@@ -2179,11 +2100,10 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         diff_algorithm,
         None,
         false,
-        copy_depth,
+        0,
         false,
         &grafts,
         indent_heuristic,
-        rename_threshold,
     )?;
 
     let mut lines: Vec<BlameAttributedLine> = raw
