@@ -6,6 +6,7 @@ use grit_lib::ident_resolve::IdentRole;
 use grit_lib::objects::parse_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
+use grit_lib::state::{resolve_head, HeadState};
 use serde::Serialize;
 
 use crate::commands::add;
@@ -45,6 +46,12 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
 
     if repo.load_index()?.has_unmerged_entries() {
         return Err(map_commit_error(Error::IndexUnmerged));
+    }
+
+    match resolve_head(&repo.git_dir)? {
+        HeadState::Branch { .. } => {}
+        HeadState::Detached { .. } => bail!("HEAD is detached; grit commit needs a branch"),
+        HeadState::Invalid => bail!("HEAD is in an unknown state"),
     }
 
     add::stage(&repo, &[])?;
