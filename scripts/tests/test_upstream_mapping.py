@@ -11,7 +11,7 @@ TESTING = ROOT / "TESTING.md"
 TESTS_DIR = ROOT / "grit-lib" / "tests"
 LIB_SRC = ROOT / "grit-lib" / "src"
 
-MAPPING_HEADER_RE = re.compile(r"^### Upstream test mapping")
+MAPPING_HEADER_RE = re.compile(r"^### Upstream test mapping", re.MULTILINE)
 ROW_RE = re.compile(r"^\| ([^|]+?) \|")
 FN_RE = re.compile(r"`([a-zA-Z0-9_]+)`")
 
@@ -136,6 +136,33 @@ class UpstreamMappingTests(unittest.TestCase):
             if not any(tid in col for col in upstream_cols)
         ]
         self.assertEqual([], missing, "TESTING.md missing upstream mapping rows")
+
+    def test_mapping_sections_discovers_all_testing_md_headings(self) -> None:
+        text = TESTING.read_text(encoding="utf-8")
+        sections = _mapping_sections(text)
+        header_count = len(MAPPING_HEADER_RE.findall(text))
+        self.assertGreaterEqual(header_count, 3)
+        self.assertEqual(len(sections), header_count)
+
+    def test_mapping_fixture_catches_invalid_rust_test_reference(self) -> None:
+        fixture = """
+### Upstream test mapping: fixture alpha
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+| t9999-fixture.sh | demo | `this_rust_test_name_does_not_exist_1119` | covered |
+
+### Upstream test mapping: fixture beta
+
+| upstream file | scenario | Rust test | status |
+| --- | --- | --- | --- |
+| t9998-fixture.sh | skip row | — | skipped |
+"""
+        rust_names = _rust_test_names()
+        missing = _validate_mapping_section(
+            _mapping_sections(fixture)[0], rust_names
+        )
+        self.assertTrue(missing)
 
     def test_mapping_rows_reference_existing_tests_or_skip(self) -> None:
         text = TESTING.read_text(encoding="utf-8")

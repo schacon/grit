@@ -66,7 +66,7 @@ coverage:
 	@mkdir -p target/llvm-cov
 	$(CARGO) build -p grit-cli --target-dir $(LLVM_COV_TARGET)
 	$(CARGO) build -p grit-http-server --target-dir $(LLVM_COV_TARGET)
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --summary-only --output-path target/llvm-cov/summary.json
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --summary-only --output-path target/llvm-cov/summary.json -- --test-threads=1
 	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/coverage.py --input target/llvm-cov/summary.json
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --html --output-dir target/llvm-cov/html
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --lcov --output-path target/llvm-cov/lcov.info

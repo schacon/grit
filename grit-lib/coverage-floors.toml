@@ -5,20 +5,40 @@
 baseline = "183dacae1"
 updated = "2026-10-11"
 
-[total]
-minimum = 60.6
-
 [core]
 groups = ["odb", "pack", "midx", "commit-graph"]
 minimum = 85.0
 
-[aggregate.refs-config]
-groups = ["refs", "reflog", "config", "ignore", "attributes"]
-minimum = 85.0
+[total]
+minimum = 60.9
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
-minimum = 42.5
+minimum = 43.2
+
+[aggregate.refs-config]
+groups = ["refs", "reflog", "config", "ignore", "attributes"]
+minimum = 82.3
+
+[group.attributes]
+files = [
+    "attributes.rs",
+]
+minimum = 85.0
+
+[group.commit-graph]
+files = [
+    "commit_graph_file.rs",
+    "commit_graph_write.rs",
+    "bloom.rs",
+]
+minimum = 86.5
+
+[group.config]
+files = [
+    "config.rs",
+]
+minimum = 82.9
 
 [group.diff]
 files = [
@@ -30,7 +50,14 @@ files = [
     "combined_diff_patch.rs",
     "merge_diff.rs",
 ]
-minimum = 40.6
+minimum = 43.1
+
+[group.ignore]
+files = [
+    "ignore.rs",
+    "wildmatch.rs",
+]
+minimum = 87.2
 
 [group.index]
 files = [
@@ -58,6 +85,50 @@ files = [
 ]
 minimum = 61.6
 
+[group.midx]
+files = [
+    "midx.rs",
+]
+minimum = 84.9
+
+[group.odb]
+files = [
+    "odb/mod.rs",
+    "odb/store/mod.rs",
+    "odb/store/packs.rs",
+]
+minimum = 81.1
+
+[group.pack]
+files = [
+    "pack.rs",
+    "pack_index.rs",
+    "pack_rev.rs",
+    "pack_map.rs",
+    "pack_index_build.rs",
+    "pack_zlib.rs",
+    "pack_bitmap/error.rs",
+    "pack_bitmap/index.rs",
+    "pack_bitmap/order.rs",
+    "bitmap_walk.rs",
+    "pack_bitmap/writer.rs",
+]
+minimum = 84.2
+
+[group.reflog]
+files = [
+    "reflog.rs",
+]
+minimum = 85.0
+
+[group.refs]
+files = [
+    "refs/mod.rs",
+    "reftable.rs",
+    "check_ref_format.rs",
+]
+minimum = 80.4
+
 [group.revparse]
 files = [
     "rev_parse.rs",
@@ -83,78 +154,6 @@ files = [
 ]
 minimum = 60.0
 
-[group.attributes]
-files = [
-    "attributes.rs",
-]
-minimum = 85.0
-
-[group.commit-graph]
-files = [
-    "commit_graph_file.rs",
-    "commit_graph_write.rs",
-    "bloom.rs",
-]
-minimum = 86.5
-
-[group.config]
-files = [
-    "config.rs",
-]
-minimum = 85.0
-
-[group.ignore]
-files = [
-    "ignore.rs",
-    "wildmatch.rs",
-]
-minimum = 86.3
-
-[group.midx]
-files = [
-    "midx.rs",
-]
-minimum = 85.0
-
-[group.odb]
-files = [
-    "odb/mod.rs",
-    "odb/store/mod.rs",
-    "odb/store/packs.rs",
-]
-minimum = 81.1
-
-[group.pack]
-files = [
-    "pack.rs",
-    "pack_index.rs",
-    "pack_rev.rs",
-    "pack_map.rs",
-    "pack_index_build.rs",
-    "pack_zlib.rs",
-    "pack_bitmap/mod.rs",
-    "pack_bitmap/error.rs",
-    "pack_bitmap/index.rs",
-    "pack_bitmap/order.rs",
-    "bitmap_walk.rs",
-    "pack_bitmap/writer.rs",
-]
-minimum = 86.3
-
-[group.reflog]
-files = [
-    "reflog.rs",
-]
-minimum = 85.0
-
-[group.refs]
-files = [
-    "refs.rs",
-    "reftable.rs",
-    "check_ref_format.rs",
-]
-minimum = 85.0
-
 [group.supporting]
 files = [
     "objects.rs",
@@ -165,7 +164,7 @@ files = [
     "promisor.rs",
     "fsck_standalone.rs",
 ]
-minimum = 85.2
+minimum = 85.9
 
 [file."attributes.rs"]
 minimum = 85.0
@@ -180,34 +179,34 @@ minimum = 96.1
 minimum = 85.0
 
 [file."commit_graph_write.rs"]
-minimum = 87.9
+minimum = 88.2
 
 [file."config.rs"]
-minimum = 85.0
+minimum = 82.9
 
 [file."delta_encode.rs"]
-minimum = 93.3
+minimum = 91.0
 
 [file."fsck_standalone.rs"]
 minimum = 86.1
 
 [file."ignore.rs"]
-minimum = 82.6
+minimum = 84.1
 
 [file."index_pack.rs"]
-minimum = 90.7
+minimum = 87.6
 
 [file."midx.rs"]
-minimum = 85.0
+minimum = 84.9
 
 [file."objects.rs"]
-minimum = 86.6
+minimum = 88.1
 
 [file."odb/mod.rs"]
 minimum = 83.3
 
 [file."odb/store/mod.rs"]
-minimum = 89.0
+minimum = 89.3
 
 [file."odb/store/packs.rs"]
 minimum = 57.8
@@ -215,11 +214,23 @@ minimum = 57.8
 [file."pack.rs"]
 minimum = 85.3
 
+[file."pack_bitmap/error.rs"]
+minimum = 0.0
+
+[file."pack_bitmap/index.rs"]
+minimum = 79.8
+
+[file."pack_bitmap/order.rs"]
+minimum = 71.6
+
+[file."pack_bitmap/writer.rs"]
+minimum = 76.0
+
 [file."pack_index.rs"]
 minimum = 89.7
 
 [file."pack_index_build.rs"]
-minimum = 87.0
+minimum = 87.4
 
 [file."pack_map.rs"]
 minimum = 91.1
@@ -230,35 +241,20 @@ minimum = 89.3
 [file."pack_zlib.rs"]
 minimum = 73.4
 
-[file."pack_bitmap/mod.rs"]
-minimum = 85.0
-
-[file."pack_bitmap/error.rs"]
-minimum = 85.0
-
-[file."pack_bitmap/index.rs"]
-minimum = 85.0
-
-[file."pack_bitmap/order.rs"]
-minimum = 85.0
-
-[file."pack_bitmap/writer.rs"]
-minimum = 85.0
-
 [file."promisor.rs"]
-minimum = 81.1
+minimum = 82.0
 
 [file."reflog.rs"]
 minimum = 84.2
 
-[file."refs.rs"]
-minimum = 79.8
+[file."refs/mod.rs"]
+minimum = 76.5
 
 [file."reftable.rs"]
 minimum = 83.8
 
 [file."unpack_objects.rs"]
-minimum = 82.9
+minimum = 83.8
 
 [file."wildmatch.rs"]
 minimum = 95.9

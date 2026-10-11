@@ -469,6 +469,29 @@ impl FilesRefStore {
         }
     }
 
+    fn persist_one_ref_name(
+        &self,
+        name: &str,
+        state: &RefBatchState,
+        packed_lock_held: bool,
+        persisted_refs: &mut HashSet<String>,
+    ) -> Result<()> {
+        if persisted_refs.contains(name) {
+            return Ok(());
+        }
+        let (_, _, lock_path) = self.ref_lock_paths(name);
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).map_err(Error::Io)?;
+        }
+        self.acquire_ref_lock(&lock_path, name)
+            .map_err(Error::from)?;
+        let write_result = self.persist_one_ref_change(name, state, &lock_path, packed_lock_held);
+        let _ = fs::remove_file(&lock_path);
+        write_result?;
+        persisted_refs.insert(name.to_owned());
+        Ok(())
+    }
+
     fn persist_state_diff(
         &self,
         before: &RefBatchState,
@@ -493,36 +516,68 @@ impl FilesRefStore {
         }
 
         let mut persisted_refs = HashSet::new();
+        let mut running = before.clone();
         for (idx, update) in updates.iter().enumerate() {
             if update.flags.log_only {
+                apply_update(&mut running, update).map_err(Error::from)?;
                 continue;
             }
+
+            let mut next = running.clone();
+            apply_update(&mut next, update).map_err(Error::from)?;
+
+            let mut changed: BTreeSet<String> = BTreeSet::new();
+            for name in running.refs.keys().chain(next.refs.keys()) {
+                if running.refs.get(name) != next.refs.get(name) {
+                    changed.insert(name.clone());
+                }
+            }
+
+            for side_name in changed
+                .iter()
+                .filter(|name| *name != &update.name)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.persist_one_ref_name(
+                    &side_name,
+                    &next,
+                    packed_lock_held,
+                    &mut persisted_refs,
+                )?;
+            }
+
             let name = &update.name;
-            let b = before.refs.get(name);
-            let a = after.refs.get(name);
+            let b = running.refs.get(name);
+            let a = next.refs.get(name);
             let materialize_loose = update.new_value.is_some()
                 && a.is_some()
                 && b == a
                 && !self
                     .loose_ref_file_exists(name)
                     .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
-            if b == a && !materialize_loose {
-                continue;
-            }
+
             let (_, _, lock_path) = self.ref_lock_paths(name);
-            if let Some(parent) = lock_path.parent() {
-                fs::create_dir_all(parent).map_err(Error::Io)?;
-            }
-            self.acquire_ref_lock(&lock_path, name)
-                .map_err(Error::from)?;
-            let write_result = (|| {
+            if b != a || materialize_loose {
+                if let Some(parent) = lock_path.parent() {
+                    fs::create_dir_all(parent).map_err(Error::Io)?;
+                }
+                self.acquire_ref_lock(&lock_path, name)
+                    .map_err(Error::from)?;
+                let write_result = (|| {
+                    self.recheck_update_at_commit(update, &batch_extras)
+                        .map_err(Error::from)?;
+                    self.persist_one_ref_change(name, &next, &lock_path, packed_lock_held)
+                })();
+                let _ = fs::remove_file(&lock_path);
+                write_result?;
+                persisted_refs.insert(name.clone());
+            } else {
                 self.recheck_update_at_commit(update, &batch_extras)
                     .map_err(Error::from)?;
-                self.persist_one_ref_change(name, after, &lock_path, packed_lock_held)
-            })();
-            let _ = fs::remove_file(&lock_path);
-            write_result?;
-            persisted_refs.insert(name.clone());
+            }
+
+            running = next;
             crate::refs::test_ref_store_batch_pause_after_ref_write(idx);
         }
 
@@ -540,16 +595,7 @@ impl FilesRefStore {
             if b == a {
                 continue;
             }
-            let (_, _, lock_path) = self.ref_lock_paths(name);
-            if let Some(parent) = lock_path.parent() {
-                fs::create_dir_all(parent).map_err(Error::Io)?;
-            }
-            self.acquire_ref_lock(&lock_path, name)
-                .map_err(Error::from)?;
-            let write_result =
-                self.persist_one_ref_change(name, after, &lock_path, packed_lock_held);
-            let _ = fs::remove_file(&lock_path);
-            write_result?;
+            self.persist_one_ref_name(name, after, packed_lock_held, &mut persisted_refs)?;
         }
         let _ = self.refresh_packed_cache_if_stale();
         Ok(())

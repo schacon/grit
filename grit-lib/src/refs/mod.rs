@@ -2205,6 +2205,32 @@ pub fn set_test_inject_ref_store_batch_pause_after_apply(
 }
 
 #[cfg(test)]
+static REF_STORE_PAUSE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serialize ref-store batch pause injection tests and clear injection on drop.
+#[cfg(test)]
+pub(crate) struct RefStoreBatchPauseTestScope {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+pub(crate) fn ref_store_batch_pause_test_scope() -> RefStoreBatchPauseTestScope {
+    set_test_inject_ref_store_batch_pause_after_apply(0, None);
+    RefStoreBatchPauseTestScope {
+        _lock: REF_STORE_PAUSE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+    }
+}
+
+#[cfg(test)]
+impl Drop for RefStoreBatchPauseTestScope {
+    fn drop(&mut self) {
+        set_test_inject_ref_store_batch_pause_after_apply(0, None);
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn test_ref_store_batch_pause_after_ref_write(idx: usize) {
     let slot = ref_store_batch_pause_inject::pause_slot()
         .lock()

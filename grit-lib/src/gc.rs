@@ -411,6 +411,8 @@ mod update_refs_tests {
         use std::sync::Arc;
         use std::thread;
 
+        let _pause_scope = refs::ref_store_batch_pause_test_scope();
+
         fn git(dir: &Path, args: &[&str]) {
             let out = Command::new("git")
                 .current_dir(dir)
@@ -532,6 +534,8 @@ mod update_refs_tests {
         use std::process::Command;
         use std::sync::Arc;
         use std::thread;
+
+        let _pause_scope = refs::ref_store_batch_pause_test_scope();
 
         fn git(dir: &Path, args: &[&str]) {
             let out = Command::new("git")

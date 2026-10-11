@@ -165,10 +165,12 @@ pub fn build_commit_dag(
         }
         for label in ready {
             remaining.remove(label);
-            let parent = edges.iter().find_map(|(child, parent_label)| {
-                (*child == label).then(|| oids[*parent_label])
-            });
-            let oid = commit_with_parent(worktree, label, parent);
+            let parents: Vec<ObjectId> = edges
+                .iter()
+                .filter(|(child, _)| *child == label)
+                .map(|(_, parent_label)| oids[*parent_label])
+                .collect();
+            let oid = commit_with_parents(worktree, label, &parents);
             oids.insert(label.to_owned(), oid);
         }
     }
@@ -183,17 +185,17 @@ pub fn build_commit_dag(
     oids
 }
 
-fn commit_with_parent(worktree: &Path, label: &str, parent: Option<ObjectId>) -> ObjectId {
+fn commit_with_parents(worktree: &Path, label: &str, parents: &[ObjectId]) -> ObjectId {
     let msg = format!("history harness {label}");
     let tree = git(worktree, &["mktree"]).trim().to_string();
-    let mut args = vec!["commit-tree", &tree, "-m", &msg];
-    let parent_hex;
-    if let Some(p) = parent {
-        parent_hex = p.to_hex();
-        args.push("-p");
-        args.push(&parent_hex);
+    let mut args: Vec<String> = vec!["commit-tree".to_owned(), tree, "-m".to_owned(), msg];
+    let parent_hex: Vec<String> = parents.iter().map(ObjectId::to_hex).collect();
+    for hex in &parent_hex {
+        args.push("-p".to_owned());
+        args.push(hex.clone());
     }
-    let commit = git(worktree, &args).trim().to_string();
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let commit = git(worktree, &arg_refs).trim().to_string();
     let refname = format!("refs/history/{label}");
     git(worktree, &["update-ref", &refname, &commit]);
     commit.parse().expect("commit oid")
@@ -215,10 +217,7 @@ pub fn git_rev_parse(dir: &Path, spec: &str) -> Option<ObjectId> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .ok()
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// `git ls-files -s` as `(path, stage, mode, oid)` tuples.
