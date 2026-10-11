@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::error::{Error, Result};
 use crate::hash::{verify_trailer, Parallelism};
@@ -16,6 +17,34 @@ use crate::pack::{verify_pack_and_collect, write_v2_pack_index_with_trailer};
 use crate::pack_map::PackData;
 use crate::transfer::fix_thin_pack_path;
 use crate::unpack_objects::PackIndexRecord;
+
+static INGEST_THREAD_RECORDING: AtomicBool = AtomicBool::new(false);
+static LAST_RESOLVED_INGEST_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Enable recording of resolved index-pack worker counts (integration tests only).
+#[doc(hidden)]
+pub fn set_ingest_thread_recording_for_tests(enabled: bool) {
+    INGEST_THREAD_RECORDING.store(enabled, Ordering::SeqCst);
+    if !enabled {
+        LAST_RESOLVED_INGEST_THREADS.store(0, Ordering::SeqCst);
+    }
+}
+
+/// Last resolved worker count from pack ingest while recording is enabled.
+#[doc(hidden)]
+pub fn last_resolved_ingest_threads_for_tests() -> Option<usize> {
+    if !INGEST_THREAD_RECORDING.load(Ordering::SeqCst) {
+        return None;
+    }
+    let raw = LAST_RESOLVED_INGEST_THREADS.load(Ordering::SeqCst);
+    (raw > 0).then(|| raw - 1)
+}
+
+fn record_resolved_ingest_threads(threads: usize) {
+    if INGEST_THREAD_RECORDING.load(Ordering::SeqCst) {
+        LAST_RESOLVED_INGEST_THREADS.store(threads.saturating_add(1), Ordering::SeqCst);
+    }
+}
 
 /// Result of installing a pack under `objects/pack/`.
 #[derive(Debug, Clone)]
@@ -212,10 +241,12 @@ pub fn install_pack_path(
                     "received pack checksum mismatch (download may be incomplete): {e}"
                 ))
             })?;
+            let parallelism = opts.index_parallelism(odb)?;
+            record_resolved_ingest_threads(parallelism.threads().get());
             let records = crate::pack_index_build::build_pack_index_records(
                 pack_bytes,
                 odb,
-                opts.index_parallelism(odb)?,
+                parallelism,
                 !opts.skip_post_index_verify,
             )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();

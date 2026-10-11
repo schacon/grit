@@ -183,7 +183,9 @@ jobs:
           shared-key: miri
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - run: cargo +nightly miri test -p grit-lib --lib parallel::policy:: parallel::tests::
+      - run: |
+          cargo +nightly miri test -p grit-lib --lib parallel::policy::
+          cargo +nightly miri test -p grit-lib --lib parallel::tests::
 
   test:
     name: test

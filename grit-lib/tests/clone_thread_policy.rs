@@ -9,10 +9,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::config::ConfigSet;
 use grit_lib::environment::Environment;
 use grit_lib::fetch::NoProgress;
-use grit_lib::parallel::{index_pack_threads_for_ingest, ThreadPolicy};
+use grit_lib::index_pack::{
+    last_resolved_ingest_threads_for_tests, set_ingest_thread_recording_for_tests,
+};
+use grit_lib::parallel::ThreadPolicy;
 use grit_lib::remote::DefaultHttpClientFactory;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -130,6 +132,7 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
         dest.clone(),
     );
 
+    set_ingest_thread_recording_for_tests(true);
     let outcome = clone_repo(
         CloneOptions {
             environment,
@@ -143,21 +146,16 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
 
     assert_eq!(outcome.repo.thread_policy().threads_override, Some(5));
 
-    let cfg = ConfigSet::load(
-        outcome.repo.environment(),
-        Some(&outcome.repo.git_dir),
-        true,
-    )
-    .expect("config");
-    let ingest_threads =
-        index_pack_threads_for_ingest(outcome.repo.thread_policy(), &cfg, None).expect("resolve");
     let avail = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
+    let recorded = last_resolved_ingest_threads_for_tests()
+        .expect("clone must run index-pack ingest while recording");
+    set_ingest_thread_recording_for_tests(false);
     assert_eq!(
-        ingest_threads,
-        Some(5.min(avail)),
-        "clone thread override must win over pack.threads during received-pack indexing"
+        recorded,
+        5.min(avail),
+        "received-pack ingest must honor clone thread policy over pack.threads"
     );
 
     let pack_dir = outcome.repo.git_dir.join("objects/pack");
