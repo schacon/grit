@@ -40,6 +40,8 @@ Unset or `0` selects auto (all logical CPUs). Positive integers cap worker count
 
 Stat preload during status/diff keeps a separate four-thread cap until a later scaling pass; it still honors `core.preloadIndex` and the global thread override.
 
+Pack writing (`pack-objects` serialization) uses the same `pack.threads` policy for parallel delta encoding and zlib compression; the on-wire byte stream matches the single-threaded writer (OFS vs REF headers are still emitted in plan order).
+
 ## Ordered parallel maps
 
 [`try_par_map`](https://docs.rs/grit-lib/latest/grit_lib/parallel/fn.try_par_map.html) and [`par_map`](https://docs.rs/grit-lib/latest/grit_lib/parallel/fn.par_map.html) run a closure over a slice with a scoped thread pool. **Results are always returned in input order**, even when workers finish out of order.
