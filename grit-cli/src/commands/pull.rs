@@ -14,7 +14,7 @@ use crate::commands::merge::{self, MergeOutcome};
 use crate::context;
 use grit_lib::fetch::NoProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
-use grit_lib::transfer::{FetchOptions, TagMode};
+use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 
 pub fn run() -> Result<MergeOutcome> {
     let repo = context::discover()?;
@@ -42,6 +42,9 @@ pub fn run() -> Result<MergeOutcome> {
         .filter(|r| !r.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
 
+    let prune = resolve_fetch_prune(&config, &remote, None)
+        .context("could not resolve fetch prune settings")?;
+
     let factory = DefaultHttpClientFactory;
     Remote::from_config(&config, &remote)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
@@ -51,6 +54,7 @@ pub fn run() -> Result<MergeOutcome> {
                 tags: TagMode::Following,
                 thread_policy: repo.thread_policy(),
                 environment: crate::context::environment(),
+                prune,
                 ..Default::default()
             },
             &mut NoProgress,
