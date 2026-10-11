@@ -6058,7 +6058,7 @@ fn border_commits_not_in_client_shallow(
             continue;
         }
         let parents = commit_parent_ids(repo, c);
-        let is_border = parents.iter().any(|p| !included.contains(p));
+        let is_border = parents.is_empty() || parents.iter().any(|p| !included.contains(p));
         if is_border && seen_out.insert(c) {
             out.push(c);
         }
