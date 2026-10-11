@@ -9,6 +9,7 @@ use grit_lib::merge_base::is_ancestor;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::worktree;
 use serde::Serialize;
 
 use crate::context;
@@ -161,6 +162,9 @@ fn delete_branch(repo: &Repository, name: &str, force_delete: bool) -> Result<Br
             bail!("cannot delete '{name}' — it is the current branch");
         }
     }
+
+    worktree::ensure_branch_not_checked_out_in_any_worktree(repo, name)
+        .map_err(anyhow::Error::new)?;
 
     let branch_ref = format!("refs/heads/{name}");
     let branch_oid = refs::resolve_ref(&repo.git_dir, &branch_ref)

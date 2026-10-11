@@ -482,6 +482,15 @@ pub enum Error {
     #[error("commit already at HEAD")]
     ReplaySourceAtHead,
 
+    /// A local branch is checked out as `HEAD` in a linked or main worktree.
+    #[error("branch '{branch}' is already checked out in '{worktree_path}'")]
+    BranchCheckedOutInWorktree {
+        /// Short branch name (e.g. `main`).
+        branch: String,
+        /// Path to the worktree that has the branch checked out.
+        worktree_path: String,
+    },
+
     /// Stash commit object has fewer parents or an invalid shape for apply/show.
     #[error("corrupt stash commit: {0}")]
     CorruptStash(&'static str),
