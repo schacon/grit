@@ -112,6 +112,11 @@ pub struct Repository {
     thread_policy: crate::parallel::ThreadPolicy,
 }
 
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<Repository>;
+};
+
 impl std::fmt::Debug for Repository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Repository")

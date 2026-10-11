@@ -193,6 +193,11 @@ pub struct Odb {
     alternates_enabled: bool,
 }
 
+const _: () = {
+    fn assert_send_sync<T: Send + Sync>() {}
+    let _ = assert_send_sync::<Odb>;
+};
+
 impl std::fmt::Debug for Odb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Odb")
@@ -337,9 +342,7 @@ impl Odb {
 
     #[doc(hidden)]
     #[must_use]
-    pub fn hot_path_metrics_arc(
-        &self,
-    ) -> Arc<crate::hot_path_test_metrics::HotPathTestMetrics> {
+    pub fn hot_path_metrics_arc(&self) -> Arc<crate::hot_path_test_metrics::HotPathTestMetrics> {
         Arc::clone(&self.hot_path_test_metrics)
     }
 

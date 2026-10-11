@@ -116,14 +116,14 @@ pub(crate) mod pack_cache {
     use crate::pack_map::{fingerprint_from_file, PackData, PackFingerprint};
     use std::collections::{HashMap, HashSet};
     use std::fs;
+    use std::hash::{Hash, Hasher};
     use std::io;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
-    static DELTA_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
-    static DELTA_LRU_POPULATED: AtomicBool = AtomicBool::new(false);
+    const DELTA_LRU_SHARD_COUNT: usize = 32;
 
     struct CachedDir {
         dir_mtime: SystemTime,
@@ -146,7 +146,7 @@ pub(crate) mod pack_cache {
     pub(super) const DELTA_BASE_CACHE_DEFAULT: usize = 96 * 1024 * 1024;
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-    struct DeltaCacheKey {
+    pub(crate) struct DeltaCacheKey {
         pack_id: u32,
         offset: u64,
     }
@@ -179,10 +179,8 @@ pub(crate) mod pack_cache {
             if limit == 0 {
                 self.clear();
                 self.byte_limit = 0;
-                DELTA_CACHE_ENABLED.store(false, Ordering::Release);
                 return;
             }
-            DELTA_CACHE_ENABLED.store(true, Ordering::Release);
             self.byte_limit = limit;
             while self.bytes_used > self.byte_limit {
                 let Some(key) = self.head else {
@@ -273,7 +271,6 @@ pub(crate) mod pack_cache {
                 };
                 self.evict_key(evict);
             }
-            DELTA_LRU_POPULATED.store(!self.entries.is_empty(), Ordering::Release);
         }
 
         fn drop_pack(&mut self, pack_id: u32) {
@@ -286,7 +283,6 @@ pub(crate) mod pack_cache {
             for key in keys {
                 self.evict_key(key);
             }
-            DELTA_LRU_POPULATED.store(!self.entries.is_empty(), Ordering::Release);
         }
 
         fn clear(&mut self) {
@@ -295,20 +291,134 @@ pub(crate) mod pack_cache {
             self.head = None;
             self.tail = None;
             self.bytes_used = 0;
-            DELTA_LRU_POPULATED.store(false, Ordering::Release);
+        }
+    }
+
+    fn shard_index(key: DeltaCacheKey) -> usize {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut hasher);
+        (hasher.finish() as usize) % DELTA_LRU_SHARD_COUNT
+    }
+
+    /// Delta-base LRU sharded by `(pack_id, offset)` so concurrent reads rarely contend.
+    pub(crate) struct ShardedDeltaBaseLru {
+        cache_enabled: AtomicBool,
+        lru_populated: AtomicBool,
+        total_byte_limit: AtomicUsize,
+        shards: Box<[Mutex<DeltaBaseLru>; DELTA_LRU_SHARD_COUNT]>,
+    }
+
+    impl ShardedDeltaBaseLru {
+        pub(crate) fn new() -> Self {
+            let per_shard = DELTA_BASE_CACHE_DEFAULT / DELTA_LRU_SHARD_COUNT;
+            Self {
+                cache_enabled: AtomicBool::new(true),
+                lru_populated: AtomicBool::new(false),
+                total_byte_limit: AtomicUsize::new(DELTA_BASE_CACHE_DEFAULT),
+                shards: Box::new(std::array::from_fn(|_| {
+                    Mutex::new(DeltaBaseLru {
+                        byte_limit: per_shard,
+                        ..DeltaBaseLru::default()
+                    })
+                })),
+            }
+        }
+
+        pub(crate) fn set_byte_limit(&self, limit: usize) {
+            self.total_byte_limit.store(limit, Ordering::Release);
+            if limit == 0 {
+                self.cache_enabled.store(false, Ordering::Release);
+                self.clear();
+                return;
+            }
+            self.cache_enabled.store(true, Ordering::Release);
+            let base = limit / DELTA_LRU_SHARD_COUNT;
+            let rem = limit % DELTA_LRU_SHARD_COUNT;
+            let mut any = false;
+            for (i, shard) in self.shards.iter().enumerate() {
+                let cap = base + usize::from(i < rem);
+                let mut g = shard.lock().unwrap_or_else(|e| e.into_inner());
+                g.set_byte_limit(cap);
+                any |= !g.entries.is_empty();
+            }
+            self.lru_populated.store(any, Ordering::Release);
+        }
+
+        pub(crate) fn get(&self, key: DeltaCacheKey) -> Option<(ObjectKind, Arc<[u8]>)> {
+            if !self.cache_enabled.load(Ordering::Acquire)
+                || !self.lru_populated.load(Ordering::Acquire)
+            {
+                return None;
+            }
+            let shard = &self.shards[shard_index(key)];
+            let mut g = shard.lock().unwrap_or_else(|e| e.into_inner());
+            g.get(key)
+        }
+
+        pub(crate) fn put_many(&self, kind: ObjectKind, items: &[(u32, u64, Arc<[u8]>)]) {
+            if items.is_empty() || !self.cache_enabled.load(Ordering::Acquire) {
+                return;
+            }
+            for &(pack_id, offset, ref data) in items {
+                let key = DeltaCacheKey { pack_id, offset };
+                let shard = &self.shards[shard_index(key)];
+                let mut g = shard.lock().unwrap_or_else(|e| e.into_inner());
+                if g.byte_limit == 0 {
+                    continue;
+                }
+                g.put(key, kind, Arc::clone(data));
+            }
+            self.lru_populated.store(true, Ordering::Release);
+        }
+
+        pub(crate) fn clear(&self) {
+            for shard in self.shards.iter() {
+                shard.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            }
+            self.lru_populated.store(false, Ordering::Release);
+        }
+
+        pub(crate) fn drop_pack(&self, pack_id: u32) {
+            let mut any = false;
+            for shard in self.shards.iter() {
+                let mut g = shard.lock().unwrap_or_else(|e| e.into_inner());
+                g.drop_pack(pack_id);
+                any |= !g.entries.is_empty();
+            }
+            self.lru_populated.store(any, Ordering::Release);
+        }
+
+        pub(crate) fn caching_enabled(&self) -> bool {
+            self.cache_enabled.load(Ordering::Acquire)
+        }
+
+        #[cfg(test)]
+        pub(crate) fn bytes_used(&self) -> usize {
+            self.shards
+                .iter()
+                .map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).bytes_used)
+                .sum()
+        }
+
+        #[cfg(test)]
+        pub(crate) fn contains(&self, pack_id: u32, offset: u64) -> bool {
+            let key = DeltaCacheKey { pack_id, offset };
+            self.shards[shard_index(key)]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entries
+                .contains_key(&key)
         }
     }
 
     #[derive(Default)]
-    pub(crate) struct State {
+    pub(crate) struct CatalogState {
         by_dir: HashMap<PathBuf, CachedDir>,
         by_idx: HashMap<PathBuf, CachedIdx>,
         by_pack: HashMap<PathBuf, CachedPack>,
         /// Small id assigned when a pack file is first registered in this process.
         pack_ids: HashMap<PathBuf, u32>,
         next_pack_id: u32,
-        /// Resolved intermediate delta bases (git's `delta_base_cache`).
-        delta_lru: DeltaBaseLru,
         /// Packs whose header object count was matched to the index (hot read path).
         validated_pack_counts: HashSet<PathBuf>,
         /// Per `objects/pack` directory rescan count (parallel-safe; tests only).
@@ -316,17 +426,17 @@ pub(crate) mod pack_cache {
         test_dir_rescan_counts: HashMap<PathBuf, u64>,
     }
 
-    pub(crate) fn with_current<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    pub(crate) fn with_current<R>(f: impl FnOnce(&mut CatalogState) -> R) -> R {
         crate::pack_store::PackStore::with_current_or_implicit(f)
     }
 
-    pub(crate) fn clear_on(m: &Mutex<State>) {
+    pub(crate) fn clear_catalog_on(m: &Mutex<CatalogState>) {
         let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
         clear_inner(&mut g);
     }
 
     pub(crate) fn configure_delta_base_on(
-        state: &Mutex<State>,
+        delta: &ShardedDeltaBaseLru,
         cfg: Option<&crate::config::ConfigSet>,
     ) {
         let bytes = cfg
@@ -335,11 +445,7 @@ pub(crate) mod pack_cache {
             .and_then(|value| crate::config::parse_i64(value).ok())
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(DELTA_BASE_CACHE_DEFAULT);
-        state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .delta_lru
-            .set_byte_limit(bytes);
+        delta.set_byte_limit(bytes);
     }
 
     #[cfg(test)]
@@ -569,8 +675,9 @@ pub(crate) mod pack_cache {
         size: u64,
     ) -> Result<Arc<PackData>> {
         let bytes = PackData::open(pack_path)?;
-        with_current(|g| {
-            drop_delta_entries_locked(g, pack_path);
+        let store = crate::pack_store::PackStore::active_for_reads();
+        store.with_catalog(|g| {
+            drop_delta_entries_locked(g, pack_path, store.delta_bases());
             g.by_idx.remove(&pack_path.with_extension("idx"));
             g.validated_pack_counts.remove(pack_path);
             g.by_pack.insert(
@@ -623,10 +730,11 @@ pub(crate) mod pack_cache {
 
     fn revalidate_stale_pack_bytes_in_context(pack_path: &Path) -> Result<bool> {
         let Some((mtime, size)) = file_signature(pack_path) else {
-            let removed = with_current(|g| {
+            let store = crate::pack_store::PackStore::active_for_reads();
+            let removed = store.with_catalog(|g| {
                 let removed = g.by_pack.remove(pack_path).is_some();
                 if removed {
-                    drop_delta_entries_locked(g, pack_path);
+                    drop_delta_entries_locked(g, pack_path, store.delta_bases());
                 }
                 removed
             });
@@ -772,39 +880,39 @@ pub(crate) mod pack_cache {
         });
     }
 
-    fn clear_inner(g: &mut State) {
+    fn clear_inner(g: &mut CatalogState) {
         g.by_dir.clear();
         g.by_idx.clear();
         g.by_pack.clear();
         g.pack_ids.clear();
-        g.delta_lru.clear();
-        DELTA_LRU_POPULATED.store(false, Ordering::Release);
     }
 
-    /// Process-wide delta-base byte cap from config (default [`DELTA_BASE_CACHE_DEFAULT`]).
+    /// Delta-base byte cap for the active read store (default [`DELTA_BASE_CACHE_DEFAULT`]).
     pub fn set_delta_base_cache_byte_limit(limit: usize) {
-        with_current(|g| g.delta_lru.set_byte_limit(limit));
+        crate::pack_store::PackStore::active_for_reads()
+            .delta_bases()
+            .set_byte_limit(limit);
     }
 
     #[cfg(test)]
     pub fn test_delta_base_cache_bytes_used(pack_path: &Path) -> usize {
         crate::pack_store::PackStore::legacy_for_pack_path(pack_path)
-            .with_pack(|g| g.delta_lru.bytes_used)
+            .delta_bases()
+            .bytes_used()
     }
 
     #[cfg(test)]
     pub fn test_set_delta_base_cache_byte_limit(pack_path: &Path, limit: usize) {
         crate::pack_store::PackStore::legacy_for_pack_path(pack_path)
-            .with_pack(|g| g.delta_lru.set_byte_limit(limit));
+            .delta_bases()
+            .set_byte_limit(limit);
     }
 
     #[cfg(test)]
     pub fn test_delta_base_cached(pack_path: &Path, pack_id: u32, offset: u64) -> bool {
-        crate::pack_store::PackStore::legacy_for_pack_path(pack_path).with_pack(|g| {
-            g.delta_lru
-                .entries
-                .contains_key(&DeltaCacheKey { pack_id, offset })
-        })
+        crate::pack_store::PackStore::legacy_for_pack_path(pack_path)
+            .delta_bases()
+            .contains(pack_id, offset)
     }
 
     fn pack_id_for_in_context(pack_path: &Path) -> u32 {
@@ -829,47 +937,45 @@ pub(crate) mod pack_cache {
     }
 
     /// Drop every cached delta base inflated from `pack_path`.
-    fn drop_delta_entries_locked(g: &mut State, pack_path: &Path) {
+    fn drop_delta_entries_locked(
+        g: &mut CatalogState,
+        pack_path: &Path,
+        delta: &ShardedDeltaBaseLru,
+    ) {
         if let Some(&pack_id) = g.pack_ids.get(pack_path) {
-            g.delta_lru.drop_pack(pack_id);
+            delta.drop_pack(pack_id);
         }
     }
 
     /// Cached resolved object at `(pack_id, offset)`, if still resident.
     pub fn get_delta_base(pack_id: u32, offset: u64) -> Option<(ObjectKind, Arc<[u8]>)> {
-        if !DELTA_CACHE_ENABLED.load(Ordering::Acquire)
-            || !DELTA_LRU_POPULATED.load(Ordering::Acquire)
-        {
-            return None;
-        }
-        let key = DeltaCacheKey { pack_id, offset };
-        with_current(|g| g.delta_lru.get(key))
+        crate::pack_store::PackStore::active_for_reads()
+            .delta_bases()
+            .get(DeltaCacheKey { pack_id, offset })
     }
 
     #[must_use]
     pub fn delta_base_caching_enabled() -> bool {
-        DELTA_CACHE_ENABLED.load(Ordering::Acquire)
+        crate::pack_store::PackStore::active_for_reads()
+            .delta_bases()
+            .caching_enabled()
     }
 
-    /// Insert many intermediate bases under one lock (hot path for delta-chain resolution).
+    /// Insert many intermediate bases (hot path for delta-chain resolution).
     pub fn put_delta_bases(kind: ObjectKind, items: &[(u32, u64, Arc<[u8]>)]) {
         if items.is_empty() {
             return;
         }
-        with_current(|g| {
-            if g.delta_lru.byte_limit == 0 {
-                return;
-            }
-            for &(pack_id, offset, ref data) in items {
-                g.delta_lru
-                    .put(DeltaCacheKey { pack_id, offset }, kind, Arc::clone(data));
-            }
-        });
+        crate::pack_store::PackStore::active_for_reads()
+            .delta_bases()
+            .put_many(kind, items);
     }
 
     /// Drop only cached delta bases (pack indexes and bytes stay cached).
     pub fn clear_delta_bases() {
-        with_current(|g| g.delta_lru.clear());
+        crate::pack_store::PackStore::active_for_reads()
+            .delta_bases()
+            .clear();
     }
 
     /// Re-stamp the cached signature for `pack_path` after the caller deliberately touched the
