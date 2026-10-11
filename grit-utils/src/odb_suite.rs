@@ -52,6 +52,7 @@ fn run_odb_scenario(
         cfg.min_runs,
         "git",
         env.as_deref(),
+        None,
     )?;
     let (mut grit_stats, grit_rss) = bench_with_peak_rss(
         hyperfine,
@@ -62,6 +63,7 @@ fn run_odb_scenario(
         cfg.min_runs,
         "grit",
         env.as_deref(),
+        None,
     )?;
     git_stats.peak_rss_bytes = Some(git_rss);
     grit_stats.peak_rss_bytes = Some(grit_rss);

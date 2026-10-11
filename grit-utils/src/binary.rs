@@ -79,21 +79,121 @@ pub fn tool_version(program: &Path) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Best-effort commit hash for the grit tree (when this crate is built from the grit repo).
-pub fn grit_source_commit() -> Option<String> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(manifest.join(".."))
+/// Resolve `spec` to a commit object id, or `None` when it is not a committish.
+fn rev_parse_commit(repo: &Path, spec: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", &format!("{spec}^{{commit}}")])
+        .current_dir(repo)
         .output()
         .ok()?;
-    if !output.status.success() {
+    if !out.status.success() {
         return None;
     }
-    String::from_utf8(output.stdout)
+    String::from_utf8(out.stdout)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn git_current_branch(repo: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .current_dir(repo)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Among `refs/heads/factory/*` tips that are ancestors of `HEAD`, pick the newest by tip committer date.
+fn factory_branch_tip_in_workspace(repo: &Path) -> Option<String> {
+    let head = rev_parse_commit(repo, "HEAD")?;
+    let out = std::process::Command::new("git")
+        .args([
+            "for-each-ref",
+            "refs/heads/factory/",
+            "--format=%(objectname)\t%(committerdate:unix)",
+        ])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut best: Option<(i64, String)> = None;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let Some((tip, date_str)) = line.split_once('\t') else {
+            continue;
+        };
+        let tip = tip.trim();
+        if tip.is_empty() {
+            continue;
+        }
+        if rev_parse_commit(repo, tip).is_none() {
+            continue;
+        }
+        if !is_ancestor(repo, tip, &head) {
+            continue;
+        }
+        let Ok(date) = date_str.trim().parse::<i64>() else {
+            continue;
+        };
+        match &best {
+            None => best = Some((date, tip.to_owned())),
+            Some((d, _)) if date > *d => best = Some((date, tip.to_owned())),
+            Some(_) => {}
+        }
+    }
+    best.map(|(_, tip)| tip)
+}
+
+/// Best-effort commit hash for the grit tree (when this crate is built from the grit repo).
+///
+/// Resolution order:
+/// 1. `bench_branch` when set (e.g. `factory/refs-bench-774` via `GRIT_BENCH_BRANCH`)
+/// 2. The checked-out branch tip when it is not `gitbutler/workspace`
+/// 3. On GitButler workspace: the newest `refs/heads/factory/*` tip that is an ancestor of `HEAD`
+/// 4. `HEAD` when it resolves to a commit object
+pub(crate) fn grit_source_commit_from(repo: &Path, bench_branch: Option<&str>) -> Option<String> {
+    if let Some(branch) = bench_branch.map(str::trim).filter(|b| !b.is_empty()) {
+        if let Some(h) = rev_parse_commit(repo, &format!("refs/heads/{branch}")) {
+            return Some(h);
+        }
+    }
+    if let Some(branch) = git_current_branch(repo) {
+        if branch != "gitbutler/workspace" {
+            if let Some(h) = rev_parse_commit(repo, &format!("refs/heads/{branch}")) {
+                return Some(h);
+            }
+        }
+    }
+    if let Some(h) = factory_branch_tip_in_workspace(repo) {
+        return Some(h);
+    }
+    rev_parse_commit(repo, "HEAD")
+}
+
+/// Best-effort commit hash for the grit tree (when this crate is built from the grit repo).
+pub fn grit_source_commit() -> Option<String> {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let bench_branch = env::var("GRIT_BENCH_BRANCH").ok();
+    grit_source_commit_from(&repo, bench_branch.as_deref())
 }
 
 fn find_on_path(name: &str) -> Result<PathBuf> {
@@ -113,7 +213,37 @@ fn find_on_path(name: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command;
     use tempfile::TempDir;
+
+    #[test]
+    fn grit_source_commit_is_committish() {
+        let Some(commit) = grit_source_commit() else {
+            return;
+        };
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let ok = Command::new("git")
+            .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+            .current_dir(&repo)
+            .status()
+            .expect("git cat-file");
+        assert!(
+            ok.success(),
+            "grit_source_commit must resolve to a commit object"
+        );
+    }
+
+    #[test]
+    fn grit_source_commit_honors_bench_branch() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let branch = "factory/refs-bench-774";
+        let expected =
+            rev_parse_commit(&repo, &format!("refs/heads/{branch}")).expect("branch tip");
+        assert_eq!(
+            grit_source_commit_from(&repo, Some(branch)).as_deref(),
+            Some(expected.as_str())
+        );
+    }
 
     #[test]
     fn relative_explicit_path_is_canonicalized() {

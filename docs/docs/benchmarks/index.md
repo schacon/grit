@@ -208,16 +208,16 @@ No GitHub issues were filed from this factory run (`file_bug_report` is dogfoodi
 
 ### Object reads
 
-The **`grit-bench odb`** suite (library drivers in `grit-bench drive …` vs system **`git`**) measures cat-file batch reads, `rev-list --objects --all`, and `log -p` on a cached bare **git.git** clone and a repacked **100k-file / 1000-commit** synthetic repo. JSON reports include **peak RSS** per scenario (each workload measured in a fresh `grit-bench measure-rss` helper process via `getrusage(RUSAGE_CHILDREN)` on that run only) alongside wall time.
-
-Reproduce:
+The **`grit-bench refs`** suite compares library drivers (`grit-bench refs-driver …`) to **`git for-each-ref`** and **`git update-ref --stdin`** on bare repositories with **100 000** branch refs. Fixtures are built once with system git and cached under the bench scratch directory: fully **packed** refs, **loose** refs only, and (when system git is **≥ 2.45**) a **reftable** layout. Scenarios list all refs, list the **`refs/heads/b05*`** glob (~1 000 refs), batch-**create** 100 000 refs into an empty-refs working copy, **update** 1 000 existing refs, and **delete** 1 000 refs; a prepare hook restores the fixture before each timed iteration. The committed baseline is **`grit-utils/baselines/refs-before.json`**.
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils
-./target/release/grit-bench odb --format json --output grit-utils/baselines/odb-read.json
+GRIT_BENCH_BRANCH=factory/refs-bench-774 ./target/release/grit-bench refs --format json --output grit-utils/baselines/refs-before.json
 ```
 
-**Measured outcomes:** the Object reads table below is generated from committed `grit-utils/baselines/odb-read.json` (hyperfine **≥5** runs per scenario, grit vs system git medians and peak RSS). Refresh with two invocations and `grit-bench compare run1.json run2.json --tolerance 0.10` before updating the baseline file and running `make docs`.
+Set `GRIT_BENCH_BRANCH` to the GitButler branch you are benchmarking so `grit_commit` in the JSON matches that branch tip (required on `gitbutler/workspace` checkouts).
+
+Driver **`for-each-ref`** output is checked against git byte-for-byte in `grit-utils` integration tests (1 000-ref fixture).
 
 ## grit-bench: network (clone, fetch, push, ls-remote)
 
@@ -275,6 +275,7 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 | object_reads | 8 | 234.49× | 4569.02× |
 | odb_backend | 6 | 14.90× | 98.20× |
 | pick | 4 | 8.63× | 17.09× |
+| refs | 10 | 2.05× | 4509.07× |
 | status | 4 | 6.17× | 48.09× |
 | switch | 4 | 3.61× | 22.50× |
 
@@ -372,6 +373,21 @@ Regenerate release binaries with **`cargo build --release -p grit-lib`** before 
 | `pick-series-10000` | synthetic-10000 | 129 | 1,551 | 11.98× | ±64.2 ms |
 | `pick-100000` | synthetic-100000 | 194 | 1,021 | 5.27× | ±48.8 ms |
 | `pick-series-100000` | synthetic-100000 | 1,045 | 17,861 | 17.09× | ±426 ms |
+
+### refs
+
+| Scenario | Fixture | Git mean (ms) | Grit mean (ms) | Grit / Git | Spread |
+| --- | --- | ---: | ---: | ---: | --- |
+| `for-each-ref-all-refs-100k-loose` | refs-100k-loose | 1,266 | 1,331 | 1.05× | ±25.7 ms |
+| `for-each-ref-prefix-b05-refs-100k-loose` | refs-100k-loose | 412 | 864 | 2.10× | ±22.1 ms |
+| `update-ref-create-100k-refs-100k-loose` | refs-100k-loose | 3,311 | 7,159 | 2.16× | ±67.9 ms |
+| `update-ref-delete-1k-refs-100k-loose` | refs-100k-loose | 65.2 | 64.9 | 1.00× | ±19.2 ms |
+| `update-ref-update-1k-refs-100k-loose` | refs-100k-loose | 95.1 | 112 | 1.18× | ±35.3 ms |
+| `for-each-ref-all-refs-100k-packed` | refs-100k-packed | 862 | 595 | 0.69× | ±23.8 ms |
+| `for-each-ref-prefix-b05-refs-100k-packed` | refs-100k-packed | 10.5 | 89.6 | 8.53× | ±9.36 ms |
+| `update-ref-create-100k-refs-100k-packed` | refs-100k-packed | 3,733 | 7,452 | 2.00× | ±84.4 ms |
+| `update-ref-delete-1k-refs-100k-packed` | refs-100k-packed | 53.1 | 161,057 | 3030.60× | ±6,691 ms |
+| `update-ref-update-1k-refs-100k-packed` | refs-100k-packed | 40.8 | 184,128 | 4509.07× | ±3,251 ms |
 
 ### status
 

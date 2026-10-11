@@ -80,4 +80,5 @@ baseline = [
   "grit-utils/baselines/blame-deep-2000.json",
   "grit-utils/baselines/stash-push-pop-LH.json",
   "grit-utils/baselines/refs-after.json",
+  "grit-utils/baselines/refs-before.json",
 ]
