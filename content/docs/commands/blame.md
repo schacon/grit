@@ -17,6 +17,8 @@ Walks history for one file and prints each line with the commit that last modifi
 
 Blame reuses parsed blob lines, tree path lookups, and parent/child line maps across the history walk so large files with deep history stay responsive. On this repository, blaming `grit-lib/src/pack.rs` (~4.6k lines, ~90 commits) completes in a few seconds on a release build; system `git blame` on the same path is still faster, and very large histories may take longer than `git`.
 
+When a commit renamed or moved the file (including rename-and-edit in the same commit), blame follows the predecessor path using rename detection with Git's default similarity threshold (50%, like `git blame` with `-M`). This behavior is independent of `diff.renames` (system Git blame still follows renames when that diff setting is off). Git's `diff.renameLimit` and `status.renameLimit` cap how many rename pairings diff/status consider; they do not change blame's similarity percentage.
+
 ## Options
 
 | Option | Description |
@@ -59,7 +61,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines[].commit` | string | Full commit oid for the line. |
 | `lines[].original_line` | number | 1-based line number in the originating commit. |
 | `lines[].final_line` | number | 1-based line number in the blamed revision. |
-| `lines[].content` | string | Line text without trailing line terminators. |
+| `lines[].content` | string | Line text. |
 | `commits` | object | Map of commit oid → metadata for every line. |
 | `commits.<oid>.author` | string | Author identity line. |
 | `commits.<oid>.author_time` | number | Author time (Unix seconds). |
@@ -81,18 +83,15 @@ Example:
   ],
   "commits": {
     "919c45f33de5e5c0bd05f8ffb089f697f4644976": {
-      "author": "Blame Test <blame@example.com> 1700000000 +0000",
-      "author_time": 1700000000,
-      "summary": "init"
+      "author": "Blame Test <blame@example.com>",
+      "author_time": 1710000000,
+      "summary": "edit first line"
     }
   }
 }
 ```
 
-## Markdown output
-
-Pass `--markdown` for a table suited to agents: columns are final line, short commit, author, date, original line, and content. Each row is one line; pipes and embedded newlines in content are escaped so the table stays valid.
-
 ## See also
 
-[grit log](../log/), [grit show](../show/)
+- [`grit log`](log.md) — commit history
+- [`grit show`](show.md) — one commit's message and file stats

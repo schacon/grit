@@ -1503,6 +1503,27 @@ pub fn diff_trees(
     diff_trees_opts(odb, old_tree_oid, new_tree_oid, prefix, false)
 }
 
+/// Diff two trees and pair deleted/added paths as renames when content is similar enough.
+///
+/// `rename_threshold` is Git's `-M` percentage (default 50). Use `100` to skip rename detection.
+///
+/// # Errors
+///
+/// Propagates errors from [`diff_trees`].
+pub fn diff_trees_with_renames(
+    odb: &Odb,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+    rename_threshold: u32,
+) -> Result<Vec<DiffEntry>> {
+    let mut entries = diff_trees(odb, old_tree_oid, new_tree_oid, prefix)?;
+    if rename_threshold < 100 {
+        entries = detect_renames(odb, None, entries, rename_threshold);
+    }
+    Ok(entries)
+}
+
 /// Like `diff_trees` but with `show_trees` flag: when true, emit entries for
 /// tree objects themselves in addition to their recursive contents (the `-t`
 /// flag of `diff-tree`).

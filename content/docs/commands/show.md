@@ -13,7 +13,7 @@ grit show [<object>]
 
 ## Description
 
-Shows a commit's id, author, date and full message, followed by a summary of the files it changed and how many lines were added and removed in each. With no argument, it shows the current commit.
+Shows a commit's id, author, date and full message, followed by a summary of the files it changed and how many lines were added and removed in each. With no argument, it shows the current commit. File stats use rename detection (Git `-M50`), so a rename with minor edits is shown as `old => new` with insertion/deletion counts for the content delta, not as deleting the old path and adding the new one.
 
 `<object>` can be a commit id (full or short), an expression like `HEAD~2`, a branch or a tag. For a branch or tag, the first line names it. For an annotated tag, the tag's own author, date and message come before the commit it points at.
 

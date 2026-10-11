@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_trees, read_submodule_head_oid,
+    diff_trees_with_renames, read_submodule_head_oid,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
@@ -228,8 +228,9 @@ fn commit_changes(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Result<V
         None => None,
     };
 
-    let mut entries = diff_trees(&repo.odb, old_tree.as_ref(), Some(&new_tree), "")
-        .context("could not diff the commit")?;
+    let mut entries =
+        diff_trees_with_renames(&repo.odb, old_tree.as_ref(), Some(&new_tree), "", 50)
+            .context("could not diff the commit")?;
     sort_entries(&mut entries);
 
     entries
