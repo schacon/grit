@@ -174,6 +174,47 @@ minimum = 50.0
                 )
             )
 
+    def test_total_floor_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            floors_path = Path(tmp) / "floors.toml"
+            floors_path.write_text(
+                """
+[meta]
+updated = "test"
+
+[total]
+minimum = 99.0
+
+[core]
+groups = ["odb"]
+minimum = 50.0
+
+[group.odb]
+files = ["odb/mod.rs"]
+minimum = 50.0
+
+[file."odb/mod.rs"]
+minimum = 50.0
+""",
+                encoding="utf-8",
+            )
+            floors = cov.load_floors(floors_path)
+            self.assertEqual(floors.total_minimum, 99.0)
+            stats = cov.parse_coverage_json(_sample_json())
+            _table, failures = cov.check(floors, stats)
+            self.assertTrue(any("total:" in f for f in failures))
+
+    def test_update_ratchet_total_never_lowers(self) -> None:
+        floors_path = ROOT / "grit-lib" / "coverage-floors.toml"
+        floors = cov.load_floors(floors_path)
+        stats = cov.parse_coverage_json(_sample_json())
+        if floors.total_minimum is None:
+            floors.total_minimum = 90.0
+        else:
+            floors.total_minimum = max(floors.total_minimum, 90.0)
+        updated = cov.apply_update(floors, stats)
+        self.assertGreaterEqual(updated.total_minimum, floors.total_minimum)
+
     def test_aggregate_failure_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             floors_path = Path(tmp) / "floors.toml"

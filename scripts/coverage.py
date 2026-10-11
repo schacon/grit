@@ -40,6 +40,7 @@ class Floors:
     meta: dict[str, str]
     core_groups: list[str]
     core_minimum: float
+    total_minimum: float | None
     aggregates: dict[str, tuple[list[str], float]]
     groups: dict[str, tuple[list[str], float | None]]
     files: dict[str, float]
@@ -56,6 +57,12 @@ def load_floors(path: Path) -> Floors:
     core = data.get("core", {})
     core_groups = [str(g) for g in core.get("groups", [])]
     core_minimum = float(core.get("minimum", 0.0))
+
+    total_section = data.get("total", {})
+    total_minimum_raw = total_section.get("minimum")
+    total_minimum = (
+        float(total_minimum_raw) if total_minimum_raw is not None else None
+    )
 
     aggregates: dict[str, tuple[list[str], float]] = {}
     for name, value in data.get("aggregate", {}).items():
@@ -76,6 +83,7 @@ def load_floors(path: Path) -> Floors:
         meta=meta,
         core_groups=core_groups,
         core_minimum=core_minimum,
+        total_minimum=total_minimum,
         aggregates=aggregates,
         groups=groups,
         files=files,
@@ -175,6 +183,10 @@ def write_floors(path: Path, floors: Floors) -> None:
             "",
         ]
     )
+    if floors.total_minimum is not None:
+        lines.append("[total]")
+        lines.append(f"minimum = {floors.total_minimum}")
+        lines.append("")
     for name in sorted(floors.aggregates):
         group_names, minimum = floors.aggregates[name]
         lines.append(f"[aggregate.{name}]")
@@ -234,10 +246,18 @@ def apply_update(floors: Floors, stats: dict[str, LineStats]) -> Floors:
     meta = dict(floors.meta)
     meta["updated"] = meta.get("updated", "")
 
+    total_stats = aggregate(list(stats.keys()), stats)
+    new_total_minimum = floors.total_minimum
+    if new_total_minimum is not None:
+        new_total_minimum = max(
+            new_total_minimum, ratchet_floor(total_stats.percent)
+        )
+
     return Floors(
         meta=meta,
         core_groups=floors.core_groups,
         core_minimum=new_core_minimum,
+        total_minimum=new_total_minimum,
         aggregates=new_aggregates,
         groups=new_groups,
         files=new_files,
@@ -311,6 +331,16 @@ def check(
         if not ok:
             failures.append(
                 f"aggregate {name}: {st.percent:.1f}% below floor {minimum:.1f}%"
+            )
+
+    if floors.total_minimum is not None:
+        total_stats = aggregate(list(stats.keys()), stats)
+        ok = total_stats.percent + 1e-9 >= floors.total_minimum
+        table.append(format_row("total", total_stats, floors.total_minimum, ok))
+        if not ok:
+            failures.append(
+                f"total: {total_stats.percent:.1f}% below floor "
+                f"{floors.total_minimum:.1f}%"
             )
 
     return table, failures

@@ -60,10 +60,13 @@ docs-check: site/node_modules
 	$(CARGO) doc -p grit-lib --no-deps
 	cd site && GRIT_SITE_STRICT=1 npm run check && npm test && npm run typecheck && GRIT_SITE_STRICT=1 npm run build
 
+LLVM_COV_FEATURES ?= http-ureq
+
 coverage:
 	@mkdir -p target/llvm-cov
 	$(CARGO) build -p grit-cli --target-dir $(LLVM_COV_TARGET)
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --lib --tests --json --summary-only --output-path target/llvm-cov/summary.json
+	$(CARGO) build -p grit-http-server --target-dir $(LLVM_COV_TARGET)
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --summary-only --output-path target/llvm-cov/summary.json
 	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/coverage.py --input target/llvm-cov/summary.json
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov report --html --output-dir target/llvm-cov/html
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --html --output-dir target/llvm-cov/html
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --lcov --output-path target/llvm-cov/lcov.info
