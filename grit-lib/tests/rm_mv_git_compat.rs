@@ -606,6 +606,32 @@ fn mv_force_partial_destination_cleanup_restores_removed_files() {
 }
 
 #[test]
+fn mv_case_only_does_not_clobber_predictable_temp_pattern_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    git(repo_dir, &["config", "core.ignorecase", "true"]);
+    fs::write(repo_dir.join("README.md"), "hi\n").unwrap();
+    let decoy = format!(".readme.md.grit-mv-{}", std::process::id());
+    fs::write(repo_dir.join(&decoy), "keep\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let repo = grit_repo(repo_dir);
+    move_path(&repo, "README.md", "readme.md", false).expect("case-only mv");
+
+    assert!(
+        repo_dir.join(&decoy).is_file(),
+        "unrelated file matching the old temp pattern must survive case-only mv"
+    );
+    let index = repo.load_index().expect("index");
+    assert!(
+        index.get(decoy.as_bytes(), 0).is_some(),
+        "index entry for decoy must remain"
+    );
+    assert!(repo_dir.join("readme.md").is_file());
+}
+
+#[test]
 fn mv_case_only_rename_with_ignorecase() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_dir = tmp.path();

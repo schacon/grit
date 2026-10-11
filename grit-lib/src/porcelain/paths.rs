@@ -729,26 +729,57 @@ fn ensure_worktree_move_sources_exist(
     Ok(())
 }
 
-fn rename_worktree_entry(from: &Path, to: &Path, _ignorecase: bool) -> std::io::Result<()> {
+fn rename_worktree_entry(from: &Path, to: &Path, ignorecase: bool) -> std::io::Result<()> {
     if from == to {
         return Ok(());
     }
     let from_name = from.to_string_lossy();
     let to_name = to.to_string_lossy();
-    if from_name.eq_ignore_ascii_case(to_name.as_ref()) {
-        let parent = to.parent().unwrap_or_else(|| Path::new("."));
-        let temp = parent.join(format!(
-            ".{}.grit-mv-{}",
-            to.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "mv".into()),
-            std::process::id()
-        ));
-        fs::rename(from, &temp)?;
-        fs::rename(&temp, to)?;
-        return Ok(());
+    if ignorecase && from_name.eq_ignore_ascii_case(to_name.as_ref()) && from != to {
+        case_only_worktree_rename(from, to)
+    } else {
+        fs::rename(from, to)
     }
-    fs::rename(from, to)
+}
+
+fn case_only_worktree_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    let parent = to.parent().unwrap_or_else(|| Path::new("."));
+    for _ in 0..32 {
+        let temp_file = tempfile::Builder::new()
+            .prefix(".grit-mv-")
+            .rand_bytes(12)
+            .tempfile_in(parent)?;
+        let temp_path = temp_file.into_temp_path();
+        if temp_path.exists() {
+            match fs::rename(from, &temp_path) {
+                Ok(()) => match fs::rename(&temp_path, to) {
+                    Ok(()) => {
+                        std::mem::forget(temp_path);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        if fs::rename(&temp_path, from).is_err() {
+                            return Err(std::io::Error::new(
+                                e.kind(),
+                                format!(
+                                    "renaming back to '{}' after failed final case-only step: \
+                                     source may be at '{}'",
+                                    from.display(),
+                                    temp_path.display()
+                                ),
+                            ));
+                        }
+                        return Err(e);
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Err(std::io::Error::other(
+        "could not allocate a unique temporary path for case-only rename",
+    ))
 }
 
 fn plan_index_renames(index: &Index, src: &str, final_dst: &str) -> Result<Vec<(String, String)>> {
