@@ -427,29 +427,43 @@ impl FilesRefStore {
         &self,
         update: &RefUpdate,
         batch_extras: &BTreeSet<String>,
+        batch_start: &RefBatchState,
+        state_before: &RefBatchState,
     ) -> StoreResult<()> {
         if update.flags.log_only {
             return Ok(());
         }
-        let actual = self
-            .read_raw(&update.name)
-            .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
-        if !expected_matches(actual.as_ref(), &update.expected) {
+        let batch_actual = state_before.refs.get(&update.name).cloned();
+        let batch_differs =
+            batch_start.refs.get(&update.name) != state_before.refs.get(&update.name);
+        let actual = if batch_differs {
+            batch_actual
+        } else {
+            Some(
+                self.read_raw(&update.name)
+                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?,
+            )
+            .flatten()
+        };
+        let actual_ref = actual.as_ref();
+        if !expected_matches(actual_ref, &update.expected) {
             return Err(RefStoreError::ExpectedMismatch {
                 name: update.name.clone(),
                 expected: update.expected.clone(),
                 actual,
             });
         }
-        if update.new_value.is_some() && actual.is_none() {
-            let skip = HashSet::new();
-            if let Err(reason) = crate::refs::verify_refname_available_for_create(
-                &self.git_dir,
-                &update.name,
-                batch_extras,
-                &skip,
-            ) {
-                return Err(reason.into());
+        if update.new_value.is_some() && actual_ref.is_none() {
+            if !batch_differs {
+                let skip = HashSet::new();
+                if let Err(reason) = crate::refs::verify_refname_available_for_create(
+                    &self.git_dir,
+                    &update.name,
+                    batch_extras,
+                    &skip,
+                ) {
+                    return Err(reason.into());
+                }
             }
         }
         Ok(())
@@ -565,7 +579,7 @@ impl FilesRefStore {
                 self.acquire_ref_lock(&lock_path, name)
                     .map_err(Error::from)?;
                 let write_result = (|| {
-                    self.recheck_update_at_commit(update, &batch_extras)
+                    self.recheck_update_at_commit(update, &batch_extras, before, &running)
                         .map_err(Error::from)?;
                     self.persist_one_ref_change(name, &next, &lock_path, packed_lock_held)
                 })();
@@ -573,7 +587,7 @@ impl FilesRefStore {
                 write_result?;
                 persisted_refs.insert(name.clone());
             } else {
-                self.recheck_update_at_commit(update, &batch_extras)
+                self.recheck_update_at_commit(update, &batch_extras, before, &running)
                     .map_err(Error::from)?;
             }
 
