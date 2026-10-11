@@ -39,6 +39,9 @@ pub(crate) struct Cli {
     /// Examples: `.branch`, `.commits[].oid`, `{branch, clean}`.
     #[arg(long, global = true, value_name = "EXPR")]
     filter: Option<String>,
+    /// Worker threads for parallel library work (`0` = auto, `1` = serial).
+    #[arg(long, global = true, value_name = "N")]
+    threads: Option<usize>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -430,6 +433,7 @@ fn main() {
         },
         filter: cli.filter.clone(),
     };
+    context::set_thread_policy(cli.threads);
     if let Err(err) = opts.validate() {
         if opts.mode == OutputMode::Json {
             output::emit_error(&err, &opts);
@@ -723,7 +727,7 @@ mod tests {
 
     /// Options every command accepts; they're documented once on the docs
     /// overview page rather than on each command's page.
-    const GLOBAL_OPTIONS: &[&str] = &["help", "version", "json", "markdown", "filter"];
+    const GLOBAL_OPTIONS: &[&str] = &["help", "version", "json", "markdown", "filter", "threads"];
 
     /// Required `##` sections on every command page, in order. `Markdown output`
     /// may appear after `JSON output` when the command supports `--markdown`.

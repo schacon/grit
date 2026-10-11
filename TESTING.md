@@ -89,6 +89,8 @@ GitHub Actions workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | **rustdoc** | Workspace API docs with warnings denied (see below) | `make doc` |
 | **coverage** | `make coverage` (llvm-cov on `grit-lib`, floor ratchet) | `make coverage` |
 | **test** | `cargo test -p grit-lib -p grit-cli`, then builds `grit` + `grit-http-server` and runs the transport tests | See [Running tests](#running-tests) and [Transport tests](#transport-tests-fetch-and-push-over-smart-http) |
+| **test-threaded** | `cargo test --release --workspace` with `GIT_CONFIG_COUNT` pairs forcing parallel config (`index.threads`, `pack.threads`, `checkout.workers`, `checkout.thresholdForParallelism=0`) | Same env vars as the workflow step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| **miri** | `cargo +nightly miri test -p grit-lib --lib parallel::` over the scoped ordered pool unit tests | `rustup toolchain install nightly -c miri` then the command above |
 
 Each job uses **`ubuntu-latest`** (the **scripts** job uses **`timeout-minutes: 5`**; **coverage** uses **30**; the others use **15**), and the jobs run in parallel. The website has its own workflow, **[`site.yml`](.github/workflows/site.yml)** (see below).
 

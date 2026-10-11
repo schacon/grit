@@ -115,6 +115,8 @@ fn fetch_once(
             repo,
             FetchOptions {
                 tags: TagMode::Following,
+                thread_policy: repo.thread_policy(),
+                environment: crate::context::environment(),
                 ..Default::default()
             },
             &mut NoProgress,

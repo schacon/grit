@@ -13,7 +13,7 @@ use crate::index::{Index, IndexEntry};
 const FNV32_BASE: u32 = 0x811c9dc5;
 const FNV32_PRIME: u32 = 0x0100_0193;
 /// Matches Git `name-hash.c` (`LAZY_THREAD_COST`).
-const LAZY_THREAD_COST: usize = 2000;
+pub(crate) const LAZY_THREAD_COST: usize = 2000;
 /// Initial hash table size in Git's `hashmap.c` (`HASHMAP_INITIAL_SIZE`).
 const HASHMAP_INITIAL_SIZE: usize = 64;
 
@@ -268,26 +268,13 @@ fn lazy_update_dir_ref_counts(table: &mut DirTable, lazy_entries: &[LazyEntry]) 
     }
 }
 
-fn lookup_lazy_params(try_threaded: bool, cache_nr: usize) -> usize {
-    if !try_threaded {
-        return 0;
-    }
-
-    let nr_cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    if nr_cpus < 2 {
-        return 0;
-    }
-    if cache_nr < 2 * LAZY_THREAD_COST {
-        return 0;
-    }
-
-    let mut nr_cpus = nr_cpus;
-    if cache_nr < nr_cpus * LAZY_THREAD_COST {
-        nr_cpus = cache_nr / LAZY_THREAD_COST;
-    }
-    nr_cpus
+fn lookup_lazy_params(
+    policy: &crate::parallel::ThreadPolicy,
+    config: &crate::config::ConfigSet,
+    try_threaded: bool,
+    cache_nr: usize,
+) -> usize {
+    crate::parallel::index_load_lazy_thread_count(policy, config, cache_nr, try_threaded)
 }
 
 fn sequential_lazy_build(index: &Index) -> (DirTable, Vec<LazyEntry>) {
@@ -412,7 +399,9 @@ fn single_threaded_hash_pass(index: &Index) {
 /// Returns an error on IO failure or when `multi` was requested without threads.
 pub fn dump_lazy_init_name_hash(index: &Index, multi: bool) -> Result<(), String> {
     let cache_nr = index.entries.len();
-    let nr_threads = lookup_lazy_params(multi, cache_nr);
+    let policy = crate::parallel::ThreadPolicy::default();
+    let config = crate::config::ConfigSet::new();
+    let nr_threads = lookup_lazy_params(&policy, &config, multi, cache_nr);
     if multi && nr_threads == 0 {
         return Err("non-threaded code path used".to_owned());
     }
@@ -454,7 +443,9 @@ pub fn dump_lazy_init_name_hash(index: &Index, multi: bool) -> Result<(), String
 /// (should not happen after worker threads have joined).
 pub fn test_lazy_init_name_hash(index: &Index, try_threaded: bool) -> Result<usize, String> {
     let cache_nr = index.entries.len();
-    let nr_threads = lookup_lazy_params(try_threaded, cache_nr);
+    let policy = crate::parallel::ThreadPolicy::default();
+    let config = crate::config::ConfigSet::new();
+    let nr_threads = lookup_lazy_params(&policy, &config, try_threaded, cache_nr);
     if nr_threads == 0 {
         single_threaded_hash_pass(index);
     } else {

@@ -27,7 +27,7 @@ pub struct IngestedPack {
 }
 
 /// Options controlling how a received pack is ingested.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct IngestPackOptions {
     /// When true, append missing ref-delta bases from `odb` before indexing
     /// (matches `git index-pack --fix-thin`).
@@ -37,23 +37,43 @@ pub struct IngestPackOptions {
     /// Skip the redundant post-index [`verify_pack_and_collect`] pass after the
     /// pack trailer was validated during indexing. Does not disable trailer checks.
     pub skip_post_index_verify: bool,
+    /// Merged config from the fetch/clone environment (includes command-scope `GIT_CONFIG_*`).
+    pub merged_config: Option<crate::config::ConfigSet>,
+    /// Environment used when [`Self::merged_config`] is unset and config is loaded from disk.
+    pub environment: crate::environment::Environment,
+}
+
+impl Default for IngestPackOptions {
+    fn default() -> Self {
+        Self {
+            fix_thin: false,
+            threads: None,
+            skip_post_index_verify: false,
+            merged_config: None,
+            environment: crate::environment::Environment::empty(),
+        }
+    }
 }
 
 impl IngestPackOptions {
-    fn index_parallelism(&self, odb: &Odb) -> Parallelism {
+    fn index_parallelism(&self, odb: &Odb) -> Result<Parallelism> {
         if let Some(n) = self.threads {
-            Parallelism::resolve(Some(n))
-        } else if let Some(git_dir) = odb.config_git_dir() {
-            crate::config::ConfigSet::load(
-                &crate::environment::Environment::empty(),
-                Some(git_dir),
-                true,
-            )
-            .map(|c| c.pack_index_parallelism())
-            .unwrap_or_else(|_| Parallelism::resolve(None))
-        } else {
-            Parallelism::resolve(None)
+            return Ok(Parallelism::resolve(Some(n)));
         }
+        if let Some(cfg) = &self.merged_config {
+            return crate::parallel::ThreadPolicy::default()
+                .try_resolve(crate::parallel::ParallelOp::IndexPack, cfg)
+                .map(|o| o.parallelism())
+                .map_err(Error::Config);
+        }
+        if let Some(git_dir) = odb.config_git_dir() {
+            let cfg = crate::config::ConfigSet::load(&self.environment, Some(git_dir), true)?;
+            return crate::parallel::ThreadPolicy::default()
+                .try_resolve(crate::parallel::ParallelOp::IndexPack, &cfg)
+                .map(|o| o.parallelism())
+                .map_err(Error::Config);
+        }
+        Ok(Parallelism::resolve(None))
     }
 }
 
@@ -195,8 +215,8 @@ pub fn install_pack_path(
             let records = crate::pack_index_build::build_pack_index_records(
                 pack_bytes,
                 odb,
-                opts.index_parallelism(odb),
-                true,
+                opts.index_parallelism(odb)?,
+                !opts.skip_post_index_verify,
             )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             (records, trailer)

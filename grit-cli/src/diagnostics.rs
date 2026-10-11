@@ -227,11 +227,10 @@ pub fn repository_options(
     let sink = Arc::new(CliDiagnosticSink::new());
     let mut options = grit_lib::environment::RepositoryOptions {
         environment: crate::context::environment(),
-        ..grit_lib::environment::RepositoryOptions {
-            diagnostics: sink.clone(),
-            network_trace,
-            ..Default::default()
-        }
+        thread_policy: crate::context::thread_policy_for_repo(),
+        diagnostics: sink.clone(),
+        network_trace,
+        ..Default::default()
     };
     options.reference_unix_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

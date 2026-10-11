@@ -2421,6 +2421,8 @@ pub struct DiffIndexToWorktreeOptions {
     /// Override parallel stat workers (`Some(1)` forces serial). When `None`, honors
     /// `core.preloadIndex` and [`crate::worktree_scan::PARALLEL_STAT_MIN_ENTRIES`].
     pub stat_parallel_threads: Option<usize>,
+    /// CLI / embedder thread override applied to stat preload and hashing in this diff.
+    pub thread_policy: Option<crate::parallel::ThreadPolicy>,
     /// Shared per-operation attribute/conversion context (see [`crate::worktree_rules::WorktreeRules`]).
     pub worktree_rules:
         Option<std::sync::Arc<std::sync::Mutex<crate::worktree_rules::WorktreeRules>>>,
@@ -3015,7 +3017,8 @@ fn diff_index_to_worktree_inner(
         index_entry_worktree_abs(&work_tree_for_files, rel, precompose_unicode, ignorecase)
     };
     let blob_count: usize = blob_dirs.values().map(|v| v.len()).sum();
-    let hash_threads = stat_scan_thread_count(blob_scan, blob_count);
+    let thread_policy = options.thread_policy.unwrap_or_default();
+    let hash_threads = stat_scan_thread_count(&thread_policy, &config, blob_scan, blob_count);
     let parallel_blob_work =
         materialize_dirty_blobs && blob_count >= PARALLEL_STAT_MIN_ENTRIES && hash_threads > 1;
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
@@ -3023,6 +3026,8 @@ fn diff_index_to_worktree_inner(
     for_each_blob_by_directory_parallel(
         &blob_dirs,
         blob_scan,
+        &thread_policy,
+        &config,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -3850,9 +3855,12 @@ pub fn refresh_index_stat_content_verified_with_rules(
     let mut dir_symlinks = SymlinkDirCache::default();
     let mut changed = false;
     let filter_fp = rules_lock.as_ref().map(|r| r.filter_process());
+    let thread_policy = crate::parallel::ThreadPolicy::default();
     for_each_blob_by_directory_parallel(
         &blob_dirs,
         blob_scan,
+        &thread_policy,
+        &config,
         dir_abs,
         file_abs,
         |rel_path| {

@@ -46,48 +46,58 @@ const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200"),
 ];
 
-const INGEST_VARIANTS: &[IngestPackOptions] = &[
-    IngestPackOptions {
-        fix_thin: false,
-        threads: Some(1),
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: false,
-        threads: Some(8),
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: false,
-        threads: None,
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: true,
-        threads: Some(1),
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: true,
-        threads: Some(8),
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: true,
-        threads: None,
-        skip_post_index_verify: false,
-    },
-    IngestPackOptions {
-        fix_thin: false,
-        threads: Some(1),
-        skip_post_index_verify: true,
-    },
-    IngestPackOptions {
-        fix_thin: false,
-        threads: Some(8),
-        skip_post_index_verify: true,
-    },
-];
+fn ingest_variants() -> [IngestPackOptions; 8] {
+    [
+        IngestPackOptions {
+            fix_thin: false,
+            threads: Some(1),
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: false,
+            threads: Some(8),
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: false,
+            threads: None,
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: true,
+            threads: Some(1),
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: true,
+            threads: Some(8),
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: true,
+            threads: None,
+            skip_post_index_verify: false,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: false,
+            threads: Some(1),
+            skip_post_index_verify: true,
+            ..Default::default()
+        },
+        IngestPackOptions {
+            fix_thin: false,
+            threads: Some(8),
+            skip_post_index_verify: true,
+            ..Default::default()
+        },
+    ]
+}
 
 #[derive(Clone, Copy, Debug)]
 enum PackShape {
@@ -702,6 +712,7 @@ fn install_rejects_corrupt_trailer_with_skip_post_index_verify() {
         fix_thin: false,
         threads: Some(4),
         skip_post_index_verify: true,
+        ..Default::default()
     };
     let err = install_pack_bytes(corrupt, &odb, &opts).expect_err("corrupt pack trailer");
     let msg = err.to_string();
@@ -764,7 +775,7 @@ fn pack_index_records_with_threads_matches_single_thread() {
 fn ingest_every_option_passes_git_verify_and_fsck_sha1() {
     for shape in ALL_PACK_SHAPES {
         let fx = shared_pack(shape, HashAlgo::Sha1).expect("fixture");
-        for opts in INGEST_VARIANTS {
+        for opts in &ingest_variants() {
             let (_keep, git_dir) =
                 install_into_git_repo(fx.bytes.clone(), fx.algo, opts, shape.label());
             git_verify_and_fsck(&git_dir.join("objects/pack"), fx.algo);
@@ -775,7 +786,7 @@ fn ingest_every_option_passes_git_verify_and_fsck_sha1() {
 #[test]
 fn ingest_received_pack_matches_install_sha1() {
     let fx = shared_pack(PackShape::GitDelta, HashAlgo::Sha1).expect("fixture");
-    for opts in INGEST_VARIANTS {
+    for opts in &ingest_variants() {
         let tmp = tempfile::tempdir().expect("odb");
         let odb = Odb::new(tmp.path().join("objects").as_path());
         let via_install = install_pack_bytes(fx.bytes.clone(), &odb, opts).expect("install");
@@ -1372,7 +1383,7 @@ fn pack_index_build_sha256_delta_pack_threads() {
 fn read_pack_bytes_cached_serves_installed_delta_pack() {
     let fx = shared_pack(PackShape::GitDelta, HashAlgo::Sha1).expect("fixture");
     let (_keep, git_dir) =
-        install_into_git_repo(fx.bytes.clone(), fx.algo, &INGEST_VARIANTS[0], "git-delta");
+        install_into_git_repo(fx.bytes.clone(), fx.algo, &ingest_variants()[0], "git-delta");
     let pack_dir = git_dir.join("objects/pack");
     let pack_path = std::fs::read_dir(&pack_dir)
         .expect("pack dir")

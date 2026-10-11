@@ -184,9 +184,15 @@ pub fn stage_tracked_modifications_in_index(
         stat_parallel_threads: None,
     };
     let mut blob_scan: Vec<(String, BlobDiskLookup)> = Vec::new();
+    let rules_config = repo
+        .config()
+        .unwrap_or_else(|_| std::sync::Arc::new(crate::config::ConfigSet::new()));
+    let thread_policy = repo.thread_policy();
     for_each_blob_by_directory_parallel(
         &blob_dirs,
         blob_scan_opts,
+        &thread_policy,
+        &rules_config,
         dir_abs,
         file_abs,
         |rel_path| {

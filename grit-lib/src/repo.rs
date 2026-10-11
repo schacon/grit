@@ -109,6 +109,7 @@ pub struct Repository {
     reference_unix_time: Option<i64>,
     test_assume_different_owner: bool,
     force_split_index: bool,
+    thread_policy: crate::parallel::ThreadPolicy,
 }
 
 impl std::fmt::Debug for Repository {
@@ -232,7 +233,14 @@ impl Repository {
             reference_unix_time: options.reference_unix_time,
             test_assume_different_owner: options.test_assume_different_owner,
             force_split_index: options.force_split_index,
+            thread_policy: options.thread_policy,
         })
+    }
+
+    /// Explicit parallel worker overrides for this handle (`--threads` / embedder policy).
+    #[must_use]
+    pub fn thread_policy(&self) -> crate::parallel::ThreadPolicy {
+        self.thread_policy
     }
 
     /// Return this handle's shared cache arena.
@@ -626,6 +634,7 @@ impl Repository {
             reference_unix_time: options.reference_unix_time,
             test_assume_different_owner: options.test_assume_different_owner,
             force_split_index: options.force_split_index,
+            thread_policy: options.thread_policy,
         };
         let cfg = repo.ensure_config_arc()?;
         repo.install_config_snapshot(cfg);
