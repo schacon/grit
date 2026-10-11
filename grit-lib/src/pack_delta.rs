@@ -32,6 +32,50 @@ use crate::parallel::{
     try_par_map_force, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy,
 };
 
+/// Try consecutive blob deltas in discovery order so bases precede targets in the pack stream.
+pub(crate) fn extend_send_order_blob_deltas(
+    send: &[ObjectId],
+    objects: &HashMap<ObjectId, Object>,
+    delta_to_base: &mut HashMap<ObjectId, ObjectId>,
+    skip_targets: &HashSet<ObjectId>,
+    hash_len: usize,
+) {
+    let mut prev_blob: Option<ObjectId> = None;
+    for &oid in send {
+        let obj = &objects[&oid];
+        if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
+            continue;
+        }
+        if skip_targets.contains(&oid) || delta_to_base.contains_key(&oid) {
+            prev_blob = Some(oid);
+            continue;
+        }
+        if let Some(base) = prev_blob {
+            let max_size = obj
+                .data
+                .len()
+                .saturating_div(2)
+                .saturating_sub(hash_len);
+            if max_size == 0 {
+                prev_blob = Some(oid);
+                continue;
+            }
+            let base_data = &objects[&base].data;
+            let chosen = if obj.data.starts_with(base_data) && obj.data.len() > base_data.len() {
+                encode_prefix_extension_delta(base_data, &obj.data)
+                    .ok()
+                    .filter(|d| d.len() <= max_size)
+            } else {
+                DeltaIndex::new(base_data).encode(&obj.data, max_size)
+            };
+            if chosen.is_some() {
+                delta_to_base.insert(oid, base);
+            }
+        }
+        prev_blob = Some(oid);
+    }
+}
+
 /// Resolve [`ParallelOptions`] for windowed delta search from repo config.
 pub(crate) fn pack_delta_search_parallel_options(
     odb: &Odb,
