@@ -148,7 +148,7 @@ impl ThreadPolicy {
         })
     }
 
-    /// Thread count for index stat preload (preserves the historical four-thread cap).
+    /// Thread count for index stat preload (Git `preload-index.c`: ~500 entries per thread).
     #[must_use]
     pub fn index_stat_preload_threads(
         &self,
@@ -156,26 +156,30 @@ impl ThreadPolicy {
         blob_count: usize,
         stat_parallel_threads: Option<usize>,
     ) -> usize {
-        const STAT_CAP: usize = 8;
+        const THREAD_COST: usize = 500;
+        const MAX_PARALLEL: usize = 20;
+
         if !core_preload_index(config) || blob_count < PARALLEL_STAT_MIN_ENTRIES {
             return 1;
         }
-        if let Some(n) = self.threads_override {
-            if n <= 1 {
-                return 1;
-            }
-            return n.min(STAT_CAP);
+
+        let mut threads = blob_count / THREAD_COST;
+        if threads < 2 {
+            threads = 2;
         }
+        threads = threads.min(MAX_PARALLEL);
+
+        let index_cap = resolve_index_threads(config, self.threads_override).get();
+        threads = threads.min(index_cap);
+
         if let Some(requested) = stat_parallel_threads {
             if requested <= 1 {
                 return 1;
             }
-            return requested.min(STAT_CAP);
+            threads = threads.min(requested);
         }
-        let cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        cpus.clamp(1, STAT_CAP)
+
+        threads.max(1)
     }
 }
 
@@ -485,10 +489,21 @@ mod tests {
     }
 
     #[test]
-    fn stat_preload_respects_cap_and_override() {
+    fn stat_preload_respects_preload_math_and_override() {
         let cfg = ConfigSet::new();
+        let policy = ThreadPolicy::default();
+        let index_cap = resolve_index_threads(&cfg, None).get();
+        assert_eq!(
+            policy.index_stat_preload_threads(&cfg, 5000, None),
+            10_usize.min(20).min(index_cap)
+        );
         let policy = ThreadPolicy::with_threads_override(Some(8));
-        assert_eq!(policy.index_stat_preload_threads(&cfg, 5000, None), 8);
+        let override_cap = resolve_index_threads(&cfg, Some(8)).get();
+        assert_eq!(
+            policy.index_stat_preload_threads(&cfg, 5000, None),
+            10_usize.min(20).min(override_cap)
+        );
+        assert_eq!(policy.index_stat_preload_threads(&cfg, 5000, Some(4)), 4);
     }
 
     #[test]

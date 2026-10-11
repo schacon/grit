@@ -53,16 +53,13 @@ pub(crate) fn worktree_read_dir_probe_count() -> usize {
 /// Minimum tracked blob entries before parallel stat preload is considered.
 pub const PARALLEL_STAT_MIN_ENTRIES: usize = 1000;
 
-/// Upper bound on worker threads for parallel stat preload (see Git's small preload pool).
-const STAT_PARALLEL_THREAD_CAP: usize = 8;
-
 /// Parallelism controls for directory-grouped blob scans (honors `core.preloadIndex`).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct WorktreeBlobScanOptions {
     /// When false, stat preload never uses more than one thread.
     pub preload_index: bool,
-    /// When `Some(1)`, forces a serial scan. When `Some(n > 1)`, caps workers at
-    /// [`STAT_PARALLEL_THREAD_CAP`]. When `None`, picks from [`std::thread::available_parallelism`].
+    /// When `Some(1)`, forces a serial scan. When `Some(n > 1)`, caps workers at `n`.
+    /// When `None`, uses [`crate::parallel::ThreadPolicy::index_stat_preload_threads`].
     pub stat_parallel_threads: Option<usize>,
 }
 
@@ -161,15 +158,14 @@ fn index_ordered_blobs(by_dir: &HashMap<String, Vec<BlobInDir>>) -> Vec<BlobInDi
     blobs
 }
 
-fn partial_dirs_for_keys(
-    by_dir: &HashMap<String, Vec<BlobInDir>>,
-    dir_keys: &[String],
-) -> HashMap<String, Vec<BlobInDir>> {
-    let mut partial = HashMap::with_capacity(dir_keys.len());
-    for key in dir_keys {
-        if let Some(blobs) = by_dir.get(key) {
-            partial.insert(key.clone(), blobs.clone());
-        }
+fn partial_dirs_from_blobs(blobs: &[BlobInDir]) -> HashMap<String, Vec<BlobInDir>> {
+    let mut partial: HashMap<String, Vec<BlobInDir>> = HashMap::new();
+    for blob in blobs {
+        let dir = match blob.rel_path.rsplit_once('/') {
+            Some((dir, _)) => dir.to_owned(),
+            None => String::new(),
+        };
+        partial.entry(dir).or_default().push(blob.clone());
     }
     partial
 }
@@ -233,37 +229,36 @@ fn preload_blob_lookups_direct_parallel(
 }
 
 fn preload_blob_lookups_parallel(
-    by_dir: &HashMap<String, Vec<BlobInDir>>,
+    ordered: &[BlobInDir],
+    entry_slots: usize,
     threads: usize,
     symlink_missing: &HashSet<String>,
     dir_abs: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
     file_abs: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
-) -> Result<HashMap<usize, BlobDiskLookup>> {
-    let mut dirs: Vec<String> = by_dir.keys().cloned().collect();
-    dirs.sort();
-    if dirs.is_empty() {
-        return Ok(HashMap::new());
+) -> Result<Vec<Option<BlobDiskLookup>>> {
+    if ordered.is_empty() {
+        return Ok(Vec::new());
     }
-    let chunk_size = dirs.len().div_ceil(threads);
-    let mut merged = HashMap::new();
+    let mut lookups: Vec<Option<BlobDiskLookup>> = (0..entry_slots).map(|_| None).collect();
+    let chunk_size = ordered.len().div_ceil(threads);
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
-        for dir_chunk in dirs.chunks(chunk_size) {
-            let dir_chunk: Vec<String> = dir_chunk.to_vec();
-            let partial_dirs = partial_dirs_for_keys(by_dir, &dir_chunk);
+        for blob_chunk in ordered.chunks(chunk_size) {
+            let blob_chunk: Vec<BlobInDir> = blob_chunk.to_vec();
+            let partial_dirs = partial_dirs_from_blobs(&blob_chunk);
             let symlink_missing = symlink_missing.clone();
             let dir_abs = Arc::clone(&dir_abs);
             let file_abs = Arc::clone(&file_abs);
             handles.push(
-                scope.spawn(move || -> Result<HashMap<usize, BlobDiskLookup>> {
-                    let mut local = HashMap::new();
+                scope.spawn(move || -> Result<Vec<(usize, BlobDiskLookup)>> {
+                    let mut local = Vec::with_capacity(blob_chunk.len());
                     for_each_blob_by_directory(
                         &partial_dirs,
                         |dir| dir_abs(dir),
                         |rel| file_abs(rel),
                         |rel| symlink_missing.contains(rel),
                         |entry_index, _path, lookup| {
-                            local.insert(entry_index, lookup);
+                            local.push((entry_index, lookup));
                             Ok(())
                         },
                     )?;
@@ -273,7 +268,16 @@ fn preload_blob_lookups_parallel(
         }
         for handle in handles {
             match handle.join() {
-                Ok(Ok(local)) => merged.extend(local),
+                Ok(Ok(local)) => {
+                    for (entry_index, lookup) in local {
+                        if entry_index >= lookups.len() {
+                            return Err(Error::Message(format!(
+                                "parallel blob stat preload out-of-range index entry {entry_index}"
+                            )));
+                        }
+                        lookups[entry_index] = Some(lookup);
+                    }
+                }
                 Ok(Err(e)) => return Err(e),
                 Err(_) => {
                     return Err(Error::Message(
@@ -284,7 +288,7 @@ fn preload_blob_lookups_parallel(
         }
         Ok(())
     })?;
-    Ok(merged)
+    Ok(lookups)
 }
 
 /// Visit grouped blob entries with one `read_dir` per distinct parent directory.
@@ -392,35 +396,39 @@ where
     let threads = stat_scan_thread_count(thread_policy, config, scan_options, blob_count);
     let dir_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(dir_abs);
     let file_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(file_abs);
-    let mut preloaded = if threads > 1 {
+    if threads > 1 {
         if blob_count >= PARALLEL_STAT_MIN_ENTRIES {
-            preload_blob_lookups_direct_parallel(
+            let mut preloaded = preload_blob_lookups_direct_parallel(
                 &ordered,
                 threads,
                 &symlink_missing,
                 Arc::clone(&file_abs_arc),
-            )?
+            )?;
+            for blob in &ordered {
+                let lookup = preloaded.remove(&blob.entry_index).ok_or_else(|| {
+                    Error::Message(format!(
+                        "parallel blob stat preload missing index entry {}",
+                        blob.entry_index
+                    ))
+                })?;
+                visit(blob.entry_index, &blob.rel_path, lookup)?;
+            }
         } else {
-            preload_blob_lookups_parallel(
-                by_dir,
+            let entry_slots = ordered
+                .iter()
+                .map(|b| b.entry_index)
+                .max()
+                .map_or(0, |i| i + 1);
+            let mut preloaded = preload_blob_lookups_parallel(
+                &ordered,
+                entry_slots,
                 threads,
                 &symlink_missing,
                 Arc::clone(&dir_abs_arc),
                 Arc::clone(&file_abs_arc),
-            )?
-        }
-    } else {
-        HashMap::new()
-    };
-    if threads > 1 {
-        let mut dirs: Vec<_> = by_dir.keys().cloned().collect();
-        dirs.sort();
-        for dir in dirs {
-            let Some(blobs) = by_dir.get(&dir) else {
-                continue;
-            };
-            for blob in blobs {
-                let lookup = preloaded.remove(&blob.entry_index).ok_or_else(|| {
+            )?;
+            for blob in &ordered {
+                let lookup = preloaded[blob.entry_index].take().ok_or_else(|| {
                     Error::Message(format!(
                         "parallel blob stat preload missing index entry {}",
                         blob.entry_index
