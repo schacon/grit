@@ -316,6 +316,12 @@ enum Command {
     Fetch {
         /// Remote to fetch from (defaults to origin).
         remote: Option<String>,
+        /// Remove remote-tracking refs that no longer exist on the remote.
+        #[arg(long = "prune")]
+        prune: bool,
+        /// Do not prune stale remote-tracking refs, even when config enables it.
+        #[arg(long = "no-prune", conflicts_with = "prune")]
+        no_prune: bool,
     },
     /// Fetch from the remote and integrate it into the current branch.
     Pull,
@@ -668,7 +674,11 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             &commands::restore::run(paths, staged, worktree, source)?,
             opts,
         ),
-        Command::Fetch { remote } => emit(&commands::fetch::run(remote)?, opts),
+        Command::Fetch {
+            remote,
+            prune,
+            no_prune,
+        } => emit(&commands::fetch::run(remote, prune, no_prune)?, opts),
         Command::Pull => emit(&commands::pull::run()?, opts),
         Command::Push { tags } => {
             let outcome = commands::push::run(tags)?;

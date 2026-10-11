@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::fetch::NoProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, RemoteError, DEFAULT_REMOTE};
-use grit_lib::transfer::{FetchOptions, TagMode};
+use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use serde::Serialize;
 
 use crate::commands::auth;
@@ -60,21 +60,30 @@ fn short_hex(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
 }
 
-pub fn run(remote: Option<String>) -> Result<FetchOutcome> {
+pub fn run(remote: Option<String>, prune: bool, no_prune: bool) -> Result<FetchOutcome> {
     let repo = context::discover()?;
     let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
         .context("could not load config")?;
     let remote_name = remote.unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
+    let cli_prune = if prune {
+        Some(true)
+    } else if no_prune {
+        Some(false)
+    } else {
+        None
+    };
+    let prune_enabled = resolve_fetch_prune(&config, &remote_name, cli_prune)
+        .context("could not resolve fetch prune settings")?;
 
     let factory = DefaultHttpClientFactory;
-    let result = match fetch_once(&repo, &config, &remote_name, &factory) {
+    let result = match fetch_once(&repo, &config, &remote_name, prune_enabled, &factory) {
         Ok(result) => result,
         Err(err) => {
             let url = config
                 .get(&format!("remote.{remote_name}.url"))
                 .unwrap_or_default();
             if auth::offer_reauth(&err, &url)? {
-                fetch_once(&repo, &config, &remote_name, &factory)?
+                fetch_once(&repo, &config, &remote_name, prune_enabled, &factory)?
             } else {
                 return Err(err);
             }
@@ -107,6 +116,7 @@ fn fetch_once(
     repo: &grit_lib::repo::Repository,
     config: &ConfigSet,
     remote_name: &str,
+    prune: bool,
     factory: &DefaultHttpClientFactory,
 ) -> Result<grit_lib::transfer::FetchOutcome> {
     let remote = crate::commands::remote::resolve_remote_or_url(Some(config), remote_name)?;
@@ -117,6 +127,7 @@ fn fetch_once(
                 tags: TagMode::Following,
                 thread_policy: repo.thread_policy(),
                 environment: crate::context::environment(),
+                prune,
                 ..Default::default()
             },
             &mut NoProgress,

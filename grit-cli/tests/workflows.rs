@@ -1071,3 +1071,106 @@ fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {
     );
     Ok(())
 }
+
+/// GitHub issue #961: `grit fetch --prune` and fetch prune config remove stale
+/// remote-tracking branches.
+#[test]
+fn fetch_prunes_stale_remote_tracking_refs() -> TestResult {
+    let scratch = Scratch::new("fetch-prune-961")?;
+    let remote = scratch.child("remote.git");
+    let seed = scratch.child("seed");
+    let clone = scratch.child("clone");
+    let remote_s = path_arg(&remote)?;
+    let clone_s = path_arg(&clone)?;
+
+    git_ok(scratch.path(), &["init", "-q", "--bare", remote_s.as_str()])?;
+    git_ok(scratch.path(), &["clone", "-q", &remote_s, "seed"])?;
+    git_ok(&seed, &["commit", "-q", "--allow-empty", "-m", "a"])?;
+    git_ok(
+        &seed,
+        &[
+            "push",
+            "-q",
+            "origin",
+            "HEAD:refs/heads/main",
+            "HEAD:refs/heads/gone1",
+            "HEAD:refs/heads/gone2",
+        ],
+    )?;
+
+    gs_ok(scratch.path(), &["clone", &remote_s, &clone_s])?;
+    git_ok(
+        &seed,
+        &["push", "-q", "origin", "--delete", "gone1", "gone2"],
+    )?;
+
+    let stale = gs_ok(&clone, ["fetch"])?;
+    assert!(
+        stale.stdout.contains("Already up to date"),
+        "fetch without prune should not remove stale refs:\n{}",
+        stale.dump()
+    );
+    let tracking = git_in(
+        &clone,
+        &[
+            "for-each-ref",
+            "--format=%(refname:strip=3)",
+            "refs/remotes/origin/",
+        ],
+    )?;
+    assert!(tracking.stdout.contains("gone1"));
+    assert!(tracking.stdout.contains("gone2"));
+
+    let pruned = gs_ok(&clone, ["fetch", "--prune"])?;
+    assert!(
+        pruned.stdout.contains("gone1") || pruned.stdout.contains("gone2"),
+        "prune fetch should list removed tracking refs:\n{}",
+        pruned.dump()
+    );
+    let tracking = git_in(
+        &clone,
+        &[
+            "for-each-ref",
+            "--format=%(refname:strip=3)",
+            "refs/remotes/origin/",
+        ],
+    )?;
+    assert!(!tracking.stdout.contains("gone1"));
+    assert!(!tracking.stdout.contains("gone2"));
+    assert!(tracking.stdout.contains("main"));
+
+    let ls = git_in(&clone, &["ls-remote", "--heads", "origin"])?;
+    let heads: Vec<&str> = ls
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .map(|r| r.strip_prefix("refs/heads/").unwrap_or(r))
+        .collect();
+    let tracking_names: Vec<&str> = tracking
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "HEAD")
+        .collect();
+    assert_eq!(
+        tracking_names.len(),
+        heads.len(),
+        "remote-tracking branches should match ls-remote heads:\ntracking={tracking_names:?}\nheads={heads:?}"
+    );
+    for name in &heads {
+        assert!(
+            tracking_names.contains(name),
+            "missing remote-tracking branch for {name}"
+        );
+    }
+
+    let json = gs_ok(&clone, ["--json", "fetch", "--prune"])?;
+    let parsed: serde_json::Value = serde_json::from_str(&json.stdout)?;
+    assert_eq!(
+        parsed.get("updated").and_then(|v| v.as_u64()),
+        Some(0),
+        "second prune fetch should report no updates: {}",
+        json.stdout
+    );
+    Ok(())
+}

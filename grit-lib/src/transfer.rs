@@ -189,6 +189,43 @@ impl FetchOptions {
     }
 }
 
+/// Resolve whether a fetch should prune stale remote-tracking refs.
+///
+/// When `cli_prune` is [`Some`], that value wins (matching `--prune` /
+/// `--no-prune`). Otherwise reads `remote.<remote>.prune`, then `fetch.prune`,
+/// in Git precedence order. Unset keys default to `false`.
+///
+/// # Errors
+///
+/// Returns [`Error::Config`] when a configured prune key is not a valid boolean.
+pub fn resolve_fetch_prune(
+    config: &crate::config::ConfigSet,
+    remote: &str,
+    cli_prune: Option<bool>,
+) -> Result<bool> {
+    if let Some(enabled) = cli_prune {
+        return Ok(enabled);
+    }
+    let remote_key = format!("remote.{remote}.prune");
+    if let Some(value) = optional_config_bool(config, &remote_key)? {
+        return Ok(value);
+    }
+    if let Some(value) = optional_config_bool(config, "fetch.prune")? {
+        return Ok(value);
+    }
+    Ok(false)
+}
+
+fn optional_config_bool(config: &crate::config::ConfigSet, key: &str) -> Result<Option<bool>> {
+    match config.get_bool(key) {
+        None => Ok(None),
+        Some(Ok(value)) => Ok(Some(value)),
+        Some(Err(message)) => Err(Error::Config(crate::error::ConfigError::Other(format!(
+            "invalid boolean for '{key}': {message}"
+        )))),
+    }
+}
+
 /// The structured result of a fetch, ready for the embedder's ref-store apply.
 #[derive(Clone, Debug, Default)]
 pub struct FetchOutcome {
