@@ -214,6 +214,33 @@ pub(crate) mod pack_cache {
         });
     }
 
+    /// Drop thread-local indexes, hints, and directory listing tied to a replaced pack path.
+    fn invalidate_thread_local_for_pack_path_change(pack_path: &Path) {
+        let idx_path = pack_path.with_extension("idx");
+        drop_thread_local_pack_bytes(pack_path);
+        PACK_INDEXES.with(|cell| {
+            cell.borrow_mut().remove(&idx_path);
+        });
+        PACK_IDS.with(|cell| {
+            cell.borrow_mut().remove(pack_path);
+        });
+        PACK_COUNT_VALIDATED.with(|cell| {
+            cell.borrow_mut().remove(pack_path);
+        });
+        PACK_HIT_INDEX.with(|cell| {
+            let drop_hint = cell
+                .borrow()
+                .as_ref()
+                .is_some_and(|(_, idx)| idx.pack_path == pack_path || idx.idx_path == idx_path);
+            if drop_hint {
+                *cell.borrow_mut() = None;
+            }
+        });
+        if let Some(pack_dir) = pack_path.parent() {
+            drop_thread_local_dir_listing(pack_dir);
+        }
+    }
+
     /// Seed thread-local pack caches from `store` (one catalog read lock; hot reads avoid the catalog).
     pub(crate) fn warm_thread_local_from_store(store: &crate::pack_store::PackStore) {
         if !crate::pack_store::PackStore::has_context() {
@@ -954,10 +981,7 @@ pub(crate) mod pack_cache {
         mtime: SystemTime,
         size: u64,
     ) -> Result<Arc<PackData>> {
-        drop_thread_local_pack_bytes(pack_path);
-        PACK_COUNT_VALIDATED.with(|cell| {
-            cell.borrow_mut().remove(pack_path);
-        });
+        invalidate_thread_local_for_pack_path_change(pack_path);
         let bytes = PackData::open(pack_path)?;
         let store = crate::pack_store::PackStore::active_for_reads();
         store.with_catalog(|g| {
@@ -1029,7 +1053,7 @@ pub(crate) mod pack_cache {
                 }
                 removed
             });
-            drop_thread_local_pack_bytes(pack_path);
+            invalidate_thread_local_for_pack_path_change(pack_path);
             return Ok(removed);
         };
         let store = crate::pack_store::PackStore::active_for_reads();
