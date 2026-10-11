@@ -104,7 +104,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 #[test]
-fn commit_during_unresolved_merge_fails_human_and_json() -> TestResult {
+fn commit_during_unresolved_merge_auto_stages_like_git_commit_a() -> TestResult {
     let scratch = Scratch::new("938")?;
     let root = scratch.path();
     git(root, &["init", "-q", "-b", "main"]);
@@ -127,33 +127,38 @@ fn commit_during_unresolved_merge_fails_human_and_json() -> TestResult {
         .output()?;
     assert!(!merge.status.success(), "merge should conflict");
 
-    let human = gs(root, ["commit", "-m", "oops"]);
-    assert_ne!(human.status, Some(0), "{}", human.dump());
+    let git_commit = Command::new("git")
+        .current_dir(root)
+        .args(["commit", "-m", "oops"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
     assert!(
-        human.stderr.contains("conflict"),
-        "human stderr should mention unresolved merge conflicts: {}",
+        !git_commit.status.success(),
+        "plain git commit should refuse unmerged index"
+    );
+
+    let human = gs(root, ["commit", "-m", "oops"]);
+    assert_eq!(
+        human.status,
+        Some(0),
+        "grit commit auto-stages conflicted paths like git commit -a: {}",
         human.dump()
     );
-
-    let json = gs(root, ["--json", "commit", "-m", "oops"]);
-    assert_ne!(json.status, Some(0), "{}", json.dump());
     assert!(
-        json.stdout.contains("conflict"),
-        "json error output should mention unresolved merge conflicts: {}",
-        json.dump()
+        !root.join(".git/MERGE_HEAD").exists(),
+        "merge commit should clear MERGE_HEAD"
     );
-
-    let markdown = gs(root, ["--markdown", "commit", "-m", "oops"]);
-    assert_ne!(markdown.status, Some(0), "{}", markdown.dump());
+    let show = Command::new("git")
+        .current_dir(root)
+        .args(["show", "HEAD:f"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    let body = String::from_utf8_lossy(&show.stdout);
     assert!(
-        markdown.stderr.contains("conflict") || markdown.stdout.contains("conflict"),
-        "markdown output should mention unresolved merge conflicts: {}",
-        markdown.dump()
-    );
-
-    assert!(
-        root.join(".git/MERGE_HEAD").exists(),
-        "MERGE_HEAD must remain after failed commit"
+        body.contains("<<<<<<<"),
+        "auto-staged merge records worktree conflict markers: {body}"
     );
     Ok(())
 }
@@ -214,5 +219,53 @@ fn commit_after_resolved_merge_without_add_succeeds() -> TestResult {
         .output()?;
     assert!(blob.status.success());
     assert_eq!(String::from_utf8_lossy(&blob.stdout).trim(), "resolved");
+    Ok(())
+}
+
+#[test]
+fn commit_after_resolved_merge_succeeds_when_unrelated_file_has_marker_literals() -> TestResult {
+    let scratch = Scratch::new("971-fp")?;
+    let root = scratch.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.name", "T"]);
+    git(root, &["config", "user.email", "t@e.com"]);
+    fs::write(
+        root.join("guide.txt"),
+        b"example markers: <<<<<<< ours and >>>>>>> theirs\n",
+    )?;
+    fs::write(root.join("f.txt"), b"base\n")?;
+    git(root, &["add", "guide.txt", "f.txt"]);
+    git(root, &["commit", "-qm", "base"]);
+    git(root, &["checkout", "-qb", "side"]);
+    fs::write(root.join("f.txt"), b"side\n")?;
+    git(root, &["commit", "-qam", "side"]);
+    git(root, &["checkout", "-q", "main"]);
+    fs::write(root.join("f.txt"), b"main\n")?;
+    git(root, &["commit", "-qam", "main"]);
+    let merge = Command::new("git")
+        .current_dir(root)
+        .args(["merge", "side"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    assert!(!merge.status.success(), "merge should conflict");
+
+    fs::write(root.join("f.txt"), b"resolved\n")?;
+
+    let commit = gs(root, ["commit", "-m", "merged"]);
+    assert_eq!(commit.status, Some(0), "{}", commit.dump());
+
+    let git_commit = Command::new("git")
+        .current_dir(root)
+        .args(["rev-list", "--parents", "-1", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    let parents_line = String::from_utf8_lossy(&git_commit.stdout);
+    assert_eq!(
+        parents_line.split_whitespace().count(),
+        3,
+        "two-parent merge commit"
+    );
     Ok(())
 }

@@ -8,7 +8,6 @@ use crate::config::ConfigSet;
 use crate::diff::{diff_trees, zero_oid};
 use crate::error::{Error, Result};
 use crate::hooks::{run_commit_hook_checked, CommitHookEnv};
-use crate::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_REGULAR};
 use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use crate::progress::ProgressSink;
 use crate::refs::{update_branch_for_commit_with_config, BranchCommitRefUpdate};
@@ -69,8 +68,7 @@ pub struct CommitOutcome {
 /// - [`Error::DetachedHead`] when `HEAD` is not on a branch.
 /// - [`Error::AmendUnborn`] when [`CommitRequest::amend`] is set but the branch has no commits yet.
 /// - [`Error::NothingToCommit`] when the new tree is empty (unborn branch) or matches the parent tree and [`CommitRequest::allow_empty`] is false (not applied when amending).
-/// - [`Error::IndexUnmerged`] when the index has conflict stages or a merge is in progress
-///   but the work tree still contains conflict markers.
+/// - [`Error::IndexUnmerged`] when the index has conflict stages.
 /// - Index write or diff failures before the branch is updated; the branch tip is not advanced.
 /// - Ref/reflog failures from [`crate::refs::update_branch_for_commit_with_config`]; the branch tip is not left advanced without reflogs when logging is enabled.
 pub fn create_commit(
@@ -124,9 +122,6 @@ pub fn create_commit(
     }
     let merge_heads = read_merge_heads(&repo.git_dir)?;
     let concluding_merge = !merge_heads.is_empty();
-    if concluding_merge && merge_worktree_has_conflict_markers(repo, &index)? {
-        return Err(Error::IndexUnmerged);
-    }
     let index_path = repo.git_dir.join("index");
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
@@ -324,49 +319,6 @@ fn commit_editmsg_hook_argument(repo: &Repository, editmsg_path: &Path) -> Strin
         }
     }
     editmsg_path.to_string_lossy().into_owned()
-}
-
-fn merge_worktree_has_conflict_markers(repo: &Repository, index: &Index) -> Result<bool> {
-    let Some(work_tree) = repo.work_tree.as_deref() else {
-        return Ok(false);
-    };
-    let mut seen = std::collections::HashSet::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 || !index_entry_is_mergeable_blob(entry) {
-            continue;
-        }
-        let rel = std::str::from_utf8(&entry.path).map_err(|_| {
-            Error::Message("index entry path is not valid UTF-8".into())
-        })?;
-        if !seen.insert(rel.to_owned()) {
-            continue;
-        }
-        let path = work_tree.join(rel);
-        if text_file_has_conflict_markers(&path)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn index_entry_is_mergeable_blob(entry: &IndexEntry) -> bool {
-    entry.mode == MODE_REGULAR || entry.mode == MODE_EXECUTABLE
-}
-
-fn text_file_has_conflict_markers(path: &Path) -> Result<bool> {
-    let content = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e.into()),
-    };
-    Ok(bytes_have_conflict_markers(&content))
-}
-
-fn bytes_have_conflict_markers(content: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(content) else {
-        return false;
-    };
-    text.contains("<<<<<<<") && text.contains(">>>>>>>")
 }
 
 #[cfg(test)]
