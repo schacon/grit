@@ -16,7 +16,7 @@
 use anyhow::{Context, Result};
 use grit_lib::diff::{
     diff_commits, diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees_with_renames,
-    read_submodule_head_oid,
+    read_submodule_head_oid, read_worktree_bytes_for_mode,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
@@ -492,7 +492,8 @@ fn new_side_bytes(odb: &Odb, e: &DiffEntry, work_tree: Option<&Path>) -> Result<
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
     if let (Some(wt), Some(p)) = (work_tree, e.new_path.as_deref().or(e.old_path.as_deref())) {
-        Ok(file_bytes(&wt.join(p)))
+        let mode = u32::from_str_radix(&e.new_mode, 8).unwrap_or(0);
+        Ok(file_bytes(&wt.join(p), mode))
     } else {
         blob_bytes(odb, &e.new_oid)
     }
@@ -538,8 +539,8 @@ fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<(SideBytes, bool)> {
 }
 
 /// Read a worktree file. A missing file reads as empty (treated as a deletion).
-fn file_bytes(path: &Path) -> (SideBytes, bool) {
-    match std::fs::read(path) {
+fn file_bytes(path: &Path, mode: u32) -> (SideBytes, bool) {
+    match read_worktree_bytes_for_mode(path, mode) {
         Ok(data) => bytes_for_diff(&data),
         Err(_) => (SideBytes::from_bytes(Vec::new()), false),
     }

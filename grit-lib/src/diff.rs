@@ -32,7 +32,7 @@ use crate::diff_rename_parallel::{
     parallel_map_indices, parse_rename_limit,
 };
 use crate::error::{Error, Result};
-use crate::index::{CacheTreeNode, Index, IndexEntry};
+use crate::index::{CacheTreeNode, Index, IndexEntry, MODE_SYMLINK};
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::parallel::ThreadPolicy;
@@ -4224,6 +4224,23 @@ fn invalidate_index_stat_cache(ie: &mut IndexEntry) {
     ie.dev = 0;
     ie.ino = 0;
     ie.size = 0;
+}
+
+/// Read worktree content for diffing, honoring Git tree modes.
+///
+/// For [`MODE_SYMLINK`] entries this returns the link target path bytes (via
+/// [`read_link`](std::fs::read_link)), not the contents of the followed file.
+/// Other modes use a plain [`read`](std::fs::read) of the path.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] when the path cannot be read.
+pub fn read_worktree_bytes_for_mode(path: &Path, mode: u32) -> std::io::Result<Vec<u8>> {
+    if mode == MODE_SYMLINK {
+        let target = fs::read_link(path)?;
+        return Ok(symlink_target_bytes(&target));
+    }
+    fs::read(path)
 }
 
 /// Symlink target as the byte string Git hashes for the blob OID.
@@ -9309,5 +9326,33 @@ mod smudge_racily_clean_tests {
         let smudged = smudge_racily_clean_entries(&odb, &git_dir, &mut index, wt, None, None, None);
         assert!(!smudged);
         assert_ne!(index.entries[0].size, 0);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod read_worktree_bytes_for_mode_tests {
+    use super::*;
+    use crate::index::MODE_SYMLINK;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn symlink_mode_reads_link_target_not_followed_file() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        fs::write(wt.join("payload.txt"), b"secret\n").expect("write");
+        symlink("payload.txt", wt.join("link")).expect("symlink");
+        let bytes =
+            read_worktree_bytes_for_mode(&wt.join("link"), MODE_SYMLINK).expect("read link");
+        assert_eq!(bytes, b"payload.txt");
+    }
+
+    #[test]
+    fn regular_mode_reads_file_contents() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let path = td.path().join("f.txt");
+        fs::write(&path, b"hello\n").expect("write");
+        let bytes = read_worktree_bytes_for_mode(&path, crate::index::MODE_REGULAR).expect("read");
+        assert_eq!(bytes, b"hello\n");
     }
 }

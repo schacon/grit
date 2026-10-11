@@ -157,19 +157,7 @@ pub fn add_stage_entry(index: &mut Index, path: &[u8], oid: &ObjectId, mode: u32
 /// Read the worktree bytes for `path`, honoring a symlink index mode (returns
 /// the link target rather than following it).
 pub fn worktree_bytes_for_index_mode(path: &Path, mode: u32) -> io::Result<Vec<u8>> {
-    if mode == MODE_SYMLINK {
-        let target = fs::read_link(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            return Ok(target.as_os_str().as_bytes().to_vec());
-        }
-        #[cfg(not(unix))]
-        {
-            return Ok(target.to_string_lossy().as_bytes().to_vec());
-        }
-    }
-    fs::read(path)
+    crate::diff::read_worktree_bytes_for_mode(path, mode)
 }
 
 /// Write a regular file at `path`, first removing any pre-existing symlink there.
@@ -947,7 +935,7 @@ fn collect_worktree_paths_blocking_stash_untracked_restore(
         }
     }
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
-    let (untracked, ignored) = collect_untracked_and_ignored_inner(
+    let (untracked, ignored, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,

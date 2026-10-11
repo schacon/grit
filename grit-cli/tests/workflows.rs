@@ -304,6 +304,57 @@ fn add_windows_backslash_and_absolute_pathspecs() -> TestResult {
 
 #[cfg(unix)]
 #[test]
+fn diff_worktree_shows_retargeted_symlink_both_sides() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("diff-symlink-retarget")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, ["init", "."])?;
+    write_file(&repo.join("f.txt"), "hello\n")?;
+    symlink("f.txt", repo.join("L"))?;
+    gs_ok(&repo, ["add", "L", "f.txt"])?;
+    gs_ok(&repo, ["commit", "-m", "a"])?;
+    fs::remove_file(repo.join("L"))?;
+    symlink("g.txt", repo.join("L"))?;
+
+    let grit_diff = gs_ok(&repo, ["diff"])?;
+    assert!(
+        grit_diff.stdout.contains("- f.txt") || grit_diff.stdout.contains("│ - f.txt"),
+        "expected old symlink target in diff:\n{}",
+        grit_diff.dump()
+    );
+    assert!(
+        grit_diff.stdout.contains("+ g.txt") || grit_diff.stdout.contains("│ + g.txt"),
+        "expected new symlink target in diff:\n{}",
+        grit_diff.dump()
+    );
+
+    let grit_json = gs_ok(&repo, ["diff", "--json"])?;
+    assert!(
+        grit_json.stdout.contains("\"kind\": \"add\"") && grit_json.stdout.contains("g.txt"),
+        "json diff should count an addition for the new target:\n{}",
+        grit_json.dump()
+    );
+    assert!(
+        grit_json.stdout.contains("\"kind\": \"del\"") && grit_json.stdout.contains("f.txt"),
+        "json diff should count a deletion for the old target:\n{}",
+        grit_json.dump()
+    );
+
+    let git_diff = Command::new("git")
+        .args(["diff"])
+        .current_dir(&repo)
+        .output()?;
+    let git_out = String::from_utf8_lossy(&git_diff.stdout);
+    assert!(git_out.contains("-f.txt"), "git diff baseline:\n{git_out}");
+    assert!(git_out.contains("+g.txt"), "git diff baseline:\n{git_out}");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn status_from_subdirectory_shows_symlink_not_target() -> TestResult {
     use std::os::unix::fs::symlink;
 
