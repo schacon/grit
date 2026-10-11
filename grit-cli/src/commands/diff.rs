@@ -1,7 +1,8 @@
 //! `grit diff` — show changes as a delta-style, dual-line-numbered diff.
 //!
-//! With no argument it shows all uncommitted changes (the worktree against
-//! HEAD's tree). Pass `--staged` for the index against HEAD. With one commit-ish
+//! With no argument it shows all uncommitted changes (the worktree and index
+//! against HEAD's tree). Pass `--unstaged` for index against worktree only, or
+//! `--staged` for the index against HEAD. With one commit-ish
 //! it shows the change that commit introduced (its first parent's tree against
 //! its own). Two commits, or a two-dot range such as `A..B`, diff those
 //! commits' trees. Use `--against <ref>` to compare the worktree to another
@@ -15,8 +16,8 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_commits, diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees_with_renames,
-    read_submodule_head_oid, read_worktree_bytes_for_mode,
+    diff_commits_with_renames, diff_index_to_tree, diff_index_to_worktree_with_options,
+    diff_trees_with_renames, read_submodule_head_oid, read_worktree_bytes_for_mode,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
@@ -142,17 +143,27 @@ pub struct Segment {
 /// Inputs for `grit diff` (flags and revision arguments).
 pub struct DiffRunOptions {
     pub staged: bool,
+    pub unstaged: bool,
     pub against: Option<String>,
     pub commits: Vec<String>,
 }
 
 pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     let repo = context::discover()?;
+    if opts.staged && opts.unstaged {
+        anyhow::bail!("--staged and --unstaged cannot be combined");
+    }
     if opts.staged {
         if !opts.commits.is_empty() || opts.against.is_some() {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         return Ok(outcome_from_changes(staged_changes(&repo)?));
+    }
+    if opts.unstaged {
+        if !opts.commits.is_empty() || opts.against.is_some() {
+            anyhow::bail!("--unstaged cannot be combined with revision arguments or --against");
+        }
+        return Ok(outcome_from_changes(unstaged_changes(&repo)?));
     }
     if opts.commits.len() > 2 {
         anyhow::bail!("at most two commits, or one two-dot range such as A..B");
@@ -228,6 +239,37 @@ struct FileChange {
     content_changed: bool,
 }
 
+/// Unstaged changes: worktree vs index (what changed on disk since `git add`).
+fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .context("grit diff needs a working tree")?;
+    let mut index = repo.load_index().context("could not load the index")?;
+    let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
+        .context("could not load worktree rules")?;
+    let config_arc = worktree_rules.config_arc();
+    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(worktree_rules));
+    let diff_opts = DiffIndexToWorktreeOptions {
+        repository_git_dir: Some(repo.git_dir.clone()),
+        config: Some(config_arc),
+        worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
+        ..DiffIndexToWorktreeOptions::default()
+    };
+    let (mut entries, _) =
+        diff_index_to_worktree_with_options(&repo.odb, &mut index, work_tree, diff_opts)
+            .context("could not diff the index against the working tree")?;
+    sort_entries(&mut entries);
+    entries
+        .into_iter()
+        .map(|e| {
+            let (old_bytes, old_bin) = old_side_bytes(&repo.odb, &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(&repo.odb, &e, Some(work_tree))?;
+            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
+        })
+        .collect()
+}
+
 /// Staged changes: index vs HEAD's tree.
 fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
     let head = resolve_head(&repo.git_dir).context("could not resolve HEAD")?;
@@ -285,7 +327,8 @@ fn tree_commit_changes(
     base: &ObjectId,
     tip: &ObjectId,
 ) -> Result<Vec<FileChange>> {
-    let mut entries = diff_commits(&repo.odb, base, tip).context("could not diff commits")?;
+    let mut entries =
+        diff_commits_with_renames(&repo.odb, base, tip, 50).context("could not diff commits")?;
     sort_entries(&mut entries);
     entries
         .into_iter()

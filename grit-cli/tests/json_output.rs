@@ -768,6 +768,32 @@ fn diff_staged_only() -> TestResult {
     let sfiles = staged["files"].as_array().unwrap();
     assert_eq!(sfiles.len(), 1);
     assert_eq!(sfiles[0]["path"], "staged.txt");
+
+    let unstaged = gs_json(&repo, &["diff", "--unstaged"]);
+    let ufiles = unstaged["files"].as_array().unwrap();
+    assert_eq!(ufiles.len(), 1);
+    assert_eq!(ufiles[0]["path"], "unstaged.txt");
+    Ok(())
+}
+
+#[test]
+fn diff_commit_range_detects_rename() -> TestResult {
+    let scratch = Scratch::new("diffrename")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("a.txt"), "line\n");
+    gs_ok(&repo, &["commit", "one"]);
+    fs::create_dir_all(&repo.join("d"))?;
+    gs_ok(&repo, &["mv", "a.txt", "d/a.txt"]);
+    gs_ok(&repo, &["commit", "moved"]);
+
+    let v = gs_json(&repo, &["diff", "HEAD~1", "HEAD"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{v}");
+    assert_eq!(files[0]["status"], "renamed");
+    assert_eq!(files[0]["path"], "d/a.txt");
+    assert_eq!(files[0]["old_path"], "a.txt");
     Ok(())
 }
 

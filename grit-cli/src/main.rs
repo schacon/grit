@@ -221,6 +221,9 @@ enum Command {
         /// Staged changes only (index vs HEAD).
         #[arg(short = 'S', long = "staged")]
         staged: bool,
+        /// Unstaged changes only (worktree vs index).
+        #[arg(long = "unstaged")]
+        unstaged: bool,
         /// Compare the worktree to this ref's tree instead of HEAD (no commit arguments).
         #[arg(long = "against", value_name = "REF")]
         against: Option<String>,
@@ -651,11 +654,13 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
         } => emit_with_markdown(&commands::blame::run(file, rev, line_range)?, opts),
         Command::Diff {
             staged,
+            unstaged,
             against,
             commits,
         } => emit(
             &commands::diff::run(commands::diff::DiffRunOptions {
                 staged,
+                unstaged,
                 against,
                 commits,
             })?,
@@ -713,10 +718,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             delete,
             message,
             object,
-        } => emit(
-            &commands::tag::run(name, delete, message, object)?,
-            opts,
-        ),
+        } => emit(&commands::tag::run(name, delete, message, object)?, opts),
         Command::Worktree { action } => match action {
             WorktreeAction::List => emit(&commands::worktree::run_list()?, opts),
             WorktreeAction::Add {
@@ -727,13 +729,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             } => {
                 let new_branch = branch.is_some();
                 emit(
-                    &commands::worktree::run_add(
-                        path,
-                        start_point,
-                        branch,
-                        new_branch,
-                        detach,
-                    )?,
+                    &commands::worktree::run_add(path, start_point, branch, new_branch, detach)?,
                     opts,
                 )
             }

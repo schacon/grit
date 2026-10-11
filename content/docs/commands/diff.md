@@ -8,15 +8,15 @@ order: 3
 ## Synopsis
 
 ```text
-grit diff [--staged] [--against <ref>] [<commit> [<commit>]]
-grit diff [--staged] [--against <ref>] [<base>..<tip>]
+grit diff [--staged] [--unstaged] [--against <ref>] [<commit> [<commit>]]
+grit diff [--staged] [--unstaged] [--against <ref>] [<base>..<tip>]
 ```
 
 ## Description
 
-With no argument, shows every uncommitted change: the working tree and index together, compared with the last commit (`HEAD`). Pass `--staged` to compare only the index to `HEAD` (staged changes). Pass `--against <ref>` to compare the working tree to another ref’s tree instead of `HEAD` (useful for “what changed since `main`?” while keeping a single commit argument as “show this commit’s patch”).
+With no argument, shows every uncommitted change: the working tree and index together, compared with the last commit (`HEAD`). Pass `--staged` to compare only the index to `HEAD` (staged changes). Pass `--unstaged` to compare only the working tree to the index (changes not yet staged). Pass `--against <ref>` to compare the working tree to another ref’s tree instead of `HEAD` (useful for “what changed since `main`?” while keeping a single commit argument as “show this commit’s patch”).
 
-With one commit, shows the change that commit introduced (its first parent’s tree against its own tree). Commit diffs detect renames by default (Git `-M50`): a move with small edits appears as one `renamed` file instead of a full delete and add. With two commits, or a two-dot range such as `A..B`, shows the tree diff between those commits (same file set as `git diff --raw` for those OIDs). A three-dot range `A...B` diffs from the merge base of `A` and `B` to `B`.
+With one commit, shows the change that commit introduced (its first parent’s tree against its own tree). Commit and range diffs detect renames by default (Git `-M50`): a move with small edits appears as one `renamed` file instead of a full delete and add. With two commits, or a two-dot range such as `A..B`, shows the tree diff between those commits with the same rename detection. A three-dot range `A...B` diffs from the merge base of `A` and `B` to `B`.
 
 Each file starts with its path, and each hunk with its position. Lines have two number columns, the line number before and after the change. In a terminal, removed lines are red, added lines are green, and the words that changed within a line are highlighted. When the output isn't a terminal, or `NO_COLOR` is set, lines are marked with `-` and `+` instead. Three lines of unchanged context are shown around each change. Binary files print `Binary file differs` when the blob changed (mode-only binary changes show mode lines only).
 
@@ -26,7 +26,8 @@ Each file starts with its path, and each hunk with its position. Lines have two 
 
 | Option | Description |
 | --- | --- |
-| `--staged`, `-S` | Staged changes only (index vs `HEAD`). Cannot be combined with commit arguments or `--against`. |
+| `--staged`, `-S` | Staged changes only (index vs `HEAD`). Cannot be combined with `--unstaged`, commit arguments, or `--against`. |
+| `--unstaged` | Unstaged changes only (worktree vs index). Cannot be combined with `--staged`, commit arguments, or `--against`. |
 | `--against <ref>` | Compare the worktree to `<ref>`’s tree instead of `HEAD`. No commit arguments. |
 | `<commit>` | One commit (that commit’s patch), two commits (tree diff), or a range `A..B` / `A...B`. Omit for uncommitted changes. |
 
@@ -49,6 +50,12 @@ What is staged but not yet committed?
 
 ```console
 $ grit diff --staged
+```
+
+What changed in the working tree since the last `grit add`?
+
+```console
+$ grit diff --unstaged
 ```
 
 What changed between two commits?

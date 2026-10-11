@@ -1556,6 +1556,24 @@ pub fn diff_commits(odb: &Odb, base: &ObjectId, tip: &ObjectId) -> Result<Vec<Di
     diff_trees(odb, Some(&base_tree), Some(&tip_tree), "")
 }
 
+/// Diff the trees at two commits and pair deleted/added paths as renames when similar enough.
+///
+/// `rename_threshold` is Git's `-M` percentage (default 50). Use `100` to skip rename detection.
+///
+/// # Errors
+///
+/// Propagates object read errors and tree diff failures.
+pub fn diff_commits_with_renames(
+    odb: &Odb,
+    base: &ObjectId,
+    tip: &ObjectId,
+    rename_threshold: u32,
+) -> Result<Vec<DiffEntry>> {
+    let base_tree = tree_oid_of_commit(odb, base)?;
+    let tip_tree = tree_oid_of_commit(odb, tip)?;
+    diff_trees_with_renames(odb, Some(&base_tree), Some(&tip_tree), "", rename_threshold)
+}
+
 /// Like `diff_trees` but with `show_trees` flag: when true, emit entries for
 /// tree objects themselves in addition to their recursive contents (the `-t`
 /// flag of `diff-tree`).
