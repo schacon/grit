@@ -20,7 +20,8 @@ use crate::odb::Odb;
 use crate::push::push_remote;
 use crate::repo::Repository;
 use crate::transfer::{
-    fetch_local, push_local, FetchOptions, FetchOutcome, PushOptions, PushOutcome, PushRefSpec,
+    fetch_local_with_progress, push_local, FetchOptions, FetchOutcome, PushOptions, PushOutcome,
+    PushRefSpec,
 };
 use crate::transport::http::{HttpClient, SmartHttpTransport};
 use crate::transport::{ConnectOptions, GitDaemonTransport, Service, SshTransport, Transport};
@@ -393,15 +394,21 @@ impl Remote {
         connect: ConnectOptions,
     ) -> RemoteResult<FetchOutcome> {
         match url {
-            RemoteUrl::Bundle(path) => Ok(crate::bundle_remote::fetch_from_bundle(
+            RemoteUrl::Bundle(path) => Ok(crate::bundle_remote::fetch_from_bundle_with_progress(
                 &repo.git_dir,
                 path,
                 opts,
+                progress,
             )?),
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
                 let remote_git =
                     local_git_dir_from_url(url, &repo.git_dir, repo.work_tree.as_deref())?;
-                Ok(fetch_local(&repo.git_dir, &remote_git, opts)?)
+                Ok(fetch_local_with_progress(
+                    &repo.git_dir,
+                    &remote_git,
+                    opts,
+                    progress,
+                )?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);

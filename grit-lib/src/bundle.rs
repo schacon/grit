@@ -15,9 +15,10 @@ use thiserror::Error;
 use crate::commit_pretty::message_subject;
 use crate::connectivity::bundle_prerequisites_connected_to_refs;
 use crate::error::{Error, Result};
-use crate::index_pack::{ingest_received_pack_path, IngestPackOptions};
+use crate::index_pack::{ingest_received_pack_path_with_progress, IngestPackOptions};
 use crate::objects::{parse_commit, parse_tag, HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::rev_list::{
     FilterObjectKind, MissingAction, ObjectFilter, RevListOptions, RevListResult,
@@ -269,12 +270,25 @@ impl Bundle {
         &self,
         repo: &Repository,
     ) -> std::result::Result<Vec<UnbundledRef>, BundleError> {
+        self.unbundle_with_progress(repo, &mut NullProgress)
+    }
+
+    /// Like [`Self::unbundle`], reporting receive and index-pack progress through `progress`.
+    pub fn unbundle_with_progress(
+        &self,
+        repo: &Repository,
+        progress: &mut dyn ProgressSink,
+    ) -> std::result::Result<Vec<UnbundledRef>, BundleError> {
         if self.header.object_format != repo.odb.hash_algo() {
             return Err(BundleError::ObjectFormatMismatch {
                 bundle_name: self.header.object_format.name(),
                 repo_name: repo.odb.hash_algo().name(),
             });
         }
+        let pack_bytes = std::fs::metadata(&self.path)
+            .map(|m| m.len().saturating_sub(self.pack_offset))
+            .unwrap_or(0);
+        progress.start(ProgressPhase::ReceivingObjects, Some(pack_bytes));
         let tmp = tempfile::NamedTempFile::new_in(repo.git_dir.join("objects").join("pack"))
             .map_err(|e| BundleError::Io(e.to_string()))?;
         {
@@ -282,15 +296,22 @@ impl Bundle {
             Seek::seek(&mut input, std::io::SeekFrom::Start(self.pack_offset))
                 .map_err(BundleError::from)?;
             let mut output = std::io::BufWriter::new(tmp.as_file());
-            std::io::copy(&mut input, &mut output).map_err(BundleError::from)?;
+            let copied = std::io::copy(&mut input, &mut output).map_err(BundleError::from)?;
             output.flush().map_err(BundleError::from)?;
+            progress.set(copied);
         }
+        progress.finish();
         let opts = IngestPackOptions {
             fix_thin: true,
             ..Default::default()
         };
-        let ingested = ingest_received_pack_path(tmp.path().to_path_buf(), &repo.odb, &opts)
-            .map_err(|e| BundleError::Io(e.to_string()))?;
+        let ingested = ingest_received_pack_path_with_progress(
+            tmp.path().to_path_buf(),
+            &repo.odb,
+            &opts,
+            progress,
+        )
+        .map_err(|e| BundleError::Io(e.to_string()))?;
         if self.header.filter.is_some() {
             std::fs::write(ingested.pack_path.with_extension("promisor"), b"")
                 .map_err(|e| BundleError::Io(e.to_string()))?;
@@ -463,13 +484,7 @@ pub fn write_bundle(
             &have_closure,
         )
         .map_err(|e| BundleError::Io(e.to_string()))?;
-        build_pack_from_send_list(
-            &repo.odb,
-            &send,
-            &have_closure,
-            &pack_opts,
-            &HashMap::new(),
-        )
+        build_pack_from_send_list(&repo.odb, &send, &have_closure, &pack_opts, &HashMap::new())
             .map_err(|e| BundleError::Io(e.to_string()))?
     } else {
         build_pack(&repo.odb, &include_oids, &haves, &pack_opts)

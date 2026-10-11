@@ -19,9 +19,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::fetch::{NoProgress, Progress};
 use crate::hash;
 use crate::objects::{parse_commit, parse_tag, parse_tree, HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::progress::{ProgressPhase, ProgressSink};
 use crate::push_report::{PushRefResult, PushRefStatus};
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 
@@ -492,6 +494,7 @@ fn copy_objects_for_local_fetch(
     have_shallow: &HashSet<ObjectId>,
     try_pack_link: bool,
     opts: &PackBuildOptions,
+    progress: &mut dyn ProgressSink,
 ) -> Result<HashSet<ObjectId>> {
     use crate::local_object_copy::{
         link_loose_objects_for_oids, linked_object_set, refresh_local_odb_after_link,
@@ -507,6 +510,9 @@ fn copy_objects_for_local_fetch(
         && !wants.is_empty()
         && try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)?
     {
+        progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
+        progress.set(wants.len() as u64);
+        progress.finish();
         return Ok(linked_object_set(local_odb, wants));
     }
 
@@ -524,6 +530,9 @@ fn copy_objects_for_local_fetch(
         && try_pack_link
         && try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, &send, false)?
     {
+        progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
+        progress.set(send.len() as u64);
+        progress.finish();
         return Ok(linked_object_set(local_odb, &send));
     }
 
@@ -542,6 +551,9 @@ fn copy_objects_for_local_fetch(
         let linked_loose =
             link_loose_objects_for_oids(&remote_objects, &local_objects, &still_missing)?;
         if linked_loose > 0 {
+            progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
+            progress.inc(linked_loose as u64);
+            progress.finish();
             refresh_local_odb_after_link(local_odb);
             still_missing.retain(|oid| !local_odb.exists(oid));
         }
@@ -560,6 +572,10 @@ fn copy_objects_for_local_fetch(
         have_shallow,
         &pack_opts,
     )?;
+    progress.start(
+        ProgressPhase::CopyingObjects,
+        Some(still_missing.len() as u64),
+    );
     let ingested = crate::index_pack::ingest_received_pack(
         pack,
         local_odb,
@@ -568,6 +584,8 @@ fn copy_objects_for_local_fetch(
             ..Default::default()
         },
     )?;
+    progress.inc(ingested.object_ids.len() as u64);
+    progress.finish();
     refresh_local_odb_after_link(local_odb);
     let mut out = linked_object_set(local_odb, &send);
     out.extend(ingested.object_ids);
@@ -1000,11 +1018,20 @@ fn zlib_decompress_fixed(bytes: &[u8], expected_size: usize) -> Result<Vec<u8>> 
     Ok(out)
 }
 
-// and live in a later phase.
 pub fn fetch_local(
     local_git_dir: &Path,
     remote_git_dir: &Path,
     opts: &FetchOptions,
+) -> Result<FetchOutcome> {
+    fetch_local_with_progress(local_git_dir, remote_git_dir, opts, &mut NoProgress)
+}
+
+/// Like [`fetch_local`], reporting object copy progress through `progress`.
+pub fn fetch_local_with_progress(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    opts: &FetchOptions,
+    progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     // Validate that the remote is actually a Git repository: a missing or
     // non-repo path must error (e.g. cloning a bad source) rather than silently
@@ -1154,6 +1181,7 @@ pub fn fetch_local(
             &local_shallow,
             opts.initial_remote_fetch,
             &pack_opts,
+            progress,
         )?;
     }
 
@@ -2094,4 +2122,104 @@ pub(crate) fn prune_tracking_refs(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::progress::ProgressPhase;
+    use crate::ref_storage::RefStorageFormat;
+    use crate::repo::init_repository;
+    use std::process::Command;
+
+    #[derive(Debug, Default)]
+    struct PhaseRecorder {
+        started: Vec<(ProgressPhase, Option<u64>)>,
+        finished: Vec<ProgressPhase>,
+        counts: Vec<u64>,
+        current: u64,
+    }
+
+    impl ProgressSink for PhaseRecorder {
+        fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+            self.started.push((phase, total));
+            self.current = 0;
+        }
+        fn inc(&mut self, units: u64) {
+            self.current += units;
+            self.counts.push(self.current);
+        }
+        fn set(&mut self, current: u64) {
+            self.current = current;
+            self.counts.push(self.current);
+        }
+        fn finish(&mut self) {
+            if let Some((phase, _)) = self.started.last() {
+                self.finished.push(*phase);
+            }
+        }
+    }
+
+    impl Progress for PhaseRecorder {}
+
+    fn git_ok(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn assert_monotonic(counts: &[u64]) {
+        for pair in counts.windows(2) {
+            assert!(pair[1] >= pair[0], "progress counts must be monotonic");
+        }
+    }
+
+    #[test]
+    fn fetch_local_reports_copy_progress() {
+        let remote = tempfile::tempdir().expect("remote");
+        assert!(git_ok(
+            remote.path(),
+            &["init", "-q", "-b", "main", "--bare"]
+        ));
+        let src = tempfile::tempdir().expect("src");
+        assert!(git_ok(src.path(), &["init", "-q", "-b", "main"]));
+        std::fs::write(src.path().join("f.txt"), "payload\n").unwrap();
+        assert!(git_ok(src.path(), &["add", "f.txt"]));
+        assert!(git_ok(src.path(), &["commit", "-qm", "c1"]));
+        assert!(git_ok(
+            src.path(),
+            &["push", "-q", remote.path().to_str().unwrap(), "main:main",],
+        ));
+
+        let local = tempfile::tempdir().expect("local");
+        init_repository(local.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+
+        let opts = FetchOptions {
+            refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
+            initial_remote_fetch: true,
+            tags: TagMode::None,
+            ..Default::default()
+        };
+        let mut rec = PhaseRecorder::default();
+        fetch_local_with_progress(&local.path().join(".git"), remote.path(), &opts, &mut rec)
+            .expect("fetch_local");
+
+        assert!(
+            rec.started
+                .iter()
+                .any(|(p, _)| *p == ProgressPhase::CopyingObjects),
+            "expected CopyingObjects phase"
+        );
+        assert!(
+            rec.finished.contains(&ProgressPhase::CopyingObjects),
+            "expected CopyingObjects finish"
+        );
+        assert!(!rec.counts.is_empty(), "expected copy progress counts");
+        assert_monotonic(&rec.counts);
+    }
 }

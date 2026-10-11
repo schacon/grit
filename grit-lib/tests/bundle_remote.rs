@@ -5,7 +5,8 @@ use std::process::Command;
 
 use grit_lib::clone::{clone as clone_repo, CloneOptions};
 use grit_lib::environment::Environment;
-use grit_lib::fetch::NoProgress;
+use grit_lib::fetch::{NoProgress, Progress};
+use grit_lib::progress::{ProgressPhase, ProgressSink};
 use grit_lib::remote::{Remote, RemoteUrl};
 use grit_lib::repo::{init_repository, Repository};
 use grit_lib::transfer::{FetchOptions, TagMode};
@@ -158,7 +159,10 @@ fn clone_from_bundle_matches_git_default_branch_when_head_not_first() {
         url: bundle_path.to_str().unwrap().to_owned(),
         dest: grit_dest.path().to_path_buf(),
         environment: Environment::empty(),
-        ..CloneOptions::new(bundle_path.to_str().unwrap(), grit_dest.path().to_path_buf())
+        ..CloneOptions::new(
+            bundle_path.to_str().unwrap(),
+            grit_dest.path().to_path_buf(),
+        )
     };
     let outcome = clone_repo(opts, &mut NoProgress, None).expect("grit clone from bundle");
 
@@ -191,4 +195,81 @@ fn clone_from_bundle_passes_git_fsck() {
     clone_repo(opts, &mut NoProgress, None).expect("clone from bundle");
 
     assert!(git_in(dest.path(), &["fsck"]));
+}
+
+#[derive(Debug, Default)]
+struct PhaseRecorder {
+    started: Vec<(ProgressPhase, Option<u64>)>,
+    finished: Vec<ProgressPhase>,
+    counts: Vec<u64>,
+    current: u64,
+}
+
+impl ProgressSink for PhaseRecorder {
+    fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+        self.started.push((phase, total));
+        self.current = 0;
+    }
+    fn inc(&mut self, units: u64) {
+        self.current += units;
+        self.counts.push(self.current);
+    }
+    fn set(&mut self, current: u64) {
+        self.current = current;
+        self.counts.push(self.current);
+    }
+    fn finish(&mut self) {
+        if let Some((phase, _)) = self.started.last() {
+            self.finished.push(*phase);
+        }
+    }
+}
+
+impl Progress for PhaseRecorder {}
+
+fn assert_monotonic(counts: &[u64]) {
+    for pair in counts.windows(2) {
+        assert!(pair[1] >= pair[0], "progress counts must be monotonic");
+    }
+}
+
+fn phase_started_and_finished(rec: &PhaseRecorder, phase: ProgressPhase) -> bool {
+    rec.started.iter().any(|(p, _)| *p == phase) && rec.finished.contains(&phase)
+}
+
+#[test]
+fn bundle_clone_reports_progress() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    init_with_commits(upstream.path(), &["one", "two"]);
+    let bundle_path = upstream.path().join("progress.bundle");
+    assert!(git_in(
+        upstream.path(),
+        &[
+            "bundle",
+            "create",
+            bundle_path.to_str().unwrap(),
+            "refs/heads/main",
+        ],
+    ));
+
+    let dest = tempfile::tempdir().expect("dest");
+    let opts = CloneOptions {
+        url: bundle_path.to_str().unwrap().to_owned(),
+        dest: dest.path().to_path_buf(),
+        environment: Environment::empty(),
+        ..CloneOptions::new(bundle_path.to_str().unwrap(), dest.path().to_path_buf())
+    };
+    let mut rec = PhaseRecorder::default();
+    clone_repo(opts, &mut rec, None).expect("clone from bundle");
+
+    assert!(
+        phase_started_and_finished(&rec, ProgressPhase::ReceivingObjects),
+        "expected ReceivingObjects start/finish"
+    );
+    assert!(
+        phase_started_and_finished(&rec, ProgressPhase::IndexingObjects),
+        "expected IndexingObjects start/finish"
+    );
+    assert!(!rec.counts.is_empty(), "expected progress counts");
+    assert_monotonic(&rec.counts);
 }

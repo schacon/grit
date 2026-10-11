@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::bundle::{Bundle, BundleError, BundleSpec};
 use crate::error::{Error, Result};
+use crate::fetch::{NoProgress, Progress};
 use crate::objects::ObjectId;
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::repo::Repository;
@@ -120,6 +121,16 @@ pub fn fetch_from_bundle(
     bundle_path: &Path,
     opts: &FetchOptions,
 ) -> Result<FetchOutcome> {
+    fetch_from_bundle_with_progress(local_git_dir, bundle_path, opts, &mut NoProgress)
+}
+
+/// Like [`fetch_from_bundle`], reporting bundle receive and index-pack progress.
+pub fn fetch_from_bundle_with_progress(
+    local_git_dir: &Path,
+    bundle_path: &Path,
+    opts: &FetchOptions,
+    progress: &mut dyn Progress,
+) -> Result<FetchOutcome> {
     let bundle = Bundle::open(bundle_path).map_err(map_bundle_err)?;
     let repo = Repository::open(local_git_dir, None)?;
     bundle
@@ -129,7 +140,9 @@ pub fn fetch_from_bundle(
         .map_err(map_bundle_err)?;
 
     if !opts.dry_run {
-        bundle.unbundle(&repo).map_err(map_bundle_err)?;
+        bundle
+            .unbundle_with_progress(&repo, progress)
+            .map_err(map_bundle_err)?;
     }
 
     let header = bundle.header();
