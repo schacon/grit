@@ -328,6 +328,7 @@ fn install_pack_path_matches_git_index() {
             fix_thin: false,
             threads: Some(8),
             skip_post_index_verify: false,
+            ..Default::default()
         },
     )
     .expect("install");

@@ -30,8 +30,13 @@ Matches Git's `repo_config_get_index_threads`:
 - `true` or `0` — auto
 - `false` or `1` — serial (one worker)
 - integer `n > 1` — up to `n` workers (clamped to available CPUs)
+- other integers (for example `-3`) — preserved as serial (Git only parallelizes when `nr_threads > 1` after treating `0` as auto)
 
 When `core.preloadIndex` is false, index refresh/load operations stay serial regardless of `index.threads`.
+
+### `pack.threads` (index-pack / pack-objects)
+
+Unset or `0` selects auto (all logical CPUs). Positive integers cap worker count. Git rejects booleans, non-numeric strings, and negative values with a config error; use [`ThreadPolicy::try_resolve`](https://docs.rs/grit-lib/latest/grit_lib/parallel/struct.ThreadPolicy.html#method.try_resolve) for [`ParallelOp::IndexPack`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) to surface those errors. Fetch and clone pass the repository [`Environment`](https://docs.rs/grit-lib/latest/grit_lib/environment/struct.Environment.html) into pack ingest so command-scope `GIT_CONFIG_*` / `-c pack.threads=N` applies during received-pack indexing.
 
 Stat preload during status/diff keeps a separate four-thread cap until a later scaling pass; it still honors `core.preloadIndex` and the global thread override.
 

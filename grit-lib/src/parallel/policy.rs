@@ -3,6 +3,7 @@
 use std::num::NonZeroUsize;
 
 use crate::config::ConfigSet;
+use crate::error::{BadNumericSource, ConfigError};
 use crate::worktree_scan::PARALLEL_STAT_MIN_ENTRIES;
 
 /// Minimum item count before parallel hash helpers use more than one thread.
@@ -65,8 +66,32 @@ impl ThreadPolicy {
     }
 
     /// Resolve pool options for `op` using merged `config` and this policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `op` is [`ParallelOp::IndexPack`] or [`ParallelOp::PackWrite`] and
+    /// `pack.threads` is invalid (call [`Self::try_resolve`] to surface errors).
     #[must_use]
     pub fn resolve(&self, op: ParallelOp, config: &ConfigSet) -> ParallelOptions {
+        self.try_resolve(op, config).unwrap_or_else(|e| match op {
+            ParallelOp::IndexPack | ParallelOp::PackWrite => {
+                panic!("invalid pack.threads config: {e}")
+            }
+            _ => unreachable!("only pack operations return config errors"),
+        })
+    }
+
+    /// Resolve pool options, returning a config error when `pack.threads` is invalid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] for rejected `pack.threads` values (negative integers,
+    /// booleans, or non-numeric strings), matching Git's pack/index-pack behavior.
+    pub fn try_resolve(
+        &self,
+        op: ParallelOp,
+        config: &ConfigSet,
+    ) -> Result<ParallelOptions, ConfigError> {
         let preload = core_preload_index(config);
         let threads = match op {
             ParallelOp::IndexRefresh | ParallelOp::IndexLoad | ParallelOp::DiffRename => {
@@ -77,7 +102,7 @@ impl ThreadPolicy {
                 }
             }
             ParallelOp::IndexPack | ParallelOp::PackWrite => {
-                resolve_pack_threads(config, self.threads_override)
+                resolve_pack_threads(config, self.threads_override)?
             }
             ParallelOp::Checkout => resolve_checkout_workers(config, self.threads_override),
         };
@@ -96,12 +121,12 @@ impl ThreadPolicy {
             _ => None,
         };
 
-        ParallelOptions {
+        Ok(ParallelOptions {
             threads,
             min_items,
             min_total_bytes: default_min_bytes,
             signed_entry_threshold,
-        }
+        })
     }
 
     /// Thread count for index stat preload (preserves the historical four-thread cap).
@@ -179,9 +204,10 @@ enum IndexThreadsSetting {
 fn index_threads_setting(config: &ConfigSet) -> IndexThreadsSetting {
     if let Some(Ok(n)) = config.get_i64("index.threads") {
         return match n {
-            n if n <= 0 => IndexThreadsSetting::Auto,
+            0 => IndexThreadsSetting::Auto,
             1 => IndexThreadsSetting::Serial,
-            n => IndexThreadsSetting::Count(usize::try_from(n).unwrap_or(1)),
+            n if n > 1 => IndexThreadsSetting::Count(usize::try_from(n).unwrap_or(1)),
+            _ => IndexThreadsSetting::Serial,
         };
     }
     if config.get("index.threads").is_some_and(|v| v.trim() == "0") {
@@ -211,16 +237,46 @@ fn resolve_index_threads(config: &ConfigSet, override_threads: Option<usize>) ->
     }
 }
 
-#[must_use]
-fn resolve_pack_threads(config: &ConfigSet, override_threads: Option<usize>) -> NonZeroUsize {
-    if let Some(n) = override_threads {
-        return Parallelism::resolve(Some(n)).threads();
+/// Git `pack.threads` parsing (`None` = unset → auto at resolve time).
+fn parse_pack_threads(config: &ConfigSet) -> Result<Option<usize>, ConfigError> {
+    const KEY: &str = "pack.threads";
+    let Some(raw) = config.get(KEY) else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    match config.get_i64(KEY) {
+        Some(Ok(n)) if n < 0 => Err(ConfigError::Other(format!(
+            "invalid number of threads specified ({n})"
+        ))),
+        Some(Ok(0)) => Ok(None),
+        Some(Ok(n)) => Ok(Some(usize::try_from(n).unwrap_or(1))),
+        Some(Err(_)) | None => {
+            if matches!(config.get_bool(KEY), Some(Ok(_))) {
+                Err(ConfigError::BadNumericValue {
+                    key: KEY.into(),
+                    value: trimmed.into(),
+                    reason: BadNumericSource::InvalidUnit,
+                })
+            } else {
+                Err(ConfigError::BadNumericValue {
+                    key: KEY.into(),
+                    value: trimmed.into(),
+                    reason: BadNumericSource::InvalidUnit,
+                })
+            }
+        }
     }
-    let requested = config
-        .get_i64("pack.threads")
-        .and_then(|r| r.ok())
-        .map(|n| if n <= 0 { 0 } else { n as usize });
-    Parallelism::resolve(requested).threads()
+}
+
+fn resolve_pack_threads(
+    config: &ConfigSet,
+    override_threads: Option<usize>,
+) -> Result<NonZeroUsize, ConfigError> {
+    if let Some(n) = override_threads {
+        return Ok(Parallelism::resolve(Some(n)).threads());
+    }
+    let requested = parse_pack_threads(config)?;
+    Ok(Parallelism::resolve(requested).threads())
 }
 
 #[must_use]
@@ -276,7 +332,47 @@ mod tests {
         let four = config_from("[index]\n\tthreads = 4\n");
         assert_eq!(index_threads_setting(&four), IndexThreadsSetting::Count(4));
         let neg = config_from("[index]\n\tthreads = -3\n");
-        assert_eq!(index_threads_setting(&neg), IndexThreadsSetting::Auto);
+        assert_eq!(index_threads_setting(&neg), IndexThreadsSetting::Serial);
+    }
+
+    #[test]
+    fn index_threads_negative_is_serial_for_refresh() {
+        let cfg = config_from("[index]\n\tthreads = -3\n");
+        let opts = ThreadPolicy::default().resolve(ParallelOp::IndexRefresh, &cfg);
+        assert_eq!(opts.threads, NonZeroUsize::MIN);
+    }
+
+    #[test]
+    fn pack_threads_negative_is_config_error() {
+        let cfg = config_from("[pack]\n\tthreads = -3\n");
+        let err = ThreadPolicy::default()
+            .try_resolve(ParallelOp::IndexPack, &cfg)
+            .expect_err("negative pack.threads");
+        assert_eq!(
+            err,
+            ConfigError::Other("invalid number of threads specified (-3)".into())
+        );
+    }
+
+    #[test]
+    fn pack_threads_bool_is_bad_numeric() {
+        for (raw, label) in [("true", "true"), ("false", "false")] {
+            let cfg = config_from(&format!("[pack]\n\tthreads = {raw}\n"));
+            let err = ThreadPolicy::default()
+                .try_resolve(ParallelOp::IndexPack, &cfg)
+                .expect_err(&format!("pack.threads = {label}"));
+            assert!(
+                matches!(
+                    &err,
+                    ConfigError::BadNumericValue {
+                        key,
+                        value,
+                        reason
+                    } if key == "pack.threads" && value == label && *reason == BadNumericSource::InvalidUnit
+                ),
+                "unexpected error for {label}: {err:?}"
+            );
+        }
     }
 
     #[test]

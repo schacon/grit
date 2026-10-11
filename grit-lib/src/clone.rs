@@ -182,6 +182,7 @@ pub fn clone(
         initial_remote_fetch: true,
         remote_name: Some(opts.remote_name.clone()),
         clone_reflog: Some(clone_reflog),
+        environment: opts.environment.clone(),
         ..Default::default()
     };
     if let Ok(v) = crate::protocol::try_effective_client_protocol_version_from_config(&config) {

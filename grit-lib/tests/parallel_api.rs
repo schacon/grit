@@ -44,12 +44,12 @@ fn index_threads_false_is_serial_for_refresh() {
 fn index_pack_threads_respects_cli_policy_not_config_alone() {
     let cfg = config_from("[pack]\n\tthreads = 2\n");
     assert_eq!(
-        index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None),
+        index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None).expect("ingest"),
         None
     );
     let policy = ThreadPolicy::with_threads_override(Some(5));
     assert_eq!(
-        index_pack_threads_for_ingest(policy, &cfg, None),
+        index_pack_threads_for_ingest(policy, &cfg, None).expect("ingest"),
         Some(
             5.min(
                 std::thread::available_parallelism()
@@ -58,6 +58,31 @@ fn index_pack_threads_respects_cli_policy_not_config_alone() {
             )
         )
     );
+}
+
+#[test]
+fn fetch_ingest_sees_git_config_count_pack_threads() {
+    use grit_lib::environment::Environment;
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("objects")).expect("objects");
+    let env = Environment::from_vars(
+        [
+            (OsString::from("GIT_CONFIG_COUNT"), OsString::from("1")),
+            (
+                OsString::from("GIT_CONFIG_KEY_0"),
+                OsString::from("pack.threads"),
+            ),
+            (OsString::from("GIT_CONFIG_VALUE_0"), OsString::from("4")),
+        ],
+        dir.path().to_path_buf(),
+    );
+    let cfg = ConfigSet::load(&env, Some(dir.path()), true).expect("load config");
+    let opts = ThreadPolicy::default()
+        .try_resolve(ParallelOp::IndexPack, &cfg)
+        .expect("resolve pack threads from GIT_CONFIG_COUNT");
+    assert_eq!(opts.threads.get(), 4);
 }
 
 #[test]

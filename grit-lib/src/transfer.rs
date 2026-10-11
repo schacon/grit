@@ -83,7 +83,7 @@ pub enum TagMode {
 }
 
 /// Options controlling a fetch.
-#[derive(Default)]
+#[derive(Clone)]
 pub struct FetchOptions {
     /// Positive refspecs selecting what to fetch.
     pub refspecs: Vec<String>,
@@ -128,10 +128,38 @@ pub struct FetchOptions {
     pub index_pack_threads: Option<usize>,
     /// Global / embedder thread policy (`--threads`); applied when [`Self::index_pack_threads`] is unset.
     pub thread_policy: crate::parallel::ThreadPolicy,
+    /// Discovery/config environment for pack ingest (`GIT_CONFIG_*`, `-c`); defaults to empty.
+    pub environment: crate::environment::Environment,
     /// When true, spool the negotiated pack to disk and return without index-pack or ref updates.
     pub pack_spool_only: bool,
     /// Override the HTTP `Git-Protocol` header for this fetch (`None` → client default, usually v2).
     pub http_protocol_version: Option<u8>,
+}
+
+impl Default for FetchOptions {
+    fn default() -> Self {
+        Self {
+            refspecs: Vec::new(),
+            negative_refspecs: Vec::new(),
+            tags: TagMode::Following,
+            prune: false,
+            dry_run: false,
+            depth: None,
+            deepen_since: None,
+            deepen_not: Vec::new(),
+            unshallow: false,
+            initial_remote_fetch: false,
+            remote_name: None,
+            clone_reflog: None,
+            diagnostics: None,
+            network_trace: false,
+            index_pack_threads: None,
+            thread_policy: crate::parallel::ThreadPolicy::default(),
+            environment: crate::environment::Environment::empty(),
+            pack_spool_only: false,
+            http_protocol_version: None,
+        }
+    }
 }
 
 /// Identity and message for clone reflog entries written by the library.

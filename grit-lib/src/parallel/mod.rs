@@ -90,14 +90,19 @@ pub fn index_pack_threads_for_ingest(
     policy: ThreadPolicy,
     config: &crate::config::ConfigSet,
     explicit: Option<usize>,
-) -> Option<usize> {
+) -> Result<Option<usize>, crate::error::ConfigError> {
     if let Some(n) = explicit {
-        return Some(n);
+        return Ok(Some(n));
     }
     if policy.threads_override.is_some() {
-        return Some(policy.resolve(ParallelOp::IndexPack, config).threads.get());
+        return Ok(Some(
+            policy
+                .try_resolve(ParallelOp::IndexPack, config)?
+                .threads
+                .get(),
+        ));
     }
-    None
+    Ok(None)
 }
 
 /// Lazy name-hash thread count from config and Git's `LAZY_THREAD_COST` thresholds.
@@ -173,16 +178,16 @@ mod tests {
     fn index_pack_threads_for_ingest_honors_override_only() {
         let cfg = config_from("[pack]\n\tthreads = 2\n");
         assert_eq!(
-            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None),
+            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None).expect("ingest"),
             None
         );
         assert_eq!(
-            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, Some(3)),
+            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, Some(3)).expect("ingest"),
             Some(3)
         );
         let policy = ThreadPolicy::with_threads_override(Some(6));
         assert_eq!(
-            index_pack_threads_for_ingest(policy, &cfg, None),
+            index_pack_threads_for_ingest(policy, &cfg, None).expect("ingest"),
             Some(policy.resolve(ParallelOp::IndexPack, &cfg).threads.get())
         );
     }

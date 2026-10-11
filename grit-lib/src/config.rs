@@ -2012,11 +2012,41 @@ impl ConfigSet {
     }
 
     /// [`crate::hash::Parallelism`] for pack indexing from merged config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when `pack.threads` is set to a value Git rejects.
+    pub fn try_pack_index_parallelism(
+        &self,
+    ) -> std::result::Result<crate::parallel::Parallelism, ConfigError> {
+        Ok(crate::parallel::ThreadPolicy::default()
+            .try_resolve(crate::parallel::ParallelOp::IndexPack, self)?
+            .parallelism())
+    }
+
+    /// Like [`Self::try_pack_index_parallelism`] but panics when `pack.threads` is invalid.
     #[must_use]
     pub fn pack_index_parallelism(&self) -> crate::parallel::Parallelism {
-        crate::parallel::ThreadPolicy::default()
-            .resolve(crate::parallel::ParallelOp::IndexPack, self)
-            .parallelism()
+        self.try_pack_index_parallelism()
+            .expect("invalid pack.threads config")
+    }
+
+    /// Load config for `git_dir` (if any) and resolve [`crate::hash::Parallelism`] for index-pack.
+    ///
+    /// # Errors
+    ///
+    /// Propagates config load failures and invalid `pack.threads`.
+    pub fn try_pack_index_parallelism_for_git_dir(
+        env: &Environment,
+        git_dir: Option<&std::path::Path>,
+    ) -> Result<crate::parallel::Parallelism> {
+        match git_dir {
+            Some(d) => {
+                let cfg = Self::load(env, Some(d), true)?;
+                Ok(cfg.try_pack_index_parallelism()?)
+            }
+            None => Ok(crate::parallel::Parallelism::resolve(None)),
+        }
     }
 
     /// Load config for `git_dir` (if any) and resolve [`crate::hash::Parallelism`] for index-pack.
@@ -2025,10 +2055,8 @@ impl ConfigSet {
         env: &Environment,
         git_dir: Option<&std::path::Path>,
     ) -> crate::parallel::Parallelism {
-        git_dir
-            .and_then(|d| Self::load(env, Some(d), true).ok())
-            .map(|c| c.pack_index_parallelism())
-            .unwrap_or_else(|| crate::parallel::Parallelism::resolve(None))
+        Self::try_pack_index_parallelism_for_git_dir(env, git_dir)
+            .unwrap_or_else(|_| crate::parallel::Parallelism::resolve(None))
     }
 
     /// Default for `pack.readReverseIndex` / `pack.readreverseindex` (Git default: true).
