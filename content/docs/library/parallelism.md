@@ -34,6 +34,17 @@ Matches Git's `repo_config_get_index_threads`:
 
 When `core.preloadIndex` is false, index refresh/load operations stay serial regardless of `index.threads`.
 
+### EOIE / IEOT (parallel index read and write)
+
+When `index.threads` is explicitly set to more than one worker, Git may also write **EOIE** (end-of-index-entries) and **IEOT** (index entry offset table) extensions so entry blocks can be parsed on worker threads while extension payloads load in parallel. Grit reads and writes these extensions when the same config keys are enabled:
+
+- `index.recordEndOfIndexEntries` / `index.recordendofindexentries`
+- `index.recordOffsetTable` / `index.recordoffsettable`
+
+If those booleans are unset, they default to **on** when `index.threads` is explicitly configured and not serial (`1` / `false`).
+
+Use [`Index::parse_with_algo_and_config`](https://docs.rs/grit-lib/latest/grit_lib/index/struct.Index.html#method.parse_with_algo_and_config) with [`IndexParseContext`](https://docs.rs/grit-lib/latest/grit_lib/index/struct.IndexParseContext.html) (thread policy from [`Repository::thread_policy`](https://docs.rs/grit-lib/latest/grit_lib/repo/struct.Repository.html#method.thread_policy)) and the repository config. Invalid EOIE data falls back to the serial entry parse. Writes go through [`Index::write_with_config_and_policy`](https://docs.rs/grit-lib/latest/grit_lib/index/struct.Index.html#method.write_with_config_and_policy) so split indexes and sparse indexes keep working.
+
 ### `pack.threads` (index-pack / pack-objects)
 
 Unset or `0` selects auto (all logical CPUs). Positive integers cap worker count. Git rejects booleans, non-numeric strings, and negative values with a config error; use [`ThreadPolicy::try_resolve`](https://docs.rs/grit-lib/latest/grit_lib/parallel/struct.ThreadPolicy.html#method.try_resolve) for [`ParallelOp::IndexPack`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) to surface those errors. Fetch and [`clone`](https://docs.rs/grit-lib/latest/grit_lib/clone/fn.clone.html) pass [`CloneOptions::thread_policy`](https://docs.rs/grit-lib/latest/grit_lib/clone/struct.CloneOptions.html) (and the repository [`Environment`](https://docs.rs/grit-lib/latest/grit_lib/environment/struct.Environment.html)) into received-pack indexing so global `--threads` overrides `pack.threads` and command-scope `GIT_CONFIG_*` / `-c pack.threads=N` still applies when no override is set.

@@ -941,7 +941,13 @@ impl Repository {
         if let Some(res) = cfg.as_ref().get_bool("index.sparse") {
             res.map_err(|s| Error::Config(s.into()))?;
         }
-        let mut idx = Index::load_expand_sparse_optional(path, &self.odb)?;
+        let parse_ctx = crate::index::IndexParseContext::from_policy(self.thread_policy());
+        let mut idx = Index::load_expand_sparse_optional_with_context(
+            path,
+            &self.odb,
+            Some(cfg.as_ref()),
+            parse_ctx,
+        )?;
         crate::split_index::resolve_split_index_if_needed(&mut idx, &self.git_dir, path)?;
         if idx.source_mtime.is_none() {
             idx.source_mtime = crate::index::index_file_mtime(path);
@@ -1217,7 +1223,15 @@ impl Repository {
             );
         }
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));
-        write_index_file_split(path, &self.git_dir, index, cfg.as_ref(), split, skip_hash)?;
+        write_index_file_split(
+            path,
+            &self.git_dir,
+            index,
+            cfg.as_ref(),
+            split,
+            skip_hash,
+            self.thread_policy(),
+        )?;
         // Git `write_locked_index`: `post-index-change` after a successful index write (t1800).
         let updated_workdir_arg = if updated_workdir { "1" } else { "0" };
         let updated_skipworktree_arg = if updated_skipworktree { "1" } else { "0" };
