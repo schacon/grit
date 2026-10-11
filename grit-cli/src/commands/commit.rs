@@ -44,10 +44,6 @@ impl MarkdownRender for CommitOutcome {}
 pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
     let repo = context::discover()?;
 
-    if repo.load_index()?.has_unmerged_entries() {
-        return Err(map_commit_error(Error::IndexUnmerged));
-    }
-
     match resolve_head(&repo.git_dir)? {
         HeadState::Branch { .. } => {}
         HeadState::Detached { .. } => bail!("HEAD is detached; grit commit needs a branch"),
@@ -55,6 +51,10 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
     }
 
     stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if repo.load_index()?.has_unmerged_entries() {
+        return Err(map_commit_error(Error::IndexUnmerged));
+    }
 
     let message = match message {
         Some(m) if !m.trim().is_empty() => Some(m),
@@ -116,7 +116,7 @@ fn map_commit_error(err: Error) -> anyhow::Error {
         Error::NothingToCommit => anyhow::anyhow!("nothing to commit — working tree clean"),
         Error::DetachedHead => anyhow::anyhow!("HEAD is detached; grit commit needs a branch"),
         Error::IndexUnmerged => anyhow::anyhow!(
-            "cannot commit: the index still has unmerged paths — resolve conflicts and stage the result"
+            "cannot commit: merge conflicts are not fully resolved — fix conflict markers in your files and try again"
         ),
         Error::AmendUnborn => anyhow::anyhow!("cannot amend: no commits on this branch yet"),
         other => anyhow::anyhow!("{other}"),

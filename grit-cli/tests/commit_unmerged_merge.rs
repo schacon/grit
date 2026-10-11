@@ -130,24 +130,24 @@ fn commit_during_unresolved_merge_fails_human_and_json() -> TestResult {
     let human = gs(root, ["commit", "-m", "oops"]);
     assert_ne!(human.status, Some(0), "{}", human.dump());
     assert!(
-        human.stderr.contains("unmerged"),
-        "human stderr should mention unmerged paths: {}",
+        human.stderr.contains("conflict"),
+        "human stderr should mention unresolved merge conflicts: {}",
         human.dump()
     );
 
     let json = gs(root, ["--json", "commit", "-m", "oops"]);
     assert_ne!(json.status, Some(0), "{}", json.dump());
     assert!(
-        json.stdout.contains("unmerged"),
-        "json error output should mention unmerged paths: {}",
+        json.stdout.contains("conflict"),
+        "json error output should mention unresolved merge conflicts: {}",
         json.dump()
     );
 
     let markdown = gs(root, ["--markdown", "commit", "-m", "oops"]);
     assert_ne!(markdown.status, Some(0), "{}", markdown.dump());
     assert!(
-        markdown.stderr.contains("unmerged") || markdown.stdout.contains("unmerged"),
-        "markdown output should mention unmerged paths: {}",
+        markdown.stderr.contains("conflict") || markdown.stdout.contains("conflict"),
+        "markdown output should mention unresolved merge conflicts: {}",
         markdown.dump()
     );
 
@@ -155,5 +155,64 @@ fn commit_during_unresolved_merge_fails_human_and_json() -> TestResult {
         root.join(".git/MERGE_HEAD").exists(),
         "MERGE_HEAD must remain after failed commit"
     );
+    Ok(())
+}
+
+#[test]
+fn commit_after_resolved_merge_without_add_succeeds() -> TestResult {
+    let scratch = Scratch::new("971")?;
+    let root = scratch.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.name", "T"]);
+    git(root, &["config", "user.email", "t@e.com"]);
+    fs::write(root.join("f.txt"), b"base\n")?;
+    git(root, &["add", "f.txt"]);
+    git(root, &["commit", "-qm", "base"]);
+    git(root, &["checkout", "-qb", "side"]);
+    fs::write(root.join("f.txt"), b"side\n")?;
+    git(root, &["commit", "-qam", "side"]);
+    git(root, &["checkout", "-q", "main"]);
+    fs::write(root.join("f.txt"), b"main\n")?;
+    git(root, &["commit", "-qam", "main"]);
+    let merge = Command::new("git")
+        .current_dir(root)
+        .args(["merge", "side"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    assert!(!merge.status.success(), "merge should conflict");
+
+    fs::write(root.join("f.txt"), b"resolved\n")?;
+
+    let commit = gs(root, ["commit", "-m", "merged"]);
+    assert_eq!(commit.status, Some(0), "{}", commit.dump());
+
+    assert!(
+        !root.join(".git/MERGE_HEAD").exists(),
+        "MERGE_HEAD should be cleared after merge commit"
+    );
+
+    let parents = Command::new("git")
+        .current_dir(root)
+        .args(["rev-list", "--parents", "-1", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    assert!(parents.status.success());
+    let line = String::from_utf8_lossy(&parents.stdout);
+    let parent_count = line.split_whitespace().count();
+    assert_eq!(
+        parent_count, 3,
+        "merge commit should have two parents: {line}"
+    );
+
+    let blob = Command::new("git")
+        .current_dir(root)
+        .args(["show", "HEAD:f.txt"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    assert!(blob.status.success());
+    assert_eq!(String::from_utf8_lossy(&blob.stdout).trim(), "resolved");
     Ok(())
 }

@@ -6,6 +6,7 @@ use std::process::Command;
 
 use grit_lib::error::Error;
 use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -135,6 +136,41 @@ fn create_commit_rejects_unmerged_index_like_git() {
         repo.git_dir.join("MERGE_HEAD").exists(),
         "MERGE_HEAD must remain after refused commit"
     );
+}
+
+#[test]
+fn stage_for_commit_then_create_commit_concludes_resolved_merge_without_prior_add() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let repo = init_conflict_merge(root);
+
+    std::fs::write(root.join("f"), b"resolved\n").unwrap();
+    stage_for_commit(&repo, &mut NullProgress).expect("stage resolved merge");
+    assert!(
+        !repo.load_index().expect("index").has_unmerged_entries(),
+        "staging resolved worktree should collapse unmerged stages"
+    );
+
+    let side_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "side"])).expect("side oid");
+    let main_before = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main oid");
+
+    create_commit(
+        &repo,
+        &commit_req("merge side without add"),
+        &mut NullProgress,
+    )
+    .expect("merge commit");
+
+    let parents_line = git_out(root, &["rev-list", "--parents", "-1", "HEAD"]);
+    let parts: Vec<&str> = parents_line.split_whitespace().collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "merge commit should have two parents: {parents_line}"
+    );
+    assert_eq!(parts[1], main_before.to_hex());
+    assert_eq!(parts[2], side_tip.to_hex());
+    assert!(!repo.git_dir.join("MERGE_HEAD").exists());
 }
 
 #[test]
