@@ -146,7 +146,10 @@ pub fn stage_tracked_modifications_in_index(
     }
 
     for (raw_path, idx_e) in &stage0 {
-        if idx_e.mode == MODE_GITLINK || std::str::from_utf8(raw_path).is_err() {
+        if idx_e.mode == MODE_GITLINK
+            || idx_e.intent_to_add()
+            || std::str::from_utf8(raw_path).is_err()
+        {
             stage_tracked_path_individual(
                 repo,
                 work_tree,
@@ -1102,5 +1105,40 @@ mod tests {
         assert!(summary.removed.is_empty());
         let index = repo.load_index().unwrap();
         assert!(index.entries.iter().any(|e| e.path == rel));
+    }
+
+    #[test]
+    fn pathless_add_promotes_intent_to_add_entry() {
+        use std::process::Command;
+
+        if !Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return;
+        }
+        let (dir, repo) = init_repo();
+        let root = dir.path();
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        fs::write(root.join("f.txt"), b"hello\n").unwrap();
+        grit_test_support::git(root, &["add", "-N", "f.txt"]);
+
+        let empty = crate::diff::empty_blob_oid();
+        let before = repo.load_index().unwrap();
+        let ie = before.get(b"f.txt", 0).expect("ita entry");
+        assert!(ie.intent_to_add());
+        assert_eq!(ie.oid, empty);
+
+        use crate::porcelain::add::{stage, StageOptions};
+        use crate::progress::NullProgress;
+        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        assert_eq!(outcome.modified, 1, "pathless add must promote -N entry");
+
+        let after = repo.load_index().unwrap();
+        let ie = after.get(b"f.txt", 0).expect("staged f.txt");
+        assert!(!ie.intent_to_add(), "full add clears intent-to-add");
+        assert_ne!(ie.oid, empty, "index must store real content blob");
     }
 }
