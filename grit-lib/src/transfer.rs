@@ -83,7 +83,7 @@ pub enum TagMode {
 }
 
 /// Options controlling a fetch.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct FetchOptions {
     /// Positive refspecs selecting what to fetch.
     pub refspecs: Vec<String>,
@@ -130,6 +130,16 @@ pub struct FetchOptions {
     pub pack_spool_only: bool,
     /// Override the HTTP `Git-Protocol` header for this fetch (`None` → client default, usually v2).
     pub http_protocol_version: Option<u8>,
+    /// When set, side-band pack bytes are streamed here (e.g. `git index-pack --stdin`) instead of a temp pack file.
+    pub sideband_pack_writer: Option<Box<dyn Write + Send>>,
+    /// Called after a side-band pack completes when [`Self::sideband_pack_writer`] was used.
+    pub sideband_pack_finish: Option<Box<dyn SidebandPackFinish + Send>>,
+}
+
+/// Finalize a side-band pack streamed via [`FetchOptions::sideband_pack_writer`].
+pub trait SidebandPackFinish: Send {
+    /// Wait for external ingest and return the set of object ids in the new pack.
+    fn finish(self: Box<Self>) -> Result<HashSet<ObjectId>>;
 }
 
 /// Identity and message for clone reflog entries written by the library.
@@ -139,6 +149,30 @@ pub struct CloneReflog {
     pub identity: String,
     /// Reflog message (e.g. `clone: from <url>`).
     pub message: String,
+}
+
+impl Clone for FetchOptions {
+    fn clone(&self) -> Self {
+        Self {
+            refspecs: self.refspecs.clone(),
+            negative_refspecs: self.negative_refspecs.clone(),
+            tags: self.tags,
+            prune: self.prune,
+            dry_run: self.dry_run,
+            depth: self.depth,
+            deepen_since: self.deepen_since.clone(),
+            deepen_not: self.deepen_not.clone(),
+            unshallow: self.unshallow,
+            initial_remote_fetch: self.initial_remote_fetch,
+            remote_name: self.remote_name.clone(),
+            clone_reflog: self.clone_reflog.clone(),
+            diagnostics: self.diagnostics.clone(),
+            network_trace: self.network_trace,
+            http_protocol_version: self.http_protocol_version,
+            sideband_pack_writer: None,
+            sideband_pack_finish: None,
+        }
+    }
 }
 
 impl FetchOptions {
@@ -616,7 +650,8 @@ fn collect_reachable_excluding_peer(
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut queue: VecDeque<ObjectId> = VecDeque::new();
 
-    let at_boundary = |oid: ObjectId| peer_boundary.contains(&oid) || peer_odb.exists(&oid);
+    let at_boundary =
+        |oid: ObjectId| peer_boundary.contains(&oid) || peer_odb.exists_materialized_local(&oid);
 
     let enqueue = |oid: ObjectId,
                    queue: &mut VecDeque<ObjectId>,

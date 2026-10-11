@@ -1009,6 +1009,27 @@ impl Odb {
         })
     }
 
+    /// Whether `oid` is stored on disk in this repository's object store (loose or
+    /// non-promisor pack), without treating the canonical empty tree as virtually
+    /// present.
+    ///
+    /// Use this when deciding whether a peer already holds an object for incremental
+    /// local transfer; [`Self::exists`] and [`Self::exists_local`] treat the empty
+    /// tree as present even when no object file exists.
+    #[must_use]
+    pub fn exists_materialized_local(&self, oid: &ObjectId) -> bool {
+        if self.custom_primary.is_some() {
+            return self
+                .primary_writable()
+                .ok()
+                .and_then(|primary| primary.contains(oid).ok())
+                .unwrap_or(false);
+        }
+        self.with_pack_store_for(&self.objects_dir, || {
+            exists_materialized_in_objects_dir(&self.objects_dir, oid)
+        })
+    }
+
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
@@ -2379,6 +2400,17 @@ mod tests {
         assert!(odb.exists(&legacy));
         assert!(odb.exists_local(&canon));
         assert!(!odb.freshen_object(&canon));
+    }
+
+    #[test]
+    fn empty_tree_virtual_presence_skips_materialized_local() {
+        let dir = TempDir::new().unwrap();
+        let objects = dir.path().join("objects");
+        fs::create_dir_all(&objects).unwrap();
+        let odb = Odb::new(&objects);
+        let canon = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").unwrap();
+        assert!(odb.exists_local(&canon));
+        assert!(!odb.exists_materialized_local(&canon));
     }
 
     #[test]

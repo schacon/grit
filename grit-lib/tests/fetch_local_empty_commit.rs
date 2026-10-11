@@ -57,4 +57,15 @@ fn fetch_local_empty_commit_bare_remote() {
         ..Default::default()
     };
     fetch_local(&consumer.join(".git"), &bare, &opts).expect("fetch_local");
+
+    let fsck = Command::new("git")
+        .current_dir(&consumer)
+        .args(["fsck", "--strict"])
+        .output()
+        .expect("git fsck");
+    assert!(
+        fsck.status.success(),
+        "git fsck --strict after empty-tree fetch: {}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
 }
