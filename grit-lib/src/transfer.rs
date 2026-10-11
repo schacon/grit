@@ -83,7 +83,6 @@ pub enum TagMode {
 }
 
 /// Options controlling a fetch.
-#[derive(Clone)]
 pub struct FetchOptions {
     /// Positive refspecs selecting what to fetch.
     pub refspecs: Vec<String>,
@@ -169,6 +168,32 @@ pub struct CloneReflog {
     pub identity: String,
     /// Reflog message (e.g. `clone: from <url>`).
     pub message: String,
+}
+
+impl Clone for FetchOptions {
+    fn clone(&self) -> Self {
+        Self {
+            refspecs: self.refspecs.clone(),
+            negative_refspecs: self.negative_refspecs.clone(),
+            tags: self.tags,
+            prune: self.prune,
+            dry_run: self.dry_run,
+            depth: self.depth,
+            deepen_since: self.deepen_since.clone(),
+            deepen_not: self.deepen_not.clone(),
+            unshallow: self.unshallow,
+            initial_remote_fetch: self.initial_remote_fetch,
+            remote_name: self.remote_name.clone(),
+            clone_reflog: self.clone_reflog.clone(),
+            diagnostics: self.diagnostics.clone(),
+            network_trace: self.network_trace,
+            index_pack_threads: self.index_pack_threads,
+            thread_policy: self.thread_policy,
+            environment: self.environment.clone(),
+            pack_spool_only: self.pack_spool_only,
+            http_protocol_version: self.http_protocol_version,
+        }
+    }
 }
 
 impl FetchOptions {

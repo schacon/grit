@@ -1382,8 +1382,12 @@ fn pack_index_build_sha256_delta_pack_threads() {
 #[test]
 fn read_pack_bytes_cached_serves_installed_delta_pack() {
     let fx = shared_pack(PackShape::GitDelta, HashAlgo::Sha1).expect("fixture");
-    let (_keep, git_dir) =
-        install_into_git_repo(fx.bytes.clone(), fx.algo, &ingest_variants()[0], "git-delta");
+    let (_keep, git_dir) = install_into_git_repo(
+        fx.bytes.clone(),
+        fx.algo,
+        &ingest_variants()[0],
+        "git-delta",
+    );
     let pack_dir = git_dir.join("objects/pack");
     let pack_path = std::fs::read_dir(&pack_dir)
         .expect("pack dir")

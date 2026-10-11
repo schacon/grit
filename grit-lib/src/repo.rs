@@ -248,6 +248,13 @@ impl Repository {
         self.thread_policy
     }
 
+    /// Return a copy of this repository handle with an updated parallel thread policy.
+    #[must_use]
+    pub fn with_thread_policy(mut self, policy: crate::parallel::ThreadPolicy) -> Self {
+        self.thread_policy = policy;
+        self
+    }
+
     /// Return this handle's shared cache arena.
     #[must_use]
     pub(crate) fn caches(&self) -> &Arc<RepoCaches> {

@@ -47,6 +47,8 @@ pub struct CloneOptions {
     pub environment: Environment,
     /// Initial branch name used when initializing the empty repo (`main`).
     pub initial_branch: String,
+    /// Global thread policy for fetch pack ingest and the opened repository (`--threads`).
+    pub thread_policy: crate::parallel::ThreadPolicy,
 }
 
 impl CloneOptions {
@@ -59,6 +61,7 @@ impl CloneOptions {
             remote_name: DEFAULT_REMOTE.to_owned(),
             environment: Environment::capture_process(), // hygiene: CLI boundary — snapshot process environment for clone
             initial_branch: "main".to_owned(),
+            thread_policy: crate::parallel::ThreadPolicy::default(),
         }
     }
 }
@@ -183,6 +186,7 @@ pub fn clone(
         remote_name: Some(opts.remote_name.clone()),
         clone_reflog: Some(clone_reflog),
         environment: opts.environment.clone(),
+        thread_policy: opts.thread_policy,
         ..Default::default()
     };
     if let Ok(v) = crate::protocol::try_effective_client_protocol_version_from_config(&config) {
@@ -247,7 +251,7 @@ pub fn clone(
         path: opts.dest.clone(),
         branch: default,
         checkout_oid: oid,
-        repo,
+        repo: repo.with_thread_policy(opts.thread_policy),
     })
 }
 

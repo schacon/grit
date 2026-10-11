@@ -55,6 +55,7 @@ fn clone_into(url: &str, path: &Path, dir: &str) -> Result<CloneOutcome> {
         environment: crate::context::environment(),
         remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
         initial_branch: "main".to_owned(),
+        thread_policy: crate::context::thread_policy_for_repo(),
     };
     let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;

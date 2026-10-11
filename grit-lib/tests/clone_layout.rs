@@ -8,7 +8,6 @@ use grit_lib::environment::Environment;
 use grit_lib::fetch::NoProgress;
 use grit_lib::pack::verify_pack_and_collect;
 use grit_lib::porcelain::checkout::checkout_between_trees;
-use grit_lib::remote::DefaultHttpClientFactory;
 use grit_lib::repo::init_repository;
 use grit_lib::transfer::{fetch_local, CloneReflog, FetchOptions, TagMode};
 
@@ -281,7 +280,6 @@ fn library_clone_api_passes_fsck_and_status() {
     );
 
     let dest = tempfile::tempdir().expect("clone dest");
-    let factory = DefaultHttpClientFactory;
     let outcome = clone_repo(
         CloneOptions {
             url: upstream.path().to_string_lossy().into_owned(),
@@ -289,9 +287,10 @@ fn library_clone_api_passes_fsck_and_status() {
             environment: Environment::capture_process(),
             remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
             initial_branch: "main".to_owned(),
+            thread_policy: grit_lib::parallel::ThreadPolicy::default(),
         },
         &mut NoProgress,
-        Some(&factory),
+        None,
     )
     .expect("library clone");
 
