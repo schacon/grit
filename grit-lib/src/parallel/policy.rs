@@ -37,6 +37,8 @@ pub struct ThreadPolicy {
     pub threads_override: Option<usize>,
     /// When set, replaces the operation's default minimum item count before using a pool.
     pub min_items_override: Option<usize>,
+    /// When set, replaces the byte threshold before using a pool (`Some(0)` disables it).
+    pub min_total_bytes_override: Option<usize>,
 }
 
 impl ThreadPolicy {
@@ -62,6 +64,13 @@ impl ThreadPolicy {
     #[must_use]
     pub fn min_items_override(mut self, min_items: Option<usize>) -> Self {
         self.min_items_override = min_items;
+        self
+    }
+
+    /// Override minimum total bytes (`Some(0)` disables the byte threshold).
+    #[must_use]
+    pub fn min_total_bytes_override(mut self, min_bytes: Option<usize>) -> Self {
+        self.min_total_bytes_override = min_bytes;
         self
     }
 
@@ -121,10 +130,16 @@ impl ThreadPolicy {
             _ => None,
         };
 
+        let min_total_bytes = match self.min_total_bytes_override {
+            Some(0) => None,
+            Some(n) => Some(n),
+            None => default_min_bytes,
+        };
+
         Ok(ParallelOptions {
             threads,
             min_items,
-            min_total_bytes: default_min_bytes,
+            min_total_bytes,
             signed_entry_threshold,
         })
     }

@@ -27,10 +27,15 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ConfigSet;
 use crate::diff_indent_heuristic;
+use crate::diff_rename_parallel::{
+    diff_rename_parallel_options, exceeds_rename_detection_limits, parallel_load_optional_blobs,
+    parallel_map_indices,
+};
 use crate::error::{Error, Result};
 use crate::index::{CacheTreeNode, Index, IndexEntry};
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
+use crate::parallel::ThreadPolicy;
 use crate::userdiff::FuncnameMatcher;
 
 #[path = "structured_diff.rs"]
@@ -4945,6 +4950,21 @@ pub fn detect_renames(
     entries: Vec<DiffEntry>,
     threshold: u32,
 ) -> Vec<DiffEntry> {
+    let config = ConfigSet::new();
+    let policy = ThreadPolicy::default();
+    detect_renames_with_policy(odb, work_root, entries, threshold, &config, &policy)
+}
+
+/// Like [`detect_renames`], but honors `index.threads` / `--threads` via `thread_policy`.
+#[must_use]
+pub fn detect_renames_with_policy(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Vec<DiffEntry> {
     // Split entries into deleted, added, and others.
     let mut deleted: Vec<DiffEntry> = Vec::new();
     let mut added: Vec<DiffEntry> = Vec::new();
@@ -4967,21 +4987,29 @@ pub fn detect_renames(
         return result;
     }
 
-    // Read content for all deleted blobs.
-    let deleted_contents: Vec<Option<Vec<u8>>> = deleted
-        .iter()
-        .map(|d| odb.read(&d.old_oid).ok().map(|obj| obj.data))
-        .collect();
+    if exceeds_rename_detection_limits(deleted.len(), added.len(), config) {
+        let mut result = others;
+        result.extend(deleted);
+        result.extend(added);
+        result.sort_by(|a, b| a.path().cmp(b.path()));
+        return result;
+    }
 
-    // Read content for all added blobs.
-    let added_contents: Vec<Option<Vec<u8>>> = added
-        .iter()
-        .map(|a| read_added_entry_bytes(odb, a, work_root))
-        .collect();
+    let par_opts = diff_rename_parallel_options(config, thread_policy);
 
-    // Build a matrix of similarity scores and find the best pairings.
-    // We use a greedy approach: pick the highest-scoring pair first.
-    let mut scores: Vec<(u32, usize, usize)> = Vec::new();
+    // Read content for all deleted and added blobs (parallel when worthwhile).
+    let deleted_contents = parallel_load_optional_blobs(odb, deleted.len(), par_opts, 0, |di| {
+        odb.read(&deleted[di].old_oid).ok().map(|obj| obj.data)
+    });
+    let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
+        read_added_entry_bytes(odb, &added[ai], work_root)
+    });
+
+    let est_bytes: usize = deleted_contents
+        .iter()
+        .chain(added_contents.iter())
+        .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+        .sum();
 
     fn is_regularish_mode(mode: &str) -> bool {
         mode == "100644" || mode == "100755"
@@ -4991,30 +5019,35 @@ pub fn detect_renames(
         del.old_path == add.new_path && del.old_oid == add.new_oid && del.old_mode == add.new_mode
     }
 
-    for (di, del) in deleted.iter().enumerate() {
-        for (ai, add) in added.iter().enumerate() {
-            // Exact OID match → 100%
-            if del.old_oid == add.new_oid {
-                scores.push((100, di, ai));
-                continue;
+    let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
+        odb,
+        deleted.len(),
+        par_opts,
+        est_bytes,
+        |di| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
+            let del = &deleted[di];
+            let mut row: Vec<(u32, usize, usize)> = Vec::new();
+            for (ai, add) in added.iter().enumerate() {
+                if del.old_oid == add.new_oid {
+                    row.push((100, di, ai));
+                    continue;
+                }
+                if !is_regularish_mode(&del.old_mode) || !is_regularish_mode(&add.new_mode) {
+                    continue;
+                }
+                let score = match (&deleted_contents[di], &added_contents[ai]) {
+                    (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                    _ => 0,
+                };
+                if score >= threshold {
+                    row.push((score, di, ai));
+                }
             }
-
-            // Do not use line similarity across file types (e.g. regular ↔ symlink); Git keeps these
-            // as separate changes (`t4008-diff-break-rewrite` #7).
-            if !is_regularish_mode(&del.old_mode) || !is_regularish_mode(&add.new_mode) {
-                continue;
-            }
-
-            let score = match (&deleted_contents[di], &added_contents[ai]) {
-                (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
-                _ => 0,
-            };
-
-            if score >= threshold {
-                scores.push((score, di, ai));
-            }
-        }
-    }
+            Ok(row)
+        },
+    )
+    .expect("rename score rows");
+    let mut scores: Vec<(u32, usize, usize)> = score_rows.into_iter().flatten().collect();
 
     // Sort: prefer real path-changing pairs before same-path no-op pairs, then
     // same-basename pairs, then by score descending.
@@ -5100,6 +5133,33 @@ pub fn detect_copies(
     find_copies_harder: bool,
     source_tree_entries: &[(String, String, ObjectId)],
 ) -> Vec<DiffEntry> {
+    let config = ConfigSet::new();
+    let policy = ThreadPolicy::default();
+    detect_copies_with_policy(
+        odb,
+        work_root,
+        entries,
+        threshold,
+        find_copies_harder,
+        source_tree_entries,
+        &config,
+        &policy,
+    )
+}
+
+/// Like [`detect_copies`], but honors parallel thread policy and rename limits.
+#[must_use]
+#[expect(clippy::too_many_arguments)]
+pub fn detect_copies_with_policy(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+    find_copies_harder: bool,
+    source_tree_entries: &[(String, String, ObjectId)],
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Vec<DiffEntry> {
     use std::collections::{HashMap, HashSet};
 
     // Separate entries by status.
@@ -5156,52 +5216,71 @@ pub fn detect_copies(
         return result;
     }
 
-    // Read content for sources.
-    let source_contents: Vec<Option<Vec<u8>>> = sources
-        .iter()
-        .map(|(_, oid, _)| odb.read(oid).ok().map(|obj| obj.data))
-        .collect();
+    let par_opts = diff_rename_parallel_options(config, thread_policy);
+
+    let source_contents = parallel_load_optional_blobs(odb, sources.len(), par_opts, 0, |si| {
+        odb.read(&sources[si].1).ok().map(|obj| obj.data)
+    });
 
     let mut result_entries: Vec<DiffEntry> = Vec::new();
     let mut renamed_deleted: HashSet<usize> = HashSet::new();
     let mut used_added2 = vec![false; added.len()];
 
     if !added.is_empty() {
-        // Read content for added blobs.
-        let added_contents: Vec<Option<Vec<u8>>> = added
-            .iter()
-            .map(|a| read_added_entry_bytes(odb, a, work_root))
-            .collect();
-
-        // Build score matrix: (score, source_idx, added_idx)
-        let mut scores: Vec<(u32, usize, usize)> = Vec::new();
-        for (si, (src_path, src_oid, _)) in sources.iter().enumerate() {
-            for (ai, add) in added.iter().enumerate() {
-                // Never pair a path with itself as copy source (matches Git; avoids
-                // arbitrary tie-breaking when several sources share the same blob).
-                if add.new_path.as_deref() == Some(src_path.as_str()) {
-                    continue;
-                }
-                let add_oid = if add.new_oid != zero_oid() {
-                    add.new_oid
-                } else if let Some(ref data) = added_contents[ai] {
-                    odb.hash(ObjectKind::Blob, data)
-                } else {
-                    zero_oid()
-                };
-                if *src_oid == add_oid {
-                    scores.push((100, si, ai));
-                    continue;
-                }
-                let score = match (&source_contents[si], &added_contents[ai]) {
-                    (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
-                    _ => 0,
-                };
-                if score >= threshold {
-                    scores.push((score, si, ai));
-                }
-            }
+        if exceeds_rename_detection_limits(sources.len(), added.len(), config) {
+            let mut result = others;
+            result.extend(deleted);
+            result.extend(added);
+            result.sort_by(|a, b| a.path().cmp(b.path()));
+            return result;
         }
+
+        let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
+            read_added_entry_bytes(odb, &added[ai], work_root)
+        });
+
+        let est_bytes: usize = source_contents
+            .iter()
+            .chain(added_contents.iter())
+            .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+            .sum();
+
+        let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
+            odb,
+            sources.len(),
+            par_opts,
+            est_bytes,
+            |si| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
+                let (src_path, src_oid, _) = &sources[si];
+                let mut row: Vec<(u32, usize, usize)> = Vec::new();
+                for (ai, add) in added.iter().enumerate() {
+                    if add.new_path.as_deref() == Some(src_path.as_str()) {
+                        continue;
+                    }
+                    let add_oid = if add.new_oid != zero_oid() {
+                        add.new_oid
+                    } else if let Some(ref data) = added_contents[ai] {
+                        odb.hash(ObjectKind::Blob, data)
+                    } else {
+                        zero_oid()
+                    };
+                    if *src_oid == add_oid {
+                        row.push((100, si, ai));
+                        continue;
+                    }
+                    let score = match (&source_contents[si], &added_contents[ai]) {
+                        (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                        _ => 0,
+                    };
+                    if score >= threshold {
+                        row.push((score, si, ai));
+                    }
+                }
+                Ok(row)
+            },
+        )
+        .expect("copy score rows");
+        let mut scores: Vec<(u32, usize, usize)> = score_rows.into_iter().flatten().collect();
 
         // Sort by score descending.
         scores.sort_by_key(|a| std::cmp::Reverse(a.0));
@@ -5340,9 +5419,18 @@ pub fn status_apply_rename_copy_detection(
     threshold: u32,
     copies: bool,
     head_tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
     if !copies {
-        return Ok(detect_renames(odb, None, unstaged_raw, threshold));
+        return Ok(detect_renames_with_policy(
+            odb,
+            None,
+            unstaged_raw,
+            threshold,
+            config,
+            thread_policy,
+        ));
     }
     let source_tree_entries: Vec<(String, String, ObjectId)> = match head_tree {
         Some(oid) => flatten_tree(odb, oid, "")?
@@ -5351,13 +5439,15 @@ pub fn status_apply_rename_copy_detection(
             .collect(),
         None => Vec::new(),
     };
-    Ok(detect_copies(
+    Ok(detect_copies_with_policy(
         odb,
         None,
         unstaged_raw,
         threshold,
         false,
         &source_tree_entries,
+        config,
+        thread_policy,
     ))
 }
 

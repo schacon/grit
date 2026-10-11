@@ -562,9 +562,11 @@ use crate::crlf::{
     ConversionConfig, GitAttributes,
 };
 use crate::diff::{detect_renames, diff_trees, DiffEntry, DiffStatus};
+use crate::diff_rename_parallel::{diff_rename_parallel_options, parallel_map_indices};
 use crate::error::{Error as LibError, Result};
 use crate::objects::{parse_commit, parse_tree, CommitData, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::parallel::{ParallelOptions, ThreadPolicy};
 use crate::repo::Repository;
 use crate::wildmatch::wildmatch;
 
@@ -582,7 +584,7 @@ type CopySourceBlameCache = (
 pub type PromisorHydrateHook = fn(&Repository, ObjectId);
 
 /// A single line attribution produced by [`compute_blame`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlameLine {
     /// Commit that last modified this line.
     pub oid: ObjectId,
@@ -955,6 +957,7 @@ struct BlameSession<'a> {
     odb: &'a Odb,
     textconv_ctx: Option<&'a BlameTextconvContext>,
     use_textconv: bool,
+    copy_score_parallel: ParallelOptions,
     blob_lines: HashMap<BlobCacheKey, Arc<Vec<String>>>,
     path_entries: HashMap<PathCacheKey, Option<(ObjectId, u32)>>,
     pair_maps: HashMap<PairMapCacheKey, PairMapCacheValue>,
@@ -965,11 +968,16 @@ impl<'a> BlameSession<'a> {
         odb: &'a Odb,
         textconv_ctx: Option<&'a BlameTextconvContext>,
         use_textconv: bool,
+        thread_policy: &ThreadPolicy,
     ) -> Self {
+        let config = textconv_ctx
+            .map(|ctx| ctx.config.clone())
+            .unwrap_or_default();
         Self {
             odb,
             textconv_ctx,
             use_textconv,
+            copy_score_parallel: diff_rename_parallel_options(&config, thread_policy),
             blob_lines: HashMap::new(),
             path_entries: HashMap::new(),
             pair_maps: HashMap::new(),
@@ -1100,8 +1108,9 @@ pub fn compute_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
+    thread_policy: &ThreadPolicy,
 ) -> Result<Vec<BlameLine>> {
-    let mut session = BlameSession::new(odb, textconv_ctx, use_textconv);
+    let mut session = BlameSession::new(odb, textconv_ctx, use_textconv, thread_policy);
     compute_blame_with_session(
         odb,
         start_oid,
@@ -1638,11 +1647,8 @@ fn compute_blame_with_session(
                 // Diff current vs parent
                 let cur_lines_arc =
                     session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
-                let par_lines_arc = session.load_blob_lines(
-                    p_blob_oid,
-                    &parent_blob_path,
-                    p_blob_mode,
-                )?;
+                let par_lines_arc =
+                    session.load_blob_lines(p_blob_oid, &parent_blob_path, p_blob_mode)?;
                 let cur_lines = BlameSession::line_refs(&cur_lines_arc);
                 let par_lines = BlameSession::line_refs(&par_lines_arc);
                 let maps = session.parent_child_line_maps(
@@ -1930,21 +1936,38 @@ fn find_copy_source_blame(
     let mut entries = Vec::new();
     collect_tree_file_entries(odb, parent_tree_oid, "", &mut entries)?;
 
-    let mut best_path: Option<String> = None;
-    let mut best_score = 0usize;
-    for (path, oid, mode) in &entries {
-        if (!include_current_path && path == exclude_path) || !is_regular_mode(*mode) {
+    let mut candidates: Vec<(String, ObjectId, u32)> = Vec::new();
+    for (path, oid, mode) in entries {
+        if (!include_current_path && path == exclude_path) || !is_regular_mode(mode) {
             continue;
         }
-        let lines_arc = session.load_blob_lines(*oid, path, *mode)?;
-        let lines = BlameSession::line_refs(&lines_arc);
-        let score = current_lines
-            .iter()
-            .filter(|line| lines.iter().any(|src| src == *line))
-            .count();
+        candidates.push((path, oid, mode));
+    }
+
+    let scored: Vec<(String, usize)> = parallel_map_indices(
+        odb,
+        candidates.len(),
+        session.copy_score_parallel,
+        0,
+        |ci| -> std::result::Result<(String, usize), LibError> {
+            let (path, oid, mode) = &candidates[ci];
+            let content =
+                read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
+            let parsed: Vec<&str> = content_lines(&content);
+            let score = current_lines
+                .iter()
+                .filter(|line| parsed.iter().any(|src| src == *line))
+                .count();
+            Ok((path.clone(), score))
+        },
+    )?;
+
+    let mut best_path: Option<String> = None;
+    let mut best_score = 0usize;
+    for (path, score) in scored {
         if score > best_score {
             best_score = score;
-            best_path = Some(path.clone());
+            best_path = Some(path);
         }
     }
 
@@ -2092,6 +2115,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         .unwrap_or(false);
     let ignore_revs = HashSet::new();
 
+    let thread_policy = repo.thread_policy();
     let raw = compute_blame(
         &repo.odb,
         start_oid,
@@ -2104,6 +2128,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         false,
         &grafts,
         indent_heuristic,
+        &thread_policy,
     )?;
 
     let mut lines: Vec<BlameAttributedLine> = raw
