@@ -258,6 +258,33 @@ cargo build --release -p grit-cli -p grit-utils
 
 **Measured outcomes:** the Object reads table below is generated from committed `grit-utils/baselines/odb-read.json` (hyperfine **≥5** runs per scenario, grit vs system git medians and peak RSS). Refresh with two invocations and `grit-bench compare run1.json run2.json --tolerance 0.10` before updating the baseline file and running `make docs`.
 
+## grit-bench: parallelism (threads=1 vs auto)
+
+The **`grit-bench parallel`** suite measures how wall time scales when worker threads are pinned to **1** versus **auto** (unset `index.threads`, `checkout.workers`, and `pack.threads`, so system **git** and **grit** use all logical CPUs). Each scenario runs twice in the JSON baseline: ids end with **`-t1`** or **`-tauto`**. Hermetic git config matches other suites (`GIT_CONFIG_NOSYSTEM`, empty global config, `gc.auto=0`), with extra keys injected through **`GIT_CONFIG_COUNT`** for the one-thread runs. When the **`grit`** binary exposes a global **`--threads`** flag, the suite passes **`--threads=1`** or **`--threads=0`** (auto) in addition to those config keys.
+
+Fixtures reuse the synthetic **100 000**-file repo (same shape as **`synthetic-100000`** / hot-path **H** tier). Scenarios:
+
+| Workload | Git command / config | Grit |
+| --- | --- | --- |
+| Status dirty / clean | `git status -s` | `grit status` |
+| Fresh checkout | `git checkout -f HEAD` after `git clone --no-checkout` | `grit-bench drive checkout-branch` (library checkout) |
+| `file://` clone | `git clone` | `grit clone` |
+| Wide switch | `git switch` out and back (~10% path delta) | `grit switch` |
+| Index-pack | `git index-pack --threads=…` on the repacked `.pack` | `grit-bench drive index-pack` |
+| Pack writing | `git pack-objects --all --stdout` | `grit-bench drive pack-build-all` |
+| Rename diff | `git diff -M` (~2000 renames) | `grit-bench drive diff-rename-m` |
+
+```bash
+cargo build --release -p grit-cli -p grit-utils
+./target/release/grit-bench parallel --format json --output grit-utils/baselines/parallel-before.json
+./target/release/grit-bench compare grit-utils/baselines/parallel-before.json /tmp/parallel-rerun.json --tolerance 0.10
+make docs
+```
+
+The committed **`parallel-before.json`** baseline captures **before** parallelism work (maintenance plan step 997). Generated site tables include **threads** in the scenario id suffix; compare **`-t1`** and **`-tauto`** rows for the same workload to see scaling. **`machine.logical_cores`** in the JSON records core count at capture time.
+
+Integration smoke (tiny fixtures, sixteen scenarios; requires **hyperfine** on `PATH`): `cargo test -p grit-utils parallel_scenario_smoke_end_to_end`.
+
 ## grit-bench: network (clone, fetch, push, ls-remote)
 
 The **`grit-bench network`** suite compares **`grit`** and system **`git`** on the same remote URLs. Cached fixtures live under **`GRIT_BENCH_NETWORK_CACHE`** (default `/tmp/grit-bench-network-cache`):

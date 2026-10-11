@@ -528,6 +528,133 @@ pub fn serve_clone(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
+/// Materialize `branch` in the worktree (matches `git checkout -f` after `--no-checkout`).
+pub fn checkout_branch_force(repo: &Repository, branch: &str) -> Result<()> {
+    use grit_lib::objects::parse_commit;
+    use grit_lib::porcelain::checkout::checkout_between_trees;
+    let oid = if branch.eq_ignore_ascii_case("HEAD") {
+        *grit_lib::state::resolve_head(&repo.git_dir)?
+            .oid()
+            .context("HEAD does not resolve to a commit")?
+    } else {
+        repo.resolve_ref_name(branch)
+            .with_context(|| format!("resolve branch {branch}"))?
+    };
+    let commit = parse_commit(
+        &repo
+            .odb
+            .read(&oid)
+            .with_context(|| format!("read commit {oid}"))?
+            .data,
+    )
+    .context("parse commit")?;
+    checkout_between_trees(repo, None, &commit.tree).context("checkout branch")?;
+    Ok(())
+}
+
+/// Build in-memory pack index records for a `.pack` file (index-pack CPU path).
+pub fn index_pack_records(
+    pack_path: &Path,
+    repo: &Repository,
+    threads: Option<usize>,
+) -> Result<()> {
+    use grit_lib::hash::Parallelism;
+    use grit_lib::unpack_objects::pack_index_records_with_threads;
+
+    let pack =
+        std::fs::read(pack_path).with_context(|| format!("read pack {}", pack_path.display()))?;
+    let parallelism = match threads {
+        Some(n) => Parallelism::resolve(Some(n)),
+        None => repo
+            .config()
+            .map(|cfg| cfg.pack_index_parallelism())
+            .unwrap_or_else(|_| Parallelism::resolve(None)),
+    };
+    let _records =
+        pack_index_records_with_threads(&pack, &repo.odb, parallelism).context("index-pack")?;
+    Ok(())
+}
+
+/// Write a full `--all` pack to stdout (matches `git pack-objects --all --stdout` workload).
+pub fn pack_build_all_stdout(repo: &Repository, delta_threads: usize) -> Result<()> {
+    use grit_lib::hash::Parallelism;
+    use grit_lib::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
+    use grit_lib::refs::list_refs_for_repository;
+
+    let refs = list_refs_for_repository(repo, "")?;
+    let wants: Vec<_> = refs.into_iter().map(|(_, oid)| oid).collect();
+    let workers = if delta_threads == 0 {
+        Parallelism::resolve(None).threads().get()
+    } else {
+        delta_threads.max(1)
+    };
+    let opts = PackObjectsOptions {
+        build: PackBuildOptions {
+            delta: true,
+            ..PackBuildOptions::default()
+        },
+        delta_threads: workers,
+    };
+    let mut stdout = io::stdout().lock();
+    PackObjects::new(&repo.odb, opts)
+        .wants(&wants)
+        .write_to(&mut stdout)
+        .context("pack-objects --all")?;
+    Ok(())
+}
+
+/// Tree diff with rename detection (`git diff -M` between two commits).
+pub fn diff_rename_m(
+    repo: &Repository,
+    old_rev: &str,
+    new_rev: &str,
+    threshold: u32,
+) -> Result<()> {
+    use grit_lib::diff::{detect_renames, diff_trees};
+    use grit_lib::objects::parse_commit;
+
+    let old_oid = resolve_rev(repo, old_rev)?;
+    let new_oid = resolve_rev(repo, new_rev)?;
+    let old_raw = repo.odb.read(&old_oid).context("read old commit")?;
+    let new_raw = repo.odb.read(&new_oid).context("read new commit")?;
+    let old_commit = parse_commit(&old_raw.data).context("parse old commit")?;
+    let new_commit = parse_commit(&new_raw.data).context("parse new commit")?;
+    let entries = diff_trees(
+        &repo.odb,
+        Some(&old_commit.tree),
+        Some(&new_commit.tree),
+        "",
+    )?;
+    let entries = detect_renames(&repo.odb, None, entries, threshold);
+    let mut out = io::stdout().lock();
+    for entry in entries {
+        let path = entry
+            .new_path
+            .as_deref()
+            .or(entry.old_path.as_deref())
+            .unwrap_or("");
+        writeln!(out, "{path}")?;
+    }
+    Ok(())
+}
+
+fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
+    if rev.len() >= 4 && rev.chars().all(|c| c.is_ascii_hexdigit()) {
+        return ObjectId::from_hex(rev).context("parse oid");
+    }
+    let mut cmd = std::process::Command::new("git");
+    let cwd = repo.work_tree.as_deref().unwrap_or(repo.git_dir.as_path());
+    cmd.args(["rev-parse", rev]).current_dir(cwd);
+    let out = cmd.output().context("git rev-parse in driver")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "rev-parse {rev}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    ObjectId::from_hex(String::from_utf8_lossy(&out.stdout).trim()).context("parse rev-parse oid")
+}
+
 /// Open a bare or normal repo at `path` for driver subcommands.
 pub fn open_repo(path: &Path) -> Result<Repository> {
     if path.join("HEAD").is_file() {

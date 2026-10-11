@@ -13,6 +13,11 @@ use grit_utils::network_suite::{
 };
 use grit_utils::odb_driver::{self, open_repo};
 use grit_utils::odb_suite::{run_odb_backend_suite, run_odb_suite, OdbRunConfig};
+use grit_utils::parallel_fixture::ParallelProfile;
+use grit_utils::parallel_suite::{
+    prepare_parallel_checkout, prepare_parallel_clone, prepare_parallel_index_pack,
+    run_parallel_suite,
+};
 use grit_utils::refs_driver;
 use grit_utils::refs_fixture::{run_prepare_refs, RefsWorkMode};
 use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
@@ -126,6 +131,12 @@ enum Cmd {
     },
     /// Clone, fetch, push, and ls-remote over file and smart HTTP
     Network {
+        /// Use tiny cached fixtures (for integration tests).
+        #[arg(long)]
+        smoke: bool,
+    },
+    /// Parallel scaling scenarios (threads=1 vs auto) on the 100k synthetic fixture
+    Parallel {
         /// Use tiny cached fixtures (for integration tests).
         #[arg(long)]
         smoke: bool,
@@ -252,6 +263,31 @@ enum Cmd {
         #[arg(long)]
         git: PathBuf,
     },
+    #[command(hide = true)]
+    PrepareParallelCheckout {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        dest: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareParallelClone {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        dest: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareParallelIndexPack {
+        #[arg(long)]
+        pack: PathBuf,
+        #[arg(long)]
+        dest: PathBuf,
+    },
 }
 
 fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
@@ -300,6 +336,29 @@ enum DriveCmd {
     },
     ServeClone {
         repo: PathBuf,
+    },
+    IndexPack {
+        pack: PathBuf,
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        threads: Option<u32>,
+    },
+    PackBuildAll {
+        repo: PathBuf,
+        #[arg(long)]
+        delta_threads: Option<u32>,
+    },
+    DiffRenameM {
+        repo: PathBuf,
+        #[arg(long)]
+        old: String,
+        #[arg(long)]
+        new: String,
+    },
+    CheckoutBranch {
+        repo: PathBuf,
+        branch: String,
     },
 }
 
@@ -400,6 +459,30 @@ fn run_drive(workload: &DriveCmd) -> Result<()> {
             let repo = open_repo(repo)?;
             odb_driver::serve_clone(&repo)?;
         }
+        DriveCmd::IndexPack {
+            pack,
+            repo,
+            threads,
+        } => {
+            let repo = open_repo(repo)?;
+            odb_driver::index_pack_records(pack, &repo, threads.map(|t| t as usize))?;
+        }
+        DriveCmd::PackBuildAll {
+            repo,
+            delta_threads,
+        } => {
+            let repo = open_repo(repo)?;
+            let threads = delta_threads.map(|t| t as usize).unwrap_or(1);
+            odb_driver::pack_build_all_stdout(&repo, threads)?;
+        }
+        DriveCmd::DiffRenameM { repo, old, new } => {
+            let repo = open_repo(repo)?;
+            odb_driver::diff_rename_m(&repo, old.as_str(), new.as_str(), 50)?;
+        }
+        DriveCmd::CheckoutBranch { repo, branch } => {
+            let repo = open_repo(repo)?;
+            odb_driver::checkout_branch_force(&repo, branch.as_str())?;
+        }
     }
     Ok(())
 }
@@ -496,6 +579,17 @@ fn main() -> Result<()> {
         Cmd::PrepareStash { git } => {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_stash(&git);
+        }
+        Cmd::PrepareParallelCheckout { git, url, dest } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_parallel_checkout(&git, url, dest.as_path());
+        }
+        Cmd::PrepareParallelClone { git, url, dest } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_parallel_clone(&git, url, dest.as_path());
+        }
+        Cmd::PrepareParallelIndexPack { pack, dest } => {
+            return prepare_parallel_index_pack(pack.as_path(), dest.as_path());
         }
         _ => {}
     }
@@ -639,6 +733,19 @@ fn main() -> Result<()> {
                 timestamp,
             )?
         }
+        Cmd::Parallel { smoke } => {
+            eprintln!("Running parallel scaling benchmarks...");
+            let profile = if *smoke {
+                ParallelProfile::Smoke
+            } else {
+                ParallelProfile::Production
+            };
+            let cfg = run_config(&cli, true);
+            let bench_exe = std::env::current_exe().context("current exe")?;
+            run_parallel_suite(
+                &hyperfine, &git, &grit, &bench_exe, &cfg, profile, timestamp,
+            )?
+        }
         Cmd::Refs => {
             eprintln!("Running ref benchmarks (100k-ref fixtures)...");
             let cfg = RefsRunConfig {
@@ -693,6 +800,9 @@ fn main() -> Result<()> {
         | Cmd::ServeGitHttp { .. }
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
+        | Cmd::PrepareParallelCheckout { .. }
+        | Cmd::PrepareParallelClone { .. }
+        | Cmd::PrepareParallelIndexPack { .. }
         | Cmd::RefsDriver { .. } => unreachable!(),
     };
 
@@ -700,7 +810,12 @@ fn main() -> Result<()> {
     write_output(&cli, &rendered)?;
     if !matches!(
         cli.command,
-        Cmd::Odb | Cmd::OdbBackend | Cmd::Refs | Cmd::Bitmaps { .. } | Cmd::Network { .. }
+        Cmd::Odb
+            | Cmd::OdbBackend
+            | Cmd::Refs
+            | Cmd::Bitmaps { .. }
+            | Cmd::Network { .. }
+            | Cmd::Parallel { .. }
     ) {
         remove_dir_robust(&scratch_dir());
     }
