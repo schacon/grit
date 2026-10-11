@@ -60,7 +60,7 @@ pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
 
 /// Staged and unstaged diffs for the current worktree (no rename detection), with stat refresh
 /// in the same worktree pass as the unstaged diff.
-fn local_change_diffs(
+pub(crate) fn local_change_diffs(
     repo: &Repository,
     index: &mut Index,
     head_tree: Option<ObjectId>,

@@ -1,6 +1,6 @@
 ---
 title: grit switch
-summary: Switch to another branch, or create one and switch to it.
+summary: Switch to another branch, remote branch, or detached commit.
 group: Branches and tags
 order: 2
 ---
@@ -9,27 +9,34 @@ order: 2
 
 ```text
 grit switch <branch>
-grit switch -c <branch>
+grit switch -c <branch> [<start-point>]
+grit switch --detach <rev>
 ```
 
 `grit checkout` and `grit co` do the same thing.
 
 ## Description
 
-Switches to a local branch and updates the files in your working tree to match it.
+Switches to a local branch, creates a branch from a remote-tracking ref or start point, or checks out a commit in detached `HEAD` mode. Updates tracked files in the working tree to match the destination.
 
-`grit switch` won't run while you have uncommitted changes, staged or not, so that nothing gets carried over to the wrong branch by accident. Commit first. Untracked files stay where they are, unless the other branch has a file at the same path; then `grit` stops rather than overwrite it.
+Local edits are allowed when they only touch paths that are the same on both sides of the switch, or when a changed path already matches the destination tree in the index. Grit still refuses when your changes would conflict with files that differ between branches, or when an untracked file would be overwritten.
 
 A local branch can only be checked out in one worktree at a time (including linked worktrees created with `git worktree add`). Switching to a branch that is already checked out elsewhere fails.
 
-With `-c`, creates the branch at the current commit and switches to it.
+With `-c`, creates the branch at the current commit (or at `<start-point>` when you pass one), then switches to it.
+
+When `<branch>` names a remote-tracking branch (for example `origin/feature`), Grit creates `feature` at the same commit and switches to it if no local branch exists yet.
+
+`--detach` checks out `<rev>` without moving a branch tip. Use another branch or `grit switch <branch>` to reattach.
 
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `<branch>` | The branch to switch to, or to create with `-c`. |
+| `<branch>` | Local branch to switch to, remote-tracking name to DWIM, or new branch name with `-c`. |
+| `<start-point>` | With `-c`, commit to create the branch from (defaults to `HEAD`). |
 | `-c`, `--create` | Create the branch first, then switch to it. Fails if the branch already exists. |
+| `--detach` | Check out a commit in detached `HEAD` mode instead of switching a branch. |
 
 ## Examples
 
@@ -39,12 +46,18 @@ Created and switched to branch feature
 
 $ grit switch main
 Switched to branch main
+
+$ grit switch -c br2 origin/br2
+Created and switched to branch br2
+
+$ grit switch --detach HEAD~1
+HEAD detached at a1b2c3d
 ```
 
-With uncommitted changes:
+When local changes would conflict with the destination branch:
 
 ```console
-$ grit switch main
+$ grit switch other
 error: you have uncommitted changes — commit them before switching
 ```
 
@@ -54,18 +67,36 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `branch` | string | The branch you switched to. |
-| `created` | boolean | `true` when `-c` created the branch; otherwise `false`. |
+| `branch` | string | Short branch name when attached; empty when detached. |
+| `created` | boolean | `true` when `-c` or remote DWIM created the branch. |
+| `detached` | boolean | `true` when `--detach` was used. |
+| `commit` | string | Present when `detached` is true: full hex oid of the checked-out commit. |
 
-Example:
+Example (branch switch):
 
 ```json
 {
   "branch": "feature",
-  "created": true
+  "created": true,
+  "detached": false
 }
 ```
 
+Example (detached):
+
+```json
+{
+  "branch": "",
+  "created": false,
+  "detached": true,
+  "commit": "a1b2c3d4e5f6789012345678901234567890abcd"
+}
+```
+
+## Markdown output
+
+Pass `--markdown` for agent-friendly output (same fields as JSON, as a bullet list under a `## Switch` heading).
+
 ## See also
 
-[grit branch](../branch/), [grit merge](../merge/), [grit status](../status/)
+[grit branch](../branch/), [grit reset](../reset/), [grit merge](../merge/), [grit status](../status/)

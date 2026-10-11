@@ -408,10 +408,12 @@ fn switch_json() -> TestResult {
     let created = gs_json(&repo, &["switch", "-c", "topic"]);
     assert_eq!(created["branch"], "topic");
     assert_eq!(created["created"], Value::Bool(true));
+    assert_eq!(created["detached"], Value::Bool(false));
 
     let switched = gs_json(&repo, &["switch", "main"]);
     assert_eq!(switched["branch"], "main");
     assert_eq!(switched["created"], Value::Bool(false));
+    assert_eq!(switched["detached"], Value::Bool(false));
     Ok(())
 }
 
