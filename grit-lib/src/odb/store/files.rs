@@ -282,6 +282,40 @@ impl FilesSource {
             Err(err) => Err(err),
         }
     }
+
+    fn contains_in_packs(&self, oid: &ObjectId) -> Result<bool> {
+        let indexes = pack::read_local_pack_indexes_cached(&self.objects_dir)?;
+        if indexes.is_empty() && !pack_directory_has_index_files(&self.objects_dir) {
+            if self.midx_tip_listing_for_exists && self.use_midx {
+                match midx_oid_listed_in_tip(&self.objects_dir, oid) {
+                    Ok(Some(true)) => return Ok(true),
+                    Ok(Some(false)) | Ok(None) => {}
+                    Err(_) => return Ok(false),
+                }
+            }
+            return Ok(false);
+        }
+        let filter = super::PackFilter {
+            include_promisor: true,
+            include_cruft: true,
+        };
+        if self.packs.contains_filtered(oid, filter)? {
+            return Ok(true);
+        }
+        if pack::reprepare_pack_directory_on_miss(&self.objects_dir)?
+            && self.packs.contains_filtered(oid, filter)?
+        {
+            return Ok(true);
+        }
+        if self.midx_tip_listing_for_exists && self.use_midx {
+            match midx_oid_listed_in_tip(&self.objects_dir, oid) {
+                Ok(Some(true)) => return Ok(true),
+                Ok(Some(false)) | Ok(None) => {}
+                Err(_) => return Ok(false),
+            }
+        }
+        Ok(false)
+    }
 }
 
 impl ObjectStore for FilesSource {
@@ -290,12 +324,18 @@ impl ObjectStore for FilesSource {
     }
 
     fn read(&self, oid: &ObjectId) -> Result<Option<Object>> {
+        if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            return self.read_with_pack_retry(oid);
+        }
         PackStore::with_context(self.packs.pack_store().clone(), || {
             self.read_with_pack_retry(oid)
         })
     }
 
     fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
+        if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            return self.read_info_with_pack_retry(oid);
+        }
         PackStore::with_context(self.packs.pack_store().clone(), || {
             self.read_info_with_pack_retry(oid)
         })
@@ -308,39 +348,12 @@ impl ObjectStore for FilesSource {
         if self.loose.object_path(oid).is_file() {
             return Ok(true);
         }
-        let indexes = pack::read_local_pack_indexes_cached(&self.objects_dir)?;
-        if indexes.is_empty() && !pack_directory_has_index_files(&self.objects_dir) {
-            if self.midx_tip_listing_for_exists && self.use_midx {
-                match midx_oid_listed_in_tip(&self.objects_dir, oid) {
-                    Ok(Some(true)) => return Ok(true),
-                    Ok(Some(false)) | Ok(None) => {}
-                    Err(_) => return Ok(false),
-                }
-            }
-            return Ok(false);
+        let check = || self.contains_in_packs(oid);
+        if PackStore::read_context_matches_objects_dir(&self.objects_dir) {
+            check()
+        } else {
+            PackStore::with_context(self.packs.pack_store().clone(), check)
         }
-        PackStore::with_context(self.packs.pack_store().clone(), || {
-            let filter = super::PackFilter {
-                include_promisor: true,
-                include_cruft: true,
-            };
-            if self.packs.contains_filtered(oid, filter)? {
-                return Ok(true);
-            }
-            if pack::reprepare_pack_directory_on_miss(&self.objects_dir)?
-                && self.packs.contains_filtered(oid, filter)?
-            {
-                return Ok(true);
-            }
-            if self.midx_tip_listing_for_exists && self.use_midx {
-                match midx_oid_listed_in_tip(&self.objects_dir, oid) {
-                    Ok(Some(true)) => return Ok(true),
-                    Ok(Some(false)) | Ok(None) => {}
-                    Err(_) => return Ok(false),
-                }
-            }
-            Ok(false)
-        })
     }
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {

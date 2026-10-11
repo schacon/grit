@@ -157,7 +157,7 @@ pub struct Odb {
     /// Whether [`Self::enable_mem_overlay`] activated the in-memory overlay (avoids locking on reads).
     mem_overlay_active: Arc<AtomicBool>,
     /// Lazily built [`FilesSource`] for [`Self::objects_dir`].
-    primary_source: Arc<RwLock<Option<Arc<FilesSource>>>>,
+    primary_source: Arc<OnceLock<Arc<FilesSource>>>,
     /// Alternate object dirs as a [`CompositeStore`] (generation-bumped with file alternates).
     alternate_sources_cache: Arc<RwLock<AlternateSourcesCache>>,
     /// Whether MIDX pack validation has run for this [`Odb`] (Git warns once per process).
@@ -258,7 +258,7 @@ impl Odb {
             env_alternate_lazy: Arc::new(OnceLock::new()),
             mem_overlay: Arc::new(RwLock::new(None)),
             mem_overlay_active: Arc::new(AtomicBool::new(false)),
-            primary_source: Arc::new(RwLock::new(None)),
+            primary_source: Arc::new(OnceLock::new()),
             alternate_sources_cache: Arc::new(RwLock::new(AlternateSourcesCache {
                 file_generation: 0,
                 env_fingerprint: 0,
@@ -306,7 +306,7 @@ impl Odb {
             env_alternate_lazy: Arc::new(OnceLock::new()),
             mem_overlay: Arc::new(RwLock::new(None)),
             mem_overlay_active: Arc::new(AtomicBool::new(false)),
-            primary_source: Arc::new(RwLock::new(None)),
+            primary_source: Arc::new(OnceLock::new()),
             alternate_sources_cache: Arc::new(RwLock::new(AlternateSourcesCache {
                 file_generation: 0,
                 env_fingerprint: 0,
@@ -643,20 +643,18 @@ impl Odb {
     /// Propagates failures while opening pack, MIDX, or loose backends.
     pub fn primary(&self) -> Result<Arc<FilesSource>> {
         self.require_files_primary("primary")?;
-        if let Ok(guard) = self.primary_source.read() {
-            if let Some(src) = guard.as_ref() {
-                return Ok(Arc::clone(src));
-            }
+        if let Some(src) = self.primary_source.get() {
+            return Ok(Arc::clone(src));
         }
         let src = self.build_files_source(
             &self.objects_dir,
             self.multi_pack_index_reads_enabled(),
             self.midx_tip_listing_enabled(),
         )?;
-        if let Ok(mut guard) = self.primary_source.write() {
-            *guard = Some(Arc::clone(&src));
+        match self.primary_source.set(Arc::clone(&src)) {
+            Ok(()) => Ok(src),
+            Err(existing) => Ok(existing),
         }
-        Ok(src)
     }
 
     /// Whether any alternate object directory is configured for this database.
@@ -873,9 +871,11 @@ impl Odb {
     /// that are invalidated here as well.
     pub fn invalidate_packs(&self) {
         self.pack_store.invalidate_all();
+        PackStore::invalidate_legacy_for_objects_dir(&self.objects_dir);
         if let Ok(guard) = self.alternate_pack_stores.lock() {
             for store in guard.values() {
                 store.invalidate_all();
+                PackStore::invalidate_legacy_for_objects_dir(store.objects_dir());
             }
         }
     }

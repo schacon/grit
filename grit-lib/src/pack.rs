@@ -125,6 +125,98 @@ pub(crate) mod pack_cache {
 
     const DELTA_LRU_SHARD_COUNT: usize = 32;
 
+    type ThreadLocalDirListing = Option<(PathBuf, SystemTime, Vec<Arc<PackIndex>>)>;
+
+    thread_local! {
+        static PACK_DIR_INDEXES: std::cell::RefCell<ThreadLocalDirListing> =
+            const { std::cell::RefCell::new(None) };
+        static PACK_HIT_INDEX: std::cell::RefCell<Option<(PathBuf, Arc<PackIndex>)>> =
+            const { std::cell::RefCell::new(None) };
+        static PACK_BYTES: std::cell::RefCell<HashMap<PathBuf, Arc<PackData>>> =
+            std::cell::RefCell::new(HashMap::new());
+        static PACK_INDEXES: std::cell::RefCell<HashMap<PathBuf, Arc<PackIndex>>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+
+    pub(crate) fn clear_thread_local_dir_indexes() {
+        PACK_DIR_INDEXES.with(|cell| *cell.borrow_mut() = None);
+        PACK_HIT_INDEX.with(|cell| *cell.borrow_mut() = None);
+        PACK_BYTES.with(|cell| cell.borrow_mut().clear());
+        PACK_INDEXES.with(|cell| cell.borrow_mut().clear());
+    }
+
+    fn cached_pack_bytes(pack_path: &Path) -> Option<Arc<PackData>> {
+        if !crate::pack_store::PackStore::has_context() {
+            return None;
+        }
+        PACK_BYTES.with(|cell| cell.borrow().get(pack_path).map(Arc::clone))
+    }
+
+    fn remember_pack_bytes(pack_path: &Path, bytes: &Arc<PackData>) {
+        if !crate::pack_store::PackStore::has_context() {
+            return;
+        }
+        PACK_BYTES.with(|cell| {
+            cell.borrow_mut()
+                .insert(pack_path.to_path_buf(), Arc::clone(bytes));
+        });
+    }
+
+    pub(crate) fn remember_pack_hit(objects_dir: &Path, idx: &Arc<PackIndex>) {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return;
+        }
+        PACK_HIT_INDEX.with(|cell| {
+            *cell.borrow_mut() = Some((objects_dir.to_path_buf(), Arc::clone(idx)));
+        });
+    }
+
+    pub(crate) fn try_read_from_hinted_pack(
+        objects_dir: &Path,
+        oid: &crate::objects::ObjectId,
+    ) -> Result<Option<crate::objects::Object>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return Ok(None);
+        }
+        let idx = PACK_HIT_INDEX.with(|cell| {
+            cell.borrow().as_ref().and_then(|(dir, idx)| {
+                (dir == objects_dir && idx.find_offset(oid).is_some()).then(|| Arc::clone(idx))
+            })
+        });
+        let Some(idx) = idx else {
+            return Ok(None);
+        };
+        match super::read_object_from_pack(&idx, oid) {
+            Ok(obj) => Ok(Some(obj)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn cached_dir_indexes(objects_dir: &Path, pack_dir: &Path) -> Option<Vec<Arc<PackIndex>>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return None;
+        }
+        let dir_mt = dir_mtime(pack_dir);
+        PACK_DIR_INDEXES.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .and_then(|(dir, cached_mt, indexes)| {
+                    (dir == pack_dir && *cached_mt == dir_mt).then(|| indexes.clone())
+                })
+        })
+    }
+
+    fn remember_dir_indexes(objects_dir: &Path, pack_dir: &Path, indexes: &[Arc<PackIndex>]) {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return;
+        }
+        let dir_mt = dir_mtime(pack_dir);
+        PACK_DIR_INDEXES.with(|cell| {
+            *cell.borrow_mut() = Some((pack_dir.to_path_buf(), dir_mt, indexes.to_vec()));
+        });
+    }
+
     struct CachedDir {
         dir_mtime: SystemTime,
         indexes: Vec<Arc<PackIndex>>,
@@ -504,17 +596,42 @@ pub(crate) mod pack_cache {
     }
 
     pub fn mark_pack_object_count_validated(pack_path: &Path) {
-        crate::pack_store::PackStore::active_for_reads().with_catalog(|g| {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if store.with_catalog_read(|g| g.validated_pack_counts.contains(pack_path)) {
+            return;
+        }
+        let _ = store.try_with_catalog(|g| {
             g.validated_pack_counts.insert(pack_path.to_path_buf());
+        });
+    }
+
+    fn cached_index(idx_path: &Path) -> Option<Arc<PackIndex>> {
+        if !crate::pack_store::PackStore::has_context() {
+            return None;
+        }
+        PACK_INDEXES.with(|cell| cell.borrow().get(idx_path).map(Arc::clone))
+    }
+
+    fn remember_index(idx_path: &Path, idx: &Arc<PackIndex>) {
+        if !crate::pack_store::PackStore::has_context() {
+            return;
+        }
+        PACK_INDEXES.with(|cell| {
+            cell.borrow_mut()
+                .insert(idx_path.to_path_buf(), Arc::clone(idx));
         });
     }
 
     /// Get a parsed pack index from cache, parsing from disk only on cache miss.
     pub fn get_index(idx_path: &Path) -> Result<Arc<PackIndex>> {
+        if let Some(hit) = cached_index(idx_path) {
+            return Ok(hit);
+        }
         let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(hit) = store.with_catalog_read(|g| {
-            g.by_idx.get(idx_path).map(|c| Arc::clone(&c.idx))
-        }) {
+        if let Some(hit) =
+            store.with_catalog_read(|g| g.by_idx.get(idx_path).map(|c| Arc::clone(&c.idx)))
+        {
+            remember_index(idx_path, &hit);
             return Ok(hit);
         }
         let parsed = Arc::new(read_pack_index_no_verify(idx_path)?);
@@ -526,6 +643,7 @@ pub(crate) mod pack_cache {
                 },
             );
         });
+        remember_index(idx_path, &parsed);
         Ok(parsed)
     }
 
@@ -615,7 +733,8 @@ pub(crate) mod pack_cache {
     /// Move `idx_path` to the front of the MRU pack search order for `objects_dir`.
     pub fn promote_pack_index(objects_dir: &Path, idx_path: &Path) {
         let pack_dir = objects_dir.join("pack");
-        with_current(|g| {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        let _ = store.try_with_catalog(|g| {
             let Some(cached) = g.by_dir.get_mut(&pack_dir) else {
                 return;
             };
@@ -651,13 +770,22 @@ pub(crate) mod pack_cache {
     /// Get all `.idx` files for `objects_dir`, using the cached directory listing when present.
     pub fn get_dir_indexes(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
         let pack_dir = objects_dir.join("pack");
-        let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(hit) = store.with_catalog_read(|g| {
-            g.by_dir.get(&pack_dir).map(|c| c.indexes.clone())
-        }) {
+        if let Some(hit) = cached_dir_indexes(objects_dir, &pack_dir) {
             return Ok(hit);
         }
-        rescan_dir_indexes(objects_dir)
+        let dir_mt = dir_mtime(&pack_dir);
+        let store = crate::pack_store::PackStore::active_for_reads();
+        if let Some(hit) = store.with_catalog_read(|g| {
+            g.by_dir
+                .get(&pack_dir)
+                .and_then(|c| (c.dir_mtime == dir_mt).then(|| c.indexes.clone()))
+        }) {
+            remember_dir_indexes(objects_dir, &pack_dir, &hit);
+            return Ok(hit);
+        }
+        let fresh = rescan_dir_indexes(objects_dir)?;
+        remember_dir_indexes(objects_dir, &pack_dir, &fresh);
+        Ok(fresh)
     }
 
     /// Re-scan `objects_dir`/`pack/` when its mtime changed since the cached listing (Git
@@ -665,12 +793,13 @@ pub(crate) mod pack_cache {
     pub fn reprepare_dir_on_miss(objects_dir: &Path) -> Result<bool> {
         let pack_dir = objects_dir.join("pack");
         let dir_mt = dir_mtime(&pack_dir);
-        let needs_rescan = crate::pack_store::PackStore::active_for_reads().with_catalog_read(
-            |g| match g.by_dir.get(&pack_dir) {
-                None => true,
-                Some(c) => c.dir_mtime != dir_mt,
-            },
-        );
+        let needs_rescan =
+            crate::pack_store::PackStore::active_for_reads().with_catalog_read(|g| {
+                match g.by_dir.get(&pack_dir) {
+                    None => true,
+                    Some(c) => c.dir_mtime != dir_mt,
+                }
+            });
         if !needs_rescan {
             return Ok(false);
         }
@@ -724,10 +853,14 @@ pub(crate) mod pack_cache {
     /// Cache hits skip `stat` for all pack basenames; in-process repack/gc clears the cache
     /// when packs change.
     pub fn get_pack_bytes(pack_path: &Path) -> Result<Arc<PackData>> {
+        if let Some(hit) = cached_pack_bytes(pack_path) {
+            return Ok(hit);
+        }
         let store = crate::pack_store::PackStore::active_for_reads();
-        if let Some(hit) = store.with_catalog_read(|g| {
-            g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes))
-        }) {
+        if let Some(hit) =
+            store.with_catalog_read(|g| g.by_pack.get(pack_path).map(|c| Arc::clone(&c.bytes)))
+        {
+            remember_pack_bytes(pack_path, &hit);
             return Ok(hit);
         }
         let (mtime, size) = file_signature(pack_path).ok_or_else(|| {
@@ -751,7 +884,8 @@ pub(crate) mod pack_cache {
             });
             return Ok(removed);
         };
-        let stale = with_current(|g| match g.by_pack.get(pack_path) {
+        let store = crate::pack_store::PackStore::active_for_reads();
+        let stale = store.with_catalog_read(|g| match g.by_pack.get(pack_path) {
             Some(c) => c.mtime != mtime || c.size != size,
             None => true,
         });
@@ -1089,6 +1223,7 @@ pub fn read_pack_bytes_cached(pack_path: &Path) -> Result<Arc<PackData>> {
 pub fn clear_pack_cache() {
     #[cfg(test)]
     let _guard = pack_cache_test_guard();
+    pack_cache::clear_thread_local_dir_indexes();
     crate::pack_store::PackStore::invalidate_all_legacy();
 }
 
@@ -2726,6 +2861,9 @@ pub(crate) fn try_read_object_from_packs_with_options(
     oid: &ObjectId,
     opts: PackLookupOptions,
 ) -> Result<Object> {
+    if let Some(obj) = pack_cache::try_read_from_hinted_pack(objects_dir, oid)? {
+        return Ok(obj);
+    }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
@@ -2733,7 +2871,10 @@ pub(crate) fn try_read_object_from_packs_with_options(
             continue;
         }
         match read_object_from_pack(idx, oid) {
-            Ok(obj) => return Ok(obj),
+            Ok(obj) => {
+                pack_cache::remember_pack_hit(objects_dir, idx);
+                return Ok(obj);
+            }
             // The object is missing from this particular pack despite the index
             // claim — keep looking in the others.
             Err(Error::ObjectNotFound(_)) => {}

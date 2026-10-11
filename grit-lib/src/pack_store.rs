@@ -84,10 +84,7 @@ impl PackStore {
         &self,
         f: impl FnOnce(&mut crate::pack::pack_cache::CatalogState) -> R,
     ) -> R {
-        f(&mut self
-            .catalog
-            .write()
-            .unwrap_or_else(|e| e.into_inner()))
+        f(&mut self.catalog.write().unwrap_or_else(|e| e.into_inner()))
     }
 
     pub(crate) fn with_catalog_read<R>(
@@ -95,6 +92,15 @@ impl PackStore {
         f: impl FnOnce(&crate::pack::pack_cache::CatalogState) -> R,
     ) -> R {
         f(&self.catalog.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Like [`Self::with_catalog`], but skips `f` when the catalog write lock is contended.
+    pub(crate) fn try_with_catalog<R>(
+        &self,
+        f: impl FnOnce(&mut crate::pack::pack_cache::CatalogState) -> R,
+    ) -> Option<R> {
+        let mut guard = self.catalog.try_write().ok()?;
+        Some(f(&mut guard))
     }
 
     /// Sharded delta-base LRU (independent of the catalog mutex).
@@ -184,6 +190,7 @@ impl PackStore {
 
     /// Drop cached pack listings, indexes, pack bytes, and delta bases.
     pub fn invalidate_packs(&self) {
+        crate::pack::pack_cache::clear_thread_local_dir_indexes();
         crate::pack::pack_cache::clear_catalog_on(&self.catalog);
         self.delta_bases.clear();
     }
@@ -246,6 +253,15 @@ impl PackStore {
             map.borrow_mut().clear();
         });
         IMPLICIT.with(|i| *i.borrow_mut() = None);
+    }
+
+    /// Drop cached pack state for legacy standalone reads of `objects_dir`.
+    pub(crate) fn invalidate_legacy_for_objects_dir(objects_dir: &Path) {
+        LEGACY_BY_DIR.with(|map| {
+            if let Some(store) = map.borrow().get(objects_dir) {
+                store.invalidate_all();
+            }
+        });
     }
 }
 

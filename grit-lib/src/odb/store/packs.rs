@@ -172,6 +172,9 @@ impl PackedObjects {
     }
 
     fn with_pack<R>(&self, f: impl FnOnce(&std::path::Path) -> Result<R>) -> Result<R> {
+        if PackStore::read_context_matches_objects_dir(self.store.objects_dir()) {
+            return f(self.store.objects_dir());
+        }
         PackStore::with_context(Arc::clone(&self.store), || f(self.store.objects_dir()))
     }
 

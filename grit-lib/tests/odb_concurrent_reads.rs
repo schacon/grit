@@ -85,7 +85,7 @@ fn odb_concurrent_reads() {
             &batch_oids,
             &[],
             &PackBuildOptions {
-                delta: false,
+                delta: true,
                 max_depth: 32,
                 use_ofs_delta: true,
                 ..PackBuildOptions::default()
