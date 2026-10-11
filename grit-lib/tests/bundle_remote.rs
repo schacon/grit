@@ -6,10 +6,11 @@ use std::process::Command;
 use grit_lib::clone::{clone as clone_repo, CloneOptions};
 use grit_lib::environment::Environment;
 use grit_lib::fetch::{NoProgress, Progress};
-use grit_lib::progress::{ProgressPhase, ProgressSink};
+use grit_lib::progress::{ProgressPhase, ProgressSink, ProgressUnit};
 use grit_lib::remote::{Remote, RemoteUrl};
 use grit_lib::repo::{init_repository, Repository};
 use grit_lib::transfer::{FetchOptions, TagMode};
+use std::collections::HashMap;
 
 fn git_in(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
@@ -199,28 +200,45 @@ fn clone_from_bundle_passes_git_fsck() {
 
 #[derive(Debug, Default)]
 struct PhaseRecorder {
-    started: Vec<(ProgressPhase, Option<u64>)>,
+    started: Vec<(ProgressPhase, ProgressUnit, Option<u64>)>,
     finished: Vec<ProgressPhase>,
-    counts: Vec<u64>,
+    counts_by_phase: HashMap<ProgressPhase, Vec<u64>>,
+    active: Option<ProgressPhase>,
     current: u64,
 }
 
 impl ProgressSink for PhaseRecorder {
     fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
-        self.started.push((phase, total));
+        self.start_with_unit(phase, phase.default_unit(), total);
+    }
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        self.started.push((phase, unit, total));
+        self.active = Some(phase);
         self.current = 0;
     }
     fn inc(&mut self, units: u64) {
+        let Some(phase) = self.active else {
+            return;
+        };
         self.current += units;
-        self.counts.push(self.current);
+        self.counts_by_phase
+            .entry(phase)
+            .or_default()
+            .push(self.current);
     }
     fn set(&mut self, current: u64) {
+        let Some(phase) = self.active else {
+            return;
+        };
         self.current = current;
-        self.counts.push(self.current);
+        self.counts_by_phase
+            .entry(phase)
+            .or_default()
+            .push(self.current);
     }
     fn finish(&mut self) {
-        if let Some((phase, _)) = self.started.last() {
-            self.finished.push(*phase);
+        if let Some(phase) = self.active.take() {
+            self.finished.push(phase);
         }
     }
 }
@@ -234,7 +252,7 @@ fn assert_monotonic(counts: &[u64]) {
 }
 
 fn phase_started_and_finished(rec: &PhaseRecorder, phase: ProgressPhase) -> bool {
-    rec.started.iter().any(|(p, _)| *p == phase) && rec.finished.contains(&phase)
+    rec.started.iter().any(|(p, _, _)| *p == phase) && rec.finished.contains(&phase)
 }
 
 #[test]
@@ -270,6 +288,27 @@ fn bundle_clone_reports_progress() {
         phase_started_and_finished(&rec, ProgressPhase::IndexingObjects),
         "expected IndexingObjects start/finish"
     );
-    assert!(!rec.counts.is_empty(), "expected progress counts");
-    assert_monotonic(&rec.counts);
+    let receive_unit = rec
+        .started
+        .iter()
+        .find(|(p, _, _)| *p == ProgressPhase::ReceivingObjects)
+        .map(|(_, u, _)| *u)
+        .expect("receive phase");
+    assert_eq!(receive_unit, ProgressUnit::Bytes);
+    let receive_counts = rec
+        .counts_by_phase
+        .get(&ProgressPhase::ReceivingObjects)
+        .expect("receive byte counts");
+    assert!(!receive_counts.is_empty());
+    assert_monotonic(receive_counts);
+    let index_counts = rec
+        .counts_by_phase
+        .get(&ProgressPhase::IndexingObjects)
+        .expect("indexing object counts");
+    assert!(!index_counts.is_empty());
+    assert_monotonic(index_counts);
+    assert!(
+        index_counts.last().copied().unwrap_or(0) > 0,
+        "indexing should report indexed objects"
+    );
 }

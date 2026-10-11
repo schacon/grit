@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::index_pack::{ingest_received_pack_path_with_progress, IngestPackOptions};
 use crate::objects::{parse_commit, parse_tag, HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
-use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
+use crate::progress::{NullProgress, ProgressPhase, ProgressSink, ProgressUnit};
 use crate::repo::Repository;
 use crate::rev_list::{
     FilterObjectKind, MissingAction, ObjectFilter, RevListOptions, RevListResult,
@@ -288,7 +288,11 @@ impl Bundle {
         let pack_bytes = std::fs::metadata(&self.path)
             .map(|m| m.len().saturating_sub(self.pack_offset))
             .unwrap_or(0);
-        progress.start(ProgressPhase::ReceivingObjects, Some(pack_bytes));
+        progress.start_with_unit(
+            ProgressPhase::ReceivingObjects,
+            ProgressUnit::Bytes,
+            Some(pack_bytes),
+        );
         let tmp = tempfile::NamedTempFile::new_in(repo.git_dir.join("objects").join("pack"))
             .map_err(|e| BundleError::Io(e.to_string()))?;
         {

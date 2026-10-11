@@ -504,16 +504,14 @@ fn copy_objects_for_local_fetch(
     let remote_objects = remote_git_dir.join("objects");
     let local_objects = local_git_dir.join("objects");
     // Initial clone: link packfiles before walking the object graph (50k+ commits).
-    if !opts.thin
-        && try_pack_link
-        && haves.is_empty()
-        && !wants.is_empty()
-        && try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)?
-    {
+    if !opts.thin && try_pack_link && haves.is_empty() && !wants.is_empty() {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
-        progress.set(wants.len() as u64);
+        if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)? {
+            progress.set(wants.len() as u64);
+            progress.finish();
+            return Ok(linked_object_set(local_odb, wants));
+        }
         progress.finish();
-        return Ok(linked_object_set(local_odb, wants));
     }
 
     let have_tips: HashSet<ObjectId> = haves.iter().copied().collect();
@@ -526,14 +524,14 @@ fn copy_objects_for_local_fetch(
         source_shallow,
     )?;
 
-    if !opts.thin
-        && try_pack_link
-        && try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, &send, false)?
-    {
+    if !opts.thin && try_pack_link {
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
-        progress.set(send.len() as u64);
+        if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, &send, false)? {
+            progress.set(send.len() as u64);
+            progress.finish();
+            return Ok(linked_object_set(local_odb, &send));
+        }
         progress.finish();
-        return Ok(linked_object_set(local_odb, &send));
     }
 
     let mut still_missing: Vec<ObjectId> = send
@@ -548,21 +546,25 @@ fn copy_objects_for_local_fetch(
     // Hard-link loose objects only for incremental transfers; initial clones should
     // install a pack (or pack link), not thousands of loose files.
     if !haves.is_empty() {
+        progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
         let linked_loose =
             link_loose_objects_for_oids(&remote_objects, &local_objects, &still_missing)?;
         if linked_loose > 0 {
-            progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
             progress.inc(linked_loose as u64);
-            progress.finish();
             refresh_local_odb_after_link(local_odb);
             still_missing.retain(|oid| !local_odb.exists(oid));
         }
+        progress.finish();
         if still_missing.is_empty() {
             return Ok(linked_object_set(local_odb, &send));
         }
     }
 
     let pack_opts = pack_build_options_for_send(remote_odb, &still_missing, opts);
+    progress.start(
+        ProgressPhase::CopyingObjects,
+        Some(still_missing.len() as u64),
+    );
     let pack = build_pack_for_local_fetch(
         remote_odb,
         &still_missing,
@@ -572,10 +574,6 @@ fn copy_objects_for_local_fetch(
         have_shallow,
         &pack_opts,
     )?;
-    progress.start(
-        ProgressPhase::CopyingObjects,
-        Some(still_missing.len() as u64),
-    );
     let ingested = crate::index_pack::ingest_received_pack(
         pack,
         local_odb,
@@ -2134,28 +2132,35 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct PhaseRecorder {
+        events: Vec<&'static str>,
         started: Vec<(ProgressPhase, Option<u64>)>,
         finished: Vec<ProgressPhase>,
         counts: Vec<u64>,
+        active: Option<ProgressPhase>,
         current: u64,
     }
 
     impl ProgressSink for PhaseRecorder {
         fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+            self.events.push("start");
             self.started.push((phase, total));
+            self.active = Some(phase);
             self.current = 0;
         }
         fn inc(&mut self, units: u64) {
+            self.events.push("inc");
             self.current += units;
             self.counts.push(self.current);
         }
         fn set(&mut self, current: u64) {
+            self.events.push("set");
             self.current = current;
             self.counts.push(self.current);
         }
         fn finish(&mut self) {
-            if let Some((phase, _)) = self.started.last() {
-                self.finished.push(*phase);
+            self.events.push("finish");
+            if let Some(phase) = self.active.take() {
+                self.finished.push(phase);
             }
         }
     }
@@ -2221,5 +2226,15 @@ mod tests {
         );
         assert!(!rec.counts.is_empty(), "expected copy progress counts");
         assert_monotonic(&rec.counts);
+        let first_progress = rec.events.iter().find(|e| **e != "start").copied();
+        assert_eq!(
+            rec.events.first().copied(),
+            Some("start"),
+            "CopyingObjects must start before link/copy work reports progress"
+        );
+        assert!(
+            first_progress.is_some(),
+            "expected set/inc after start during copy"
+        );
     }
 }

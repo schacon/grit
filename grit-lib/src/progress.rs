@@ -70,12 +70,22 @@ pub trait ProgressSink {
     ///
     /// `total` may be [`None`] when the operation cannot estimate the final
     /// count (common for network receives).
+    ///
     fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
         let _ = (phase, total);
     }
 
-    /// Advance the current phase by `units` (see the active phase's
-    /// [`ProgressPhase::default_unit`]).
+    /// Begin a phase with an explicit count unit (for example [`ProgressUnit::Bytes`]
+    /// when streaming a pack whose size is known in bytes).
+    ///
+    /// Defaults to [`Self::start`]; override when the sink renders counts differently
+    /// per [`ProgressUnit`].
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        let _ = unit;
+        self.start(phase, total);
+    }
+
+    /// Advance the current phase by `units` in the active phase unit.
     fn inc(&mut self, units: u64) {
         let _ = units;
     }
@@ -94,6 +104,9 @@ pub trait ProgressSink {
 impl<T: ProgressSink + ?Sized> ProgressSink for &mut T {
     fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
         (**self).start(phase, total);
+    }
+    fn start_with_unit(&mut self, phase: ProgressPhase, unit: ProgressUnit, total: Option<u64>) {
+        (**self).start_with_unit(phase, unit, total);
     }
     fn inc(&mut self, units: u64) {
         (**self).inc(units);
