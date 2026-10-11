@@ -19,7 +19,7 @@ Call [`ThreadPolicy::resolve`](https://docs.rs/grit-lib/latest/grit_lib/parallel
 | `IndexRefresh` | `core.preloadIndex`, `index.threads` |
 | `IndexLoad` | `core.preloadIndex`, `index.threads` |
 | `Checkout` | `checkout.workers`, `checkout.thresholdForParallelism` (default threshold `100`) |
-| `IndexPack`, `PackWrite` | `pack.threads` |
+| `IndexPack`, `PackWrite`, `PackDeltaSearch` | `pack.threads` |
 | `DiffRename` | `index.threads` with `core.preloadIndex` |
 
 ### Git value semantics for `index.threads`
@@ -51,7 +51,11 @@ Unset or `0` selects auto (all logical CPUs). Positive integers cap worker count
 
 Stat preload during status/diff keeps a separate four-thread cap until a later scaling pass; it still honors `core.preloadIndex` and the global thread override.
 
-Pack writing (`pack-objects` serialization) uses the same `pack.threads` policy for parallel delta encoding and zlib compression; the on-wire byte stream matches the single-threaded writer (OFS vs REF headers are still emitted in plan order).
+Windowed delta search during pack planning uses [`ParallelOp::PackDeltaSearch`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) with the same `pack.threads` policy. Segments are fixed from object count and `pack.window`, so chosen delta bases do not depend on worker count.
+
+Pack writing (`pack-objects` serialization) uses [`ParallelOp::PackWrite`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) for parallel delta encoding and zlib compression; the on-wire byte stream matches the single-threaded writer (OFS vs REF headers are still emitted in plan order).
+
+Optional `pack.windowMemory` caps sliding-window retention during delta search (Git `pack.windowMemory`, default unlimited).
 
 ## Ordered parallel maps
 

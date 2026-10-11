@@ -26,6 +26,8 @@ pub enum ParallelOp {
     IndexPack,
     /// Pack writing / `pack-objects` threading (`pack.threads`).
     PackWrite,
+    /// Parallel windowed delta search during pack planning (`pack.threads`).
+    PackDeltaSearch,
     /// Rename/copy detection scoring (`index.threads` when preload is enabled).
     DiffRename,
 }
@@ -74,7 +76,7 @@ impl ThreadPolicy {
     #[must_use]
     pub fn resolve(&self, op: ParallelOp, config: &ConfigSet) -> ParallelOptions {
         self.try_resolve(op, config).unwrap_or_else(|e| match op {
-            ParallelOp::IndexPack | ParallelOp::PackWrite => {
+            ParallelOp::IndexPack | ParallelOp::PackWrite | ParallelOp::PackDeltaSearch => {
                 panic!("invalid pack.threads config: {e}")
             }
             _ => unreachable!("only pack operations return config errors"),
@@ -101,7 +103,7 @@ impl ThreadPolicy {
                     resolve_index_threads(config, self.threads_override)
                 }
             }
-            ParallelOp::IndexPack | ParallelOp::PackWrite => {
+            ParallelOp::IndexPack | ParallelOp::PackWrite | ParallelOp::PackDeltaSearch => {
                 resolve_pack_threads(config, self.threads_override)?
             }
             ParallelOp::Checkout => resolve_checkout_workers(config, self.threads_override),
@@ -111,7 +113,9 @@ impl ThreadPolicy {
             ParallelOp::IndexRefresh => (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES)),
             ParallelOp::IndexLoad => (crate::index_name_hash_lazy::LAZY_THREAD_COST * 2, None),
             ParallelOp::Checkout => (0, None),
-            ParallelOp::IndexPack | ParallelOp::PackWrite => (0, None),
+            ParallelOp::IndexPack | ParallelOp::PackWrite | ParallelOp::PackDeltaSearch => {
+                (0, None)
+            }
             ParallelOp::DiffRename => (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES)),
         };
 

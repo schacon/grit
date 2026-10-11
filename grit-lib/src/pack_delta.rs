@@ -1,20 +1,28 @@
-//! Parallel delta encoding and zlib compression for pack serialization.
+//! Windowed delta search and parallel pack serialization.
 //!
-//! [`serialize_pack_with_deltas`] splits work into a parallel preparation stage
+//! [`search_windowed_blob_deltas`] implements Git-style sliding-window delta
+//! selection (type/name-hash/size sort, real delta sizes via [`DeltaIndex`], depth
+//! and window-memory limits). Segments are fixed from object count and window so
+//! parallel worker counts do not change chosen bases.
+//!
+//! [`serialize_pack_with_deltas`] splits encoding into a parallel preparation stage
 //! (delta bytes + deflate per planned entry) and a serial emission stage (headers,
 //! OFS vs REF selection, trailer).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
 use crate::config::ConfigSet;
 use crate::delta_encode::{encode_prefix_extension_delta, DeltaIndex};
+use crate::delta_islands::DeltaIslands;
 use crate::error::{Error, Result};
-use crate::objects::{HashAlgo, ObjectId, ObjectKind};
+use crate::objects::{HashAlgo, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_objects::{
     append_pack_trailer, encode_ofs_delta_distance, encode_pack_object_header, pack_type_code,
@@ -23,6 +31,490 @@ use crate::pack_objects::{
 use crate::parallel::{
     try_par_map_force, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy,
 };
+
+/// Resolve [`ParallelOptions`] for windowed delta search from repo config.
+pub(crate) fn pack_delta_search_parallel_options(
+    odb: &Odb,
+    search_threads: Option<usize>,
+) -> Result<ParallelOptions> {
+    let cfg = pack_config(odb)?;
+    let policy = ThreadPolicy::with_threads_override(search_threads);
+    Ok(policy.try_resolve(ParallelOp::PackDeltaSearch, &cfg)?)
+}
+
+/// Inputs for [`search_windowed_blob_deltas`].
+pub(crate) struct DeltaSearchInput<'a> {
+    pub objects: &'a HashMap<ObjectId, Object>,
+    pub blob_name_hashes: &'a HashMap<ObjectId, u32>,
+    pub islands: &'a DeltaIslands,
+    pub skip_targets: &'a HashSet<ObjectId>,
+    pub skip_as_target: &'a HashSet<ObjectId>,
+    pub opts: &'a PackBuildOptions,
+}
+
+/// Git-style windowed delta search over in-pack blobs.
+///
+/// Returns target → base edges for newly chosen deltas (not including entries
+/// listed in `skip_targets`). Respects delta islands when `islands` is active.
+pub(crate) fn search_windowed_blob_deltas(
+    odb: &Odb,
+    input: DeltaSearchInput<'_>,
+    search_threads: Option<usize>,
+) -> Result<HashMap<ObjectId, ObjectId>> {
+    let DeltaSearchInput {
+        objects,
+        blob_name_hashes,
+        islands,
+        skip_targets,
+        skip_as_target,
+        opts,
+    } = input;
+    if opts.window == 0 || opts.max_depth == 0 {
+        return Ok(HashMap::new());
+    }
+
+    let cfg = pack_config(odb)?;
+    let window_memory = cfg.pack_window_memory_bytes();
+    let hash_len = odb.hash_algo().len();
+    let window = opts.window + 1;
+
+    let mut sorted: Vec<ObjectId> = objects
+        .iter()
+        .filter_map(|(&oid, obj)| {
+            if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
+                return None;
+            }
+            if skip_targets.contains(&oid) || skip_as_target.contains(&oid) {
+                return None;
+            }
+            Some(oid)
+        })
+        .collect();
+    sorted.sort_by(|a, b| type_size_sort(a, b, objects, blob_name_hashes));
+
+    if sorted.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let par = pack_delta_search_parallel_options(odb, search_threads)?;
+    let segments = fixed_delta_segments(sorted.len(), opts.window);
+    let workers = par.threads.get().min(segments.len()).max(1);
+    let sorted = Arc::new(sorted);
+
+    if workers <= 1 {
+        let mut out = HashMap::new();
+        for (start, end) in &segments {
+            let warmup = segment_warmup(&sorted, *start, opts.window);
+            let prior = out.clone();
+            find_deltas_in_segment(
+                &sorted[*start..*end],
+                &warmup,
+                objects,
+                islands,
+                SegmentSearchParams {
+                    window,
+                    max_depth: opts.max_depth,
+                    hash_len,
+                    window_memory,
+                },
+                &mut out,
+                &prior,
+            );
+        }
+        return Ok(out);
+    }
+
+    let next_segment = Arc::new(AtomicUsize::new(0));
+    let completed_segments = Arc::new(AtomicUsize::new(0));
+    let segments = Arc::new(segments);
+    let merged: Arc<Mutex<HashMap<ObjectId, ObjectId>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            let merged = Arc::clone(&merged);
+            let sorted = Arc::clone(&sorted);
+            let next_segment = Arc::clone(&next_segment);
+            let completed_segments = Arc::clone(&completed_segments);
+            let segments = Arc::clone(&segments);
+            scope.spawn(move || loop {
+                let seg_idx = next_segment.fetch_add(1, Ordering::SeqCst);
+                if seg_idx >= segments.len() {
+                    break;
+                }
+                while completed_segments.load(Ordering::Acquire) < seg_idx {
+                    thread::yield_now();
+                }
+                let (start, end) = segments[seg_idx];
+                let warmup = segment_warmup(&sorted, start, opts.window);
+                let prior = merged.lock().ok().map(|g| g.clone()).unwrap_or_default();
+                let mut local = HashMap::new();
+                find_deltas_in_segment(
+                    &sorted[start..end],
+                    &warmup,
+                    objects,
+                    islands,
+                    SegmentSearchParams {
+                        window,
+                        max_depth: opts.max_depth,
+                        hash_len,
+                        window_memory,
+                    },
+                    &mut local,
+                    &prior,
+                );
+                if let Ok(mut guard) = merged.lock() {
+                    guard.extend(local);
+                }
+                completed_segments.fetch_add(1, Ordering::Release);
+            });
+        }
+    });
+
+    let merged = Arc::try_unwrap(merged)
+        .ok()
+        .and_then(|m| m.into_inner().ok())
+        .unwrap_or_default();
+    Ok(merged)
+}
+
+fn type_size_sort(
+    a: &ObjectId,
+    b: &ObjectId,
+    objects: &HashMap<ObjectId, Object>,
+    name_hashes: &HashMap<ObjectId, u32>,
+) -> std::cmp::Ordering {
+    let ha = name_hashes.get(a).copied().unwrap_or(0);
+    let hb = name_hashes.get(b).copied().unwrap_or(0);
+    hb.cmp(&ha)
+        .then_with(|| objects[b].data.len().cmp(&objects[a].data.len()))
+        .then_with(|| b.as_bytes().cmp(a.as_bytes()))
+}
+
+struct SegmentSearchParams {
+    window: usize,
+    max_depth: usize,
+    hash_len: usize,
+    window_memory: u64,
+}
+
+fn segment_warmup(sorted: &[ObjectId], start: usize, window: usize) -> Vec<ObjectId> {
+    if start == 0 {
+        return Vec::new();
+    }
+    let warm_start = start.saturating_sub(window);
+    sorted[warm_start..start].to_vec()
+}
+
+fn fixed_delta_segments(n: usize, window: usize) -> Vec<(usize, usize)> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let chunk = (2 * window).max(1);
+    if n <= chunk {
+        return vec![(0, n)];
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < n {
+        let end = (start + chunk).min(n);
+        out.push((start, end));
+        start = end;
+    }
+    out
+}
+
+struct WindowSlot {
+    oid: Option<ObjectId>,
+    data: Vec<u8>,
+    depth: usize,
+    base: Option<ObjectId>,
+    delta_size: Option<usize>,
+}
+
+impl WindowSlot {
+    fn clear(&mut self) -> usize {
+        let mem = self.data.len();
+        self.oid = None;
+        self.data.clear();
+        self.depth = 0;
+        self.base = None;
+        self.delta_size = None;
+        mem
+    }
+
+    fn load(&mut self, oid: ObjectId, data: &[u8]) {
+        self.oid = Some(oid);
+        self.data = data.to_vec();
+        self.depth = 0;
+        self.base = None;
+        self.delta_size = None;
+    }
+}
+
+fn delta_chain_depth(edges: &HashMap<ObjectId, ObjectId>, oid: ObjectId) -> usize {
+    let mut depth = 0usize;
+    let mut cur = Some(oid);
+    let mut guard = 0usize;
+    while let Some(t) = cur {
+        let Some(base) = edges.get(&t) else {
+            break;
+        };
+        depth += 1;
+        cur = Some(*base);
+        guard += 1;
+        if guard > 4096 {
+            break;
+        }
+    }
+    depth
+}
+
+fn find_deltas_in_segment(
+    list: &[ObjectId],
+    warmup: &[ObjectId],
+    objects: &HashMap<ObjectId, Object>,
+    islands: &DeltaIslands,
+    params: SegmentSearchParams,
+    out: &mut HashMap<ObjectId, ObjectId>,
+    prior_edges: &HashMap<ObjectId, ObjectId>,
+) {
+    if list.is_empty() {
+        return;
+    }
+    let SegmentSearchParams {
+        window,
+        max_depth,
+        hash_len,
+        window_memory,
+    } = params;
+    let mut array: Vec<WindowSlot> = (0..window)
+        .map(|_| WindowSlot {
+            oid: None,
+            data: Vec::new(),
+            depth: 0,
+            base: None,
+            delta_size: None,
+        })
+        .collect();
+    let mut index_cache: HashMap<ObjectId, Arc<DeltaIndex>> = HashMap::new();
+    let mut idx = 0usize;
+    let mut count = 0usize;
+    let mut mem_usage = 0u64;
+
+    for &warm_oid in warmup {
+        mem_usage = mem_usage.saturating_sub(array[idx].clear() as u64);
+        array[idx].load(warm_oid, &objects[&warm_oid].data);
+        if let Some(base) = prior_edges.get(&warm_oid) {
+            array[idx].base = Some(*base);
+            array[idx].depth = delta_chain_depth(prior_edges, warm_oid);
+        }
+        mem_usage = mem_usage.saturating_add(array[idx].data.len() as u64);
+        idx += 1;
+        if count + 1 < window {
+            count += 1;
+        }
+        if idx >= window {
+            idx = 0;
+        }
+    }
+
+    for &entry_oid in list {
+        mem_usage = mem_usage.saturating_sub(array[idx].clear() as u64);
+        array[idx].load(entry_oid, &objects[&entry_oid].data);
+        mem_usage = mem_usage.saturating_add(array[idx].data.len() as u64);
+
+        while window_memory > 0 && mem_usage > window_memory && count > 1 {
+            let tail = (idx + window - count) % window;
+            mem_usage = mem_usage.saturating_sub(array[tail].clear() as u64);
+            count -= 1;
+        }
+
+        if max_depth == 0 {
+            continue;
+        }
+
+        let mut best_base = None::<usize>;
+        let mut j = window;
+        while j > 1 {
+            j -= 1;
+            let other_idx = (idx + j) % window;
+            let Some(src_oid) = array[other_idx].oid else {
+                break;
+            };
+            let src_depth = array[other_idx].depth;
+            let src_data = array[other_idx].data.clone();
+            let ret = try_delta_pair(
+                &mut array[idx],
+                TryDeltaContext {
+                    src_oid,
+                    src_depth,
+                    src_data: &src_data,
+                    trg_oid: entry_oid,
+                    max_depth,
+                    hash_len,
+                    islands,
+                },
+                &mut index_cache,
+                &mut mem_usage,
+            );
+            if ret < 0 {
+                break;
+            }
+            if ret > 0 {
+                best_base = Some(other_idx);
+            }
+        }
+
+        if array[idx].base.is_some() && max_depth <= array[idx].depth {
+            continue;
+        }
+
+        if let Some(base_oid) = array[idx].base {
+            out.insert(entry_oid, base_oid);
+            if let Some(best_idx) = best_base {
+                rotate_best_base(&mut array, idx, best_idx, window);
+            }
+        }
+
+        idx += 1;
+        if count + 1 < window {
+            count += 1;
+        }
+        if idx >= window {
+            idx = 0;
+        }
+    }
+}
+
+fn rotate_best_base(slots: &mut [WindowSlot], idx: usize, best_base: usize, window: usize) {
+    let swap = std::mem::replace(
+        &mut slots[best_base],
+        WindowSlot {
+            oid: None,
+            data: Vec::new(),
+            depth: 0,
+            base: None,
+            delta_size: None,
+        },
+    );
+    let mut dst = best_base;
+    let dist = (window + idx - best_base) % window;
+    for _ in 0..dist {
+        let src = (dst + 1) % window;
+        slots[dst] = std::mem::replace(
+            &mut slots[src],
+            WindowSlot {
+                oid: None,
+                data: Vec::new(),
+                depth: 0,
+                base: None,
+                delta_size: None,
+            },
+        );
+        dst = src;
+    }
+    slots[dst] = swap;
+}
+
+struct TryDeltaContext<'a> {
+    src_oid: ObjectId,
+    src_depth: usize,
+    src_data: &'a [u8],
+    trg_oid: ObjectId,
+    max_depth: usize,
+    hash_len: usize,
+    islands: &'a DeltaIslands,
+}
+
+fn try_delta_pair(
+    trg: &mut WindowSlot,
+    ctx: TryDeltaContext<'_>,
+    index_cache: &mut HashMap<ObjectId, Arc<DeltaIndex>>,
+    mem_usage: &mut u64,
+) -> i32 {
+    let TryDeltaContext {
+        src_oid,
+        src_depth,
+        src_data,
+        trg_oid,
+        max_depth,
+        hash_len,
+        islands,
+    } = ctx;
+    if !islands.in_same_island(&trg_oid, &src_oid) {
+        return 0;
+    }
+
+    if src_depth >= max_depth {
+        return 0;
+    }
+
+    let trg_size = trg.data.len();
+    let src_size = src_data.len();
+    let (base_max, ref_depth) = match trg.delta_size {
+        None => (trg_size.saturating_div(2).saturating_sub(hash_len), 1usize),
+        Some(ds) => (ds, trg.depth),
+    };
+    let num = max_depth.saturating_sub(src_depth);
+    let den = max_depth.saturating_sub(ref_depth) + 1;
+    let max_size = if den == 0 {
+        0
+    } else {
+        (base_max as u64 * num as u64 / den as u64) as usize
+    };
+    if max_size == 0 {
+        return 0;
+    }
+    let sizediff = trg_size.saturating_sub(src_size);
+    if sizediff >= max_size {
+        return 0;
+    }
+    if trg_size < src_size / 32 {
+        return 0;
+    }
+
+    if trg.data.is_empty() {
+        return 0;
+    }
+
+    if trg.data.starts_with(src_data) && trg.data.len() > src_data.len() {
+        let delta = match encode_prefix_extension_delta(src_data, &trg.data) {
+            Ok(d) => d,
+            Err(_) => return 0,
+        };
+        if delta.len() > max_size {
+            return 0;
+        }
+        if let Some(prev) = trg.delta_size {
+            if delta.len() == prev && src_depth + 1 >= trg.depth {
+                return 0;
+            }
+        }
+        trg.base = Some(src_oid);
+        trg.depth = src_depth + 1;
+        trg.delta_size = Some(delta.len());
+        return 1;
+    }
+
+    let index = index_cache.entry(src_oid).or_insert_with(|| {
+        *mem_usage = mem_usage.saturating_add((src_data.len() * 2) as u64);
+        Arc::new(DeltaIndex::new(src_data))
+    });
+
+    let Some(delta) = index.encode(&trg.data, max_size) else {
+        return 0;
+    };
+    if let Some(prev) = trg.delta_size {
+        if delta.len() == prev && src_depth + 1 >= trg.depth {
+            return 0;
+        }
+    }
+
+    trg.base = Some(src_oid);
+    trg.depth = src_depth + 1;
+    trg.delta_size = Some(delta.len());
+    1
+}
 
 /// Per-entry compressed payload produced by the parallel stage.
 enum PreparedBody {

@@ -1987,6 +1987,15 @@ impl ConfigSet {
     ///
     /// An explicit `0` disables newly computed deltas (on-disk reuse may still apply).
     #[must_use]
+    /// Sliding-window memory cap for delta search (`pack.windowMemory`, Git default: unlimited).
+    pub fn pack_window_memory_bytes(&self) -> u64 {
+        match self.get_i64("pack.windowmemory") {
+            None => 0,
+            Some(Ok(n)) if n >= 0 => u64::try_from(n).unwrap_or(0),
+            Some(Ok(_)) | Some(Err(_)) => 0,
+        }
+    }
+
     pub fn pack_object_depth(&self) -> usize {
         match self.get_i64("pack.depth") {
             None => crate::pack::DEFAULT_PACK_DEPTH,
