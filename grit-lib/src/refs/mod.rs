@@ -907,6 +907,24 @@ fn parse_packed_refs_to_map(path: &Path, data: &[u8]) -> Result<HashMap<String, 
     parse_packed_refs_to_map_with_prefix(path, data, None)
 }
 
+/// Whether the `packed-refs` header comment lists Git's `sorted` trait (`pack-refs --all`).
+fn packed_refs_file_declares_sorted(text: &str) -> bool {
+    for line in text.split('\n') {
+        if line.is_empty() {
+            break;
+        }
+        if !line.starts_with('#') {
+            break;
+        }
+        let body = line[1..].trim();
+        let Some(traits) = body.strip_prefix("pack-refs with:") else {
+            continue;
+        };
+        return traits.split_whitespace().any(|t| t == "sorted");
+    }
+    false
+}
+
 fn parse_packed_refs_to_map_with_prefix(
     path: &Path,
     data: &[u8],
@@ -939,7 +957,12 @@ fn parse_packed_refs_to_map_with_prefix(
     let mut map = HashMap::new();
     let mut expect_peel = false;
     let prefix_trim = prefix_filter.map(|p| p.trim_end_matches('/'));
-    let prefix_upper = prefix_trim.and_then(list_prefix_upper_bound);
+    let packed_sorted = packed_refs_file_declares_sorted(text);
+    let prefix_upper = if packed_sorted {
+        prefix_trim.and_then(list_prefix_upper_bound)
+    } else {
+        None
+    };
     let mut lines = text.split('\n').peekable();
     while let Some(line) = lines.next() {
         if line.is_empty() {
@@ -962,13 +985,15 @@ fn parse_packed_refs_to_map_with_prefix(
             let Some(refname) = packed_ref_data_line_refname(line) else {
                 return Err(packed_refs_unexpected_line(path, line));
             };
-            if refname < prefix {
-                expect_peel = true;
-                continue;
-            }
-            if let Some(upper) = &prefix_upper {
-                if refname >= upper.as_str() {
-                    break;
+            if packed_sorted {
+                if refname < prefix {
+                    expect_peel = true;
+                    continue;
+                }
+                if let Some(upper) = &prefix_upper {
+                    if refname >= upper.as_str() {
+                        break;
+                    }
                 }
             }
             if !ref_name_matches_list_prefix(refname, prefix) {
@@ -2846,11 +2871,6 @@ fn ref_name_matches_list_prefix(refname: &str, prefix: &str) -> bool {
     false
 }
 
-/// Exclusive upper bound for ref names sharing `prefix` in sorted `packed-refs`.
-pub(crate) fn list_prefix_upper_bound_for_store(prefix: &str) -> Option<String> {
-    list_prefix_upper_bound(prefix)
-}
-
 fn list_prefix_upper_bound(prefix: &str) -> Option<String> {
     let base = prefix.trim_end_matches('/');
     let (head, tail) = base.rsplit_once('/')?;
@@ -3364,6 +3384,23 @@ mod packed_refs_parse_tests {
             parse_packed_refs_to_map(&path, &data),
             Err(Error::PackedRefsUnexpectedLine { .. })
         ));
+    }
+
+    #[test]
+    fn prefix_filter_unsorted_packed_refs_scans_past_later_names() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        let oid = "1111111111111111111111111111111111111111";
+        fs::write(
+            store::paths::packed_refs_path(git_dir),
+            format!(
+                "# pack-refs with: peeled fully-peeled\n{oid} refs/heads/zzz\n{oid} refs/heads/aaa\n{oid} refs/heads/main\n"
+            ),
+        )
+        .unwrap();
+        let listed = list_refs_glob(git_dir, "refs/heads/a*").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "refs/heads/aaa");
     }
 
     #[test]
