@@ -528,16 +528,19 @@ pub fn dir_flags_from_config(config: &ConfigSet) -> u32 {
 }
 
 fn global_excludes_path(repo: &Repository, config: &ConfigSet) -> Option<PathBuf> {
-    let raw = config
+    let env = repo.environment();
+    if let Some(raw) = config
         .get("core.excludesFile")
-        .or_else(|| config.get("core.excludesfile"))?;
-    let expanded = parse_path(repo.environment(), &raw);
-    let p = Path::new(&expanded);
-    if p.is_absolute() {
-        Some(p.to_path_buf())
-    } else {
-        repo.work_tree.as_ref().map(|wt| wt.join(p))
+        .or_else(|| config.get("core.excludesfile"))
+    {
+        let expanded = parse_path(env, &raw);
+        let p = Path::new(&expanded);
+        if p.is_absolute() {
+            return Some(p.to_path_buf());
+        }
+        return repo.work_tree.as_ref().map(|wt| wt.join(p));
     }
+    env.default_xdg_config_git_file("ignore")
 }
 
 fn file_stat_and_blob_oid(path: &Path, algo: HashAlgo) -> Result<(StatDataDisk, ObjectId)> {

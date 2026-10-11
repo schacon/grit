@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::config::parse_path;
 use crate::config::ConfigSet;
 use crate::crlf::{self, AttrRule, ConversionConfig, FileAttrs};
+use crate::environment::Environment;
 use crate::error::{Error, Result};
 use crate::filter_process::FilterProcessState;
 use crate::ignore::IgnoreMatcher;
@@ -342,7 +343,7 @@ fn load_attribute_stack_prefix_and_info(
     gitattributes_index_only: bool,
 ) -> Result<(Vec<AttrRule>, Vec<AttrRule>)> {
     let mut stack_prefix = Vec::new();
-    if let Some(g) = global_attributes_path(config)? {
+    if let Some(g) = global_attributes_path(repo.environment(), config)? {
         if let Some(content) = read_worktree_gitattributes(&g) {
             stack_prefix.extend(crlf::parse_gitattributes_content(&content));
         }
@@ -375,23 +376,11 @@ fn load_attribute_stack_prefix_and_info(
     Ok((stack_prefix, info_rules))
 }
 
-fn global_attributes_path(config: &ConfigSet) -> Result<Option<PathBuf>> {
+fn global_attributes_path(env: &Environment, config: &ConfigSet) -> Result<Option<PathBuf>> {
     if let Some(path) = config.get("core.attributesfile") {
-        return Ok(Some(PathBuf::from(parse_path(
-            &crate::environment::Environment::empty(),
-            &path,
-        ))));
+        return Ok(Some(PathBuf::from(parse_path(env, &path))));
     }
-    let home = crate::environment::Environment::empty().var("HOME");
-    let Some(home) = home else {
-        return Ok(None);
-    };
-    if let Some(xdg) = crate::environment::Environment::empty().var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Ok(Some(PathBuf::from(xdg).join("git/attributes")));
-        }
-    }
-    Ok(Some(PathBuf::from(home).join(".config/git/attributes")))
+    Ok(env.default_xdg_config_git_file("attributes"))
 }
 
 fn read_worktree_gitattributes(path: &Path) -> Option<String> {
