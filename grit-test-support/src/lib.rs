@@ -6,6 +6,7 @@
 
 pub mod objects;
 pub mod odb_conformance;
+pub mod parallel;
 
 pub use objects::{
     git_cat_file_batch_check, git_commit_graph_verify, git_fsck, git_hash_object_literally,
@@ -13,6 +14,7 @@ pub use objects::{
     write_loose_object, BatchCheckOutcome, FsckOutcome, GitToolOutcome, HashAlgo, ObjectKind,
     PackBuilder, RepoFixture,
 };
+pub use parallel::{forced_parallel_options, forced_parallel_policy, forced_parallelism};
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;

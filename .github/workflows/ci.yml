@@ -124,6 +124,67 @@ jobs:
 
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
+  test-threaded:
+    name: test-threaded
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install reftable-capable Git (>= 2.45)
+        run: |
+          sudo add-apt-repository -y ppa:git-core/ppa
+          sudo apt-get update
+          sudo apt-get install -y git
+          git version
+
+      - name: Use all CPU cores for Cargo (override .cargo/config.toml jobs = 2)
+        run: echo "CARGO_BUILD_JOBS=$(nproc)" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-threaded
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Release workspace tests with parallel Git config
+        env:
+          GRIT_REQUIRE_REFTABLE_GIT: "1"
+          GIT_CONFIG_COUNT: "4"
+          GIT_CONFIG_KEY_0: "index.threads"
+          GIT_CONFIG_VALUE_0: "4"
+          GIT_CONFIG_KEY_1: "pack.threads"
+          GIT_CONFIG_VALUE_1: "4"
+          GIT_CONFIG_KEY_2: "checkout.workers"
+          GIT_CONFIG_VALUE_2: "4"
+          GIT_CONFIG_KEY_3: "checkout.thresholdForParallelism"
+          GIT_CONFIG_VALUE_3: "0"
+        run: cargo test --release --workspace
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use all CPU cores for Cargo (override .cargo/config.toml jobs = 2)
+        run: echo "CARGO_BUILD_JOBS=$(nproc)" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: cargo +nightly miri test -p grit-lib --lib parallel::
+
   test:
     name: test
     runs-on: ubuntu-latest

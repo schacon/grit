@@ -2013,8 +2013,10 @@ impl ConfigSet {
 
     /// [`crate::hash::Parallelism`] for pack indexing from merged config.
     #[must_use]
-    pub fn pack_index_parallelism(&self) -> crate::hash::Parallelism {
-        crate::hash::Parallelism::resolve(self.pack_index_threads())
+    pub fn pack_index_parallelism(&self) -> crate::parallel::Parallelism {
+        crate::parallel::ThreadPolicy::default()
+            .resolve(crate::parallel::ParallelOp::IndexPack, self)
+            .parallelism()
     }
 
     /// Load config for `git_dir` (if any) and resolve [`crate::hash::Parallelism`] for index-pack.
@@ -2022,11 +2024,11 @@ impl ConfigSet {
     pub fn pack_index_parallelism_for_git_dir(
         env: &Environment,
         git_dir: Option<&std::path::Path>,
-    ) -> crate::hash::Parallelism {
+    ) -> crate::parallel::Parallelism {
         git_dir
             .and_then(|d| Self::load(env, Some(d), true).ok())
             .map(|c| c.pack_index_parallelism())
-            .unwrap_or_else(|| crate::hash::Parallelism::resolve(None))
+            .unwrap_or_else(|| crate::parallel::Parallelism::resolve(None))
     }
 
     /// Default for `pack.readReverseIndex` / `pack.readreverseindex` (Git default: true).

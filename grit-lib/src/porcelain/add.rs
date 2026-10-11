@@ -13,9 +13,7 @@ use crate::diff::{
     DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
-use crate::hash::{
-    index_parallelism_from_config, try_par_hash_with, ParallelHashError, Parallelism,
-};
+use crate::hash::{try_par_hash_with, ParallelHashError, Parallelism};
 use crate::index::{
     entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_TREE,
 };
@@ -112,7 +110,13 @@ pub fn stage(
         repo, &index,
     )?));
     let rules_config = lock_rules(&rules_arc)?.config_arc();
-    let parallelism = index_parallelism_from_config(&rules_config);
+    let parallelism = repo
+        .thread_policy()
+        .resolve(
+            crate::parallel::ParallelOp::IndexRefresh,
+            rules_config.as_ref(),
+        )
+        .parallelism();
     let ignorecase = rules_config
         .get_bool("core.ignorecase")
         .and_then(|r| r.ok())
@@ -127,6 +131,7 @@ pub fn stage(
             repository_git_dir: Some(repo.git_dir.clone()),
             config: Some(std::sync::Arc::clone(&rules_config)),
             worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
+            thread_policy: Some(repo.thread_policy()),
             ..DiffIndexToWorktreeOptions::default()
         };
         let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(

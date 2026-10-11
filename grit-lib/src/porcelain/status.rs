@@ -29,10 +29,11 @@ use std::sync::{Arc, Mutex};
 use crate::config::ConfigSet;
 use crate::diff::DiffEntry;
 use crate::error::Result;
-use crate::hash::{index_parallelism_from_config, try_par_hash_with, ParallelHashError};
+use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
 use crate::index::{Index, MODE_GITLINK, MODE_TREE};
 use crate::objects::ObjectId;
+use crate::parallel::ParallelOp;
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
 use crate::repo::Repository;
 use crate::state::{HeadState, WtStatusState};
@@ -543,7 +544,10 @@ fn collect_untracked_parallel_top_level(
     }
 
     let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
-    let parallelism = index_parallelism_from_config(&config);
+    let parallelism = repo
+        .thread_policy()
+        .resolve(ParallelOp::IndexRefresh, &config)
+        .parallelism();
     let threads = parallelism.threads();
     let dir_count = root_dirs.len();
     let est_bytes = dir_count.saturating_mul(4096);

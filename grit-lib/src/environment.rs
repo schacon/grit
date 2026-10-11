@@ -571,6 +571,8 @@ pub struct RepositoryOptions {
     pub force_split_index: bool,
     /// Wall-clock reference for rev-parse date selectors; embedders set explicitly.
     pub reference_unix_time: Option<i64>,
+    /// Parallel worker overrides (`--threads` in the CLI).
+    pub thread_policy: crate::parallel::ThreadPolicy,
 }
 
 impl std::fmt::Debug for RepositoryOptions {
@@ -593,6 +595,7 @@ impl Default for RepositoryOptions {
             test_assume_different_owner: false,
             force_split_index: false,
             reference_unix_time: None,
+            thread_policy: crate::parallel::ThreadPolicy::default(),
         }
     }
 }

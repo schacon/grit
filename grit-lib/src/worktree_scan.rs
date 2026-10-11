@@ -53,21 +53,16 @@ pub(crate) struct WorktreeBlobScanOptions {
 
 /// Returns how many threads a blob scan should use for `blob_count` entries.
 #[must_use]
-pub(crate) fn stat_scan_thread_count(options: WorktreeBlobScanOptions, blob_count: usize) -> usize {
+pub(crate) fn stat_scan_thread_count(
+    policy: &crate::parallel::ThreadPolicy,
+    config: &crate::config::ConfigSet,
+    options: WorktreeBlobScanOptions,
+    blob_count: usize,
+) -> usize {
     if !options.preload_index || blob_count < PARALLEL_STAT_MIN_ENTRIES {
-        1
-    } else if let Some(requested) = options.stat_parallel_threads {
-        if requested <= 1 {
-            1
-        } else {
-            requested.min(STAT_PARALLEL_THREAD_CAP)
-        }
-    } else {
-        let cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        cpus.clamp(1, STAT_PARALLEL_THREAD_CAP)
+        return 1;
     }
+    policy.index_stat_preload_threads(config, blob_count, options.stat_parallel_threads)
 }
 
 fn probe_worktree_metadata_call() {
@@ -268,9 +263,12 @@ where
 }
 
 /// Like [`for_each_blob_by_directory`], optionally preloading disk lookups in parallel.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn for_each_blob_by_directory_parallel<F>(
     by_dir: &HashMap<String, Vec<BlobInDir>>,
     scan_options: WorktreeBlobScanOptions,
+    thread_policy: &crate::parallel::ThreadPolicy,
+    config: &crate::config::ConfigSet,
     dir_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     mut has_symlink_ancestor: impl FnMut(&str) -> bool,
@@ -288,7 +286,7 @@ where
     }
 
     let blob_count = ordered.len();
-    let threads = stat_scan_thread_count(scan_options, blob_count);
+    let threads = stat_scan_thread_count(thread_policy, config, scan_options, blob_count);
     let dir_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(dir_abs);
     let file_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(file_abs);
     let mut preloaded = if threads > 1 {
@@ -492,6 +490,8 @@ mod tests {
     #[test]
     fn core_preload_index_false_uses_single_thread() {
         let threads = stat_scan_thread_count(
+            &crate::parallel::ThreadPolicy::default(),
+            &crate::config::ConfigSet::new(),
             WorktreeBlobScanOptions {
                 preload_index: false,
                 stat_parallel_threads: Some(4),

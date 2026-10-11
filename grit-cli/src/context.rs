@@ -8,10 +8,24 @@ use grit_lib::ident_resolve::{
     IdentityError,
 };
 use grit_lib::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
+use grit_lib::parallel::ThreadPolicy;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use time::OffsetDateTime;
+
+static THREAD_POLICY: OnceLock<ThreadPolicy> = OnceLock::new();
+
+/// Apply the global `--threads` flag for subsequent repository opens in this process.
+pub fn set_thread_policy(threads: Option<usize>) {
+    let _ = THREAD_POLICY.set(ThreadPolicy::with_threads_override(threads));
+}
+
+/// Thread policy for [`RepositoryOptions`] (global `--threads` when set).
+pub fn thread_policy_for_repo() -> ThreadPolicy {
+    THREAD_POLICY.get().copied().unwrap_or_default()
+}
 
 use crate::dates::{identity_when_suffix, rfc3339_from_identity_when};
 use crate::diagnostics;
