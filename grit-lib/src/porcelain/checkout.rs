@@ -594,7 +594,7 @@ fn apply_in_place_git_mode_transition(
     if new_exec {
         // Match Git: grant execute wherever read is already present (0644→0755 under umask 022,
         // 0600→0700 under umask 077).
-        bits |= (bits & 0o444) >> 2;
+        bits = grant_execute_from_read_bits(bits);
     } else {
         bits &= !ALL_EXEC;
     }
@@ -677,7 +677,56 @@ fn written_file_metadata(file: &std::fs::File, path: &Path) -> Result<fs::Metada
     file.metadata().map_err(Error::Io)
 }
 
-/// Set `abs_path` permissions to match Git index `mode` (regular vs executable blob).
+/// Grant execute bits wherever read is already present (Git index executable semantics).
+#[cfg(unix)]
+fn grant_execute_from_read_bits(bits: u32) -> u32 {
+    bits | ((bits & 0o444) >> 2)
+}
+
+/// Mode passed to `open(2)` when creating a fresh worktree file (before the process umask).
+#[cfg(unix)]
+fn git_create_mode_for_index_mode(mode: u32) -> u32 {
+    if mode == MODE_EXECUTABLE {
+        0o777
+    } else {
+        0o666
+    }
+}
+
+/// Create a new regular file and write `data`, letting the kernel apply umask to the create mode.
+fn write_fresh_worktree_blob(
+    abs_path: &Path,
+    rel_path: &str,
+    data: &[u8],
+    mode: u32,
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let create_mode = git_create_mode_for_index_mode(mode);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(create_mode)
+            .open(abs_path)
+            .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+        file.write_all(data)
+            .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(abs_path, data)
+            .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+    }
+    Ok(())
+}
+
+/// Adjust an existing file to an executable index mode (in-place checkout only).
+///
+/// Fresh files are created via [`write_fresh_worktree_blob`] with mode `0777` so umask can mask
+/// execute independently of read; this helper propagates execute from read when the prior mode
+/// is already fixed on disk.
 pub fn apply_index_file_mode(abs_path: &Path, mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
@@ -686,8 +735,7 @@ pub fn apply_index_file_mode(abs_path: &Path, mode: u32) -> Result<()> {
             return Ok(());
         }
         let mut perms = fs::metadata(abs_path)?.permissions();
-        let mut bits = perms.mode();
-        bits |= 0o100;
+        let bits = grant_execute_from_read_bits(perms.mode());
         perms.set_mode(bits);
         fs::set_permissions(abs_path, perms)?;
     }
@@ -763,12 +811,7 @@ pub(crate) fn write_to_worktree_cached(
         fs::write(&abs_path, target.as_bytes())
             .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
     } else {
-        fs::write(&abs_path, data)
-            .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
-
-        if mode == MODE_EXECUTABLE {
-            apply_index_file_mode(&abs_path, MODE_EXECUTABLE)?;
-        }
+        write_fresh_worktree_blob(&abs_path, rel_path, data, mode)?;
     }
 
     Ok(())
