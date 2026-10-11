@@ -251,7 +251,7 @@ fn fetch_over_smart_http_lands_refs_and_objects() {
 
     // 2. Fetch via http_fetch over a recording client (no Git-Protocol header).
     let client = Arc::new(RecordingClient::new_default());
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()
@@ -685,7 +685,7 @@ fn fetch_over_smart_http_v2_lands_refs_and_objects() {
     drop(conn);
 
     // 2. Fetch over v2 via http_fetch with the recording client.
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()
@@ -938,7 +938,7 @@ fn fetch_from_config_client_v2_many_refs_and_large_pack() {
         "sanity: bare new() must not imply v2 — regression targets from_config"
     );
 
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()
@@ -1428,7 +1428,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
     git(&back, &["init", "-q", "-b", "main", "."]);
     let back_git = back.join(".git");
 
-    let fetch_opts = FetchOptions {
+    let mut fetch_opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::None,
         ..Default::default()

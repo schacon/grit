@@ -130,16 +130,6 @@ pub struct FetchOptions {
     pub pack_spool_only: bool,
     /// Override the HTTP `Git-Protocol` header for this fetch (`None` → client default, usually v2).
     pub http_protocol_version: Option<u8>,
-    /// When set, side-band pack bytes are streamed here (e.g. `git index-pack --stdin`) instead of a temp pack file.
-    pub sideband_pack_writer: Option<Box<dyn Write + Send>>,
-    /// Called after a side-band pack completes when [`Self::sideband_pack_writer`] was used.
-    pub sideband_pack_finish: Option<Box<dyn SidebandPackFinish + Send>>,
-}
-
-/// Finalize a side-band pack streamed via [`FetchOptions::sideband_pack_writer`].
-pub trait SidebandPackFinish: Send {
-    /// Wait for external ingest and return the set of object ids in the new pack.
-    fn finish(self: Box<Self>) -> Result<HashSet<ObjectId>>;
 }
 
 /// Identity and message for clone reflog entries written by the library.
@@ -169,8 +159,6 @@ impl Clone for FetchOptions {
             diagnostics: self.diagnostics.clone(),
             network_trace: self.network_trace,
             http_protocol_version: self.http_protocol_version,
-            sideband_pack_writer: None,
-            sideband_pack_finish: None,
         }
     }
 }

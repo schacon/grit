@@ -914,7 +914,7 @@ mod http_401 {
         }
         let url = format!("http://127.0.0.1:{port}/repo.git");
 
-        let opts = FetchOptions {
+        let mut opts = FetchOptions {
             refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
             tags: TagMode::None,
             ..Default::default()

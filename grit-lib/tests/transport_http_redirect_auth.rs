@@ -323,11 +323,12 @@ fn cross_authority_redirect_does_not_forward_cached_basic_auth() {
         .with_git_protocol("version=2");
     client.seed_cached_basic_auth(&fx.gateway_url, "wronguser", "wrongpass");
 
+    let mut opts = fetch_opts();
     http_fetch(
         http_client_arc(client),
         &fx.local_git,
         &fx.gateway_url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     )
     .expect("fetch through cross-origin redirect");
@@ -368,11 +369,12 @@ fn cross_authority_redirect_does_not_forward_host_only_cookies() {
         }))
         .with_git_protocol("version=2");
 
+    let mut opts = fetch_opts();
     http_fetch(
         http_client_arc(client),
         &fx.local_git,
         &fx.gateway_url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     )
     .expect("fetch with host-only cookie file");

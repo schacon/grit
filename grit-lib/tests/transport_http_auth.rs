@@ -277,7 +277,7 @@ fn fetch_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherw
     };
     let url = format!("http://127.0.0.1:{port}/repo.git");
 
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::All,
         ..Default::default()

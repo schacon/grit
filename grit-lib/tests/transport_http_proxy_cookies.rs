@@ -251,11 +251,12 @@ fn cookie_file_sends_cookie_header_to_server() {
         .unwrap();
     let client = http_client_arc(UreqHttpClient::from_config(&cfg).expect("from_config"));
 
+    let mut opts = fetch_opts();
     let outcome = http_fetch(
         client.clone(),
         &fx.local_git,
         &fx.url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     )
     .expect("http_fetch with cookie file");
@@ -299,11 +300,12 @@ fn save_cookies_persists_set_cookie_to_file() {
         .unwrap();
     let client = http_client_arc(UreqHttpClient::from_config(&cfg).expect("from_config"));
 
+    let mut opts = fetch_opts();
     http_fetch(
         client.clone(),
         &fx.local_git,
         &fx.url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     )
     .expect("http_fetch with saveCookies");
@@ -330,11 +332,12 @@ fn extra_header_reaches_server() {
         .unwrap();
     let client = http_client_arc(UreqHttpClient::from_config(&cfg).expect("from_config"));
 
+    let mut opts = fetch_opts();
     http_fetch(
         client.clone(),
         &fx.local_git,
         &fx.url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     )
     .expect("http_fetch with extraHeader");
@@ -438,11 +441,12 @@ fn http_proxy_routes_fetch_through_proxy() {
     let client =
         http_client_arc(UreqHttpClient::from_config(&cfg).expect("from_config with proxy"));
 
+    let mut opts = fetch_opts();
     let outcome = match http_fetch(
         client.clone(),
         &fx.local_git,
         &fx.url,
-        &fetch_opts(),
+        &mut opts,
         &mut NoProgress,
     ) {
         Ok(o) => o,

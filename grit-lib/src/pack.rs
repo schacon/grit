@@ -1079,14 +1079,8 @@ fn write_v2_pack_index_body(
 ) -> Result<()> {
     let mut sorted: Vec<(ObjectId, u64, u32)> = entries.to_vec();
     sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
-    let mut fanout = [0u32; 256];
-    for byte in 0u32..256 {
-        let count = sorted
-            .iter()
-            .filter(|(oid, _, _)| u32::from(oid.as_bytes()[0]) <= byte)
-            .count();
-        fanout[byte as usize] = u32::try_from(count).unwrap_or(u32::MAX);
-    }
+    let oid_slices: Vec<&[u8]> = sorted.iter().map(|(oid, _, _)| oid.as_bytes()).collect();
+    let fanout = compute_fanout_from_oid_slices(&oid_slices);
     let mut buf = Vec::new();
     buf.extend_from_slice(b"\xfftOc");
     buf.extend_from_slice(&2u32.to_be_bytes());

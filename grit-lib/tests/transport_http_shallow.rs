@@ -203,7 +203,7 @@ fn shallow_depth1_then_unshallow_over_smart_http_v1() {
     let client = http_client_arc(UreqHttpClient::new());
 
     // 1. Shallow depth=1 fetch.
-    let shallow_opts = FetchOptions {
+    let mut shallow_opts = FetchOptions {
         refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
         depth: Some(1),
         ..Default::default()
@@ -290,7 +290,7 @@ fn shallow_depth1_then_unshallow_over_smart_http_v1() {
     }
 
     // 2. Deepen to full with `--unshallow`.
-    let unshallow_opts = FetchOptions {
+    let mut unshallow_opts = FetchOptions {
         refspecs: vec!["+refs/heads/main:refs/remotes/origin/main".to_owned()],
         unshallow: true,
         ..Default::default()

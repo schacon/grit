@@ -49,29 +49,12 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
 
 fn clone_into(url: &str, path: &Path, dir: &str) -> Result<CloneOutcome> {
     let factory = DefaultHttpClientFactory;
-    let http_clone = url.starts_with("http://") || url.starts_with("https://");
-    let setup_http_sideband_ingest = if http_clone {
-        Some(Box::new(|git_dir: &Path| {
-            let git = std::path::Path::new("git");
-            crate::git_sideband_index::spawn_git_sideband_index_pack(git, git_dir)
-                .map(|(writer, finish)| {
-                    (
-                        Box::new(writer) as Box<dyn std::io::Write + Send>,
-                        Box::new(finish) as Box<dyn grit_lib::transfer::SidebandPackFinish + Send>,
-                    )
-                })
-                .map_err(|e| grit_lib::error::Error::Message(e.to_string()))
-        }) as grit_lib::clone::HttpSidebandIngestSetup)
-    } else {
-        None
-    };
     let clone_opts = CloneOptions {
         url: url.to_owned(),
         dest: path.to_path_buf(),
         environment: crate::context::environment(),
         remote_name: grit_lib::remote::DEFAULT_REMOTE.to_owned(),
         initial_branch: "main".to_owned(),
-        setup_http_sideband_ingest,
     };
     let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;

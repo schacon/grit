@@ -283,7 +283,7 @@ fn library_clone_api_passes_fsck_and_status() {
     let dest = tempfile::tempdir().expect("clone dest");
     let factory = DefaultHttpClientFactory;
     let outcome = clone_repo(
-        &CloneOptions {
+        CloneOptions {
             url: upstream.path().to_string_lossy().into_owned(),
             dest: dest.path().to_path_buf(),
             environment: Environment::capture_process(),
