@@ -3116,8 +3116,9 @@ fn diff_index_to_worktree_inner(
                         let ie_ref = &index.entries[entry_index];
                         let stat_matches = stat_matches_with_policy(ie_ref, &meta, stat_policy);
                         let worktree_size = u32::try_from(meta.len()).unwrap_or(u32::MAX);
-                        // When size changed, status will hash for the unstaged diff; skip the
-                        // refresh pass's duplicate read. Mtime-only bumps keep size and still refresh.
+                        // When size changed, the status fast path skips content hashing for the
+                        // unstaged diff; skip the refresh pass's duplicate read here too.
+                        // Mtime-only bumps keep size and still refresh.
                         let skip_refresh_for_status_diff =
                             options.for_status && !stat_matches && worktree_size != ie_ref.size;
                         if !skip_refresh_for_status_diff {

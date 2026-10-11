@@ -351,27 +351,24 @@ impl IgnoreMatcher {
             return Ok(Vec::new());
         }
         let parent = parent_dir(repo_rel_path);
-        let dirs = if self
-            .per_dir_dirs_cache
-            .as_ref()
-            .is_some_and(|(cached, _)| cached == parent)
-        {
-            self.per_dir_dirs_cache.as_ref().unwrap().1.clone()
-        } else {
-            let mut dirs = Vec::new();
-            dirs.push(String::new());
-            if !parent.is_empty() {
-                let mut cur = String::new();
-                for segment in parent.split('/') {
-                    if !cur.is_empty() {
-                        cur.push('/');
+        let dirs = match self.per_dir_dirs_cache.as_ref() {
+            Some((cached, cached_dirs)) if cached == parent => cached_dirs.clone(),
+            _ => {
+                let mut dirs = Vec::new();
+                dirs.push(String::new());
+                if !parent.is_empty() {
+                    let mut cur = String::new();
+                    for segment in parent.split('/') {
+                        if !cur.is_empty() {
+                            cur.push('/');
+                        }
+                        cur.push_str(segment);
+                        dirs.push(cur.clone());
                     }
-                    cur.push_str(segment);
-                    dirs.push(cur.clone());
                 }
+                self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
+                dirs
             }
-            self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
-            dirs
         };
 
         let per_dir_name = self.per_directory_name.clone();
