@@ -50,10 +50,11 @@ fn packed_refs_load_and_namespace_conflict() {
         ),
     )
     .expect("packed");
-    let packed = PackedRefs::load(&git_dir).expect("load");
+    let mut packed = PackedRefs::load(&git_dir).expect("load");
     assert!(packed_refs_entry_exists(&git_dir, "refs/heads/packed").expect("exists"));
     assert!(packed.has_namespace_conflict("refs/heads/packed/extra"));
-    write_ref_cached(&git_dir, "refs/heads/cached-new", &oid(8), &packed).expect("cached write");
+    write_ref_cached(&git_dir, "refs/heads/cached-new", &oid(8), &mut packed)
+        .expect("cached write");
     assert_eq!(
         resolve_ref_cached(&git_dir, "refs/heads/cached-new", &packed)
             .expect("cached resolve")
