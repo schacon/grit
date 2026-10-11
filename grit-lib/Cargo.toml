@@ -112,6 +112,10 @@ name = "odb_read_parallel"
 harness = false
 
 [[bench]]
+name = "diff_renames"
+harness = false
+
+[[bench]]
 name = "delta_encode"
 harness = false
 

@@ -186,6 +186,7 @@ fn blame_pair_map_cache_respects_textconv_path() {
         false,
         &grafts,
         indent_heuristic,
+        &grit_lib::parallel::ThreadPolicy::default(),
     )
     .expect("compute_blame");
 

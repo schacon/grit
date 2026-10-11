@@ -139,6 +139,7 @@ pub mod diagnostics;
 pub mod diff;
 pub mod diff_indent_heuristic;
 pub mod diff_moved;
+mod diff_rename_parallel;
 pub mod diffstat;
 pub mod dotfile;
 pub mod environment;

@@ -70,11 +70,15 @@ fn compute_blame_public_entry_point_attributes_lines() {
         false,
         &grafts,
         false,
+        &grit_lib::parallel::ThreadPolicy::default(),
     )
     .expect("compute_blame");
 
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0].final_lineno, 1);
     assert_eq!(lines[1].final_lineno, 2);
-    assert_ne!(lines[0].oid, lines[1].oid, "second line should be a newer commit");
+    assert_ne!(
+        lines[0].oid, lines[1].oid,
+        "second line should be a newer commit"
+    );
 }

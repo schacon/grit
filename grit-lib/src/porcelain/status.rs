@@ -1492,8 +1492,24 @@ pub fn status(
         .collect();
 
     if let Some(rd) = opts.renames {
-        staged = apply_status_renames(&repo.odb, staged, rd, head_tree.as_ref())?;
-        unstaged = apply_status_renames(&repo.odb, unstaged, rd, head_tree.as_ref())?;
+        let thread_policy = repo.thread_policy();
+        let rename_config = repo.config().map(|c| (*c).clone()).unwrap_or_default();
+        staged = apply_status_renames(
+            &repo.odb,
+            staged,
+            rd,
+            head_tree.as_ref(),
+            &rename_config,
+            &thread_policy,
+        )?;
+        unstaged = apply_status_renames(
+            &repo.odb,
+            unstaged,
+            rd,
+            head_tree.as_ref(),
+            &rename_config,
+            &thread_policy,
+        )?;
     }
 
     let conflicts = conflict_paths_from_index(&index);
@@ -1545,6 +1561,8 @@ fn apply_status_renames(
     entries: Vec<DiffEntry>,
     rd: RenameDetection,
     head_tree: Option<&ObjectId>,
+    config: &crate::config::ConfigSet,
+    thread_policy: &crate::parallel::ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
     use crate::diff::DiffStatus;
     const MATRIX_BUDGET: usize = 50_000;
@@ -1574,13 +1592,17 @@ fn apply_status_renames(
             rd.threshold,
             true,
             head_tree,
+            config,
+            thread_policy,
         );
     }
-    Ok(crate::diff::detect_renames(
+    Ok(crate::diff::detect_renames_with_policy(
         odb,
         None,
         entries,
         rd.threshold,
+        config,
+        thread_policy,
     ))
 }
 
