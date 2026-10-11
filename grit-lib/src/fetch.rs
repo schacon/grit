@@ -1358,19 +1358,24 @@ pub fn fetch_remote(
                     new_unshallow: shallow_update.unshallow,
                 });
             }
+            let pack_config = crate::config::ConfigSet::load(
+                &crate::environment::Environment::empty(),
+                Some(local_git_dir),
+                true,
+            )
+            .unwrap_or_default();
+            let index_threads = crate::parallel::index_pack_threads_for_ingest(
+                opts.thread_policy,
+                &pack_config,
+                opts.index_pack_threads,
+            );
             pack_oids = crate::index_pack::ingest_received_pack_path(
                 path,
                 &local_odb,
                 &crate::index_pack::IngestPackOptions {
                     fix_thin: true,
                     skip_post_index_verify: true,
-                    threads: opts.index_pack_threads.or_else(|| {
-                        Some(
-                            std::thread::available_parallelism()
-                                .map(|n| n.get())
-                                .unwrap_or(4),
-                        )
-                    }),
+                    threads: index_threads,
                     ..Default::default()
                 },
             )?

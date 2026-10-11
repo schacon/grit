@@ -3,7 +3,7 @@ title: Parallelism
 summary: Thread policy, Git config keys, and ordered parallel maps in grit-lib.
 ---
 
-Grit centralizes worker counts and batch thresholds in [`grit_lib::parallel`](../../grit-lib) so embedders and the CLI share one policy.
+Grit centralizes worker counts and batch thresholds in [`grit_lib::parallel`](https://docs.rs/grit-lib/latest/grit_lib/parallel/index.html) so embedders and the CLI share one policy.
 
 ## Thread policy
 
@@ -48,4 +48,4 @@ There is **no global thread pool** and **no environment reads** inside `grit_lib
 - Policy unit tests live in `grit-lib/src/parallel/policy.rs`.
 - Public API coverage: `grit-lib/tests/parallel_api.rs`.
 - Hash wrappers: `grit-lib/tests/hash_parallel_api.rs` (unchanged behavior).
-- [`grit_test_support::forced_parallel_policy`](../../grit-test-support) sets `threads = 4` and `min_items = 0` for deterministic parallel paths in integration tests.
+- `grit_test_support::forced_parallel_policy` sets `threads = 4` and `min_items = 0` for deterministic parallel paths in integration tests (see the `grit-test-support` crate in the workspace).

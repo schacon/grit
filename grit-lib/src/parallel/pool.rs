@@ -171,3 +171,111 @@ where
     };
     Ok(slots.into_vec())
 }
+
+/// Like [`run_ordered_pool`], but each worker calls `init()` once and reuses `S` for its chunks.
+pub(crate) fn run_ordered_pool_with_local<T, R, E, S, Init, F>(
+    items: &[T],
+    n_workers: usize,
+    chunk: usize,
+    init: Init,
+    f: F,
+) -> Result<Vec<R>, E>
+where
+    T: Sync,
+    R: Send,
+    E: Send + 'static,
+    S: Send,
+    Init: Fn() -> S + Sync,
+    F: Fn(&mut S, &T) -> Result<R, E> + Sync,
+{
+    let len = items.len();
+    let slots: Arc<Slots<R>> = Arc::new(Slots::new(len));
+
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let first_error: Arc<Mutex<Option<E>>> = Arc::new(Mutex::new(None));
+    let panic_payload: Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>> =
+        Arc::new(Mutex::new(None));
+
+    let record_task_error = |err: E, first_error: &Mutex<Option<E>>| {
+        if let Ok(mut guard) = first_error.lock() {
+            if guard.is_none() {
+                *guard = Some(err);
+            }
+        }
+        failed.store(true, Ordering::Release);
+    };
+
+    let run_worker =
+        |slots: Arc<Slots<R>>,
+         first_error: Arc<Mutex<Option<E>>>,
+         panic_payload: Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>>| {
+            let mut state = init();
+            loop {
+                if failed.load(Ordering::Acquire) {
+                    return;
+                }
+                let start = next.fetch_add(chunk, Ordering::AcqRel);
+                if start >= len {
+                    return;
+                }
+                let end = (start + chunk).min(len);
+                for (offset, item) in items[start..end].iter().enumerate() {
+                    if failed.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let i = start + offset;
+                    match catch_unwind(AssertUnwindSafe(|| f(&mut state, item))) {
+                        Ok(Ok(value)) => slots.store(i, value),
+                        Ok(Err(e)) => record_task_error(e, &first_error),
+                        Err(payload) => {
+                            if let Ok(mut guard) = panic_payload.lock() {
+                                if guard.is_none() {
+                                    *guard = Some(payload);
+                                }
+                            }
+                            failed.store(true, Ordering::Release);
+                        }
+                    }
+                }
+            }
+        };
+
+    std::thread::scope(|scope| {
+        for _ in 1..n_workers {
+            let slots = Arc::clone(&slots);
+            let first_error = Arc::clone(&first_error);
+            let panic_payload = Arc::clone(&panic_payload);
+            scope.spawn(move || run_worker(slots, first_error, panic_payload));
+        }
+        run_worker(
+            Arc::clone(&slots),
+            Arc::clone(&first_error),
+            Arc::clone(&panic_payload),
+        );
+    });
+
+    if let Ok(mut guard) = panic_payload.lock() {
+        if let Some(payload) = guard.take() {
+            slots.drop_initialized();
+            resume_unwind(payload);
+        }
+    }
+
+    if let Ok(mut guard) = first_error.lock() {
+        if let Some(e) = guard.take() {
+            drop(guard);
+            slots.drop_initialized();
+            return Err(e);
+        }
+    }
+
+    let slots = match Arc::try_unwrap(slots) {
+        Ok(s) => s,
+        Err(arc) => {
+            arc.drop_initialized();
+            panic!("parallel slot buffer still shared after scope join");
+        }
+    };
+    Ok(slots.into_vec())
+}

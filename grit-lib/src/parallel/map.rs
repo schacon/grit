@@ -4,13 +4,18 @@ use std::convert::Infallible;
 use std::num::NonZeroUsize;
 
 use super::policy::ParallelOptions;
-use super::pool::{run_ordered_pool, DEFAULT_CHUNK};
+use super::pool::{run_ordered_pool, run_ordered_pool_with_local, DEFAULT_CHUNK};
 use super::ParallelHashError;
 
 #[must_use]
-fn pool_worthwhile(len: usize, total_bytes: usize, options: ParallelOptions) -> bool {
+pub(crate) fn pool_worthwhile(len: usize, total_bytes: usize, options: ParallelOptions) -> bool {
     if options.threads.get() <= 1 || len == 0 {
         return false;
+    }
+    if let Some(threshold) = options.signed_entry_threshold {
+        if (len as i64) < threshold {
+            return false;
+        }
     }
     if options.min_items == 0 {
         return true;
@@ -130,10 +135,21 @@ where
     Init: Fn() -> S + Sync,
     F: Fn(&mut S, &T) -> Result<R, E> + Sync,
 {
-    try_par_map(items, options, total_bytes, |item| {
+    let len = items.len();
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let n_workers = worker_count(options, len);
+    if !pool_worthwhile(len, total_bytes, options) {
         let mut state = init();
-        f(&mut state, item)
-    })
+        return items
+            .iter()
+            .map(|item| f(&mut state, item))
+            .collect::<Result<Vec<R>, E>>()
+            .map_err(ParallelHashError::Task);
+    }
+    run_ordered_pool_with_local(items, n_workers, DEFAULT_CHUNK, init, f)
+        .map_err(ParallelHashError::Task)
 }
 
 /// Legacy helper: returns true when parallel hashing is expected to beat a serial loop.
@@ -152,6 +168,7 @@ pub fn parallel_worthwhile(
             threads,
             min_items,
             min_total_bytes: Some(min_total_bytes),
+            signed_entry_threshold: None,
         },
     )
 }

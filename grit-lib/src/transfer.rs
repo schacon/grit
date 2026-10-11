@@ -126,6 +126,8 @@ pub struct FetchOptions {
     pub network_trace: bool,
     /// Override worker threads for index-pack after a received pack (`None` = config/default).
     pub index_pack_threads: Option<usize>,
+    /// Global / embedder thread policy (`--threads`); applied when [`Self::index_pack_threads`] is unset.
+    pub thread_policy: crate::parallel::ThreadPolicy,
     /// When true, spool the negotiated pack to disk and return without index-pack or ref updates.
     pub pack_spool_only: bool,
     /// Override the HTTP `Git-Protocol` header for this fetch (`None` → client default, usually v2).

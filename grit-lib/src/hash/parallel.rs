@@ -39,6 +39,7 @@ fn hash_parallel_options(threads: NonZeroUsize) -> ParallelOptions {
         threads,
         min_items: PAR_HASH_MIN_ITEMS,
         min_total_bytes: Some(PAR_HASH_MIN_TOTAL_BYTES),
+        signed_entry_threshold: None,
     }
 }
 

@@ -49,6 +49,7 @@ pub fn run() -> Result<MergeOutcome> {
             &repo,
             FetchOptions {
                 tags: TagMode::Following,
+                thread_policy: repo.thread_policy(),
                 ..Default::default()
             },
             &mut NoProgress,

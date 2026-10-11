@@ -1,7 +1,9 @@
 //! Integration coverage for [`grit_lib::parallel`] public helpers.
 
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::parallel::{par_map, ParallelOp, ParallelOptions, Parallelism, ThreadPolicy};
+use grit_lib::parallel::{
+    index_pack_threads_for_ingest, par_map, ParallelOp, Parallelism, ThreadPolicy,
+};
 use grit_test_support::forced_parallel_policy;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -36,6 +38,26 @@ fn index_threads_false_is_serial_for_refresh() {
     let cfg = config_from("[index]\n\tthreads = false\n");
     let opts = ThreadPolicy::default().resolve(ParallelOp::IndexRefresh, &cfg);
     assert_eq!(opts.threads, NonZeroUsize::MIN);
+}
+
+#[test]
+fn index_pack_threads_respects_cli_policy_not_config_alone() {
+    let cfg = config_from("[pack]\n\tthreads = 2\n");
+    assert_eq!(
+        index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None),
+        None
+    );
+    let policy = ThreadPolicy::with_threads_override(Some(5));
+    assert_eq!(
+        index_pack_threads_for_ingest(policy, &cfg, None),
+        Some(
+            5.min(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            )
+        )
+    );
 }
 
 #[test]

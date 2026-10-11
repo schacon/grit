@@ -81,6 +81,25 @@ pub fn index_parallelism_from_config(config: &crate::config::ConfigSet) -> Paral
         .parallelism()
 }
 
+/// Resolve `IngestPackOptions::threads` from explicit fetch options, CLI policy, or config.
+///
+/// Returns `Some(n)` only when `explicit` or a [`ThreadPolicy::threads_override`] is set.
+/// Otherwise returns `None` so index-pack reads `pack.threads` from the repository config.
+#[must_use]
+pub fn index_pack_threads_for_ingest(
+    policy: ThreadPolicy,
+    config: &crate::config::ConfigSet,
+    explicit: Option<usize>,
+) -> Option<usize> {
+    if let Some(n) = explicit {
+        return Some(n);
+    }
+    if policy.threads_override.is_some() {
+        return Some(policy.resolve(ParallelOp::IndexPack, config).threads.get());
+    }
+    None
+}
+
 /// Lazy name-hash thread count from config and Git's `LAZY_THREAD_COST` thresholds.
 #[must_use]
 pub fn index_load_lazy_thread_count(
@@ -123,6 +142,7 @@ mod tests {
             threads: threads(4),
             min_items: 0,
             min_total_bytes: None,
+            signed_entry_threshold: None,
         };
         let got = par_map(&items, opts, items.len(), |&x| x * 2);
         let expect: Vec<_> = items.iter().map(|x| x * 2).collect();
@@ -136,6 +156,7 @@ mod tests {
             threads: threads(4),
             min_items: 0,
             min_total_bytes: None,
+            signed_entry_threshold: None,
         };
         let err = try_par_map(&items, opts, items.len(), |&x| {
             if x == 64 {
@@ -149,19 +170,51 @@ mod tests {
     }
 
     #[test]
-    fn try_par_map_with_local_runs() {
-        let items: Vec<i32> = (0..64).collect();
+    fn index_pack_threads_for_ingest_honors_override_only() {
+        let cfg = config_from("[pack]\n\tthreads = 2\n");
+        assert_eq!(
+            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, None),
+            None
+        );
+        assert_eq!(
+            index_pack_threads_for_ingest(ThreadPolicy::default(), &cfg, Some(3)),
+            Some(3)
+        );
+        let policy = ThreadPolicy::with_threads_override(Some(6));
+        assert_eq!(
+            index_pack_threads_for_ingest(policy, &cfg, None),
+            Some(policy.resolve(ParallelOp::IndexPack, &cfg).threads.get())
+        );
+    }
+
+    fn config_from(text: &str) -> crate::config::ConfigSet {
+        use crate::config::{ConfigFile, ConfigScope, ConfigSet};
+        use std::path::Path;
+        let file = ConfigFile::parse(Path::new("test"), text, ConfigScope::Local).expect("parse");
+        let mut set = ConfigSet::new();
+        set.merge(&file);
+        set
+    }
+
+    #[test]
+    fn try_par_map_with_local_reuses_per_worker_state() {
+        let items: Vec<i32> = (0..256).collect();
         let opts = ParallelOptions {
             threads: threads(4),
             min_items: 0,
             min_total_bytes: None,
+            signed_entry_threshold: None,
         };
-        let counter = Arc::new(AtomicUsize::new(0));
+        let init_count = Arc::new(AtomicUsize::new(0));
+        let init_count_for_init = Arc::clone(&init_count);
         let got = try_par_map_with_local(
             &items,
             opts,
             items.len(),
-            || 0_i32,
+            move || {
+                init_count_for_init.fetch_add(1, Ordering::SeqCst);
+                0_i32
+            },
             |state, &x| -> Result<i32, ()> {
                 *state += 1;
                 Ok(x + *state)
@@ -169,6 +222,14 @@ mod tests {
         )
         .expect("map");
         assert_eq!(got.len(), items.len());
-        assert!(counter.load(Ordering::Relaxed) <= got.len());
+        let inits = init_count.load(Ordering::SeqCst);
+        assert!(
+            inits >= 2,
+            "expected multiple workers to init state, got {inits}"
+        );
+        assert!(
+            inits <= 4,
+            "init count should not exceed worker count, got {inits}"
+        );
     }
 }

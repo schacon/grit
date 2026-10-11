@@ -85,17 +85,22 @@ impl ThreadPolicy {
         let (default_min_items, default_min_bytes) = match op {
             ParallelOp::IndexRefresh => (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES)),
             ParallelOp::IndexLoad => (crate::index_name_hash_lazy::LAZY_THREAD_COST * 2, None),
-            ParallelOp::Checkout => checkout_parallelism_threshold(config),
+            ParallelOp::Checkout => (0, None),
             ParallelOp::IndexPack | ParallelOp::PackWrite => (0, None),
             ParallelOp::DiffRename => (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES)),
         };
 
         let min_items = self.min_items_override.unwrap_or(default_min_items);
+        let signed_entry_threshold = match op {
+            ParallelOp::Checkout => Some(checkout_parallelism_threshold(config)),
+            _ => None,
+        };
 
         ParallelOptions {
             threads,
             min_items,
             min_total_bytes: default_min_bytes,
+            signed_entry_threshold,
         }
     }
 
@@ -139,6 +144,8 @@ pub struct ParallelOptions {
     pub min_items: usize,
     /// Optional minimum summed payload bytes (used by object hashing).
     pub min_total_bytes: Option<usize>,
+    /// Git `checkout.thresholdForParallelism` (signed); parallel only when `count >=` this value.
+    pub signed_entry_threshold: Option<i64>,
 }
 
 impl ParallelOptions {
@@ -177,10 +184,7 @@ fn index_threads_setting(config: &ConfigSet) -> IndexThreadsSetting {
             n => IndexThreadsSetting::Count(usize::try_from(n).unwrap_or(1)),
         };
     }
-    if config
-        .get("index.threads")
-        .is_some_and(|v| v.trim() == "0")
-    {
+    if config.get("index.threads").is_some_and(|v| v.trim() == "0") {
         return IndexThreadsSetting::Auto;
     }
     if let Some(result) = config.get_bool("index.threads") {
@@ -225,21 +229,20 @@ fn resolve_checkout_workers(config: &ConfigSet, override_threads: Option<usize>)
         return Parallelism::resolve(Some(n)).threads();
     }
     match config.get_i64("checkout.workers") {
-        None => Parallelism::resolve(None).threads(),
+        None => NonZeroUsize::MIN,
         Some(Ok(n)) if n < 1 => Parallelism::resolve(None).threads(),
         Some(Ok(n)) => Parallelism::resolve(Some(n as usize)).threads(),
-        Some(Err(_)) => Parallelism::resolve(None).threads(),
+        Some(Err(_)) => NonZeroUsize::MIN,
     }
 }
 
 #[must_use]
-fn checkout_parallelism_threshold(config: &ConfigSet) -> (usize, Option<usize>) {
-    let threshold = config
-        .get_i64("checkout.thresholdForParallelism")
-        .and_then(|r| r.ok())
-        .and_then(|n| usize::try_from(n).ok())
-        .unwrap_or(100);
-    (threshold, None)
+fn checkout_parallelism_threshold(config: &ConfigSet) -> i64 {
+    match config.get_i64("checkout.thresholdForParallelism") {
+        None => 100,
+        Some(Ok(n)) => n,
+        Some(Err(_)) => 100,
+    }
 }
 
 #[cfg(test)]
@@ -315,7 +318,15 @@ mod tests {
     }
 
     #[test]
-    fn checkout_workers_below_one_is_auto() {
+    fn checkout_workers_unset_defaults_to_one() {
+        let cfg = ConfigSet::new();
+        let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(opts.threads, NonZeroUsize::MIN);
+        assert_eq!(opts.signed_entry_threshold, Some(100));
+    }
+
+    #[test]
+    fn checkout_workers_zero_is_auto() {
         let cfg = config_from("[checkout]\n\tworkers = 0\n");
         let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
         assert_eq!(
@@ -323,6 +334,38 @@ mod tests {
             std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(1)
+        );
+    }
+
+    #[test]
+    fn checkout_threshold_negative_is_preserved() {
+        let cfg = config_from("[checkout]\n\tthresholdForParallelism = -5\n");
+        let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(opts.signed_entry_threshold, Some(-5));
+    }
+
+    #[test]
+    fn checkout_threshold_negative_keeps_small_batches_serial() {
+        use crate::parallel::map::pool_worthwhile;
+        let cfg =
+            config_from("[checkout]\n\tthresholdForParallelism = -5\n[checkout]\n\tworkers = 4\n");
+        let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
+        assert!(!pool_worthwhile(0, 0, opts));
+        assert!(pool_worthwhile(100, 0, opts));
+    }
+
+    #[test]
+    fn checkout_thread_override_beats_workers_config() {
+        let cfg = config_from("[checkout]\n\tworkers = 2\n");
+        let policy = ThreadPolicy::with_threads_override(Some(6));
+        let opts = policy.resolve(ParallelOp::Checkout, &cfg);
+        assert_eq!(
+            opts.threads.get(),
+            6.min(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            )
         );
     }
 
