@@ -55,12 +55,26 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
+| `dry_run` | boolean | `true` when `-f` was not passed (preview only); `false` when paths were actually deleted. |
 | `removed` | array of strings | Repository-relative paths removed, or that would be removed when `-f` was not passed. |
 
 Example (dry run):
 
 ```json
 {
+  "dry_run": true,
+  "removed": [
+    "untracked.txt",
+    "nested/"
+  ]
+}
+```
+
+Example (with `-f`):
+
+```json
+{
+  "dry_run": false,
   "removed": [
     "untracked.txt",
     "nested/"

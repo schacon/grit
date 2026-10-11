@@ -16,8 +16,7 @@ pub struct CleanOutcome {
     /// Paths removed, or that would be removed when `-f` was not passed.
     pub removed: Vec<String>,
     /// Whether this run only previewed removals (no `-f`).
-    #[serde(skip)]
-    dry_run: bool,
+    pub dry_run: bool,
 }
 
 impl HumanRender for CleanOutcome {

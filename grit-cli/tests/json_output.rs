@@ -1100,13 +1100,18 @@ fn schema_top_level_keys_are_stable() -> TestResult {
 
     write_file(&seed.join("scratch.txt"), "x\n");
     let clean_preview = gs_json(&seed, &["clean"]);
-    assert_eq!(keys(&clean_preview), ["removed"]);
+    assert_eq!(keys(&clean_preview), ["dry_run", "removed"]);
+    assert_eq!(clean_preview["dry_run"], Value::Bool(true));
     assert!(clean_preview["removed"]
         .as_array()
         .unwrap()
         .iter()
         .any(|p| p.as_str() == Some("scratch.txt")));
-    let _ = gs_ok(&seed, &["clean", "-f"]);
+    assert!(seed.join("scratch.txt").is_file());
+    let clean_forced = gs_json(&seed, &["clean", "-f"]);
+    assert_eq!(keys(&clean_forced), ["dry_run", "removed"]);
+    assert_eq!(clean_forced["dry_run"], Value::Bool(false));
+    assert!(!seed.join("scratch.txt").is_file());
     let committed = gs_json(&seed, &["commit", "first"]);
     assert_eq!(
         keys(&committed),
