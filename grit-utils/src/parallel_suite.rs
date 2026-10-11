@@ -385,7 +385,8 @@ pub fn run_parallel_suite(
     for mode in [ThreadMode::One, ThreadMode::Auto] {
         let env = parallel_env_prefix(mode);
         let grit_extra = grit_thread_argv(mode, grit_threads_flag);
-        let grit_cmd = chain_switch(grit, &meta.branch_b, &meta.branch_a, &grit_extra);
+        // Thread flags are injected into the shell script in `run_parallel_scenario`.
+        let grit_cmd = chain_switch(grit, &meta.branch_b, &meta.branch_a, &[]);
         let git_cmd = chain_switch_git(git, &meta.branch_b, &meta.branch_a);
         let prepare = shell_command(
             git,
@@ -550,11 +551,7 @@ pub fn run_parallel_suite(
                 new_rev.clone(),
             ],
         );
-        let git_cmd = format!(
-            "git diff --no-ext-diff --no-textconv -M {} {} > /dev/null",
-            shell_quote(&old_rev),
-            shell_quote(&new_rev)
-        );
+        let git_cmd = rename_git_diff_null_cmd(git, &old_rev, &new_rev);
         let diff_prepare = format!("{git_cmd} && {grit_cmd} && {git_cmd} && {grit_cmd}");
         scenarios.push(run_parallel_scenario(
             hyperfine,
@@ -697,4 +694,81 @@ pub fn prepare_parallel_index_pack(pack: &Path, dest: &Path) -> Result<()> {
         fs::remove_file(idx)?;
     }
     Ok(())
+}
+
+/// Shell snippet: resolved `git diff -M` between two commits, discarding output.
+fn rename_git_diff_null_cmd(git: &Path, old_rev: &str, new_rev: &str) -> String {
+    format!(
+        "{} > /dev/null",
+        shell_command(
+            git,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-M",
+                old_rev,
+                new_rev,
+            ],
+        )
+    )
+}
+
+#[cfg(test)]
+mod rename_git_path_tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::binary::resolve_binary;
+    use crate::parallel_fixture::{ensure_rename_repo, ParallelProfile};
+
+    #[test]
+    fn rename_diff_prepare_uses_resolved_git_not_path() {
+        let real_git = resolve_binary("git", None).expect("system git");
+        let (repo, old_rev, new_rev) =
+            ensure_rename_repo(&real_git, ParallelProfile::Smoke).expect("rename smoke fixture");
+        let git_cmd = rename_git_diff_null_cmd(&real_git, &old_rev, &new_rev);
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let trap = tmp.path().join("git");
+        fs::write(&trap, "#!/bin/sh\nexit 42\n").expect("write trap git");
+        let mut perms = fs::metadata(&trap).expect("meta").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&trap, perms).expect("chmod trap git");
+
+        let path = std::env::var("PATH").unwrap_or_default();
+        let path_with_trap = format!("{}:{path}", tmp.path().display());
+
+        let ok = Command::new("sh")
+            .arg("-c")
+            .arg(&git_cmd)
+            .current_dir(&repo)
+            .env("PATH", &path_with_trap)
+            .status()
+            .expect("run resolved git diff");
+        assert!(
+            ok.success(),
+            "rename warm-up must call the resolved git binary, not PATH (got {:?})",
+            ok.code()
+        );
+
+        let bad_cmd = format!(
+            "git diff --no-ext-diff --no-textconv -M {} {} > /dev/null",
+            shell_quote(&old_rev),
+            shell_quote(&new_rev)
+        );
+        let bad = Command::new("sh")
+            .arg("-c")
+            .arg(&bad_cmd)
+            .current_dir(&repo)
+            .env("PATH", &path_with_trap)
+            .status()
+            .expect("run PATH git diff");
+        assert_eq!(
+            bad.code(),
+            Some(42),
+            "sanity: unqualified git must hit the PATH trap"
+        );
+    }
 }

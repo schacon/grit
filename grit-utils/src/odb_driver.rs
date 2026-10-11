@@ -593,7 +593,8 @@ pub fn pack_build_all_stdout(repo: &Repository, delta_threads: usize) -> Result<
             delta: true,
             ..PackBuildOptions::default()
         },
-        delta_threads: workers,
+        search_threads: None,
+        write_threads: Some(workers),
     };
     let mut stdout = io::stdout().lock();
     PackObjects::new(&repo.odb, opts)
