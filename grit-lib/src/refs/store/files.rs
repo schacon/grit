@@ -500,7 +500,13 @@ impl FilesRefStore {
             let name = &update.name;
             let b = before.refs.get(name);
             let a = after.refs.get(name);
-            if b == a {
+            let materialize_loose = update.new_value.is_some()
+                && a.is_some()
+                && b == a
+                && !self
+                    .loose_ref_file_exists(name)
+                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+            if b == a && !materialize_loose {
                 continue;
             }
             let (_, _, lock_path) = self.ref_lock_paths(name);

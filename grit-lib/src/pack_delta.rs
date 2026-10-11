@@ -94,6 +94,8 @@ pub(crate) struct DeltaSearchInput<'a> {
     pub islands: &'a DeltaIslands,
     pub skip_targets: &'a HashSet<ObjectId>,
     pub skip_as_target: &'a HashSet<ObjectId>,
+    /// Send-order / reuse deltas fixed before window search; used for warmup depth only.
+    pub warmup_delta_edges: &'a HashMap<ObjectId, ObjectId>,
     pub opts: &'a PackBuildOptions,
 }
 
@@ -112,6 +114,7 @@ pub(crate) fn search_windowed_blob_deltas(
         islands,
         skip_targets,
         skip_as_target,
+        warmup_delta_edges,
         opts,
     } = input;
     if opts.window == 0 || opts.max_depth == 0 {
@@ -146,31 +149,31 @@ pub(crate) fn search_windowed_blob_deltas(
     let workers = par.threads.get().min(segments.len()).max(1);
     let sorted = Arc::new(sorted);
 
+    let segment_params = SegmentSearchParams {
+        window,
+        max_depth: opts.max_depth,
+        hash_len,
+        window_memory,
+    };
+
     if workers <= 1 {
         let mut out = HashMap::new();
         for (start, end) in &segments {
             let warmup = segment_warmup(&sorted, *start, opts.window);
-            let prior = out.clone();
             find_deltas_in_segment(
                 &sorted[*start..*end],
                 &warmup,
                 objects,
                 islands,
-                SegmentSearchParams {
-                    window,
-                    max_depth: opts.max_depth,
-                    hash_len,
-                    window_memory,
-                },
+                segment_params,
                 &mut out,
-                &prior,
+                warmup_delta_edges,
             );
         }
         return Ok(out);
     }
 
     let next_segment = Arc::new(AtomicUsize::new(0));
-    let completed_segments = Arc::new(AtomicUsize::new(0));
     let segments = Arc::new(segments);
     let merged: Arc<Mutex<HashMap<ObjectId, ObjectId>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -179,38 +182,27 @@ pub(crate) fn search_windowed_blob_deltas(
             let merged = Arc::clone(&merged);
             let sorted = Arc::clone(&sorted);
             let next_segment = Arc::clone(&next_segment);
-            let completed_segments = Arc::clone(&completed_segments);
             let segments = Arc::clone(&segments);
             scope.spawn(move || loop {
                 let seg_idx = next_segment.fetch_add(1, Ordering::SeqCst);
                 if seg_idx >= segments.len() {
                     break;
                 }
-                while completed_segments.load(Ordering::Acquire) < seg_idx {
-                    thread::yield_now();
-                }
                 let (start, end) = segments[seg_idx];
                 let warmup = segment_warmup(&sorted, start, opts.window);
-                let prior = merged.lock().ok().map(|g| g.clone()).unwrap_or_default();
                 let mut local = HashMap::new();
                 find_deltas_in_segment(
                     &sorted[start..end],
                     &warmup,
                     objects,
                     islands,
-                    SegmentSearchParams {
-                        window,
-                        max_depth: opts.max_depth,
-                        hash_len,
-                        window_memory,
-                    },
+                    segment_params,
                     &mut local,
-                    &prior,
+                    warmup_delta_edges,
                 );
                 if let Ok(mut guard) = merged.lock() {
                     guard.extend(local);
                 }
-                completed_segments.fetch_add(1, Ordering::Release);
             });
         }
     });
@@ -235,6 +227,7 @@ fn type_size_sort(
         .then_with(|| b.as_bytes().cmp(a.as_bytes()))
 }
 
+#[derive(Clone, Copy)]
 struct SegmentSearchParams {
     window: usize,
     max_depth: usize,
@@ -410,11 +403,11 @@ fn find_deltas_in_segment(
             }
         }
 
-        if array[idx].base.is_some() && max_depth <= array[idx].depth {
-            continue;
-        }
-
         if let Some(base_oid) = array[idx].base {
+            if max_depth <= array[idx].depth {
+                out.insert(entry_oid, base_oid);
+                continue;
+            }
             out.insert(entry_oid, base_oid);
             if let Some(best_idx) = best_base {
                 rotate_best_base(&mut array, idx, best_idx, window);
@@ -816,6 +809,110 @@ mod tests {
     use super::*;
     use crate::objects::ObjectKind;
     use std::num::NonZeroUsize;
+
+    #[test]
+    #[ignore = "perf smoke: cargo test -p grit-lib --release --lib parallel_segment_search_scales -- --ignored --nocapture"]
+    fn parallel_segment_search_scales_on_large_blob_set() {
+        use std::time::Instant;
+
+        let mut objects = HashMap::new();
+        let mut blob_name_hashes = HashMap::new();
+        let mut sorted = Vec::new();
+        for i in 0..200 {
+            let hex = format!("{:040x}", i + 1);
+            let oid = ObjectId::from_hex(&hex).unwrap();
+            let mut data = vec![0u8; 16 * 1024];
+            data[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+            objects.insert(oid, Object::new(ObjectKind::Blob, data));
+            blob_name_hashes.insert(oid, i as u32);
+            sorted.push(oid);
+        }
+        sorted.sort_by(|a, b| type_size_sort(a, b, &objects, &blob_name_hashes));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects_dir = dir.path().join("objects");
+        std::fs::create_dir_all(&objects_dir).expect("objects");
+        let odb = Odb::new(&objects_dir);
+        let opts = PackBuildOptions {
+            delta: true,
+            window: 10,
+            max_depth: 50,
+            ..PackBuildOptions::default()
+        };
+        let islands = DeltaIslands::default();
+        let skip = HashSet::new();
+        let warmup_edges = HashMap::new();
+        let run = |threads: usize| {
+            search_windowed_blob_deltas(
+                &odb,
+                DeltaSearchInput {
+                    objects: &objects,
+                    blob_name_hashes: &blob_name_hashes,
+                    islands: &islands,
+                    skip_targets: &skip,
+                    skip_as_target: &skip,
+                    warmup_delta_edges: &warmup_edges,
+                    opts: &opts,
+                },
+                Some(threads),
+            )
+            .expect("search")
+        };
+        let _ = run(1);
+        let t1 = Instant::now();
+        let one = run(1);
+        let d1 = t1.elapsed();
+        let t4 = Instant::now();
+        let four = run(4);
+        let d4 = t4.elapsed();
+        assert_eq!(one, four, "parallel search must match serial edges");
+        let speedup = d1.as_secs_f64() / d4.as_secs_f64();
+        eprintln!(
+            "parallel delta search: 1 thread {:.1}ms, 4 threads {:.1}ms, speedup {:.2}x",
+            d1.as_secs_f64() * 1000.0,
+            d4.as_secs_f64() * 1000.0,
+            speedup
+        );
+        assert!(
+            speedup >= 2.5,
+            "expected >=2.5× speedup from 1 to 4 search threads, got {speedup:.2}×"
+        );
+    }
+
+    #[test]
+    fn find_deltas_records_edge_at_max_depth_before_evicting() {
+        let grand_oid = ObjectId::from_hex(&"0".repeat(40)).unwrap();
+        let base_oid = ObjectId::from_hex(&"1".repeat(40)).unwrap();
+        let target_oid = ObjectId::from_hex(&"2".repeat(40)).unwrap();
+        let shared = vec![b'x'; 512];
+        let mut base_data = shared.clone();
+        base_data.push(b'a');
+        let mut target_data = base_data.clone();
+        target_data.push(b'b');
+        let mut objects = HashMap::new();
+        objects.insert(grand_oid, Object::new(ObjectKind::Blob, shared));
+        objects.insert(base_oid, Object::new(ObjectKind::Blob, base_data));
+        objects.insert(target_oid, Object::new(ObjectKind::Blob, target_data));
+        let list = vec![target_oid];
+        let warmup = vec![base_oid];
+        let mut prior = HashMap::new();
+        prior.insert(base_oid, grand_oid);
+        let mut out = HashMap::new();
+        find_deltas_in_segment(
+            &list,
+            &warmup,
+            &objects,
+            &DeltaIslands::default(),
+            SegmentSearchParams {
+                window: 2,
+                max_depth: 2,
+                hash_len: 0,
+                window_memory: 0,
+            },
+            &mut out,
+            &prior,
+        );
+        assert_eq!(out.get(&target_oid), Some(&base_oid));
+    }
 
     #[test]
     fn single_thread_prepare_matches_entry_count() {

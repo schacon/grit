@@ -854,6 +854,7 @@ fn plan_deltas(
                 islands: &islands,
                 skip_targets: &skip_targets,
                 skip_as_target: &reuse_delta_bases,
+                warmup_delta_edges: &delta_to_base,
                 opts,
             },
             search_threads,
