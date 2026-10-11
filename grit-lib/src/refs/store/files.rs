@@ -751,9 +751,12 @@ impl Drop for FilesPrepared<'_> {
 }
 
 fn head_matches_prefix(logical_prefix: &str) -> bool {
-    logical_prefix.is_empty()
-        || "HEAD".starts_with(logical_prefix)
-        || logical_prefix.starts_with("HEAD")
+    let prefix = logical_prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        // `git for-each-ref` with no pattern lists refs under `refs/`, not `HEAD`.
+        return false;
+    }
+    "HEAD".starts_with(prefix) || prefix.starts_with("HEAD")
 }
 
 fn ref_to_raw(r: Ref) -> RawRef {

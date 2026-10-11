@@ -2889,7 +2889,7 @@ fn list_prefix_upper_bound(prefix: &str) -> Option<String> {
 pub(crate) fn loose_ref_list_walk_root(git_dir: &Path, prefix: &str) -> (PathBuf, String) {
     let trimmed = prefix.trim_end_matches('/');
     if trimmed.is_empty() {
-        return (git_dir.to_path_buf(), String::new());
+        return (git_dir.join("refs"), "refs/".to_owned());
     }
     let direct = git_dir.join(trimmed);
     if direct.is_dir() {
