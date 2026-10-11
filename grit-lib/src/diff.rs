@@ -2572,6 +2572,33 @@ fn parallel_process_blob_worktree_jobs(
     Ok(())
 }
 
+/// Git `compare_stat_data`: a size mismatch means modified without reading blob contents.
+#[must_use]
+fn try_push_status_modified_on_size_mismatch(
+    ie: &IndexEntry,
+    path_str_ref: &str,
+    meta: &fs::Metadata,
+    for_status: bool,
+    result: &mut Vec<DiffEntry>,
+) -> bool {
+    if !for_status || crate::index::munge_index_size(meta.len()) == ie.size {
+        return false;
+    }
+    let worktree_mode = mode_from_metadata(meta);
+    let path_owned = path_str_ref.to_owned();
+    result.push(DiffEntry {
+        status: DiffStatus::Modified,
+        old_path: Some(path_owned.clone()),
+        new_path: Some(path_owned),
+        old_mode: format_mode(ie.mode),
+        new_mode: format_mode(worktree_mode),
+        old_oid: ie.oid,
+        new_oid: ie.oid,
+        score: None,
+    });
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_index_blob_worktree_diff(
     odb: &Odb,
@@ -2585,6 +2612,7 @@ fn push_index_blob_worktree_diff(
     file_attrs_for: &dyn Fn(&str) -> crate::crlf::FileAttrs,
     conv: &crate::crlf::ConversionConfig,
     materialize_dirty_blobs: bool,
+    for_status: bool,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
@@ -2638,6 +2666,10 @@ fn push_index_blob_worktree_diff(
         && (!trust_filemode || worktree_mode == ie.mode)
         && !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
     {
+        return Ok(());
+    }
+
+    if try_push_status_modified_on_size_mismatch(ie, path_str_ref, &meta, for_status, result) {
         return Ok(());
     }
 
@@ -3040,8 +3072,9 @@ fn diff_index_to_worktree_inner(
     let blob_count: usize = blob_dirs.values().map(|v| v.len()).sum();
     let thread_policy = options.thread_policy.unwrap_or_default();
     let hash_threads = stat_scan_thread_count(&thread_policy, &config, blob_scan, blob_count);
-    let parallel_blob_work =
-        materialize_dirty_blobs && blob_count >= PARALLEL_STAT_MIN_ENTRIES && hash_threads > 1;
+    let parallel_blob_work = blob_count >= PARALLEL_STAT_MIN_ENTRIES
+        && hash_threads > 1
+        && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
     let mut stat_refresh_verified = vec![false; index.entries.len()];
     for_each_blob_by_directory_parallel(
@@ -3080,24 +3113,33 @@ fn diff_index_to_worktree_inner(
                         );
                     }
                     if refresh_index_stat_in_pass {
-                        let ie = &mut index.entries[entry_index];
-                        let refresh = refresh_index_blob_stat_from_metadata(
-                            odb,
-                            ie,
-                            &meta,
-                            path_str_ref,
-                            &file_path,
-                            index_mtime,
-                            &conv,
-                            &file_attrs_for,
-                            stat_policy,
-                            filter_fp,
-                        );
-                        if refresh.index_changed {
-                            index_stat_refresh_changed = true;
-                        }
-                        if refresh.content_verified {
-                            stat_refresh_verified[entry_index] = true;
+                        let ie_ref = &index.entries[entry_index];
+                        let stat_matches = stat_matches_with_policy(ie_ref, &meta, stat_policy);
+                        let worktree_size = u32::try_from(meta.len()).unwrap_or(u32::MAX);
+                        // When size changed, status will hash for the unstaged diff; skip the
+                        // refresh pass's duplicate read. Mtime-only bumps keep size and still refresh.
+                        let skip_refresh_for_status_diff =
+                            options.for_status && !stat_matches && worktree_size != ie_ref.size;
+                        if !skip_refresh_for_status_diff {
+                            let ie = &mut index.entries[entry_index];
+                            let refresh = refresh_index_blob_stat_from_metadata(
+                                odb,
+                                ie,
+                                &meta,
+                                path_str_ref,
+                                &file_path,
+                                index_mtime,
+                                &conv,
+                                &file_attrs_for,
+                                stat_policy,
+                                filter_fp,
+                            );
+                            if refresh.index_changed {
+                                index_stat_refresh_changed = true;
+                            }
+                            if refresh.content_verified {
+                                stat_refresh_verified[entry_index] = true;
+                            }
                         }
                     }
                     let ie = &index.entries[entry_index];
@@ -3118,6 +3160,13 @@ fn diff_index_to_worktree_inner(
                                 new_oid: ie.oid,
                                 score: None,
                             });
+                        } else if try_push_status_modified_on_size_mismatch(
+                            ie,
+                            path_str_ref,
+                            &meta,
+                            options.for_status,
+                            &mut result,
+                        ) {
                         } else if !(stat_matches_with_policy(ie, &meta, stat_policy)
                             && (!trust_filemode || worktree_mode == ie.mode)
                             && !entry_is_racy_with_policy(ie, index_mtime, stat_policy))
@@ -3146,6 +3195,7 @@ fn diff_index_to_worktree_inner(
                             &file_attrs_for,
                             &conv,
                             materialize_dirty_blobs,
+                            options.for_status,
                             filter_fp,
                             &mut result,
                         )?;
@@ -8663,6 +8713,34 @@ mod smudge_racily_clean_tests {
         assert!(!super::index_stat_cache_trustworthy(None));
         assert!(!super::index_stat_cache_trustworthy(Some((0, 0))));
         assert!(super::index_stat_cache_trustworthy(Some((1, 0))));
+    }
+
+    #[test]
+    fn status_diff_skips_hash_when_worktree_size_differs() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (git_dir, odb) = minimal_repo(wt, "[core]\n");
+        let rel = "size-change.txt";
+        let original = b"short\n";
+        let mut index = Index::new();
+        index
+            .entries
+            .push(staged_entry_for_file(&odb, wt, rel, original, (100, 0)));
+        fs::write(wt.join(rel), b"longer content\n").expect("rewrite");
+        let (entries, _) = super::diff_index_to_worktree_with_options(
+            &odb,
+            &mut index,
+            wt,
+            super::DiffIndexToWorktreeOptions {
+                repository_git_dir: Some(git_dir),
+                for_status: true,
+                ..Default::default()
+            },
+        )
+        .expect("diff");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, super::DiffStatus::Modified);
+        assert_eq!(entries[0].path(), rel);
     }
 
     #[test]

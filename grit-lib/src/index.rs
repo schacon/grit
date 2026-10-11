@@ -1684,20 +1684,15 @@ impl Index {
         entry.path == path && entry.stage() == stage
     }
 
-    /// Index of `(path, stage)`; binary search when sorted, linear fallback if the flag is stale.
+    /// Index of `(path, stage)`; binary search when sorted, linear scan when not.
     fn find_entry_pos(&self, path: &[u8], stage: u8) -> Option<usize> {
         if self.entries_sorted {
-            if let Ok(pos) = self.entries.binary_search_by(|e| {
+            return match self.entries.binary_search_by(|e| {
                 Self::cmp_paths(e.path.as_slice(), path).then_with(|| e.stage().cmp(&stage))
             }) {
-                if self
-                    .entries
-                    .get(pos)
-                    .is_some_and(|e| Self::entry_matches(e, path, stage))
-                {
-                    return Some(pos);
-                }
-            }
+                Ok(pos) if Self::entry_matches(&self.entries[pos], path, stage) => Some(pos),
+                _ => None,
+            };
         }
         self.entries
             .iter()
@@ -1716,6 +1711,23 @@ impl Index {
                 .take_while(|e| e.path == path)
                 .count();
         (start, end)
+    }
+
+    /// Whether any stage-0 entry lies strictly under `rel_dir/` (or any stage-0 entry exists when
+    /// `rel_dir` is empty).
+    #[must_use]
+    pub fn has_stage0_descendant_under(&self, rel_dir: &str) -> bool {
+        if rel_dir.is_empty() {
+            return self.entries.iter().any(|e| e.stage() == 0);
+        }
+        if self.entries_sorted {
+            let (start, end) = self.descendant_run_range_sorted(rel_dir);
+            return self.entries[start..end].iter().any(|e| e.stage() == 0);
+        }
+        let prefix = format!("{rel_dir}/");
+        self.entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path.starts_with(prefix.as_bytes()))
     }
 
     /// Inclusive start and exclusive end of entries strictly under `path/` (sorted indexes only).
@@ -3485,7 +3497,7 @@ pub fn normalize_mode(raw_mode: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod index_path_cmp {
+pub(crate) mod index_path_cmp {
     use std::cell::Cell;
 
     thread_local! { // hygiene: index path comparison test counter (cfg(test) only)
@@ -3870,16 +3882,43 @@ mod tests {
     }
 
     #[test]
-    fn stale_sorted_flag_still_finds_and_removes_entries() {
+    fn stale_sorted_flag_miss_until_resorted() {
         let mut idx = Index::new();
         idx.entries.push(make_entry("z"));
         idx.entries.push(make_entry("a"));
         idx.entries.push(make_entry("b"));
         idx.entries_sorted = true;
         assert!(!idx.entries_are_sorted());
+        assert!(idx.get(b"z", 0).is_none());
+        idx.sort();
         assert!(idx.get(b"z", 0).is_some());
         assert!(idx.remove(b"z"));
         assert!(idx.get(b"z", 0).is_none());
+    }
+
+    #[test]
+    fn find_entry_pos_sorted_miss_is_constant() {
+        const N: usize = 100_000;
+        const M: usize = 1_000;
+        let mut idx = Index::new();
+        for i in 0..N {
+            idx.add_or_replace(make_entry(&format!("file/{i:06}.txt")));
+        }
+        assert!(idx.entries_sorted);
+        let misses: Vec<Vec<u8>> = (0..M)
+            .map(|i| format!("missing/{i:06}.txt").into_bytes())
+            .collect();
+        index_path_cmp::reset();
+        for path in &misses {
+            assert!(idx.get(path, 0).is_none());
+        }
+        let cmps = index_path_cmp::take();
+        let log_n = (N as f64).log2().ceil() as usize;
+        let bound = 100 * M * log_n;
+        assert!(
+            cmps < bound,
+            "sorted miss path comparisons {cmps} should stay under {bound} (N={N}, M={M})"
+        );
     }
 
     #[test]

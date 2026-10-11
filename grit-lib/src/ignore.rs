@@ -60,6 +60,8 @@ pub struct IgnoreMatcher {
     read_per_directory: bool,
     /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
     pub warnings: Vec<String>,
+    /// Cached ancestor directory list for the last [`Self::ensure_per_dir_rules_loaded`] parent.
+    per_dir_dirs_cache: Option<(String, Vec<String>)>,
 }
 
 impl IgnoreMatcher {
@@ -108,6 +110,7 @@ impl IgnoreMatcher {
         self.read_per_directory = true;
         // The cache is keyed by directory only; clear it so a new filename is honored.
         self.gitignore_cache.clear();
+        self.per_dir_dirs_cache = None;
     }
 
     /// Append patterns from `ls-files --exclude` / `-x` (Git command-line exclude list).
@@ -123,6 +126,36 @@ impl IgnoreMatcher {
     #[must_use]
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
+    }
+
+    /// Whether `repo_rel_path` is ignored, without computing verbose `-v` match metadata.
+    ///
+    /// Prefer this on hot paths (for example untracked directory walks) that only need the
+    /// boolean result.
+    pub fn is_path_ignored(
+        &mut self,
+        repo: &Repository,
+        index: Option<&Index>,
+        repo_rel_path: &str,
+        is_dir: bool,
+    ) -> Result<bool> {
+        if is_tracked(index, repo_rel_path) {
+            return Ok(false);
+        }
+        let per_dir_dirs = self.ensure_per_dir_rules_loaded(repo, index, repo_rel_path)?;
+        let per_dir_groups = self.cached_rule_slices_for_dirs(&per_dir_dirs);
+        if !self.has_any_exclude_rules(&per_dir_groups) {
+            return Ok(false);
+        }
+        if self
+            .first_excluded_ancestor(repo_rel_path, &per_dir_groups)
+            .is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .evaluate_against_groups(repo_rel_path, is_dir, &per_dir_groups)
+            .0)
     }
 
     /// Check whether a repository-relative path is ignored.
@@ -161,7 +194,8 @@ impl IgnoreMatcher {
         // The FIRST group that yields a match decides the result; within a group, the last
         // matching pattern (last line) wins. This means a CLI `--exclude` overrides a per-directory
         // `!negation`, and a per-directory `.gitignore` overrides `core.excludesfile`.
-        let per_dir_groups = self.rules_for_path_grouped(repo, index, repo_rel_path)?;
+        let per_dir_dirs = self.ensure_per_dir_rules_loaded(repo, index, repo_rel_path)?;
+        let per_dir_groups = self.cached_rule_slices_for_dirs(&per_dir_dirs);
 
         // Git's `prep_exclude` (dir.c) descends into the path's ancestor directories before
         // matching the leaf. If an ancestor directory itself matches a non-negative exclude
@@ -203,7 +237,7 @@ impl IgnoreMatcher {
         &self,
         path: &str,
         is_dir: bool,
-        per_dir_groups: &[Vec<IgnoreRule>],
+        per_dir_groups: &[&[IgnoreRule]],
     ) -> (bool, Option<IgnoreMatch>) {
         let groups = self.build_groups(per_dir_groups);
         for group in &groups {
@@ -230,7 +264,7 @@ impl IgnoreMatcher {
 
     /// Flatten the ordered group list into a single rule slice (used for `check-ignore -v`
     /// attribution, which walks every loaded pattern).
-    fn flatten_groups<'a>(&'a self, per_dir_groups: &'a [Vec<IgnoreRule>]) -> Vec<&'a IgnoreRule> {
+    fn flatten_groups<'a>(&'a self, per_dir_groups: &[&'a [IgnoreRule]]) -> Vec<&'a IgnoreRule> {
         self.build_groups(per_dir_groups)
             .into_iter()
             .flatten()
@@ -239,10 +273,7 @@ impl IgnoreMatcher {
 
     /// Assemble the priority-ordered exclude groups: EXC_CMDL, then per-directory `.gitignore`
     /// (deepest directory first), then EXC_FILE (`--exclude-from`, global, info).
-    fn build_groups<'a>(
-        &'a self,
-        per_dir_groups: &'a [Vec<IgnoreRule>],
-    ) -> Vec<Vec<&'a IgnoreRule>> {
+    fn build_groups<'a>(&'a self, per_dir_groups: &[&'a [IgnoreRule]]) -> Vec<Vec<&'a IgnoreRule>> {
         let cmdl_rules: Vec<&IgnoreRule> = self.cli_rules.iter().collect();
         let mut dir_groups: Vec<Vec<&IgnoreRule>> = Vec::new();
         for rules in per_dir_groups.iter().rev() {
@@ -273,7 +304,7 @@ impl IgnoreMatcher {
     fn first_excluded_ancestor(
         &self,
         repo_rel_path: &str,
-        per_dir_groups: &[Vec<IgnoreRule>],
+        per_dir_groups: &[&[IgnoreRule]],
     ) -> Option<IgnoreMatch> {
         let parent = parent_dir(repo_rel_path);
         if parent.is_empty() {
@@ -302,28 +333,46 @@ impl IgnoreMatcher {
     /// directory and ordered root-first (deepest directory last). The caller evaluates the
     /// groups deepest-first to honor Git's `EXC_DIRS` precedence (a nested `.gitignore` wins
     /// over an ancestor's, and over `EXC_FILE` sources).
-    fn rules_for_path_grouped(
+    fn has_any_exclude_rules(&self, per_dir_groups: &[&[IgnoreRule]]) -> bool {
+        !self.cli_rules.is_empty()
+            || !self.exclude_from_rules.is_empty()
+            || !self.global_rules.is_empty()
+            || !self.info_rules.is_empty()
+            || per_dir_groups.iter().any(|g| !g.is_empty())
+    }
+
+    fn ensure_per_dir_rules_loaded(
         &mut self,
         repo: &Repository,
         index: Option<&Index>,
         repo_rel_path: &str,
-    ) -> Result<Vec<Vec<IgnoreRule>>> {
+    ) -> Result<Vec<String>> {
         if !self.read_per_directory {
             return Ok(Vec::new());
         }
         let parent = parent_dir(repo_rel_path);
-        let mut dirs = Vec::new();
-        dirs.push(String::new());
-        if !parent.is_empty() {
-            let mut cur = String::new();
-            for segment in parent.split('/') {
-                if !cur.is_empty() {
-                    cur.push('/');
+        let dirs = if self
+            .per_dir_dirs_cache
+            .as_ref()
+            .is_some_and(|(cached, _)| cached == parent)
+        {
+            self.per_dir_dirs_cache.as_ref().unwrap().1.clone()
+        } else {
+            let mut dirs = Vec::new();
+            dirs.push(String::new());
+            if !parent.is_empty() {
+                let mut cur = String::new();
+                for segment in parent.split('/') {
+                    if !cur.is_empty() {
+                        cur.push('/');
+                    }
+                    cur.push_str(segment);
+                    dirs.push(cur.clone());
                 }
-                cur.push_str(segment);
-                dirs.push(cur.clone());
             }
-        }
+            self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
+            dirs
+        };
 
         let per_dir_name = self.per_directory_name.clone();
         for dir in &dirs {
@@ -338,16 +387,17 @@ impl IgnoreMatcher {
                 self.gitignore_cache.insert(dir.clone(), rules);
             }
         }
+        Ok(dirs)
+    }
 
-        let mut groups: Vec<Vec<IgnoreRule>> = Vec::new();
-        for dir in dirs {
-            if let Some(rules) = self.gitignore_cache.get(&dir) {
-                groups.push(rules.clone());
-            } else {
-                groups.push(Vec::new());
-            }
-        }
-        Ok(groups)
+    fn cached_rule_slices_for_dirs(&self, dirs: &[String]) -> Vec<&[IgnoreRule]> {
+        dirs.iter()
+            .map(|dir| {
+                self.gitignore_cache
+                    .get(dir)
+                    .map_or(&[] as &[IgnoreRule], Vec::as_slice)
+            })
+            .collect()
     }
 }
 
@@ -442,12 +492,7 @@ fn load_gitignore_for_dir(
     }
 
     if let Some(ix) = index {
-        if let Some(entry) = ix.entries.iter().find(|e| {
-            e.stage() == 0
-                && std::str::from_utf8(&e.path)
-                    .map(|p| p == rel_key.as_str())
-                    .unwrap_or(false)
-        }) {
+        if let Some(entry) = ix.get(rel_key.as_bytes(), 0) {
             if let Ok(obj) = repo.odb.read(&entry.oid) {
                 if obj.kind == ObjectKind::Blob {
                     if let Ok(text) = std::str::from_utf8(&obj.data) {
@@ -700,12 +745,7 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
     let Some(index) = index else {
         return false;
     };
-    index.entries.iter().any(|entry| {
-        entry.stage() == 0
-            && std::str::from_utf8(&entry.path)
-                .map(|path| path == repo_rel_path)
-                .unwrap_or(false)
-    })
+    index.get(repo_rel_path.as_bytes(), 0).is_some()
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
@@ -1005,23 +1045,25 @@ fn sparse_unanchored_basename_matches(pat: &str, path: &str) -> bool {
 /// Returns the submodule path if `repo_rel_path` names something inside a gitlink entry.
 #[must_use]
 pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<String> {
-    let mut best: Option<&str> = None;
-    for entry in &index.entries {
-        if entry.stage() != 0 || entry.mode != MODE_GITLINK {
-            continue;
-        }
-        let Ok(p) = std::str::from_utf8(&entry.path) else {
-            continue;
-        };
-        if repo_rel_path.len() > p.len()
-            && repo_rel_path.starts_with(p)
-            && repo_rel_path.as_bytes().get(p.len()) == Some(&b'/')
-            && best.is_none_or(|b| p.len() > b.len())
-        {
-            best = Some(p);
-        }
+    let bytes = repo_rel_path.as_bytes();
+    if bytes.is_empty() {
+        return None;
     }
-    best.map(std::string::ToString::to_string)
+    let mut best: Option<String> = None;
+    let mut end = 0usize;
+    while end < bytes.len() {
+        let Some(slash) = bytes[end..].iter().position(|&b| b == b'/') else {
+            break;
+        };
+        end += slash;
+        if let Some(entry) = index.get(&bytes[..end], 0) {
+            if entry.mode == MODE_GITLINK {
+                best = Some(String::from_utf8_lossy(&bytes[..end]).into_owned());
+            }
+        }
+        end += 1;
+    }
+    best
 }
 
 /// Convert a user-supplied path into a normalized repository-relative path.
@@ -1132,5 +1174,68 @@ mod gitignore_glob_tests {
             "foo/bar/*.c",
             "foo/bar/baz/x.c"
         ));
+    }
+}
+
+#[cfg(test)]
+mod index_lookup_scaling_tests {
+    use super::*;
+    use crate::index::{index_path_cmp, Index, IndexEntry, MODE_REGULAR};
+    use crate::objects::ObjectId;
+    use crate::repo::init_repository;
+    use crate::RefStorageFormat;
+    use tempfile::TempDir;
+
+    fn dummy_oid() -> ObjectId {
+        ObjectId::from_bytes(&[0u8; 20]).unwrap()
+    }
+
+    fn make_entry(path: &str) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: dummy_oid(),
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn tracked_check_path_index_lookups_sublinear_in_index_size() {
+        const N: usize = 100_000;
+        const M: usize = 1_000;
+        let dir = TempDir::new().unwrap();
+        let repo =
+            init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).unwrap();
+        let mut index = Index::new();
+        for i in 0..N {
+            index.add_or_replace(make_entry(&format!("tracked/{i:06}.txt")));
+        }
+        let mut matcher = IgnoreMatcher::default();
+        index_path_cmp::reset();
+        for i in 0..M {
+            let path = format!("untracked/{i:06}.txt");
+            let (ignored, _) = matcher
+                .check_path(&repo, Some(&index), &path, false)
+                .unwrap();
+            assert!(!ignored, "untracked path must not be ignored");
+        }
+        let cmps = index_path_cmp::take();
+        let log_n = (N as f64).log2().ceil() as usize;
+        let bound = 100 * M * log_n;
+        assert!(
+            cmps < bound,
+            "index path comparisons {cmps} should stay under {bound} (N={N}, M={M})"
+        );
     }
 }

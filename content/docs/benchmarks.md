@@ -181,7 +181,9 @@ Recorded on the factory VM after stacking pick/merge/stash perf work on `origin/
 | `pick-series-10000` | 129.4 | 1544.3 | 11.18× | 11.94× |
 | `pick-series-100000` | 961.6 | 17843.4 | 17.65× | 18.56× |
 
-**Suite at L/H** (`grit-utils/baselines/suite-after-LH.json`): status scenarios remain far above 2× (dirty/clean at 10k and 100k files).
+**2026-10-11 status index lookups:** Replacing quadratic index scans during untracked/ignore classification dropped **`status-dirty-100000`** from ~**53×** to ~**2.5×** Git median time and **`status-dirty-10000`** from ~**7×** to ~**2×** (see refreshed `suite-after-LH.json`). A follow-up **size-mismatch** fast path on the status diff (Git `compare_stat_data`: different size ⇒ modified without re-reading blobs) brings **`status-dirty-10000`** to ~**1.94×** on the committed baseline.
+
+**Suite at L/H** (`grit-utils/baselines/suite-after-LH.json`): **`status-dirty-10000`** is below the **2×** bar; dirty status at 100k remains ~**2.2×** (within **3×**); clean status at L/H is still above **2×**.
 
 **H/L acceptance (1.25× bar):** after-run medians fail the scaling check for **`switch`**, **`switch-wide`**, **`pick`**, **`merge`**, and **`pick-series`** (not only switch/pick/merge). **`commit`** and **`add`** at H are within 2× of Git but **`add`** at L/H both exceed 2× at 10k and 100k files.
 
