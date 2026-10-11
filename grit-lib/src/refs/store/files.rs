@@ -19,6 +19,7 @@ use crate::refs::{
 };
 
 use super::apply::{apply_update, ref_lock_names_for_updates, simulate_batch_apply, RefBatchState};
+use super::transaction::expected_matches;
 use super::error::RefStoreError;
 use super::routing::{resolve_common_dir, route_ref_storage_with_namespace, RefStorageRoute};
 use super::transaction::RefTransaction;
@@ -423,13 +424,46 @@ impl FilesRefStore {
         Ok(())
     }
 
+    fn recheck_update_at_commit(
+        &self,
+        update: &RefUpdate,
+        batch_extras: &BTreeSet<String>,
+    ) -> StoreResult<()> {
+        if update.flags.log_only {
+            return Ok(());
+        }
+        let actual = self.read_raw(&update.name).map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+        if !expected_matches(actual.as_ref(), &update.expected) {
+            return Err(RefStoreError::ExpectedMismatch {
+                name: update.name.clone(),
+                expected: update.expected.clone(),
+                actual,
+            });
+        }
+        if update.new_value.is_some() && actual.is_none() {
+            let skip = HashSet::new();
+            if let Err(reason) = crate::refs::verify_refname_available_for_create(
+                &self.git_dir,
+                &update.name,
+                batch_extras,
+                &skip,
+            ) {
+                return Err(reason.into());
+            }
+        }
+        Ok(())
+    }
+
     fn persist_state_diff(
         &self,
         before: &RefBatchState,
         after: &RefBatchState,
         held_locks: &HashMap<String, PathBuf>,
         packed_lock_held: bool,
+        updates: &[RefUpdate],
     ) -> Result<()> {
+        let batch_extras: BTreeSet<String> = updates.iter().map(|u| u.name.clone()).collect();
+
         let mut names: BTreeSet<String> = BTreeSet::new();
         names.extend(before.refs.keys().cloned());
         names.extend(after.refs.keys().cloned());
@@ -443,6 +477,7 @@ impl FilesRefStore {
             }
         }
 
+        let mut ref_write_idx = 0usize;
         for name in before
             .refs
             .keys()
@@ -453,6 +488,10 @@ impl FilesRefStore {
             let a = after.refs.get(name);
             if b == a && (a.is_none() || !held_locks.contains_key(name)) {
                 continue;
+            }
+            if let Some(update) = updates.iter().find(|u| u.name == *name) {
+                self.recheck_update_at_commit(update, &batch_extras)
+                    .map_err(Error::from)?;
             }
             let lock = held_locks.get(name).ok_or_else(|| {
                 Error::Message(format!(
@@ -468,6 +507,8 @@ impl FilesRefStore {
                     FilesRefStore::write_loose_value(&path, lock, value)?;
                 }
             }
+            crate::refs::test_ref_store_batch_pause_after_ref_write(ref_write_idx);
+            ref_write_idx += 1;
         }
         let _ = self.refresh_packed_cache_if_stale();
         Ok(())
@@ -756,6 +797,7 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
             &batch.after_commit,
             &batch.ref_locks,
             packed_lock_held,
+            &batch.updates,
         ) {
             FilesRefStore::release_locks(&batch);
             return Err(RefStoreError::Corrupt(err.to_string()));

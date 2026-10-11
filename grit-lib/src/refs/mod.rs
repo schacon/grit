@@ -2160,6 +2160,70 @@ fn test_branch_ref_pause_before_commit() {
 #[cfg(not(test))]
 fn test_branch_ref_pause_before_commit() {}
 
+#[cfg(test)]
+mod ref_store_batch_pause_inject {
+    use std::sync::{Condvar, Mutex, OnceLock};
+
+    pub struct PauseGate {
+        pub wait: Mutex<bool>,
+        pub cv: Condvar,
+    }
+
+    // hygiene: test-only ref-store batch commit pause injection
+    static PAUSE_AFTER_REF_WRITE: OnceLock<Mutex<Option<(usize, std::sync::Arc<PauseGate>)>>> =
+        OnceLock::new();
+
+    pub fn pause_slot() -> &'static Mutex<Option<(usize, std::sync::Arc<PauseGate>)>> {
+        PAUSE_AFTER_REF_WRITE.get_or_init(|| Mutex::new(None))
+    }
+}
+
+/// Synchronization gate used with [`set_test_inject_ref_store_batch_pause_after_apply`].
+#[cfg(test)]
+pub type RefStoreBatchPauseGate = std::sync::Arc<ref_store_batch_pause_inject::PauseGate>;
+
+/// Test-only: build a pause gate for [`set_test_inject_ref_store_batch_pause_after_apply`].
+#[cfg(test)]
+pub fn new_ref_store_batch_pause_gate() -> RefStoreBatchPauseGate {
+    std::sync::Arc::new(ref_store_batch_pause_inject::PauseGate {
+        wait: std::sync::Mutex::new(false),
+        cv: std::sync::Condvar::new(),
+    })
+}
+
+/// Test-only: pause files ref-store batch commit after persisting the ref at `apply_index` (0-based).
+#[cfg(test)]
+pub fn set_test_inject_ref_store_batch_pause_after_apply(
+    apply_index: usize,
+    gate: Option<RefStoreBatchPauseGate>,
+) {
+    *ref_store_batch_pause_inject::pause_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = gate.map(|g| (apply_index, g));
+}
+
+#[cfg(test)]
+pub(crate) fn test_ref_store_batch_pause_after_ref_write(idx: usize) {
+    let slot = ref_store_batch_pause_inject::pause_slot()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if let Some((target, gate)) = slot {
+        if idx != target {
+            return;
+        }
+        let mut wait = gate.wait.lock().unwrap_or_else(|e| e.into_inner());
+        *wait = true;
+        gate.cv.notify_all();
+        while *wait {
+            wait = gate.cv.wait(wait).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn test_ref_store_batch_pause_after_ref_write(_idx: usize) {}
+
 /// Loose branch ref lock held between CAS validation and the ref file commit.
 ///
 /// Dropping without [`commit_branch_commit_ref_lock`](Self::commit) aborts the lock file.

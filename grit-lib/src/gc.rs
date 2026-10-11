@@ -403,4 +403,122 @@ mod update_refs_tests {
             c2
         );
     }
+
+    #[test]
+    fn apply_cas_rejects_after_concurrent_packed_delete() {
+        use std::path::Path;
+        use std::process::Command;
+        use std::sync::Arc;
+        use std::thread;
+
+        fn git(dir: &Path, args: &[&str]) {
+            let out = Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "T")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "T")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        fn rev_parse(repo: &Path, refname: &str) -> ObjectId {
+            let hex = Command::new("git")
+                .current_dir(repo)
+                .args(["rev-parse", refname])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .expect("rev-parse")
+                .stdout;
+            String::from_utf8(hex).expect("utf8").trim().parse().expect("oid")
+        }
+
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main", "."]);
+        let git_dir = repo.join(".git");
+
+        std::fs::write(repo.join("f.txt"), "one\n").unwrap();
+        git(&repo, &["add", "f.txt"]);
+        git(&repo, &["commit", "-q", "-m", "c1"]);
+        let c1 = rev_parse(&repo, "HEAD");
+
+        std::fs::write(repo.join("f.txt"), "two\n").unwrap();
+        git(&repo, &["add", "f.txt"]);
+        git(&repo, &["commit", "-q", "-m", "c2"]);
+        let c2 = rev_parse(&repo, "HEAD");
+
+        for name in ["refs/heads/first", "refs/heads/middle", "refs/heads/last"] {
+            git(&repo, &["update-ref", name, &c1.to_hex()]);
+        }
+        git(&repo, &["pack-refs", "--all"]);
+        for name in ["first", "middle", "last"] {
+            let _ = std::fs::remove_file(git_dir.join(format!("refs/heads/{name}")));
+        }
+
+        let gate = refs::new_ref_store_batch_pause_gate();
+        refs::set_test_inject_ref_store_batch_pause_after_apply(0, Some(Arc::clone(&gate)));
+
+        let updates = vec![
+            RefTransactionItem {
+                name: "refs/heads/first".to_owned(),
+                new_oid: Some(c2),
+                expected_old: Some(c1),
+            },
+            RefTransactionItem {
+                name: "refs/heads/middle".to_owned(),
+                new_oid: Some(c2),
+                expected_old: Some(c1),
+            },
+            RefTransactionItem {
+                name: "refs/heads/last".to_owned(),
+                new_oid: Some(c2),
+                expected_old: Some(c1),
+            },
+        ];
+
+        let git_dir_thread = git_dir.clone();
+        let updates_thread = updates.clone();
+        let worker = thread::spawn(move || update_refs(&git_dir_thread, &updates_thread));
+
+        let mut paused = gate.wait.lock().expect("lock");
+        while !*paused {
+            paused = gate.cv.wait(paused).expect("wait");
+        }
+
+        git(
+            &repo,
+            &["update-ref", "-d", "refs/heads/last", &c1.to_hex()],
+        );
+
+        *paused = false;
+        gate.cv.notify_all();
+        drop(paused);
+
+        let err = worker.join().expect("join").expect_err("stale CAS");
+        match &err {
+            Error::RefStore(RefStoreError::ExpectedMismatch { name, .. }) => {
+                assert_eq!(name, "refs/heads/last");
+            }
+            other => panic!("expected ExpectedMismatch for last ref, got {other}"),
+        }
+        assert!(crate::refs::resolve_ref(&git_dir, "refs/heads/last").is_err());
+        assert_eq!(
+            crate::refs::resolve_ref(&git_dir, "refs/heads/first").expect("first"),
+            c2
+        );
+
+        refs::set_test_inject_ref_store_batch_pause_after_apply(0, None);
+    }
 }
