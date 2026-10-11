@@ -1,6 +1,7 @@
 //! Case-only renames via `grit mv` with `core.ignorecase=true` (issue #968).
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use grit_lib::index::Index;
@@ -23,6 +24,14 @@ fn run_grit(grit: &str, dir: &std::path::Path, args: &[&str], null: &str) -> std
         .expect("run grit")
 }
 
+fn worktree_has_exact_dir_entry(parent: &Path, name: &str) -> bool {
+    fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy() == name)
+}
+
 fn run_git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)
@@ -40,9 +49,11 @@ fn grit_mv_case_only_rename_updates_index() {
     let null = null_config();
     let git_dir = dir.path().join(".git");
 
-    assert!(run_grit(grit, dir.path(), &["init"], &null)
-        .status
-        .success());
+    assert!(
+        run_grit(grit, dir.path(), &["init"], &null)
+            .status
+            .success()
+    );
     fs::write(
         git_dir.join("config"),
         "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tignorecase = true\n\tbare = false\n",
@@ -50,9 +61,11 @@ fn grit_mv_case_only_rename_updates_index() {
     .expect("config");
 
     fs::write(dir.path().join("README.md"), b"hi\n").expect("write");
-    assert!(run_grit(grit, dir.path(), &["add", "README.md"], &null)
-        .status
-        .success());
+    assert!(
+        run_grit(grit, dir.path(), &["add", "README.md"], &null)
+            .status
+            .success()
+    );
     assert!(
         run_grit(grit, dir.path(), &["commit", "-m", "first"], &null)
             .status
@@ -65,8 +78,8 @@ fn grit_mv_case_only_rename_updates_index() {
         "grit mv failed: {}",
         String::from_utf8_lossy(&mv.stderr)
     );
-    assert!(dir.path().join("readme.md").is_file());
-    assert!(!dir.path().join("README.md").exists());
+    assert!(worktree_has_exact_dir_entry(dir.path(), "readme.md"));
+    assert!(!worktree_has_exact_dir_entry(dir.path(), "README.md"));
 
     let index = Index::load(&git_dir.join("index")).expect("index");
     let stage0: Vec<_> = index.entries().iter().filter(|e| e.stage() == 0).collect();
