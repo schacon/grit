@@ -5,12 +5,14 @@ use std::path::Path;
 use std::process::Command;
 
 use filetime::FileTime;
+use grit_lib::environment::RepositoryOptions;
+use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 
-fn init_grit_repo(root: &Path, sha256: bool) -> Repository {
+fn init_grit_repo(root: &Path, sha256: bool, threads: Option<usize>) -> Repository {
     let git_dir = root.join(".git");
     fs::create_dir_all(git_dir.join("objects")).expect("objects");
     fs::create_dir_all(git_dir.join("refs/heads")).expect("refs");
@@ -21,7 +23,11 @@ fn init_grit_repo(root: &Path, sha256: bool) -> Repository {
         "[core]\n\trepositoryformatversion = 0\n\tbare = false\n[user]\n\temail = t@example.com\n\tname = Test\n"
     };
     fs::write(git_dir.join("config"), config).expect("config");
-    Repository::open(&git_dir, Some(root)).expect("open grit repo")
+    let mut options = RepositoryOptions::empty();
+    if let Some(n) = threads {
+        options.thread_policy = ThreadPolicy::with_threads_override(Some(n));
+    }
+    Repository::open_with(&options, &git_dir, Some(root)).expect("open grit repo")
 }
 
 fn write_wide_tree(root: &Path, count: usize) {
@@ -59,17 +65,7 @@ fn reset_staging_area(repo: &Repository) {
     }
 }
 
-fn set_index_threads(repo: &Repository, threads: usize) {
-    let path = repo.git_dir.join("config");
-    let mut text = fs::read_to_string(&path).expect("config");
-    text.push_str(&format!("\n[index]\n\tthreads = {threads}\n"));
-    fs::write(&path, text).expect("write config");
-}
-
-fn stage_all(repo: &Repository, threads: Option<usize>) -> Vec<u8> {
-    if let Some(n) = threads {
-        set_index_threads(repo, n);
-    }
+fn stage_all(repo: &Repository) -> Vec<u8> {
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     fs::read(repo.index_path()).expect("read index")
 }
@@ -88,14 +84,15 @@ fn assert_serial_parallel_index_match(sha256: bool) {
     let root = tmp.path();
     write_wide_tree(root, N);
     pin_all_file_mtrees(root, N);
-    let repo = init_grit_repo(root, sha256);
+    let repo_serial = init_grit_repo(root, sha256, Some(1));
+    let serial_index = stage_all(&repo_serial);
 
-    let serial_index = stage_all(&repo, Some(1));
-    reset_staging_area(&repo);
+    reset_staging_area(&repo_serial);
     let parallel_threads = std::thread::available_parallelism()
         .map(|n| n.get().max(2))
         .unwrap_or(2);
-    let parallel_index = stage_all(&repo, Some(parallel_threads));
+    let repo_parallel = init_grit_repo(root, sha256, Some(parallel_threads));
+    let parallel_index = stage_all(&repo_parallel);
 
     if serial_index != parallel_index {
         let diff_at = serial_index
