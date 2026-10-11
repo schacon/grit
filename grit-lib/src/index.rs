@@ -1251,32 +1251,13 @@ impl Index {
                 ));
             };
             let ieot = read_ieot_extension(body, ext_off, extensions_end);
-            let entry_workers = workers.saturating_sub(1).max(1);
-            let ext_result = std::sync::Mutex::new(None::<Result<ParsedIndexExtensions>>);
-
-            let mut loaded_entries = std::thread::scope(|scope| -> Result<Vec<IndexEntry>> {
-                scope.spawn(|| {
-                    let res =
-                        parse_index_extensions(body, ext_off, extensions_end, hash_algo, None);
-                    *ext_result.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
-                });
-
-                if let Some(ieot) = ieot {
-                    parse_entries_parallel(body, version, count, hash_len, &ieot, entry_workers)
-                } else {
-                    parse_entries_serial(body, version, count, hash_len, 12).map(|(e, _)| e)
-                }
-            })?;
-
-            let ext_fields = match ext_result.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                Some(Ok(v)) => v,
-                Some(Err(e)) => return Err(e),
-                None => {
-                    return Err(Error::IndexError(
-                        "parallel index extension load did not finish".to_owned(),
-                    ));
-                }
+            let mut loaded_entries = if let Some(ref ieot) = ieot {
+                parse_entries_parallel(body, version, count, hash_len, ieot, workers)?
+            } else {
+                parse_entries_serial(body, version, count, hash_len, 12)?.0
             };
+            let ext_fields =
+                parse_index_extensions(body, ext_off, extensions_end, hash_algo, None)?;
             if let Some(dirty) = ext_fields.fsmonitor_dirty.as_ref() {
                 apply_fsmonitor_dirty_to_entries(&mut loaded_entries, dirty);
             }
@@ -1577,8 +1558,11 @@ impl Index {
                             nr: nr_in_block,
                         });
                         nr_in_block = 0;
-                        previous_path.clear();
-                        previous_path.push(0);
+                        // Git `do_write_index`: invalidate first byte so the next entry
+                        // encodes with no common prefix, without shrinking `previous_path`.
+                        if !previous_path.is_empty() {
+                            previous_path[0] = 0;
+                        }
                         block_start_offset = out.len();
                     }
                 }

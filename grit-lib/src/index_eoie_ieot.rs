@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
@@ -13,7 +12,7 @@ use crate::index::{
 };
 use crate::objects::HashAlgo;
 use crate::objects::ObjectId;
-use crate::parallel::ThreadPolicy;
+use crate::parallel::{run_ordered_pool, ThreadPolicy};
 use crate::resolve_undo::ResolveUndoRecord;
 use crate::split_index;
 use crate::untracked_cache;
@@ -363,6 +362,48 @@ pub(crate) fn parse_entries_serial(
     Ok((entries, pos))
 }
 
+fn parse_ieot_block_range(
+    body: &[u8],
+    version: u32,
+    hash_len: usize,
+    ieot: &IeotTable,
+    block_start: usize,
+    block_end: usize,
+) -> Result<Vec<IndexEntry>> {
+    let nr: usize = ieot.entries[block_start..block_end]
+        .iter()
+        .map(|b| b.nr as usize)
+        .sum();
+    let mut local = Vec::with_capacity(nr);
+    for i in block_start..block_end {
+        let block = &ieot.entries[i];
+        let mut pos = block.offset as usize;
+        if pos > body.len() {
+            return Err(Error::IndexError(format!(
+                "IEOT block {i} offset {pos} past index body"
+            )));
+        }
+        let mut prev: Vec<u8> = Vec::new();
+        for _ in 0..block.nr {
+            if pos >= body.len() {
+                return Err(Error::IndexError(format!(
+                    "IEOT block {i} entry overruns index body at {pos}"
+                )));
+            }
+            let prev_path: &[u8] = if version == 4 { &prev } else { &[] };
+            let (entry, consumed) =
+                crate::index::parse_entry(&body[pos..], version, prev_path, hash_len)?;
+            pos += consumed;
+            if version == 4 {
+                prev.clear();
+                prev.extend_from_slice(&entry.path);
+            }
+            local.push(entry);
+        }
+    }
+    Ok(local)
+}
+
 pub(crate) fn parse_entries_parallel(
     body: &[u8],
     version: u32,
@@ -371,78 +412,24 @@ pub(crate) fn parse_entries_parallel(
     ieot: &IeotTable,
     nr_threads: usize,
 ) -> Result<Vec<IndexEntry>> {
-    let nr_threads = nr_threads.max(1).min(ieot.entries.len());
+    let n_blocks = ieot.entries.len();
+    if n_blocks == 0 {
+        return Err(Error::IndexError("empty IEOT table".to_owned()));
+    }
+    let nr_threads = nr_threads.max(1).min(n_blocks);
     #[cfg(test)]
     if nr_threads > 1 {
         PARALLEL_IEOT_ENTRY_LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    let ieot_blocks = ieot.entries.len().div_ceil(nr_threads);
-    let parts: Arc<Mutex<Vec<(usize, Vec<IndexEntry>)>>> = Arc::new(Mutex::new(Vec::new()));
-    let err: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
 
-    std::thread::scope(|scope| {
-        let mut ieot_start = 0usize;
-        for _t in 0..nr_threads {
-            let mut blocks = ieot_blocks;
-            if ieot_start + blocks > ieot.entries.len() {
-                blocks = ieot.entries.len().saturating_sub(ieot_start);
-            }
-            if blocks == 0 {
-                continue;
-            }
-            let start_idx = ieot_start;
-            ieot_start += blocks;
-            let parts = Arc::clone(&parts);
-            let err = Arc::clone(&err);
-            scope.spawn(move || {
-                let mut local = Vec::new();
-                for i in start_idx..start_idx + blocks {
-                    let block = &ieot.entries[i];
-                    let mut pos = block.offset as usize;
-                    let mut prev: Vec<u8> = Vec::new();
-                    if version == 4 {
-                        prev.clear();
-                    }
-                    for _ in 0..block.nr {
-                        let prev_path: &[u8] = if version == 4 { &prev } else { &[] };
-                        match crate::index::parse_entry(&body[pos..], version, prev_path, hash_len)
-                        {
-                            Ok((entry, consumed)) => {
-                                if version == 4 {
-                                    prev = entry.path.clone();
-                                }
-                                pos += consumed;
-                                local.push(entry);
-                            }
-                            Err(e) => {
-                                *err.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
-                                return;
-                            }
-                        }
-                    }
-                }
-                parts
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push((start_idx, local));
-            });
-        }
-    });
-
-    if let Some(e) = Arc::try_unwrap(err)
-        .ok()
-        .and_then(|m| m.into_inner().ok())
-        .flatten()
-    {
-        return Err(e);
-    }
-    let mut chunks = Arc::try_unwrap(parts)
-        .map_err(|_| Error::IndexError("parallel index load still shared".to_owned()))?
-        .into_inner()
-        .map_err(|_| Error::IndexError("parallel index load mutex poisoned".to_owned()))?;
-    chunks.sort_by_key(|(start, _)| *start);
+    let block_indices: Vec<usize> = (0..n_blocks).collect();
+    // One IEOT block per pool task (chunk=1); the default map chunk size would let a
+    // single worker claim every block and defeat parallelism on small IEOT tables.
+    let blocks = run_ordered_pool(&block_indices, nr_threads, 1, |&i| {
+        parse_ieot_block_range(body, version, hash_len, ieot, i, i + 1)
+    })?;
     let mut entries = Vec::with_capacity(count as usize);
-    for (_, part) in chunks.drain(..) {
+    for part in blocks {
         entries.extend(part);
     }
     if entries.len() != count as usize {

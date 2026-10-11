@@ -184,6 +184,63 @@ fn grit_write_eoie_ieot_v4_git_fsck_and_update_index() {
 }
 
 #[test]
+fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    populate_files(root, 8);
+    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
+        .expect("init");
+    let mut cfg_text = fs::read_to_string(repo.git_dir.join("config")).expect("config");
+    cfg_text.push_str(
+        "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
+    );
+    fs::write(repo.git_dir.join("config"), cfg_text).expect("write config");
+
+    let mut idx = Index::empty(4);
+    for i in 0..8 {
+        let path = format!("d{:04}/f{i:05}.txt", i / 100);
+        let data = format!("body {i}\n");
+        let oid = hash_object(repo.odb.hash_algo(), ObjectKind::Blob, data.as_bytes());
+        repo.odb
+            .write_loose_materialize(ObjectKind::Blob, data.as_bytes())
+            .expect("write blob");
+        idx.add_or_replace(grit_lib::index::IndexEntry {
+            ctime_sec: 1_700_000_000,
+            ctime_nsec: 0,
+            mtime_sec: 1_700_000_000,
+            mtime_nsec: 0,
+            dev: 1,
+            ino: i as u32,
+            mode: grit_lib::index::MODE_REGULAR,
+            uid: 1000,
+            gid: 1000,
+            size: data.len() as u32,
+            oid,
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.into_bytes(),
+            base_index_pos: 0,
+        });
+    }
+
+    let cfg = load_config(&repo);
+    let policy = ThreadPolicy::with_threads_override(Some(4));
+    idx.write_with_config_and_policy(&repo.index_path(), &cfg, policy)
+        .expect("write v4 ieot index");
+
+    let root_s = root.to_str().expect("path");
+    assert!(
+        run_git(&["-C", root_s, "-c", "index.threads=1", "ls-files"]).success(),
+        "git serial index reader must accept grit-written v4 IEOT block restarts"
+    );
+
+    let bytes = fs::read(repo.index_path()).expect("read index");
+    let algo = repo.odb.hash_algo();
+    let parsed = grit_parse_serial(&bytes, algo);
+    assert_eq!(parsed.entries().len(), 8);
+}
+
+#[test]
 fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
