@@ -4065,7 +4065,14 @@ mod tests {
         use crate::repo::init_repository;
 
         let dir = tempfile::tempdir().expect("tempdir");
-        init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+        init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Reftable,
+        )
+        .expect("init");
         let git_dir = dir.path().join(".git");
         let mut opts = read_write_options(&git_dir);
         opts.autocompaction_enabled = false;
@@ -4106,7 +4113,14 @@ mod tests {
         use crate::repo::init_repository;
 
         let dir = tempfile::tempdir().expect("tempdir");
-        init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+        init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Reftable,
+        )
+        .expect("init");
         let git_dir = dir.path().join(".git");
         let mut opts = read_write_options(&git_dir);
         opts.autocompaction_enabled = false;

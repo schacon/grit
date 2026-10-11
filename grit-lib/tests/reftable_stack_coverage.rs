@@ -280,7 +280,14 @@ fn stack_write_ref_deletion_value() {
 #[test]
 fn geometric_partial_compaction_ref_indices_within_table_headers() {
     let dir = tempdir().expect("tempdir");
-    init_repository(dir.path(), false, "main", None, "reftable").expect("init");
+    init_repository(
+        dir.path(),
+        false,
+        "main",
+        None,
+        grit_lib::RefStorageFormat::Reftable,
+    )
+    .expect("init");
     let git_dir = dir.path().join(".git");
 
     for i in 0..80u32 {
