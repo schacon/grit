@@ -167,7 +167,7 @@ fn clone_fetch_keeps_pack_and_matches_git_layout() {
         &upstream.path().join(".git"),
         &FetchOptions {
             refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
-            tags: TagMode::Following,
+            tags: TagMode::All,
             initial_remote_fetch: true,
             remote_name: Some("origin".to_owned()),
             clone_reflog: Some(CloneReflog {

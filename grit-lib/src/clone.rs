@@ -181,7 +181,7 @@ pub fn clone(
         message: clone_message.clone(),
     };
     let mut fetch_opts = FetchOptions {
-        tags: TagMode::Following,
+        tags: TagMode::All,
         initial_remote_fetch: true,
         remote_name: Some(opts.remote_name.clone()),
         clone_reflog: Some(clone_reflog),

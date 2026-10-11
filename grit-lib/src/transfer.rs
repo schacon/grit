@@ -75,10 +75,12 @@ pub struct RefUpdate {
 pub enum TagMode {
     /// Do not fetch any tags automatically.
     None,
-    /// Fetch tags that point at objects being fetched (Git's default).
+    /// Fetch tags that point at commits reachable from the refs being fetched
+    /// (same idea as `git fetch --follow-tags`; not what `git clone` does).
     #[default]
     Following,
-    /// Fetch all tags from the remote.
+    /// Fetch every advertised `refs/tags/*` ref (same idea as `git clone` and
+    /// `git fetch --tags`).
     All,
 }
 
