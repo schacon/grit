@@ -44,25 +44,31 @@ type LsRefsAdvertised = (
     Option<String>,
     std::collections::HashMap<String, ObjectId>,
 );
+use crate::progress::ProgressSink;
 use crate::transfer::{
     classify_update, match_positive, open_odb, prune_tracking_refs, ref_excluded, refspecs_force,
     FetchOptions, FetchOutcome, RefUpdate, UpdateMode,
 };
 use crate::transport::Connection;
 
-/// Sink for the remote's human-readable progress (side-band channel 2).
+/// Sink for wire transport progress: typed phases via [`ProgressSink`] plus
+/// raw side-band channel 2 bytes from the remote.
 ///
-/// Implementations receive the raw progress bytes the server writes (typically
-/// `\r`-delimited counter lines). The default does nothing.
-pub trait Progress {
+/// Implementations receive the server's progress bytes (typically `\r`-delimited
+/// counter lines) through [`Progress::message`]. Typed
+/// [`progress::ProgressPhase`](crate::progress::ProgressPhase) updates use the
+/// [`crate::progress::ProgressSink`] methods inherited from this supertrait.
+pub trait Progress: ProgressSink {
     /// Receive a chunk of progress bytes from side-band channel 2.
     fn message(&mut self, _bytes: &[u8]) {}
 }
 
-/// A [`Progress`] that discards everything.
+/// A [`Progress`] / [`ProgressSink`] that discards everything.
 pub struct NoProgress;
 
 impl Progress for NoProgress {}
+
+impl ProgressSink for NoProgress {}
 
 // --- Negotiation flush schedule (mirrors fetch-pack.c) --------------------
 

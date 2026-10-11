@@ -74,10 +74,8 @@ pub struct CommitOutcome {
 pub fn create_commit(
     repo: &Repository,
     req: &CommitRequest,
-    progress: &mut dyn ProgressSink,
+    _progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
-    progress.start("commit", None);
-
     let head = resolve_head(&repo.git_dir)?;
     let (refname, short_name, mut parent) = match head {
         HeadState::Branch {
@@ -252,7 +250,6 @@ pub fn create_commit(
 
     let _ = run_commit_hook_checked(repo, "post-commit", &[], None, &commit_env);
 
-    progress.finish();
     Ok(CommitOutcome {
         oid,
         branch: short_name,

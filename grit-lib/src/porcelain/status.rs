@@ -1402,7 +1402,7 @@ use crate::progress::ProgressSink;
 pub fn status(
     repo: &Repository,
     opts: &StatusOptions,
-    progress: &mut dyn ProgressSink,
+    _progress: &mut dyn ProgressSink,
 ) -> Result<StatusModel> {
     let work_tree = repo.work_tree.as_deref().ok_or_else(|| {
         crate::error::Error::Message("this operation must be run in a work tree".into())
@@ -1441,8 +1441,6 @@ pub fn status(
         }
         None => None,
     };
-
-    progress.start("status", None);
 
     // Staged: index vs HEAD tree, narrowed to pathspecs before rename detection.
     let mut staged: Vec<DiffEntry> = if opts.pathspecs.is_empty()
@@ -1535,8 +1533,6 @@ pub fn status(
     let stash_count = crate::reflog::read_reflog(&repo.git_dir, "refs/stash")
         .map(|e| e.len())
         .unwrap_or(0);
-
-    progress.finish();
 
     Ok(StatusModel {
         head,

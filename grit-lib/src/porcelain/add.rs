@@ -148,8 +148,6 @@ fn stage_inner(
         .as_deref()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
-    progress.start("stage", None);
-
     let index_path = repo.index_path();
     let index_mtime = index_file_mtime(&index_path);
     let mut index = repo.load_index()?;
@@ -311,7 +309,6 @@ fn stage_inner(
         repo.write_index(&mut index)?;
     }
 
-    progress.finish();
     Ok(outcome)
 }
 

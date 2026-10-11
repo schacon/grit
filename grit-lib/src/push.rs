@@ -1011,6 +1011,7 @@ mod tests {
     #[test]
     fn demux_separates_report_and_progress() {
         struct Cap(Vec<u8>);
+        impl crate::progress::ProgressSink for Cap {}
         impl Progress for Cap {
             fn message(&mut self, bytes: &[u8]) {
                 self.0.extend_from_slice(bytes);
