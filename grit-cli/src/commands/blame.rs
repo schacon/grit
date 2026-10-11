@@ -10,6 +10,7 @@ use grit_lib::rev_parse::resolve_revision;
 use serde::Serialize;
 
 use crate::context::{self, relative_date_from};
+use crate::markdown;
 use crate::output::{HumanRender, MarkdownRender};
 
 /// Result of `grit blame`.
@@ -75,7 +76,7 @@ impl MarkdownRender for BlameOutcome {
         println!("| ---: | --- | --- | --- | ---: | --- |");
         for line in &self.display_lines {
             let short = short_oid(&line.commit.to_hex());
-            let content = line.content.replace('|', "\\|");
+            let content = markdown::escape_table_cell(&line.content);
             println!(
                 "| {} | `{}` | {} | {} | {} | {} |",
                 line.final_line, short, line.author_short, line.date, line.original_line, content,
@@ -87,6 +88,13 @@ impl MarkdownRender for BlameOutcome {
 
 fn short_oid(full: &str) -> String {
     full.chars().take(7).collect()
+}
+
+/// Strip trailing line terminators from blamed line text for display and JSON.
+fn normalize_blame_line_content(content: String) -> String {
+    content
+        .trim_end_matches(|c| c == '\n' || c == '\r')
+        .to_owned()
 }
 
 pub fn run(file: String, rev: Option<String>, line_range: Option<String>) -> Result<BlameOutcome> {
@@ -167,17 +175,18 @@ fn outcome_from_result(file: String, rev: String, result: BlameResult, now: i64)
             })
             .unwrap_or_else(|| ("unknown".to_owned(), "?".to_owned()));
 
+        let content = normalize_blame_line_content(line.content);
         lines_json.push(BlameLineJson {
             commit: commit_hex.clone(),
             original_line: line.original_line,
             final_line: line.final_line,
-            content: line.content.clone(),
+            content: content.clone(),
         });
         display_lines.push(BlameDisplayLine {
             commit: line.commit,
             original_line: line.original_line,
             final_line: line.final_line,
-            content: line.content,
+            content,
             author_short,
             date,
         });
@@ -199,5 +208,12 @@ mod tests {
     #[test]
     fn parse_line_range_accepts_inclusive_bounds() {
         assert_eq!(parse_line_range("2,5").unwrap(), 2..=5);
+    }
+
+    #[test]
+    fn normalize_blame_line_content_strips_trailing_crlf() {
+        assert_eq!(normalize_blame_line_content("x\r\n".to_owned()), "x");
+        assert_eq!(normalize_blame_line_content("y\n".to_owned()), "y");
+        assert_eq!(normalize_blame_line_content("z".to_owned()), "z");
     }
 }

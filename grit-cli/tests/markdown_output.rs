@@ -284,6 +284,60 @@ fn skill_markdown_prints_verbatim_skill_file() {
 }
 
 #[test]
+fn blame_markdown_table_rows_are_single_lines() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), "one\r\n").unwrap();
+    Command::new(GRIT)
+        .args(["add", "f.txt"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    Command::new(GRIT)
+        .args(["commit", "-m", "init"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    let out = Command::new(GRIT)
+        .args(["blame", "f.txt", "--markdown"])
+        .current_dir(dir.path())
+        .output()
+        .expect("blame");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        if line.starts_with("| ") && line.chars().nth(2).is_some_and(|c| c.is_ascii_digit()) {
+            assert!(
+                line.ends_with(" |"),
+                "table data row must be one line ending with ' |':\n{line}\nfull stdout:\n{stdout}"
+            );
+            assert!(
+                !line.contains('\r'),
+                "table row must not contain raw carriage returns:\n{line}"
+            );
+        }
+    }
+    let json = Command::new(GRIT)
+        .args(["blame", "f.txt", "--json"])
+        .current_dir(dir.path())
+        .output()
+        .expect("blame json");
+    assert!(json.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).expect("blame json parse");
+    for line in parsed["lines"].as_array().expect("lines array") {
+        let content = line["content"].as_str().expect("content");
+        assert!(
+            !content.ends_with('\n') && !content.ends_with('\r'),
+            "json content must not trail line terminators: {content:?}"
+        );
+    }
+}
+
+#[test]
 fn completions_rejects_json_and_markdown() {
     for flag in ["--json", "--markdown"] {
         let out = Command::new(GRIT)

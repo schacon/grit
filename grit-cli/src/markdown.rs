@@ -205,10 +205,17 @@ pub fn print_config_entries(entries: &[crate::commands::config::ConfigEntry]) {
     }
 }
 
-/// Escape `|` so a path or value does not split a Markdown table row.
+/// Escape cell text so it stays on one Markdown table row.
+///
+/// Trims trailing line terminators (common in blame content on CRLF files), replaces
+/// any remaining `\r`/`\n` with visible escapes, and escapes `|`.
 #[must_use]
 pub fn escape_table_cell(s: &str) -> String {
-    s.replace('|', "\\|")
+    let trimmed = s.trim_end_matches(|c| c == '\n' || c == '\r');
+    trimmed
+        .replace('|', "\\|")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
 }
 
 /// Remotes as a two-column table.
@@ -273,7 +280,7 @@ fn short_hex(oid: &str) -> &str {
 /// Per-ref push results.
 #[cfg(test)]
 mod tests {
-    use super::diff_code_fence;
+    use super::{diff_code_fence, escape_table_cell};
 
     #[test]
     fn diff_code_fence_uses_longer_delimiter_when_body_has_triple_backticks() {
@@ -289,6 +296,17 @@ mod tests {
         let (open, close) = diff_code_fence(body);
         assert_eq!(open, "```diff");
         assert_eq!(close, "```");
+    }
+
+    #[test]
+    fn escape_table_cell_trims_trailing_line_terminators() {
+        assert_eq!(escape_table_cell("one\r\n"), "one");
+        assert_eq!(escape_table_cell("two\n"), "two");
+    }
+
+    #[test]
+    fn escape_table_cell_replaces_internal_newlines_and_pipes() {
+        assert_eq!(escape_table_cell("a|b\nc"), "a\\|b\\nc");
     }
 }
 

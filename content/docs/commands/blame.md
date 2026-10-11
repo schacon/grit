@@ -57,7 +57,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines[].commit` | string | Full commit oid for the line. |
 | `lines[].original_line` | number | 1-based line number in the originating commit. |
 | `lines[].final_line` | number | 1-based line number in the blamed revision. |
-| `lines[].content` | string | Line text. |
+| `lines[].content` | string | Line text without trailing line terminators. |
 | `commits` | object | Map of commit oid → metadata for every line. |
 | `commits.<oid>.author` | string | Author identity line. |
 | `commits.<oid>.author_time` | number | Author time (Unix seconds). |
@@ -89,7 +89,7 @@ Example:
 
 ## Markdown output
 
-Pass `--markdown` for a table suited to agents: columns are final line, short commit, author, date, original line, and content.
+Pass `--markdown` for a table suited to agents: columns are final line, short commit, author, date, original line, and content. Each row is one line; pipes and embedded newlines in content are escaped so the table stays valid.
 
 ## See also
 
