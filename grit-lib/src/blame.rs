@@ -932,7 +932,11 @@ struct PathCacheKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PairMapCacheKey {
     parent: ObjectId,
+    parent_path: String,
+    parent_mode: u32,
     child: ObjectId,
+    child_path: String,
+    child_mode: u32,
     diff_algorithm: BlameDiffAlgorithm,
     indent_heuristic: bool,
     fuzzy: bool,
@@ -1026,7 +1030,11 @@ impl<'a> BlameSession<'a> {
     fn parent_child_line_maps(
         &mut self,
         parent_oid: ObjectId,
+        parent_path: &str,
+        parent_mode: u32,
         child_oid: ObjectId,
+        child_path: &str,
+        child_mode: u32,
         par_lines: &Arc<Vec<String>>,
         cur_lines: &Arc<Vec<String>>,
         diff_algorithm: BlameDiffAlgorithm,
@@ -1035,7 +1043,11 @@ impl<'a> BlameSession<'a> {
     ) -> PairMapCacheValue {
         let key = PairMapCacheKey {
             parent: parent_oid,
+            parent_path: parent_path.to_owned(),
+            parent_mode,
             child: child_oid,
+            child_path: child_path.to_owned(),
+            child_mode,
             diff_algorithm,
             indent_heuristic,
             fuzzy: is_ignored,
@@ -1338,7 +1350,11 @@ fn compute_blame_with_session(
                 };
                 let pair = session.parent_child_line_maps(
                     blob,
+                    &current_path,
+                    mode,
                     current_blob_oid,
+                    &current_path,
+                    current_blob_mode,
                     &pl_arc,
                     &cur_lines_arc,
                     map_algo,
@@ -1606,7 +1622,11 @@ fn compute_blame_with_session(
                 let par_lines = BlameSession::line_refs(&par_lines_arc);
                 let maps = session.parent_child_line_maps(
                     p_blob_oid,
+                    &current_path,
+                    p_blob_mode,
                     current_blob_oid,
+                    &current_path,
+                    current_blob_mode,
                     &par_lines_arc,
                     &cur_lines_arc,
                     diff_algorithm,
