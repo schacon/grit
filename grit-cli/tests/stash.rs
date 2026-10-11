@@ -184,7 +184,7 @@ fn stash_pop_untracked_collision_keeps_stash_and_file() {
     assert_ne!(code, 0, "pop must fail when untracked path exists");
     let combined = format!("{stdout}{stderr}");
     assert!(
-        combined.contains("could not restore untracked files from stash"),
+        combined.contains("stash untracked restore blocked") && combined.contains("u.txt"),
         "stderr should explain failure: {combined}"
     );
     assert_eq!(
@@ -205,6 +205,7 @@ fn stash_pop_untracked_collision_keeps_stash_and_file() {
     );
 }
 
+#[test]
 fn stash_interop_with_git() {
     let dir = scratch("interop");
     init_repo(&dir);

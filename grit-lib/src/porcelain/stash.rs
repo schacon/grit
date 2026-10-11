@@ -12,7 +12,7 @@
 //! building blocks for apply and for embedders that manipulate stash trees.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -929,10 +929,53 @@ pub fn check_stash_apply_would_overwrite_local_changes(
     Ok(())
 }
 
-/// Refuse when restoring the stash untracked-files parent would clobber existing untracked paths.
+/// Worktree paths that would block materializing the stash untracked-files parent.
+fn collect_worktree_paths_blocking_stash_untracked_restore(
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<Vec<String>> {
+    let mut paths = HashSet::new();
+    let mut index = repo.load_index()?;
+    for entry in index.entries() {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path).into_owned();
+        let wt = work_tree.join(&path);
+        if wt.exists() || wt.symlink_metadata().is_ok() {
+            paths.insert(path);
+        }
+    }
+    let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
+    let (untracked, ignored) = collect_untracked_and_ignored_inner(
+        repo,
+        &mut index,
+        work_tree,
+        &[],
+        UntrackedScan {
+            ignored_mode: IgnoredMode::Traditional,
+            show_all: true,
+            sort_paths: true,
+            use_untracked_cache: false,
+        },
+        &worktree_rules,
+    )?;
+    paths.extend(untracked);
+    paths.extend(ignored);
+    let mut sorted: Vec<String> = paths.into_iter().collect();
+    sorted.sort();
+    Ok(sorted)
+}
+
+/// Refuse when restoring the stash untracked-files parent would clobber an existing worktree path.
 ///
 /// Must run before any worktree or index mutations in [`apply_stash`].
-pub fn check_stash_untracked_restore(
+///
+/// # Errors
+///
+/// Returns [`Error::StashCouldNotRestoreUntracked`] when a path from the untracked parent
+/// collides with tracked, untracked, or ignored content already on disk.
+pub(crate) fn check_stash_untracked_restore(
     repo: &Repository,
     work_tree: &Path,
     stash_commit: &CommitData,
@@ -947,7 +990,7 @@ pub fn check_stash_untracked_restore(
     if ut_entries.is_empty() {
         return Ok(());
     }
-    let untracked_paths = collect_untracked_paths(repo, work_tree)?;
+    let existing_paths = collect_worktree_paths_blocking_stash_untracked_restore(repo, work_tree)?;
     let tree_changes: Vec<DiffEntry> = ut_entries
         .iter()
         .map(|entry| DiffEntry {
@@ -962,7 +1005,7 @@ pub fn check_stash_untracked_restore(
         })
         .collect();
     if let Some(path) =
-        untracked_would_be_overwritten_by_tree_changes(&untracked_paths, &tree_changes).first()
+        untracked_would_be_overwritten_by_tree_changes(&existing_paths, &tree_changes).first()
     {
         return Err(Error::StashCouldNotRestoreUntracked { path: path.clone() });
     }
