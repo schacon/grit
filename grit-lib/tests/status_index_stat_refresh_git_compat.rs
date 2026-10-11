@@ -231,6 +231,85 @@ fn status_succeeds_when_index_lock_held_after_touch() {
     let _ = fs::remove_file(&lock_path);
 }
 
+/// Mirrors a fresh `git clone` index where every entry mtime shares the index file second
+/// (all racily clean) — grit must verify content once, not again in the parallel diff pass.
+#[test]
+fn status_on_racy_git_index_verifies_content_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    git(repo_root, &["config", "core.filemode", "false"]);
+
+    const FILE_COUNT: usize = 1200;
+    for i in 0..FILE_COUNT {
+        let name = format!("file-{i:04}.txt");
+        fs::write(repo_root.join(&name), format!("payload {i}\n")).expect("write");
+    }
+    git(repo_root, &["add", "."]);
+    git(repo_root, &["commit", "-qm", "initial"]);
+
+    let index_path = repo_root.join(".git/index");
+    let index_mtime = fs::metadata(&index_path)
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+    let pinned = filetime::FileTime::from_system_time(index_mtime);
+    for path in git(repo_root, &["ls-files", "-z"])
+        .split('\0')
+        .filter(|p| !p.is_empty())
+    {
+        filetime::set_file_mtime(repo_root.join(path), pinned).expect("pin worktree mtime");
+    }
+    filetime::set_file_mtime(&index_path, pinned).expect("pin index mtime");
+
+    let grit_repo =
+        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let index_mtime_before = fs::metadata(&index_path)
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+
+    let first_start = Instant::now();
+    let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
+        .expect("first status on racy git index");
+    let first_elapsed = first_start.elapsed();
+
+    assert!(
+        model.unstaged.is_empty(),
+        "racy clone-like index must be clean in grit status"
+    );
+    let git_diff = git(repo_root, &["diff-files"]);
+    assert!(
+        git_diff.trim().is_empty(),
+        "system git diff-files must agree the tree is clean"
+    );
+
+    let second_start = Instant::now();
+    let _second =
+        status(&grit_repo, &StatusOptions::default(), &mut NullProgress).expect("second status");
+    let second_elapsed = second_start.elapsed();
+
+    assert!(
+        first_elapsed < Duration::from_secs(2),
+        "first status on racy index should not re-hash every path twice (got {first_elapsed:?})"
+    );
+    assert!(
+        second_elapsed <= first_elapsed,
+        "warm status should not do more work than the first pass (first {first_elapsed:?}, second {second_elapsed:?})"
+    );
+
+    let index_mtime_after = fs::metadata(&index_path)
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+    assert!(
+        index_mtime_after >= index_mtime_before,
+        "stat refresh may persist updated entries after the first pass"
+    );
+}
+
 #[test]
 fn status_on_git_created_sparse_index_after_touch() {
     let tmp = tempfile::tempdir().expect("tempdir");

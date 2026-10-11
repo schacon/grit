@@ -3019,6 +3019,7 @@ fn diff_index_to_worktree_inner(
     let parallel_blob_work =
         materialize_dirty_blobs && blob_count >= PARALLEL_STAT_MIN_ENTRIES && hash_threads > 1;
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
+    let mut stat_refresh_verified = vec![false; index.entries.len()];
     for_each_blob_by_directory_parallel(
         &blob_dirs,
         blob_scan,
@@ -3054,7 +3055,7 @@ fn diff_index_to_worktree_inner(
                     }
                     if refresh_index_stat_in_pass {
                         let ie = &mut index.entries[entry_index];
-                        if refresh_index_blob_stat_from_metadata(
+                        let refresh = refresh_index_blob_stat_from_metadata(
                             odb,
                             ie,
                             &meta,
@@ -3065,8 +3066,12 @@ fn diff_index_to_worktree_inner(
                             &file_attrs_for,
                             stat_policy,
                             filter_fp,
-                        ) {
+                        );
+                        if refresh.index_changed {
                             index_stat_refresh_changed = true;
+                        }
+                        if refresh.content_verified {
+                            stat_refresh_verified[entry_index] = true;
                         }
                     }
                     let ie = &index.entries[entry_index];
@@ -3090,6 +3095,7 @@ fn diff_index_to_worktree_inner(
                         } else if !(stat_matches_with_policy(ie, &meta, stat_policy)
                             && (!trust_filemode || worktree_mode == ie.mode)
                             && !entry_is_racy_with_policy(ie, index_mtime, stat_policy))
+                            && !stat_refresh_verified[entry_index]
                         {
                             staging_hash_jobs.push(StagingHashJob {
                                 entry_index,
@@ -3685,19 +3691,20 @@ pub fn stat_matches_with_policy(
     }
     #[cfg(not(unix))]
     {
-        use std::time::UNIX_EPOCH;
-        let Some(dur) = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        else {
-            return false;
-        };
-        if dur.as_secs() as u32 != ie.mtime_sec {
+        let ((ctime_sec, ctime_nsec), (mtime_sec, mtime_nsec)) = crate::index::metadata_times(meta);
+        if mtime_sec != ie.mtime_sec {
             return false;
         }
-        if policy.use_nanosec && policy.check_stat && dur.subsec_nanos() != ie.mtime_nsec {
+        if policy.use_nanosec && policy.check_stat && mtime_nsec != ie.mtime_nsec {
             return false;
+        }
+        if policy.trust_ctime && policy.check_stat {
+            if ctime_sec != ie.ctime_sec {
+                return false;
+            }
+            if policy.use_nanosec && ctime_nsec != ie.ctime_nsec {
+                return false;
+            }
         }
     }
     true
@@ -3869,13 +3876,23 @@ pub fn refresh_index_stat_content_verified_with_rules(
                 &file_attrs_for,
                 stat_policy,
                 filter_fp,
-            ) {
+            )
+            .index_changed
+            {
                 changed = true;
             }
             Ok(())
         },
     )?;
     Ok(changed)
+}
+
+/// Result of refreshing one index entry's cached stat during a worktree scan.
+struct BlobStatRefreshOutcome {
+    /// Whether the in-memory index entry was updated (stat fields or invalidation).
+    index_changed: bool,
+    /// Blob content was read and matches the recorded OID (skip a second hash in the same pass).
+    content_verified: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3890,14 +3907,20 @@ fn refresh_index_blob_stat_from_metadata(
     file_attrs_for: &dyn Fn(&str) -> crate::crlf::FileAttrs,
     stat_policy: crate::index::StatMatchPolicy,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
-) -> bool {
+) -> BlobStatRefreshOutcome {
     use crate::index::{MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
 
     if ie.stage() != 0 || ie.skip_worktree() || ie.assume_unchanged() || ie.intent_to_add() {
-        return false;
+        return BlobStatRefreshOutcome {
+            index_changed: false,
+            content_verified: false,
+        };
     }
     if ie.mode != MODE_REGULAR && ie.mode != MODE_EXECUTABLE && ie.mode != MODE_SYMLINK {
-        return false;
+        return BlobStatRefreshOutcome {
+            index_changed: false,
+            content_verified: false,
+        };
     }
     if !stat_matches_with_policy(ie, meta, stat_policy) {
         let file_attrs = file_attrs_for(path);
@@ -3914,11 +3937,17 @@ fn refresh_index_blob_stat_from_metadata(
         .map(|oid| oid == ie.oid)
         .unwrap_or(false);
         if !content_matches {
-            return false;
+            return BlobStatRefreshOutcome {
+                index_changed: false,
+                content_verified: false,
+            };
         }
         let refreshed = crate::index::entry_from_metadata(meta, &ie.path, ie.oid, ie.mode);
         if index_entry_stat_matches(ie, &refreshed, stat_policy) {
-            return false;
+            return BlobStatRefreshOutcome {
+                index_changed: false,
+                content_verified: true,
+            };
         }
         ie.ctime_sec = refreshed.ctime_sec;
         ie.ctime_nsec = refreshed.ctime_nsec;
@@ -3929,7 +3958,10 @@ fn refresh_index_blob_stat_from_metadata(
         ie.uid = refreshed.uid;
         ie.gid = refreshed.gid;
         ie.size = refreshed.size;
-        return true;
+        return BlobStatRefreshOutcome {
+            index_changed: true,
+            content_verified: true,
+        };
     }
     if entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
         let file_attrs = file_attrs_for(path);
@@ -3947,12 +3979,37 @@ fn refresh_index_blob_stat_from_metadata(
         .unwrap_or(false);
         if !content_matches {
             invalidate_index_stat_cache(ie);
-            return true;
+            return BlobStatRefreshOutcome {
+                index_changed: true,
+                content_verified: false,
+            };
         }
+        let refreshed = crate::index::entry_from_metadata(meta, &ie.path, ie.oid, ie.mode);
+        let index_changed = if index_entry_stat_matches(ie, &refreshed, stat_policy) {
+            false
+        } else {
+            ie.ctime_sec = refreshed.ctime_sec;
+            ie.ctime_nsec = refreshed.ctime_nsec;
+            ie.mtime_sec = refreshed.mtime_sec;
+            ie.mtime_nsec = refreshed.mtime_nsec;
+            ie.dev = refreshed.dev;
+            ie.ino = refreshed.ino;
+            ie.uid = refreshed.uid;
+            ie.gid = refreshed.gid;
+            ie.size = refreshed.size;
+            true
+        };
+        return BlobStatRefreshOutcome {
+            index_changed,
+            content_verified: true,
+        };
     }
     let refreshed = crate::index::entry_from_metadata(meta, &ie.path, ie.oid, ie.mode);
     if index_entry_stat_matches(ie, &refreshed, stat_policy) {
-        return false;
+        return BlobStatRefreshOutcome {
+            index_changed: false,
+            content_verified: false,
+        };
     }
     ie.ctime_sec = refreshed.ctime_sec;
     ie.ctime_nsec = refreshed.ctime_nsec;
@@ -3963,7 +4020,10 @@ fn refresh_index_blob_stat_from_metadata(
     ie.uid = refreshed.uid;
     ie.gid = refreshed.gid;
     ie.size = refreshed.size;
-    true
+    BlobStatRefreshOutcome {
+        index_changed: true,
+        content_verified: false,
+    }
 }
 
 fn index_entry_stat_matches(

@@ -97,6 +97,42 @@ impl StatMatchPolicy {
     }
 }
 
+/// Git-compatible `(ctime, mtime)` seconds and nanoseconds from worktree metadata.
+///
+/// On Windows uses `filetime` (last write + creation times) so index stat comparison
+/// matches Git's `mingw_stat` / `match_stat_data` rather than `Metadata::modified()` alone.
+#[must_use]
+pub(crate) fn metadata_times(meta: &fs::Metadata) -> ((u32, u32), (u32, u32)) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (
+            (meta.ctime() as u32, meta.ctime_nsec() as u32),
+            (meta.mtime() as u32, meta.mtime_nsec() as u32),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        use filetime::FileTime;
+        let mtime_ft = FileTime::from_last_modification_time(meta);
+        let ctime_ft = FileTime::from_creation_time(meta).unwrap_or(mtime_ft);
+        (
+            filetime_to_index_pair(ctime_ft),
+            filetime_to_index_pair(mtime_ft),
+        )
+    }
+}
+
+#[must_use]
+fn filetime_to_index_pair(ft: filetime::FileTime) -> (u32, u32) {
+    let secs = ft.unix_seconds();
+    if secs.is_negative() {
+        (0, 0)
+    } else {
+        (secs as u32, ft.nanoseconds())
+    }
+}
+
 /// Map `st_size` into the 32-bit size stored in the index (Git `munge_st_size`).
 #[must_use]
 pub fn munge_index_size(st_size: u64) -> u32 {
@@ -3303,11 +3339,12 @@ impl IndexStatFields {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
+            let ((ctime_sec, ctime_nsec), (mtime_sec, mtime_nsec)) = metadata_times(meta);
             Self {
-                ctime_sec: meta.ctime() as u32,
-                ctime_nsec: meta.ctime_nsec() as u32,
-                mtime_sec: meta.mtime() as u32,
-                mtime_nsec: meta.mtime_nsec() as u32,
+                ctime_sec,
+                ctime_nsec,
+                mtime_sec,
+                mtime_nsec,
                 dev: meta.dev() as u32,
                 ino: meta.ino() as u32,
                 uid: meta.uid(),
@@ -3317,17 +3354,12 @@ impl IndexStatFields {
         }
         #[cfg(not(unix))]
         {
-            use std::time::UNIX_EPOCH;
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .unwrap_or_default();
+            let ((ctime_sec, ctime_nsec), (mtime_sec, mtime_nsec)) = metadata_times(meta);
             Self {
-                ctime_sec: mtime.as_secs() as u32,
-                ctime_nsec: mtime.subsec_nanos(),
-                mtime_sec: mtime.as_secs() as u32,
-                mtime_nsec: mtime.subsec_nanos(),
+                ctime_sec,
+                ctime_nsec,
+                mtime_sec,
+                mtime_nsec,
                 dev: 0,
                 ino: 0,
                 uid: 0,
@@ -3380,11 +3412,12 @@ pub fn entry_from_metadata(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let ((ctime_sec, ctime_nsec), (mtime_sec, mtime_nsec)) = metadata_times(meta);
         IndexEntry {
-            ctime_sec: meta.ctime() as u32,
-            ctime_nsec: meta.ctime_nsec() as u32,
-            mtime_sec: meta.mtime() as u32,
-            mtime_nsec: meta.mtime_nsec() as u32,
+            ctime_sec,
+            ctime_nsec,
+            mtime_sec,
+            mtime_nsec,
             dev: meta.dev() as u32,
             ino: meta.ino() as u32,
             mode,
@@ -3400,17 +3433,12 @@ pub fn entry_from_metadata(
     }
     #[cfg(not(unix))]
     {
-        use std::time::UNIX_EPOCH;
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .unwrap_or_default();
+        let ((ctime_sec, ctime_nsec), (mtime_sec, mtime_nsec)) = metadata_times(meta);
         IndexEntry {
-            ctime_sec: mtime.as_secs() as u32,
-            ctime_nsec: mtime.subsec_nanos(),
-            mtime_sec: mtime.as_secs() as u32,
-            mtime_nsec: mtime.subsec_nanos(),
+            ctime_sec,
+            ctime_nsec,
+            mtime_sec,
+            mtime_nsec,
             dev: 0,
             ino: 0,
             mode,
