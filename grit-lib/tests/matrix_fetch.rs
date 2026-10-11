@@ -1357,7 +1357,7 @@ fn fetch_outcome_identical_git_daemon_and_smart_http() {
     let scratch = tempfile::tempdir().expect("tempdir");
     let all = drivers(scratch.path());
 
-    let scenarios: [(&str, FetchOptions); 4] = [
+    let mut scenarios: [(&str, FetchOptions); 4] = [
         (
             "shallow-v1",
             FetchOptions {
@@ -1396,7 +1396,7 @@ fn fetch_outcome_identical_git_daemon_and_smart_http() {
 
     let mut ran = 0usize;
     const SCENARIOS: usize = 4;
-    for (scenario, opts) in &scenarios {
+    for (scenario, opts) in scenarios.iter_mut() {
         let git_name = if scenario.contains("v2") {
             "git-daemon/v2"
         } else {

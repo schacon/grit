@@ -158,6 +158,8 @@ impl Clone for FetchOptions {
             clone_reflog: self.clone_reflog.clone(),
             diagnostics: self.diagnostics.clone(),
             network_trace: self.network_trace,
+            index_pack_threads: self.index_pack_threads,
+            pack_spool_only: self.pack_spool_only,
             http_protocol_version: self.http_protocol_version,
         }
     }

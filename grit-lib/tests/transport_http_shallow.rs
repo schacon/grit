@@ -212,7 +212,7 @@ fn shallow_depth1_then_unshallow_over_smart_http_v1() {
         client.clone(),
         &local_git,
         &url,
-        &shallow_opts,
+        &mut shallow_opts,
         &mut NoProgress,
     ) {
         Ok(o) => o,
@@ -299,7 +299,7 @@ fn shallow_depth1_then_unshallow_over_smart_http_v1() {
         client.clone(),
         &local_git,
         &url,
-        &unshallow_opts,
+        &mut unshallow_opts,
         &mut NoProgress,
     )
     .expect("unshallow http_fetch");

@@ -205,6 +205,44 @@ impl TempPackReceive {
         self.seen_pack
     }
 
+    pub(crate) fn file_mut(&mut self) -> &mut dyn Write {
+        &mut self.file
+    }
+
+    pub(crate) fn mark_seen_pack(&mut self, seen: bool) {
+        if seen {
+            self.seen_pack = true;
+        }
+    }
+
+    pub(crate) fn read_sideband_pack_tail(
+        &mut self,
+        r: &mut dyn Read,
+        progress: &mut dyn Progress,
+        pending: &mut Vec<u8>,
+        seen: &mut bool,
+    ) -> Result<()> {
+        let mut target = PackReceiveTarget::File(&mut self.file);
+        read_sideband_pack_tail(
+            r,
+            &mut target,
+            progress,
+            pending,
+            seen,
+            &mut self.sideband_payload,
+        )
+    }
+
+    pub(crate) fn write_raw(&mut self, data: &[u8]) -> Result<()> {
+        if !data.is_empty() {
+            self.file.write_all(data).map_err(Error::Io)?;
+            if data.windows(4).any(|w| w == b"PACK") {
+                self.seen_pack = true;
+            }
+        }
+        Ok(())
+    }
+
     /// Demux side-band from `reader` into this temp file.
     ///
     /// # Errors

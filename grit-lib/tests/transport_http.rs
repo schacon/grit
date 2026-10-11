@@ -256,7 +256,7 @@ fn fetch_over_smart_http_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = http_fetch(client.clone(), &local_git, &url, &opts, &mut NoProgress)
+    let outcome = http_fetch(client.clone(), &local_git, &url, &mut opts, &mut NoProgress)
         .expect("http_fetch over grit-http-server");
 
     // PROVE this is genuinely the v0/v1 stateless RPC (not a silent v2 upgrade):
@@ -690,7 +690,7 @@ fn fetch_over_smart_http_v2_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = http_fetch(recording.clone(), &local_git, &url, &opts, &mut NoProgress)
+    let outcome = http_fetch(recording.clone(), &local_git, &url, &mut opts, &mut NoProgress)
         .expect("v2 http_fetch over grit-http-server");
 
     // PROVE v2: the recorded POSTs include a `command=ls-refs` and a
@@ -802,7 +802,7 @@ fn fetch_over_smart_http_v2_lands_refs_and_objects() {
     assert_ne!(new_main_oid, main_oid, "source main should have advanced");
 
     let recording2 = Arc::new(RecordingClient::new("version=2"));
-    let outcome2 = http_fetch(recording2.clone(), &local_git, &url, &opts, &mut NoProgress)
+    let outcome2 = http_fetch(recording2.clone(), &local_git, &url, &mut opts, &mut NoProgress)
         .expect("incremental v2 http_fetch");
     let commands2 = recording2.post_commands.lock().unwrap().clone();
     assert!(
@@ -943,7 +943,7 @@ fn fetch_from_config_client_v2_many_refs_and_large_pack() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = http_fetch(recording.clone(), &local_git, &url, &opts, &mut NoProgress)
+    let outcome = http_fetch(recording.clone(), &local_git, &url, &mut opts, &mut NoProgress)
         .expect("from_config v2 http_fetch over many-ref repo");
 
     let commands = recording.post_commands.lock().unwrap().clone();
@@ -1031,12 +1031,12 @@ fn http_fetch_surfaces_io_error_from_upload_pack_read_failure() {
 
     let inner = UreqHttpClient::from_config(&ConfigSet::new()).expect("from_config");
     let client = http_client_arc(IoFailUploadPackClient { inner });
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         tags: TagMode::None,
         ..Default::default()
     };
-    let err = http_fetch(client, &local_git, &url, &opts, &mut NoProgress).expect_err("I/O");
+    let err = http_fetch(client, &local_git, &url, &mut opts, &mut NoProgress).expect_err("I/O");
     assert!(
         matches!(err, Error::Io(_)),
         "truncated upload-pack read must surface as Io error, got {err:?}"
@@ -1438,7 +1438,7 @@ fn push_then_fetch_roundtrip_and_server_side_rejection_over_http() {
         client2.clone(),
         &back_git,
         &url,
-        &fetch_opts,
+        &mut fetch_opts,
         &mut NoProgress,
     )
     .expect("http_fetch back the just-pushed repo");
@@ -1556,7 +1556,7 @@ fn http_fetch_rss_child_process() {
     std::fs::create_dir_all(&work).expect("work dir");
     git(&work, &["init", "-q", "-b", "main", "."]);
     let git_dir = work.join(".git");
-    let opts = FetchOptions {
+    let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         initial_remote_fetch: true,
         remote_name: Some("origin".to_owned()),
@@ -1565,7 +1565,7 @@ fn http_fetch_rss_child_process() {
         ..Default::default()
     };
     let client = http_client_arc(UreqHttpClient::new());
-    http_fetch(client, &git_dir, &url, &opts, &mut NoProgress).expect("http_fetch");
+    http_fetch(client, &git_dir, &url, &mut opts, &mut NoProgress).expect("http_fetch");
 }
 
 /// Streaming HTTP fetch must not hold the full pack in memory (peak RSS well below pack size).
@@ -1779,15 +1779,16 @@ fn fetch_over_git_http_backend_cgi() {
         &post_body[..post_body.len().min(24)]
     );
     let mut progress = NoProgress;
+    let mut fetch_opts = FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+        tags: TagMode::Following,
+        ..Default::default()
+    };
     http_fetch(
         client.clone(),
         &local,
         &url,
-        &FetchOptions {
-            refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
-            tags: TagMode::Following,
-            ..Default::default()
-        },
+        &mut fetch_opts,
         &mut progress,
     )
     .expect("http_fetch over git http-backend CGI wrapper");

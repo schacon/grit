@@ -291,7 +291,7 @@ fn fetch_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherw
         git(&local, &["init", "-q", "-b", "main", "."]);
         let local_git = local.join(".git");
         let client = http_client_arc(UreqHttpClient::new().with_git_protocol("version=2"));
-        let err = http_fetch(client.clone(), &local_git, &url, &opts, &mut NoProgress)
+        let err = http_fetch(client.clone(), &local_git, &url, &mut opts, &mut NoProgress)
             .expect_err("fetch with no credentials against an authed server must fail");
         assert!(
             matches!(err, Error::Auth(_)),
@@ -311,7 +311,7 @@ fn fetch_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherw
             UreqHttpClient::with_credentials(Box::new(provider.clone()))
                 .with_git_protocol("version=2"),
         );
-        let err = http_fetch(client.clone(), &local_git, &url, &opts, &mut NoProgress)
+        let err = http_fetch(client.clone(), &local_git, &url, &mut opts, &mut NoProgress)
             .expect_err("fetch with wrong credentials must fail");
         assert!(
             matches!(err, Error::Auth(_)),
@@ -347,7 +347,7 @@ fn fetch_over_authed_http_succeeds_with_right_credentials_and_fails_typed_otherw
     let client = http_client_arc(
         UreqHttpClient::with_credentials(Box::new(provider.clone())).with_git_protocol("version=2"),
     );
-    let outcome = http_fetch(client.clone(), &local_git, &url, &opts, &mut NoProgress)
+    let outcome = http_fetch(client.clone(), &local_git, &url, &mut opts, &mut NoProgress)
         .expect("authed fetch with correct credentials must succeed");
 
     // Credentials were filled and approved (Git's credential_approve on success);

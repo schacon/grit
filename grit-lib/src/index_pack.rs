@@ -187,18 +187,16 @@ pub fn install_pack_path(
         let indexed = PackData::open(&stage_pack)?;
         let (records, trailer) = {
             let pack_bytes: &[u8] = indexed.deref();
-            if !opts.skip_post_index_verify {
-                verify_trailer(odb.hash_algo(), pack_bytes).map_err(|e| {
-                    Error::CorruptObject(format!(
-                        "received pack checksum mismatch (download may be incomplete): {e}"
-                    ))
-                })?;
-            }
+            verify_trailer(odb.hash_algo(), pack_bytes).map_err(|e| {
+                Error::CorruptObject(format!(
+                    "received pack checksum mismatch (download may be incomplete): {e}"
+                ))
+            })?;
             let records = crate::pack_index_build::build_pack_index_records(
                 pack_bytes,
                 odb,
                 opts.index_parallelism(odb),
-                verify_trailer,
+                true,
             )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             (records, trailer)

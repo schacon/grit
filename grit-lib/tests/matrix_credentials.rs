@@ -940,7 +940,7 @@ mod http_401 {
                 http_client_arc(client),
                 &local_git,
                 &url,
-                &opts,
+                &mut opts,
                 &mut NoProgress,
             )
             .expect_err("wrong creds from helper must fail typed, not hang");
@@ -975,7 +975,7 @@ mod http_401 {
             http_client_arc(client),
             &local_git,
             &url,
-            &opts,
+            &mut opts,
             &mut NoProgress,
         )
         .expect("authed fetch via helper-filled Basic creds must succeed");

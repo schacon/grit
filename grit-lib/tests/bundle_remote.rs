@@ -160,7 +160,7 @@ fn clone_from_bundle_matches_git_default_branch_when_head_not_first() {
         environment: Environment::empty(),
         ..CloneOptions::new(bundle_path.to_str().unwrap(), grit_dest.path().to_path_buf())
     };
-    let outcome = clone_repo(&opts, &mut NoProgress, None).expect("grit clone from bundle");
+    let outcome = clone_repo(opts, &mut NoProgress, None).expect("grit clone from bundle");
 
     assert_eq!(outcome.branch, git_branch);
     assert_eq!(outcome.checkout_oid.to_hex(), git_head);
@@ -188,7 +188,7 @@ fn clone_from_bundle_passes_git_fsck() {
         environment: Environment::empty(),
         ..CloneOptions::new(bundle_path.to_str().unwrap(), dest.path().to_path_buf())
     };
-    clone_repo(&opts, &mut NoProgress, None).expect("clone from bundle");
+    clone_repo(opts, &mut NoProgress, None).expect("clone from bundle");
 
     assert!(git_in(dest.path(), &["fsck"]));
 }
