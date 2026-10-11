@@ -862,6 +862,22 @@ fn parse_packed_ref_peel_line(path: &Path, line: &str, expect_peel: bool) -> Res
     Ok(())
 }
 
+fn packed_ref_data_line_refname(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut j = 0usize;
+    while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
+        j += 1;
+    }
+    if !ObjectId::is_hex_len(j) || j + 1 >= bytes.len() || bytes[j] != b' ' {
+        return None;
+    }
+    let refname = &line[j + 1..];
+    if refname.is_empty() || refname.as_bytes().iter().any(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    Some(refname)
+}
+
 fn parse_packed_ref_data_line(
     path: &Path,
     line: &str,
@@ -888,6 +904,32 @@ fn parse_packed_ref_data_line(
 
 /// Parse `packed-refs` bytes the way Git reads them for ref listing (strict).
 fn parse_packed_refs_to_map(path: &Path, data: &[u8]) -> Result<HashMap<String, ObjectId>> {
+    parse_packed_refs_to_map_with_prefix(path, data, None)
+}
+
+/// Whether the `packed-refs` header comment lists Git's `sorted` trait (`pack-refs --all`).
+fn packed_refs_file_declares_sorted(text: &str) -> bool {
+    for line in text.split('\n') {
+        if line.is_empty() {
+            break;
+        }
+        if !line.starts_with('#') {
+            break;
+        }
+        let body = line[1..].trim();
+        let Some(traits) = body.strip_prefix("pack-refs with:") else {
+            continue;
+        };
+        return traits.split_whitespace().any(|t| t == "sorted");
+    }
+    false
+}
+
+fn parse_packed_refs_to_map_with_prefix(
+    path: &Path,
+    data: &[u8],
+    prefix_filter: Option<&str>,
+) -> Result<HashMap<String, ObjectId>> {
     if data.is_empty() {
         return Ok(HashMap::new());
     }
@@ -912,16 +954,22 @@ fn parse_packed_refs_to_map(path: &Path, data: &[u8]) -> Result<HashMap<String, 
         normalize: false,
     };
 
-    let mut lines: Vec<&str> = text.split('\n').collect();
-    if lines.last() == Some(&"") {
-        lines.pop();
-    }
-
     let mut map = HashMap::new();
     let mut expect_peel = false;
-    for line in lines {
+    let prefix_trim = prefix_filter.map(|p| p.trim_end_matches('/'));
+    let packed_sorted = packed_refs_file_declares_sorted(text);
+    let prefix_upper = if packed_sorted {
+        prefix_trim.and_then(list_prefix_upper_bound)
+    } else {
+        None
+    };
+    let mut lines = text.split('\n').peekable();
+    while let Some(line) = lines.next() {
         if line.is_empty() {
-            return Err(packed_refs_unexpected_line(path, line));
+            if lines.peek().is_some() {
+                return Err(packed_refs_unexpected_line(path, line));
+            }
+            break;
         }
         if line.starts_with('#') {
             expect_peel = false;
@@ -933,6 +981,26 @@ fn parse_packed_refs_to_map(path: &Path, data: &[u8]) -> Result<HashMap<String, 
             continue;
         }
 
+        if let Some(prefix) = prefix_trim {
+            let Some(refname) = packed_ref_data_line_refname(line) else {
+                return Err(packed_refs_unexpected_line(path, line));
+            };
+            if packed_sorted {
+                if refname < prefix {
+                    expect_peel = true;
+                    continue;
+                }
+                if let Some(upper) = &prefix_upper {
+                    if refname >= upper.as_str() {
+                        break;
+                    }
+                }
+            }
+            if !ref_name_matches_list_prefix(refname, prefix) {
+                expect_peel = true;
+                continue;
+            }
+        }
         let (refname, oid) = parse_packed_ref_data_line(path, line, &ref_opts)?;
         map.insert(refname, oid);
         expect_peel = true;
@@ -941,13 +1009,25 @@ fn parse_packed_refs_to_map(path: &Path, data: &[u8]) -> Result<HashMap<String, 
 }
 
 pub(crate) fn read_packed_refs_map(store: &Path) -> Result<HashMap<String, ObjectId>> {
+    read_packed_refs_map_for_prefix(store, "")
+}
+
+pub(crate) fn read_packed_refs_map_for_prefix(
+    store: &Path,
+    prefix: &str,
+) -> Result<HashMap<String, ObjectId>> {
     let packed_path = store::paths::packed_refs_path(store);
     let data = match fs::read(&packed_path) {
         Ok(d) => d,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
         Err(e) => return Err(Error::Io(e)),
     };
-    parse_packed_refs_to_map(&packed_path, &data)
+    let filter = if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    };
+    parse_packed_refs_to_map_with_prefix(&packed_path, &data, filter)
 }
 
 fn acquire_packed_refs_lock(git_dir: &Path, lock: &Path, lock_display: &Path) -> Result<()> {
@@ -2463,42 +2543,11 @@ pub fn list_refs_for_repository(
 pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
     let prefix_norm = normalize_list_refs_prefix(git_dir, prefix);
     let prefix = prefix_norm.as_str();
-    if open_ref_store(git_dir)?.format() != RefStorageFormat::Files {
+    let store = open_ref_store(git_dir)?;
+    if store.format() != RefStorageFormat::Files {
         return crate::reftable::reftable_list_refs(git_dir, prefix);
     }
-    // Merge packed + loose so **loose always wins** for the same ref name (matches Git and
-    // `resolve_ref`). Previously we concatenated packed then loose and never deduplicated the
-    // main git dir case, so `pack-refs` could leave stale packed lines that shadowed updates.
-    let mut by_name: HashMap<String, ObjectId> = HashMap::new();
-
-    let stored_prefixes: Vec<String> =
-        if let Some(ns) = crate::ref_namespace::ref_storage_prefix_default() {
-            if prefix.starts_with("refs/namespaces/") {
-                vec![prefix.to_owned()]
-            } else if prefix.starts_with("refs/") {
-                vec![format!("{ns}{prefix}")]
-            } else {
-                vec![prefix.to_owned()]
-            }
-        } else {
-            vec![prefix.to_owned()]
-        };
-
-    for stored_prefix in stored_prefixes {
-        if let Some(cdir) = common_dir(git_dir) {
-            if cdir != git_dir {
-                collect_packed_refs_into_map(&cdir, &stored_prefix, false, &mut by_name)?;
-                let cbase = cdir.join(&stored_prefix);
-                collect_loose_refs_into_map(&cbase, &stored_prefix, &cdir, false, &mut by_name)?;
-            }
-        }
-
-        collect_packed_refs_into_map(git_dir, &stored_prefix, false, &mut by_name)?;
-        let base = git_dir.join(&stored_prefix);
-        collect_loose_refs_into_map(&base, &stored_prefix, git_dir, false, &mut by_name)?;
-    }
-
-    let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
+    let mut results = collect_resolved_refs(store.as_ref(), prefix)?;
     if crate::worktree_ref::is_linked_worktree_git_dir(git_dir) {
         results.retain(|(name, _)| crate::worktree_ref::ref_visible_from_worktree(git_dir, name));
     }
@@ -2525,14 +2574,28 @@ pub fn list_refs_physical(git_dir: &Path, prefix: &str) -> Result<Vec<(String, O
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
             collect_packed_refs_into_map(&cdir, &stored_prefix, true, &mut by_name)?;
-            let cbase = cdir.join(&stored_prefix);
-            collect_loose_refs_into_map(&cbase, &stored_prefix, &cdir, true, &mut by_name)?;
+            let (loose_root, loose_prefix) = loose_ref_list_walk_root(&cdir, &stored_prefix);
+            collect_loose_refs_into_map(
+                &loose_root,
+                &loose_prefix,
+                &stored_prefix,
+                &cdir,
+                true,
+                &mut by_name,
+            )?;
         }
     }
 
     collect_packed_refs_into_map(git_dir, &stored_prefix, true, &mut by_name)?;
-    let base = git_dir.join(&stored_prefix);
-    collect_loose_refs_into_map(&base, &stored_prefix, git_dir, true, &mut by_name)?;
+    let (loose_root, loose_prefix) = loose_ref_list_walk_root(git_dir, &stored_prefix);
+    collect_loose_refs_into_map(
+        &loose_root,
+        &loose_prefix,
+        &stored_prefix,
+        git_dir,
+        true,
+        &mut by_name,
+    )?;
 
     let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
     results.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2592,14 +2655,38 @@ pub fn collect_alternate_ref_oids(receiving_git_dir: &Path) -> Result<Vec<Object
     Ok(out)
 }
 
+/// List refs matching a glob pattern (e.g. `refs/heads/topic/*`) using `repo`'s ref store.
+pub fn list_refs_glob_for_repository(
+    repo: &crate::repo::Repository,
+    pattern: &str,
+) -> Result<Vec<(String, ObjectId)>> {
+    let glob_pos = pattern.find(['*', '?', '[']);
+    let prefix_owned: String = match glob_pos {
+        Some(pos) => pattern[..pos].to_owned(),
+        None => {
+            let mut p = pattern.trim_end_matches('/').to_owned();
+            if !p.is_empty() {
+                p.push('/');
+            }
+            p
+        }
+    };
+    let all = list_refs_for_repository(repo, prefix_owned.as_str())?;
+    let mut results = Vec::new();
+    for (refname, oid) in all {
+        if ref_matches_glob(&refname, pattern) {
+            results.push((refname, oid));
+        }
+    }
+    Ok(results)
+}
+
 /// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).
 pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, ObjectId)>> {
     let glob_pos = pattern.find(['*', '?', '[']);
     let prefix_owned: String = match glob_pos {
-        Some(pos) => match pattern[..pos].rfind('/') {
-            Some(slash) => pattern[..=slash].to_owned(),
-            None => String::new(),
-        },
+        // Literal segment before the first wildcard (e.g. `refs/heads/b05*` → `refs/heads/b05`).
+        Some(pos) => pattern[..pos].to_owned(),
         None => {
             let mut p = pattern.trim_end_matches('/').to_owned();
             if !p.is_empty() {
@@ -2673,6 +2760,7 @@ fn loose_ref_file_direct_oid(path: &Path) -> Option<ObjectId> {
 fn collect_loose_refs_into_map(
     dir: &Path,
     prefix: &str,
+    filter_prefix: &str,
     resolve_git_dir: &Path,
     physical_keys: bool,
     out: &mut HashMap<String, ObjectId>,
@@ -2704,6 +2792,7 @@ fn collect_loose_refs_into_map(
             collect_loose_refs_into_map(
                 &path,
                 &format!("{refname}/"),
+                filter_prefix,
                 resolve_git_dir,
                 physical_keys,
                 out,
@@ -2720,8 +2809,15 @@ fn collect_loose_refs_into_map(
             } else {
                 let logical = crate::ref_namespace::logical_ref_name_from_storage(&refname)
                     .unwrap_or_else(|| refname.clone());
-                if let Ok(oid) = resolve_ref(resolve_git_dir, &logical) {
+                if !ref_name_matches_list_prefix(&logical, filter_prefix.trim_end_matches('/')) {
+                    continue;
+                }
+                if let Some(oid) = loose_ref_file_direct_oid(&path) {
                     out.insert(logical, oid);
+                } else if let Ok(Ref::Symbolic(target)) = read_ref_file(&path) {
+                    if let Ok(oid) = resolve_ref(resolve_git_dir, target.trim()) {
+                        out.insert(logical, oid);
+                    }
                 }
             }
         }
@@ -2762,16 +2858,48 @@ pub fn resolve_at_n_branch(git_dir: &Path, spec: &str) -> Result<String> {
 }
 
 fn ref_name_matches_list_prefix(refname: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        return true;
+    }
     if refname.starts_with(prefix) {
         return true;
     }
-    if prefix.ends_with('/') {
-        let trimmed = prefix.trim_end_matches('/');
-        if refname == trimmed {
-            return true;
-        }
+    if refname == prefix {
+        return true;
     }
     false
+}
+
+fn list_prefix_upper_bound(prefix: &str) -> Option<String> {
+    let base = prefix.trim_end_matches('/');
+    let (head, tail) = base.rsplit_once('/')?;
+    let mut chars: Vec<char> = tail.chars().collect();
+    while let Some(last) = chars.pop() {
+        if last != '\u{10ffff}' {
+            chars.push(char::from_u32(last as u32 + 1).unwrap_or(last));
+            return Some(format!("{head}/{}", chars.into_iter().collect::<String>()));
+        }
+    }
+    None
+}
+
+/// When `prefix` names a partial ref (e.g. `refs/heads/b05/` with no `b05/` directory),
+/// start the walk at the parent directory (`refs/heads/`) and filter by prefix.
+pub(crate) fn loose_ref_list_walk_root(git_dir: &Path, prefix: &str) -> (PathBuf, String) {
+    let trimmed = prefix.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return (git_dir.join("refs"), "refs/".to_owned());
+    }
+    let direct = git_dir.join(trimmed);
+    if direct.is_dir() {
+        return (direct, format!("{trimmed}/"));
+    }
+    if let Some(slash) = trimmed.rfind('/') {
+        let parent = &trimmed[..slash];
+        return (git_dir.join(parent), format!("{parent}/"));
+    }
+    (git_dir.to_path_buf(), String::new())
 }
 
 fn collect_packed_refs_into_map(
@@ -2780,11 +2908,8 @@ fn collect_packed_refs_into_map(
     physical_keys: bool,
     out: &mut HashMap<String, ObjectId>,
 ) -> Result<()> {
-    let map = read_packed_refs_map(git_dir)?;
+    let map = read_packed_refs_map_for_prefix(git_dir, prefix)?;
     for (refname, oid) in map {
-        if !ref_name_matches_list_prefix(&refname, prefix) {
-            continue;
-        }
         let key = if physical_keys {
             refname.clone()
         } else {
@@ -2977,6 +3102,19 @@ mod refname_available_tests {
             err,
             RefnameUnavailable::AncestorExists { ref blocking, .. } if blocking == "refs/1l/c"
         ));
+    }
+
+    #[test]
+    fn list_refs_glob_b05_star_matches_one_thousand_packed_refs() {
+        let git_dir = Path::new("/tmp/grit-bench-refs-cache/refs-100k-packed");
+        if !git_dir.is_dir() {
+            return;
+        }
+        let listed = list_refs_glob(git_dir, "refs/heads/b05*").unwrap();
+        assert_eq!(listed.len(), 1000, "expected 1k b05* refs");
+        assert!(listed
+            .iter()
+            .all(|(name, _)| name.starts_with("refs/heads/b05")));
     }
 
     #[test]
@@ -3246,6 +3384,23 @@ mod packed_refs_parse_tests {
             parse_packed_refs_to_map(&path, &data),
             Err(Error::PackedRefsUnexpectedLine { .. })
         ));
+    }
+
+    #[test]
+    fn prefix_filter_unsorted_packed_refs_scans_past_later_names() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        let oid = "1111111111111111111111111111111111111111";
+        fs::write(
+            store::paths::packed_refs_path(git_dir),
+            format!(
+                "# pack-refs with: peeled fully-peeled\n{oid} refs/heads/zzz\n{oid} refs/heads/aaa\n{oid} refs/heads/main\n"
+            ),
+        )
+        .unwrap();
+        let listed = list_refs_glob(git_dir, "refs/heads/a*").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "refs/heads/aaa");
     }
 
     #[test]

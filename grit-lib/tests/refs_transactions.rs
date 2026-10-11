@@ -366,6 +366,33 @@ fn concurrent_cas_delete_single_winner() {
 }
 
 #[test]
+fn concurrent_cas_delete_single_winner_packed_only() {
+    each_backend(|backend, repo| {
+        if backend == Backend::Reftable {
+            return;
+        }
+        let git_dir = repo.git_dir();
+        let (c1, _) = two_commit_oids(&repo);
+        write_ref(&git_dir, "refs/heads/cas-del-packed", &c1).expect("seed");
+        git(repo.worktree(), &["pack-refs", "--all"]);
+        assert!(
+            !git_dir.join("refs/heads/cas-del-packed").is_file(),
+            "fixture must be packed-only"
+        );
+
+        let item = RefTransactionItem {
+            name: "refs/heads/cas-del-packed".to_owned(),
+            new_oid: None,
+            expected_old: Some(c1),
+        };
+        concurrent_cas_winners(&git_dir, item, 1, |gd| {
+            assert!(resolve_ref(gd, "refs/heads/cas-del-packed").is_err());
+        });
+        assert_fsck_when_git_interop(&repo);
+    });
+}
+
+#[test]
 fn concurrent_reftable_cas_single_winner() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = init_repository(

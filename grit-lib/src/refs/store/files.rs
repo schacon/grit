@@ -11,7 +11,8 @@ use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 use crate::reflog::{self, ReflogEntry};
 use crate::refs::{
-    lock_path_for_ref, prune_empty_loose_ref_parents, read_packed_refs_map, read_ref_file,
+    lock_path_for_ref, loose_ref_list_walk_root, prune_empty_loose_ref_parents,
+    read_packed_refs_map, read_packed_refs_map_for_prefix, read_ref_file,
     remove_empty_ref_directory, remove_packed_ref, remove_packed_ref_under_lock, LogRefsConfig,
     Ref,
 };
@@ -59,7 +60,8 @@ struct PackedRefsStamp {
 #[derive(Debug)]
 struct PackedCacheEntry {
     stamp: PackedRefsStamp,
-    map: HashMap<String, ObjectId>,
+    loaded: bool,
+    map: BTreeMap<String, ObjectId>,
 }
 
 #[derive(Debug)]
@@ -81,13 +83,16 @@ impl FilesRefStore {
     pub fn open(config: FilesRefStoreConfig) -> Self {
         let path = super::paths::packed_refs_path(&config.common_dir);
         let stamp = Self::packed_refs_stamp(&path);
-        let map = read_packed_refs_map(&config.common_dir).unwrap_or_default();
         Self {
             git_dir: config.git_dir,
             common_dir: config.common_dir,
             namespace_prefix: config.namespace_prefix,
             log_refs: config.log_refs,
-            packed_cache: Mutex::new(PackedCacheEntry { stamp, map }),
+            packed_cache: Mutex::new(PackedCacheEntry {
+                stamp,
+                loaded: false,
+                map: BTreeMap::new(),
+            }),
             prepared: Mutex::new(None),
         }
     }
@@ -122,11 +127,14 @@ impl FilesRefStore {
         let path = super::paths::packed_refs_path(&self.common_dir);
         let stamp = Self::packed_refs_stamp(&path);
         let mut guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.stamp == stamp {
+        if guard.loaded && guard.stamp == stamp {
             return Ok(());
         }
-        guard.map = read_packed_refs_map(&self.common_dir)?;
+        guard.map = read_packed_refs_map(&self.common_dir)?
+            .into_iter()
+            .collect();
         guard.stamp = stamp;
+        guard.loaded = true;
         Ok(())
     }
 
@@ -157,23 +165,54 @@ impl FilesRefStore {
         }
     }
 
+    /// Prefix for scanning `packed-refs` lines (storage paths, not logical names).
+    fn packed_refs_scan_prefix(&self, logical_prefix: &str) -> String {
+        match self.namespace_prefix.as_deref() {
+            Some(ns) if !logical_prefix.is_empty() => format!("{ns}{logical_prefix}"),
+            Some(ns) => ns.trim_end_matches('/').to_owned(),
+            None => logical_prefix.to_owned(),
+        }
+    }
+
     fn load_raw_map_prefix(&self, logical_prefix: &str) -> Result<BTreeMap<String, RawRef>> {
-        self.refresh_packed_cache_if_stale()?;
+        let logical_prefix = logical_prefix.trim_end_matches('/');
         let mut map: BTreeMap<String, RawRef> = BTreeMap::new();
-        let cache = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
-        for (storage, oid) in cache.map.iter() {
-            if !self.packed_storage_visible(storage) {
-                continue;
-            }
-            let logical = self.logical_name(storage);
-            if logical_prefix.is_empty() || logical.starts_with(logical_prefix) {
+        if logical_prefix.is_empty() {
+            self.refresh_packed_cache_if_stale()?;
+            let cache = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
+            for (storage, oid) in cache.map.iter() {
+                if !self.packed_storage_visible(storage) {
+                    continue;
+                }
+                let logical = self.logical_name(storage);
                 map.insert(logical, RawRef::Direct(*oid));
             }
+            drop(cache);
+        } else {
+            let common = self.common_dir.as_path();
+            let git = self.git_dir.as_path();
+            let bases: [&Path; 2] = if common == git {
+                [common, common]
+            } else {
+                [common, git]
+            };
+            for (i, base) in bases.iter().enumerate() {
+                if i == 1 && *base == bases[0] {
+                    continue;
+                }
+                let packed_prefix = self.packed_refs_scan_prefix(logical_prefix);
+                for (storage, oid) in read_packed_refs_map_for_prefix(base, &packed_prefix)? {
+                    if !self.packed_storage_visible(&storage) {
+                        continue;
+                    }
+                    let logical = self.logical_name(&storage);
+                    map.insert(logical, RawRef::Direct(oid));
+                }
+            }
         }
-        drop(cache);
 
-        let storage_prefix = self.namespace_prefix.as_deref().unwrap_or("refs/");
         for base in [self.common_dir.as_path(), self.git_dir.as_path()] {
+            let storage_prefix = self.namespace_prefix.as_deref().unwrap_or("refs/");
             if self.namespace_prefix.is_some() {
                 let root = base.join(storage_prefix.trim_end_matches('/'));
                 if root.is_dir() {
@@ -187,10 +226,10 @@ impl FilesRefStore {
                     }
                 }
             } else {
-                let refs_root = base.join("refs");
-                if refs_root.is_dir() {
+                let (walk_root, walk_prefix) = loose_ref_list_walk_root(base, logical_prefix);
+                if walk_root.is_dir() {
                     let mut storage_map = BTreeMap::new();
-                    collect_loose_raw_refs(&refs_root, "refs/", &mut storage_map)?;
+                    collect_loose_raw_refs(&walk_root, &walk_prefix, &mut storage_map)?;
                     for (storage, value) in storage_map {
                         let logical = self.logical_name(&storage);
                         if logical_prefix.is_empty() || logical.starts_with(logical_prefix) {
@@ -413,6 +452,7 @@ impl RefStore for FilesRefStore {
         prefix: &str,
         f: &mut dyn FnMut(&RefEntry) -> ControlFlow<()>,
     ) -> Result<()> {
+        let prefix = prefix.trim_end_matches('/');
         let map = self.load_raw_map_prefix(prefix)?;
         for (name, value) in map.range(prefix.to_string()..) {
             if !name.starts_with(prefix) {
@@ -711,9 +751,12 @@ impl Drop for FilesPrepared<'_> {
 }
 
 fn head_matches_prefix(logical_prefix: &str) -> bool {
-    logical_prefix.is_empty()
-        || "HEAD".starts_with(logical_prefix)
-        || logical_prefix.starts_with("HEAD")
+    let prefix = logical_prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        // `git for-each-ref` with no pattern lists refs under `refs/`, not `HEAD`.
+        return false;
+    }
+    "HEAD".starts_with(prefix) || prefix.starts_with("HEAD")
 }
 
 fn ref_to_raw(r: Ref) -> RawRef {
