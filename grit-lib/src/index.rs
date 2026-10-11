@@ -1245,21 +1245,19 @@ impl Index {
             && parallel_index_load_allowed(parse_context.thread_policy, config, count as usize);
 
         let (entries, ext_fields): (Vec<IndexEntry>, ParsedIndexExtensions) = if try_parallel {
-            let ext_off = extension_offset.expect("checked above");
+            let Some(ext_off) = extension_offset else {
+                return Err(Error::IndexError(
+                    "parallel index load missing EOIE offset".to_owned(),
+                ));
+            };
             let ieot = read_ieot_extension(body, ext_off, extensions_end);
             let entry_workers = workers.saturating_sub(1).max(1);
             let ext_result = std::sync::Mutex::new(None::<Result<ParsedIndexExtensions>>);
 
-            let entries = std::thread::scope(|scope| -> Result<Vec<IndexEntry>> {
+            let mut loaded_entries = std::thread::scope(|scope| -> Result<Vec<IndexEntry>> {
                 scope.spawn(|| {
-                    let mut scratch = Vec::new();
-                    let res = parse_index_extensions(
-                        body,
-                        ext_off,
-                        extensions_end,
-                        hash_algo,
-                        &mut scratch,
-                    );
+                    let res =
+                        parse_index_extensions(body, ext_off, extensions_end, hash_algo, None);
                     *ext_result.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
                 });
 
@@ -1270,20 +1268,23 @@ impl Index {
                 }
             })?;
 
-            let ext_fields = match ext_result
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take()
-                .expect("extension thread must set result")
-            {
-                Ok(v) => v,
-                Err(e) => return Err(e),
+            let ext_fields = match ext_result.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                Some(Ok(v)) => v,
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(Error::IndexError(
+                        "parallel index extension load did not finish".to_owned(),
+                    ));
+                }
             };
-            (entries, ext_fields)
+            if let Some(dirty) = ext_fields.fsmonitor_dirty.as_ref() {
+                apply_fsmonitor_dirty_to_entries(&mut loaded_entries, dirty);
+            }
+            (loaded_entries, ext_fields)
         } else {
             let (mut entries, pos) = parse_entries_serial(body, version, count, hash_len, 12)?;
             let ext_fields =
-                parse_index_extensions(body, pos, body.len(), hash_algo, &mut entries)?;
+                parse_index_extensions(body, pos, body.len(), hash_algo, Some(&mut entries))?;
             (entries, ext_fields)
         };
 

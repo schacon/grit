@@ -29,6 +29,10 @@ pub(crate) const INDEX_LOAD_THREAD_COST: usize = 10_000;
 
 const EOIE_FIXED_PAYLOAD: usize = 4; // offset only; hash width is per algo
 
+#[cfg(test)]
+pub(crate) static PARALLEL_IEOT_ENTRY_LOADS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 #[derive(Debug, Clone)]
 pub(crate) struct IeotEntry {
     pub offset: u32,
@@ -161,17 +165,16 @@ fn clamp_load_workers(requested: usize, entry_count: usize) -> usize {
 }
 
 /// Scan backwards for a valid EOIE extension; returns byte offset of first extension after entries.
+///
+/// `body` is the index file without the trailing object-format checksum.
 pub(crate) fn read_eoie_extension(body: &[u8], hash_algo: HashAlgo) -> Option<usize> {
     let hash_len = hash_algo.len();
     let eoie_payload = EOIE_FIXED_PAYLOAD + hash_len;
     let eoie_with_header = 8 + eoie_payload;
-    if body.len() < 12 + eoie_with_header + hash_len {
+    if body.len() < 12 + eoie_with_header {
         return None;
     }
-    let eoie_start = body
-        .len()
-        .checked_sub(hash_len)?
-        .checked_sub(eoie_with_header)?;
+    let eoie_start = body.len().checked_sub(eoie_with_header)?;
     if u32::from_be_bytes(body[eoie_start..eoie_start + 4].try_into().ok()?) != INDEX_EXT_EOIE {
         return None;
     }
@@ -266,7 +269,7 @@ pub(crate) fn parse_index_extensions(
     mut pos: usize,
     end: usize,
     hash_algo: HashAlgo,
-    entries: &mut [IndexEntry],
+    entries_for_fsmonitor: Option<&mut [IndexEntry]>,
 ) -> Result<ParsedIndexExtensions> {
     let mut out = ParsedIndexExtensions::default();
     let hash_len = hash_algo.len();
@@ -331,7 +334,7 @@ pub(crate) fn parse_index_extensions(
     if pos != end {
         return Err(Error::IndexError("junk after index extensions".to_owned()));
     }
-    if let Some(dirty) = &out.fsmonitor_dirty {
+    if let (Some(entries), Some(dirty)) = (entries_for_fsmonitor, out.fsmonitor_dirty.as_ref()) {
         crate::index::apply_fsmonitor_dirty_to_entries(entries, dirty);
     }
     Ok(out)
@@ -369,6 +372,10 @@ pub(crate) fn parse_entries_parallel(
     nr_threads: usize,
 ) -> Result<Vec<IndexEntry>> {
     let nr_threads = nr_threads.max(1).min(ieot.entries.len());
+    #[cfg(test)]
+    if nr_threads > 1 {
+        PARALLEL_IEOT_ENTRY_LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     let ieot_blocks = ieot.entries.len().div_ceil(nr_threads);
     let parts: Arc<Mutex<Vec<(usize, Vec<IndexEntry>)>>> = Arc::new(Mutex::new(Vec::new()));
     let err: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
@@ -552,4 +559,78 @@ pub(crate) fn parallel_index_load_allowed(
     }
     let workers = index_load_worker_count(policy, config, entry_count);
     workers > 1
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+    use crate::config::ConfigSet;
+    use crate::environment::Environment;
+    use crate::index::{Index, IndexParseContext};
+    use crate::objects::HashAlgo;
+    use crate::parallel::ThreadPolicy;
+
+    fn git_index_with_eoie(entry_count: usize) -> (tempfile::TempDir, Vec<u8>, ConfigSet) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        for i in 0..entry_count {
+            let dir = format!("d{:04}", i / 100);
+            std::fs::create_dir_all(root.join(&dir)).expect("mkdir");
+            std::fs::write(root.join(format!("{dir}/f{i:05}.txt")), format!("x{i}\n"))
+                .expect("write");
+        }
+        assert!(Command::new("git")
+            .args(["init", root.to_str().expect("p")])
+            .status()
+            .expect("git init")
+            .success());
+        for (k, v) in [
+            ("index.threads", "4"),
+            ("index.recordOffsetTable", "true"),
+            ("index.recordEndOfIndexEntries", "true"),
+        ] {
+            assert!(Command::new("git")
+                .args(["-C", root.to_str().expect("p"), "config", k, v])
+                .status()
+                .expect("git config")
+                .success());
+        }
+        assert!(Command::new("git")
+            .args(["-C", root.to_str().expect("p"), "add", "-A"])
+            .status()
+            .expect("git add")
+            .success());
+        let bytes = std::fs::read(root.join(".git/index")).expect("read index");
+        let cfg =
+            ConfigSet::load(&Environment::empty(), Some(&root.join(".git")), true).expect("config");
+        (tmp, bytes, cfg)
+    }
+
+    #[test]
+    fn read_eoie_finds_git_written_trailer() {
+        let (_tmp, bytes, _cfg) = git_index_with_eoie(25_000);
+        let algo = HashAlgo::Sha1;
+        let body = &bytes[..bytes.len() - algo.len()];
+        let off = read_eoie_extension(body, algo).expect("valid git EOIE");
+        assert!(off >= 12);
+    }
+
+    #[test]
+    fn parallel_ieot_entry_load_runs_for_large_git_index() {
+        let (_tmp, bytes, cfg) = git_index_with_eoie(25_000);
+        let algo = HashAlgo::Sha1;
+        let body = &bytes[..bytes.len() - algo.len()];
+        let ext_off = read_eoie_extension(body, algo).expect("EOIE");
+        assert!(read_ieot_extension(body, ext_off, body.len()).is_some());
+        PARALLEL_IEOT_ENTRY_LOADS.store(0, Ordering::Relaxed);
+        let ctx = IndexParseContext::from_policy(ThreadPolicy::with_threads_override(Some(4)));
+        Index::parse_with_algo_and_config(&bytes, algo, Some(&cfg), ctx).expect("parse");
+        assert!(
+            PARALLEL_IEOT_ENTRY_LOADS.load(Ordering::Relaxed) > 0,
+            "IEOT parallel entry load must run when EOIE/IEOT are present"
+        );
+    }
 }

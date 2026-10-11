@@ -12,7 +12,7 @@ use grit_lib::objects::HashAlgo;
 use grit_lib::objects::ObjectKind;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::{init_repository, Repository};
-const ENTRY_COUNT: usize = 15_000;
+const ENTRY_COUNT: usize = 25_000;
 
 fn git_init(repo: &Path) {
     assert!(
@@ -86,10 +86,29 @@ fn git_writes_index_grit_reads(version: u32) {
     let cfg = load_config(&repo);
     let algo = repo.odb.hash_algo();
 
+    let hash_len = algo.len();
+    let body = &bytes[..bytes.len() - hash_len];
+    assert!(
+        body.windows(4).any(|w| w == b"EOIE") && body.windows(4).any(|w| w == b"IEOT"),
+        "git index with index.threads=4 must contain EOIE and IEOT"
+    );
+
     let serial = grit_parse_serial(&bytes, algo);
     let parallel = grit_parse_parallel(&bytes, algo, &cfg, 4);
     assert_entries_match(&serial, &parallel);
+    assert_fsmonitor_flags_match(&serial, &parallel);
     let _ = version;
+}
+
+fn assert_fsmonitor_flags_match(a: &Index, b: &Index) {
+    for (ea, eb) in a.entries().iter().zip(b.entries().iter()) {
+        assert_eq!(
+            ea.fsmonitor_valid(),
+            eb.fsmonitor_valid(),
+            "fsmonitor valid bit mismatch on {}",
+            String::from_utf8_lossy(&ea.path)
+        );
+    }
 }
 
 #[test]
@@ -165,6 +184,66 @@ fn grit_write_eoie_ieot_v4_git_fsck_and_update_index() {
 }
 
 #[test]
+fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    populate_files(root, ENTRY_COUNT);
+    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
+        .expect("init");
+    let mut cfg_text = fs::read_to_string(repo.git_dir.join("config")).expect("config");
+    cfg_text.push_str(
+        "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
+    );
+    fs::write(repo.git_dir.join("config"), cfg_text).expect("write config");
+
+    let mut idx = Index::empty(2);
+    for i in 0..ENTRY_COUNT {
+        let path = format!("d{:04}/f{i:05}.txt", i / 100);
+        let data = format!("body {i}\n");
+        repo.odb
+            .write_loose_materialize(ObjectKind::Blob, data.as_bytes())
+            .expect("blob");
+        let oid = hash_object(repo.odb.hash_algo(), ObjectKind::Blob, data.as_bytes());
+        let mut entry = grit_lib::index::IndexEntry {
+            ctime_sec: 1_700_000_000,
+            ctime_nsec: 0,
+            mtime_sec: 1_700_000_000,
+            mtime_nsec: 0,
+            dev: 1,
+            ino: i as u32,
+            mode: grit_lib::index::MODE_REGULAR,
+            uid: 1000,
+            gid: 1000,
+            size: data.len() as u32,
+            oid,
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.into_bytes(),
+            base_index_pos: 0,
+        };
+        entry.set_fsmonitor_valid(i != 1_000 && i != 9_000);
+        idx.add_or_replace(entry);
+    }
+    idx.set_fsmonitor_last_update(Some("builtin:fake".to_owned()));
+    idx.sync_fsmonitor_dirty_bitmap();
+
+    let cfg = load_config(&repo);
+    let policy = ThreadPolicy::with_threads_override(Some(4));
+    idx.write_with_config_and_policy(&repo.index_path(), &cfg, policy)
+        .expect("write ieot index");
+
+    let bytes = fs::read(repo.index_path()).expect("read index");
+    let algo = repo.odb.hash_algo();
+    let body = &bytes[..bytes.len() - algo.len()];
+    assert!(body.windows(4).any(|w| w == b"EOIE"));
+
+    let serial = grit_parse_serial(&bytes, algo);
+    let parallel = grit_parse_parallel(&bytes, algo, &cfg, 4);
+    assert_fsmonitor_flags_match(&serial, &parallel);
+    assert!(!serial.entries().iter().all(|e| e.fsmonitor_valid()));
+}
+
+#[test]
 fn invalid_eoie_falls_back_to_serial_parse() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
@@ -178,14 +257,19 @@ fn invalid_eoie_falls_back_to_serial_parse() {
     let mut bytes = fs::read(&index_path).expect("read");
     let algo = HashAlgo::Sha1;
     let hash_len = algo.len();
+    let body_len = bytes.len() - hash_len;
+    let body = &bytes[..body_len];
+    assert!(
+        body.windows(4).any(|w| w == b"EOIE"),
+        "fixture must include EOIE before corruption"
+    );
     let eoie_with_header = 8 + 4 + hash_len;
-    if bytes.len() > hash_len + eoie_with_header {
-        let eoie_start = bytes.len() - hash_len - eoie_with_header;
-        if &bytes[eoie_start..eoie_start + 4] == b"EOIE" {
+    if body.len() >= eoie_with_header {
+        let eoie_start = body.len() - eoie_with_header;
+        if &body[eoie_start..eoie_start + 4] == b"EOIE" {
             // Corrupt EOIE extension-header hash (not the file trailer); read_eoie must reject it.
             let hash_in_eoie = eoie_start + 8 + 4;
             bytes[hash_in_eoie] = bytes[hash_in_eoie].wrapping_add(1);
-            let body_len = bytes.len() - hash_len;
             let trailer = algo.digest(&bytes[..body_len]);
             bytes[body_len..].copy_from_slice(trailer.as_bytes());
         }
