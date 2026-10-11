@@ -82,4 +82,5 @@ baseline = [
   "grit-utils/baselines/refs-after.json",
   "grit-utils/baselines/refs-before.json",
   "grit-utils/baselines/refs-after-reftable.json",
+  "grit-utils/baselines/refs-after-994.json",
 ]
