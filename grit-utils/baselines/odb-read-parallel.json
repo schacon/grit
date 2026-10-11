@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-11T15:45:00Z",
+  "machine": {
+    "logical_cores": 4
+  },
+  "scenario": "odb_read_parallel/packed_blobs",
+  "object_count": 50000,
+  "note": "Partitioned reads across persistent worker threads; pack context per worker; release profile on 4-vCPU VM.",
+  "results_ms": {
+    "1": 64.966,
+    "2": 56.822,
+    "4": 39.494,
+    "8": 37.935
+  },
+  "speedup_1_to_4": 1.645
+}
