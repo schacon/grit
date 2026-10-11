@@ -171,30 +171,6 @@ pub struct CloneReflog {
     pub message: String,
 }
 
-impl Clone for FetchOptions {
-    fn clone(&self) -> Self {
-        Self {
-            refspecs: self.refspecs.clone(),
-            negative_refspecs: self.negative_refspecs.clone(),
-            tags: self.tags,
-            prune: self.prune,
-            dry_run: self.dry_run,
-            depth: self.depth,
-            deepen_since: self.deepen_since.clone(),
-            deepen_not: self.deepen_not.clone(),
-            unshallow: self.unshallow,
-            initial_remote_fetch: self.initial_remote_fetch,
-            remote_name: self.remote_name.clone(),
-            clone_reflog: self.clone_reflog.clone(),
-            diagnostics: self.diagnostics.clone(),
-            network_trace: self.network_trace,
-            index_pack_threads: self.index_pack_threads,
-            pack_spool_only: self.pack_spool_only,
-            http_protocol_version: self.http_protocol_version,
-        }
-    }
-}
-
 impl FetchOptions {
     /// Whether this fetch carries any shallow/deepen request (an explicit
     /// `depth`/`deepen-since`/`deepen-not`/`unshallow`). Note this does NOT cover

@@ -712,6 +712,7 @@ fn install_rejects_corrupt_trailer_with_skip_post_index_verify() {
         fix_thin: false,
         threads: Some(4),
         skip_post_index_verify: true,
+        ..Default::default()
     };
     let err = install_pack_bytes(corrupt, &odb, &opts).expect_err("corrupt pack trailer");
     let msg = err.to_string();
