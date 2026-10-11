@@ -111,7 +111,14 @@ fn verify_refname_blocks_packed_descendant_without_loose_children() {
 #[test]
 fn update_refs_create_batch_rejects_later_conflict_without_partial_write() {
     let dir = tempdir().expect("tempdir");
-    init_repository(dir.path(), false, "main", None, "files").expect("init");
+    init_repository(
+        dir.path(),
+        false,
+        "main",
+        None,
+        grit_lib::RefStorageFormat::Files,
+    )
+    .expect("init");
     let git_dir = dir.path().join(".git");
 
     fs::create_dir_all(git_dir.join("refs/heads/existing")).expect("dir");
@@ -139,4 +146,72 @@ fn update_refs_create_batch_rejects_later_conflict_without_partial_write() {
         resolve_ref(&git_dir, "refs/heads/innocent").is_err(),
         "batch must not leave earlier creates on disk when a later create is rejected"
     );
+}
+
+#[test]
+fn update_refs_create_batch_rejects_remotes_conflict_without_partial_write() {
+    let dir = tempdir().expect("tempdir");
+    init_repository(
+        dir.path(),
+        false,
+        "main",
+        None,
+        grit_lib::RefStorageFormat::Files,
+    )
+    .expect("init");
+    let git_dir = dir.path().join(".git");
+
+    fs::create_dir_all(git_dir.join("refs/remotes/origin")).expect("dir");
+    fs::write(
+        git_dir.join("refs/remotes/origin/main"),
+        format!("{}\n", oid(12).to_hex()),
+    )
+    .expect("remote ref");
+
+    let items = vec![
+        RefTransactionItem {
+            name: "refs/heads/innocent".into(),
+            new_oid: Some(oid(13)),
+            expected_old: None,
+        },
+        RefTransactionItem {
+            name: "refs/remotes/origin".into(),
+            new_oid: Some(oid(14)),
+            expected_old: None,
+        },
+    ];
+    let err = update_refs(&git_dir, &items).expect_err("descendant conflict");
+    let _ = err;
+    assert!(
+        resolve_ref(&git_dir, "refs/heads/innocent").is_err(),
+        "batch must not leave earlier creates when a later create hits refs/remotes D/F"
+    );
+}
+
+#[test]
+fn update_refs_cas_sees_loose_tag_while_heads_tree_empty() {
+    let dir = tempdir().expect("tempdir");
+    init_repository(
+        dir.path(),
+        false,
+        "main",
+        None,
+        grit_lib::RefStorageFormat::Files,
+    )
+    .expect("init");
+    let git_dir = dir.path().join(".git");
+    let old_oid = oid(20);
+    let new_oid = oid(21);
+    write_ref(&git_dir, "refs/tags/v1", &old_oid).expect("write tag");
+
+    update_refs(
+        &git_dir,
+        &[RefTransactionItem {
+            name: "refs/tags/v1".into(),
+            new_oid: Some(new_oid),
+            expected_old: Some(old_oid),
+        }],
+    )
+    .expect("CAS update tag");
+    assert_eq!(resolve_ref(&git_dir, "refs/tags/v1").unwrap(), new_oid);
 }

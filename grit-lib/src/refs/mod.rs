@@ -1008,8 +1008,85 @@ fn parse_packed_refs_to_map_with_prefix(
     Ok(map)
 }
 
+fn parse_packed_refs_to_map_with_names(
+    path: &Path,
+    data: &[u8],
+    names: &HashSet<String>,
+) -> Result<HashMap<String, ObjectId>> {
+    if data.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if data.contains(&b'\r') {
+        return Err(packed_refs_unexpected_line(
+            path,
+            "<contains carriage return>",
+        ));
+    }
+    if !data.ends_with(b"\n") {
+        let tail = std::str::from_utf8(data)
+            .map(|s| s.rsplit('\n').next().unwrap_or(s))
+            .unwrap_or("<invalid utf-8>");
+        return Err(packed_refs_unterminated_line(path, tail));
+    }
+    let text = std::str::from_utf8(data)
+        .map_err(|_| packed_refs_unexpected_line(path, "<invalid utf-8>"))?;
+
+    let ref_opts = RefNameOptions {
+        allow_onelevel: false,
+        refspec_pattern: false,
+        normalize: false,
+    };
+
+    let mut map = HashMap::with_capacity(names.len());
+    let mut expect_peel = false;
+    let mut lines = text.split('\n').peekable();
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            if lines.peek().is_none() {
+                break;
+            }
+            return Err(packed_refs_unexpected_line(path, line));
+        }
+        if line.starts_with('#') {
+            expect_peel = false;
+            continue;
+        }
+        if line.starts_with('^') {
+            parse_packed_ref_peel_line(path, line, expect_peel)?;
+            expect_peel = false;
+            continue;
+        }
+
+        let Some(refname) = packed_ref_data_line_refname(line) else {
+            return Err(packed_refs_unexpected_line(path, line));
+        };
+        if names.contains(refname) {
+            let (refname, oid) = parse_packed_ref_data_line(path, line, &ref_opts)?;
+            map.insert(refname, oid);
+        }
+        expect_peel = true;
+    }
+    Ok(map)
+}
+
 pub(crate) fn read_packed_refs_map(store: &Path) -> Result<HashMap<String, ObjectId>> {
     read_packed_refs_map_for_prefix(store, "")
+}
+
+pub(crate) fn read_packed_refs_map_for_names(
+    store: &Path,
+    names: &HashSet<String>,
+) -> Result<HashMap<String, ObjectId>> {
+    if names.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let packed_path = store::paths::packed_refs_path(store);
+    let data = match fs::read(&packed_path) {
+        Ok(d) => d,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    parse_packed_refs_to_map_with_names(&packed_path, &data, names)
 }
 
 pub(crate) fn read_packed_refs_map_for_prefix(
@@ -1245,6 +1322,30 @@ impl PackedRefs {
     pub fn load(git_dir: &Path) -> Result<Self> {
         let store = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
         let map = read_packed_refs_map(&store)?;
+        Ok(Self { map })
+    }
+
+    /// Validate the full `packed-refs` file but retain only entries listed in `names`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::load`].
+    pub(crate) fn load_for_ref_names(git_dir: &Path, names: &HashSet<String>) -> Result<Self> {
+        if names.is_empty() {
+            return Ok(Self {
+                map: HashMap::new(),
+            });
+        }
+        let store = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+        let packed_path = store::paths::packed_refs_path(&store);
+        let data = match fs::read(&packed_path) {
+            Ok(d) => d,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self {
+                map: HashMap::new(),
+            }),
+            Err(e) => return Err(Error::Io(e)),
+        };
+        let map = parse_packed_refs_to_map_with_names(&packed_path, &data, names)?;
         Ok(Self { map })
     }
 

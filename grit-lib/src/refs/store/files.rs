@@ -12,7 +12,8 @@ use crate::objects::ObjectId;
 use crate::reflog::{self, ReflogEntry};
 use crate::refs::{
     lock_path_for_ref, loose_ref_list_walk_root, prune_empty_loose_ref_parents,
-    read_packed_refs_map, read_packed_refs_map_for_prefix, read_ref_file,
+    read_packed_refs_map, read_packed_refs_map_for_names, read_packed_refs_map_for_prefix,
+    read_ref_file,
     remove_empty_ref_directory, remove_packed_ref, remove_packed_ref_under_lock, LogRefsConfig,
     Ref,
 };
@@ -22,6 +23,7 @@ use super::error::RefStoreError;
 use super::routing::{resolve_common_dir, route_ref_storage_with_namespace, RefStorageRoute};
 use super::transaction::RefTransaction;
 use super::validation::{validate_storable_refname, verify_create_conflicts};
+use super::types::Expected;
 use super::{PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefUpdate};
 
 type StoreResult<T> = std::result::Result<T, RefStoreError>;
@@ -131,6 +133,21 @@ impl FilesRefStore {
             return Ok(());
         }
         guard.map = read_packed_refs_map(&self.common_dir)?
+            .into_iter()
+            .collect();
+        guard.stamp = stamp;
+        guard.loaded = true;
+        Ok(())
+    }
+
+    fn refresh_packed_cache_for_logical_names(&self, names: &HashSet<String>) -> Result<()> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        let path = super::paths::packed_refs_path(&self.common_dir);
+        let stamp = Self::packed_refs_stamp(&path);
+        let mut guard = self.packed_cache.lock().unwrap_or_else(|e| e.into_inner());
+        guard.map = read_packed_refs_map_for_names(&self.common_dir, names)?
             .into_iter()
             .collect();
         guard.stamp = stamp;
@@ -500,6 +517,15 @@ impl RefStore for FilesRefStore {
         RefTransaction::validate_no_duplicates(txn.updates())?;
         let updates = txn.into_updates();
 
+        if !updates.is_empty()
+            && updates
+                .iter()
+                .all(|u| matches!(u.expected, Expected::Oid(_)))
+        {
+            let names: HashSet<String> = updates.iter().map(|u| u.name.clone()).collect();
+            let _ = self.refresh_packed_cache_for_logical_names(&names);
+        }
+
         for update in &updates {
             validate_storable_refname(&update.name)?;
         }
@@ -535,10 +561,7 @@ impl RefStore for FilesRefStore {
             ref_locks.insert(name.clone(), lock);
         }
 
-        let state = self
-            .load_batch_state()
-            .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
-        if let Err(err) = simulate_batch_apply(&state, &updates) {
+        if let Err(err) = simulate_batch_apply(&preliminary, &updates) {
             for acquired in ref_locks.values() {
                 let _ = fs::remove_file(acquired);
             }
@@ -551,7 +574,7 @@ impl RefStore for FilesRefStore {
             if update.new_value.is_none() || update.flags.log_only {
                 continue;
             }
-            if state.refs.contains_key(&update.name) {
+            if preliminary.refs.contains_key(&update.name) {
                 continue;
             }
             if let Err(reason) = crate::refs::verify_refname_available_for_create(
@@ -567,7 +590,7 @@ impl RefStore for FilesRefStore {
             }
         }
 
-        let before_commit = state.snapshot();
+        let before_commit = preliminary.snapshot();
         let mut after_commit = before_commit.clone();
         for update in &updates {
             apply_update(&mut after_commit, update)?;
