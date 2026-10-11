@@ -40,7 +40,9 @@ fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()>
         return checkout_between_trees_slow(repo, None, Some(tree_oid));
     }
     let config = repo.config()?;
-    let rules = WorktreeRules::from_parts(repo, &index, config)?;
+    let changes = diff_trees(&repo.odb, None, Some(tree_oid), "")?;
+    let prospective_index = prospective_index_for_checkout(&index, &changes);
+    let rules = WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config)?;
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
     let mut new_entries: Vec<IndexEntry> = Vec::new();
