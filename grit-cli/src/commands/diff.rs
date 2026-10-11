@@ -1,8 +1,11 @@
 //! `grit diff` — show changes as a delta-style, dual-line-numbered diff.
 //!
 //! With no argument it shows all uncommitted changes (the worktree against
-//! HEAD's tree). With a commit-ish it shows the change that commit introduced
-//! (its first parent's tree against its own).
+//! HEAD's tree). Pass `--staged` for the index against HEAD. With one commit-ish
+//! it shows the change that commit introduced (its first parent's tree against
+//! its own). Two commits, or a two-dot range such as `A..B`, diff those
+//! commits' trees. Use `--against <ref>` to compare the worktree to another
+//! ref's tree instead of HEAD.
 //!
 //! The human rendering imitates [delta](https://github.com/dandavison/delta): a
 //! bold file header, a hunk header showing the enclosing definition, two
@@ -15,15 +18,20 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_trees_with_renames, read_submodule_head_oid,
+    diff_commits, diff_index_to_tree, diff_trees_with_renames, read_submodule_head_oid,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
     },
     submodule_porcelain_flags, DiffEntry, DiffStatus,
 };
+use grit_lib::merge_base::merge_base_for_diff_two_commits;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
+use grit_lib::rev_parse::{
+    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
+    split_double_dot_range, split_triple_dot_range,
+};
 use grit_lib::state::resolve_head;
 use serde::Serialize;
 
@@ -78,6 +86,9 @@ pub struct FileDiff {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub new_encoding_lossy: bool,
     pub binary: bool,
+    /// True when the blob OID changed (not a mode-only touch on the same content).
+    #[serde(skip_serializing)]
+    pub content_changed: bool,
     pub hunks: Vec<Hunk>,
 }
 
@@ -128,15 +139,50 @@ pub struct Segment {
     pub emphasis: bool,
 }
 
-pub fn run(commit: Option<String>) -> Result<DiffOutcome> {
+/// Inputs for `grit diff` (flags and revision arguments).
+pub struct DiffRunOptions {
+    pub staged: bool,
+    pub against: Option<String>,
+    pub commits: Vec<String>,
+}
+
+pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     let repo = context::discover()?;
-    let changes = match commit {
-        Some(spec) => {
-            let oid = grit_lib::rev_parse::resolve_revision(&repo, &spec)
-                .with_context(|| format!("could not resolve '{spec}'"))?;
-            commit_changes(&repo, &oid)?
+    if opts.staged {
+        if !opts.commits.is_empty() || opts.against.is_some() {
+            anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
-        None => worktree_changes(&repo)?,
+        return Ok(outcome_from_changes(staged_changes(&repo)?));
+    }
+    if opts.commits.len() > 2 {
+        anyhow::bail!("at most two commits, or one two-dot range such as A..B");
+    }
+    if opts.against.is_some() && !opts.commits.is_empty() {
+        anyhow::bail!("--against compares the worktree to a ref and takes no commit arguments");
+    }
+    let changes = match opts.commits.len() {
+        0 => {
+            if let Some(spec) = opts.against {
+                against_ref_changes(&repo, &spec)?
+            } else {
+                worktree_changes(&repo)?
+            }
+        }
+        1 => {
+            let spec = &opts.commits[0];
+            if let Some((base, tip)) = parse_commit_range(&repo, spec)? {
+                tree_commit_changes(&repo, &base, &tip)?
+            } else {
+                let oid = resolve_diff_commit(&repo, spec)?;
+                commit_changes(&repo, &oid)?
+            }
+        }
+        2 => {
+            let base = resolve_diff_commit(&repo, &opts.commits[0])?;
+            let tip = resolve_diff_commit(&repo, &opts.commits[1])?;
+            tree_commit_changes(&repo, &base, &tip)?
+        }
+        _ => unreachable!("checked above"),
     };
     Ok(outcome_from_changes(changes))
 }
@@ -179,19 +225,141 @@ struct FileChange {
     old_bytes: SideBytes,
     new_bytes: SideBytes,
     binary: bool,
+    content_changed: bool,
 }
 
-/// All uncommitted changes: HEAD's tree vs the worktree.
-fn worktree_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .context("grit diff needs a working tree")?;
+/// Staged changes: index vs HEAD's tree.
+fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
     let head = resolve_head(&repo.git_dir).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
         None => None,
     };
+    let index = repo.load_index().context("could not load the index")?;
+    let mut entries = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)
+        .context("could not diff the index against HEAD")?;
+    sort_entries(&mut entries);
+    entries
+        .into_iter()
+        .map(|e| {
+            let (old_bytes, old_bin) = old_side_bytes(&repo.odb, &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(&repo.odb, &e, None)?;
+            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
+        })
+        .collect()
+}
+
+/// Worktree (and index) vs the tree at `ref_spec`.
+fn against_ref_changes(
+    repo: &grit_lib::repo::Repository,
+    ref_spec: &str,
+) -> Result<Vec<FileChange>> {
+    let commit = resolve_diff_commit(repo, ref_spec)?;
+    let base_tree = context::commit_tree(repo, &commit)?;
+    worktree_against_tree(repo, Some(&base_tree))
+}
+
+/// Resolve a user revision to a commit OID, peeling annotated tags.
+fn resolve_diff_commit(repo: &grit_lib::repo::Repository, spec: &str) -> Result<ObjectId> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("could not resolve '{spec}'"))?;
+    peel_to_commit_for_merge_base(repo, oid).map_err(map_peel_to_anyhow)
+}
+
+/// Resolve a range endpoint and peel to a commit (tags, etc.).
+fn resolve_diff_range_end(repo: &grit_lib::repo::Repository, spec: &str) -> Result<ObjectId> {
+    let oid = resolve_revision_for_range_end(repo, spec)?;
+    peel_to_commit_for_merge_base(repo, oid).map_err(map_peel_to_anyhow)
+}
+
+fn map_peel_to_anyhow(err: grit_lib::error::Error) -> anyhow::Error {
+    match err {
+        grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
+        other => other.into(),
+    }
+}
+
+/// Diff trees at two commits.
+fn tree_commit_changes(
+    repo: &grit_lib::repo::Repository,
+    base: &ObjectId,
+    tip: &ObjectId,
+) -> Result<Vec<FileChange>> {
+    let mut entries = diff_commits(&repo.odb, base, tip).context("could not diff commits")?;
+    sort_entries(&mut entries);
+    entries
+        .into_iter()
+        .map(|e| {
+            let (old_bytes, old_bin) = old_side_bytes(&repo.odb, &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(&repo.odb, &e, None)?;
+            Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
+        })
+        .collect()
+}
+
+/// Resolve `spec` when it is a revision range (`A..B`, `A...B`, `..B`, etc.).
+fn parse_commit_range(
+    repo: &grit_lib::repo::Repository,
+    spec: &str,
+) -> Result<Option<(ObjectId, ObjectId)>> {
+    if let Some((left, right)) = split_triple_dot_range(spec) {
+        let left_c = if left.is_empty() {
+            resolve_diff_range_end(repo, "HEAD")?
+        } else {
+            resolve_diff_range_end(repo, left)?
+        };
+        let right_c = if right.is_empty() {
+            resolve_diff_range_end(repo, "HEAD")?
+        } else {
+            resolve_diff_range_end(repo, right)?
+        };
+        let base = merge_base_for_diff_two_commits(repo, left_c, right_c).map_err(|e| {
+            anyhow::anyhow!(match e {
+                grit_lib::merge_base::MergeBaseForDiffError::None => {
+                    "no merge base for that revision range".to_owned()
+                }
+                grit_lib::merge_base::MergeBaseForDiffError::Multiple => {
+                    "multiple merge bases for that revision range".to_owned()
+                }
+                grit_lib::merge_base::MergeBaseForDiffError::Other(msg) => msg,
+            })
+        })?;
+        return Ok(Some((base, right_c)));
+    }
+    let Some((left, right)) = split_double_dot_range(spec) else {
+        return Ok(None);
+    };
+    let base = if left.is_empty() {
+        resolve_diff_range_end(repo, "HEAD")?
+    } else {
+        resolve_diff_range_end(repo, left)?
+    };
+    let tip = if right.is_empty() {
+        resolve_diff_range_end(repo, "HEAD")?
+    } else {
+        resolve_diff_range_end(repo, right)?
+    };
+    Ok(Some((base, tip)))
+}
+
+/// All uncommitted changes: HEAD's tree vs the worktree.
+fn worktree_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
+    let head = resolve_head(&repo.git_dir).context("could not resolve HEAD")?;
+    let head_tree = match head.oid() {
+        Some(oid) => Some(context::commit_tree(repo, oid)?),
+        None => None,
+    };
+    worktree_against_tree(repo, head_tree.as_ref())
+}
+
+fn worktree_against_tree(
+    repo: &grit_lib::repo::Repository,
+    base_tree: Option<&ObjectId>,
+) -> Result<Vec<FileChange>> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .context("grit diff needs a working tree")?;
     let index = repo.load_index().context("could not load the index")?;
     let config = repo.config().context("could not load config")?;
 
@@ -199,7 +367,7 @@ fn worktree_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         .context("could not load worktree rules")?;
     let mut entries = grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
         &repo.odb,
-        head_tree.as_ref(),
+        base_tree,
         work_tree,
         &repo.git_dir,
         &index,
@@ -271,6 +439,7 @@ fn file_change(
         old_bytes,
         new_bytes,
         binary,
+        content_changed: e.old_oid != e.new_oid,
     }
 }
 
@@ -417,6 +586,7 @@ fn build_file_diff(fc: FileChange) -> FileDiff {
         old_encoding_lossy: structured.old_encoding_lossy,
         new_encoding_lossy: structured.new_encoding_lossy,
         binary: fc.binary,
+        content_changed: fc.content_changed,
         hunks,
     }
 }
@@ -476,10 +646,9 @@ fn render_file(file: &FileDiff, color: bool) {
     }
 
     if file.binary {
-        if file.hunks.is_empty() {
-            return;
+        if file.content_changed {
+            println!("{}", paint(color, FG_DIM, "Binary file differs"));
         }
-        println!("{}", paint(color, FG_DIM, "Binary file differs"));
         return;
     }
 

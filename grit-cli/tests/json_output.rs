@@ -707,6 +707,148 @@ fn diff_binary_mode_only_shows_modes_not_content_message() -> TestResult {
 }
 
 #[test]
+fn diff_binary_content_shows_differs_message() -> TestResult {
+    let scratch = Scratch::new("diffbincontent")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    std::fs::write(repo.join("bin.dat"), b"old\0bytes")?;
+    gs_ok(&repo, &["commit", "init"]);
+    std::fs::write(repo.join("bin.dat"), b"new\0bytes")?;
+    let out = gs(&repo, ["diff"]);
+    assert_eq!(out.status, Some(0), "{}", out.dump());
+    assert!(
+        out.stdout.contains("Binary file differs"),
+        "binary content change must be noted: {}",
+        out.dump()
+    );
+    Ok(())
+}
+
+#[test]
+fn diff_two_commits_and_range() -> TestResult {
+    let scratch = Scratch::new("difftwocommit")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("a.txt"), "v1\n");
+    gs_ok(&repo, &["commit", "c1"]);
+    write_file(&repo.join("a.txt"), "v2\n");
+    gs_ok(&repo, &["commit", "c2"]);
+
+    for args in [
+        &["diff", "HEAD~1", "HEAD"][..],
+        &["diff", "HEAD~1..HEAD"][..],
+    ] {
+        let v = gs_json(&repo, args);
+        let files = v["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "args {args:?}: {v}");
+        assert_eq!(files[0]["path"], "a.txt");
+    }
+    Ok(())
+}
+
+#[test]
+fn diff_staged_only() -> TestResult {
+    let scratch = Scratch::new("diffstaged")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("staged.txt"), "a\n");
+    write_file(&repo.join("unstaged.txt"), "b\n");
+    gs_ok(&repo, &["commit", "init"]);
+    write_file(&repo.join("staged.txt"), "A\n");
+    write_file(&repo.join("unstaged.txt"), "B\n");
+    gs_ok(&repo, &["add", "staged.txt"]);
+
+    let all = gs_json(&repo, &["diff"]);
+    assert_eq!(all["files"].as_array().unwrap().len(), 2);
+
+    let staged = gs_json(&repo, &["diff", "--staged"]);
+    let sfiles = staged["files"].as_array().unwrap();
+    assert_eq!(sfiles.len(), 1);
+    assert_eq!(sfiles[0]["path"], "staged.txt");
+    Ok(())
+}
+
+#[test]
+fn diff_against_ref_compares_worktree() -> TestResult {
+    let scratch = Scratch::new("diffagainst")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("f.txt"), "base\n");
+    gs_ok(&repo, &["commit", "base"]);
+    write_file(&repo.join("f.txt"), "tip\n");
+    gs_ok(&repo, &["commit", "tip"]);
+    write_file(&repo.join("f.txt"), "worktree\n");
+
+    let v = gs_json(&repo, &["diff", "--against", "HEAD~1"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "f.txt");
+    Ok(())
+}
+
+fn git_annotated_tag(repo: &Path, name: &str) {
+    system_git_ok(
+        repo,
+        &[
+            "-c",
+            "user.email=t@e.com",
+            "-c",
+            "user.name=T",
+            "tag",
+            "-a",
+            name,
+            "-m",
+            name,
+        ],
+    );
+}
+
+#[test]
+fn diff_two_annotated_tags() -> TestResult {
+    let scratch = Scratch::new("difftags")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("a.txt"), "one\n");
+    gs_ok(&repo, &["commit", "c1"]);
+    git_annotated_tag(&repo, "v1");
+    write_file(&repo.join("a.txt"), "two\n");
+    gs_ok(&repo, &["commit", "c2"]);
+    git_annotated_tag(&repo, "v2");
+
+    let v = gs_json(&repo, &["diff", "v1", "v2"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "a.txt");
+
+    let range = gs_json(&repo, &["diff", "v1..v2"]);
+    assert_eq!(range["files"].as_array().unwrap().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn diff_against_annotated_tag() -> TestResult {
+    let scratch = Scratch::new("diffagainsttag")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("f.txt"), "tagged\n");
+    gs_ok(&repo, &["commit", "c1"]);
+    git_annotated_tag(&repo, "v1");
+    write_file(&repo.join("f.txt"), "worktree\n");
+
+    let v = gs_json(&repo, &["diff", "--against", "v1"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], "f.txt");
+    Ok(())
+}
+
+#[test]
 fn diff_human_shows_hunk_range_with_function_context() -> TestResult {
     let scratch = Scratch::new("difffctx")?;
     let repo = scratch.child("repo");

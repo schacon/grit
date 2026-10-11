@@ -1,6 +1,6 @@
 ---
 title: grit diff
-summary: Show uncommitted changes, or the change a commit introduced.
+summary: Show uncommitted, staged, commit, or range changes.
 group: Making changes
 order: 3
 ---
@@ -8,14 +8,17 @@ order: 3
 ## Synopsis
 
 ```text
-grit diff [<commit>]
+grit diff [--staged] [--against <ref>] [<commit> [<commit>]]
+grit diff [--staged] [--against <ref>] [<base>..<tip>]
 ```
 
 ## Description
 
-With no argument, shows every uncommitted change: the working tree, staged or not, compared with the last commit. With a commit, shows the change that commit introduced, compared with its first parent. Commit diffs detect renames by default (Git `-M50`): a move with small edits appears as one `renamed` file instead of a full delete and add.
+With no argument, shows every uncommitted change: the working tree and index together, compared with the last commit (`HEAD`). Pass `--staged` to compare only the index to `HEAD` (staged changes). Pass `--against <ref>` to compare the working tree to another ref’s tree instead of `HEAD` (useful for “what changed since `main`?” while keeping a single commit argument as “show this commit’s patch”).
 
-Each file starts with its path, and each hunk with its position. Lines have two number columns, the line number before and after the change. In a terminal, removed lines are red, added lines are green, and the words that changed within a line are highlighted. When the output isn't a terminal, or `NO_COLOR` is set, lines are marked with `-` and `+` instead. Three lines of unchanged context are shown around each change. Binary files are reported but not shown.
+With one commit, shows the change that commit introduced (its first parent’s tree against its own tree). Commit diffs detect renames by default (Git `-M50`): a move with small edits appears as one `renamed` file instead of a full delete and add. With two commits, or a two-dot range such as `A..B`, shows the tree diff between those commits (same file set as `git diff --raw` for those OIDs). A three-dot range `A...B` diffs from the merge base of `A` and `B` to `B`.
+
+Each file starts with its path, and each hunk with its position. Lines have two number columns, the line number before and after the change. In a terminal, removed lines are red, added lines are green, and the words that changed within a line are highlighted. When the output isn't a terminal, or `NO_COLOR` is set, lines are marked with `-` and `+` instead. Three lines of unchanged context are shown around each change. Binary files print `Binary file differs` when the blob changed (mode-only binary changes show mode lines only).
 
 `<commit>` can be anything that names a commit: a full or short commit id, a branch or tag name, or an expression like `HEAD~2`.
 
@@ -23,7 +26,9 @@ Each file starts with its path, and each hunk with its position. Lines have two 
 
 | Option | Description |
 | --- | --- |
-| `<commit>` | The commit whose change to show. Omit to show uncommitted changes. |
+| `--staged`, `-S` | Staged changes only (index vs `HEAD`). Cannot be combined with commit arguments or `--against`. |
+| `--against <ref>` | Compare the worktree to `<ref>`’s tree instead of `HEAD`. No commit arguments. |
+| `<commit>` | One commit (that commit’s patch), two commits (tree diff), or a range `A..B` / `A...B`. Omit for uncommitted changes. |
 
 ## Examples
 
@@ -38,6 +43,25 @@ main.rs
     1 │ + fn main() {
     2 │ +     println!("hi");
     3 │ + }
+```
+
+What is staged but not yet committed?
+
+```console
+$ grit diff --staged
+```
+
+What changed between two commits?
+
+```console
+$ grit diff HEAD~1 HEAD
+$ grit diff HEAD~1..HEAD
+```
+
+What does my worktree look like compared to `main`?
+
+```console
+$ grit diff --against main
 ```
 
 What did the commit before the last one change?
@@ -106,7 +130,7 @@ Example:
 
 ## Markdown output
 
-Pass [`--markdown`](../global-options/) for one `diff`-fenced unified patch per changed file:
+Pass [`--markdown`](../global-options/) for one `diff`-fenced unified patch per changed file (binary files note `Binary file differs.` when content changed):
 
 ```text
 File: main.rs

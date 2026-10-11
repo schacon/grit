@@ -91,8 +91,10 @@ pub fn print_diff_files(files: &[FileDiff]) {
         };
         println!("## {header}");
         if file.binary {
-            println!();
-            println!("Binary file differs.");
+            if file.content_changed {
+                println!();
+                println!("Binary file differs.");
+            }
             continue;
         }
         println!();

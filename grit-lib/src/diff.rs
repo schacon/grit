@@ -1524,6 +1524,33 @@ pub fn diff_trees_with_renames(
     Ok(entries)
 }
 
+/// Return the tree OID stored in a commit object.
+///
+/// # Errors
+///
+/// Returns object read/parse errors when `commit_oid` is missing or not a commit.
+pub fn tree_oid_of_commit(odb: &Odb, commit_oid: &ObjectId) -> Result<ObjectId> {
+    let obj = odb.read(commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        return Err(Error::InvalidRef(format!(
+            "invalid ref: {commit_oid} is not a commit"
+        )));
+    }
+    let commit = parse_commit(&obj.data)?;
+    Ok(commit.tree)
+}
+
+/// Diff the trees recorded at two commits (`base` is the old side, `tip` the new side).
+///
+/// # Errors
+///
+/// Propagates object read errors and tree diff failures.
+pub fn diff_commits(odb: &Odb, base: &ObjectId, tip: &ObjectId) -> Result<Vec<DiffEntry>> {
+    let base_tree = tree_oid_of_commit(odb, base)?;
+    let tip_tree = tree_oid_of_commit(odb, tip)?;
+    diff_trees(odb, Some(&base_tree), Some(&tip_tree), "")
+}
+
 /// Like `diff_trees` but with `show_trees` flag: when true, emit entries for
 /// tree objects themselves in addition to their recursive contents (the `-t`
 /// flag of `diff-tree`).

@@ -185,10 +185,17 @@ enum Command {
         line_range: Option<String>,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
-    /// the change that commit introduced.
+    /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
     Diff {
-        /// Commit to show the diff of (defaults to uncommitted changes).
-        commit: Option<String>,
+        /// Staged changes only (index vs HEAD).
+        #[arg(short = 'S', long = "staged")]
+        staged: bool,
+        /// Compare the worktree to this ref's tree instead of HEAD (no commit arguments).
+        #[arg(long = "against", value_name = "REF")]
+        against: Option<String>,
+        /// One commit (that commit's patch), two commits (tree diff), or a range `A..B` / `A...B`.
+        #[arg(value_name = "COMMIT")]
+        commits: Vec<String>,
     },
     /// Show information about a commit, tag, or branch (defaults to HEAD).
     Show {
@@ -594,7 +601,18 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             rev,
             line_range,
         } => emit_with_markdown(&commands::blame::run(file, rev, line_range)?, opts),
-        Command::Diff { commit } => emit(&commands::diff::run(commit)?, opts),
+        Command::Diff {
+            staged,
+            against,
+            commits,
+        } => emit(
+            &commands::diff::run(commands::diff::DiffRunOptions {
+                staged,
+                against,
+                commits,
+            })?,
+            opts,
+        ),
         Command::Show { object } => emit(&commands::show::run(object)?, opts),
         Command::Status => emit(&commands::status::run()?, opts),
         Command::Shortlog => emit(&commands::shortlog::run()?, opts),
