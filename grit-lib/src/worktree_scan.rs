@@ -21,18 +21,31 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+/// Minimum blob entries sharing a parent before `read_dir` amortizes separate stats.
+const READ_DIR_AMORTIZE_MIN: usize = 2;
+
 /// Test hook: incremented once per worktree metadata syscall used by directory scans.
 #[cfg(test)]
 pub(crate) static WORKTREE_METADATA_PROBE: AtomicUsize = AtomicUsize::new(0);
 
+/// Test hook: `read_dir` calls during directory-grouped blob scans.
+#[cfg(test)]
+pub(crate) static WORKTREE_READ_DIR_PROBE: AtomicUsize = AtomicUsize::new(0);
+
 #[cfg(test)]
 pub(crate) fn reset_worktree_metadata_probe() {
     WORKTREE_METADATA_PROBE.store(0, Ordering::Relaxed);
+    WORKTREE_READ_DIR_PROBE.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
 pub(crate) fn worktree_metadata_probe_count() -> usize {
     WORKTREE_METADATA_PROBE.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn worktree_read_dir_probe_count() -> usize {
+    WORKTREE_READ_DIR_PROBE.load(Ordering::Relaxed)
 }
 
 /// Minimum tracked blob entries before parallel stat preload is considered.
@@ -243,6 +256,27 @@ where
             continue;
         }
 
+        if blobs.len() < READ_DIR_AMORTIZE_MIN {
+            for blob in blobs {
+                if has_symlink_ancestor(&blob.rel_path) {
+                    visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
+                    continue;
+                }
+                let target = file_abs(&blob.rel_path);
+                let lookup = match symlink_metadata_path(&target) {
+                    Ok(meta) => BlobDiskLookup::Present(meta),
+                    Err(e)
+                        if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) =>
+                    {
+                        BlobDiskLookup::Missing
+                    }
+                    Err(e) => BlobDiskLookup::Io(e),
+                };
+                visit(blob.entry_index, &blob.rel_path, lookup)?;
+            }
+            continue;
+        }
+
         let abs_dir = dir_abs(&dir);
         let (dir_readable, on_disk) = read_directory_map(&abs_dir)?;
         for blob in blobs {
@@ -368,6 +402,8 @@ fn lookup_blob_in_directory(
 }
 
 fn read_directory_map(abs_dir: &Path) -> Result<(bool, HashMap<String, fs::DirEntry>)> {
+    #[cfg(test)]
+    WORKTREE_READ_DIR_PROBE.fetch_add(1, Ordering::Relaxed);
     match fs::read_dir(abs_dir) {
         Ok(rd) => {
             let mut on_disk = HashMap::new();
@@ -485,6 +521,61 @@ mod tests {
         )
         .unwrap();
         assert!(missing);
+    }
+
+    #[test]
+    fn deep_linear_paths_stat_directly_without_read_dir() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        const CHAINS: usize = 120;
+        const DEPTH: usize = 10;
+        let mut index = Index::new();
+        for chain in 0..CHAINS {
+            let mut rel = format!("root{chain:03}");
+            for d in 0..DEPTH {
+                rel.push_str(&format!("/dir{d}"));
+            }
+            rel.push_str("/leaf.txt");
+            let oid = write_blob_file(wt, &rel, b"payload\n");
+            index.add_or_replace(
+                entry_from_stat(&wt.join(&rel), rel.as_bytes(), oid, 0o100644).unwrap(),
+            );
+        }
+        let grouped = group_blob_entries_by_dir(&index);
+        reset_worktree_metadata_probe();
+        let dir_abs = |dir: &str| {
+            if dir.is_empty() {
+                wt.to_path_buf()
+            } else {
+                wt.join(dir)
+            }
+        };
+        let file_abs = |rel: &str| wt.join(rel);
+        let mut seen = 0;
+        for_each_blob_by_directory(
+            &grouped,
+            dir_abs,
+            file_abs,
+            |_| false,
+            |_, _, lookup| {
+                assert!(matches!(lookup, BlobDiskLookup::Present(_)));
+                seen += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, CHAINS);
+        assert_eq!(
+            worktree_read_dir_probe_count(),
+            0,
+            "single-blob parent dirs must not read_dir"
+        );
+        assert!(
+            worktree_metadata_probe_count() <= CHAINS + 5,
+            "expected ~one stat per file, got {}",
+            worktree_metadata_probe_count()
+        );
     }
 
     #[test]

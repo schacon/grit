@@ -381,3 +381,70 @@ fn status_on_git_created_sparse_index_after_touch() {
         "system git diff-files must be clean after grit refreshed stats"
     );
 }
+
+#[test]
+fn status_deep_linear_tree_second_run_stays_fast_with_autocrlf() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    git(repo_root, &["config", "core.autocrlf", "true"]);
+
+    const CHAINS: usize = 150;
+    const DEPTH: usize = 10;
+    for chain in 0..CHAINS {
+        let mut rel = format!("chain{chain:03}");
+        for d in 0..DEPTH {
+            rel.push_str(&format!("/dir{d}"));
+        }
+        rel.push_str("/file.txt");
+        let abs = repo_root.join(&rel);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).expect("mkdirs");
+        }
+        fs::write(&abs, format!("line {chain}\n")).expect("write");
+    }
+    git(repo_root, &["add", "-A"]);
+    git(repo_root, &["commit", "-qm", "big"]);
+
+    let grit_repo =
+        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let opts = StatusOptions::default();
+
+    let first_start = Instant::now();
+    let first = status(&grit_repo, &opts, &mut NullProgress).expect("first status");
+    let first_elapsed = first_start.elapsed();
+    assert!(first.unstaged.is_empty());
+    assert!(first.untracked.is_empty());
+
+    let index_mtime_after_first = fs::metadata(grit_repo.index_path())
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+
+    let second_start = Instant::now();
+    let second = status(&grit_repo, &opts, &mut NullProgress).expect("second status");
+    let second_elapsed = second_start.elapsed();
+    assert!(second.unstaged.is_empty());
+
+    let index_mtime_after_second = fs::metadata(grit_repo.index_path())
+        .expect("index metadata")
+        .modified()
+        .expect("index mtime");
+    assert_eq!(
+        index_mtime_after_second, index_mtime_after_first,
+        "clean second status must not rewrite the index"
+    );
+
+    assert!(
+        second_elapsed <= first_elapsed + Duration::from_millis(5),
+        "second status should not regress (first {first_elapsed:?}, second {second_elapsed:?})"
+    );
+    if first_elapsed > Duration::from_millis(40) {
+        assert!(
+            second_elapsed * 2 + Duration::from_millis(5) < first_elapsed,
+            "warm deep-tree status should be faster than the first pass (first {first_elapsed:?}, second {second_elapsed:?})"
+        );
+    }
+}

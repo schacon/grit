@@ -995,6 +995,35 @@ fn read_directory_recursive(
         do_invalidate_gitignore(ucd);
     }
 
+    if !rel.is_empty() && has_tracked_under(tracked, gitlinks, rel) {
+        if let Some(child) =
+            crate::tracked_path_tree::unique_indexed_subdirectory(tracked, gitlinks, rel)
+        {
+            let child_rel = relative_path(rel, &child);
+            if !tracked.contains(&child_rel) && !gitlinks.contains(&child_rel) {
+                let child_abs = abs.join(&child);
+                if child_abs.is_dir() {
+                    let child_uc = lookup_or_create_child(ucd, &child, uc);
+                    return read_directory_recursive(
+                        repo,
+                        index,
+                        work_tree,
+                        tracked,
+                        gitlinks,
+                        matcher,
+                        ignored_mode,
+                        show_all,
+                        check_only,
+                        child_uc,
+                        &child_rel,
+                        &child_abs,
+                        uc,
+                    );
+                }
+            }
+        }
+    }
+
     let use_disk = !valid_cached_dir(ucd, abs, check_only);
     let mut src = if use_disk {
         invalidate_directory(uc, ucd);

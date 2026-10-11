@@ -9,9 +9,9 @@ use grit_lib::progress::NullProgress;
 use grit_lib::state::{resolve_head, HeadState};
 use serde::Serialize;
 
-use crate::commands::add;
 use crate::context::{self, subject_line};
 use crate::output::{HumanRender, MarkdownRender};
+use grit_lib::porcelain::add::stage_for_commit;
 
 /// Result of `grit commit`.
 #[derive(Serialize)]
@@ -54,7 +54,7 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
     }
 
-    add::stage(&repo, &[])?;
+    stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let message = match message {
         Some(m) if !m.trim().is_empty() => Some(m),

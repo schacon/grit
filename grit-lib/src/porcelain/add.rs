@@ -21,6 +21,7 @@ use crate::objects::{parse_commit, parse_tree, ObjectId};
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
 use crate::pathspec::{has_glob_chars, matches_pathspec_list, pathspec_is_exclude};
+use crate::porcelain::stage_tracked::stage_tracked_modifications_in_index;
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedScan,
@@ -78,6 +79,27 @@ impl StageOutcome {
     }
 }
 
+/// Stage every tracked and untracked change for [`crate::porcelain::commit`].
+///
+/// Uses the stat-trust tracked scan from [`stage_tracked_modifications_in_index`] instead of
+/// the diff-for-staging pipeline, then stages untracked paths the same way as [`stage`] with
+/// [`StageMode::All`].
+///
+/// # Errors
+///
+/// Same as [`stage`].
+pub fn stage_for_commit(
+    repo: &Repository,
+    progress: &mut dyn ProgressSink,
+) -> Result<StageOutcome> {
+    let opts = StageOptions {
+        pathspecs: Vec::new(),
+        pathspec_sources: Vec::new(),
+        mode: StageMode::All,
+    };
+    stage_with_tracked_scan(repo, &opts, progress)
+}
+
 /// Stage paths matching `opts` into the index.
 ///
 /// Loads the index, compares it to the work tree once, hashes only changed or new
@@ -92,6 +114,34 @@ pub fn stage(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+) -> Result<StageOutcome> {
+    if opts.pathspecs.is_empty() && opts.mode == StageMode::All {
+        return stage_with_tracked_scan(repo, opts, progress);
+    }
+    stage_via_worktree_diff(repo, opts, progress)
+}
+
+fn stage_via_worktree_diff(
+    repo: &Repository,
+    opts: &StageOptions,
+    progress: &mut dyn ProgressSink,
+) -> Result<StageOutcome> {
+    stage_inner(repo, opts, progress, false)
+}
+
+fn stage_with_tracked_scan(
+    repo: &Repository,
+    opts: &StageOptions,
+    progress: &mut dyn ProgressSink,
+) -> Result<StageOutcome> {
+    stage_inner(repo, opts, progress, true)
+}
+
+fn stage_inner(
+    repo: &Repository,
+    opts: &StageOptions,
+    progress: &mut dyn ProgressSink,
+    tracked_scan: bool,
 ) -> Result<StageOutcome> {
     let work_tree = repo
         .work_tree
@@ -123,7 +173,14 @@ pub fn stage(
         .unwrap_or(false);
     let mut icase_map = Stage0IcasePathMap::from_index(&index, ignorecase);
 
+    let use_tracked_scan = tracked_scan && !index.entries.is_empty() && !ignorecase;
+    let mut tracked_scan_summary = None;
     let (unstaged, staging_stats) = if index.entries.is_empty() {
+        (Vec::new(), std::collections::BTreeMap::new())
+    } else if use_tracked_scan {
+        let summary =
+            stage_tracked_modifications_in_index(repo, work_tree, &index_path, &mut index)?;
+        tracked_scan_summary = Some(summary);
         (Vec::new(), std::collections::BTreeMap::new())
     } else {
         let diff_opts = DiffIndexToWorktreeOptions {
@@ -205,25 +262,30 @@ pub fn stage(
     let mut outcome = StageOutcome::default();
     let has_unmerged = index.has_unmerged_entries();
 
-    let worktree_updates = collect_tracked_stage_plans(&unstaged, &matches);
-    for (path, plan) in worktree_updates {
-        if plan.remove {
-            if index.remove(path.as_bytes()) {
-                outcome.removed += 1;
+    if let Some(summary) = tracked_scan_summary {
+        outcome.modified = summary.modified.len();
+        outcome.removed = summary.removed.len();
+    } else {
+        let worktree_updates = collect_tracked_stage_plans(&unstaged, &matches);
+        for (path, plan) in worktree_updates {
+            if plan.remove {
+                if index.remove(path.as_bytes()) {
+                    outcome.removed += 1;
+                }
+                continue;
             }
-            continue;
+            icase_map.remove_alias_of(&mut index, path.as_bytes());
+            apply_tracked_stage_plan(
+                repo,
+                work_tree,
+                &path,
+                &plan,
+                staging_stats.get(&path),
+                &mut index,
+                has_unmerged,
+            )?;
+            outcome.modified += 1;
         }
-        icase_map.remove_alias_of(&mut index, path.as_bytes());
-        apply_tracked_stage_plan(
-            repo,
-            work_tree,
-            &path,
-            &plan,
-            staging_stats.get(&path),
-            &mut index,
-            has_unmerged,
-        )?;
-        outcome.modified += 1;
     }
 
     if ignorecase {

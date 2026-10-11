@@ -252,6 +252,7 @@ pub mod submodule_config_cache;
 pub mod submodule_gitdir;
 pub mod terminal;
 pub mod textconv_cache;
+mod tracked_path_tree;
 pub mod transfer;
 pub mod transport;
 pub mod transport_path;
