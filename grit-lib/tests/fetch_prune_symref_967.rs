@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use grit_lib::objects::ObjectId;
-use grit_lib::refs::store::RefUpdate;
+use grit_lib::refs::store::{Expected, RefUpdate};
 use grit_lib::refs::{
     commit_ref_store_batch, pack_remote_tracking_refs_for_clone, resolve_ref, write_symbolic_ref,
 };
@@ -78,6 +78,63 @@ fn batch_delete_origin_head_keeps_packed_main() {
     assert_eq!(
         resolve_ref(&local_git, "refs/remotes/origin/main").unwrap(),
         main
+    );
+}
+
+fn setup_slash_remote_layout(tmp: &Path) -> (PathBuf, PathBuf) {
+    let remote = tmp.join("remote");
+    let local = tmp.join("local");
+    fs::create_dir_all(&remote).unwrap();
+    fs::create_dir_all(&local).unwrap();
+    git(&remote, &["init", "-q", "-b", "main", "."]);
+    fs::write(remote.join("a"), "a\n").unwrap();
+    git(&remote, &["add", "a"]);
+    git(&remote, &["commit", "-q", "-m", "a"]);
+    git(&local, &["init", "-q", "-b", "main", "."]);
+    let remote_git = remote.join(".git");
+    let local_git = local.join(".git");
+    let main: ObjectId = git(&remote, &["rev-parse", "refs/heads/main"])
+        .trim()
+        .parse()
+        .unwrap();
+    write_symbolic_ref(
+        &local_git,
+        "refs/remotes/team/origin/HEAD",
+        "refs/remotes/team/origin/main",
+    )
+    .unwrap();
+    write_ref_direct(&local_git, "refs/remotes/team/origin/main", &main);
+    pack_remote_tracking_refs_for_clone(&local_git, "team/origin").unwrap();
+    (local_git, remote_git)
+}
+
+#[test]
+fn fetch_local_prune_slash_remote_name_no_phantom_head_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (local_git, remote_git) = setup_slash_remote_layout(tmp.path());
+
+    let opts = FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/team/origin/*".to_owned()],
+        remote_name: Some("team/origin".to_owned()),
+        tags: TagMode::Following,
+        prune: true,
+        ..Default::default()
+    };
+    for pass in 1..=2 {
+        let outcome = fetch_local(&local_git, &remote_git, &opts).expect("fetch");
+        let noisy: Vec<_> = outcome
+            .updates
+            .iter()
+            .filter(|u| u.mode != UpdateMode::UpToDate)
+            .collect();
+        assert!(
+            noisy.is_empty(),
+            "pass {pass}: prune fetch must not report phantom updates for team/origin: {noisy:?}"
+        );
+    }
+    assert!(
+        local_git.join("refs/remotes/team/origin/HEAD").is_file(),
+        "remote HEAD symref must remain"
     );
 }
 

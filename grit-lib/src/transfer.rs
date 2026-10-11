@@ -2056,16 +2056,11 @@ pub(crate) fn classify_update(
     UpdateMode::NonFastForwardRejected
 }
 
-/// Remote default-branch symref (`refs/remotes/<remote>/HEAD`) is not a
-/// remote-tracking branch and must not be pruned by `fetch --prune`.
-fn is_remote_default_head_symref(refname: &str) -> bool {
-    let Some(rest) = refname.strip_prefix("refs/remotes/") else {
-        return false;
-    };
-    let Some(remote) = rest.strip_suffix("/HEAD") else {
-        return false;
-    };
-    !remote.is_empty() && !remote.contains('/')
+/// Default-branch symref for a wildcard refspec destination (`<prefix>HEAD`).
+///
+/// Remote names may contain `/` (e.g. `team/origin` → `refs/remotes/team/origin/HEAD`).
+fn is_default_head_under_tracking_prefix(refname: &str, tracking_prefix: &str) -> bool {
+    refname == format!("{tracking_prefix}HEAD")
 }
 
 /// Delete local tracking refs whose remote counterpart no longer exists.
@@ -2103,14 +2098,18 @@ pub(crate) fn prune_tracking_refs(
                 if !name.starts_with(prefix) {
                     continue;
                 }
-                if is_remote_default_head_symref(&name) {
+                if is_default_head_under_tracking_prefix(&name, prefix) {
                     continue;
                 }
                 if !live.contains(&name) {
                     pruned.entry(name).or_insert(oid);
                 }
             }
-        } else if !live.contains(dst) && !is_remote_default_head_symref(dst) {
+        } else if !live.contains(dst) {
+            let exact_prefix = dst.strip_suffix("HEAD").filter(|p| p.ends_with('/'));
+            if exact_prefix.is_some_and(|p| is_default_head_under_tracking_prefix(dst, p)) {
+                continue;
+            }
             // Exact refspec (e.g. `refs/heads/a2:refs/remotes/origin/a2`): when
             // the source ref is gone from the remote, `dst` is absent from `live`,
             // so prune the tracking ref if it still exists locally. This is the
