@@ -367,6 +367,40 @@ pub fn build_packed_exists_local_fixture(object_count: usize) -> (TempDir, Odb, 
     (root, odb, oids)
 }
 
+/// Fifty-thousand packed blobs across several delta and whole-object packs (fast setup).
+pub fn build_parallel_packed_blob_fixture(count: usize) -> (TempDir, Odb, Vec<ObjectId>) {
+    let root = tempfile::tempdir().expect("parallel read tempdir");
+    let objects = root.path().join("objects");
+    std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
+    let odb = Odb::new(&objects);
+    let mut oids = Vec::with_capacity(count);
+    for i in 0..count {
+        let body = format!("parallel-bench-blob-{i:06}\n");
+        oids.push(
+            odb.write(ObjectKind::Blob, body.as_bytes())
+                .expect("write loose blob"),
+        );
+    }
+    const CHUNK: usize = 12_500;
+    for (chunk_idx, chunk) in oids.chunks(CHUNK).enumerate() {
+        let pack = build_pack(
+            &odb,
+            chunk,
+            &[],
+            &PackBuildOptions {
+                delta: chunk_idx % 2 == 1,
+                max_depth: 64,
+                use_ofs_delta: true,
+                ..PackBuildOptions::default()
+            },
+        )
+        .expect("build bench pack");
+        install_indexed_pack(&objects, &format!("bench-{chunk_idx}"), &pack);
+    }
+    odb.invalidate_packs();
+    (root, odb, oids)
+}
+
 fn build_large_pack_index(objects_dir: &Path, object_count: usize) -> (PackIndex, ObjectId) {
     let tmp = tempfile::tempdir().expect("large pack tempdir");
     let repo = init_repository(
