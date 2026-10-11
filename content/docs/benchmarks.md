@@ -62,14 +62,14 @@ The rev-list gap is dominated by history/object enumeration in `grit-lib`, not b
 
 ## grit-lib: parallel packed ODB reads
 
-Criterion group **`odb_read_parallel/packed_blobs`** (`cargo bench -p grit-lib --bench odb_read_parallel`) measures throughput when worker threads share one [`Odb`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html) and hold [`Odb::with_pack_read_context`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html#method.with_pack_read_context) for the worker lifetime. Each iteration reads a partition of **50 000** whole-object pack blobs (loose copies are removed after the fixture is packed). Baseline **`odb-read-parallel.json`** records factory VM medians on **4 logical CPUs**.
+Criterion group **`odb_read_parallel/packed_blobs`** (`cargo bench -p grit-lib --bench odb_read_parallel`) measures throughput when worker threads share one [`Odb`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html) and hold [`Odb::with_pack_read_context`](https://docs.rs/grit-lib/latest/grit_lib/odb/struct.Odb.html#method.with_pack_read_context) for the worker lifetime. Each iteration reads a partition of **50 000** whole-object pack blobs (**3072-byte** payload; loose copies are removed after packing so hits are pack-only). Baseline **`odb-read-parallel.json`** records Criterion central estimates on the factory VM (**4 logical CPUs**, Rust **1.85** stable).
 
 | Threads | Median time (50k reads) | Throughput |
 | ------- | ----------------------: | ---------- |
-| 1 | ~68 ms | ~730 Kelem/s |
-| 4 | ~32 ms | ~1.56 Melem/s |
+| 1 | ~149 ms | ~336 Kelem/s |
+| 4 | ~51 ms | ~983 Kelem/s |
 
-**Speedup (4 vs 1 thread): ~2.1×** on the factory VM (2026-10-11). This exercises the explicit batch read-context API and shared [`PackStore`](https://docs.rs/grit-lib/latest/grit_lib/pack_store/struct.PackStore.html) catalog, not ad-hoc per-read context installation.
+**Speedup (4 vs 1 thread): ~2.9×** on the factory VM (2026-10-11). This exercises the explicit batch read-context API and shared [`PackStore`](https://docs.rs/grit-lib/latest/grit_lib/pack_store/struct.PackStore.html) catalog, not ad-hoc per-read context installation.
 
 ```bash
 cargo bench -p grit-lib --bench odb_read_parallel -- packed_blobs

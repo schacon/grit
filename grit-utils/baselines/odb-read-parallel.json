@@ -1,17 +1,21 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-10-11T16:45:00Z",
+  "timestamp": "2026-10-11T17:15:00Z",
   "machine": {
-    "logical_cores": 4
+    "logical_cores": 4,
+    "cpu_model": "Intel Xeon (factory VM)",
+    "rust_version": "1.99.0"
   },
+  "git_commit": "factory/concurrent-odb-1112",
   "scenario": "odb_read_parallel/packed_blobs",
   "object_count": 50000,
-  "note": "Persistent worker threads hold Odb::with_pack_read_context for the worker lifetime; each iteration reads a partition of 50k whole-object pack blobs (loose copies removed after pack install). Thread-local pack cache skips re-warm when store cache_epoch is unchanged.",
+  "blob_payload_bytes": 3072,
+  "note": "Persistent workers hold Odb::with_pack_read_context for the worker lifetime. Fixture builds 50k whole-object pack blobs (3072-byte payload), removes loose copies after packing, four pack files. Criterion sample_size=20, warm_up=5s, measurement=10s.",
   "results_ms": {
-    "1": 68.459,
-    "2": 53.29,
-    "4": 32.1,
-    "8": 38.756
+    "1": 148.82,
+    "2": 87.802,
+    "4": 50.875,
+    "8": 52.7
   },
-  "speedup_1_to_4": 2.13
+  "speedup_1_to_4": 2.93
 }

@@ -332,10 +332,14 @@ pub fn build_parallel_packed_blob_fixture(count: usize) -> (TempDir, Odb, Vec<Ob
     std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
     let odb = Odb::new(&objects);
     let mut oids = Vec::with_capacity(count);
+    /// Payload size chosen so pack decompress dominates per-read overhead on 4-vCPU VMs.
+    const BLOB_PAYLOAD: usize = 3072;
     for i in 0..count {
-        let body = format!("parallel-bench-blob-{i:06}\n");
+        let mut body = vec![0u8; BLOB_PAYLOAD];
+        body[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        body[8..].fill(b'x');
         oids.push(
-            odb.write(ObjectKind::Blob, body.as_bytes())
+            odb.write(ObjectKind::Blob, &body)
                 .expect("write loose blob"),
         );
     }

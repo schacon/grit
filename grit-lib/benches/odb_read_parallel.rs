@@ -106,6 +106,9 @@ fn bench_parallel_reads(c: &mut Criterion) {
     let odb = fx.odb.clone();
     let mut group = c.benchmark_group("odb_read_parallel/packed_blobs");
     group.throughput(Throughput::Elements(fx.oids.len() as u64));
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(10));
     for threads in [1_usize, 2, 4, 8] {
         let thread_count = threads;
         let chunk = fx.oids.len().div_ceil(thread_count);
