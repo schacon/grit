@@ -1,11 +1,12 @@
 //! `remove_paths` / `move_path` compatibility with the system `git` binary.
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
-use grit_lib::porcelain::paths::{move_path, remove_paths, RemoveOptions};
+use grit_lib::porcelain::paths::{RemoveOptions, move_path, remove_paths};
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags};
+use grit_lib::write_tree::{WriteTreeFlags, cache_tree_fully_valid, write_tree_update_index};
 use grit_test_support::git;
 
 fn git_porcelain(repo: &std::path::Path) -> String {
@@ -63,6 +64,14 @@ fn commit_all(repo: &std::path::Path, msg: &str) {
 
 fn grit_repo(dir: &std::path::Path) -> Repository {
     Repository::discover(Some(dir)).expect("open repo")
+}
+
+fn worktree_has_exact_dir_entry(parent: &Path, name: &str) -> bool {
+    fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy() == name)
 }
 
 fn hold_index_lock(repo: &Repository) -> std::fs::File {
@@ -628,7 +637,43 @@ fn mv_case_only_does_not_clobber_predictable_temp_pattern_file() {
         index.get(decoy.as_bytes(), 0).is_some(),
         "index entry for decoy must remain"
     );
-    assert!(repo_dir.join("readme.md").is_file());
+    assert!(worktree_has_exact_dir_entry(repo_dir, "readme.md"));
+}
+
+#[test]
+fn mv_case_only_directory_with_ignorecase() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path();
+    git(repo_dir, &["init", "-q", "-b", "main"]);
+    git(repo_dir, &["config", "core.ignorecase", "true"]);
+    fs::create_dir(repo_dir.join("Docs")).unwrap();
+    fs::write(repo_dir.join("Docs/a.txt"), "in dir\n").unwrap();
+    commit_all(repo_dir, "init");
+
+    let repo = grit_repo(repo_dir);
+    move_path(&repo, "Docs", "docs", false).expect("case-only directory mv");
+
+    assert!(worktree_has_exact_dir_entry(repo_dir, "docs"));
+    assert!(!worktree_has_exact_dir_entry(repo_dir, "Docs"));
+    assert!(repo_dir.join("docs/a.txt").is_file());
+
+    let index = repo.load_index().expect("index");
+    let entry = index
+        .get(b"docs/a.txt", 0)
+        .expect("index tracks renamed tree path");
+    assert_eq!(String::from_utf8_lossy(&entry.path), "docs/a.txt");
+
+    if Command::new("git").output().is_ok() {
+        let ls = Command::new("git")
+            .current_dir(repo_dir)
+            .args(["ls-files"])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git ls-files");
+        assert!(ls.status.success());
+        assert_eq!(String::from_utf8_lossy(&ls.stdout).trim(), "docs/a.txt");
+    }
 }
 
 #[test]
@@ -643,8 +688,8 @@ fn mv_case_only_rename_with_ignorecase() {
     let repo = grit_repo(repo_dir);
     move_path(&repo, "README.md", "readme.md", false).expect("case-only mv");
 
-    assert!(repo_dir.join("readme.md").is_file());
-    assert!(!repo_dir.join("README.md").exists());
+    assert!(worktree_has_exact_dir_entry(repo_dir, "readme.md"));
+    assert!(!worktree_has_exact_dir_entry(repo_dir, "README.md"));
 
     let index = repo.load_index().expect("index");
     let entry = index

@@ -5,16 +5,16 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions, DiffStatus,
+    DiffIndexToWorktreeOptions, DiffStatus, diff_index_to_tree, diff_index_to_worktree_with_options,
 };
 use crate::error::{Error, Result};
-use crate::index::{index_file_mtime, Index, IndexEntry, MODE_TREE};
-use crate::objects::{parse_commit, ObjectId};
+use crate::index::{Index, IndexEntry, MODE_TREE, index_file_mtime};
+use crate::objects::{ObjectId, parse_commit};
 use crate::path_icase::paths_equal;
 use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
 use crate::porcelain::checkout::remove_empty_parent_dirs;
 use crate::repo::Repository;
-use crate::state::{resolve_head, HeadState};
+use crate::state::{HeadState, resolve_head};
 
 /// Options for [`remove_paths`].
 #[derive(Debug, Clone, Default)]
@@ -666,9 +666,7 @@ fn index_has_unrelated_entries(
     if paths.is_empty() && index.get(dst.as_bytes(), 0).is_some() {
         paths.push(dst.to_string());
     }
-    paths
-        .iter()
-        .any(|p| !rename_from.contains(p.as_str()))
+    paths.iter().any(|p| !rename_from.contains(p.as_str()))
 }
 
 fn index_path_at_destination(path: &str, dst: &str) -> bool {
@@ -743,38 +741,41 @@ fn rename_worktree_entry(from: &Path, to: &Path, ignorecase: bool) -> std::io::R
 }
 
 fn case_only_worktree_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CASE_MV_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
     let parent = to.parent().unwrap_or_else(|| Path::new("."));
-    for _ in 0..32 {
-        let temp_file = tempfile::Builder::new()
-            .prefix(".grit-mv-")
-            .rand_bytes(12)
-            .tempfile_in(parent)?;
-        let temp_path = temp_file.into_temp_path();
+    let salt = CASE_MV_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    for attempt in 0..64 {
+        let temp_path = parent.join(format!(
+            ".grit-mv-{}-{}-{}",
+            std::process::id(),
+            salt,
+            attempt
+        ));
         if temp_path.exists() {
-            match fs::rename(from, &temp_path) {
-                Ok(()) => match fs::rename(&temp_path, to) {
-                    Ok(()) => {
-                        std::mem::forget(temp_path);
-                        return Ok(());
+            continue;
+        }
+        match fs::rename(from, &temp_path) {
+            Ok(()) => match fs::rename(&temp_path, to) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if fs::rename(&temp_path, from).is_err() {
+                        return Err(std::io::Error::new(
+                            e.kind(),
+                            format!(
+                                "renaming back to '{}' after failed final case-only step: \
+                                 source may be at '{}'",
+                                from.display(),
+                                temp_path.display()
+                            ),
+                        ));
                     }
-                    Err(e) => {
-                        if fs::rename(&temp_path, from).is_err() {
-                            return Err(std::io::Error::new(
-                                e.kind(),
-                                format!(
-                                    "renaming back to '{}' after failed final case-only step: \
-                                     source may be at '{}'",
-                                    from.display(),
-                                    temp_path.display()
-                                ),
-                            ));
-                        }
-                        return Err(e);
-                    }
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
-            }
+                    return Err(e);
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
     }
     Err(std::io::Error::other(
@@ -964,11 +965,11 @@ mod destination_exists_tests {
 mod index_lock_transaction_tests {
     use std::fs;
 
-    use crate::porcelain::add::{stage, StageOptions};
+    use crate::porcelain::add::{StageOptions, stage};
     use crate::progress::NullProgress;
-    use crate::repo::{init_repository, set_test_inject_index_write_fail, Repository};
+    use crate::repo::{Repository, init_repository, set_test_inject_index_write_fail};
 
-    use super::{move_path, remove_paths, RemoveOptions};
+    use super::{RemoveOptions, move_path, remove_paths};
 
     fn init_repo(root: &std::path::Path) -> Repository {
         init_repository(root, false, "main", None, Default::default()).expect("init")
