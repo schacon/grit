@@ -16,14 +16,17 @@ use crate::parallel_env::{
     grit_supports_threads_flag, grit_thread_argv, parallel_env_prefix, ThreadMode,
 };
 use crate::parallel_fixture::{
-    ensure_bare_remote, ensure_rename_repo, ensure_repack_pack, ensure_switch_wide_repo,
-    file_url, index_pack_staging_dir, parallel_clone_dir, prepare_status_clean_repo,
+    ensure_bare_remote, ensure_rename_repo, ensure_repack_pack, ensure_switch_wide_repo, file_url,
+    index_pack_staging_dir, parallel_clone_dir, prepare_status_clean_repo,
     prepare_status_dirty_repo, ParallelProfile,
 };
 use crate::scenarios::{Driver, RunConfig, Scenario};
 use crate::schema::{BenchReport, ScenarioResult, ToolVersions, SCHEMA_VERSION};
 use crate::shell::{shell_command, shell_quote};
 use crate::stats::{median_ratio, timing_from_hyperfine};
+
+const PARALLEL_MIN_WARMUP: u32 = 7;
+const PARALLEL_MIN_RUNS: u32 = 10;
 
 #[derive(Debug, Clone)]
 struct ParallelScenario {
@@ -81,13 +84,20 @@ fn run_parallel_scenario(
     };
 
     let mut grit_argv = scenario.base.grit_argv.clone();
-    if !scenario.grit_extra_argv.is_empty() && !scenario.base.grit_via_shell {
-        grit_argv = scenario
-            .grit_extra_argv
-            .iter()
-            .chain(grit_argv.iter())
-            .cloned()
-            .collect();
+    if !scenario.grit_extra_argv.is_empty() {
+        if scenario.base.grit_via_shell {
+            if grit_argv.len() >= 2 && grit_argv[0] == "-c" {
+                grit_argv[1] =
+                    inject_grit_thread_flags(&grit_argv[1], grit, &scenario.grit_extra_argv);
+            }
+        } else {
+            grit_argv = scenario
+                .grit_extra_argv
+                .iter()
+                .chain(grit_argv.iter())
+                .cloned()
+                .collect();
+        }
     }
 
     let git_stats = bench_with_env(
@@ -155,6 +165,11 @@ pub fn run_parallel_suite(
     profile: ParallelProfile,
     timestamp: OffsetDateTime,
 ) -> Result<BenchReport> {
+    let cfg = &RunConfig {
+        warmup: cfg.warmup.max(PARALLEL_MIN_WARMUP),
+        min_runs: cfg.min_runs.max(PARALLEL_MIN_RUNS),
+        ..cfg.clone()
+    };
     let grit_threads_flag = grit_supports_threads_flag(grit);
     let fixture_label = format!("synthetic-{}", profile.suffix());
     let mut scenarios = Vec::new();
@@ -164,6 +179,7 @@ pub fn run_parallel_suite(
         let grit_extra = grit_thread_argv(mode, grit_threads_flag);
 
         let dirty = prepare_status_dirty_repo(git, profile)?;
+        let status_prepare = status_warm_prepare(git, grit, &grit_extra);
         scenarios.push(run_parallel_scenario(
             hyperfine,
             git,
@@ -188,7 +204,7 @@ pub fn run_parallel_suite(
                 grit_extra_argv: grit_extra.clone(),
             },
             &dirty,
-            None,
+            Some(&status_prepare),
         )?);
 
         let clean = prepare_status_clean_repo(git, profile)?;
@@ -216,7 +232,7 @@ pub fn run_parallel_suite(
                 grit_extra_argv: grit_extra.clone(),
             },
             &clean,
-            None,
+            Some(&status_prepare),
         )?);
     }
 
@@ -238,6 +254,26 @@ pub fn run_parallel_suite(
                 clone_dir.display().to_string(),
             ],
         );
+        let warm_git_checkout = shell_command(
+            git,
+            &[
+                "-C",
+                &clone_dir.display().to_string(),
+                "checkout",
+                "-f",
+                "HEAD",
+            ],
+        );
+        let warm_grit_checkout = shell_command(
+            bench_exe,
+            &[
+                "drive".into(),
+                "checkout-branch".into(),
+                clone_dir.display().to_string(),
+                "HEAD".into(),
+            ],
+        );
+        let prepare_checkout = format!("{prepare} && {warm_git_checkout} && {warm_grit_checkout}");
 
         scenarios.push(run_parallel_scenario(
             hyperfine,
@@ -282,7 +318,7 @@ pub fn run_parallel_suite(
                 grit_extra_argv: Vec::new(),
             },
             clone_dir.parent().unwrap_or(Path::new(".")),
-            Some(&prepare),
+            Some(&prepare_checkout),
         )?);
 
         let prepare_clone = shell_command(
@@ -334,7 +370,7 @@ pub fn run_parallel_suite(
     for mode in [ThreadMode::One, ThreadMode::Auto] {
         let env = parallel_env_prefix(mode);
         let grit_extra = grit_thread_argv(mode, grit_threads_flag);
-        let grit_cmd = chain_switch(grit, &meta.branch_b, &meta.branch_a);
+        let grit_cmd = chain_switch(grit, &meta.branch_b, &meta.branch_a, &grit_extra);
         let git_cmd = chain_switch_git(git, &meta.branch_b, &meta.branch_a);
         let prepare = shell_command(
             git,
@@ -448,6 +484,7 @@ pub fn run_parallel_suite(
             ],
         );
         let git_cmd = "git pack-objects --all --stdout > /dev/null".to_string();
+        let pack_prepare = format!("{git_cmd} && {grit_cmd}");
         scenarios.push(run_parallel_scenario(
             hyperfine,
             git,
@@ -459,8 +496,8 @@ pub fn run_parallel_suite(
                     group: "parallel".into(),
                     fixture: fixture_label.clone(),
                     description: "pack-objects --all --stdout".into(),
-                    grit_argv: sh_script(grit_cmd),
-                    git_argv: sh_script(git_cmd),
+                    grit_argv: sh_script(grit_cmd.clone()),
+                    git_argv: sh_script(git_cmd.clone()),
                     driver: Driver::Lib,
                     prepare_kind: None,
                     grit_via_shell: true,
@@ -472,7 +509,7 @@ pub fn run_parallel_suite(
                 grit_extra_argv: Vec::new(),
             },
             &pack_repo,
-            None,
+            Some(&pack_prepare),
         )?);
     }
 
@@ -492,10 +529,11 @@ pub fn run_parallel_suite(
             ],
         );
         let git_cmd = format!(
-            "git diff -M {} {} > /dev/null",
+            "git diff --no-ext-diff --no-textconv -M {} {} > /dev/null",
             shell_quote(&old_rev),
             shell_quote(&new_rev)
         );
+        let diff_prepare = format!("{git_cmd} && {grit_cmd} && {git_cmd} && {grit_cmd}");
         scenarios.push(run_parallel_scenario(
             hyperfine,
             git,
@@ -507,8 +545,8 @@ pub fn run_parallel_suite(
                     group: "parallel".into(),
                     fixture: fixture_label.clone(),
                     description: "rename-heavy tree diff (-M, ~2000 renames)".into(),
-                    grit_argv: sh_script(grit_cmd),
-                    git_argv: sh_script(git_cmd),
+                    grit_argv: sh_script(grit_cmd.clone()),
+                    git_argv: sh_script(git_cmd.clone()),
                     driver: Driver::Lib,
                     prepare_kind: None,
                     grit_via_shell: true,
@@ -520,7 +558,7 @@ pub fn run_parallel_suite(
                 grit_extra_argv: Vec::new(),
             },
             &rename_repo,
-            None,
+            Some(&diff_prepare),
         )?);
     }
 
@@ -541,11 +579,43 @@ fn sh_script(script: String) -> Vec<String> {
     vec!["-c".into(), script]
 }
 
-fn chain_switch(tool: &Path, first: &str, second: &str) -> String {
+fn status_warm_prepare(git: &Path, grit: &Path, grit_extra: &[String]) -> String {
+    let mut grit_args = grit_extra.to_vec();
+    grit_args.push("status".into());
+    let grit_args_ref: Vec<&str> = grit_args.iter().map(String::as_str).collect();
     format!(
         "{} && {}",
-        shell_command(tool, &["switch", first]),
-        shell_command(tool, &["switch", second])
+        shell_command(git, &["status", "-s"]),
+        shell_command(grit, &grit_args_ref)
+    )
+}
+
+fn inject_grit_thread_flags(script: &str, grit: &Path, extra: &[String]) -> String {
+    if extra.is_empty() {
+        return script.to_string();
+    }
+    let tool = shell_quote(&grit.to_string_lossy());
+    let flags = extra
+        .iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let needle = format!("{tool} ");
+    let replacement = format!("{tool} {flags} ");
+    script.replace(&needle, &replacement)
+}
+
+fn chain_switch(tool: &Path, first: &str, second: &str, grit_extra: &[String]) -> String {
+    let mut args_a = grit_extra.to_vec();
+    args_a.push("switch".into());
+    args_a.push(first.into());
+    let mut args_b = grit_extra.to_vec();
+    args_b.push("switch".into());
+    args_b.push(second.into());
+    format!(
+        "{} && {}",
+        shell_command(tool, &args_a.iter().map(String::as_str).collect::<Vec<_>>()),
+        shell_command(tool, &args_b.iter().map(String::as_str).collect::<Vec<_>>())
     )
 }
 

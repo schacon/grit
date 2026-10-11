@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::bench_env::empty_global_config_path;
 use crate::fixture::{dirty_repo, remove_dir_robust, scratch_dir};
 use crate::hot_path_fixture::{load_meta, setup_switch_fixture_in, HotPathMeta, HotPathRepoSpec};
-use crate::odb_fixture::ensure_hot_path_repacked;
+use crate::odb_fixture::{ensure_hot_path_repacked, odb_scratch_root};
 
 /// Production vs tiny smoke fixtures (mirrors network bench profiles).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,28 +99,22 @@ fn rev_parse(git: &Path, dir: &Path, rev: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn list_tracked_txt(repo: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    walk(repo, repo, &mut files)?;
-    Ok(files)
-}
-
-fn walk(base: &Path, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.file_name().is_some_and(|n| n == ".git") {
-            continue;
-        }
-        if path.is_dir() {
-            walk(base, &path, files)?;
-        } else if path.extension().is_some_and(|e| e == "txt") {
-            if let Ok(rel) = path.strip_prefix(base) {
-                files.push(rel.to_path_buf());
-            }
-        }
+fn list_tracked_files_git(git: &Path, repo: &Path) -> Result<Vec<PathBuf>> {
+    let mut cmd = Command::new(git);
+    cmd.args(["ls-files"]).current_dir(repo);
+    git_env(&mut cmd);
+    let out = cmd.output().context("git ls-files")?;
+    if !out.status.success() {
+        bail!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,25 +138,29 @@ pub fn load_parallel_meta(repo: &Path) -> Result<ParallelBenchMeta> {
 
 /// Worktree repo with `N` tracked files (cached).
 pub fn ensure_worktree_repo(git: &Path, profile: ParallelProfile) -> Result<PathBuf> {
-    let dest = parallel_cache_root().join(format!("worktree-{}", profile.suffix()));
-    if meta_path(&dest).is_file() {
-        return Ok(dest);
+    match profile {
+        ParallelProfile::Production => ensure_hot_path_repacked(git),
+        ParallelProfile::Smoke => {
+            let dest = parallel_cache_root().join(format!("worktree-{}", profile.suffix()));
+            if meta_path(&dest).is_file() {
+                return Ok(dest);
+            }
+            if dest.exists() {
+                remove_dir_robust(&dest);
+            }
+            fs::create_dir_all(parallel_cache_root())?;
+            create_repo_in(git, &dest, profile.file_count())?;
+            write_meta(
+                git,
+                &dest,
+                profile,
+                None,
+                rev_parse(git, &dest, "HEAD")?,
+                rev_parse(git, &dest, "HEAD")?,
+            )?;
+            Ok(dest)
+        }
     }
-    if dest.exists() {
-        remove_dir_robust(&dest);
-    }
-    fs::create_dir_all(parallel_cache_root())?;
-    let n = profile.file_count();
-    create_repo_in(git, &dest, n)?;
-    write_meta(
-        git,
-        &dest,
-        profile,
-        None,
-        rev_parse(git, &dest, "HEAD")?,
-        rev_parse(git, &dest, "HEAD")?,
-    )?;
-    Ok(dest)
 }
 
 fn create_repo_in(git: &Path, dir: &Path, file_count: usize) -> Result<()> {
@@ -232,9 +230,15 @@ pub fn ensure_rename_repo(
     if dest.exists() {
         remove_dir_robust(&dest);
     }
-    create_repo_in(git, &dest, profile.file_count())?;
+    match profile {
+        ParallelProfile::Production => {
+            let src = ensure_hot_path_repacked(git)?;
+            clone_local_copy(git, &src, &dest)?;
+        }
+        ParallelProfile::Smoke => create_repo_in(git, &dest, profile.file_count())?,
+    }
     let old_rev = rev_parse(git, &dest, "HEAD")?;
-    let files = list_tracked_txt(&dest)?;
+    let files = list_tracked_files_git(git, &dest)?;
     let n = profile.rename_count().min(files.len());
     for (i, rel) in files.iter().take(n).enumerate() {
         let from = dest.join(rel);
@@ -290,14 +294,24 @@ pub fn ensure_switch_wide_repo(
     git: &Path,
     profile: ParallelProfile,
 ) -> Result<(PathBuf, HotPathMeta)> {
-    let dest = parallel_cache_root().join(format!("switch-wide-{}", profile.suffix()));
-    if meta_path(&dest).is_file() && crate::hot_path_fixture::meta_path(&dest).is_file() {
+    let dest = match profile {
+        ParallelProfile::Production => odb_scratch_root().join("hot-path-100k-wide-switch"),
+        ParallelProfile::Smoke => {
+            parallel_cache_root().join(format!("switch-wide-{}", profile.suffix()))
+        }
+    };
+    if crate::hot_path_fixture::meta_path(&dest).is_file() {
         return Ok((dest.clone(), load_meta(&dest)?));
     }
     if dest.exists() {
         remove_dir_robust(&dest);
     }
-    fs::create_dir_all(parallel_cache_root())?;
+    if profile == ParallelProfile::Smoke {
+        fs::create_dir_all(parallel_cache_root())?;
+    } else {
+        let parent = dest.parent().unwrap_or(Path::new("/tmp"));
+        fs::create_dir_all(parent)?;
+    }
     let spec = profile.switch_spec();
     let (_p, meta) = setup_switch_fixture_in(git, &dest, spec, true)?;
     Ok((dest, meta))
@@ -349,22 +363,49 @@ pub fn index_pack_staging_dir() -> PathBuf {
     scratch_dir().join("parallel-index-pack")
 }
 
-/// Dirty the cached worktree repo in the scratch copy used for status benches.
+/// Dirty copy of the synthetic repo, cached for stable status timings across suite runs.
 pub fn prepare_status_dirty_repo(git: &Path, profile: ParallelProfile) -> Result<PathBuf> {
-    let src = ensure_worktree_repo(git, profile)?;
-    let dest = scratch_dir().join(format!("parallel-status-{}", profile.suffix()));
+    let dest = parallel_cache_root().join(format!("status-dirty-{}", profile.suffix()));
+    if meta_path(&dest).is_file() {
+        return Ok(dest);
+    }
     if dest.exists() {
         remove_dir_robust(&dest);
     }
+    fs::create_dir_all(parallel_cache_root())?;
+    let src = ensure_worktree_repo(git, profile)?;
     clone_local_copy(git, &src, &dest)?;
     dirty_repo(&dest, profile.file_count())?;
+    write_meta(
+        git,
+        &dest,
+        profile,
+        None,
+        rev_parse(git, &dest, "HEAD")?,
+        rev_parse(git, &dest, "HEAD")?,
+    )?;
     Ok(dest)
 }
 
 pub fn prepare_status_clean_repo(git: &Path, profile: ParallelProfile) -> Result<PathBuf> {
+    let dest = parallel_cache_root().join(format!("status-clean-{}", profile.suffix()));
+    if meta_path(&dest).is_file() {
+        return Ok(dest);
+    }
+    if dest.exists() {
+        remove_dir_robust(&dest);
+    }
+    fs::create_dir_all(parallel_cache_root())?;
     let src = ensure_worktree_repo(git, profile)?;
-    let dest = scratch_dir().join(format!("parallel-status-clean-{}", profile.suffix()));
     clone_local_copy(git, &src, &dest)?;
+    write_meta(
+        git,
+        &dest,
+        profile,
+        None,
+        rev_parse(git, &dest, "HEAD")?,
+        rev_parse(git, &dest, "HEAD")?,
+    )?;
     Ok(dest)
 }
 
