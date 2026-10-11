@@ -111,6 +111,35 @@ enum StashAction {
     },
 }
 
+/// Subcommands of `grit worktree`.
+#[derive(Debug, Subcommand)]
+enum WorktreeAction {
+    /// List registered worktrees (main first, then linked).
+    List,
+    /// Create a linked worktree at `path`.
+    Add {
+        /// Directory for the new working tree.
+        path: std::path::PathBuf,
+        /// Commit or branch to check out (defaults to `HEAD`).
+        #[arg(value_name = "REV")]
+        start_point: Option<String>,
+        /// Create and check out a new branch.
+        #[arg(short = 'b', long = "branch", value_name = "NAME")]
+        branch: Option<String>,
+        /// Check out in detached HEAD mode.
+        #[arg(long = "detach")]
+        detach: bool,
+    },
+    /// Remove a linked worktree.
+    Remove {
+        /// Path to the worktree to remove.
+        path: std::path::PathBuf,
+        /// Remove even when the worktree has local changes or is locked.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
 /// Subcommands of `grit bundle`.
 #[derive(Debug, Subcommand)]
 enum BundleAction {
@@ -363,19 +392,36 @@ enum Command {
         /// under `refs/tags/` to the remote.
         #[arg(short = 't', long = "tags")]
         tags: bool,
+        /// Delete a remote branch or tag (may be repeated).
+        #[arg(long = "delete", value_name = "REF")]
+        delete: Vec<String>,
+        /// Remote to push to (defaults to the current branch's remote or `origin`).
+        #[arg(long)]
+        remote: Option<String>,
     },
     /// Create, verify, or list git bundle files.
     Bundle {
         #[command(subcommand)]
         action: BundleAction,
     },
-    /// List tags, or create / delete one. A new tag points at HEAD.
+    /// List tags, or create / delete one.
     Tag {
         /// Name of the tag to create. Omit to list tags.
         name: Option<String>,
         /// Delete the named tag instead of creating it.
         #[arg(short = 'd', long = "delete")]
         delete: bool,
+        /// Annotated tag message (`-m` creates an annotated tag).
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
+        /// Object to tag (revision). Defaults to `HEAD`.
+        #[arg(long = "object", value_name = "REV")]
+        object: Option<String>,
+    },
+    /// List, add, or remove linked worktrees.
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
     },
     /// Sign in to GitHub (device flow) and store a token for HTTPS push/fetch.
     Auth {
@@ -660,7 +706,39 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
                 emit_with_markdown(&commands::bundle::run_list(file.into())?, opts)
             }
         },
-        Command::Tag { name, delete } => emit(&commands::tag::run(name, delete)?, opts),
+        Command::Tag {
+            name,
+            delete,
+            message,
+            object,
+        } => emit(
+            &commands::tag::run(name, delete, message, object)?,
+            opts,
+        ),
+        Command::Worktree { action } => match action {
+            WorktreeAction::List => emit(&commands::worktree::run_list()?, opts),
+            WorktreeAction::Add {
+                path,
+                start_point,
+                branch,
+                detach,
+            } => {
+                let new_branch = branch.is_some();
+                emit(
+                    &commands::worktree::run_add(
+                        path,
+                        start_point,
+                        branch,
+                        new_branch,
+                        detach,
+                    )?,
+                    opts,
+                )
+            }
+            WorktreeAction::Remove { path, force } => {
+                emit(&commands::worktree::run_remove(path, force)?, opts)
+            }
+        },
         Command::Switch {
             branch,
             start_point,
@@ -751,8 +829,12 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             }
             Ok(())
         }
-        Command::Push { tags } => {
-            let outcome = commands::push::run(tags)?;
+        Command::Push {
+            tags,
+            delete,
+            remote,
+        } => {
+            let outcome = commands::push::run(tags, &delete, remote)?;
             emit(&outcome, opts)?;
             // The outcome (per-ref results) is reported in both modes; a rejected
             // push is still a failure, so mirror Git and exit non-zero.

@@ -34,3 +34,4 @@ pub mod status;
 pub mod switch;
 pub mod tag;
 pub mod update;
+pub mod worktree;

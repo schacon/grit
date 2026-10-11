@@ -67,12 +67,23 @@ impl MarkdownRender for PushOutcome {
     }
 }
 
-pub fn run(tags: bool) -> Result<PushOutcome> {
+pub fn run(
+    tags: bool,
+    delete_refs: &[String],
+    remote_override: Option<String>,
+) -> Result<PushOutcome> {
     let repo = context::discover()?;
     let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
         .context("could not load config")?;
 
-    let (branch_label, remote, specs) = if tags {
+    let (branch_label, remote, specs) = if !delete_refs.is_empty() {
+        let remote = configured_remote_for_push(&repo, &config, remote_override);
+        let specs = delete_refs
+            .iter()
+            .map(|name| map_delete_ref(&repo.git_dir, name))
+            .collect::<Result<Vec<_>>>()?;
+        ("--delete".to_owned(), remote, specs)
+    } else if tags {
         let entries =
             refs::list_refs(&repo.git_dir, "refs/tags/").context("could not list tags")?;
         if entries.is_empty() {
@@ -89,7 +100,11 @@ pub fn run(tags: bool) -> Result<PushOutcome> {
                 expect_absent: false,
             })
             .collect::<Vec<_>>();
-        ("--tags".to_owned(), DEFAULT_REMOTE.to_owned(), specs)
+        (
+            "--tags".to_owned(),
+            configured_remote_for_push(&repo, &config, remote_override),
+            specs,
+        )
     } else {
         let (short_name, oid) = match resolve_head(&repo.git_dir)? {
             HeadState::Branch {
@@ -102,9 +117,12 @@ pub fn run(tags: bool) -> Result<PushOutcome> {
             HeadState::Invalid => bail!("HEAD is in an unknown state"),
         };
 
-        let remote = config
-            .get(&format!("branch.{short_name}.remote"))
-            .filter(|r| !r.trim().is_empty())
+        let remote = remote_override
+            .or_else(|| {
+                config
+                    .get(&format!("branch.{short_name}.remote"))
+                    .filter(|r| !r.trim().is_empty())
+            })
             .unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
         let dst = config
             .get(&format!("branch.{short_name}.merge"))
@@ -179,6 +197,43 @@ pub fn run(tags: bool) -> Result<PushOutcome> {
         branch: branch_label,
         results,
         rejected,
+    })
+}
+
+fn configured_remote_for_push(
+    repo: &grit_lib::repo::Repository,
+    config: &ConfigSet,
+    remote_override: Option<String>,
+) -> String {
+    if let Some(remote) = remote_override {
+        return remote;
+    }
+    if let Ok(HeadState::Branch { short_name, .. }) = resolve_head(&repo.git_dir) {
+        if let Some(remote) = config
+            .get(&format!("branch.{short_name}.remote"))
+            .filter(|r| !r.trim().is_empty())
+        {
+            return remote;
+        }
+    }
+    DEFAULT_REMOTE.to_owned()
+}
+
+fn map_delete_ref(git_dir: &std::path::Path, name: &str) -> Result<PushRefSpec> {
+    let dst = if name.starts_with("refs/") {
+        name.to_owned()
+    } else if refs::resolve_ref(git_dir, &format!("refs/heads/{name}")).is_ok() {
+        format!("refs/heads/{name}")
+    } else {
+        format!("refs/tags/{name}")
+    };
+    Ok(PushRefSpec {
+        src: None,
+        dst,
+        force: false,
+        delete: true,
+        expected_old: None,
+        expect_absent: false,
     })
 }
 

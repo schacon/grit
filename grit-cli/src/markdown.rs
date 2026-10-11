@@ -242,7 +242,12 @@ pub fn print_tag_list(tags: &[crate::commands::tag::TagEntry]) {
     println!("## Tags");
     for tag in tags {
         let short = tag.oid.get(..7).unwrap_or(&tag.oid);
-        println!("- `{}` (`{short}`)", tag.name);
+        let peel = tag
+            .peeled
+            .as_ref()
+            .map(|p| format!(" → `{}`", p.get(..7).unwrap_or(p.as_str())))
+            .unwrap_or_default();
+        println!("- `{}` · {} `{short}`{peel}", tag.name, tag.kind);
     }
 }
 

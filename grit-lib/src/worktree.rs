@@ -2,15 +2,21 @@
 //!
 //! Git stores linked worktrees under `<common-git-dir>/worktrees/<id>/` with
 //! `gitdir`, `commondir`, `HEAD`, and optional `locked` / `prunable` files.
-//! This module reads that layout; lifecycle mutations (`add` / `remove`) remain
-//! in the CLI for now and will move here in Phase 1.2.
+//! This module reads that layout and implements linked worktree add/remove.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::check_ref_format::validate_branch_short_name;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::objects::{parse_commit, ObjectKind};
+use crate::porcelain::checkout::checkout_between_trees;
+use crate::porcelain::status::{status, StatusOptions};
+use crate::progress::NullProgress;
+use crate::refs;
 use crate::repo::{common_git_dir_for_config, Repository};
+use crate::rev_parse::resolve_revision;
 use crate::state::{resolve_head, HeadState};
 
 /// One row returned by [`list_worktrees`].
@@ -407,6 +413,240 @@ fn strip_worktree_config_keys(path: &Path, keys: &[&str]) -> Result<()> {
         out.push('\n');
     }
     fs::write(path, out).map_err(Error::Io)
+}
+
+/// Options for [`add_linked_worktree`].
+#[derive(Debug, Clone)]
+pub struct AddLinkedWorktreeOptions {
+    /// Directory for the new working tree (created when missing).
+    pub path: PathBuf,
+    /// Branch to check out. With [`Self::new_branch`], create this branch at the start commit.
+    pub branch: Option<String>,
+    /// Create [`Self::branch`] before checkout.
+    pub new_branch: bool,
+    /// Detached HEAD at the resolved start commit.
+    pub detach: bool,
+    /// Start commit (revision spec). Defaults to the current `HEAD` commit.
+    pub start_point: Option<String>,
+}
+
+/// Register and populate a linked worktree (Git `worktree add` layout).
+///
+/// # Errors
+///
+/// Fails when the repository is bare, the path is occupied, the branch is already
+/// checked out elsewhere, or checkout cannot complete.
+pub fn add_linked_worktree(
+    repo: &Repository,
+    opts: &AddLinkedWorktreeOptions,
+) -> Result<WorktreeEntry> {
+    let common = common_git_dir(&repo.git_dir);
+    if is_bare_repository(&common) {
+        return Err(Error::Message(
+            "cannot add a worktree to a bare repository".into(),
+        ));
+    }
+
+    let wt_path = opts
+        .path
+        .canonicalize()
+        .unwrap_or_else(|_| opts.path.clone());
+    ensure_empty_or_missing(&wt_path)?;
+
+    let start_spec = opts.start_point.as_deref().unwrap_or("HEAD");
+    let start_oid = resolve_revision(repo, start_spec)?;
+    let start_obj = repo.odb.read(&start_oid)?;
+    if start_obj.kind != ObjectKind::Commit {
+        return Err(Error::Message(format!(
+            "revision '{start_spec}' does not resolve to a commit"
+        )));
+    }
+    let tree_oid = parse_commit(&start_obj.data)?.tree;
+
+    let head_ref = if opts.detach {
+        None
+    } else if let Some(branch) = opts.branch.as_deref() {
+        validate_branch_short_name(branch).map_err(|e| Error::Message(e.to_string()))?;
+        let branch_ref = format!("refs/heads/{branch}");
+        if opts.new_branch {
+            if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+                return Err(Error::Message(format!("branch '{branch}' already exists")));
+            }
+            refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+        } else if refs::resolve_ref(&repo.git_dir, &branch_ref).is_err() {
+            return Err(Error::Message(format!("no branch named '{branch}'")));
+        } else {
+            let tip = refs::resolve_ref(&repo.git_dir, &branch_ref)?;
+            if tip != start_oid {
+                return Err(Error::Message(format!(
+                    "branch '{branch}' does not match start commit"
+                )));
+            }
+        }
+        branch_checked_out_elsewhere(repo, &branch_ref)?;
+        Some(branch_ref)
+    } else if let Some(start) = opts.start_point.as_deref() {
+        if let Some(branch_ref) = resolve_existing_branch(repo, start) {
+            branch_checked_out_elsewhere(repo, &branch_ref)?;
+            Some(branch_ref)
+        } else {
+            None
+        }
+    } else {
+        let branch = worktree_path_basename(&wt_path);
+        validate_branch_short_name(&branch).map_err(|e| Error::Message(e.to_string()))?;
+        let branch_ref = format!("refs/heads/{branch}");
+        if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+            return Err(Error::Message(format!("branch '{branch}' already exists")));
+        }
+        refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+        branch_checked_out_elsewhere(repo, &branch_ref)?;
+        Some(branch_ref)
+    };
+
+    let admin = allocate_worktree_admin_dir(&common, &wt_path);
+    fs::create_dir_all(&admin).map_err(Error::Io)?;
+    fs::create_dir_all(&wt_path).map_err(Error::Io)?;
+
+    let wt_git = wt_path.join(".git");
+    fs::write(
+        &wt_git,
+        format!(
+            "gitdir: {}\n",
+            admin
+                .canonicalize()
+                .unwrap_or_else(|_| admin.clone())
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+    )
+    .map_err(Error::Io)?;
+    let wt_git_abs = wt_git
+        .canonicalize()
+        .unwrap_or_else(|_| wt_git.clone())
+        .to_string_lossy()
+        .replace('\\', "/");
+    fs::write(admin.join("commondir"), "../..\n").map_err(Error::Io)?;
+    fs::write(admin.join("gitdir"), format!("{wt_git_abs}\n")).map_err(Error::Io)?;
+
+    if let Some(ref branch_ref) = head_ref {
+        fs::write(admin.join("HEAD"), format!("ref: {branch_ref}\n")).map_err(Error::Io)?;
+    } else {
+        fs::write(admin.join("HEAD"), format!("{start_oid}\n")).map_err(Error::Io)?;
+    }
+
+    copy_filtered_worktree_config(&common, &admin)?;
+
+    let linked = Repository::discover(Some(&wt_path))?;
+    checkout_between_trees(&linked, None, &tree_oid)?;
+
+    let wt_canon = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+    list_worktrees(repo)?
+        .into_iter()
+        .find(|e| e.path == wt_canon)
+        .ok_or_else(|| Error::Message("worktree was added but could not be listed".into()))
+}
+
+/// Remove a linked worktree and its admin directory.
+///
+/// # Errors
+///
+/// Refuses to remove the main worktree, locked worktrees (unless `force`), or dirty
+/// trees (unless `force`).
+pub fn remove_linked_worktree(repo: &Repository, path: &Path, force: bool) -> Result<()> {
+    let common = common_git_dir(&repo.git_dir);
+    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let entry = list_worktrees(repo)?
+        .into_iter()
+        .find(|e| e.path == target)
+        .ok_or_else(|| Error::Message(format!("'{target:?}' is not a registered worktree")))?;
+    if entry.admin_dir == common {
+        return Err(Error::Message("cannot remove the main working tree".into()));
+    }
+    if entry.is_locked && !force {
+        return Err(Error::Message(
+            entry
+                .lock_reason
+                .map(|r| format!("worktree is locked: {r}"))
+                .unwrap_or_else(|| "worktree is locked".into()),
+        ));
+    }
+
+    let linked = Repository::discover(Some(&entry.path))?;
+    if !force && worktree_has_local_changes(&linked)? {
+        return Err(Error::Message(
+            "worktree contains modified or untracked files; use force to remove".into(),
+        ));
+    }
+
+    fs::remove_dir_all(&entry.admin_dir).map_err(Error::Io)?;
+    if force {
+        let _ = fs::remove_dir_all(&entry.path);
+    } else if entry.path.is_dir() {
+        let gitfile = entry.path.join(".git");
+        let _ = fs::remove_file(&gitfile);
+        if fs::read_dir(&entry.path)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_dir(&entry.path);
+        }
+    }
+    Ok(())
+}
+
+fn resolve_existing_branch(repo: &Repository, spec: &str) -> Option<String> {
+    let full = if spec.starts_with("refs/heads/") {
+        spec.to_owned()
+    } else {
+        format!("refs/heads/{spec}")
+    };
+    refs::resolve_ref(&repo.git_dir, &full).ok()?;
+    Some(full)
+}
+
+fn branch_checked_out_elsewhere(repo: &Repository, branch_ref: &str) -> Result<()> {
+    let resolved = branch_ref.to_owned();
+    for wt in list_worktrees(repo)? {
+        if let HeadState::Branch { refname, .. } = &wt.head {
+            if refname == &resolved {
+                return Err(Error::Message(format!(
+                    "branch '{}' is already checked out at '{}'",
+                    resolved.strip_prefix("refs/heads/").unwrap_or(&resolved),
+                    wt.path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_empty_or_missing(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if !path.is_dir() {
+        return Err(Error::Message(format!(
+            "'{}' already exists and is not a directory",
+            path.display()
+        )));
+    }
+    let mut entries = fs::read_dir(path).map_err(Error::Io)?;
+    if entries.next().is_some() {
+        return Err(Error::Message(format!(
+            "'{}' already exists",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn worktree_has_local_changes(repo: &Repository) -> Result<bool> {
+    let model = status(repo, &StatusOptions::default(), &mut NullProgress)?;
+    Ok(!model.staged.is_empty()
+        || !model.unstaged.is_empty()
+        || !model.conflicts.is_empty()
+        || !model.untracked.is_empty())
 }
 
 /// Read the working tree path from `<admin>/gitdir` (parent of the worktree `.git` file).

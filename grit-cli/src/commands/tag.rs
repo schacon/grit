@@ -1,21 +1,20 @@
 //! `grit tag` — list tags, or create / delete one.
-//!
-//! Tags created here are **lightweight**: a `refs/tags/<name>` ref that points
-//! at the chosen commit (defaults to HEAD). `grit` is opinionated and skips the
-//! annotated-tag ceremony; reach for `grit tag -a` when you need that.
 
 use anyhow::{bail, Context, Result};
 use grit_lib::check_ref_format::validate_tag_short_name;
-
-use crate::ref_name_messages::tag_short_name_error_message;
+use grit_lib::ident_resolve::IdentRole;
+use grit_lib::porcelain::tag::{create_tag, tag_ref_metadata, CreateTagRequest, TagKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::context;
 use crate::markdown;
 use crate::output::{HumanRender, MarkdownRender};
+use crate::ref_name_messages::tag_short_name_error_message;
 
 /// Result of `grit tag`, tagged by `action` (`list` / `create` / `delete`).
 #[derive(Serialize)]
@@ -26,8 +25,11 @@ pub enum TagOutcome {
     /// A new tag was created.
     Create {
         name: String,
-        /// Hex object id the tag points at.
+        /// Hex object id the tag ref points at.
         oid: String,
+        kind: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        peeled: Option<String>,
     },
     /// A tag was deleted.
     Delete { name: String },
@@ -37,8 +39,11 @@ pub enum TagOutcome {
 #[derive(Serialize)]
 pub struct TagEntry {
     pub name: String,
-    /// Hex object id the tag points at.
+    /// Hex object id the tag ref points at.
     pub oid: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peeled: Option<String>,
 }
 
 impl HumanRender for TagOutcome {
@@ -63,26 +68,48 @@ impl MarkdownRender for TagOutcome {
     fn render_markdown(&self) {
         match self {
             TagOutcome::List { tags } => markdown::print_tag_list(tags),
-            TagOutcome::Create { name, oid } => {
+            TagOutcome::Create {
+                name,
+                oid,
+                kind,
+                peeled,
+            } => {
                 let short = oid.get(..7).unwrap_or(oid.as_str());
-                println!("Created tag `{name}` at `{short}`.");
+                let kind_note = if kind == "annotated" {
+                    " (annotated)"
+                } else {
+                    ""
+                };
+                let peel = peeled
+                    .as_ref()
+                    .map(|p| format!(" → `{}`", p.get(..7).unwrap_or(p.as_str())))
+                    .unwrap_or_default();
+                println!("Created tag `{name}`{kind_note} at `{short}`{peel}.");
             }
             TagOutcome::Delete { name } => println!("Deleted tag `{name}`."),
         }
     }
 }
 
+fn kind_str(kind: TagKind) -> &'static str {
+    match kind {
+        TagKind::Lightweight => "lightweight",
+        TagKind::Annotated => "annotated",
+    }
+}
+
 /// Run `grit tag` with the parsed CLI arguments.
-///
-/// * `name = None` → list tags (any `delete` flag is ignored).
-/// * `name = Some(_)` with `delete = true` → delete the named tag.
-/// * `name = Some(_)` otherwise → create the tag at HEAD.
-pub fn run(name: Option<String>, delete: bool) -> Result<TagOutcome> {
+pub fn run(
+    name: Option<String>,
+    delete: bool,
+    message: Option<String>,
+    object: Option<String>,
+) -> Result<TagOutcome> {
     let repo = context::discover()?;
     match name {
         None => list(&repo),
         Some(name) if delete => delete_tag(&repo, &name),
-        Some(name) => create(&repo, &name),
+        Some(name) => create(&repo, &name, message, object),
     }
 }
 
@@ -93,37 +120,77 @@ fn list(repo: &Repository) -> Result<TagOutcome> {
 
     let tags = entries
         .into_iter()
-        .map(|(refname, oid)| TagEntry {
-            name: refname
-                .strip_prefix("refs/tags/")
-                .unwrap_or(&refname)
-                .to_owned(),
-            oid: oid.to_hex(),
+        .map(|(refname, oid)| {
+            let (kind, peeled) = tag_ref_metadata(repo, &oid);
+            TagEntry {
+                name: refname
+                    .strip_prefix("refs/tags/")
+                    .unwrap_or(&refname)
+                    .to_owned(),
+                oid: oid.to_hex(),
+                kind: kind_str(kind).to_owned(),
+                peeled: peeled.map(|p| p.to_hex()),
+            }
         })
         .collect();
 
     Ok(TagOutcome::List { tags })
 }
 
-fn create(repo: &Repository, name: &str) -> Result<TagOutcome> {
+fn create(
+    repo: &Repository,
+    name: &str,
+    message: Option<String>,
+    object: Option<String>,
+) -> Result<TagOutcome> {
     if let Err(err) = validate_tag_short_name(name) {
         bail!(tag_short_name_error_message(name, &err));
     }
-    let tag_ref = format!("refs/tags/{name}");
-    if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
-        bail!("tag '{name}' already exists");
-    }
 
-    let base = match resolve_head(&repo.git_dir)? {
-        HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
-        HeadState::Branch { .. } => bail!("no commits yet to tag"),
-        HeadState::Invalid => bail!("HEAD is in an unknown state"),
+    let target = if let Some(rev) = object {
+        resolve_revision(repo, &rev).context("could not resolve tag target")?
+    } else {
+        match resolve_head(&repo.git_dir)? {
+            HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
+            HeadState::Branch { .. } => bail!("no commits yet to tag"),
+            HeadState::Invalid => bail!("HEAD is in an unknown state"),
+        }
     };
 
-    refs::write_ref(&repo.git_dir, &tag_ref, &base).context("could not create tag")?;
+    let env = context::environment();
+    let config = repo.config().context("could not load config")?;
+    let now = OffsetDateTime::now_utc();
+    let tagger = if message.is_some() {
+        Some(
+            context::identity(
+                &env,
+                &config,
+                IdentRole::Committer,
+                "GIT_COMMITTER_DATE",
+                now,
+            )
+            .context("could not resolve tagger identity")?,
+        )
+    } else {
+        None
+    };
+
+    let outcome = create_tag(
+        repo,
+        &CreateTagRequest {
+            name: name.to_owned(),
+            target,
+            message,
+            tagger,
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+
     Ok(TagOutcome::Create {
-        name: name.to_owned(),
-        oid: base.to_hex(),
+        name: outcome.name,
+        oid: outcome.oid.to_hex(),
+        kind: kind_str(outcome.kind).to_owned(),
+        peeled: outcome.peeled.map(|p| p.to_hex()),
     })
 }
 
