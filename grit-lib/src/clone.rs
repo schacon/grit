@@ -3,6 +3,7 @@
 //! File checkout is left to the caller (typically [`crate::porcelain::checkout`]).
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -16,7 +17,7 @@ use crate::ref_storage::RefStorageFormat;
 use crate::refs;
 use crate::remote::{HttpClientFactory, Remote, DEFAULT_REMOTE};
 use crate::repo::{init_repository, Repository};
-use crate::transfer::{CloneReflog, FetchOptions, TagMode};
+use crate::transfer::{CloneReflog, FetchOptions, SidebandPackFinish, TagMode};
 use crate::transport_path::{
     absolute_local_clone_source_url, should_store_absolute_local_clone_url,
 };
@@ -35,8 +36,12 @@ pub enum CloneError {
     Remote(#[from] crate::remote::RemoteError),
 }
 
+/// Builds an optional HTTP side-band ingest pipeline (e.g. `git index-pack --stdin`).
+pub type HttpSidebandIngestSetup = Box<
+    dyn FnOnce(&Path) -> Result<(Box<dyn Write + Send>, Box<dyn SidebandPackFinish + Send>)> + Send,
+>;
+
 /// Options for [`clone`].
-#[derive(Debug, Clone)]
 pub struct CloneOptions {
     /// Source URL or path (as passed on the command line).
     pub url: String,
@@ -48,6 +53,8 @@ pub struct CloneOptions {
     pub environment: Environment,
     /// Initial branch name used when initializing the empty repo (`main`).
     pub initial_branch: String,
+    /// When set, invoked after init to stream HTTP clone packs into external index-pack.
+    pub setup_http_sideband_ingest: Option<HttpSidebandIngestSetup>,
 }
 
 impl CloneOptions {
@@ -60,6 +67,7 @@ impl CloneOptions {
             remote_name: DEFAULT_REMOTE.to_owned(),
             environment: Environment::capture_process(), // hygiene: CLI boundary — snapshot process environment for clone
             initial_branch: "main".to_owned(),
+            setup_http_sideband_ingest: None,
         }
     }
 }
@@ -124,7 +132,7 @@ pub fn cleanup_failed_clone(path: &Path, keep_toplevel: bool) {
 ///
 /// Returns [`CloneError`] when the destination is invalid, fetch fails, or no branch exists.
 pub fn clone(
-    opts: &CloneOptions,
+    mut opts: CloneOptions,
     progress: &mut dyn Progress,
     http_factory: Option<&dyn HttpClientFactory>,
 ) -> std::result::Result<CloneOutcome, CloneError> {
@@ -178,18 +186,22 @@ pub fn clone(
         identity: identity.clone(),
         message: clone_message.clone(),
     };
-    let fetch_outcome = remote.fetch(
-        &repo,
-        FetchOptions {
-            tags: TagMode::Following,
-            initial_remote_fetch: true,
-            remote_name: Some(opts.remote_name.clone()),
-            clone_reflog: Some(clone_reflog),
-            ..Default::default()
-        },
-        progress,
-        http_factory,
-    )?;
+    let mut fetch_opts = FetchOptions {
+        tags: TagMode::Following,
+        initial_remote_fetch: true,
+        remote_name: Some(opts.remote_name.clone()),
+        clone_reflog: Some(clone_reflog),
+        ..Default::default()
+    };
+    if let Ok(v) = crate::protocol::try_effective_client_protocol_version_from_config(&config) {
+        fetch_opts.http_protocol_version = Some(v);
+    }
+    if let Some(setup) = opts.setup_http_sideband_ingest.take() {
+        let (writer, finish) = setup(&repo.git_dir).map_err(CloneError::Library)?;
+        fetch_opts.sideband_pack_writer = Some(writer);
+        fetch_opts.sideband_pack_finish = Some(finish);
+    }
+    let fetch_outcome = remote.fetch(&repo, fetch_opts, progress, http_factory)?;
 
     let default = fetch_outcome
         .default_branch

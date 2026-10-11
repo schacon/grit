@@ -18,16 +18,128 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::crlf;
-use crate::diff::{diff_trees, DiffEntry, DiffStatus};
+use crate::diff::{diff_trees, format_mode, DiffEntry, DiffStatus};
 use crate::error::{Error, Result};
 use crate::filter_process::{DelayedCheckoutError, DelayedProcessCheckout, FilterSmudgeMeta};
 use crate::index::{
     entry_from_metadata, entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK,
     MODE_REGULAR, MODE_SYMLINK,
 };
-use crate::objects::ObjectId;
+use crate::objects::{parse_tree, ObjectId, ObjectKind};
 use crate::repo::Repository;
 use crate::worktree_rules::WorktreeRules;
+
+/// Populate an empty work tree and index from `tree_oid` without building a full diff.
+fn checkout_populated_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .clone()
+        .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
+    let mut index = repo.load_index()?;
+    if !index.entries.is_empty() {
+        return checkout_between_trees_slow(repo, None, Some(tree_oid));
+    }
+    let config = repo.config()?;
+    let rules = WorktreeRules::from_parts(repo, &index, config)?;
+    let mut delayed = DelayedProcessCheckout::default();
+    let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
+    let mut new_entries: Vec<IndexEntry> = Vec::new();
+    let mut dir_cache = LeadingDirCache::new();
+    let mut stack: Vec<(String, ObjectId)> = vec![(String::new(), *tree_oid)];
+
+    while let Some((prefix, oid)) = stack.pop() {
+        let tree_obj = repo.odb.read(&oid)?;
+        if tree_obj.kind != ObjectKind::Tree {
+            return Err(Error::CorruptObject(format!(
+                "expected tree object at {oid}, got {:?}",
+                tree_obj.kind
+            )));
+        }
+        for entry in parse_tree(&tree_obj.data)? {
+            let name = String::from_utf8_lossy(&entry.name);
+            let path = if prefix.is_empty() {
+                name.into_owned()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let mode = entry.mode;
+            if mode == 0o040000 {
+                stack.push((path, entry.oid));
+                continue;
+            }
+            if mode == MODE_GITLINK {
+                materialize_gitlink_worktree(&work_tree, &path, &mut dir_cache)?;
+                let abs = work_tree.join(&path);
+                let mut entry = entry_from_stat(&abs, path.as_bytes(), entry.oid, MODE_GITLINK)?;
+                entry.size = 0;
+                new_entries.push(entry);
+                continue;
+            }
+            let change = DiffEntry {
+                status: DiffStatus::Added,
+                old_path: None,
+                new_path: Some(path.clone()),
+                old_mode: "000000".to_owned(),
+                new_mode: format_mode(mode),
+                old_oid: ObjectId::zero(),
+                new_oid: entry.oid,
+                score: None,
+            };
+            let object = repo.odb.read(&entry.oid)?;
+            let worktree_bytes = worktree_bytes_from_index_blob(
+                repo,
+                &rules,
+                &path,
+                mode,
+                &object.data,
+                &entry.oid,
+                Some(&mut delayed),
+            )?;
+            let Some(worktree_bytes) = worktree_bytes else {
+                pending_delayed.push(DelayedCheckoutTarget {
+                    path: path.clone(),
+                    mode,
+                    oid: entry.oid,
+                    change: change.clone(),
+                });
+                continue;
+            };
+            let index_entry = write_checkout_entry(
+                &work_tree,
+                &path,
+                &worktree_bytes,
+                mode,
+                &change,
+                &mut dir_cache,
+                entry.oid,
+            )?;
+            new_entries.push(index_entry);
+        }
+    }
+
+    finish_delayed_checkouts(
+        repo,
+        &rules,
+        &work_tree,
+        &mut delayed,
+        &pending_delayed,
+        &mut dir_cache,
+        &mut new_entries,
+    )?;
+
+    index.remove_paths_and_insert([], new_entries);
+    repo.write_index(&mut index)?;
+    Ok(())
+}
+
+fn checkout_between_trees_slow(
+    repo: &Repository,
+    from: Option<&ObjectId>,
+    to: Option<&ObjectId>,
+) -> Result<()> {
+    let changes = diff_trees(&repo.odb, from, to, "")?;
+    checkout_tree_changes(repo, &changes)
+}
 
 /// Apply the change from tree `from` to tree `to` onto the working tree and
 /// index, then write the index.
@@ -46,8 +158,10 @@ pub fn checkout_between_trees(
     from: Option<&ObjectId>,
     to: &ObjectId,
 ) -> Result<()> {
-    let changes = diff_trees(&repo.odb, from, Some(to), "")?;
-    checkout_tree_changes(repo, &changes)
+    if from.is_none() {
+        return checkout_populated_tree(repo, to);
+    }
+    checkout_between_trees_slow(repo, from, Some(to))
 }
 
 /// Apply a precomputed tree-to-tree diff to the working tree and index.

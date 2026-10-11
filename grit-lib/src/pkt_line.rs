@@ -172,6 +172,26 @@ pub fn write_sideband_channel1_64k(w: &mut impl Write, payload: &[u8]) -> io::Re
     Ok(())
 }
 
+/// Stream `reader` on sideband channel 1 with 64k chunking (avoids loading whole packs).
+pub fn write_sideband_channel1_64k_reader(
+    w: &mut impl Write,
+    mut reader: impl Read,
+) -> io::Result<()> {
+    const MAX_PAYLOAD: usize = 65515;
+    let mut buf = [0u8; MAX_PAYLOAD];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        let len = 4 + 1 + n;
+        write!(w, "{len:04x}")?;
+        w.write_all(&[1u8])?;
+        w.write_all(&buf[..n])?;
+    }
+    Ok(())
+}
+
 /// Parse a 4-byte hexadecimal pkt-line length prefix.
 pub fn parse_hex_len(prefix: &[u8]) -> io::Result<usize> {
     let s = std::str::from_utf8(prefix)

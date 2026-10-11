@@ -2,6 +2,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use super::shallow_upload::{compute_shallow_response, ShallowRequest, ShallowResponse};
 use super::upload_pack_policy::{
@@ -857,12 +858,28 @@ fn commit_closure(
 }
 
 /// Write a pack, framed on side-band channel 1 when negotiated, then a flush.
-fn write_pack(output: &mut dyn Write, pack: &[u8], sideband: bool) -> Result<()> {
-    if sideband {
-        crate::pkt_line::write_sideband_channel1_64k(&mut &mut *output, pack)?;
-        write_flush(output)
-    } else {
-        output.write_all(pack)?;
-        Ok(())
+fn write_pack_payload(output: &mut dyn Write, pack: &ResponsePack, sideband: bool) -> Result<()> {
+    match pack {
+        ResponsePack::Memory(bytes) => {
+            if sideband {
+                crate::pkt_line::write_sideband_channel1_64k(&mut &mut *output, bytes)
+                    .map_err(ServeError::from)?;
+                write_flush(output)
+            } else {
+                output.write_all(bytes).map_err(ServeError::from)?;
+                Ok(())
+            }
+        }
+        ResponsePack::OnDisk(path) => {
+            let mut file = fs::File::open(path).map_err(ServeError::from)?;
+            if sideband {
+                crate::pkt_line::write_sideband_channel1_64k_reader(&mut &mut *output, &mut file)
+                    .map_err(ServeError::from)?;
+                write_flush(output)
+            } else {
+                std::io::copy(&mut file, output).map_err(ServeError::from)?;
+                Ok(())
+            }
+        }
     }
 }

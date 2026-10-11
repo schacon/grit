@@ -310,18 +310,19 @@ impl Remote {
             opts.diagnostics = Some(repo.diagnostics());
             opts.network_trace = repo.network_trace_enabled();
         }
+        let connect = ConnectOptions {
+            protocol_version: 2,
+            diagnostics: opts.diagnostics.clone(),
+            network_trace: opts.network_trace,
+            ..Default::default()
+        };
         self.dispatch_fetch(
             repo,
             &self.fetch_url,
-            &opts,
+            &mut opts,
             progress,
             http_factory,
-            ConnectOptions {
-                protocol_version: 2,
-                diagnostics: opts.diagnostics.clone(),
-                network_trace: opts.network_trace,
-                ..Default::default()
-            },
+            connect,
         )
     }
 
@@ -386,7 +387,7 @@ impl Remote {
         &self,
         repo: &Repository,
         url: &RemoteUrl,
-        opts: &FetchOptions,
+        opts: &mut FetchOptions,
         progress: &mut dyn Progress,
         http_factory: Option<&dyn HttpClientFactory>,
         connect: ConnectOptions,
