@@ -21,6 +21,8 @@ Clone fetches every remote tag under `refs/tags/`, including tags on commits tha
 
 Without `<dir>`, the directory is named after the last part of the URL with any `.git` suffix removed, so `https://github.com/gitbutlerapp/grit.git` clones into `grit`. The destination must not exist or must be empty. If the path already exists and is not empty, grit refuses the clone and leaves the directory and its files unchanged.
 
+On an interactive terminal (human output, not `--json` or `--markdown`), grit prints a live **Checking out files** counter on stderr while the working tree is populated after the fetch completes.
+
 For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/).
 
 You can clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
