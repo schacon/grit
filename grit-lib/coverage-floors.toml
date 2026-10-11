@@ -3,7 +3,10 @@
 
 [meta]
 baseline = "183dacae1"
-updated = "2026-10-09"
+updated = "2026-10-11"
+
+[total]
+minimum = 60.6
 
 [core]
 groups = ["odb", "pack", "midx", "commit-graph"]
@@ -12,6 +15,73 @@ minimum = 85.0
 [aggregate.refs-config]
 groups = ["refs", "reflog", "config", "ignore", "attributes"]
 minimum = 85.0
+
+[aggregate.history]
+groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
+minimum = 42.5
+
+[group.diff]
+files = [
+    "diff.rs",
+    "diff_indent_heuristic.rs",
+    "diffstat.rs",
+    "structured_diff.rs",
+    "combined_tree_diff.rs",
+    "combined_diff_patch.rs",
+    "merge_diff.rs",
+]
+minimum = 40.6
+
+[group.index]
+files = [
+    "index.rs",
+    "write_tree.rs",
+    "resolve_undo.rs",
+    "sparse_checkout.rs",
+]
+minimum = 58.7
+
+[group.index-ext]
+files = [
+    "split_index.rs",
+    "untracked_cache.rs",
+    "index_name_hash_lazy.rs",
+]
+minimum = 14.0
+
+[group.merge]
+files = [
+    "merge_trees.rs",
+    "merge_file.rs",
+    "porcelain/merge.rs",
+    "porcelain/cherry_pick.rs",
+]
+minimum = 61.6
+
+[group.revparse]
+files = [
+    "rev_parse.rs",
+    "rev_parse_error.rs",
+    "merge_base.rs",
+]
+minimum = 29.3
+
+[group.revwalk]
+files = [
+    "rev_list.rs",
+    "rev_list_error.rs",
+]
+minimum = 33.9
+
+[group.stash-notes-worktree]
+files = [
+    "porcelain/stash.rs",
+    "notes.rs",
+    "patch_ids.rs",
+    "worktree.rs",
+    "worktree_ref.rs",
+]
+minimum = 60.0
 
 [group.attributes]
 files = [
