@@ -735,7 +735,7 @@ pub fn verify_ref_transaction_batch(
         });
     }
 
-    if crate::RefStorageFormat::detect(git_dir).is_ok_and(|f| f.is_reftable()) {
+    if crate::ref_storage::detect_format(git_dir).is_ok_and(|f| f.is_reftable()) {
         return crate::reftable::verify_ref_transaction_batch_reftable(git_dir, items);
     }
 
