@@ -521,6 +521,12 @@ pub enum Error {
     #[error("symlink target is not UTF-8")]
     StashSymlinkNotUtf8,
 
+    /// Applying a stash with an untracked-files parent would replace an existing untracked path.
+    #[error(
+        "could not restore untracked files from stash: '{path}' already exists in the worktree"
+    )]
+    StashCouldNotRestoreUntracked { path: String },
+
     /// [`CommitRequest::amend`](crate::porcelain::commit::CommitRequest::amend) was set on an unborn branch.
     #[error("cannot amend: no commits on this branch yet")]
     AmendUnborn,
