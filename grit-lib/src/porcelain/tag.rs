@@ -1,17 +1,11 @@
 //! `git tag` listing/filtering core.
 //!
-//! The full tag command in the `grit` binary parses argv, decides between
-//! create/list/delete/verify modes, resolves the tagger identity, launches the
-//! tag-message editor, writes the tag object and ref, prints the tag listing,
-//! and maps exit codes. Those responsibilities — argv parsing, terminal output,
-//! editor/hook subprocess dispatch, identity/env resolution, object/ref writes,
-//! and exit-code mapping — stay in the CLI.
-//!
-//! What lives here is presentation-free tag logic: creating lightweight and
+//! The `grit tag` command parses argv, resolves identity, and formats output;
+//! what lives here is presentation-free tag logic: creating lightweight and
 //! annotated tags ([`create_tag`]), listing metadata ([`tag_ref_metadata`]),
 //! filter/sort predicates, and `-m`/`-F` message cleanup ([`strip_comments`]).
-//! The CLI resolves argv, identity, and output; this module performs object and
-//! ref writes for create paths and pure computations for list filters.
+//! This module performs object and ref writes for create paths and pure
+//! computations for list filters.
 //!
 //! # What this module owns
 //!

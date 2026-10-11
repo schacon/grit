@@ -17,8 +17,9 @@ use crate::context;
 use crate::markdown;
 use crate::output::{HumanRender, MarkdownRender};
 use grit_lib::fetch::NoProgress;
-use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
-use grit_lib::transfer::PushOptions;
+use grit_lib::remote::{DefaultHttpClientFactory, ListRefsOptions, Remote, DEFAULT_REMOTE};
+use grit_lib::transfer::{PushOptions, resolve_push_delete_ref};
+use std::collections::HashSet;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
 #[derive(Serialize)]
@@ -78,9 +79,24 @@ pub fn run(
 
     let (branch_label, remote, specs) = if !delete_refs.is_empty() {
         let remote = configured_remote_for_push(&repo, &config, remote_override);
+        let remote_handle = Remote::from_config(&config, &remote)
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        let factory = DefaultHttpClientFactory;
+        let advertised = remote_handle
+            .list_refs(
+                Some(&repo),
+                &ListRefsOptions::default(),
+                Some(&factory),
+            )
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        let remote_names: HashSet<String> = advertised
+            .into_iter()
+            .map(|r| r.name)
+            .filter(|n| !n.ends_with("^{}"))
+            .collect();
         let specs = delete_refs
             .iter()
-            .map(|name| map_delete_ref(&repo.git_dir, name))
+            .map(|name| map_delete_ref(&repo.git_dir, name, &remote_names))
             .collect::<Result<Vec<_>>>()?;
         ("--delete".to_owned(), remote, specs)
     } else if tags {
@@ -219,14 +235,12 @@ fn configured_remote_for_push(
     DEFAULT_REMOTE.to_owned()
 }
 
-fn map_delete_ref(git_dir: &std::path::Path, name: &str) -> Result<PushRefSpec> {
-    let dst = if name.starts_with("refs/") {
-        name.to_owned()
-    } else if refs::resolve_ref(git_dir, &format!("refs/heads/{name}")).is_ok() {
-        format!("refs/heads/{name}")
-    } else {
-        format!("refs/tags/{name}")
-    };
+fn map_delete_ref(
+    git_dir: &std::path::Path,
+    name: &str,
+    remote_ref_names: &HashSet<String>,
+) -> Result<PushRefSpec> {
+    let dst = resolve_push_delete_ref(git_dir, remote_ref_names, name);
     Ok(PushRefSpec {
         src: None,
         dst,

@@ -291,6 +291,34 @@ pub struct PushRefSpec {
     pub expect_absent: bool,
 }
 
+/// Resolve the remote ref name for a push deletion from a short name or full ref.
+///
+/// When `spec` is a short name, a local `refs/heads/<spec>` wins, then an
+/// advertised remote branch, then an advertised remote tag, otherwise
+/// `refs/heads/<spec>` (same default as `git push <remote> :<branch>`).
+#[must_use]
+pub fn resolve_push_delete_ref(
+    git_dir: &Path,
+    remote_ref_names: &HashSet<String>,
+    spec: &str,
+) -> String {
+    if spec.starts_with("refs/") {
+        return spec.to_owned();
+    }
+    let branch = format!("refs/heads/{spec}");
+    let tag = format!("refs/tags/{spec}");
+    if crate::refs::resolve_ref(git_dir, &branch).is_ok() {
+        return branch;
+    }
+    if remote_ref_names.contains(&branch) {
+        return branch;
+    }
+    if remote_ref_names.contains(&tag) {
+        return tag;
+    }
+    branch
+}
+
 /// Options controlling a push.
 #[derive(Clone, Default)]
 pub struct PushOptions {
