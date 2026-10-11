@@ -27,6 +27,8 @@ For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../
 
 You can clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
 
+Working-tree materialization after fetch uses the same parallel checkout path as [`grit switch`](../switch/). Configure [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism` in the repository config, or pass global [`--threads`](../global-options.md) to override worker count for this process.
+
 ## Options
 
 | Option | Description |

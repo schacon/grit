@@ -30,6 +30,13 @@ use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
 use crate::worktree_rules::WorktreeRules;
 
+#[path = "checkout_parallel.rs"]
+mod checkout_parallel;
+use checkout_parallel::{
+    execute_write_jobs, is_eligible_for_parallel_checkout, paths_needing_serial_checkout,
+    CheckoutPlanSlot, CheckoutWriteJob, WriteJobOutcome,
+};
+
 const CHECKOUT_FILE_PROGRESS_BATCH: u64 = 256;
 
 /// Batched file-count progress for the populated-tree checkout path.
@@ -366,14 +373,22 @@ fn checkout_tree_changes_with_progress(
 
     let mut index = repo.load_index()?;
     let config = repo.config()?;
+    let ignorecase = config
+        .get_bool("core.ignorecase")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    let precompose = repo.pathspec_precompose_enabled();
     let prospective_index = prospective_index_for_checkout(&index, changes);
-    let rules = WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config)?;
+    let rules =
+        WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config.clone())?;
+    let conv = rules.conversion().clone();
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(changes.len() / 8);
-    let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(changes.len());
     let mut deleted_abs_paths: Vec<PathBuf> = Vec::with_capacity(changes.len() / 8);
     let mut dir_cache = LeadingDirCache::new();
+    let mut plan: Vec<CheckoutPlanSlot> = Vec::with_capacity(changes.len());
+    let mut write_jobs: Vec<CheckoutWriteJob> = Vec::new();
 
     progress.start(
         ProgressPhase::CheckingOutFiles,
@@ -413,7 +428,7 @@ fn checkout_tree_changes_with_progress(
                     let mut entry =
                         entry_from_metadata(&meta, path.as_bytes(), change.new_oid, MODE_GITLINK);
                     entry.size = 0;
-                    new_entries.push(entry);
+                    plan.push(CheckoutPlanSlot::Ready(entry));
                     progress.inc(1);
                     continue;
                 }
@@ -422,7 +437,7 @@ fn checkout_tree_changes_with_progress(
             let abs = work_tree.join(path);
             let mut entry = entry_from_stat(&abs, path.as_bytes(), change.new_oid, MODE_GITLINK)?;
             entry.size = 0;
-            new_entries.push(entry);
+            plan.push(CheckoutPlanSlot::Ready(entry));
             progress.inc(1);
             continue;
         }
@@ -440,47 +455,78 @@ fn checkout_tree_changes_with_progress(
             )? {
                 let abs = work_tree.join(path);
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
-                new_entries.push(entry_from_metadata(
+                plan.push(CheckoutPlanSlot::Ready(entry_from_metadata(
                     &meta,
                     path.as_bytes(),
                     change.new_oid,
                     mode,
-                ));
+                )));
                 progress.inc(1);
                 continue;
             }
         }
-        let object = repo.odb.read(&change.new_oid)?;
-        let worktree_bytes = worktree_bytes_from_index_blob(
-            repo,
-            &rules,
-            path,
+        let file_attrs = rules.file_attrs(path, false);
+        let smudge_meta =
+            crate::filter_process::smudge_meta_for_checkout(repo, &change.new_oid.to_string());
+        write_jobs.push(CheckoutWriteJob {
+            path: path.clone(),
             mode,
-            &object.data,
-            &change.new_oid,
-            Some(&mut delayed),
-        )?;
-        let Some(worktree_bytes) = worktree_bytes else {
-            pending_delayed.push(DelayedCheckoutTarget {
-                path: path.to_string(),
-                mode,
-                oid: change.new_oid,
-                change: change.clone(),
-            });
-            progress.inc(1);
-            continue;
-        };
-        let entry = write_checkout_entry(
-            &work_tree,
-            path,
-            &worktree_bytes,
-            mode,
-            change,
-            &mut dir_cache,
-            change.new_oid,
-        )?;
-        new_entries.push(entry);
-        progress.inc(1);
+            oid: change.new_oid,
+            change: change.clone(),
+            file_attrs,
+            smudge_meta,
+        });
+        plan.push(CheckoutPlanSlot::Write);
+    }
+
+    let write_paths: Vec<String> = write_jobs.iter().map(|j| j.path.clone()).collect();
+    let serial_paths = paths_needing_serial_checkout(&write_paths, ignorecase, precompose);
+    let parallel_indices: HashSet<usize> = write_jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, job)| {
+            is_eligible_for_parallel_checkout(job.mode, &job.file_attrs)
+                && !serial_paths.contains(&job.path)
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    for job in &write_jobs {
+        dir_cache.ensure_parents(&work_tree, &job.path)?;
+    }
+
+    let write_outcomes = execute_write_jobs(
+        repo,
+        &rules,
+        &config,
+        &conv,
+        &work_tree,
+        &mut dir_cache,
+        &mut delayed,
+        &write_jobs,
+        &parallel_indices,
+    )?;
+
+    let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(plan.len());
+    let mut write_iter = write_outcomes.into_iter();
+    for slot in plan {
+        match slot {
+            CheckoutPlanSlot::Ready(entry) => new_entries.push(entry),
+            CheckoutPlanSlot::Write => {
+                match write_iter.next().ok_or_else(|| {
+                    Error::PathError("internal error: missing parallel checkout outcome".into())
+                })? {
+                    WriteJobOutcome::Index(entry) => {
+                        new_entries.push(entry);
+                        progress.inc(1);
+                    }
+                    WriteJobOutcome::Delayed(target) => {
+                        pending_delayed.push(target);
+                        progress.inc(1);
+                    }
+                }
+            }
+        }
     }
 
     finish_delayed_checkouts(
@@ -502,6 +548,7 @@ fn checkout_tree_changes_with_progress(
     Ok(())
 }
 
+#[derive(Clone)]
 struct DelayedCheckoutTarget {
     path: String,
     mode: u32,
@@ -829,6 +876,13 @@ impl LeadingDirCache {
     pub(crate) fn new() -> Self {
         Self {
             ready: HashSet::new(),
+        }
+    }
+
+    /// Share parent-directory state from planning so workers do not re-stat prepared paths.
+    pub(crate) fn with_ready_from(source: &Self) -> Self {
+        Self {
+            ready: source.ready.clone(),
         }
     }
 

@@ -53,6 +53,10 @@ Unset or `0` selects auto (all logical CPUs). Positive integers cap worker count
 
 Stat preload during status/diff keeps a separate four-thread cap until a later scaling pass; it still honors `core.preloadIndex` and the global thread override.
 
+### Parallel checkout (clone, switch, merge, pull)
+
+Tree checkout in [`grit_lib::porcelain::checkout`](https://docs.rs/grit-lib/latest/grit_lib/porcelain/checkout/index.html) plans all path updates on the caller thread (deletions, parent directories, attribute/conversion resolution), then writes regular files with [`try_par_map_with_local`](https://docs.rs/grit-lib/latest/grit_lib/parallel/fn.try_par_map_with_local.html) when [`ParallelOp::Checkout`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) resolves to more than one worker and the batch meets `checkout.thresholdForParallelism` (default `100`). Symlinks, gitlinks, delayed process filters, external smudge commands, and paths that would collide on case-insensitive or precomposed filesystems stay on the serial path. Index entries are assembled in diff order after workers finish.
+
 Windowed delta search during pack planning uses [`ParallelOp::PackDeltaSearch`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) with the same `pack.threads` policy. Segments are fixed from object count and `pack.window`, so chosen delta bases do not depend on worker count.
 
 Pack writing (`pack-objects` serialization) uses [`ParallelOp::PackWrite`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) for parallel delta encoding and zlib compression; the on-wire byte stream matches the single-threaded writer (OFS vs REF headers are still emitted in plan order).
