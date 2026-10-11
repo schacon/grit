@@ -358,6 +358,49 @@ pub fn parallel_clone_dir() -> PathBuf {
     scratch_dir().join("parallel-clone")
 }
 
+/// Disposable clone used only to warm caches before fresh-checkout timings.
+pub fn parallel_clone_warm_dir() -> PathBuf {
+    scratch_dir().join("parallel-clone-warm")
+}
+
+/// Count worktree paths excluding `.git` (used to verify `clone --no-checkout`).
+pub fn worktree_non_git_path_count(repo: &Path) -> Result<usize> {
+    if !repo.is_dir() {
+        return Ok(0);
+    }
+    let mut count = 0usize;
+    count_worktree_paths(repo, repo, &mut count)?;
+    Ok(count)
+}
+
+fn count_worktree_paths(base: &Path, dir: &Path, count: &mut usize) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == ".git") {
+            continue;
+        }
+        if path.is_dir() {
+            count_worktree_paths(base, &path, count)?;
+        } else {
+            *count += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Fail when the worktree is already materialized (fresh-checkout precondition).
+pub fn assert_clone_no_checkout_worktree(repo: &Path) -> Result<()> {
+    let n = worktree_non_git_path_count(repo)?;
+    if n != 0 {
+        bail!(
+            "expected empty worktree after clone --no-checkout under {}, found {n} paths",
+            repo.display()
+        );
+    }
+    Ok(())
+}
+
 /// Copy of the pack file used for index-pack timing (idx removed each prepare).
 pub fn index_pack_staging_dir() -> PathBuf {
     scratch_dir().join("parallel-index-pack")

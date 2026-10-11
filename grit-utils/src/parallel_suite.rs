@@ -16,9 +16,9 @@ use crate::parallel_env::{
     grit_supports_threads_flag, grit_thread_argv, parallel_env_prefix, ThreadMode,
 };
 use crate::parallel_fixture::{
-    ensure_bare_remote, ensure_rename_repo, ensure_repack_pack, ensure_switch_wide_repo, file_url,
-    index_pack_staging_dir, parallel_clone_dir, prepare_status_clean_repo,
-    prepare_status_dirty_repo, ParallelProfile,
+    assert_clone_no_checkout_worktree, ensure_bare_remote, ensure_rename_repo, ensure_repack_pack,
+    ensure_switch_wide_repo, file_url, index_pack_staging_dir, parallel_clone_dir,
+    parallel_clone_warm_dir, prepare_status_clean_repo, prepare_status_dirty_repo, ParallelProfile,
 };
 use crate::scenarios::{Driver, RunConfig, Scenario};
 use crate::schema::{BenchReport, ScenarioResult, ToolVersions, SCHEMA_VERSION};
@@ -242,7 +242,39 @@ pub fn run_parallel_suite(
         let env = parallel_env_prefix(mode);
         let grit_extra = grit_thread_argv(mode, grit_threads_flag);
         let clone_dir = parallel_clone_dir();
-        let prepare = shell_command(
+        let warm_dir = parallel_clone_warm_dir();
+        let prepare_warm = shell_command(
+            &cfg.prepare_bin,
+            &[
+                "prepare-parallel-checkout".into(),
+                "--git".into(),
+                git.display().to_string(),
+                "--url".into(),
+                url.clone(),
+                "--dest".into(),
+                warm_dir.display().to_string(),
+            ],
+        );
+        let warm_git_checkout = shell_command(
+            git,
+            &[
+                "-C",
+                &warm_dir.display().to_string(),
+                "checkout",
+                "-f",
+                "HEAD",
+            ],
+        );
+        let warm_grit_checkout = shell_command(
+            bench_exe,
+            &[
+                "drive".into(),
+                "checkout-branch".into(),
+                warm_dir.display().to_string(),
+                "HEAD".into(),
+            ],
+        );
+        let prepare_timed = shell_command(
             &cfg.prepare_bin,
             &[
                 "prepare-parallel-checkout".into(),
@@ -254,26 +286,9 @@ pub fn run_parallel_suite(
                 clone_dir.display().to_string(),
             ],
         );
-        let warm_git_checkout = shell_command(
-            git,
-            &[
-                "-C",
-                &clone_dir.display().to_string(),
-                "checkout",
-                "-f",
-                "HEAD",
-            ],
+        let prepare_checkout = format!(
+            "{prepare_warm} && {warm_git_checkout} && {warm_grit_checkout} && {prepare_timed}"
         );
-        let warm_grit_checkout = shell_command(
-            bench_exe,
-            &[
-                "drive".into(),
-                "checkout-branch".into(),
-                clone_dir.display().to_string(),
-                "HEAD".into(),
-            ],
-        );
-        let prepare_checkout = format!("{prepare} && {warm_git_checkout} && {warm_grit_checkout}");
 
         scenarios.push(run_parallel_scenario(
             hyperfine,
@@ -426,9 +441,13 @@ pub fn run_parallel_suite(
             ],
         );
         let pack_in_staging = staging.join("bench.pack");
-        let git_cmd = format!(
-            "git index-pack --threads={threads} {}",
-            shell_quote(&pack_in_staging.to_string_lossy())
+        let git_cmd = shell_command(
+            git,
+            &[
+                "index-pack",
+                &format!("--threads={threads}"),
+                &pack_in_staging.to_string_lossy(),
+            ],
         );
         let grit_cmd = shell_command(
             bench_exe,
@@ -483,7 +502,10 @@ pub fn run_parallel_suite(
                 delta.clone(),
             ],
         );
-        let git_cmd = "git pack-objects --all --stdout > /dev/null".to_string();
+        let git_cmd = format!(
+            "{} > /dev/null",
+            shell_command(git, &["pack-objects", "--all", "--stdout"])
+        );
         let pack_prepare = format!("{git_cmd} && {grit_cmd}");
         scenarios.push(run_parallel_scenario(
             hyperfine,
@@ -651,6 +673,7 @@ pub fn prepare_parallel_checkout(git: &Path, url: &str, dest: &Path) -> Result<(
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
+    assert_clone_no_checkout_worktree(dest)?;
     Ok(())
 }
 
