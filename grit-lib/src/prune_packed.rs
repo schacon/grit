@@ -35,6 +35,8 @@ pub struct PrunePackedOptions {
 /// - [`crate::error::Error::Io`] for directory or file access failures.
 pub fn prune_packed_objects(objects_dir: &Path, opts: PrunePackedOptions) -> Result<Vec<PathBuf>> {
     let odb = Odb::new(objects_dir);
+    // External `git repack` does not notify grit; drop stale pack listings before enumerating packs.
+    odb.invalidate_packs();
     let primary = odb.primary()?;
     let loose = primary.loose_store();
     let packed = primary.packed_objects();

@@ -275,6 +275,7 @@ impl PackReadContextGuard {
         let prev_store = CURRENT.with(|c| c.borrow_mut().replace(Arc::clone(&store)));
         let prev_dir =
             ACTIVE_OBJECTS_DIR.with(|d| d.borrow_mut().replace(store.objects_dir().to_path_buf()));
+        crate::pack::pack_cache::warm_thread_local_from_store(&store);
         Self {
             prev_store,
             prev_dir,

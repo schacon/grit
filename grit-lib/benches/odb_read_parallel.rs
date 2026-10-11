@@ -16,7 +16,6 @@ use fixture::build_parallel_packed_blob_fixture;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::pack::clear_pack_cache;
-use grit_lib::pack_store::PackStore;
 use tempfile::TempDir;
 
 struct ParallelReadFixture {
@@ -50,12 +49,7 @@ struct ReadWorkerPool {
 }
 
 impl ReadWorkerPool {
-    fn new(
-        thread_count: usize,
-        odb: Odb,
-        store: Arc<PackStore>,
-        partitions: Arc<[Arc<[ObjectId]>]>,
-    ) -> Self {
+    fn new(thread_count: usize, odb: Odb, partitions: Arc<[Arc<[ObjectId]>]>) -> Self {
         let mut workers = Vec::with_capacity(thread_count);
         let mut run_txs = Vec::with_capacity(thread_count);
         for t in 0..thread_count {
@@ -63,19 +57,18 @@ impl ReadWorkerPool {
             run_txs.push(tx);
             let slice = Arc::clone(&partitions[t]);
             let odb_t = odb.clone();
-            let pack_store = Arc::clone(&store);
-            workers.push(thread::spawn(move || {
-                PackStore::with_context(pack_store, || loop {
-                    match rx.recv() {
-                        Ok(PoolMsg::Run { ack }) => {
+            workers.push(thread::spawn(move || loop {
+                match rx.recv() {
+                    Ok(PoolMsg::Run { ack }) => {
+                        odb_t.with_pack_read_context(|| {
                             for oid in slice.iter() {
                                 black_box(odb_t.read(oid).expect("read").data);
                             }
-                            let _ = ack.send(());
-                        }
-                        Ok(PoolMsg::Shutdown) | Err(_) => break,
+                        });
+                        let _ = ack.send(());
                     }
-                });
+                    Ok(PoolMsg::Shutdown) | Err(_) => break,
+                }
             }));
         }
         Self { workers, run_txs }
@@ -111,7 +104,6 @@ impl Drop for ReadWorkerPool {
 fn bench_parallel_reads(c: &mut Criterion) {
     let fx = fixture();
     let odb = fx.odb.clone();
-    let store = Arc::clone(odb.pack_store().expect("pack store"));
     let mut group = c.benchmark_group("odb_read_parallel/packed_blobs");
     group.throughput(Throughput::Elements(fx.oids.len() as u64));
     for threads in [1_usize, 2, 4, 8] {
@@ -129,7 +121,7 @@ fn bench_parallel_reads(c: &mut Criterion) {
             .collect::<Vec<_>>()
             .into();
 
-        let pool = ReadWorkerPool::new(thread_count, odb.clone(), Arc::clone(&store), partitions);
+        let pool = ReadWorkerPool::new(thread_count, odb.clone(), partitions);
 
         group.bench_with_input(
             BenchmarkId::from_parameter(threads),

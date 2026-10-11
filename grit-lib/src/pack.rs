@@ -127,6 +127,7 @@ pub(crate) mod pack_cache {
 
     type ThreadLocalDirListing = Option<(PathBuf, SystemTime, Vec<Arc<PackIndex>>)>;
 
+    // hygiene: per-thread pack read hot cache (indexes, bytes, dir listing); cleared on invalidate
     thread_local! {
         static PACK_DIR_INDEXES: std::cell::RefCell<ThreadLocalDirListing> =
             const { std::cell::RefCell::new(None) };
@@ -136,6 +137,11 @@ pub(crate) mod pack_cache {
             std::cell::RefCell::new(HashMap::new());
         static PACK_INDEXES: std::cell::RefCell<HashMap<PathBuf, Arc<PackIndex>>> =
             std::cell::RefCell::new(HashMap::new());
+        static PACK_IDS: std::cell::RefCell<HashMap<PathBuf, u32>> =
+            std::cell::RefCell::new(HashMap::new());
+        static PACK_COUNT_VALIDATED: std::cell::RefCell<HashSet<PathBuf>> =
+            std::cell::RefCell::new(HashSet::new());
+        static PACK_DIR_LISTING_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     pub(crate) fn clear_thread_local_dir_indexes() {
@@ -143,6 +149,65 @@ pub(crate) mod pack_cache {
         PACK_HIT_INDEX.with(|cell| *cell.borrow_mut() = None);
         PACK_BYTES.with(|cell| cell.borrow_mut().clear());
         PACK_INDEXES.with(|cell| cell.borrow_mut().clear());
+        PACK_IDS.with(|cell| cell.borrow_mut().clear());
+        PACK_COUNT_VALIDATED.with(|cell| cell.borrow_mut().clear());
+        PACK_DIR_LISTING_TRUSTED.set(false);
+    }
+
+    fn drop_thread_local_dir_listing(pack_dir: &Path) {
+        PACK_DIR_INDEXES.with(|cell| {
+            if cell
+                .borrow()
+                .as_ref()
+                .is_some_and(|(dir, _, _)| dir == pack_dir)
+            {
+                *cell.borrow_mut() = None;
+                PACK_DIR_LISTING_TRUSTED.set(false);
+            }
+        });
+    }
+
+    fn drop_thread_local_pack_bytes(pack_path: &Path) {
+        PACK_BYTES.with(|cell| {
+            cell.borrow_mut().remove(pack_path);
+        });
+    }
+
+    /// Seed thread-local pack caches from `store` (one catalog read lock; hot reads avoid the catalog).
+    pub(crate) fn warm_thread_local_from_store(store: &crate::pack_store::PackStore) {
+        if !crate::pack_store::PackStore::has_context() {
+            return;
+        }
+        PACK_BYTES.with(|cell| cell.borrow_mut().clear());
+        PACK_INDEXES.with(|cell| cell.borrow_mut().clear());
+        PACK_IDS.with(|cell| cell.borrow_mut().clear());
+        PACK_COUNT_VALIDATED.with(|cell| cell.borrow_mut().clear());
+        PACK_HIT_INDEX.with(|cell| *cell.borrow_mut() = None);
+        let objects_dir = store.objects_dir();
+        let pack_dir = objects_dir.join("pack");
+        store.with_catalog_read(|g| {
+            if let Some(cached) = g.by_dir.get(&pack_dir) {
+                PACK_DIR_INDEXES.with(|cell| {
+                    *cell.borrow_mut() =
+                        Some((pack_dir.clone(), cached.dir_mtime, cached.indexes.clone()));
+                });
+            }
+            for (path, entry) in &g.by_pack {
+                remember_pack_bytes(path, &entry.bytes);
+            }
+            for (path, entry) in &g.by_idx {
+                remember_index(path, &entry.idx);
+            }
+            PACK_IDS.with(|cell| {
+                cell.borrow_mut()
+                    .extend(g.pack_ids.iter().map(|(k, v)| (k.clone(), *v)));
+            });
+            PACK_COUNT_VALIDATED.with(|cell| {
+                cell.borrow_mut()
+                    .extend(g.validated_pack_counts.iter().cloned());
+            });
+            PACK_DIR_LISTING_TRUSTED.set(true);
+        });
     }
 
     fn cached_pack_bytes(pack_path: &Path) -> Option<Arc<PackData>> {
@@ -197,12 +262,24 @@ pub(crate) mod pack_cache {
         if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
             return None;
         }
-        let dir_mt = dir_mtime(pack_dir);
+        let trust_listing = PACK_DIR_LISTING_TRUSTED.get();
+        let dir_mt = if trust_listing {
+            None
+        } else {
+            Some(dir_mtime(pack_dir))
+        };
         PACK_DIR_INDEXES.with(|cell| {
             cell.borrow()
                 .as_ref()
                 .and_then(|(dir, cached_mt, indexes)| {
-                    (dir == pack_dir && *cached_mt == dir_mt).then(|| indexes.clone())
+                    if dir != pack_dir {
+                        return None;
+                    }
+                    if trust_listing || dir_mt == Some(*cached_mt) {
+                        Some(indexes.clone())
+                    } else {
+                        None
+                    }
                 })
         })
     }
@@ -591,11 +668,21 @@ pub(crate) mod pack_cache {
     }
 
     pub fn pack_object_count_validated(pack_path: &Path) -> bool {
+        if crate::pack_store::PackStore::has_context()
+            && PACK_COUNT_VALIDATED.with(|cell| cell.borrow().contains(pack_path))
+        {
+            return true;
+        }
         crate::pack_store::PackStore::active_for_reads()
             .with_catalog_read(|g| g.validated_pack_counts.contains(pack_path))
     }
 
     pub fn mark_pack_object_count_validated(pack_path: &Path) {
+        if crate::pack_store::PackStore::has_context() {
+            PACK_COUNT_VALIDATED.with(|cell| {
+                cell.borrow_mut().insert(pack_path.to_path_buf());
+            });
+        }
         let store = crate::pack_store::PackStore::active_for_reads();
         if store.with_catalog_read(|g| g.validated_pack_counts.contains(pack_path)) {
             return;
@@ -649,6 +736,7 @@ pub(crate) mod pack_cache {
 
     fn rescan_dir_indexes(objects_dir: &Path) -> Result<Vec<Arc<PackIndex>>> {
         let pack_dir = objects_dir.join("pack");
+        drop_thread_local_dir_listing(&pack_dir);
         let dir_mt = dir_mtime(&pack_dir);
 
         let rd = match fs::read_dir(&pack_dir) {
@@ -812,6 +900,10 @@ pub(crate) mod pack_cache {
         mtime: SystemTime,
         size: u64,
     ) -> Result<Arc<PackData>> {
+        drop_thread_local_pack_bytes(pack_path);
+        PACK_COUNT_VALIDATED.with(|cell| {
+            cell.borrow_mut().remove(pack_path);
+        });
         let bytes = PackData::open(pack_path)?;
         let store = crate::pack_store::PackStore::active_for_reads();
         store.with_catalog(|g| {
@@ -827,6 +919,7 @@ pub(crate) mod pack_cache {
                 },
             );
         });
+        remember_pack_bytes(pack_path, &bytes);
         Ok(bytes)
     }
 
@@ -882,6 +975,7 @@ pub(crate) mod pack_cache {
                 }
                 removed
             });
+            drop_thread_local_pack_bytes(pack_path);
             return Ok(removed);
         };
         let store = crate::pack_store::PackStore::active_for_reads();
@@ -1061,8 +1155,14 @@ pub(crate) mod pack_cache {
     }
 
     fn pack_id_for_in_context(pack_path: &Path) -> u32 {
+        if let Some(id) = PACK_IDS.with(|cell| cell.borrow().get(pack_path).copied()) {
+            return id;
+        }
         let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(id) = store.with_catalog_read(|g| g.pack_ids.get(pack_path).copied()) {
+            PACK_IDS.with(|cell| {
+                cell.borrow_mut().insert(pack_path.to_path_buf(), id);
+            });
             return id;
         }
         store.with_catalog(|g| {
@@ -1072,6 +1172,9 @@ pub(crate) mod pack_cache {
             let id = g.next_pack_id;
             g.next_pack_id = g.next_pack_id.saturating_add(1);
             g.pack_ids.insert(pack_path.to_path_buf(), id);
+            PACK_IDS.with(|cell| {
+                cell.borrow_mut().insert(pack_path.to_path_buf(), id);
+            });
             id
         })
     }
