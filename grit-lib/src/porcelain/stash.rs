@@ -18,8 +18,8 @@ use std::io;
 use std::path::Path;
 
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, DiffEntry,
-    DiffIndexToWorktreeOptions, DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees,
+    worktree_differs_from_index_entry, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK};
@@ -906,25 +906,23 @@ pub fn check_stash_apply_would_overwrite_local_changes(
     };
 
     for path in stash_worktree_change_paths(repo, stash_commit)? {
-        let file_path = work_tree.join(&path);
         let Some(idx_entry) = current_index.get(path.as_bytes(), 0) else {
             continue;
         };
         if idx_entry.mode == MODE_GITLINK {
             continue;
         }
-        match worktree_bytes_for_index_mode(&file_path, idx_entry.mode) {
-            Ok(contents) => {
-                if let Ok(idx_blob) = repo.odb.read(&idx_entry.oid) {
-                    if contents != idx_blob.data {
-                        return Err(Error::StashWouldOverwriteLocalChanges {
-                            paths: path.clone(),
-                        });
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
+        if worktree_differs_from_index_entry(
+            &repo.odb,
+            &repo.git_dir,
+            work_tree,
+            idx_entry,
+            true,
+            None,
+        )? {
+            return Err(Error::StashWouldOverwriteLocalChanges {
+                paths: path.clone(),
+            });
         }
     }
     Ok(())
@@ -973,36 +971,6 @@ pub fn apply_stash(
     let base_tree_entries = flatten_tree_full(&repo.odb, &head_at_stash_commit.tree, "")?;
 
     let wt_changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
-
-    // Check for conflicts: does the worktree have local modifications to files
-    // that the stash also wants to change?
-    for (path, _) in &wt_changes {
-        let file_path = work_tree.join(path);
-        // Get the current index entry for this file
-        if let Some(idx_entry) = current_index.get(path.as_bytes(), 0) {
-            if idx_entry.mode == MODE_GITLINK {
-                // Submodule: comparing index blob in the superproject ODB is wrong; t7402 expects
-                // stash apply to succeed while the nested repo keeps its own HEAD.
-                continue;
-            }
-            // Read the worktree file
-            match worktree_bytes_for_index_mode(&file_path, idx_entry.mode) {
-                Ok(contents) => {
-                    if let Ok(idx_blob) = repo.odb.read(&idx_entry.oid) {
-                        if contents != idx_blob.data {
-                            return Err(Error::StashWouldOverwriteLocalChanges {
-                                paths: path.clone(),
-                            });
-                        }
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // File doesn't exist in worktree — could be deleted locally
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-    }
 
     // Read index commit tree
     let idx_obj = repo.odb.read(index_commit_oid)?;
