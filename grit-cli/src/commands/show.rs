@@ -217,12 +217,11 @@ fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
 impl Person {
     /// Parse a raw `Name <email> <epoch> <tz>` identity line.
     fn parse(ident: &str) -> Self {
-        let (name, rest) = ident.split_once(" <").map_or((ident, ""), |(n, r)| (n, r));
-        let (email, when) = rest.split_once("> ").map_or((rest, ""), |(e, w)| (e, w));
+        let parsed = context::parse_identity_line(ident);
         Self {
-            name: name.trim().to_owned(),
-            email: email.trim_end_matches('>').to_owned(),
-            date: rfc3339_from_identity_when(when),
+            name: parsed.name,
+            email: parsed.email,
+            date: rfc3339_from_identity_when(&parsed.when_suffix),
         }
     }
 }

@@ -57,8 +57,8 @@ pub struct TargetBranch {
 pub struct CommitSummary {
     pub oid: ObjectId,
     pub subject: String,
-    /// Author, with the email domain stripped (e.g. `schacon` from
-    /// `schacon@gmail.com`), falling back to the author name.
+    /// Author display name: the identity name when present, otherwise the email
+    /// local-part (e.g. `schacon` from `schacon@gmail.com`).
     pub author: String,
     /// Author date as a Unix timestamp (for relative-date rendering).
     pub timestamp: i64,
@@ -177,28 +177,75 @@ pub fn commits_ahead_of(
     Ok(AheadOfTarget { total, commits })
 }
 
-/// Parse a `Name <email> <epoch> <tz>` identity into a display author (the
-/// email's local part, with `@domain` stripped — falling back to the name) and
-/// the Unix timestamp.
-pub fn author_and_time(ident: &str) -> (String, i64) {
-    let name = ident.split(" <").next().unwrap_or("").trim();
-    let email = ident
-        .split_once(" <")
-        .and_then(|(_, rest)| rest.split_once('>'))
-        .map(|(email, _)| email)
-        .unwrap_or("");
-    let local = email.split('@').next().unwrap_or("").trim();
-    let author = if local.is_empty() {
-        name.to_owned()
+/// Parsed fields from a Git commit identity line (`Name <email> <epoch> <tz>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParsedIdentityLine {
+    pub name: String,
+    pub email: String,
+    /// Timestamp and timezone suffix after the closing `>` (e.g. `1700000000 +0000`).
+    pub when_suffix: String,
+}
+
+/// Split a raw identity line into name, email, and the date suffix.
+pub(crate) fn parse_identity_line(ident: &str) -> ParsedIdentityLine {
+    let (name, rest) = ident.split_once(" <").map_or((ident, ""), |(n, r)| (n, r));
+    let (email, when) = rest.split_once("> ").map_or((rest, ""), |(e, w)| (e, w));
+    ParsedIdentityLine {
+        name: name.trim().to_owned(),
+        email: email.trim_end_matches('>').trim().to_owned(),
+        when_suffix: when.to_owned(),
+    }
+}
+
+/// Display author for log-style output: prefer the identity name, fall back to
+/// the email local-part when the name is empty.
+pub(crate) fn author_display_name(name: &str, email: &str) -> String {
+    if !name.trim().is_empty() {
+        name.trim().to_owned()
     } else {
-        local.to_owned()
-    };
-    let timestamp = ident
-        .rsplit_once('>')
-        .and_then(|(_, after)| after.split_whitespace().next())
+        email.split('@').next().unwrap_or("").trim().to_owned()
+    }
+}
+
+/// Parse a `Name <email> <epoch> <tz>` identity into a display author and Unix timestamp.
+pub fn author_and_time(ident: &str) -> (String, i64) {
+    let parsed = parse_identity_line(ident);
+    let author = author_display_name(&parsed.name, &parsed.email);
+    let timestamp = parsed
+        .when_suffix
+        .split_whitespace()
+        .next()
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
     (author, timestamp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn author_display_prefers_name_over_email_local_part() {
+        let ident = "Zed Quartz <zed@q.test> 1700000000 +0000";
+        let (author, ts) = author_and_time(ident);
+        assert_eq!(author, "Zed Quartz");
+        assert_eq!(ts, 1_700_000_000);
+    }
+
+    #[test]
+    fn author_display_falls_back_to_email_local_part_when_name_empty() {
+        let ident = " <nobody@example.com> 1 +0000";
+        let (author, _) = author_and_time(ident);
+        assert_eq!(author, "nobody");
+    }
+
+    #[test]
+    fn author_display_uses_name_when_no_email_angle_brackets() {
+        let ident = "Ada Lovelace";
+        let (author, ts) = author_and_time(ident);
+        assert_eq!(author, "Ada Lovelace");
+        assert_eq!(ts, 0);
+    }
 }
 
 /// A human "N units ago" string for a Unix `timestamp`, relative to `now`
