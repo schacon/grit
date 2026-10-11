@@ -27,12 +27,30 @@
 //!   are written against.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::path::Path;
 
+use crate::commit::{assemble_identity, identity_now_from_epoch};
+use crate::config::ConfigSet;
+use crate::diff::diff_trees;
 use crate::error::{Error, Result};
+use crate::ident_resolve::{
+    resolve_email_with, resolve_loose_committer_parts_with, resolve_name_with, IdentRole,
+};
 use crate::index::{Index, IndexEntry};
-use crate::merge_base::is_ancestor;
-use crate::objects::{parse_tree, ObjectId, ObjectKind};
+use crate::merge_base::{is_ancestor, merge_bases_first_vs_rest};
+use crate::merge_file::MergeFavor;
+use crate::merge_trees::{
+    merge_trees_three_way, TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
+};
+use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
+use crate::porcelain::checkout::{self, checkout_between_trees};
+use crate::porcelain::commit::write_commit_object;
+use crate::porcelain::worktree_guard::{ensure_worktree_clean_for_merge, prepare_tree_checkout};
+use crate::refs;
 use crate::repo::Repository;
+use crate::state::{clear_merge_state, read_merge_heads, read_orig_head};
+use crate::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
 
 /// Flatten a tree object into a recursive list of [`IndexEntry`] values.
 ///
@@ -189,4 +207,370 @@ pub fn reduce_octopus_merge_heads(
         }
     }
     Ok((out_oids, out_names))
+}
+
+/// Result of integrating another branch into the current one ([`integrate_branch`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IntegrateBranchOutcome {
+    /// The current branch already contains the other tip.
+    UpToDate,
+    /// The current branch fast-forwarded to the other tip.
+    FastForward {
+        /// New branch tip after the fast-forward.
+        oid: ObjectId,
+    },
+    /// A merge commit was created without conflicts.
+    Merged {
+        /// New merge commit OID.
+        oid: ObjectId,
+    },
+    /// The merge has conflicts; the repository is left in a merge-in-progress state.
+    Conflicts {
+        /// Conflicted paths in repository-relative form, sorted and deduplicated.
+        paths: Vec<String>,
+    },
+}
+
+/// Integrate `other_oid` into the branch `into_ref` (currently at `into_oid`).
+///
+/// On success without conflicts, updates the branch ref, index, and worktree. On
+/// conflicts, records `MERGE_HEAD` / `ORIG_HEAD` / `MERGE_MSG`, writes conflict
+/// markers and a partially merged index, and leaves the branch ref unchanged.
+///
+/// # Errors
+///
+/// Propagates merge, checkout, ref, and I/O failures. Returns [`Error::Message`] when
+/// the histories are unrelated or the worktree is not clean.
+pub fn integrate_branch(
+    repo: &Repository,
+    into_ref: &str,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+) -> Result<IntegrateBranchOutcome> {
+    ensure_worktree_clean_for_merge(repo)?;
+
+    if into_oid == other_oid || is_ancestor(repo, other_oid, into_oid)? {
+        return Ok(IntegrateBranchOutcome::UpToDate);
+    }
+
+    let into_tree = commit_tree(repo, &into_oid)?;
+    let other_tree = commit_tree(repo, &other_oid)?;
+
+    if is_ancestor(repo, into_oid, other_oid)? {
+        prepare_tree_checkout(repo, Some(&into_tree), &other_tree)?;
+        checkout_between_trees(repo, Some(&into_tree), &other_tree)?;
+        move_branch(
+            repo,
+            into_ref,
+            into_oid,
+            other_oid,
+            &format!("merge {label}: fast-forward"),
+        )?;
+        return Ok(IntegrateBranchOutcome::FastForward { oid: other_oid });
+    }
+
+    let base_oid = merge_bases_first_vs_rest(repo, into_oid, &[other_oid])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            Error::Message(format!(
+                "'{label}' has no common history with the current branch"
+            ))
+        })?;
+    let base_tree = commit_tree(repo, &base_oid)?;
+
+    let presentation = TreeMergeConflictPresentation {
+        label_theirs: crate::merge_trees::TheirsConflictLabel::Fixed(label),
+        ..TreeMergeConflictPresentation::default()
+    };
+    let merged = merge_trees_three_way(
+        repo,
+        base_tree,
+        into_tree,
+        other_tree,
+        MergeFavor::default(),
+        WhitespaceMergeOptions::default(),
+        None,
+        presentation,
+    )?;
+
+    if has_tree_merge_conflicts(&merged) {
+        let paths = tree_merge_conflict_paths(&merged);
+        prepare_tree_checkout(
+            repo,
+            Some(&into_tree),
+            &write_tree_from_index(&repo.odb, &merged.index, "")?,
+        )?;
+        apply_conflict_merge_worktree(repo, &into_tree, &merged)?;
+        record_merge_in_progress(&repo.git_dir, into_oid, other_oid, label)?;
+        return Ok(IntegrateBranchOutcome::Conflicts { paths });
+    }
+
+    let mut index = merged.index;
+    let merged_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
+    checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
+
+    let config = repo.config()?;
+    let author =
+        strict_commit_identity(repo, config.as_ref(), IdentRole::Author, "GIT_AUTHOR_DATE")?;
+    let committer = strict_commit_identity(
+        repo,
+        config.as_ref(),
+        IdentRole::Committer,
+        "GIT_COMMITTER_DATE",
+    )?;
+
+    let commit = CommitData {
+        tree: merged_tree,
+        parents: vec![into_oid, other_oid],
+        author,
+        committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding: None,
+        message: format!("Merge {label}\n"),
+        raw_message: None,
+        extra_headers: Vec::new(),
+    };
+    let oid = write_commit_object(repo, &commit, None)?;
+    move_branch(repo, into_ref, into_oid, oid, &format!("merge {label}"))?;
+    Ok(IntegrateBranchOutcome::Merged { oid })
+}
+
+/// Abort an in-progress merge, restoring index and worktree to [`read_orig_head`].
+///
+/// # Errors
+///
+/// Returns [`Error::Message`] when no merge is in progress, or propagates checkout and I/O errors.
+pub fn abort_branch_merge(repo: &Repository) -> Result<()> {
+    if read_merge_heads(&repo.git_dir)?.is_empty() {
+        return Err(Error::Message(
+            "there is no merge in progress — nothing to abort".into(),
+        ));
+    }
+    let orig = read_orig_head(&repo.git_dir)?
+        .ok_or_else(|| Error::Message("merge in progress but ORIG_HEAD is missing".into()))?;
+    let head_tree = commit_tree(repo, &orig)?;
+
+    let old_index = repo.load_index()?;
+    let from_tree = write_tree_from_index(&repo.odb, &old_index, "")?;
+    let mut clean_index = index_from_tree(repo, &head_tree)?;
+    repo.write_index(&mut clean_index)?;
+    let changes = diff_trees(&repo.odb, Some(&from_tree), Some(&head_tree), "")?;
+    checkout::checkout_tree_changes(repo, &changes)?;
+    clear_merge_state(&repo.git_dir)?;
+    Ok(())
+}
+
+fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        return Err(Error::CorruptObject(format!(
+            "expected commit, got {}",
+            obj.kind.as_str()
+        )));
+    }
+    Ok(parse_commit(&obj.data)?.tree)
+}
+
+fn index_from_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<Index> {
+    let entries = tree_to_index_entries(repo, tree_oid, "")?;
+    let mut index = Index::new();
+    for entry in entries {
+        index.push_entry_unsorted(entry);
+    }
+    index.sort();
+    Ok(index)
+}
+
+fn has_tree_merge_conflicts(merged: &TreeMergeOutput) -> bool {
+    !merged.conflict_content.is_empty() || merged.index.entries().iter().any(|e| e.stage() != 0)
+}
+
+fn tree_merge_conflict_paths(merged: &TreeMergeOutput) -> Vec<String> {
+    let mut paths: Vec<String> = merged
+        .conflict_content
+        .keys()
+        .map(|k| String::from_utf8_lossy(k).into_owned())
+        .collect();
+    paths.extend(
+        merged
+            .index
+            .entries()
+            .iter()
+            .filter(|e| e.stage() != 0)
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned()),
+    );
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn conflict_path_set(merged: &TreeMergeOutput) -> BTreeSet<Vec<u8>> {
+    let mut set = BTreeSet::new();
+    set.extend(merged.conflict_content.keys().cloned());
+    for entry in merged.index.entries() {
+        if entry.stage() != 0 {
+            set.insert(entry.path.clone());
+        }
+    }
+    set
+}
+
+fn apply_conflict_merge_worktree(
+    repo: &Repository,
+    head_tree: &ObjectId,
+    merged: &TreeMergeOutput,
+) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
+    let conflict_paths = conflict_path_set(merged);
+    let mut index = merged.index.clone();
+    if index.has_unmerged_entries() {
+        index.clear_cache_tree();
+    }
+    repo.write_index(&mut index)?;
+
+    let stage0_tree = write_tree_from_index(&repo.odb, &index, "")?;
+    let changes = diff_trees(&repo.odb, Some(head_tree), Some(&stage0_tree), "")?;
+    let filtered: Vec<_> = changes
+        .into_iter()
+        .filter(|change| {
+            let path = change
+                .new_path
+                .as_deref()
+                .or(change.old_path.as_deref())
+                .unwrap_or("");
+            !conflict_paths.contains(path.as_bytes())
+        })
+        .collect();
+    checkout::checkout_tree_changes(repo, &filtered)?;
+
+    for (path, oid) in &merged.conflict_content {
+        let mode = index
+            .get(path, 2)
+            .or_else(|| index.get(path, 3))
+            .map(|e| e.mode)
+            .unwrap_or(0o100644);
+        let blob = repo.odb.read(oid)?;
+        let rel = String::from_utf8_lossy(path);
+        checkout::write_to_worktree(work_tree, rel.as_ref(), &blob.data, mode)?;
+    }
+    Ok(())
+}
+
+fn record_merge_in_progress(
+    git_dir: &Path,
+    into_oid: ObjectId,
+    other_oid: ObjectId,
+    label: &str,
+) -> Result<()> {
+    fs::write(
+        git_dir.join("MERGE_HEAD"),
+        format!("{}\n", other_oid.to_hex()),
+    )
+    .map_err(Error::Io)?;
+    fs::write(
+        git_dir.join("ORIG_HEAD"),
+        format!("{}\n", into_oid.to_hex()),
+    )
+    .map_err(Error::Io)?;
+    fs::write(
+        git_dir.join("MERGE_MSG"),
+        format!("Merge branch '{label}'\n"),
+    )
+    .map_err(Error::Io)?;
+    Ok(())
+}
+
+fn strict_commit_identity(
+    repo: &Repository,
+    config: &ConfigSet,
+    role: IdentRole,
+    date_var: &str,
+) -> Result<String> {
+    let env = repo.environment();
+    let name = resolve_name_with(env, config, role).map_err(|e| Error::Message(e.to_string()))?;
+    let email = resolve_email_with(env, config, role).map_err(|e| Error::Message(e.to_string()))?;
+    let now = identity_now_from_epoch(
+        env.var("SOURCE_DATE_EPOCH")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| time::OffsetDateTime::now_utc().unix_timestamp()),
+        env.var("TZ").as_deref(),
+    );
+    let date = env.var(date_var);
+    Ok(assemble_identity(&name, &email, date.as_deref(), now))
+}
+
+fn move_branch(
+    repo: &Repository,
+    refname: &str,
+    old: ObjectId,
+    new: ObjectId,
+    reason: &str,
+) -> Result<()> {
+    refs::write_ref(&repo.git_dir, refname, &new)?;
+    let env = repo.environment();
+    let config = ConfigSet::load(env, Some(&repo.git_dir), true).unwrap_or_default();
+    let now = identity_now_from_epoch(
+        env.var("SOURCE_DATE_EPOCH")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| time::OffsetDateTime::now_utc().unix_timestamp()),
+        env.var("TZ").as_deref(),
+    );
+    let (name, email) = resolve_loose_committer_parts_with(env, &config);
+    let who = assemble_identity(&name, &email, None, now);
+    let _ = refs::append_reflog(&repo.git_dir, refname, &old, &new, &who, reason, false);
+    let _ = refs::append_reflog(&repo.git_dir, "HEAD", &old, &new, &who, reason, false);
+    Ok(())
+}
+
+#[cfg(test)]
+mod integrate_tests {
+    use super::*;
+    use crate::index::{Index, IndexEntry, MODE_REGULAR};
+    use std::collections::BTreeMap;
+
+    fn index_entry(path: &str, stage: u8) -> IndexEntry {
+        let mut entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: crate::diff::zero_oid(),
+            flags: 0,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        };
+        entry.set_stage(stage);
+        entry
+    }
+
+    #[test]
+    fn tree_merge_conflict_paths_unions_markers_and_unmerged_index() {
+        let mut index = Index::new();
+        index.add_or_replace(index_entry("b.txt", 1));
+        index.add_or_replace(index_entry("b.txt", 2));
+        let mut conflict_content = BTreeMap::new();
+        conflict_content.insert(b"a.txt".to_vec(), crate::diff::zero_oid());
+        let merged = TreeMergeOutput {
+            index,
+            conflict_content,
+        };
+        assert_eq!(
+            tree_merge_conflict_paths(&merged),
+            vec!["a.txt".to_owned(), "b.txt".to_owned()]
+        );
+    }
 }

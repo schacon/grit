@@ -295,7 +295,11 @@ enum Command {
     /// Merge another branch into the current one.
     Merge {
         /// Branch to merge in.
-        branch: String,
+        #[arg(required_unless_present = "abort")]
+        branch: Option<String>,
+        /// Cancel an in-progress merge and restore the pre-merge state.
+        #[arg(long = "abort")]
+        abort: bool,
     },
     /// Cherry-pick a commit onto the current branch.
     Pick {
@@ -654,7 +658,14 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             mixed,
             hard,
         } => emit(&commands::reset::run(rev, soft, mixed, hard)?, opts),
-        Command::Merge { branch } => emit(&commands::merge::run(&branch)?, opts),
+        Command::Merge { branch, abort } => {
+            let outcome = commands::merge::run(branch.as_deref(), abort)?;
+            emit(&outcome, opts)?;
+            if outcome.result == "conflicts" {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Pick { commit } => emit(&commands::pick::run(&commit)?, opts),
         Command::Revert { commit } => emit(&commands::revert::run(&commit)?, opts),
         Command::Stash {
@@ -714,7 +725,14 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             prune,
             no_prune,
         } => emit(&commands::fetch::run(remote, prune, no_prune)?, opts),
-        Command::Pull => emit(&commands::pull::run()?, opts),
+        Command::Pull => {
+            let outcome = commands::pull::run()?;
+            emit(&outcome, opts)?;
+            if outcome.result == "conflicts" {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Push { tags } => {
             let outcome = commands::push::run(tags)?;
             emit(&outcome, opts)?;

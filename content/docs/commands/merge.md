@@ -9,6 +9,7 @@ order: 3
 
 ```text
 grit merge <branch>
+grit merge --abort
 ```
 
 ## Description
@@ -17,11 +18,10 @@ Brings the commits from `<branch>` into the current branch:
 
 - If the current branch already has everything, nothing changes.
 - If the current branch has no commits of its own since they diverged, it's moved forward to `<branch>` (a fast-forward). No new commit is made.
-- Otherwise both sides are merged and a merge commit is recorded, with the message `Merge <branch>`. When `commit.gpgsign` is enabled, that merge commit is signed like [`grit commit`](../commit/).
+- Otherwise both sides are merged. When there are no overlapping edits, a merge commit is recorded with the message `Merge <branch>`. When `commit.gpgsign` is enabled, that merge commit is signed like [`grit commit`](../commit/).
+- When the same lines were changed on both sides, `grit merge` stops with conflicts: it updates the index and working tree, writes conflict markers around each conflicting hunk, records merge-in-progress state (`MERGE_HEAD`, `ORIG_HEAD`, `MERGE_MSG`), and leaves the branch ref unchanged. Fix the conflicts, stage the resolved paths, and run [`grit commit`](../commit/) to create the two-parent merge commit. Run `grit merge --abort` to discard the in-progress merge and restore the pre-merge branch, index, and working tree.
 
 `<branch>` can be a local branch or a remote-tracking branch such as `origin/main`. Local branches are looked up first.
-
-If both sides changed the same lines, `grit` lists the conflicting files, exits with an error, and leaves the branch and working tree exactly as they were. `grit` can't resolve conflicts yet; to finish the merge, run `git merge <branch>`, fix the conflicts and commit.
 
 `grit merge` won't run with uncommitted changes, on a branch with no commits, or with a detached HEAD. It also refuses when an untracked file in the working tree would be replaced by a path the merge would check out (same rule as [`grit switch`](../switch/)); the branch and file are left unchanged.
 
@@ -30,6 +30,7 @@ If both sides changed the same lines, `grit` lists the conflicting files, exits 
 | Option | Description |
 | --- | --- |
 | `<branch>` | The branch to merge into the current one. |
+| `--abort` | Cancel an in-progress merge and restore the state recorded in `ORIG_HEAD`. |
 
 ## Examples
 
@@ -45,10 +46,24 @@ When both branches change the same lines:
 
 ```console
 $ grit merge topic
-error: merge has conflicts in:
+Merge has conflicts in:
   README.md
 
-Nothing was changed. grit can't resolve conflicts yet — run `git merge topic` to resolve them.
+Automatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`.
+```
+
+After resolving markers and staging:
+
+```console
+$ grit commit -m "Merge topic"
+Merged topic (2 parents)
+```
+
+To cancel:
+
+```console
+$ grit merge --abort
+Merge aborted.
 ```
 
 When an untracked file would be overwritten:
@@ -64,10 +79,11 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `result` | string | `up_to_date`, `fast_forward`, `merged`, or `set_upstream`. |
+| `result` | string | `up_to_date`, `fast_forward`, `merged`, `conflicts`, `aborted`, or `set_upstream`. |
 | `branch` | string | The branch that was merged in (or set as upstream). |
 | `oid` | string or null | Commit the current branch points at after the merge, when applicable. |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
+| `conflicts` | array or null | Sorted paths with unresolved conflicts when `result` is `conflicts`. |
 
 Example:
 
@@ -78,18 +94,12 @@ Example:
 }
 ```
 
-On failure because of conflicts, stdout is a single JSON object (exit code 1):
-
-| Field | Type | Meaning |
-| ----- | ---- | ------- |
-| `error` | string | Short summary (`merge has conflicts`). |
-| `kind` | string | `conflict`. |
-| `conflicts` | array | Sorted paths with unresolved conflicts. |
+When the merge stops on conflicts (exit code 1), stdout is still a single JSON object:
 
 ```json
 {
-  "error": "merge has conflicts",
-  "kind": "conflict",
+  "result": "conflicts",
+  "branch": "topic",
   "conflicts": ["src/lib.rs"]
 }
 ```
