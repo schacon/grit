@@ -259,10 +259,29 @@ impl FilesRefStore {
     }
 
     fn load_batch_state(&self) -> Result<RefBatchState> {
+        let mut refs = self.load_raw_map()?;
+        // Empty-prefix ref listing intentionally omits `HEAD` (Git `for-each-ref` behavior), but
+        // batch transactions must treat an existing `HEAD` as an update, not a create.
+        self.insert_head_for_batch_state(&mut refs)?;
         Ok(RefBatchState {
-            refs: self.load_raw_map()?,
+            refs,
             reflogs: self.load_reflog_map()?,
         })
+    }
+
+    fn insert_head_for_batch_state(&self, map: &mut BTreeMap<String, RawRef>) -> Result<()> {
+        if map.contains_key("HEAD") {
+            return Ok(());
+        }
+        for base in [self.common_dir.as_path(), self.git_dir.as_path()] {
+            let head_path = base.join("HEAD");
+            if head_path.is_file() {
+                let raw = read_ref_file(&head_path).map(ref_to_raw)?;
+                map.insert("HEAD".to_owned(), raw);
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn loose_ref_file_exists(&self, refname: &str) -> Result<bool> {
