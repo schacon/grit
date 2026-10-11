@@ -36,6 +36,7 @@ use crate::parallel::{
 pub(crate) fn extend_send_order_blob_deltas(
     send: &[ObjectId],
     objects: &HashMap<ObjectId, Object>,
+    islands: &DeltaIslands,
     delta_to_base: &mut HashMap<ObjectId, ObjectId>,
     skip_targets: &HashSet<ObjectId>,
     hash_len: usize,
@@ -51,11 +52,11 @@ pub(crate) fn extend_send_order_blob_deltas(
             continue;
         }
         if let Some(base) = prev_blob {
-            let max_size = obj
-                .data
-                .len()
-                .saturating_div(2)
-                .saturating_sub(hash_len);
+            if !islands.in_same_island(&oid, &base) {
+                prev_blob = Some(oid);
+                continue;
+            }
+            let max_size = obj.data.len().saturating_div(2).saturating_sub(hash_len);
             if max_size == 0 {
                 prev_blob = Some(oid);
                 continue;

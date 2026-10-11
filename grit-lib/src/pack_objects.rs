@@ -121,9 +121,9 @@ impl PackBuildOptions {
 pub struct PackObjectsOptions {
     /// Core pack-objects behaviour flags.
     pub build: PackBuildOptions,
-    /// Override parallel delta-search workers (`None` = resolve [`ParallelOp::PackDeltaSearch`] / `pack.threads`).
+    /// Override parallel delta-search workers (`None` = resolve [`crate::parallel::ParallelOp::PackDeltaSearch`] / `pack.threads`).
     pub search_threads: Option<usize>,
-    /// Override parallel pack-write workers (`None` = resolve [`ParallelOp::PackWrite`] / `pack.threads` from the repo config attached to the [`Odb`]).
+    /// Override parallel pack-write workers (`None` = resolve [`crate::parallel::ParallelOp::PackWrite`] / `pack.threads` from the repo config attached to the [`Odb`]).
     pub write_threads: Option<usize>,
 }
 
@@ -840,6 +840,7 @@ fn plan_deltas(
         crate::pack_delta::extend_send_order_blob_deltas(
             send,
             &objects,
+            &islands,
             &mut delta_to_base,
             &reuse_delta_bases,
             odb.hash_algo().len(),
