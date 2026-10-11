@@ -41,8 +41,11 @@ Clone a repository from GitHub:
 ```console
 $ grit clone https://github.com/gitbutlerapp/grit.git
 Cloning into 'grit' ...
+Receiving objects: 4.12 MiB, 8.50 MiB/s, done.
 Cloned into 'grit' on branch main.
 ```
+
+Progress lines are written to stderr and update in place on a terminal. When stderr is not a TTY (for example in a CI log or with stderr redirected), only the initial `Cloning into …` line is shown.
 
 Clone into a directory with a different name:
 

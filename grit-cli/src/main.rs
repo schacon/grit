@@ -14,6 +14,7 @@ mod json_error;
 mod json_filter;
 mod markdown;
 mod output;
+mod progress;
 mod ref_name_messages;
 mod stdio;
 mod terminal_progress;

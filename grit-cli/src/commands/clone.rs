@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::context;
 use crate::output::{progress, HumanRender, MarkdownRender, OutputMode};
+use crate::progress::TerminalProgress;
 
 /// Result of `grit clone`.
 #[derive(Serialize)]
@@ -63,7 +64,8 @@ fn clone_into(url: &str, path: &Path, dir: &str, mode: OutputMode) -> Result<Clo
         initial_branch: "main".to_owned(),
         thread_policy: crate::context::thread_policy_for_repo(),
     };
-    let outcome = clone_repo(clone_opts, &mut grit_lib::fetch::NoProgress, Some(&factory))?;
+    let mut term_progress = TerminalProgress::new(mode);
+    let outcome = clone_repo(clone_opts, &mut term_progress, Some(&factory))?;
 
     let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
     let progress_enabled =

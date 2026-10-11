@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::fetch::Progress;
+use crate::progress::ProgressPhase;
 
 /// Where demuxed pack bytes are stored.
 pub enum PackReceiveTarget<'a> {
@@ -39,20 +40,44 @@ pub fn append_pack_data(
     target: &mut PackReceiveTarget<'_>,
     pending: &mut Vec<u8>,
     seen_pack: &mut bool,
-) -> Result<()> {
+) -> Result<u64> {
     if *seen_pack {
-        return target.append(data);
+        let n = data.len() as u64;
+        target.append(data)?;
+        return Ok(n);
     }
     pending.extend_from_slice(data);
     if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
         *seen_pack = true;
-        target.append(&pending[pos..])?;
+        let chunk = &pending[pos..];
+        let n = chunk.len() as u64;
+        target.append(chunk)?;
         pending.clear();
-    } else if pending.len() > 3 {
-        let keep_from = pending.len() - 3;
-        pending.drain(..keep_from);
+        Ok(n)
+    } else {
+        if pending.len() > 3 {
+            let keep_from = pending.len() - 3;
+            pending.drain(..keep_from);
+        }
+        Ok(0)
     }
-    Ok(())
+}
+
+fn note_received_pack_bytes(progress: &mut dyn Progress, active: &mut bool, nbytes: u64) {
+    if nbytes == 0 {
+        return;
+    }
+    if !*active {
+        progress.start(ProgressPhase::ReceivingObjects, None);
+        *active = true;
+    }
+    progress.inc(nbytes);
+}
+
+fn finish_receiving(progress: &mut dyn Progress, active: bool) {
+    if active {
+        progress.finish();
+    }
 }
 
 /// Demultiplex a side-band-64k stream: pack bytes go to `target`, channel 2 to
@@ -64,7 +89,8 @@ pub fn read_sideband_pack_to(
 ) -> Result<()> {
     let mut pending = Vec::new();
     let mut payload = Vec::with_capacity(65520);
-    read_sideband_pack_tail(r, target, progress, &mut pending, &mut false, &mut payload)
+    read_sideband_pack_tail(r, target, progress, &mut pending, &mut false, &mut payload)?;
+    Ok(())
 }
 
 /// Continue demux after the first side-band payload (or mid-stream) with existing
@@ -106,6 +132,7 @@ pub fn read_sideband_pack_tail(
     seen_pack: &mut bool,
     payload_buf: &mut Vec<u8>,
 ) -> Result<()> {
+    let mut receiving = false;
     loop {
         let mut len_buf = [0u8; 4];
         match r.read_exact(&mut len_buf) {
@@ -140,11 +167,15 @@ pub fn read_sideband_pack_tail(
         }
         match payload_buf[0] {
             1 => {
-                if *seen_pack {
-                    target.append(&payload_buf[1..])?;
+                let nbytes = if *seen_pack {
+                    let data = &payload_buf[1..];
+                    let n = data.len() as u64;
+                    target.append(data)?;
+                    n
                 } else {
-                    append_pack_data(&payload_buf[1..], target, pending, seen_pack)?;
-                }
+                    append_pack_data(&payload_buf[1..], target, pending, seen_pack)?
+                };
+                note_received_pack_bytes(progress, &mut receiving, nbytes);
             }
             2 => progress.message(&payload_buf[1..]),
             3 => {
@@ -153,9 +184,13 @@ pub fn read_sideband_pack_tail(
                     String::from_utf8_lossy(&payload_buf[1..]).trim_end()
                 )))
             }
-            _ => append_pack_data(payload_buf, target, pending, seen_pack)?,
+            _ => {
+                let nbytes = append_pack_data(payload_buf, target, pending, seen_pack)?;
+                note_received_pack_bytes(progress, &mut receiving, nbytes);
+            }
         }
     }
+    finish_receiving(progress, receiving);
     Ok(())
 }
 
@@ -255,57 +290,15 @@ impl TempPackReceive {
     ) -> Result<()> {
         let mut target = PackReceiveTarget::File(&mut self.file);
         let mut pending = Vec::new();
-        let mut seen = false;
-        loop {
-            let mut len_buf = [0u8; 4];
-            match reader.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.into()),
-            }
-            let len_str = std::str::from_utf8(&len_buf)
-                .map_err(|_| Error::Message("bad pkt length".to_owned()))?;
-            let len = usize::from_str_radix(len_str, 16)
-                .map_err(|_| Error::Message("bad pkt length".to_owned()))?;
-            match len {
-                0 => {
-                    if seen {
-                        break;
-                    }
-                    continue;
-                }
-                1 | 2 => continue,
-                n if n <= 4 => {
-                    return Err(Error::Message(format!(
-                        "invalid pkt-line length in side-band stream: {n}"
-                    )))
-                }
-                _ => {}
-            }
-            let payload_len = len - 4;
-            if self.sideband_payload.len() < payload_len {
-                self.sideband_payload.resize(payload_len, 0);
-            }
-            self.sideband_payload.truncate(payload_len);
-            reader.read_exact(&mut self.sideband_payload)?;
-            let payload = &self.sideband_payload;
-            if payload.is_empty() {
-                continue;
-            }
-            match payload[0] {
-                1 => {
-                    append_pack_data(&payload[1..], &mut target, &mut pending, &mut seen)?;
-                }
-                2 => progress.message(&payload[1..]),
-                3 => {
-                    return Err(Error::Message(format!(
-                        "remote error: {}",
-                        String::from_utf8_lossy(&payload[1..]).trim_end()
-                    )))
-                }
-                _ => append_pack_data(payload, &mut target, &mut pending, &mut seen)?,
-            }
-        }
+        let mut seen = self.seen_pack;
+        read_sideband_pack_tail(
+            reader,
+            &mut target,
+            progress,
+            &mut pending,
+            &mut seen,
+            &mut self.sideband_payload,
+        )?;
         self.seen_pack = seen;
         self.file.flush().map_err(Error::Io)?;
         Ok(())
@@ -470,9 +463,18 @@ impl PackReceiveSink {
         match &mut self.0 {
             PackReceiveInner::File(f) => f.read_sideband(reader, progress),
             PackReceiveInner::Memory(m) => {
+                let mut pending = Vec::new();
+                let mut seen = m.seen_pack;
                 let mut target = PackReceiveTarget::Memory(&mut m.buf);
-                read_sideband_pack_to(reader, &mut target, progress)?;
-                m.seen_pack = !m.buf.is_empty();
+                read_sideband_pack_tail(
+                    reader,
+                    &mut target,
+                    progress,
+                    &mut pending,
+                    &mut seen,
+                    &mut m.sideband_payload,
+                )?;
+                m.seen_pack = seen;
                 Ok(())
             }
         }
@@ -503,6 +505,63 @@ impl Write for TempPackReceive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fetch::Progress;
+    use crate::progress::ProgressPhase;
+    use std::io::Cursor;
+
+    #[derive(Default)]
+    struct ReceiveRecorder {
+        started: bool,
+        total: Option<u64>,
+        increments: Vec<u64>,
+        finished: bool,
+    }
+
+    impl Progress for ReceiveRecorder {}
+
+    impl crate::progress::ProgressSink for ReceiveRecorder {
+        fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+            assert_eq!(phase, ProgressPhase::ReceivingObjects);
+            self.started = true;
+            self.total = total;
+        }
+        fn inc(&mut self, units: u64) {
+            self.increments.push(units);
+        }
+        fn finish(&mut self) {
+            self.finished = true;
+        }
+    }
+
+    fn sideband_pkt(channel: u8, data: &[u8]) -> Vec<u8> {
+        let payload_len = 1 + data.len();
+        let total_len = payload_len + 4;
+        let mut out = format!("{total_len:04x}").into_bytes();
+        out.push(channel);
+        out.extend_from_slice(data);
+        out
+    }
+
+    #[test]
+    fn reports_received_bytes_per_packet() {
+        let pack1 = b"PACKaaaa";
+        let pack2 = b"bbbbbbbb";
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&sideband_pkt(1, pack1));
+        stream.extend_from_slice(&sideband_pkt(1, pack2));
+        stream.extend_from_slice(b"0000");
+
+        let mut target_buf = Vec::new();
+        let mut target = PackReceiveTarget::Memory(&mut target_buf);
+        let mut rec = ReceiveRecorder::default();
+        read_sideband_pack_to(&mut Cursor::new(stream), &mut target, &mut rec).expect("read");
+
+        assert!(rec.started);
+        assert_eq!(rec.total, None);
+        assert_eq!(rec.increments, vec![pack1.len() as u64, pack2.len() as u64]);
+        assert!(rec.finished);
+        assert_eq!(target_buf, b"PACKaaaabbbbbbbb");
+    }
 
     #[test]
     fn temp_pack_finish_leaves_durable_path_with_bytes() {

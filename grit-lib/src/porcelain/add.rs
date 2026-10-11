@@ -140,7 +140,7 @@ fn stage_with_tracked_scan(
 fn stage_inner(
     repo: &Repository,
     opts: &StageOptions,
-    progress: &mut dyn ProgressSink,
+    _progress: &mut dyn ProgressSink,
     tracked_scan: bool,
 ) -> Result<StageOutcome> {
     let work_tree = repo
