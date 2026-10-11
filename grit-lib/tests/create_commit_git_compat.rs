@@ -1,5 +1,6 @@
 //! Round-trip `create_commit` with the system `git` binary.
 
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -239,6 +240,54 @@ fn amend_keeps_author_and_message() {
         reflog.contains("commit (amend): keep me"),
         "reflog: {reflog:?}"
     );
+}
+
+fn commit_message_bytes(root: &Path) -> Vec<u8> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["cat-file", "commit", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git cat-file");
+    assert!(out.status.success(), "cat-file commit failed");
+    let raw = out.stdout;
+    let sep = raw
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .expect("commit headers");
+    raw[sep + 2..].to_vec()
+}
+
+#[test]
+fn amend_preserves_message_bytes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "core.logAllRefUpdates", "true"]);
+    std::fs::write(root.join("a.txt"), b"a\n").unwrap();
+    let repo = Repository::discover(Some(root)).expect("open");
+    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).expect("commit");
+    let baseline = commit_message_bytes(root);
+    assert_eq!(baseline, b"oneline subject\n");
+
+    for extra in 1..=2 {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join("a.txt"))
+            .unwrap()
+            .write_all(format!("{extra}\n").as_bytes())
+            .unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+        create_commit(&repo, &amend_req(""), &mut NullProgress).expect("amend");
+        fsck(root);
+        assert_eq!(
+            commit_message_bytes(root),
+            baseline,
+            "message changed after amend {extra}"
+        );
+    }
 }
 
 #[test]

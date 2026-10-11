@@ -157,7 +157,7 @@ pub fn create_commit(
     if req.amend && message.is_empty() {
         message = amend_default_message.unwrap_or_default();
     }
-    if !message.is_empty() {
+    if !message.is_empty() && !message.ends_with('\n') {
         message.push('\n');
     }
     let editmsg_path = repo.git_dir.join("COMMIT_EDITMSG");
@@ -554,12 +554,44 @@ mod tests {
         req.amend = true;
         let tip = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
-        assert_ne!(outcome.oid, tip);
+        assert_eq!(
+            outcome.oid, tip,
+            "same tree and message with fixed committer yields the same object id"
+        );
         assert!(outcome.parent.is_some());
 
         let branch_log = read_reflog(&repo.git_dir, "refs/heads/main").unwrap();
         assert_eq!(branch_log.len(), 3);
         assert_eq!(branch_log[2].message, "commit (amend): second");
+    }
+
+    #[test]
+    fn create_commit_amend_preserves_message_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a.txt"), b"a\n").unwrap();
+        stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).unwrap();
+        let baseline = {
+            let oid = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+            parse_commit(&repo.odb.read(&oid).unwrap().data)
+                .unwrap()
+                .message
+        };
+
+        for extra in 1..=2 {
+            fs::write(root.join("a.txt"), format!("a\n{extra}\n")).unwrap();
+            stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+            let mut req = commit_req("");
+            req.amend = true;
+            create_commit(&repo, &req, &mut NullProgress).unwrap();
+            let oid = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+            let message = parse_commit(&repo.odb.read(&oid).unwrap().data)
+                .unwrap()
+                .message;
+            assert_eq!(message, baseline, "after amend {extra}");
+        }
     }
 
     #[test]
