@@ -9,7 +9,6 @@ use std::io::Write;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
-use crate::delta_encode::{encode_prefix_extension_delta, DeltaIndex};
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, HashAlgo, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -121,15 +120,15 @@ impl PackBuildOptions {
 pub struct PackObjectsOptions {
     /// Core pack-objects behaviour flags.
     pub build: PackBuildOptions,
-    /// Parallel delta-search worker threads (`1` = single-threaded, the default).
-    pub delta_threads: usize,
+    /// Override parallel pack-write workers (`None` = resolve [`ParallelOp::PackWrite`] / `pack.threads` from the repo config attached to the [`Odb`]).
+    pub write_threads: Option<usize>,
 }
 
 impl Default for PackObjectsOptions {
     fn default() -> Self {
         Self {
             build: PackBuildOptions::default(),
-            delta_threads: 1,
+            write_threads: None,
         }
     }
 }
@@ -138,7 +137,7 @@ impl From<PackBuildOptions> for PackObjectsOptions {
     fn from(build: PackBuildOptions) -> Self {
         Self {
             build,
-            delta_threads: 1,
+            write_threads: None,
         }
     }
 }
@@ -284,7 +283,12 @@ impl<'a> PackObjects<'a> {
             )?;
             self.fire(PackProgress::PlannedDeltas);
             let delta_count = plan.entries.iter().filter(|e| e.base.is_some()).count() as u32;
-            let pack = serialize_pack_with_deltas(self.source_odb, &plan, &opts)?;
+            let pack = crate::pack_delta::serialize_pack_with_deltas(
+                self.source_odb,
+                &plan.entries,
+                &opts,
+                self.opts.write_threads,
+            )?;
             w.write_all(&pack).map_err(Error::Io)?;
             let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]);
             return Ok(PackStats {
@@ -410,7 +414,56 @@ pub fn build_pack_from_send_list(
         return serialize_pack(odb, send, opts);
     }
     let plan = plan_deltas(odb, send, have_closure, opts, blob_name_hashes)?;
-    serialize_pack_with_deltas(odb, &plan, opts)
+    crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, None)
+}
+
+/// Like [`build_pack`] with an explicit pack-write worker override for tests and embedders.
+///
+/// `write_threads` replaces config-derived `pack.threads` when set.
+pub fn build_pack_with_write_threads(
+    odb: &Odb,
+    wants: &[ObjectId],
+    haves: &[ObjectId],
+    opts: &PackBuildOptions,
+    write_threads: Option<usize>,
+) -> Result<Vec<u8>> {
+    let have_closure = reachable_closure(odb, haves, &HashSet::new(), true, &HashSet::new())?;
+    let selection = crate::pack_object_select::enumerate_pack_objects(
+        odb,
+        wants,
+        haves,
+        &crate::pack_object_select::PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &HashSet::new(),
+            have_shallow_grafts: Some(&HashSet::new()),
+            use_bitmaps: opts.use_bitmaps,
+            exclude_objects: Some(&have_closure),
+        },
+    )?;
+    build_pack_from_send_list_with_write_threads(
+        odb,
+        &selection.send,
+        &selection.have_closure,
+        opts,
+        &selection.blob_name_hashes,
+        write_threads,
+    )
+}
+
+/// Serialize a precomputed object list with an explicit pack-write worker count.
+pub fn build_pack_from_send_list_with_write_threads(
+    odb: &Odb,
+    send: &[ObjectId],
+    have_closure: &HashSet<ObjectId>,
+    opts: &PackBuildOptions,
+    blob_name_hashes: &HashMap<ObjectId, u32>,
+    write_threads: Option<usize>,
+) -> Result<Vec<u8>> {
+    if !opts.delta {
+        return serialize_pack(odb, send, opts);
+    }
+    let plan = plan_deltas(odb, send, have_closure, opts, blob_name_hashes)?;
+    crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, write_threads)
 }
 
 /// Object list for a local fetch (remote source, local have boundary).
@@ -423,13 +476,7 @@ pub(crate) fn send_list_for_local_fetch(
     have_shallow: &HashSet<ObjectId>,
 ) -> Result<Vec<ObjectId>> {
     let have_closure = reachable_closure(have_odb, haves, &HashSet::new(), true, have_shallow)?;
-    collect_reachable_excluding(
-        source_odb,
-        wants,
-        &have_closure,
-        false,
-        source_shallow,
-    )
+    collect_reachable_excluding(source_odb, wants, &have_closure, false, source_shallow)
 }
 
 /// Build a pack for local fetch: enumerate haves on `have_odb`, read payloads from `source_odb`.
@@ -524,7 +571,7 @@ fn collect_reachable_excluding(
 }
 
 /// The pack object type code for a Git object kind (PACK v2 base types).
-fn pack_type_code(kind: ObjectKind) -> u8 {
+pub(crate) fn pack_type_code(kind: ObjectKind) -> u8 {
     match kind {
         ObjectKind::Commit => 1,
         ObjectKind::Tree => 2,
@@ -535,7 +582,7 @@ fn pack_type_code(kind: ObjectKind) -> u8 {
 
 /// Append a PACK object header: 3-bit type + variable-length size (little-endian
 /// 7-bit groups, MSB = continuation). Lifted from the CLI pack writer.
-fn encode_pack_object_header(buf: &mut Vec<u8>, type_code: u8, payload_len: usize) {
+pub(crate) fn encode_pack_object_header(buf: &mut Vec<u8>, type_code: u8, payload_len: usize) {
     let mut size = payload_len;
     let first = ((type_code & 0x7) << 4) | (size & 0x0f) as u8;
     size >>= 4;
@@ -610,21 +657,22 @@ pub(crate) fn append_whole_objects_from_odb(
 }
 
 /// A single object to write, either whole or as a delta against a chosen base.
-struct PlannedEntry {
-    oid: ObjectId,
-    kind: ObjectKind,
+pub(crate) struct PlannedEntry {
+    pub(crate) oid: ObjectId,
+    pub(crate) kind: ObjectKind,
     /// Object payload, kept so the serializer can re-hash/compress without a
     /// second odb read.
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// `Some(base_oid)` when this entry is a (blob) delta against `base_oid`.
     /// The base may be an in-pack object or — for thin packs — an external base
     /// present only on the peer.
-    base: Option<ObjectId>,
+    pub(crate) base: Option<ObjectId>,
     /// Uncompressed delta bytes when freshly computed or reused after inflate.
-    reused_delta: Option<Vec<u8>>,
+    pub(crate) reused_delta: Option<Vec<u8>>,
     /// On-disk reuse: uncompressed size from the source pack header plus zlib
     /// bytes copied verbatim from a cached pack buffer (Git's `reuse_delta`).
-    reused_delta_zlib: Option<(u64, std::sync::Arc<crate::pack::PackData>, usize, usize)>,
+    pub(crate) reused_delta_zlib:
+        Option<(u64, std::sync::Arc<crate::pack::PackData>, usize, usize)>,
 }
 
 /// The full delta plan: the ordered entries to emit plus the set of external
@@ -917,123 +965,6 @@ fn load_islands_for_pack(
     crate::delta_islands::load_delta_islands(&repo, &cfg, in_pack)
 }
 
-/// Serialize a [`DeltaPlan`] into a PACK v2 stream.
-///
-/// Whole entries are written as base objects; delta entries are written as
-/// `OFS_DELTA` when the base is already in the pack at a known offset and
-/// `opts.use_ofs_delta` is set, otherwise `REF_DELTA` (which also covers thin /
-/// external bases that are never emitted).
-fn serialize_pack_with_deltas(
-    odb: &Odb,
-    plan: &DeltaPlan,
-    opts: &PackBuildOptions,
-) -> Result<Vec<u8>> {
-    let algo = odb.hash_algo();
-
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"PACK");
-    buf.extend_from_slice(&2u32.to_be_bytes());
-    let count = u32::try_from(plan.entries.len())
-        .map_err(|_| Error::CorruptObject("pack object count exceeds u32".to_owned()))?;
-    buf.extend_from_slice(&count.to_be_bytes());
-
-    // Payload of every emitted object, so a base reached later can be deltified
-    // and so we can compute deltas without another odb round-trip.
-    let payloads: HashMap<ObjectId, &[u8]> = plan
-        .entries
-        .iter()
-        .map(|e| (e.oid, e.data.as_slice()))
-        .collect();
-
-    let mut oid_to_offset: HashMap<ObjectId, u64> = HashMap::new();
-    let mut delta_index_by_base: HashMap<ObjectId, DeltaIndex> = HashMap::new();
-
-    for entry in &plan.entries {
-        let start = buf.len() as u64;
-        match entry.base {
-            None => {
-                write_whole_pack_object(&mut buf, odb, entry.oid, entry.kind, &entry.data, opts)?;
-                oid_to_offset.insert(entry.oid, start);
-            }
-            Some(base_oid) => {
-                let in_pack_offset = oid_to_offset.get(&base_oid).copied();
-                if let Some((delta_size, pack_bytes, zlib_start, zlib_end)) =
-                    &entry.reused_delta_zlib
-                {
-                    let delta_len = usize::try_from(*delta_size).map_err(|_| {
-                        Error::CorruptObject("reused delta size exceeds usize".to_owned())
-                    })?;
-                    if let Some(base_off) = in_pack_offset.filter(|_| opts.use_ofs_delta) {
-                        let dist = start.checked_sub(base_off).ok_or_else(|| {
-                            Error::CorruptObject("ofs-delta distance underflow".to_owned())
-                        })?;
-                        encode_pack_object_header(&mut buf, 6, delta_len);
-                        encode_ofs_delta_distance(&mut buf, dist);
-                    } else {
-                        encode_pack_object_header(&mut buf, 7, delta_len);
-                        if base_oid.as_bytes().len() != algo.len() {
-                            return Err(Error::CorruptObject(
-                                "ref-delta base oid width mismatch".to_owned(),
-                            ));
-                        }
-                        buf.extend_from_slice(base_oid.as_bytes());
-                    }
-                    buf.extend_from_slice(&pack_bytes[*zlib_start..*zlib_end]);
-                } else {
-                    let delta = if let Some(reused) = &entry.reused_delta {
-                        reused.clone()
-                    } else {
-                        let base_data: Vec<u8> = if let Some(d) = payloads.get(&base_oid) {
-                            d.to_vec()
-                        } else {
-                            odb.read(&base_oid)?.data
-                        };
-                        if entry.data.starts_with(&base_data) && entry.data.len() > base_data.len()
-                        {
-                            encode_prefix_extension_delta(&base_data, &entry.data)?
-                        } else {
-                            let base_ref = payloads
-                                .get(&base_oid)
-                                .copied()
-                                .unwrap_or(base_data.as_slice());
-                            delta_index_by_base
-                                .entry(base_oid)
-                                .or_insert_with(|| DeltaIndex::new(base_ref))
-                                .encode(&entry.data, 0)
-                                .ok_or_else(|| {
-                                    Error::CorruptObject(
-                                        "failed to encode pack delta for object".into(),
-                                    )
-                                })?
-                        }
-                    };
-
-                    if let Some(base_off) = in_pack_offset.filter(|_| opts.use_ofs_delta) {
-                        let dist = start.checked_sub(base_off).ok_or_else(|| {
-                            Error::CorruptObject("ofs-delta distance underflow".to_owned())
-                        })?;
-                        encode_pack_object_header(&mut buf, 6, delta.len());
-                        encode_ofs_delta_distance(&mut buf, dist);
-                    } else {
-                        encode_pack_object_header(&mut buf, 7, delta.len());
-                        if base_oid.as_bytes().len() != algo.len() {
-                            return Err(Error::CorruptObject(
-                                "ref-delta base oid width mismatch".to_owned(),
-                            ));
-                        }
-                        buf.extend_from_slice(base_oid.as_bytes());
-                    }
-                    write_zlib(&mut buf, &delta)?;
-                }
-                oid_to_offset.insert(entry.oid, start);
-            }
-        }
-    }
-
-    append_pack_trailer(&mut buf, algo);
-    Ok(buf)
-}
-
 /// zlib-deflate `data` and append it to `buf`.
 fn write_zlib(buf: &mut Vec<u8>, data: &[u8]) -> Result<()> {
     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
@@ -1045,7 +976,7 @@ fn write_zlib(buf: &mut Vec<u8>, data: &[u8]) -> Result<()> {
 
 /// Encode an `OFS_DELTA` base distance (Git's offset varint). Lifted verbatim
 /// from the CLI pack writer's `encode_git_ofs_delta_distance`.
-fn encode_ofs_delta_distance(buf: &mut Vec<u8>, mut ofs: u64) {
+pub(crate) fn encode_ofs_delta_distance(buf: &mut Vec<u8>, mut ofs: u64) {
     let mut dheader = [0u8; 32];
     let mut pos = dheader.len() - 1;
     dheader[pos] = (ofs & 0x7f) as u8;
