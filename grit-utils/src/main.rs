@@ -252,36 +252,6 @@ enum Cmd {
         #[arg(long)]
         git: PathBuf,
     },
-    #[command(hide = true)]
-    PrepareRefs {
-        #[arg(long)]
-        git: PathBuf,
-        #[arg(long)]
-        source: PathBuf,
-        #[arg(long)]
-        work: PathBuf,
-        #[arg(long, value_parser = parse_refs_work_mode)]
-        mode: RefsWorkMode,
-    },
-}
-
-fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
-    match s {
-        "full" => Ok(RefsWorkMode::Full),
-        "empty" => Ok(RefsWorkMode::Empty),
-        other => Err(format!("expected full or empty, got {other}")),
-    }
-}
-
-#[derive(Subcommand)]
-enum RefsDriveCmd {
-    ForEachRef {
-        repo: PathBuf,
-        prefix: Option<String>,
-    },
-    UpdateRefStdin {
-        repo: PathBuf,
-    },
 }
 
 fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
@@ -730,11 +700,7 @@ fn main() -> Result<()> {
     write_output(&cli, &rendered)?;
     if !matches!(
         cli.command,
-        Cmd::Odb
-            | Cmd::OdbBackend
-            | Cmd::Refs
-            | Cmd::Bitmaps { .. }
-            | Cmd::Network { .. }
+        Cmd::Odb | Cmd::OdbBackend | Cmd::Refs | Cmd::Bitmaps { .. } | Cmd::Network { .. }
     ) {
         remove_dir_robust(&scratch_dir());
     }

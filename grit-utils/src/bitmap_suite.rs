@@ -98,6 +98,7 @@ fn run_scenario(
         cfg.min_runs,
         "git",
         env.as_deref(),
+        None,
     )?;
     git_stats.peak_rss_bytes = Some(git_rss);
 
@@ -122,6 +123,7 @@ fn run_scenario(
                 cfg.min_runs,
                 "grit",
                 env.as_deref(),
+                None,
             )?;
             grit_stats.peak_rss_bytes = Some(grit_rss);
             Ok(grit_stats)
