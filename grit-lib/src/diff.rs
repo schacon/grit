@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 use crate::config::ConfigSet;
 use crate::diff_indent_heuristic;
 use crate::diff_rename_parallel::{
-    diff_rename_parallel_options, exceeds_rename_detection_limits, parallel_load_optional_blobs,
-    parallel_map_indices,
+    diff_rename_parallel_options, inexact_matrix_exceeds_limit, parallel_load_optional_blobs,
+    parallel_map_indices, parse_rename_limit,
 };
 use crate::error::{Error, Result};
 use crate::index::{CacheTreeNode, Index, IndexEntry};
@@ -4987,30 +4987,6 @@ pub fn detect_renames_with_policy(
         return result;
     }
 
-    if exceeds_rename_detection_limits(deleted.len(), added.len(), config) {
-        let mut result = others;
-        result.extend(deleted);
-        result.extend(added);
-        result.sort_by(|a, b| a.path().cmp(b.path()));
-        return result;
-    }
-
-    let par_opts = diff_rename_parallel_options(config, thread_policy);
-
-    // Read content for all deleted and added blobs (parallel when worthwhile).
-    let deleted_contents = parallel_load_optional_blobs(odb, deleted.len(), par_opts, 0, |di| {
-        odb.read(&deleted[di].old_oid).ok().map(|obj| obj.data)
-    });
-    let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
-        read_added_entry_bytes(odb, &added[ai], work_root)
-    });
-
-    let est_bytes: usize = deleted_contents
-        .iter()
-        .chain(added_contents.iter())
-        .filter_map(|opt| opt.as_ref().map(|b| b.len()))
-        .sum();
-
     fn is_regularish_mode(mode: &str) -> bool {
         mode == "100644" || mode == "100755"
     }
@@ -5019,82 +4995,156 @@ pub fn detect_renames_with_policy(
         del.old_path == add.new_path && del.old_oid == add.new_oid && del.old_mode == add.new_mode
     }
 
-    let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
-        odb,
-        deleted.len(),
-        par_opts,
-        est_bytes,
-        |di| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
-            let del = &deleted[di];
-            let mut row: Vec<(u32, usize, usize)> = Vec::new();
-            for (ai, add) in added.iter().enumerate() {
-                if del.old_oid == add.new_oid {
-                    row.push((100, di, ai));
-                    continue;
-                }
-                if !is_regularish_mode(&del.old_mode) || !is_regularish_mode(&add.new_mode) {
-                    continue;
-                }
-                let score = match (&deleted_contents[di], &added_contents[ai]) {
-                    (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
-                    _ => 0,
-                };
-                if score >= threshold {
-                    row.push((score, di, ai));
-                }
-            }
-            Ok(row)
-        },
-    )
-    .expect("rename score rows");
-    let mut scores: Vec<(u32, usize, usize)> = score_rows.into_iter().flatten().collect();
+    fn sort_rename_scores(
+        scores: &mut [(u32, usize, usize)],
+        deleted: &[DiffEntry],
+        added: &[DiffEntry],
+    ) {
+        scores.sort_by(|a, b| {
+            let a_noop = same_path_same_blob(&deleted[a.1], &added[a.2]);
+            let b_noop = same_path_same_blob(&deleted[b.1], &added[b.2]);
+            let a_same = same_basename(&deleted[a.1], &added[a.2]);
+            let b_same = same_basename(&deleted[b.1], &added[b.2]);
+            a_noop
+                .cmp(&b_noop)
+                .then_with(|| b_same.cmp(&a_same))
+                .then_with(|| b.0.cmp(&a.0))
+        });
+    }
 
-    // Sort: prefer real path-changing pairs before same-path no-op pairs, then
-    // same-basename pairs, then by score descending.
-    // This matches Git's behavior where basename matches are checked first.
-    scores.sort_by(|a, b| {
-        let a_noop = same_path_same_blob(&deleted[a.1], &added[a.2]);
-        let b_noop = same_path_same_blob(&deleted[b.1], &added[b.2]);
-        let a_same = same_basename(&deleted[a.1], &added[a.2]);
-        let b_same = same_basename(&deleted[b.1], &added[b.2]);
-        a_noop
-            .cmp(&b_noop)
-            .then_with(|| b_same.cmp(&a_same))
-            .then_with(|| b.0.cmp(&a.0))
-    });
+    fn apply_rename_scores(
+        scores: &[(u32, usize, usize)],
+        deleted: &[DiffEntry],
+        added: &[DiffEntry],
+        used_deleted: &mut [bool],
+        used_added: &mut [bool],
+        renames: &mut Vec<DiffEntry>,
+    ) {
+        for (score, di, ai) in scores {
+            if used_deleted[*di] || used_added[*ai] {
+                continue;
+            }
+            used_deleted[*di] = true;
+            used_added[*ai] = true;
+
+            let del = &deleted[*di];
+            let add = &added[*ai];
+            if same_path_same_blob(del, add) {
+                continue;
+            }
+
+            renames.push(DiffEntry {
+                status: DiffStatus::Renamed,
+                old_path: del.old_path.clone(),
+                new_path: add.new_path.clone(),
+                old_mode: del.old_mode.clone(),
+                new_mode: add.new_mode.clone(),
+                old_oid: del.old_oid,
+                new_oid: add.new_oid,
+                score: Some(*score),
+            });
+        }
+    }
 
     let mut used_deleted = vec![false; deleted.len()];
     let mut used_added = vec![false; added.len()];
     let mut renames: Vec<DiffEntry> = Vec::new();
 
-    for (score, di, ai) in &scores {
-        if used_deleted[*di] || used_added[*ai] {
-            continue;
+    // Git always runs exact rename detection, regardless of renameLimit.
+    let mut exact_scores: Vec<(u32, usize, usize)> = Vec::new();
+    for (di, del) in deleted.iter().enumerate() {
+        for (ai, add) in added.iter().enumerate() {
+            if del.old_oid == add.new_oid {
+                exact_scores.push((100, di, ai));
+            }
         }
-        used_deleted[*di] = true;
-        used_added[*ai] = true;
+    }
+    sort_rename_scores(&mut exact_scores, &deleted, &added);
+    apply_rename_scores(
+        &exact_scores,
+        &deleted,
+        &added,
+        &mut used_deleted,
+        &mut used_added,
+        &mut renames,
+    );
 
-        let del = &deleted[*di];
-        let add = &added[*ai];
+    let remaining_deleted: Vec<usize> = used_deleted
+        .iter()
+        .enumerate()
+        .filter_map(|(i, used)| (!*used).then_some(i))
+        .collect();
+    let remaining_added: Vec<usize> = used_added
+        .iter()
+        .enumerate()
+        .filter_map(|(i, used)| (!*used).then_some(i))
+        .collect();
 
-        // A "rename" whose source and destination are the same path with the
-        // same blob is not a change at all (this arises with pathological
-        // duplicate tree entries, t4058). Git pairs and then drops it, leaving
-        // no diff entry; mirror that by skipping emission.
-        if same_path_same_blob(del, add) {
-            continue;
-        }
+    let rename_limit = parse_rename_limit(config);
+    if !remaining_deleted.is_empty()
+        && !remaining_added.is_empty()
+        && !inexact_matrix_exceeds_limit(
+            remaining_added.len(),
+            remaining_deleted.len(),
+            rename_limit,
+        )
+    {
+        let par_opts = diff_rename_parallel_options(config, thread_policy);
 
-        renames.push(DiffEntry {
-            status: DiffStatus::Renamed,
-            old_path: del.old_path.clone(),
-            new_path: add.new_path.clone(),
-            old_mode: del.old_mode.clone(),
-            new_mode: add.new_mode.clone(),
-            old_oid: del.old_oid,
-            new_oid: add.new_oid,
-            score: Some(*score),
-        });
+        let deleted_contents =
+            parallel_load_optional_blobs(odb, remaining_deleted.len(), par_opts, 0, |i| {
+                odb.read(&deleted[remaining_deleted[i]].old_oid)
+                    .ok()
+                    .map(|obj| obj.data)
+            });
+        let added_contents =
+            parallel_load_optional_blobs(odb, remaining_added.len(), par_opts, 0, |i| {
+                read_added_entry_bytes(odb, &added[remaining_added[i]], work_root)
+            });
+
+        let est_bytes: usize = deleted_contents
+            .iter()
+            .chain(added_contents.iter())
+            .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+            .sum();
+
+        let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
+            odb,
+            remaining_deleted.len(),
+            par_opts,
+            est_bytes,
+            |row| -> std::result::Result<Vec<(u32, usize, usize)>, std::convert::Infallible> {
+                let di = remaining_deleted[row];
+                let del = &deleted[di];
+                let mut out: Vec<(u32, usize, usize)> = Vec::new();
+                for (col, &ai) in remaining_added.iter().enumerate() {
+                    let add = &added[ai];
+                    if !is_regularish_mode(&del.old_mode) || !is_regularish_mode(&add.new_mode) {
+                        continue;
+                    }
+                    let score = match (&deleted_contents[row], &added_contents[col]) {
+                        (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                        _ => 0,
+                    };
+                    if score >= threshold {
+                        out.push((score, di, ai));
+                    }
+                }
+                Ok(out)
+            },
+        )
+        .expect("rename score rows");
+        let mut inexact_scores: Vec<(u32, usize, usize)> =
+            score_rows.into_iter().flatten().collect();
+        sort_rename_scores(&mut inexact_scores, &deleted, &added);
+        apply_rename_scores(
+            &inexact_scores,
+            &deleted,
+            &added,
+            &mut used_deleted,
+            &mut used_added,
+            &mut renames,
+        );
     }
 
     // Collect unmatched entries.
@@ -5217,33 +5267,39 @@ pub fn detect_copies_with_policy(
     }
 
     let par_opts = diff_rename_parallel_options(config, thread_policy);
+    let rename_limit = parse_rename_limit(config);
+    let skip_inexact =
+        !added.is_empty() && inexact_matrix_exceeds_limit(added.len(), sources.len(), rename_limit);
 
-    let source_contents = parallel_load_optional_blobs(odb, sources.len(), par_opts, 0, |si| {
-        odb.read(&sources[si].1).ok().map(|obj| obj.data)
-    });
+    let source_contents = if skip_inexact {
+        vec![None; sources.len()]
+    } else {
+        parallel_load_optional_blobs(odb, sources.len(), par_opts, 0, |si| {
+            odb.read(&sources[si].1).ok().map(|obj| obj.data)
+        })
+    };
 
     let mut result_entries: Vec<DiffEntry> = Vec::new();
     let mut renamed_deleted: HashSet<usize> = HashSet::new();
     let mut used_added2 = vec![false; added.len()];
 
     if !added.is_empty() {
-        if exceeds_rename_detection_limits(sources.len(), added.len(), config) {
-            let mut result = others;
-            result.extend(deleted);
-            result.extend(added);
-            result.sort_by(|a, b| a.path().cmp(b.path()));
-            return result;
-        }
-
         let added_contents = parallel_load_optional_blobs(odb, added.len(), par_opts, 0, |ai| {
             read_added_entry_bytes(odb, &added[ai], work_root)
         });
 
-        let est_bytes: usize = source_contents
-            .iter()
-            .chain(added_contents.iter())
-            .filter_map(|opt| opt.as_ref().map(|b| b.len()))
-            .sum();
+        let est_bytes: usize = if skip_inexact {
+            added_contents
+                .iter()
+                .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+                .sum()
+        } else {
+            source_contents
+                .iter()
+                .chain(added_contents.iter())
+                .filter_map(|opt| opt.as_ref().map(|b| b.len()))
+                .sum()
+        };
 
         let score_rows: Vec<Vec<(u32, usize, usize)>> = parallel_map_indices(
             odb,
@@ -5266,6 +5322,9 @@ pub fn detect_copies_with_policy(
                     };
                     if *src_oid == add_oid {
                         row.push((100, si, ai));
+                        continue;
+                    }
+                    if skip_inexact {
                         continue;
                     }
                     let score = match (&source_contents[si], &added_contents[ai]) {

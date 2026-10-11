@@ -1,11 +1,61 @@
 //! Parallel blob loads and rename/copy score-matrix rows for [`crate::diff`].
 
+use std::num::NonZeroUsize;
+
 use crate::config::ConfigSet;
 use crate::odb::Odb;
 use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy};
 
 /// Git's default `diff.renameLimit` when unset.
 pub(crate) const DEFAULT_RENAME_LIMIT: usize = 1000;
+
+/// Parsed `diff.renameLimit` (`None` = unlimited, including explicit `0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RenameLimit {
+    max: Option<NonZeroUsize>,
+}
+
+impl RenameLimit {
+    /// Side length of the maximum inexact rename matrix Git will build (`limit²` cells).
+    #[must_use]
+    pub(crate) fn max_side(self) -> Option<usize> {
+        self.max.map(NonZeroUsize::get)
+    }
+}
+
+/// Resolve `diff.renameLimit` the way Git does for inexact rename/copy matrices.
+#[must_use]
+pub(crate) fn parse_rename_limit(config: &ConfigSet) -> RenameLimit {
+    let raw = config
+        .get_i64("diff.renameLimit")
+        .or_else(|| config.get_i64("diff.renamelimit"))
+        .and_then(|r| r.ok());
+    match raw {
+        Some(n) if n <= 0 => RenameLimit { max: None },
+        Some(n) => usize::try_from(n)
+            .ok()
+            .and_then(|u| NonZeroUsize::new(u))
+            .map(|nz| RenameLimit { max: Some(nz) })
+            .unwrap_or(RenameLimit { max: None }),
+        None => RenameLimit {
+            max: NonZeroUsize::new(DEFAULT_RENAME_LIMIT),
+        },
+    }
+}
+
+/// Return `true` when Git would skip **inexact** rename detection for this matrix shape.
+#[must_use]
+pub(crate) fn inexact_matrix_exceeds_limit(
+    num_destinations: usize,
+    num_sources: usize,
+    limit: RenameLimit,
+) -> bool {
+    let Some(max) = limit.max else {
+        return false;
+    };
+    let cap = max.get().saturating_mul(max.get());
+    num_destinations.saturating_mul(num_sources) > cap
+}
 
 /// Resolve pool options for rename/copy similarity work.
 #[must_use]
@@ -14,30 +64,6 @@ pub(crate) fn diff_rename_parallel_options(
     thread_policy: &ThreadPolicy,
 ) -> ParallelOptions {
     thread_policy.resolve(ParallelOp::DiffRename, config)
-}
-
-/// Return `true` when Git would skip rename detection for this candidate count.
-#[must_use]
-pub(crate) fn exceeds_rename_detection_limits(
-    deleted: usize,
-    added: usize,
-    config: &ConfigSet,
-) -> bool {
-    if deleted == 0 || added == 0 {
-        return false;
-    }
-    let limit = rename_limit(config);
-    deleted.max(added) > limit
-}
-
-#[must_use]
-fn rename_limit(config: &ConfigSet) -> usize {
-    config
-        .get_i64("diff.renameLimit")
-        .or_else(|| config.get_i64("diff.renamelimit"))
-        .and_then(|r| r.ok())
-        .and_then(|n| usize::try_from(n.max(0)).ok())
-        .unwrap_or(DEFAULT_RENAME_LIMIT)
 }
 
 /// Load `count` blob payloads in parallel when policy thresholds allow.
@@ -89,16 +115,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ConfigFile, ConfigScope, ConfigSet};
+    use std::path::Path;
+
+    fn config_from(text: &str) -> ConfigSet {
+        let file = ConfigFile::parse(Path::new("test"), text, ConfigScope::Local).expect("parse");
+        let mut set = ConfigSet::new();
+        set.merge(&file);
+        set
+    }
 
     #[test]
     fn rename_limit_defaults_to_git_value() {
         let cfg = ConfigSet::new();
-        assert_eq!(rename_limit(&cfg), DEFAULT_RENAME_LIMIT);
+        assert_eq!(
+            parse_rename_limit(&cfg).max.map(NonZeroUsize::get),
+            Some(DEFAULT_RENAME_LIMIT)
+        );
     }
 
     #[test]
-    fn rename_limit_blocks_large_side() {
-        let cfg = ConfigSet::new();
-        assert!(exceeds_rename_detection_limits(1001, 10, &cfg));
+    fn rename_limit_zero_means_unlimited() {
+        let cfg = config_from("[diff]\n\trenameLimit = 0\n");
+        assert_eq!(parse_rename_limit(&cfg).max, None);
+        assert!(!inexact_matrix_exceeds_limit(
+            10_000,
+            10_000,
+            parse_rename_limit(&cfg)
+        ));
+    }
+
+    #[test]
+    fn inexact_matrix_uses_limit_squared() {
+        let limit = RenameLimit {
+            max: NonZeroUsize::new(1000),
+        };
+        assert!(!inexact_matrix_exceeds_limit(1000, 1000, limit));
+        assert!(inexact_matrix_exceeds_limit(1001, 1000, limit));
+        assert!(inexact_matrix_exceeds_limit(1000, 1001, limit));
     }
 }

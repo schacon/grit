@@ -6,9 +6,11 @@ use std::process::Command;
 use grit_lib::blame::{compute_blame, BlameDiffAlgorithm};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    detect_copies_with_policy, detect_renames_with_policy, diff_trees, DiffEntry, DiffStatus,
+    detect_copies_with_policy, detect_renames_with_policy, diff_trees, zero_oid, DiffEntry,
+    DiffStatus,
 };
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::Repository;
 use grit_test_support::forced_parallel_policy;
@@ -102,32 +104,37 @@ fn git_name_status(dir: &Path, old_tree: &ObjectId, new_tree: &ObjectId) -> Stri
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-fn grit_name_status(entries: &[DiffEntry]) -> String {
+fn rename_and_copy_lines(entries: &[DiffEntry]) -> Vec<String> {
     let mut lines: Vec<String> = entries
         .iter()
-        .filter(|e| {
-            matches!(
-                e.status,
-                DiffStatus::Renamed | DiffStatus::Copied | DiffStatus::Modified
-            )
-        })
+        .filter(|e| matches!(e.status, DiffStatus::Renamed | DiffStatus::Copied))
         .map(|e| {
+            let score = e.score.unwrap_or(100);
             let tag = match e.status {
-                DiffStatus::Renamed => "R100",
-                DiffStatus::Copied => "C100",
-                DiffStatus::Modified => "M",
-                _ => "?",
-            };
-            match (&e.old_path, &e.new_path) {
-                (Some(old), Some(new)) if old != new => format!("{tag}\t{old}\t{new}"),
-                (_, Some(new)) => format!("{tag}\t{new}"),
-                (Some(old), None) => format!("D\t{old}"),
+                DiffStatus::Renamed => format!("R{score:03}"),
+                DiffStatus::Copied => format!("C{score:03}"),
                 _ => String::new(),
-            }
+            };
+            format!(
+                "{tag}\t{}\t{}",
+                e.old_path.as_deref().unwrap_or(""),
+                e.new_path.as_deref().unwrap_or("")
+            )
         })
         .collect();
     lines.sort();
-    lines.join("")
+    lines
+}
+
+fn git_rename_and_copy_lines(dir: &Path, old_tree: &ObjectId, new_tree: &ObjectId) -> Vec<String> {
+    let raw = git_name_status(dir, old_tree, new_tree);
+    let mut lines: Vec<String> = raw
+        .lines()
+        .filter(|line| line.starts_with('R') || line.starts_with('C') || line.starts_with('M'))
+        .map(str::to_owned)
+        .collect();
+    lines.sort();
+    lines
 }
 
 #[test]
@@ -163,15 +170,114 @@ fn parallel_rename_matches_serial_exact_and_inexact() {
 
     let detected =
         detect_renames_with_policy(&repo.odb, None, raw, 50, &config, &parallel_policy());
-    let git_lines = git_name_status(root, &parent, &commit);
-    let grit_lines = grit_name_status(&detected);
-    assert!(
-        git_lines.contains("exact.txt") && git_lines.contains("exact-renamed.txt"),
-        "git diff-tree should show exact rename: {git_lines}"
+    let git_lines = git_rename_and_copy_lines(root, &parent, &commit);
+    let grit_lines = rename_and_copy_lines(&detected);
+    assert_eq!(
+        git_lines, grit_lines,
+        "rename/copy paths and scores should match git diff-tree -M50"
     );
-    assert!(
-        grit_lines.contains("exact.txt") && grit_lines.contains("exact-renamed.txt"),
-        "grit should show exact rename: {grit_lines:?}"
+}
+
+#[test]
+fn exact_renames_above_default_rename_limit_match_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+
+    const N: usize = 1001;
+    for i in 0..N {
+        std::fs::write(root.join(format!("old{i}.txt")), format!("payload {i}\n")).unwrap();
+    }
+    git_run(root, &["add", "."]);
+    git_run(root, &["commit", "-m", "many"]);
+
+    for i in 0..N {
+        std::fs::remove_file(root.join(format!("old{i}.txt"))).unwrap();
+        std::fs::write(root.join(format!("new{i}.txt")), format!("payload {i}\n")).unwrap();
+    }
+    git_run(root, &["add", "-A"]);
+    git_run(root, &["commit", "-m", "renamed"]);
+
+    let parent = rev_parse_tree(root, "HEAD~1^{tree}");
+    let commit = rev_parse_tree(root, "HEAD^{tree}");
+    let repo = Repository::discover(Some(root)).expect("open");
+    let raw = diff_trees(&repo.odb, Some(&parent), Some(&commit), "").expect("diff");
+    let config = ConfigSet::new();
+    let detected =
+        detect_renames_with_policy(&repo.odb, None, raw, 50, &config, &parallel_policy());
+
+    let renames = detected
+        .iter()
+        .filter(|e| e.status == DiffStatus::Renamed)
+        .count();
+    assert_eq!(
+        renames, N,
+        "expected {N} exact renames under renameLimit=1000"
+    );
+    assert_eq!(
+        detected
+            .iter()
+            .filter(|e| e.status == DiffStatus::Deleted)
+            .count(),
+        0
+    );
+    assert_eq!(
+        detected
+            .iter()
+            .filter(|e| e.status == DiffStatus::Added)
+            .count(),
+        0
+    );
+
+    let git_lines = git_rename_and_copy_lines(root, &parent, &commit);
+    let grit_lines = rename_and_copy_lines(&detected);
+    assert_eq!(git_lines.len(), N);
+    assert_eq!(git_lines, grit_lines);
+}
+
+#[test]
+fn asymmetric_matrix_exact_matches_still_pair() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir_all(git_dir.join("objects")).unwrap();
+    let odb = Odb::new(&git_dir.join("objects"));
+    let shared = b"shared exact payload\n";
+    let oid = odb.write(ObjectKind::Blob, shared).expect("write");
+
+    let mut entries = Vec::new();
+    for i in 0..5 {
+        entries.push(DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(format!("old{i}.txt")),
+            new_path: None,
+            old_mode: "100644".into(),
+            new_mode: "000000".into(),
+            old_oid: oid,
+            new_oid: zero_oid(),
+            score: None,
+        });
+    }
+    for i in 0..50 {
+        entries.push(DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(format!("new{i}.txt")),
+            old_mode: "000000".into(),
+            new_mode: "100644".into(),
+            old_oid: zero_oid(),
+            new_oid: oid,
+            score: None,
+        });
+    }
+
+    let config = ConfigSet::new();
+    let detected = detect_renames_with_policy(&odb, None, entries, 50, &config, &serial_policy());
+    assert_eq!(
+        detected
+            .iter()
+            .filter(|e| e.status == DiffStatus::Renamed)
+            .count(),
+        5
     );
 }
 

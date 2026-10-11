@@ -1944,11 +1944,17 @@ fn find_copy_source_blame(
         candidates.push((path, oid, mode));
     }
 
+    let est_bytes = current_lines
+        .iter()
+        .map(|line| line.len())
+        .sum::<usize>()
+        .saturating_mul(candidates.len());
+
     let scored: Vec<(String, usize)> = parallel_map_indices(
         odb,
         candidates.len(),
         session.copy_score_parallel,
-        0,
+        est_bytes,
         |ci| -> std::result::Result<(String, usize), LibError> {
             let (path, oid, mode) = &candidates[ci];
             let content =
