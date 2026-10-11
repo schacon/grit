@@ -181,6 +181,10 @@ pub fn switch_repository(repo: &Repository, opts: &SwitchOptions) -> Result<Swit
         }
     };
 
+    if let SwitchMode::Existing { branch, .. } = &opts.mode {
+        crate::worktree::ensure_branch_not_checked_out_elsewhere(repo, branch)?;
+    }
+
     switch_to_target(
         repo,
         &branch_ref,

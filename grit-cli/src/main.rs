@@ -283,10 +283,10 @@ enum Command {
         #[arg(value_name = "REV")]
         rev: Option<String>,
         /// Keep the index and worktree; move the branch tip only.
-        #[arg(long, conflicts_with = "hard")]
+        #[arg(long, conflicts_with_all = ["hard", "mixed"])]
         soft: bool,
         /// Reset the index to the target commit; keep the worktree (default).
-        #[arg(long, conflicts_with = "hard")]
+        #[arg(long, conflicts_with_all = ["hard", "soft"])]
         mixed: bool,
         /// Reset the index and worktree to match the target commit.
         #[arg(long, conflicts_with_all = ["soft", "mixed"])]
