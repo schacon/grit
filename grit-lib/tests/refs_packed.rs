@@ -427,7 +427,7 @@ fn resolve_ref_cached_and_write_ref_cached_reload_after_git_pack_refs() {
     );
 
     let new_oid = git_empty_commit_oid(wt);
-    write_ref_cached(&git_dir, "refs/heads/cached-new", &new_oid, &snapshot).unwrap();
+    write_ref_cached(&git_dir, "refs/heads/cached-new", &new_oid, &mut snapshot).unwrap();
     assert_list_refs_match_git(wt, "refs/heads/");
 }
 

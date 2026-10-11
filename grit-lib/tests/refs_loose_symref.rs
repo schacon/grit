@@ -584,7 +584,7 @@ fn t1400_packed_refs_resolve_delete_and_cached() {
         assert!(packed_refs_entry_exists(&git_dir, "refs/heads/packed-a").unwrap());
         assert_eq!(resolve_ref(&git_dir, "refs/heads/packed-a").unwrap(), oid);
 
-        let packed = PackedRefs::load(&git_dir).expect("load packed");
+        let mut packed = PackedRefs::load(&git_dir).expect("load packed");
         assert_eq!(
             resolve_ref_cached(&git_dir, "refs/heads/packed-b", &packed)
                 .unwrap()
@@ -592,7 +592,7 @@ fn t1400_packed_refs_resolve_delete_and_cached() {
             oid
         );
 
-        write_ref_cached(&git_dir, "refs/heads/packed-c", &oid, &packed).expect("cached write");
+        write_ref_cached(&git_dir, "refs/heads/packed-c", &oid, &mut packed).expect("cached write");
         delete_ref(&git_dir, "refs/heads/packed-a").expect("delete packed entry");
         assert!(!packed_refs_entry_exists(&git_dir, "refs/heads/packed-a").unwrap());
         assert_git_fsck_strict(repo.worktree());
