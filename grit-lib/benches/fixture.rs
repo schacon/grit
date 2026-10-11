@@ -104,56 +104,14 @@ pub fn git_repack_with_window(
     Ok(())
 }
 
-/// Repository with `git repack --depth=250 --window=250` for packed read micro-benchmarks.
+/// Pack with a long delta chain for packed read micro-benchmarks (deterministic, no `git repack`).
 pub fn build_deep_repack_read_sample() -> (TempDir, PackIndex, ObjectId) {
     let tmp = tempfile::tempdir().expect("deep repack tempdir");
-    let repo = init_repository(
-        tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
-    )
-    .expect("init repo");
-    let mut parent = None;
-    let mut body = String::new();
-    for i in 0..128 {
-        body.push_str(&format!("seed {i:04}\n"));
-    }
-    for rev in 0..80 {
-        body.push_str(&format!("layer-{rev}\n"));
-        parent = Some(
-            grit_commit_file(
-                &repo,
-                parent,
-                "chain.txt",
-                body.as_bytes(),
-                &format!("deep-repack-{rev}"),
-            )
-            .expect("grit commit"),
-        );
-    }
-    git_repack_with_window(tmp.path(), Some(250), Some(250)).expect("deep repack");
-    let pack_dir = repo.git_dir.join("objects/pack");
-    let idx_path = std::fs::read_dir(&pack_dir)
-        .expect("pack dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "idx"))
-        .expect("idx after deep repack");
-    let idx = read_pack_index(&idx_path).expect("read idx");
-    let records = verify_pack_and_collect(&idx_path).expect("verify-pack metadata");
-    let best = records
-        .iter()
-        .filter(|r| matches!(r.packed_type, PackedType::RefDelta | PackedType::OfsDelta))
-        .max_by_key(|r| r.depth.unwrap_or(0))
-        .expect("deep repack pack must contain deltified objects");
-    let depth = best.depth.unwrap_or(0);
-    assert!(
-        depth >= MIN_DEEP_DELTA_DEPTH,
-        "deepest delta depth {depth} below minimum {MIN_DEEP_DELTA_DEPTH}"
-    );
-    let sample_oid = ObjectId::from_bytes(&best.oid).expect("oid");
+    let objects = tmp.path().join("objects");
+    std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
+    let (pack_bytes, sample_oid, _depth) =
+        build_delta_chain_pack(MIN_DEEP_DELTA_DEPTH as usize + 8);
+    let idx = install_indexed_pack(&objects, "deep-delta", &pack_bytes);
     (tmp, idx, sample_oid)
 }
 
@@ -388,7 +346,7 @@ pub fn build_parallel_packed_blob_fixture(count: usize) -> (TempDir, Odb, Vec<Ob
             chunk,
             &[],
             &PackBuildOptions {
-                delta: chunk_idx % 2 == 1,
+                delta: true,
                 max_depth: 64,
                 use_ofs_delta: true,
                 ..PackBuildOptions::default()
