@@ -1368,7 +1368,7 @@ pub fn fetch_remote(
                 &pack_config,
                 opts.index_pack_threads,
             )?;
-            pack_oids = crate::index_pack::ingest_received_pack_path(
+            pack_oids = crate::index_pack::ingest_received_pack_path_with_progress(
                 path,
                 &local_odb,
                 &crate::index_pack::IngestPackOptions {
@@ -1379,6 +1379,7 @@ pub fn fetch_remote(
                     environment: opts.environment.clone(),
                     ..Default::default()
                 },
+                Some(progress),
             )?
             .object_ids;
         }

@@ -15,6 +15,7 @@ use crate::objects::ObjectId;
 use crate::odb::Odb;
 use crate::pack::{verify_pack_and_collect, write_v2_pack_index_with_trailer};
 use crate::pack_map::PackData;
+use crate::progress::ProgressSink;
 use crate::transfer::fix_thin_pack_path;
 use crate::unpack_objects::PackIndexRecord;
 
@@ -114,6 +115,16 @@ pub fn ingest_received_pack(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
+    ingest_received_pack_with_progress(pack, odb, opts, None)
+}
+
+/// Like [`ingest_received_pack`], reporting pack indexing progress on `progress` when set.
+pub fn ingest_received_pack_with_progress(
+    pack: Vec<u8>,
+    odb: &Odb,
+    opts: &IngestPackOptions,
+    progress: Option<&mut dyn ProgressSink>,
+) -> Result<IngestedPack> {
     if pack.is_empty() {
         return Ok(IngestedPack {
             object_ids: HashSet::new(),
@@ -130,7 +141,7 @@ pub fn ingest_received_pack(
             "received pack checksum mismatch (download may be incomplete): {e}"
         ))
     })?;
-    install_pack_bytes(pack, odb, opts)
+    install_pack_bytes_with_progress(pack, odb, opts, progress)
 }
 
 /// Ingest a pack already written to disk (streaming fetch/clone receive path).
@@ -143,13 +154,23 @@ pub fn ingest_received_pack_path(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
+    ingest_received_pack_path_with_progress(pack_path, odb, opts, None)
+}
+
+/// Like [`ingest_received_pack_path`], reporting pack indexing progress on `progress` when set.
+pub fn ingest_received_pack_path_with_progress(
+    pack_path: PathBuf,
+    odb: &Odb,
+    opts: &IngestPackOptions,
+    progress: Option<&mut dyn ProgressSink>,
+) -> Result<IngestedPack> {
     if !pack_path.is_file() {
         return Err(Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("received pack file missing: {}", pack_path.display()),
         )));
     }
-    install_pack_path(&pack_path, odb, opts)
+    install_pack_path_with_progress(&pack_path, odb, opts, progress)
 }
 
 /// Write `pack` into `odb`'s `objects/pack/` directory with a v2 index.
@@ -160,6 +181,16 @@ pub fn install_pack_bytes(
     odb: &Odb,
     opts: &IngestPackOptions,
 ) -> Result<IngestedPack> {
+    install_pack_bytes_with_progress(pack, odb, opts, None)
+}
+
+/// Like [`install_pack_bytes`], reporting pack indexing progress on `progress` when set.
+pub fn install_pack_bytes_with_progress(
+    pack: Vec<u8>,
+    odb: &Odb,
+    opts: &IngestPackOptions,
+    progress: Option<&mut dyn ProgressSink>,
+) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let pack_dir = odb.objects_dir().join("pack");
     std::fs::create_dir_all(&pack_dir).map_err(Error::Io)?;
@@ -167,7 +198,7 @@ pub fn install_pack_bytes(
     let seq = INSTALL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = pack_dir.join(format!("tmp_install_{}_{seq}", std::process::id()));
     std::fs::write(&tmp, &pack).map_err(Error::Io)?;
-    match install_pack_path(&tmp, odb, opts) {
+    match install_pack_path_with_progress(&tmp, odb, opts, progress) {
         Ok(ingested) => Ok(ingested),
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
@@ -184,6 +215,16 @@ pub fn install_pack_path(
     pack_path: &Path,
     odb: &Odb,
     opts: &IngestPackOptions,
+) -> Result<IngestedPack> {
+    install_pack_path_with_progress(pack_path, odb, opts, None)
+}
+
+/// Like [`install_pack_path`], reporting pack indexing progress on `progress` when set.
+pub fn install_pack_path_with_progress(
+    pack_path: &Path,
+    odb: &Odb,
+    opts: &IngestPackOptions,
+    progress: Option<&mut dyn ProgressSink>,
 ) -> Result<IngestedPack> {
     odb.require_files_primary("index_pack")?;
     let mut owned = pack_path.to_path_buf();
@@ -243,11 +284,12 @@ pub fn install_pack_path(
             })?;
             let parallelism = opts.index_parallelism(odb)?;
             record_resolved_ingest_threads(parallelism.threads().get());
-            let records = crate::pack_index_build::build_pack_index_records(
+            let records = crate::pack_index_build::build_pack_index_records_with_progress(
                 pack_bytes,
                 odb,
                 parallelism,
                 !opts.skip_post_index_verify,
+                progress,
             )?;
             let trailer = pack_bytes[pack_bytes.len() - hb..].to_vec();
             (records, trailer)
@@ -658,6 +700,158 @@ mod tests {
                 matches!(err, Error::CorruptObject(_)),
                 "install threads={threads}: {err:?}"
             );
+        }
+    }
+
+    fn pack_with_whole_objects_and_ofs_deltas() -> (Vec<u8>, usize, usize) {
+        use grit_test_support::objects::{HashAlgo as FixtureAlgo, ObjectKind as PK, PackBuilder};
+
+        let mut pb = PackBuilder::new(FixtureAlgo::Sha1);
+        for i in 0..6 {
+            pb.add_full(PK::Blob, format!("standalone-{i}\n").as_bytes());
+        }
+        let mut base_indices = Vec::new();
+        for i in 0..4 {
+            let data = format!("delta-base-{i}\n");
+            base_indices.push(pb.add_full(PK::Blob, data.as_bytes()));
+        }
+        for (i, base_idx) in base_indices.into_iter().enumerate() {
+            let base = format!("delta-base-{i}\n");
+            let target = format!("delta-base-{i}-extended\n");
+            let delta = crate::delta_encode::encode_lcp_delta(base.as_bytes(), target.as_bytes())
+                .expect("delta");
+            pb.add_ofs_delta(base_idx, &delta, delta.len());
+        }
+        let pack = pb.build().bytes;
+        let nr_objects = 6 + 4 + 4;
+        let nr_deltas = 4;
+        (pack, nr_objects, nr_deltas)
+    }
+
+    #[derive(Default)]
+    struct IndexPackProgressCapture {
+        active: Option<crate::progress::ProgressPhase>,
+        phase_totals: Vec<(crate::progress::ProgressPhase, Option<u64>)>,
+        phase_max: std::collections::HashMap<crate::progress::ProgressPhase, u64>,
+        set_samples: Vec<u64>,
+    }
+
+    impl crate::progress::ProgressSink for IndexPackProgressCapture {
+        fn start(&mut self, phase: crate::progress::ProgressPhase, total: Option<u64>) {
+            self.active = Some(phase);
+            self.phase_totals.push((phase, total));
+        }
+
+        fn set(&mut self, current: u64) {
+            self.set_samples.push(current);
+            if let Some(phase) = self.active {
+                let entry = self.phase_max.entry(phase).or_insert(0);
+                *entry = (*entry).max(current);
+            }
+        }
+
+        fn finish(&mut self) {
+            self.active = None;
+        }
+    }
+
+    #[test]
+    fn progress_reports_object_and_delta_totals() {
+        use crate::hash::Parallelism;
+        use crate::unpack_objects::pack_index_records_with_threads_with_progress;
+
+        let (pack, nr_objects, nr_deltas) = pack_with_whole_objects_and_ofs_deltas();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+
+        for threads in [1_usize, 4] {
+            let mut cap = IndexPackProgressCapture::default();
+            let records = pack_index_records_with_threads_with_progress(
+                &pack,
+                &odb,
+                Parallelism::resolve(Some(threads)),
+                Some(&mut cap),
+            )
+            .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
+            assert_eq!(records.len(), nr_objects, "threads={threads}");
+            assert_eq!(
+                cap.phase_max
+                    .get(&crate::progress::ProgressPhase::IndexingObjects)
+                    .copied(),
+                Some(nr_objects as u64),
+                "threads={threads}"
+            );
+            assert_eq!(
+                cap.phase_max
+                    .get(&crate::progress::ProgressPhase::ResolvingDeltas)
+                    .copied(),
+                Some(nr_deltas as u64),
+                "threads={threads}"
+            );
+            let indexing_total = cap
+                .phase_totals
+                .iter()
+                .find(|(p, _)| *p == crate::progress::ProgressPhase::IndexingObjects)
+                .and_then(|(_, t)| *t);
+            assert_eq!(indexing_total, Some(nr_objects as u64), "threads={threads}");
+            let delta_total = cap
+                .phase_totals
+                .iter()
+                .find(|(p, _)| *p == crate::progress::ProgressPhase::ResolvingDeltas)
+                .and_then(|(_, t)| *t);
+            assert_eq!(delta_total, Some(nr_deltas as u64), "threads={threads}");
+        }
+    }
+
+    #[derive(Default)]
+    struct MonotonicPhaseCapture {
+        active: Option<crate::progress::ProgressPhase>,
+        sets_by_phase: std::collections::HashMap<crate::progress::ProgressPhase, Vec<u64>>,
+    }
+
+    impl crate::progress::ProgressSink for MonotonicPhaseCapture {
+        fn start(&mut self, phase: crate::progress::ProgressPhase, _total: Option<u64>) {
+            self.active = Some(phase);
+            self.sets_by_phase.entry(phase).or_default();
+        }
+
+        fn set(&mut self, current: u64) {
+            if let Some(phase) = self.active {
+                self.sets_by_phase.entry(phase).or_default().push(current);
+            }
+        }
+
+        fn finish(&mut self) {
+            self.active = None;
+        }
+    }
+
+    #[test]
+    fn progress_counts_monotonic() {
+        use crate::hash::Parallelism;
+        use crate::unpack_objects::pack_index_records_with_threads_with_progress;
+
+        let (pack, _, _) = pack_with_whole_objects_and_ofs_deltas();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        let mut cap = MonotonicPhaseCapture::default();
+        pack_index_records_with_threads_with_progress(
+            &pack,
+            &odb,
+            Parallelism::resolve(Some(4)),
+            Some(&mut cap),
+        )
+        .expect("index with progress");
+
+        for (phase, samples) in &cap.sets_by_phase {
+            let mut last = 0_u64;
+            for &cur in samples {
+                assert!(
+                    cur >= last,
+                    "phase {phase:?} regressed from {last} to {cur}: {samples:?}"
+                );
+                last = cur;
+            }
         }
     }
 

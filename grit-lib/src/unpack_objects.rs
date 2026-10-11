@@ -658,6 +658,23 @@ pub fn pack_index_records_with_threads(
     crate::pack_index_build::build_pack_index_records(data, odb, parallelism, true)
 }
 
+/// Like [`pack_index_records_with_threads`], reporting indexing and delta resolution
+/// progress on `progress` when provided.
+pub fn pack_index_records_with_threads_with_progress(
+    data: &[u8],
+    odb: &Odb,
+    parallelism: crate::hash::Parallelism,
+    progress: Option<&mut dyn crate::progress::ProgressSink>,
+) -> Result<Vec<PackIndexRecord>> {
+    crate::pack_index_build::build_pack_index_records_with_progress(
+        data,
+        odb,
+        parallelism,
+        true,
+        progress,
+    )
+}
+
 fn build_pack_object_map(mut rd: PackReader<'_>, odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
     let algo = odb.hash_algo();
     let sig = rd.read_exact(4)?;

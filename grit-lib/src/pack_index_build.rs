@@ -9,9 +9,88 @@ use crate::hash::{hash_object, try_par_hash_with_force, Parallelism};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_zlib::{decompress_zlib_at_index, skip_zlib_at};
+use crate::progress::{ProgressPhase, ProgressSink};
 use crate::unpack_objects::{apply_delta, type_code_to_kind, PackIndexRecord, PackReader};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Poll the coordinating thread every N object slots / resolved deltas.
+const PROGRESS_POLL_EVERY: u64 = 32;
+
+/// Coordinates pack-index progress on the caller thread (workers bump atomics only).
+struct PackIndexReporter<'a> {
+    sink: &'a mut dyn ProgressSink,
+    object_total: u64,
+    indexed: AtomicU64,
+    resolved: AtomicU64,
+    last_index_reported: u64,
+    last_delta_reported: u64,
+}
+
+impl<'a> PackIndexReporter<'a> {
+    fn begin_indexing(sink: &'a mut dyn ProgressSink, object_total: u64) -> Self {
+        sink.start(ProgressPhase::IndexingObjects, Some(object_total));
+        Self {
+            sink,
+            object_total,
+            indexed: AtomicU64::new(0),
+            resolved: AtomicU64::new(0),
+            last_index_reported: 0,
+            last_delta_reported: 0,
+        }
+    }
+
+    fn on_object_slot(&mut self) {
+        self.indexed.fetch_add(1, Ordering::Relaxed);
+        self.poll_index();
+    }
+
+    fn poll_index(&mut self) {
+        let cur = self.indexed.load(Ordering::Relaxed);
+        if cur == self.object_total
+            || cur.saturating_sub(self.last_index_reported) >= PROGRESS_POLL_EVERY
+        {
+            self.sink.set(cur);
+            self.last_index_reported = cur;
+        }
+    }
+
+    fn finish_indexing(&mut self) {
+        let cur = self.indexed.load(Ordering::Relaxed);
+        self.sink.set(cur);
+        self.sink.finish();
+    }
+
+    fn begin_deltas(&mut self, delta_total: u64) {
+        self.resolved.store(0, Ordering::Relaxed);
+        self.last_delta_reported = 0;
+        self.sink
+            .start(ProgressPhase::ResolvingDeltas, Some(delta_total));
+    }
+
+    fn on_deltas_resolved(&mut self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        self.resolved.fetch_add(count, Ordering::Relaxed);
+        self.poll_deltas();
+    }
+
+    fn poll_deltas(&mut self) {
+        let cur = self.resolved.load(Ordering::Relaxed);
+        if cur.saturating_sub(self.last_delta_reported) >= PROGRESS_POLL_EVERY {
+            self.sink.set(cur);
+            self.last_delta_reported = cur;
+        }
+    }
+
+    fn finish_deltas(&mut self) {
+        let cur = self.resolved.load(Ordering::Relaxed);
+        self.sink.set(cur);
+        self.sink.finish();
+    }
+}
 
 #[derive(Clone)]
 enum BasePayload {
@@ -94,9 +173,23 @@ pub fn build_pack_index_records(
     parallelism: Parallelism,
     verify_trailer: bool,
 ) -> Result<Vec<PackIndexRecord>> {
+    build_pack_index_records_with_progress(pack, odb, parallelism, verify_trailer, None)
+}
+
+/// Like [`build_pack_index_records`], emitting [`ProgressPhase::IndexingObjects`] then
+/// [`ProgressPhase::ResolvingDeltas`] on `progress` when provided.
+pub fn build_pack_index_records_with_progress(
+    pack: &[u8],
+    odb: &Odb,
+    parallelism: Parallelism,
+    verify_trailer: bool,
+    progress: Option<&mut dyn ProgressSink>,
+) -> Result<Vec<PackIndexRecord>> {
     let algo = odb.hash_algo();
     let threads = parallelism.threads();
     let header = read_pack_header(pack)?;
+    let object_total = u64::try_from(header.nr_objects).unwrap_or(u64::MAX);
+    let mut reporter = progress.map(|sink| PackIndexReporter::begin_indexing(sink, object_total));
     let mut ofs_base_refs: HashMap<usize, u32> = HashMap::new();
     let mut oid_base_refs: HashMap<ObjectId, u32> = HashMap::new();
     let mut pending: Vec<PendingIndexDelta> = Vec::new();
@@ -114,8 +207,14 @@ pub fn build_pack_index_records(
     };
 
     if threads.get() <= 1 {
-        let whole_objects =
-            scan_whole_objects_inflate(pack, &header, &mut pending, &mut state, verify_trailer)?;
+        let whole_objects = scan_whole_objects_inflate(
+            pack,
+            &header,
+            &mut pending,
+            &mut state,
+            verify_trailer,
+            reporter.as_mut(),
+        )?;
         hash_whole_objects_serial(pack, whole_objects, algo, &mut state)?;
     } else {
         let whole_slots = scan_whole_slots_skip(
@@ -125,11 +224,33 @@ pub fn build_pack_index_records(
             &mut state,
             algo,
             verify_trailer,
+            reporter.as_mut(),
         )?;
         inflate_hash_whole_objects_parallel(pack, whole_slots, threads, algo, &mut state)?;
     }
 
-    resolve_pending_deltas_parallel(pack, threads, algo, &mut pending, &mut state)?;
+    let delta_total = u64::try_from(pending.len()).unwrap_or(u64::MAX);
+    if let Some(r) = reporter.as_mut() {
+        r.finish_indexing();
+        if delta_total > 0 {
+            r.begin_deltas(delta_total);
+        }
+    }
+
+    resolve_pending_deltas_parallel(
+        pack,
+        threads,
+        algo,
+        &mut pending,
+        &mut state,
+        reporter.as_mut(),
+    )?;
+
+    if let Some(r) = reporter.as_mut() {
+        if delta_total > 0 {
+            r.finish_deltas();
+        }
+    }
     Ok(records)
 }
 
@@ -161,6 +282,7 @@ fn scan_whole_objects_inflate(
     pending: &mut Vec<PendingIndexDelta>,
     state: &mut IndexBuildState<'_>,
     verify_trailer: bool,
+    mut progress: Option<&mut PackIndexReporter<'_>>,
 ) -> Result<Vec<WholeInflated>> {
     let hb = state.odb.hash_algo().len();
     let mut rd = PackReader::new(pack);
@@ -199,6 +321,9 @@ fn scan_whole_objects_inflate(
                 )))
             }
         }
+        if let Some(r) = progress.as_mut() {
+            r.on_object_slot();
+        }
     }
 
     let consumed = rd.pos;
@@ -215,6 +340,7 @@ fn scan_whole_slots_skip(
     state: &mut IndexBuildState<'_>,
     algo: HashAlgo,
     verify_trailer: bool,
+    mut progress: Option<&mut PackIndexReporter<'_>>,
 ) -> Result<Vec<WholeSlot>> {
     let hb = algo.len();
     let mut rd = PackReader::new(pack);
@@ -252,6 +378,9 @@ fn scan_whole_slots_skip(
                     "unknown packed-object type {other}"
                 )))
             }
+        }
+        if let Some(r) = progress.as_mut() {
+            r.on_object_slot();
         }
     }
 
@@ -522,6 +651,7 @@ fn resolve_pending_deltas_parallel(
     algo: HashAlgo,
     pending: &mut Vec<PendingIndexDelta>,
     state: &mut IndexBuildState<'_>,
+    mut progress: Option<&mut PackIndexReporter<'_>>,
 ) -> Result<()> {
     let mut remaining = std::mem::take(pending);
     loop {
@@ -549,6 +679,7 @@ fn resolve_pending_deltas_parallel(
         let oid_out_refs = state.oid_base_refs.clone();
         let mut base_release: Vec<(Option<usize>, Option<ObjectId>)> = Vec::new();
 
+        let ready_count = u64::try_from(ready.len()).unwrap_or(u64::MAX);
         for batch in ready.chunks(WHOLE_PARALLEL_BATCH) {
             let hashed = try_par_hash_with_force(batch, threads, |delta| {
                 resolve_one_delta(
@@ -582,6 +713,9 @@ fn resolve_pending_deltas_parallel(
                 }
                 base_release.push((item.base_offset, item.base_oid));
             }
+        }
+        if let Some(r) = progress.as_mut() {
+            r.on_deltas_resolved(ready_count);
         }
 
         for (base_off, base_id) in base_release {
