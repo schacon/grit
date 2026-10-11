@@ -21,7 +21,7 @@
 //! sparse-expanded index, and the stash count.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, DirEntry, ReadDir};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -310,18 +310,12 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         .unwrap_or(false);
     let tracked_paths =
         crate::path_icase::Stage0TrackedPaths::from_index_for_untracked_scan(index, ignorecase);
-    let tracked: BTreeSet<String> = index
-        .entries
-        .iter()
-        .filter(|ie| ie.stage() == 0)
-        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
-        .collect();
 
-    let gitlinks: BTreeSet<String> = index
+    let gitlinks: HashSet<String> = index
         .entries
         .iter()
         .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
-        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .filter_map(|e| std::str::from_utf8(&e.path).ok().map(str::to_string))
         .collect();
 
     let mut untracked = Vec::new();
@@ -329,7 +323,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     let precompose_unicode =
         effective_core_precomposeunicode_with_config(Some(&repo.git_dir), Some(rules.config()));
 
-    if !sort_paths && effective_pathspecs.is_empty() && tracked.is_empty() && gitlinks.is_empty() {
+    if effective_pathspecs.is_empty() && gitlinks.is_empty() && ignored_mode == IgnoredMode::No {
         untracked = collect_untracked_parallel_top_level(
             repo,
             index,
@@ -341,6 +335,9 @@ pub(crate) fn collect_untracked_and_ignored_inner(
             &rules.ignore(),
             effective_pathspecs,
         )?;
+        if sort_paths {
+            untracked.sort_unstable();
+        }
         return Ok((untracked, ignored));
     }
 
@@ -348,7 +345,6 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         repo,
         index,
         work_tree,
-        &tracked,
         &gitlinks,
         &mut rules.ignore_mut(),
         ignored_mode,
@@ -491,8 +487,7 @@ fn collect_untracked_parallel_top_level(
     matcher_template: &IgnoreMatcher,
     pathspecs: &[String],
 ) -> Result<Vec<String>> {
-    let empty_tracked = BTreeSet::<String>::new();
-    let empty_gitlinks = BTreeSet::<String>::new();
+    let empty_gitlinks = HashSet::<String>::new();
     let entries: Vec<DirEntry> = fs::read_dir(work_tree)
         .map_err(crate::error::Error::Io)?
         .filter_map(|e| e.ok())
@@ -515,40 +510,81 @@ fn collect_untracked_parallel_top_level(
 
     let mut untracked = Vec::new();
     let mut ignored = Vec::new();
-    let mut matcher = matcher_template.clone();
-    for entry in root_files {
-        let _ = visit_untracked_dir_entry(
-            repo,
-            index,
-            work_tree,
-            &empty_tracked,
-            &empty_gitlinks,
-            &mut matcher,
-            ignored_mode,
-            show_all,
-            false,
-            None::<&Cell<bool>>,
-            precompose_unicode,
-            tracked_paths,
-            "",
-            &entry,
-            pathspecs,
-            None,
-            &mut untracked,
-            &mut ignored,
-        )?;
-    }
-
-    if root_dirs.is_empty() {
-        return Ok(untracked);
-    }
-
     let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
     let parallelism = repo
         .thread_policy()
         .resolve(ParallelOp::IndexRefresh, &config)
         .parallelism();
     let threads = parallelism.threads();
+
+    if !root_files.is_empty() {
+        let scan_root_file = |entry: &DirEntry, local_untracked: &mut Vec<String>| {
+            let mut matcher = matcher_template.clone();
+            let mut local_ignored = Vec::new();
+            let _ = visit_untracked_dir_entry(
+                repo,
+                index,
+                work_tree,
+                &empty_gitlinks,
+                &mut matcher,
+                ignored_mode,
+                show_all,
+                false,
+                None::<&Cell<bool>>,
+                precompose_unicode,
+                tracked_paths,
+                "",
+                entry,
+                pathspecs,
+                None,
+                local_untracked,
+                &mut local_ignored,
+            )?;
+            Ok::<(), crate::error::Error>(())
+        };
+        if root_files.len() >= 8 && threads.get() > 1 {
+            let est_bytes = root_files.len().saturating_mul(512);
+            let per_file = try_par_hash_with(&root_files, threads, est_bytes, |entry| {
+                let mut local_untracked = Vec::new();
+                scan_root_file(entry, &mut local_untracked)?;
+                Ok(local_untracked)
+            })
+            .map_err(|e: ParallelHashError<crate::error::Error>| match e {
+                ParallelHashError::Task(err) => err,
+            })?;
+            for mut local in per_file {
+                untracked.append(&mut local);
+            }
+        } else {
+            let mut matcher = matcher_template.clone();
+            for entry in root_files {
+                let _ = visit_untracked_dir_entry(
+                    repo,
+                    index,
+                    work_tree,
+                    &empty_gitlinks,
+                    &mut matcher,
+                    ignored_mode,
+                    show_all,
+                    false,
+                    None::<&Cell<bool>>,
+                    precompose_unicode,
+                    tracked_paths,
+                    "",
+                    &entry,
+                    pathspecs,
+                    None,
+                    &mut untracked,
+                    &mut ignored,
+                )?;
+            }
+        }
+    }
+
+    if root_dirs.is_empty() {
+        return Ok(untracked);
+    }
+
     let dir_count = root_dirs.len();
     let est_bytes = dir_count.saturating_mul(4096);
     let per_dir = try_par_hash_with(&root_dirs, threads, est_bytes, |entry| {
@@ -559,7 +595,6 @@ fn collect_untracked_parallel_top_level(
             repo,
             index,
             work_tree,
-            &empty_tracked,
             &empty_gitlinks,
             &mut matcher,
             ignored_mode,
@@ -592,8 +627,7 @@ fn visit_untracked_dir_entry(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
+    gitlinks: &HashSet<String>,
     matcher: &mut IgnoreMatcher,
     ignored_mode: IgnoredMode,
     show_all: bool,
@@ -637,7 +671,6 @@ fn visit_untracked_dir_entry(
             repo,
             index,
             work_tree,
-            tracked,
             gitlinks,
             matcher,
             ignored_mode,
@@ -662,7 +695,7 @@ fn visit_untracked_dir_entry(
         ) {
             return Ok(UntrackedWalkStep::Continue);
         }
-        let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+        let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
         if is_ign {
             if !check_only && ignored_mode != IgnoredMode::No {
                 ignored_out.push(child_rel);
@@ -684,8 +717,7 @@ fn visit_untracked_read_dir_lazy(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
+    gitlinks: &HashSet<String>,
     matcher: &mut IgnoreMatcher,
     ignored_mode: IgnoredMode,
     show_all: bool,
@@ -713,7 +745,6 @@ fn visit_untracked_read_dir_lazy(
                 repo,
                 index,
                 work_tree,
-                tracked,
                 gitlinks,
                 matcher,
                 ignored_mode,
@@ -742,8 +773,7 @@ fn visit_untracked_node(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
+    gitlinks: &HashSet<String>,
     matcher: &mut IgnoreMatcher,
     ignored_mode: IgnoredMode,
     show_all: bool,
@@ -765,7 +795,7 @@ fn visit_untracked_node(
     if !rel.is_empty()
         && abs.is_dir()
         && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
-        && has_tracked_under(tracked, gitlinks, rel)
+        && has_tracked_under(index, gitlinks, rel)
     {
         return Ok(());
     }
@@ -781,7 +811,6 @@ fn visit_untracked_node(
             repo,
             index,
             work_tree,
-            tracked,
             gitlinks,
             matcher,
             ignored_mode,
@@ -806,7 +835,6 @@ fn visit_untracked_node(
                 repo,
                 index,
                 work_tree,
-                tracked,
                 gitlinks,
                 matcher,
                 ignored_mode,
@@ -836,8 +864,7 @@ fn visit_untracked_directory(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
+    gitlinks: &HashSet<String>,
     matcher: &mut IgnoreMatcher,
     ignored_mode: IgnoredMode,
     show_all: bool,
@@ -852,12 +879,11 @@ fn visit_untracked_directory(
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
-    if has_tracked_under(tracked, gitlinks, rel) {
+    if has_tracked_under(index, gitlinks, rel) {
         visit_untracked_node(
             repo,
             index,
             work_tree,
-            tracked,
             gitlinks,
             matcher,
             ignored_mode,
@@ -878,7 +904,7 @@ fn visit_untracked_directory(
 
     // Fast prune: in default ignored mode, a directory excluded as a directory cannot contribute
     // visible untracked paths (and tracked descendants were handled above).
-    if ignored_mode == IgnoredMode::No && matcher.check_path(repo, Some(index), rel, true)?.0 {
+    if ignored_mode == IgnoredMode::No && matcher.is_path_ignored(repo, Some(index), rel, true)? {
         return Ok(());
     }
 
@@ -887,7 +913,7 @@ fn visit_untracked_directory(
     // tracked files force a full walk — handled above).
     if ignored_mode == IgnoredMode::Matching
         && show_all
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         ignored_out.push(format!("{rel}/"));
         return Ok(());
@@ -895,7 +921,7 @@ fn visit_untracked_directory(
 
     if ignored_mode != IgnoredMode::No
         && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         ignored_out.push(format!("{rel}/"));
         return Ok(());
@@ -906,7 +932,7 @@ fn visit_untracked_directory(
         && directory_pathspec_matches_self(rel, pathspecs)
     {
         if let Some(dir_line) = traditional_normal_directory_only(
-            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs, pathspecs, rules,
+            repo, index, work_tree, gitlinks, matcher, rel, abs, pathspecs, rules,
         )? {
             ignored_out.push(dir_line);
             return Ok(());
@@ -918,7 +944,6 @@ fn visit_untracked_directory(
             repo,
             index,
             work_tree,
-            tracked,
             gitlinks,
             matcher,
             ignored_mode,
@@ -948,7 +973,6 @@ fn visit_untracked_directory(
             repo,
             index,
             work_tree,
-            tracked,
             gitlinks,
             matcher,
             ignored_mode,
@@ -982,7 +1006,6 @@ fn visit_untracked_directory(
         repo,
         index,
         work_tree,
-        tracked,
         gitlinks,
         matcher,
         ignored_mode,
@@ -1017,7 +1040,7 @@ fn visit_untracked_directory(
     }
 
     if sub_untracked.is_empty() && !sub_ignored.is_empty() {
-        let dir_excluded = matcher.check_path(repo, Some(index), rel, true)?.0;
+        let dir_excluded = matcher.is_path_ignored(repo, Some(index), rel, true)?;
         let collapse_matching = ignored_mode == IgnoredMode::Matching && dir_excluded;
         let collapse_traditional = ignored_mode == IgnoredMode::Traditional
             && directory_pathspec_matches_self(rel, pathspecs);
@@ -1070,8 +1093,7 @@ fn traditional_normal_directory_only(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
+    gitlinks: &HashSet<String>,
     matcher: &mut IgnoreMatcher,
     rel: &str,
     abs: &Path,
@@ -1103,7 +1125,7 @@ fn traditional_normal_directory_only(
             {
                 continue;
             }
-            if tracked.contains(&rel_child) {
+            if index.get(rel_child.as_bytes(), 0).is_some() {
                 return Ok(None);
             }
             let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
@@ -1114,7 +1136,7 @@ fn traditional_normal_directory_only(
                 stack.push(path);
             } else {
                 any_file = true;
-                let (ig, _) = matcher.check_path(repo, Some(index), &rel_child, false)?;
+                let ig = matcher.is_path_ignored(repo, Some(index), &rel_child, false)?;
                 if !ig {
                     return Ok(None);
                 }
@@ -1122,7 +1144,7 @@ fn traditional_normal_directory_only(
         }
     }
 
-    let dir_ignored = matcher.check_path(repo, Some(index), rel, true)?.0;
+    let dir_ignored = matcher.is_path_ignored(repo, Some(index), rel, true)?;
     if !any_file {
         return Ok(if dir_ignored {
             Some(format!("{rel}/"))
@@ -1134,23 +1156,13 @@ fn traditional_normal_directory_only(
     Ok(Some(format!("{rel}/")))
 }
 
-fn has_tracked_under(
-    tracked: &BTreeSet<String>,
-    gitlinks: &BTreeSet<String>,
-    rel_dir: &str,
-) -> bool {
-    let prefix = if rel_dir.is_empty() {
-        String::new()
-    } else {
-        format!("{rel_dir}/")
-    };
-    tracked
-        .range::<String, _>(prefix.clone()..)
-        .next()
-        .is_some_and(|t| t.starts_with(&prefix))
-        || gitlinks.iter().any(|g| {
-            g.as_str() == rel_dir || (!rel_dir.is_empty() && g.starts_with(&format!("{rel_dir}/")))
-        })
+fn has_tracked_under(index: &Index, gitlinks: &HashSet<String>, rel_dir: &str) -> bool {
+    if index.has_stage0_descendant_under(rel_dir) {
+        return true;
+    }
+    gitlinks.iter().any(|g| {
+        g.as_str() == rel_dir || (!rel_dir.is_empty() && g.starts_with(&format!("{rel_dir}/")))
+    })
 }
 
 fn relative_path(parent: &str, name: &str) -> String {

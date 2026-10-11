@@ -60,6 +60,8 @@ pub struct IgnoreMatcher {
     read_per_directory: bool,
     /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
     pub warnings: Vec<String>,
+    /// Cached ancestor directory list for the last [`Self::ensure_per_dir_rules_loaded`] parent.
+    per_dir_dirs_cache: Option<(String, Vec<String>)>,
 }
 
 impl IgnoreMatcher {
@@ -108,6 +110,7 @@ impl IgnoreMatcher {
         self.read_per_directory = true;
         // The cache is keyed by directory only; clear it so a new filename is honored.
         self.gitignore_cache.clear();
+        self.per_dir_dirs_cache = None;
     }
 
     /// Append patterns from `ls-files --exclude` / `-x` (Git command-line exclude list).
@@ -123,6 +126,36 @@ impl IgnoreMatcher {
     #[must_use]
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
+    }
+
+    /// Whether `repo_rel_path` is ignored, without computing verbose `-v` match metadata.
+    ///
+    /// Prefer this on hot paths (for example untracked directory walks) that only need the
+    /// boolean result.
+    pub fn is_path_ignored(
+        &mut self,
+        repo: &Repository,
+        index: Option<&Index>,
+        repo_rel_path: &str,
+        is_dir: bool,
+    ) -> Result<bool> {
+        if is_tracked(index, repo_rel_path) {
+            return Ok(false);
+        }
+        let per_dir_dirs = self.ensure_per_dir_rules_loaded(repo, index, repo_rel_path)?;
+        let per_dir_groups = self.cached_rule_slices_for_dirs(&per_dir_dirs);
+        if !self.has_any_exclude_rules(&per_dir_groups) {
+            return Ok(false);
+        }
+        if self
+            .first_excluded_ancestor(repo_rel_path, &per_dir_groups)
+            .is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .evaluate_against_groups(repo_rel_path, is_dir, &per_dir_groups)
+            .0)
     }
 
     /// Check whether a repository-relative path is ignored.
@@ -161,7 +194,8 @@ impl IgnoreMatcher {
         // The FIRST group that yields a match decides the result; within a group, the last
         // matching pattern (last line) wins. This means a CLI `--exclude` overrides a per-directory
         // `!negation`, and a per-directory `.gitignore` overrides `core.excludesfile`.
-        let per_dir_groups = self.rules_for_path_grouped(repo, index, repo_rel_path)?;
+        let per_dir_dirs = self.ensure_per_dir_rules_loaded(repo, index, repo_rel_path)?;
+        let per_dir_groups = self.cached_rule_slices_for_dirs(&per_dir_dirs);
 
         // Git's `prep_exclude` (dir.c) descends into the path's ancestor directories before
         // matching the leaf. If an ancestor directory itself matches a non-negative exclude
@@ -203,7 +237,7 @@ impl IgnoreMatcher {
         &self,
         path: &str,
         is_dir: bool,
-        per_dir_groups: &[Vec<IgnoreRule>],
+        per_dir_groups: &[&[IgnoreRule]],
     ) -> (bool, Option<IgnoreMatch>) {
         let groups = self.build_groups(per_dir_groups);
         for group in &groups {
@@ -230,7 +264,7 @@ impl IgnoreMatcher {
 
     /// Flatten the ordered group list into a single rule slice (used for `check-ignore -v`
     /// attribution, which walks every loaded pattern).
-    fn flatten_groups<'a>(&'a self, per_dir_groups: &'a [Vec<IgnoreRule>]) -> Vec<&'a IgnoreRule> {
+    fn flatten_groups<'a>(&'a self, per_dir_groups: &[&'a [IgnoreRule]]) -> Vec<&'a IgnoreRule> {
         self.build_groups(per_dir_groups)
             .into_iter()
             .flatten()
@@ -239,10 +273,7 @@ impl IgnoreMatcher {
 
     /// Assemble the priority-ordered exclude groups: EXC_CMDL, then per-directory `.gitignore`
     /// (deepest directory first), then EXC_FILE (`--exclude-from`, global, info).
-    fn build_groups<'a>(
-        &'a self,
-        per_dir_groups: &'a [Vec<IgnoreRule>],
-    ) -> Vec<Vec<&'a IgnoreRule>> {
+    fn build_groups<'a>(&'a self, per_dir_groups: &[&'a [IgnoreRule]]) -> Vec<Vec<&'a IgnoreRule>> {
         let cmdl_rules: Vec<&IgnoreRule> = self.cli_rules.iter().collect();
         let mut dir_groups: Vec<Vec<&IgnoreRule>> = Vec::new();
         for rules in per_dir_groups.iter().rev() {
@@ -273,7 +304,7 @@ impl IgnoreMatcher {
     fn first_excluded_ancestor(
         &self,
         repo_rel_path: &str,
-        per_dir_groups: &[Vec<IgnoreRule>],
+        per_dir_groups: &[&[IgnoreRule]],
     ) -> Option<IgnoreMatch> {
         let parent = parent_dir(repo_rel_path);
         if parent.is_empty() {
@@ -302,28 +333,46 @@ impl IgnoreMatcher {
     /// directory and ordered root-first (deepest directory last). The caller evaluates the
     /// groups deepest-first to honor Git's `EXC_DIRS` precedence (a nested `.gitignore` wins
     /// over an ancestor's, and over `EXC_FILE` sources).
-    fn rules_for_path_grouped(
+    fn has_any_exclude_rules(&self, per_dir_groups: &[&[IgnoreRule]]) -> bool {
+        !self.cli_rules.is_empty()
+            || !self.exclude_from_rules.is_empty()
+            || !self.global_rules.is_empty()
+            || !self.info_rules.is_empty()
+            || per_dir_groups.iter().any(|g| !g.is_empty())
+    }
+
+    fn ensure_per_dir_rules_loaded(
         &mut self,
         repo: &Repository,
         index: Option<&Index>,
         repo_rel_path: &str,
-    ) -> Result<Vec<Vec<IgnoreRule>>> {
+    ) -> Result<Vec<String>> {
         if !self.read_per_directory {
             return Ok(Vec::new());
         }
         let parent = parent_dir(repo_rel_path);
-        let mut dirs = Vec::new();
-        dirs.push(String::new());
-        if !parent.is_empty() {
-            let mut cur = String::new();
-            for segment in parent.split('/') {
-                if !cur.is_empty() {
-                    cur.push('/');
+        let dirs = if self
+            .per_dir_dirs_cache
+            .as_ref()
+            .is_some_and(|(cached, _)| cached == parent)
+        {
+            self.per_dir_dirs_cache.as_ref().unwrap().1.clone()
+        } else {
+            let mut dirs = Vec::new();
+            dirs.push(String::new());
+            if !parent.is_empty() {
+                let mut cur = String::new();
+                for segment in parent.split('/') {
+                    if !cur.is_empty() {
+                        cur.push('/');
+                    }
+                    cur.push_str(segment);
+                    dirs.push(cur.clone());
                 }
-                cur.push_str(segment);
-                dirs.push(cur.clone());
             }
-        }
+            self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
+            dirs
+        };
 
         let per_dir_name = self.per_directory_name.clone();
         for dir in &dirs {
@@ -338,16 +387,17 @@ impl IgnoreMatcher {
                 self.gitignore_cache.insert(dir.clone(), rules);
             }
         }
+        Ok(dirs)
+    }
 
-        let mut groups: Vec<Vec<IgnoreRule>> = Vec::new();
-        for dir in dirs {
-            if let Some(rules) = self.gitignore_cache.get(&dir) {
-                groups.push(rules.clone());
-            } else {
-                groups.push(Vec::new());
-            }
-        }
-        Ok(groups)
+    fn cached_rule_slices_for_dirs(&self, dirs: &[String]) -> Vec<&[IgnoreRule]> {
+        dirs.iter()
+            .map(|dir| {
+                self.gitignore_cache
+                    .get(dir)
+                    .map_or(&[] as &[IgnoreRule], Vec::as_slice)
+            })
+            .collect()
     }
 }
 

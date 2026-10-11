@@ -1713,6 +1713,23 @@ impl Index {
         (start, end)
     }
 
+    /// Whether any stage-0 entry lies strictly under `rel_dir/` (or any stage-0 entry exists when
+    /// `rel_dir` is empty).
+    #[must_use]
+    pub fn has_stage0_descendant_under(&self, rel_dir: &str) -> bool {
+        if rel_dir.is_empty() {
+            return self.entries.iter().any(|e| e.stage() == 0);
+        }
+        if self.entries_sorted {
+            let (start, end) = self.descendant_run_range_sorted(rel_dir);
+            return self.entries[start..end].iter().any(|e| e.stage() == 0);
+        }
+        let prefix = format!("{rel_dir}/");
+        self.entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path.starts_with(prefix.as_bytes()))
+    }
+
     /// Inclusive start and exclusive end of entries strictly under `path/` (sorted indexes only).
     fn descendant_run_range_sorted(&self, path: &str) -> (usize, usize) {
         debug_assert!(self.entries_sorted);
