@@ -175,19 +175,19 @@ pub fn index_entries_stat_equivalent(
 }
 
 /// Git index extension signature `sdir` (sparse directory entries present).
-const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
+pub(crate) const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 /// Git index extension signature `UNTR` (untracked cache).
-const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
+pub(crate) const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
 /// Git index extension signature `FSMN` (fsmonitor).
-const INDEX_EXT_FSMONITOR: u32 = u32::from_be_bytes(*b"FSMN");
+pub(crate) const INDEX_EXT_FSMONITOR: u32 = u32::from_be_bytes(*b"FSMN");
 /// Fsmonitor index extension header version 1 (u64 timestamp token).
 const FSMONITOR_EXT_VERSION1: u32 = 1;
 /// Fsmonitor index extension header version 2 (NUL-terminated string token).
 const FSMONITOR_EXT_VERSION2: u32 = 2;
 /// Git index extension signature `REUC` (resolve undo).
-const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
+pub(crate) const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
 /// Git index extension signature `link` (split index).
-const INDEX_EXT_LINK: u32 = u32::from_be_bytes(*b"link");
+pub(crate) const INDEX_EXT_LINK: u32 = u32::from_be_bytes(*b"link");
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,17 +434,22 @@ impl CacheTreeNode {
     }
 }
 
+pub use crate::index_eoie_ieot::IndexParseContext;
+
 /// Options for loading an index from disk.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexLoadOptions {
     /// If the index contains sparse directory placeholders, expand them to full file entries.
     pub expand_sparse_directories: bool,
+    /// Thread policy for parallel index entry load (EOIE/IEOT).
+    pub parse_context: IndexParseContext,
 }
 
 impl Default for IndexLoadOptions {
     fn default() -> Self {
         Self {
             expand_sparse_directories: true,
+            parse_context: IndexParseContext::default(),
         }
     }
 }
@@ -459,10 +464,10 @@ const INDEX_FORMAT_LB: u32 = 2;
 /// downgraded on write).
 const INDEX_FORMAT_UB: u32 = 4;
 /// Index extension signature `TREE` (cache-tree).
-const INDEX_EXT_CACHE_TREE: u32 = 0x5452_4545;
+pub(crate) const INDEX_EXT_CACHE_TREE: u32 = 0x5452_4545;
 
 /// Best-effort read of Git's `TREE` index extension (`cache_tree_read`).
-fn parse_cache_tree(data: &[u8], hash_len: usize) -> Option<CacheTreeNode> {
+pub(crate) fn parse_cache_tree(data: &[u8], hash_len: usize) -> Option<CacheTreeNode> {
     let (node, pos) = parse_cache_tree_node(data, 0, hash_len)?;
     if pos == data.len() {
         Some(node)
@@ -651,7 +656,9 @@ pub fn get_index_format_from_env() -> Option<u32> {
 }
 
 /// Parse Git's `FSMN` index extension payload (`read_fsmonitor_extension`).
-fn parse_fsmonitor_extension(ext_data: &[u8]) -> Result<(String, crate::ewah_bitmap::EwahBitmap)> {
+pub(crate) fn parse_fsmonitor_extension(
+    ext_data: &[u8],
+) -> Result<(String, crate::ewah_bitmap::EwahBitmap)> {
     if ext_data.len() < 4 + 1 + 4 {
         return Err(Error::IndexFsmonitorExtensionTruncated);
     }
@@ -707,7 +714,7 @@ fn parse_fsmonitor_extension(ext_data: &[u8]) -> Result<(String, crate::ewah_bit
 }
 
 /// Apply `FSMN` dirty bits to in-memory `CE_FSMONITOR_VALID` (`fsmonitor_ewah_callback`).
-fn apply_fsmonitor_dirty_to_entries(
+pub(crate) fn apply_fsmonitor_dirty_to_entries(
     entries: &mut [IndexEntry],
     dirty: &crate::ewah_bitmap::EwahBitmap,
 ) {
@@ -962,15 +969,31 @@ impl Index {
     /// Like [`Index::load_expand_sparse`], but treats a missing index or Git's
     /// `"file too short"` placeholder as an empty index.
     pub fn load_expand_sparse_optional(path: &Path, odb: &Odb) -> Result<Self> {
+        Self::load_expand_sparse_optional_with_context(
+            path,
+            odb,
+            None,
+            IndexParseContext::default(),
+        )
+    }
+
+    /// Like [`Self::load_expand_sparse_optional`], but passes config and thread policy for EOIE/IEOT load.
+    pub fn load_expand_sparse_optional_with_context(
+        path: &Path,
+        odb: &Odb,
+        config: Option<&ConfigSet>,
+        parse_context: IndexParseContext,
+    ) -> Result<Self> {
         let algo = odb.hash_algo();
         let mut idx = match fs::read(path) {
-            Ok(data) => Self::parse_with_algo(&data, algo).or_else(|e| match e {
-                Error::IndexError(msg) if msg == "file too short" => Ok(Self {
-                    hash_algo: algo,
-                    ..Self::new()
-                }),
-                other => Err(other),
-            })?,
+            Ok(data) => Self::parse_with_algo_and_config(&data, algo, config, parse_context)
+                .or_else(|e| match e {
+                    Error::IndexError(msg) if msg == "file too short" => Ok(Self {
+                        hash_algo: algo,
+                        ..Self::new()
+                    }),
+                    other => Err(other),
+                })?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => Self {
                 hash_algo: algo,
                 ..Self::new()
@@ -1151,13 +1174,27 @@ impl Index {
     /// `extensions.objectformat`), which determines the entry OID width and the
     /// trailing checksum width.
     pub fn parse_with_algo(data: &[u8], hash_algo: HashAlgo) -> Result<Self> {
+        Self::parse_with_algo_and_config(data, hash_algo, None, IndexParseContext::default())
+    }
+
+    /// Parse an index with optional repository config and thread policy for EOIE/IEOT load.
+    pub fn parse_with_algo_and_config(
+        data: &[u8],
+        hash_algo: HashAlgo,
+        config: Option<&ConfigSet>,
+        parse_context: IndexParseContext,
+    ) -> Result<Self> {
+        use crate::index_eoie_ieot::{
+            index_load_worker_count, parallel_index_load_allowed, parse_entries_parallel,
+            parse_entries_serial, parse_index_extensions, read_eoie_extension, read_ieot_extension,
+            ParsedIndexExtensions,
+        };
+
         if data.len() < 12 {
             return Err(Error::IndexError("file too short".to_owned()));
         }
 
         let hash_len = hash_algo.len();
-        // Trailing checksum: normal index is a hash of the body; Git may write
-        // all zeros when `index.skipHash` / `feature.manyFiles` skips it.
         let (body, checksum) = data.split_at(data.len() - hash_len);
         if !checksum.iter().all(|&b| b == 0) {
             verify_trailer(hash_algo, data).map_err(|e| {
@@ -1168,7 +1205,6 @@ impl Index {
             })?;
         }
 
-        // Header
         let magic = &body[..4];
         if magic != b"DIRC" {
             return Err(Error::IndexError("bad magic: expected DIRC".to_owned()));
@@ -1189,97 +1225,81 @@ impl Index {
                 .map_err(|_| Error::IndexError("cannot read entry count".to_owned()))?,
         );
 
-        let mut pos = 12usize;
-        let mut entries = Vec::with_capacity(count as usize);
+        let workers = index_load_worker_count(parse_context.thread_policy, config, count as usize);
+        let extension_offset = if workers > 1 {
+            read_eoie_extension(body, hash_algo)
+        } else {
+            None
+        };
 
-        for _ in 0..count {
-            // Only v4 prefix-compresses paths against the previous entry;
-            // borrow it from `entries` instead of cloning every path.
-            let prev_path: &[u8] = if version == 4 {
-                entries.last().map_or(&[][..], |e: &IndexEntry| &e.path)
-            } else {
-                &[]
+        let eoie_payload = 4 + hash_len;
+        let eoie_with_header = 8 + eoie_payload;
+        let extensions_end = body
+            .len()
+            .checked_sub(eoie_with_header)
+            .filter(|_| extension_offset.is_some())
+            .unwrap_or(body.len());
+
+        let try_parallel = extension_offset.is_some()
+            && workers > 1
+            && parallel_index_load_allowed(parse_context.thread_policy, config, count as usize);
+
+        let (entries, ext_fields): (Vec<IndexEntry>, ParsedIndexExtensions) = if try_parallel {
+            let ext_off = extension_offset.expect("checked above");
+            let ieot = read_ieot_extension(body, ext_off, extensions_end);
+            let entry_workers = workers.saturating_sub(1).max(1);
+            let ext_result = std::sync::Mutex::new(None::<Result<ParsedIndexExtensions>>);
+
+            let entries = std::thread::scope(|scope| -> Result<Vec<IndexEntry>> {
+                scope.spawn(|| {
+                    let mut scratch = Vec::new();
+                    let res = parse_index_extensions(
+                        body,
+                        ext_off,
+                        extensions_end,
+                        hash_algo,
+                        &mut scratch,
+                    );
+                    *ext_result.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
+                });
+
+                if let Some(ieot) = ieot {
+                    parse_entries_parallel(body, version, count, hash_len, &ieot, entry_workers)
+                } else {
+                    parse_entries_serial(body, version, count, hash_len, 12).map(|(e, _)| e)
+                }
+            })?;
+
+            let ext_fields = match ext_result
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+                .expect("extension thread must set result")
+            {
+                Ok(v) => v,
+                Err(e) => return Err(e),
             };
-            let (entry, consumed) = parse_entry(&body[pos..], version, prev_path, hash_len)?;
-            entries.push(entry);
-            pos += consumed;
-        }
-
-        let mut sparse_directories = false;
-        let mut untracked_cache = None;
-        let mut fsmonitor_last_update = None;
-        let mut fsmonitor_dirty = None;
-        let mut fsmonitor_raw_extension = None;
-        let mut resolve_undo = None;
-        let mut split_link = None;
-        let mut cache_tree_root = None;
-        let mut cache_tree = None;
-        while pos + 8 <= body.len() {
-            let sig = u32::from_be_bytes(
-                body[pos..pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::IndexError("truncated extension sig".to_owned()))?,
-            );
-            let ext_sz = u32::from_be_bytes(
-                body[pos + 4..pos + 8]
-                    .try_into()
-                    .map_err(|_| Error::IndexError("truncated extension size".to_owned()))?,
-            ) as usize;
-            pos += 8;
-            if pos + ext_sz > body.len() {
-                return Err(Error::IndexError(
-                    "extension overruns index body".to_owned(),
-                ));
-            }
-            if sig == INDEX_EXT_SPARSE_DIRECTORIES {
-                sparse_directories = true;
-            } else if sig == INDEX_EXT_UNTRACKED {
-                let ext_data = &body[pos..pos + ext_sz];
-                untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
-            } else if sig == INDEX_EXT_FSMONITOR {
-                let ext_data = &body[pos..pos + ext_sz];
-                let (token, dirty) = parse_fsmonitor_extension(ext_data)?;
-                fsmonitor_last_update = Some(token);
-                fsmonitor_dirty = Some(dirty);
-                fsmonitor_raw_extension = Some(ext_data.to_vec());
-            } else if sig == INDEX_EXT_RESOLVE_UNDO {
-                let ext_data = &body[pos..pos + ext_sz];
-                resolve_undo = Some(resolve_undo::parse_resolve_undo_payload(ext_data)?);
-            } else if sig == INDEX_EXT_LINK {
-                let ext_data = &body[pos..pos + ext_sz];
-                split_link = Some(crate::split_index::parse_link_extension(
-                    ext_data, hash_algo,
-                )?);
-            } else if sig == INDEX_EXT_CACHE_TREE {
-                let ext_data = &body[pos..pos + ext_sz];
-                cache_tree = parse_cache_tree(ext_data, hash_len);
-                cache_tree_root = cache_tree
-                    .as_ref()
-                    .and_then(|node| node.oid.filter(|_| node.entry_count >= 0));
-            }
-            pos += ext_sz;
-        }
-        if pos != body.len() {
-            return Err(Error::IndexError("junk after index extensions".to_owned()));
-        }
-
-        if let Some(dirty) = &fsmonitor_dirty {
-            apply_fsmonitor_dirty_to_entries(&mut entries, dirty);
-        }
+            (entries, ext_fields)
+        } else {
+            let (mut entries, pos) = parse_entries_serial(body, version, count, hash_len, 12)?;
+            let ext_fields =
+                parse_index_extensions(body, pos, body.len(), hash_algo, &mut entries)?;
+            (entries, ext_fields)
+        };
 
         Ok(Self {
             version,
             entries,
             entries_sorted: true,
-            sparse_directories,
-            untracked_cache,
-            fsmonitor_last_update,
-            fsmonitor_dirty,
-            fsmonitor_raw_extension,
-            resolve_undo,
-            split_link,
-            cache_tree_root,
-            cache_tree,
+            sparse_directories: ext_fields.sparse_directories,
+            untracked_cache: ext_fields.untracked_cache,
+            fsmonitor_last_update: ext_fields.fsmonitor_last_update,
+            fsmonitor_dirty: ext_fields.fsmonitor_dirty,
+            fsmonitor_raw_extension: ext_fields.fsmonitor_raw_extension,
+            resolve_undo: ext_fields.resolve_undo,
+            split_link: ext_fields.split_link,
+            cache_tree_root: ext_fields.cache_tree_root,
+            cache_tree: ext_fields.cache_tree,
             hash_algo,
             source_mtime: None,
         })
@@ -1305,8 +1325,18 @@ impl Index {
     ///
     /// Same as [`Self::write`].
     pub fn write_with_config(&self, path: &Path, config: &ConfigSet) -> Result<()> {
+        self.write_with_config_and_policy(path, config, crate::parallel::ThreadPolicy::default())
+    }
+
+    /// Write the index using config and an explicit thread policy (EOIE/IEOT emission).
+    pub fn write_with_config_and_policy(
+        &self,
+        path: &Path,
+        config: &ConfigSet,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<()> {
         let skip_hash = index_skip_hash_for_write(Some(config));
-        self.write_to_path_with_config(path, skip_hash, Some(config))
+        self.write_to_path_with_config_and_policy(path, skip_hash, Some(config), policy)
     }
 
     /// Write this index to `path` with an explicit trailing-checksum policy.
@@ -1323,7 +1353,22 @@ impl Index {
         skip_hash: bool,
         config: Option<&ConfigSet>,
     ) -> Result<()> {
-        self.write_to_path_with_config_and_lock(path, skip_hash, config, None)
+        self.write_to_path_with_config_and_policy(
+            path,
+            skip_hash,
+            config,
+            crate::parallel::ThreadPolicy::default(),
+        )
+    }
+
+    pub(crate) fn write_to_path_with_config_and_policy(
+        &self,
+        path: &Path,
+        skip_hash: bool,
+        config: Option<&ConfigSet>,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<()> {
+        self.write_to_path_with_config_and_lock_policy(path, skip_hash, config, None, policy)
     }
 
     /// Persist the index using an already-held [`IndexLock`] from [`IndexLock::acquire`].
@@ -1334,7 +1379,31 @@ impl Index {
         config: Option<&ConfigSet>,
         existing_lock: Option<&mut IndexLock>,
     ) -> Result<()> {
-        self.write_to_path_with_config_and_lock_mode(path, skip_hash, config, existing_lock, true)
+        self.write_to_path_with_config_and_lock_policy(
+            path,
+            skip_hash,
+            config,
+            existing_lock,
+            crate::parallel::ThreadPolicy::default(),
+        )
+    }
+
+    pub(crate) fn write_to_path_with_config_and_lock_policy(
+        &self,
+        path: &Path,
+        skip_hash: bool,
+        config: Option<&ConfigSet>,
+        existing_lock: Option<&mut IndexLock>,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<()> {
+        self.write_to_path_with_config_and_lock_mode_policy(
+            path,
+            skip_hash,
+            config,
+            existing_lock,
+            true,
+            policy,
+        )
     }
 
     /// Like [`Self::write_to_path_with_config_and_lock`], but can leave the index uncommitted
@@ -1347,7 +1416,26 @@ impl Index {
         existing_lock: Option<&mut IndexLock>,
         commit: bool,
     ) -> Result<()> {
-        let body = self.serialize_index_body()?;
+        self.write_to_path_with_config_and_lock_mode_policy(
+            path,
+            skip_hash,
+            config,
+            existing_lock,
+            commit,
+            crate::parallel::ThreadPolicy::default(),
+        )
+    }
+
+    pub(crate) fn write_to_path_with_config_and_lock_mode_policy(
+        &self,
+        path: &Path,
+        skip_hash: bool,
+        config: Option<&ConfigSet>,
+        existing_lock: Option<&mut IndexLock>,
+        commit: bool,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<()> {
+        let body = self.serialize_index_body(config, policy)?;
         let checksum: Vec<u8> = if skip_hash {
             vec![0u8; self.hash_algo.len()]
         } else {
@@ -1422,14 +1510,18 @@ impl Index {
         Ok(())
     }
 
-    fn serialize_index_body(&self) -> Result<Vec<u8>> {
+    fn serialize_index_body(
+        &self,
+        config: Option<&ConfigSet>,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<Vec<u8>> {
         let mut body = Vec::new();
         if self.entries_sorted {
-            self.serialize_into(&mut body)?;
+            self.serialize_into_with_options(&mut body, config, policy)?;
         } else {
             let mut sorted = self.clone();
             sorted.sort();
-            sorted.serialize_into(&mut body)?;
+            sorted.serialize_into_with_options(&mut body, config, policy)?;
         }
         Ok(body)
     }
@@ -1438,6 +1530,19 @@ impl Index {
     ///
     /// Callers must have sorted entries when using format 4 (path compression depends on order).
     pub(crate) fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.serialize_into_with_options(out, None, crate::parallel::ThreadPolicy::default())
+    }
+
+    pub(crate) fn serialize_into_with_options(
+        &self,
+        out: &mut Vec<u8>,
+        config: Option<&ConfigSet>,
+        policy: crate::parallel::ThreadPolicy,
+    ) -> Result<()> {
+        use crate::index_eoie_ieot::{
+            entries_per_ieot_block, ieot_block_count_for_write, record_end_of_index_entries,
+            write_ieot_payload, IeotEntry, IeotTable, INDEX_EXT_EOIE, INDEX_EXT_IEOT,
+        };
         let has_extended_flags = self.entries.iter().any(|e| e.flags_extended.is_some());
         let write_version = if self.version >= 4 {
             4
@@ -1453,33 +1558,86 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
+        let ieot_blocks = ieot_block_count_for_write(policy, config, self.entries.len());
+        let ieot_stride = ieot_blocks.map(|b| entries_per_ieot_block(self.entries.len(), b));
+        let mut ieot_table = IeotTable {
+            entries: Vec::new(),
+        };
+        let mut nr_in_block = 0u32;
+        let mut block_start_offset = out.len();
+
         if write_version == 4 {
             let mut previous_path: Vec<u8> = Vec::new();
-            for entry in &self.entries {
+            for (i, entry) in self.entries.iter().enumerate() {
+                if let Some(stride) = ieot_stride {
+                    if i > 0 && i % stride == 0 {
+                        ieot_table.entries.push(IeotEntry {
+                            offset: block_start_offset as u32,
+                            nr: nr_in_block,
+                        });
+                        nr_in_block = 0;
+                        previous_path.clear();
+                        previous_path.push(0);
+                        block_start_offset = out.len();
+                    }
+                }
                 serialize_entry_v4(entry, &mut previous_path, out);
+                nr_in_block += 1;
             }
         } else {
-            for entry in &self.entries {
+            for (i, entry) in self.entries.iter().enumerate() {
+                if let Some(stride) = ieot_stride {
+                    if i > 0 && i % stride == 0 {
+                        ieot_table.entries.push(IeotEntry {
+                            offset: block_start_offset as u32,
+                            nr: nr_in_block,
+                        });
+                        nr_in_block = 0;
+                        block_start_offset = out.len();
+                    }
+                }
                 serialize_entry(entry, write_version, out);
+                nr_in_block += 1;
             }
         }
+        if ieot_blocks.is_some() && nr_in_block > 0 {
+            ieot_table.entries.push(IeotEntry {
+                offset: block_start_offset as u32,
+                nr: nr_in_block,
+            });
+        }
+
+        let extension_offset = out.len();
+        let write_eoie = record_end_of_index_entries(config);
+        let mut eoie_header_bytes: Option<Vec<u8>> = write_eoie.then(Vec::new);
+
+        if !ieot_table.entries.is_empty() {
+            let mut payload = Vec::new();
+            write_ieot_payload(&ieot_table, &mut payload);
+            append_index_extension(out, &mut eoie_header_bytes, INDEX_EXT_IEOT, &payload);
+        }
         if self.sparse_directories {
-            out.extend_from_slice(&INDEX_EXT_SPARSE_DIRECTORIES.to_be_bytes());
-            out.extend_from_slice(&0u32.to_be_bytes());
+            append_index_extension(
+                out,
+                &mut eoie_header_bytes,
+                INDEX_EXT_SPARSE_DIRECTORIES,
+                &[],
+            );
         }
         if let Some(uc) = &self.untracked_cache {
             let payload = untracked_cache::write_untracked_extension(uc);
-            out.extend_from_slice(&INDEX_EXT_UNTRACKED.to_be_bytes());
-            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-            out.extend_from_slice(&payload);
+            append_index_extension(out, &mut eoie_header_bytes, INDEX_EXT_UNTRACKED, &payload);
         }
-        self.write_fsmonitor_extension(out)?;
+        self.append_fsmonitor_extension(out, &mut eoie_header_bytes)?;
         if let Some(ru) = &self.resolve_undo {
             let payload = write_resolve_undo_payload(ru);
             if !payload.is_empty() {
-                out.extend_from_slice(&INDEX_EXT_RESOLVE_UNDO.to_be_bytes());
-                out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-                out.extend_from_slice(&payload);
+                append_index_extension(
+                    out,
+                    &mut eoie_header_bytes,
+                    INDEX_EXT_RESOLVE_UNDO,
+                    &payload,
+                );
             }
         }
         if let Some(sl) = &self.split_link {
@@ -1496,17 +1654,56 @@ impl Index {
                 .unwrap_or_else(EwahBitmap::new);
             let payload =
                 crate::split_index::serialize_link_extension_payload(&sl.base_oid, &del, &rep);
-            out.extend_from_slice(&INDEX_EXT_LINK.to_be_bytes());
-            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-            out.extend_from_slice(&payload);
+            append_index_extension(out, &mut eoie_header_bytes, INDEX_EXT_LINK, &payload);
         }
         if let Some(cache_tree) = &self.cache_tree {
             let mut payload = Vec::new();
             serialize_cache_tree_node(cache_tree, &mut payload);
-            out.extend_from_slice(&INDEX_EXT_CACHE_TREE.to_be_bytes());
-            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-            out.extend_from_slice(&payload);
+            append_index_extension(out, &mut eoie_header_bytes, INDEX_EXT_CACHE_TREE, &payload);
         }
+        if write_eoie {
+            let mut eoie_payload = Vec::new();
+            eoie_payload.extend_from_slice(&(extension_offset as u32).to_be_bytes());
+            let headers = eoie_header_bytes.as_deref().unwrap_or(&[]);
+            eoie_payload.extend_from_slice(self.hash_algo.digest(headers).as_bytes());
+            append_index_extension(out, &mut None, INDEX_EXT_EOIE, &eoie_payload);
+        }
+        Ok(())
+    }
+
+    fn append_fsmonitor_extension(
+        &self,
+        out: &mut Vec<u8>,
+        eoie_headers: &mut Option<Vec<u8>>,
+    ) -> Result<()> {
+        if let Some(raw) = &self.fsmonitor_raw_extension {
+            if self.fsmonitor_raw_still_valid() {
+                append_index_extension(out, eoie_headers, INDEX_EXT_FSMONITOR, raw);
+                return Ok(());
+            }
+        }
+        let Some(token) = &self.fsmonitor_last_update else {
+            return Ok(());
+        };
+        let dirty = self
+            .fsmonitor_dirty
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.build_fsmonitor_dirty_from_entries());
+        if dirty.bit_size > self.fsmonitor_active_entry_count() {
+            return Ok(());
+        }
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&FSMONITOR_EXT_VERSION2.to_be_bytes());
+        payload.extend_from_slice(token.as_bytes());
+        payload.push(0);
+        let ewah_size_fixup = payload.len();
+        payload.extend_from_slice(&0u32.to_be_bytes());
+        let ewah_start = payload.len();
+        dirty.serialize(&mut payload);
+        let ewah_size = (payload.len() - ewah_start) as u32;
+        payload[ewah_size_fixup..ewah_size_fixup + 4].copy_from_slice(&ewah_size.to_be_bytes());
+        append_index_extension(out, eoie_headers, INDEX_EXT_FSMONITOR, &payload);
         Ok(())
     }
 
@@ -3005,6 +3202,22 @@ fn hash_index_body(algo: HashAlgo, body: &[u8]) -> Vec<u8> {
     algo.digest(body).as_bytes().to_vec()
 }
 
+fn append_index_extension(
+    out: &mut Vec<u8>,
+    eoie_headers: &mut Option<Vec<u8>>,
+    signature: u32,
+    payload: &[u8],
+) {
+    let size = payload.len() as u32;
+    out.extend_from_slice(&signature.to_be_bytes());
+    out.extend_from_slice(&size.to_be_bytes());
+    if let Some(headers) = eoie_headers {
+        headers.extend_from_slice(&signature.to_be_bytes());
+        headers.extend_from_slice(&size.to_be_bytes());
+    }
+    out.extend_from_slice(payload);
+}
+
 /// Best-effort detection of an index file's hash algorithm from its trailing
 /// checksum. Used by [`Index::parse`] when no repository algorithm is known.
 /// Callers with a repository should use [`Index::parse_with_algo`] instead,
@@ -3025,7 +3238,7 @@ fn detect_index_hash_algo(data: &[u8]) -> HashAlgo {
 /// Parse a single index entry from `data`, returning `(entry, bytes_consumed)`.
 ///
 /// `hash_len` is the raw object-id width (20 for SHA-1, 32 for SHA-256).
-fn parse_entry(
+pub(crate) fn parse_entry(
     data: &[u8],
     version: u32,
     prev_path: &[u8],

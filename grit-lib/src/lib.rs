@@ -170,6 +170,7 @@ pub mod ident_config;
 pub mod ident_resolve;
 pub mod ignore;
 pub mod index;
+pub mod index_eoie_ieot;
 pub mod index_name_hash_lazy;
 pub mod index_pack;
 pub mod init_filesystem;
