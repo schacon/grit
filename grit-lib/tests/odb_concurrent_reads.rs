@@ -144,6 +144,8 @@ fn odb_concurrent_reads() {
         })
         .collect();
 
+    test_hooks::reset();
+
     let stop = Arc::new(AtomicBool::new(false));
     let odb_inv = odb.clone();
     let stop_inv = Arc::clone(&stop);
