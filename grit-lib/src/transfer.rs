@@ -2168,7 +2168,7 @@ mod tests {
     impl Progress for PhaseRecorder {}
 
     fn git_ok(dir: &Path, args: &[&str]) -> bool {
-        Command::new("git")
+        Command::new("git") // hygiene: git fixture comparison in cfg(test) module
             .current_dir(dir)
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
