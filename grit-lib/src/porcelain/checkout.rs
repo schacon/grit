@@ -164,6 +164,129 @@ pub fn checkout_between_trees(
     checkout_between_trees_slow(repo, from, Some(to))
 }
 
+/// Replace the index and tracked worktree so they match `tree_oid` exactly.
+///
+/// Used by hard reset: every path in the tree is written to the worktree (even when
+/// the path is unchanged between commits), and tracked paths absent from the tree are
+/// removed.
+///
+/// # Errors
+///
+/// Returns an error when the repository has no work tree or checkout I/O fails.
+pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()> {
+    use crate::porcelain::merge::tree_to_index_entries;
+
+    let work_tree = repo
+        .work_tree
+        .clone()
+        .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
+
+    let target_entries = tree_to_index_entries(repo, tree_oid, "")?;
+    let target_paths: BTreeSet<Vec<u8>> = target_entries.iter().map(|e| e.path.clone()).collect();
+
+    let index = repo.load_index()?;
+    let mut paths_in_index: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for entry in &index.entries {
+        paths_in_index.insert(entry.path.clone());
+    }
+    let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
+    for path in &paths_in_index {
+        if target_paths.contains(path) {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Some(entry) = index.get(path, 0) {
+            if entry.mode == MODE_GITLINK {
+                remove_uninitialized_gitlink_worktree(&abs);
+            } else if fs::symlink_metadata(&abs).is_ok() {
+                let _ = fs::remove_file(&abs);
+            }
+            deleted_abs_paths.push(abs);
+        } else if fs::symlink_metadata(&abs).is_ok() {
+            let _ = fs::remove_file(&abs);
+            deleted_abs_paths.push(abs);
+        }
+    }
+
+    let config = repo.config()?;
+    let rules = WorktreeRules::from_parts(repo, &index, config)?;
+    let mut delayed = DelayedProcessCheckout::default();
+    let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
+    let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(target_entries.len());
+    let mut dir_cache = LeadingDirCache::new();
+
+    for te in target_entries {
+        let path = String::from_utf8_lossy(&te.path).into_owned();
+        let mode = te.mode;
+        if mode == MODE_GITLINK {
+            materialize_gitlink_worktree(&work_tree, &path, &mut dir_cache)?;
+            let abs = work_tree.join(&path);
+            let mut entry = entry_from_stat(&abs, path.as_bytes(), te.oid, MODE_GITLINK)?;
+            entry.size = 0;
+            new_entries.push(entry);
+            continue;
+        }
+        let change = DiffEntry {
+            status: DiffStatus::Modified,
+            old_path: Some(path.clone()),
+            new_path: Some(path.clone()),
+            old_mode: format_mode(mode),
+            new_mode: format_mode(mode),
+            old_oid: te.oid,
+            new_oid: te.oid,
+            score: None,
+        };
+        let object = repo.odb.read(&te.oid)?;
+        let worktree_bytes = worktree_bytes_from_index_blob(
+            repo,
+            &rules,
+            &path,
+            mode,
+            &object.data,
+            &te.oid,
+            Some(&mut delayed),
+        )?;
+        let Some(worktree_bytes) = worktree_bytes else {
+            pending_delayed.push(DelayedCheckoutTarget {
+                path: path.clone(),
+                mode,
+                oid: te.oid,
+                change: change.clone(),
+            });
+            continue;
+        };
+        let entry = write_checkout_entry(
+            &work_tree,
+            &path,
+            &worktree_bytes,
+            mode,
+            &change,
+            &mut dir_cache,
+            te.oid,
+        )?;
+        new_entries.push(entry);
+    }
+
+    finish_delayed_checkouts(
+        repo,
+        &rules,
+        &work_tree,
+        &mut delayed,
+        &pending_delayed,
+        &mut dir_cache,
+        &mut new_entries,
+    )?;
+
+    remove_empty_parent_dirs_batch(&work_tree, &deleted_abs_paths);
+
+    let mut new_index = Index::new();
+    new_index.entries = new_entries;
+    new_index.sort();
+    repo.write_index(&mut new_index)?;
+    Ok(())
+}
+
 /// Apply a precomputed tree-to-tree diff to the working tree and index.
 ///
 /// Callers such as `grit switch` can reuse one [`diff_trees`] result for both

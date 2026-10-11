@@ -262,14 +262,35 @@ enum Command {
         #[arg(short = 'D', long = "force")]
         force_delete: bool,
     },
-    /// Switch to another branch.
+    /// Switch to another branch, remote branch, or detached commit.
     #[command(alias = "checkout", alias = "co")]
     Switch {
-        /// Branch to switch to.
-        name: String,
+        /// Branch to switch to, revision with `--detach`, or new branch name with `-c`.
+        #[arg(value_name = "NAME", required_unless_present = "detach")]
+        branch: Option<String>,
+        /// With `-c`, the commit to start the branch from (defaults to `HEAD`).
+        start_point: Option<String>,
         /// Create the branch first, then switch to it.
         #[arg(short = 'c', long = "create")]
         create: bool,
+        /// Check out a commit in detached HEAD mode.
+        #[arg(long = "detach")]
+        detach: bool,
+    },
+    /// Move the branch tip and optionally reset the index or worktree.
+    Reset {
+        /// Commit to reset to (defaults to `HEAD`).
+        #[arg(value_name = "REV")]
+        rev: Option<String>,
+        /// Keep the index and worktree; move the branch tip only.
+        #[arg(long, conflicts_with = "hard")]
+        soft: bool,
+        /// Reset the index to the target commit; keep the worktree (default).
+        #[arg(long, conflicts_with = "hard")]
+        mixed: bool,
+        /// Reset the index and worktree to match the target commit.
+        #[arg(long, conflicts_with_all = ["soft", "mixed"])]
+        hard: bool,
     },
     /// Merge another branch into the current one.
     Merge {
@@ -618,7 +639,21 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             }
         },
         Command::Tag { name, delete } => emit(&commands::tag::run(name, delete)?, opts),
-        Command::Switch { name, create } => emit(&commands::switch::run(&name, create)?, opts),
+        Command::Switch {
+            branch,
+            start_point,
+            create,
+            detach,
+        } => emit(
+            &commands::switch::run(branch, start_point, create, detach)?,
+            opts,
+        ),
+        Command::Reset {
+            rev,
+            soft,
+            mixed,
+            hard,
+        } => emit(&commands::reset::run(rev, soft, mixed, hard)?, opts),
         Command::Merge { branch } => emit(&commands::merge::run(&branch)?, opts),
         Command::Pick { commit } => emit(&commands::pick::run(&commit)?, opts),
         Command::Revert { commit } => emit(&commands::revert::run(&commit)?, opts),
