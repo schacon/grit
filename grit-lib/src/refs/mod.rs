@@ -2205,28 +2205,40 @@ pub fn set_test_inject_ref_store_batch_pause_after_apply(
 }
 
 #[cfg(test)]
-static REF_STORE_PAUSE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+struct RefStorePauseTestSerial {
+    /// Held while one test owns ref-store batch pause injection.
+    holder: Option<std::thread::ThreadId>,
+}
+
+#[cfg(test)]
+static REF_STORE_PAUSE_TEST_SERIAL: std::sync::Mutex<RefStorePauseTestSerial> =
+    std::sync::Mutex::new(RefStorePauseTestSerial { holder: None });
 
 /// Serialize ref-store batch pause injection tests and clear injection on drop.
 #[cfg(test)]
 pub(crate) struct RefStoreBatchPauseTestScope {
-    _lock: std::sync::MutexGuard<'static, ()>,
+    _serial: std::sync::MutexGuard<'static, RefStorePauseTestSerial>,
 }
 
 #[cfg(test)]
 pub(crate) fn ref_store_batch_pause_test_scope() -> RefStoreBatchPauseTestScope {
+    let mut serial = REF_STORE_PAUSE_TEST_SERIAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    assert!(
+        serial.holder.is_none(),
+        "ref_store_batch_pause_test_scope must not nest"
+    );
+    serial.holder = Some(std::thread::current().id());
     set_test_inject_ref_store_batch_pause_after_apply(0, None);
-    RefStoreBatchPauseTestScope {
-        _lock: REF_STORE_PAUSE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-    }
+    RefStoreBatchPauseTestScope { _serial: serial }
 }
 
 #[cfg(test)]
 impl Drop for RefStoreBatchPauseTestScope {
     fn drop(&mut self) {
         set_test_inject_ref_store_batch_pause_after_apply(0, None);
+        self._serial.holder = None;
     }
 }
 
