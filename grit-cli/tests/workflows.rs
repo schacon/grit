@@ -1019,3 +1019,55 @@ fn diff_linked_worktree_autocrlf_matches_git() -> TestResult {
     );
     Ok(())
 }
+
+/// `core.autocrlf=true` and `core.filemode=false`: grit diff must match git/status (issue #947).
+#[test]
+fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {
+    let scratch = Scratch::new("diff-947-crlf-filemode")?;
+    let repo = scratch.path();
+    git_ok(repo, &["init", "-q", "-b", "main"])?;
+    git_ok(repo, &["config", "user.name", "T"])?;
+    git_ok(repo, &["config", "user.email", "t@e.com"])?;
+    git_ok(repo, &["config", "core.autocrlf", "true"])?;
+    git_ok(repo, &["config", "core.filemode", "false"])?;
+    write_file(&repo.join("a.txt"), "one\ntwo\nthree\n")?;
+    git_ok(repo, &["add", "a.txt"])?;
+    git_ok(repo, &["update-index", "--chmod=+x", "a.txt"])?;
+    git_ok(repo, &["commit", "-qm", "init"])?;
+    fs::remove_file(repo.join("a.txt"))?;
+    git_ok(repo, &["checkout", "-q", "--", "a.txt"])?;
+
+    let git_diff = Command::new("git")
+        .args(["diff", "--quiet"])
+        .current_dir(repo)
+        .status()?;
+    assert!(
+        git_diff.success(),
+        "git diff should be empty after autocrlf checkout with filemode=false"
+    );
+
+    let status = gs(repo, ["status", "--json"])?;
+    assert_eq!(status.status, Some(0), "{}", status.dump());
+    let status_json: serde_json::Value = serde_json::from_str(&status.stdout)?;
+    assert!(
+        status_json
+            .get("clean")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        "grit status should report clean tree: {}",
+        status.stdout
+    );
+
+    let diff = gs(repo, ["--json", "diff"])?;
+    assert_eq!(diff.status, Some(0), "{}", diff.dump());
+    let diff_json: serde_json::Value = serde_json::from_str(&diff.stdout)?;
+    let files = diff_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .expect("diff json must include files array");
+    assert!(
+        files.is_empty(),
+        "grit diff must be empty when git diff and grit status are clean: {files:?}"
+    );
+    Ok(())
+}

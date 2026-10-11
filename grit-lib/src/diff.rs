@@ -4381,6 +4381,10 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
 
     let index_mtime = index_mtime_for_diff(index, None);
     let stat_policy = crate::index::StatMatchPolicy::from_config(Some(&config));
+    let trust_filemode = config
+        .get_bool("core.filemode")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
     let mut result = Vec::new();
 
     for path in &all_paths {
@@ -4501,7 +4505,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     filter_fp,
                 )?;
                 let wt_mode = mode_from_metadata(meta);
-                if wt_oid != te.oid || wt_mode != te.mode {
+                if wt_oid != te.oid || (trust_filemode && wt_mode != te.mode) {
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -4529,7 +4533,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 // Fully clean: index matches `HEAD`, worktree matches index, stat cache fresh.
                 let stat_trusted = stat_matches_with_policy(ie, meta, stat_policy)
                     && !entry_is_racy_with_policy(ie, index_mtime, stat_policy);
-                if index_matches_tree && wt_mode == te.mode && stat_trusted {
+                if index_matches_tree && stat_trusted && (!trust_filemode || wt_mode == te.mode) {
                     continue;
                 }
 
@@ -4537,7 +4541,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 let idx_ent = index_entries.get(path.as_bytes()).copied();
 
                 // Staged mode (same blob as `HEAD`, different mode recorded in the index).
-                if ie.oid == te.oid && ie.mode != te.mode {
+                if trust_filemode && ie.oid == te.oid && ie.mode != te.mode {
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -4564,16 +4568,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         idx_ent,
                         filter_fp,
                     )?;
-                    let mut eff_oid = wt_oid;
-                    if eff_oid != te.oid {
-                        if let Ok(raw) = fs::read(&file_path) {
-                            let raw_oid = odb.hash(ObjectKind::Blob, &raw);
-                            if raw_oid == te.oid {
-                                eff_oid = te.oid;
-                            }
-                        }
-                    }
-                    if eff_oid != te.oid {
+                    if wt_oid != te.oid {
                         result.push(DiffEntry {
                             status: DiffStatus::Modified,
                             old_path: Some(path.clone()),
@@ -4581,10 +4576,10 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             old_mode: format_mode(te.mode),
                             new_mode: format_mode(wt_mode),
                             old_oid: te.oid,
-                            new_oid: eff_oid,
+                            new_oid: wt_oid,
                             score: None,
                         });
-                    } else if wt_mode != te.mode {
+                    } else if trust_filemode && wt_mode != te.mode {
                         result.push(DiffEntry {
                             status: DiffStatus::Modified,
                             old_path: Some(path.clone()),
@@ -4610,16 +4605,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     idx_ent,
                     filter_fp,
                 )?;
-                let mut eff_oid = wt_oid;
-                if eff_oid != te.oid {
-                    if let Ok(raw) = fs::read(&file_path) {
-                        let raw_oid = odb.hash(ObjectKind::Blob, &raw);
-                        if raw_oid == te.oid {
-                            eff_oid = te.oid;
-                        }
-                    }
-                }
-                if eff_oid != te.oid || wt_mode != te.mode {
+                if wt_oid != te.oid || (trust_filemode && wt_mode != te.mode) {
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -4627,7 +4613,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         old_mode: format_mode(te.mode),
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
-                        new_oid: eff_oid,
+                        new_oid: wt_oid,
                         score: None,
                     });
                 }
