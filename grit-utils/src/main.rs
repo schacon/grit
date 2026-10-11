@@ -13,6 +13,9 @@ use grit_utils::network_suite::{
 };
 use grit_utils::odb_driver::{self, open_repo};
 use grit_utils::odb_suite::{run_odb_backend_suite, run_odb_suite, OdbRunConfig};
+use grit_utils::refs_driver;
+use grit_utils::refs_fixture::{run_prepare_refs, RefsWorkMode};
+use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
 use grit_utils::render::{render_markdown, render_text};
 use grit_utils::scenarios::{
     run_add_suite, run_blame_suite, run_commit_suite, run_diff_suite, run_hot_path_suite,
@@ -127,11 +130,19 @@ enum Cmd {
         #[arg(long)]
         smoke: bool,
     },
+    /// Ref workloads (for-each-ref, update-ref --stdin) on 100k-ref fixtures
+    Refs,
     /// Internal: library-backed workloads for ODB benchmarks
     #[command(hide = true)]
     Drive {
         #[command(subcommand)]
         workload: DriveCmd,
+    },
+    /// Internal: library-backed workloads for ref benchmarks
+    #[command(hide = true)]
+    RefsDriver {
+        #[command(subcommand)]
+        workload: RefsDriveCmd,
     },
     /// Internal: measure peak RSS for one shell command (fresh process)
     #[command(hide = true)]
@@ -230,6 +241,36 @@ enum Cmd {
         #[arg(long)]
         git: PathBuf,
     },
+    #[command(hide = true)]
+    PrepareRefs {
+        #[arg(long)]
+        git: PathBuf,
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        work: PathBuf,
+        #[arg(long, value_parser = parse_refs_work_mode)]
+        mode: RefsWorkMode,
+    },
+}
+
+fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
+    match s {
+        "full" => Ok(RefsWorkMode::Full),
+        "empty" => Ok(RefsWorkMode::Empty),
+        other => Err(format!("expected full or empty, got {other}")),
+    }
+}
+
+#[derive(Subcommand)]
+enum RefsDriveCmd {
+    ForEachRef {
+        repo: PathBuf,
+        prefix: Option<String>,
+    },
+    UpdateRefStdin {
+        repo: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -312,6 +353,19 @@ fn render_report(format: &OutputFormat, report: &BenchReport) -> Result<String> 
     }
 }
 
+fn run_refs_drive(workload: &RefsDriveCmd) -> Result<()> {
+    match workload {
+        RefsDriveCmd::ForEachRef { repo, prefix } => {
+            let repo = refs_driver::open_repo_for_refs(repo)?;
+            refs_driver::for_each_ref(&repo, prefix.as_deref())?;
+        }
+        RefsDriveCmd::UpdateRefStdin { repo } => {
+            refs_driver::update_ref_stdin_at(repo)?;
+        }
+    }
+    Ok(())
+}
+
 fn run_drive(workload: &DriveCmd) -> Result<()> {
     match workload {
         DriveCmd::CatFileBatch { repo } => {
@@ -362,6 +416,18 @@ fn main() -> Result<()> {
         }
         Cmd::Drive { workload } => {
             return run_drive(workload);
+        }
+        Cmd::RefsDriver { workload } => {
+            return run_refs_drive(workload);
+        }
+        Cmd::PrepareRefs {
+            git,
+            source,
+            work,
+            mode,
+        } => {
+            let git = resolve_binary("git", Some(git))?;
+            return run_prepare_refs(&git, source, work, *mode);
         }
         Cmd::PrepareAdd { git } => {
             let git = resolve_binary("git", Some(git))?;
@@ -573,6 +639,17 @@ fn main() -> Result<()> {
                 timestamp,
             )?
         }
+        Cmd::Refs => {
+            eprintln!("Running ref benchmarks (100k-ref fixtures)...");
+            let cfg = RefsRunConfig {
+                warmup: cli.warmup,
+                min_runs: cli.min_runs,
+                prepare_bin: std::env::current_exe()
+                    .unwrap_or_else(|_| PathBuf::from("grit-bench")),
+            };
+            let bench_exe = std::env::current_exe().context("current exe")?;
+            run_refs_suite(&hyperfine, &git, &grit, &bench_exe, &cfg, timestamp)?
+        }
         Cmd::HotPaths {
             sizes,
             fsmonitor_fixture,
@@ -614,14 +691,16 @@ fn main() -> Result<()> {
         | Cmd::PrepareNetworkPush { .. }
         | Cmd::ServeGitHttp { .. }
         | Cmd::PrepareRestore
-        | Cmd::PrepareStash { .. } => unreachable!(),
+        | Cmd::PrepareStash { .. }
+        | Cmd::PrepareRefs { .. }
+        | Cmd::RefsDriver { .. } => unreachable!(),
     };
 
     let rendered = render_report(&cli.format, &report)?;
     write_output(&cli, &rendered)?;
     if !matches!(
         cli.command,
-        Cmd::Odb | Cmd::OdbBackend | Cmd::Bitmaps { .. } | Cmd::Network { .. }
+        Cmd::Odb | Cmd::OdbBackend | Cmd::Bitmaps { .. } | Cmd::Network { .. } | Cmd::Refs
     ) {
         remove_dir_robust(&scratch_dir());
     }
