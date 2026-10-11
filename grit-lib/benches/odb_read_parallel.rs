@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Barrier};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use fixture::build_packed_exists_local_fixture;
+use fixture::build_parallel_packed_blob_fixture;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::pack::clear_pack_cache;
@@ -26,7 +26,7 @@ static FIXTURE: OnceLock<ParallelReadFixture> = OnceLock::new();
 fn fixture() -> &'static ParallelReadFixture {
     FIXTURE.get_or_init(|| {
         clear_pack_cache();
-        let (root, odb, oids) = build_packed_exists_local_fixture(50_000);
+        let (root, odb, oids) = build_parallel_packed_blob_fixture(50_000);
         ParallelReadFixture {
             _root: root,
             odb,
@@ -45,7 +45,6 @@ fn bench_parallel_reads(c: &mut Criterion) {
             &threads,
             |b, &thread_count| {
                 b.iter(|| {
-                    clear_pack_cache();
                     let odb = fx.odb.clone();
                     let oids = fx.oids.clone();
                     let barrier = Arc::new(Barrier::new(thread_count));
