@@ -580,17 +580,8 @@ pub fn remove_linked_worktree(repo: &Repository, path: &Path, force: bool) -> Re
     }
 
     fs::remove_dir_all(&entry.admin_dir).map_err(Error::Io)?;
-    if force {
-        let _ = fs::remove_dir_all(&entry.path);
-    } else if entry.path.is_dir() {
-        let gitfile = entry.path.join(".git");
-        let _ = fs::remove_file(&gitfile);
-        if fs::read_dir(&entry.path)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(false)
-        {
-            let _ = fs::remove_dir(&entry.path);
-        }
+    if entry.path.exists() {
+        fs::remove_dir_all(&entry.path).map_err(Error::Io)?;
     }
     Ok(())
 }

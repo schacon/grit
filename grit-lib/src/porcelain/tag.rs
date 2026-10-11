@@ -7,14 +7,16 @@
 //! editor/hook subprocess dispatch, identity/env resolution, object/ref writes,
 //! and exit-code mapping — stay in the CLI.
 //!
-//! What lives here is the self-contained, presentation-free part of tag listing
-//! and message cleanup: the predicates and orderings that filter and sort the
-//! `refs/tags/*` set, and the comment-stripping applied to `-m`/`-F` messages.
-//! Each computes a result from object/ref data (or a plain string) alone, with
-//! no presentation, argv, or process state.
+//! What lives here is presentation-free tag logic: creating lightweight and
+//! annotated tags ([`create_tag`]), listing metadata ([`tag_ref_metadata`]),
+//! filter/sort predicates, and `-m`/`-F` message cleanup ([`strip_comments`]).
+//! The CLI resolves argv, identity, and output; this module performs object and
+//! ref writes for create paths and pure computations for list filters.
 //!
 //! # What this module owns
 //!
+//! - Tag creation ([`create_tag`], [`CreateTagRequest`], [`TagKind`]) and list
+//!   classification ([`tag_ref_metadata`]).
 //! - The `--contains` / `--no-contains` / `--points-at` filter predicates
 //!   ([`tag_contains`], [`tag_points_at`]) and the [`peel_to_commit`] helper they
 //!   share.
