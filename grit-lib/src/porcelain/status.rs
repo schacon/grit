@@ -800,40 +800,6 @@ fn visit_untracked_node(
         return Ok(());
     }
 
-    if !rel.is_empty() && abs.is_dir() && has_tracked_under(tracked, gitlinks, rel) {
-        if let Some(child) =
-            crate::tracked_path_tree::unique_indexed_subdirectory(tracked, gitlinks, rel)
-        {
-            let child_rel = relative_path(rel, &child);
-            if !tracked.contains(&child_rel) && !gitlinks.contains(&child_rel) {
-                let child_abs = abs.join(&child);
-                if child_abs.is_dir() {
-                    visit_untracked_directory(
-                        repo,
-                        index,
-                        work_tree,
-                        tracked,
-                        gitlinks,
-                        matcher,
-                        ignored_mode,
-                        show_all,
-                        check_only,
-                        visible_out,
-                        precompose_unicode,
-                        tracked_paths,
-                        &child_rel,
-                        &child_abs,
-                        pathspecs,
-                        rules,
-                        untracked_out,
-                        ignored_out,
-                    )?;
-                    return Ok(());
-                }
-            }
-        }
-    }
-
     let entries = match fs::read_dir(abs) {
         Ok(e) => e,
         Err(_) => return Ok(()),
@@ -1727,36 +1693,22 @@ mod status_op_tests {
     }
 
     #[test]
-    fn status_deep_linear_tracked_chains_skip_interior_read_dir() {
+    fn status_lists_untracked_sibling_on_deep_indexed_chain() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         init_min_repo(root);
-        const CHAINS: usize = 80;
-        const DEPTH: usize = 12;
-        for chain in 0..CHAINS {
-            let mut rel = format!("t{chain:03}");
-            for d in 0..DEPTH {
-                rel.push_str(&format!("/d{d}"));
-            }
-            rel.push_str("/f.txt");
-            let abs = root.join(&rel);
-            if let Some(p) = abs.parent() {
-                fs::create_dir_all(p).unwrap();
-            }
-            fs::write(&abs, format!("body {chain}\n")).unwrap();
-        }
-        grit_test_support::git(root, &["add", "."]);
+        fs::create_dir_all(root.join("a/b/c")).unwrap();
+        fs::write(root.join("a/b/c/tracked.txt"), b"tracked\n").unwrap();
+        grit_test_support::git(root, &["add", "a/b/c/tracked.txt"]);
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
+        fs::write(root.join("a/b/untracked.txt"), b"new\n").unwrap();
 
         let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
-        untracked_walk_probe::reset();
         let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
-        assert!(model.unstaged.is_empty());
-        assert!(model.untracked.is_empty());
-        let entries_read = untracked_walk_probe::count();
         assert!(
-            entries_read <= (CHAINS + 8) as u32,
-            "interior chain dirs should not read_dir every level (read {entries_read} entries, chains {CHAINS})"
+            model.untracked.iter().any(|p| p == "a/b/untracked.txt"),
+            "interior untracked sibling must be visible, got {:?}",
+            model.untracked
         );
     }
 

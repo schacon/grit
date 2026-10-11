@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::diff::{
-    entry_is_racy, index_entry_worktree_abs, mode_from_metadata, read_submodule_head_oid,
-    stat_matches, symlink_target_bytes, SymlinkDirCache,
+    entry_is_racy, index_entry_worktree_abs, materialize_worktree_blob, mode_from_metadata,
+    read_submodule_head_oid, stat_matches, symlink_target_bytes, SymlinkDirCache,
 };
 use crate::error::{Error, Result};
 use crate::index::index_file_mtime;
@@ -21,6 +21,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::precompose_config::effective_core_precomposeunicode_with_config;
 use crate::repo::Repository;
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
+use crate::worktree_rules::WorktreeRules;
 use crate::worktree_scan::{
     for_each_blob_by_directory_parallel, group_blob_entries_by_dir, BlobDiskLookup,
     WorktreeBlobScanOptions,
@@ -118,6 +119,7 @@ pub fn stage_tracked_modifications_in_index(
         .ok()
         .and_then(|cfg| cfg.get_bool("core.filemode").and_then(|r| r.ok()))
         .unwrap_or(true);
+    let mut rules = WorktreeRules::from_repository(repo, index)?;
 
     let mut unmerged_paths: HashSet<Vec<u8>> = HashSet::new();
     let mut stage0: HashMap<Vec<u8>, IndexEntry> = HashMap::new();
@@ -140,7 +142,7 @@ pub fn stage_tracked_modifications_in_index(
 
     for raw_path in &unmerged_paths {
         let abs_path = abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode);
-        refresh_unmerged_tracked_path(repo, index, raw_path, &abs_path, &mut summary)?;
+        refresh_unmerged_tracked_path(repo, index, raw_path, &abs_path, &mut rules, &mut summary)?;
     }
 
     for (raw_path, idx_e) in &stage0 {
@@ -155,6 +157,7 @@ pub fn stage_tracked_modifications_in_index(
                 trust_filemode,
                 precompose_unicode,
                 &mut symlink_parent_cache,
+                &mut rules,
                 &mut summary,
             )?;
         }
@@ -244,6 +247,7 @@ pub fn stage_tracked_modifications_in_index(
                     idx_e: &idx_e,
                     index_mtime,
                     trust_filemode,
+                    rules: &mut rules,
                 };
                 if refresh_present_tracked_path(ctx, &meta)? {
                     summary.modified.push(raw_path);
@@ -265,6 +269,7 @@ struct PresentRefreshCtx<'a> {
     idx_e: &'a IndexEntry,
     index_mtime: Option<(u32, u32)>,
     trust_filemode: bool,
+    rules: &'a mut WorktreeRules,
 }
 
 fn refresh_unmerged_tracked_path(
@@ -272,6 +277,7 @@ fn refresh_unmerged_tracked_path(
     index: &mut Index,
     raw_path: &[u8],
     abs_path: &Path,
+    rules: &mut WorktreeRules,
     summary: &mut StageTrackedSummary,
 ) -> Result<()> {
     let idx_mode = index
@@ -296,7 +302,7 @@ fn refresh_unmerged_tracked_path(
                     summary.modified.push(raw_path.to_vec());
                 }
             } else {
-                stage_blob_from_worktree(repo, index, abs_path, raw_path, None)?;
+                stage_blob_from_worktree(repo, index, abs_path, raw_path, None, rules)?;
                 summary.modified.push(raw_path.to_vec());
             }
         }
@@ -346,6 +352,7 @@ fn stage_tracked_path_individual(
     trust_filemode: bool,
     precompose_unicode: bool,
     symlink_parent_cache: &mut HashMap<PathBuf, bool>,
+    rules: &mut WorktreeRules,
     summary: &mut StageTrackedSummary,
 ) -> Result<()> {
     let abs_path = abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode);
@@ -365,6 +372,7 @@ fn stage_tracked_path_individual(
                 idx_e,
                 index_mtime,
                 trust_filemode,
+                rules,
             };
             if refresh_present_tracked_path(ctx, &meta)? {
                 summary.modified.push(raw_path.to_vec());
@@ -389,6 +397,7 @@ fn refresh_present_tracked_path(ctx: PresentRefreshCtx<'_>, meta: &fs::Metadata)
         idx_e,
         index_mtime,
         trust_filemode,
+        rules,
     } = ctx;
     let idx_mode = idx_e.mode;
     let idx_intent_to_add = idx_e.intent_to_add();
@@ -430,11 +439,32 @@ fn refresh_present_tracked_path(ctx: PresentRefreshCtx<'_>, meta: &fs::Metadata)
         return Ok(true);
     }
 
-    let oid = read_worktree_blob_oid(repo, abs_path, meta)?;
+    let oid = if let Ok(rel_path) = std::str::from_utf8(raw_path) {
+        let file_attrs = rules.file_attrs(rel_path, false);
+        let conv = rules.conversion();
+        let filter_fp = Some(rules.filter_process());
+        let staged_oid = materialize_worktree_blob(
+            &repo.odb,
+            abs_path,
+            meta,
+            conv,
+            &file_attrs,
+            rel_path,
+            Some(idx_e),
+            filter_fp,
+        )?;
+        if !idx_intent_to_add && staged_oid == idx_oid && (wt_mode == idx_mode || !trust_filemode) {
+            return Ok(false);
+        }
+        staged_oid
+    } else {
+        let oid = read_worktree_blob_oid_raw(repo, abs_path, meta)?;
+        if !idx_intent_to_add && idx_oid == oid && (wt_mode == idx_mode || !trust_filemode) {
+            return Ok(false);
+        }
+        oid
+    };
     let mode_for_index = if trust_filemode { wt_mode } else { idx_mode };
-    if !idx_intent_to_add && idx_oid == oid && (wt_mode == idx_mode || !trust_filemode) {
-        return Ok(false);
-    }
     let entry = entry_from_stat(abs_path, raw_path, oid, mode_for_index)?;
     index.stage_file(entry);
     Ok(true)
@@ -481,9 +511,10 @@ fn stage_blob_from_worktree(
     abs_path: &Path,
     raw_path: &[u8],
     mode_override: Option<u32>,
+    rules: &mut WorktreeRules,
 ) -> Result<()> {
     let meta = fs::symlink_metadata(abs_path)?;
-    let oid = read_worktree_blob_oid(repo, abs_path, &meta)?;
+    let oid = read_worktree_blob_oid(repo, abs_path, &meta, raw_path, rules)?;
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     let mode = mode_override.unwrap_or_else(|| {
@@ -502,6 +533,36 @@ fn stage_blob_from_worktree(
 }
 
 fn read_worktree_blob_oid(
+    repo: &Repository,
+    abs_path: &Path,
+    meta: &fs::Metadata,
+    raw_path: &[u8],
+    rules: &mut WorktreeRules,
+) -> Result<ObjectId> {
+    if meta.file_type().is_symlink() {
+        let target = fs::read_link(abs_path)?;
+        let data = symlink_target_bytes(&target);
+        return repo.odb.write(ObjectKind::Blob, &data);
+    }
+    if let Ok(rel_path) = std::str::from_utf8(raw_path) {
+        let file_attrs = rules.file_attrs(rel_path, false);
+        #[cfg(test)]
+        repo.odb.hot_path_metrics().record_blob_content_read();
+        return materialize_worktree_blob(
+            &repo.odb,
+            abs_path,
+            meta,
+            rules.conversion(),
+            &file_attrs,
+            rel_path,
+            None,
+            Some(rules.filter_process()),
+        );
+    }
+    read_worktree_blob_oid_raw(repo, abs_path, meta)
+}
+
+fn read_worktree_blob_oid_raw(
     repo: &Repository,
     abs_path: &Path,
     meta: &fs::Metadata,
