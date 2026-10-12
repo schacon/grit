@@ -1938,7 +1938,7 @@ mod status_op_tests {
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
 
         let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
-        reset_worktree_metadata_probe();
+        let _probe = reset_worktree_metadata_probe(root);
         let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
         let tracked = repo.load_index().unwrap().entries.len();
         let dir_count = (FILE_COUNT + 99) / 100;

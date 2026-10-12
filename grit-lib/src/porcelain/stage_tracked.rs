@@ -703,7 +703,7 @@ mod tests {
             let rel = format!("d{:04}/f{:05}.txt", i / 100, i);
             write_and_index(&repo, rel.as_bytes(), b"x\n");
         }
-        reset_worktree_metadata_probe();
+        let _probe = reset_worktree_metadata_probe(wt);
         let index_path = repo.index_path_for_env().unwrap();
         let mut index = repo.load_index().unwrap();
         stage_tracked_modifications_in_index(&repo, wt, &index_path, &mut index).unwrap();
