@@ -1531,6 +1531,7 @@ pub fn grit_lib::environment::Environment::empty() -> Self
 pub fn grit_lib::environment::Environment::from_vars(impl core::iter::traits::collect::IntoIterator<Item = (std::ffi::os_str::OsString, std::ffi::os_str::OsString)>, std::path::PathBuf) -> Self
 pub fn grit_lib::environment::Environment::git_now_date_override(&self) -> core::option::Option<i64>
 pub fn grit_lib::environment::Environment::home_dir(&self) -> core::option::Option<std::path::PathBuf>
+pub fn grit_lib::environment::Environment::is_fetch_options_default(&self) -> bool
 pub fn grit_lib::environment::Environment::reftable_autocompaction_enabled(&self) -> bool
 pub fn grit_lib::environment::Environment::subprocess_environment(&self) -> alloc::vec::Vec<(std::ffi::os_str::OsString, std::ffi::os_str::OsString)>
 pub fn grit_lib::environment::Environment::test_assume_different_owner(&self) -> bool
@@ -3818,6 +3819,7 @@ pub fn grit_lib::environment::Environment::empty() -> Self
 pub fn grit_lib::environment::Environment::from_vars(impl core::iter::traits::collect::IntoIterator<Item = (std::ffi::os_str::OsString, std::ffi::os_str::OsString)>, std::path::PathBuf) -> Self
 pub fn grit_lib::environment::Environment::git_now_date_override(&self) -> core::option::Option<i64>
 pub fn grit_lib::environment::Environment::home_dir(&self) -> core::option::Option<std::path::PathBuf>
+pub fn grit_lib::environment::Environment::is_fetch_options_default(&self) -> bool
 pub fn grit_lib::environment::Environment::reftable_autocompaction_enabled(&self) -> bool
 pub fn grit_lib::environment::Environment::subprocess_environment(&self) -> alloc::vec::Vec<(std::ffi::os_str::OsString, std::ffi::os_str::OsString)>
 pub fn grit_lib::environment::Environment::test_assume_different_owner(&self) -> bool
@@ -12414,6 +12416,7 @@ pub fn grit_lib::environment::Environment::empty() -> Self
 pub fn grit_lib::environment::Environment::from_vars(impl core::iter::traits::collect::IntoIterator<Item = (std::ffi::os_str::OsString, std::ffi::os_str::OsString)>, std::path::PathBuf) -> Self
 pub fn grit_lib::environment::Environment::git_now_date_override(&self) -> core::option::Option<i64>
 pub fn grit_lib::environment::Environment::home_dir(&self) -> core::option::Option<std::path::PathBuf>
+pub fn grit_lib::environment::Environment::is_fetch_options_default(&self) -> bool
 pub fn grit_lib::environment::Environment::reftable_autocompaction_enabled(&self) -> bool
 pub fn grit_lib::environment::Environment::subprocess_environment(&self) -> alloc::vec::Vec<(std::ffi::os_str::OsString, std::ffi::os_str::OsString)>
 pub fn grit_lib::environment::Environment::test_assume_different_owner(&self) -> bool

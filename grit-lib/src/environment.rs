@@ -173,6 +173,64 @@ impl Environment {
         }
     }
 
+    /// Whether this snapshot matches [`Self::empty`], the default
+    /// [`crate::transfer::FetchOptions::environment`] value.
+    ///
+    /// SSH transport uses the repository [`Environment`] when fetch options still
+    /// carry this sentinel so `FetchOptions::default()` does not mask `GIT_SSH_*`
+    /// stored on the repository handle.
+    #[must_use]
+    pub fn is_fetch_options_default(&self) -> bool {
+        let e = Self::empty();
+        self.cwd == e.cwd
+            && self.git_dir == e.git_dir
+            && self.git_work_tree == e.git_work_tree
+            && self.git_ceiling_directories == e.git_ceiling_directories
+            && self.git_index_file == e.git_index_file
+            && self.git_namespace == e.git_namespace
+            && self.git_replace_ref_base == e.git_replace_ref_base
+            && self.git_no_replace_objects == e.git_no_replace_objects
+            && self.git_alternate_object_directories == e.git_alternate_object_directories
+            && self.git_object_directory == e.git_object_directory
+            && self.git_prefix == e.git_prefix
+            && self.git_config_nosystem == e.git_config_nosystem
+            && self.git_config_system == e.git_config_system
+            && self.git_config_global == e.git_config_global
+            && self.git_config == e.git_config
+            && self.git_config_parameters == e.git_config_parameters
+            && self.git_config_count == e.git_config_count
+            && self.git_config_pairs == e.git_config_pairs
+            && self.home == e.home
+            && self.xdg_config_home == e.xdg_config_home
+            && self.userprofile == e.userprofile
+            && self.homedrive == e.homedrive
+            && self.homepath == e.homepath
+            && self.git_install_root == e.git_install_root
+            && self.git_exec_path == e.git_exec_path
+            && self.pwd == e.pwd
+            && self.git_test_assume_different_owner == e.git_test_assume_different_owner
+            && self.grit_debug_safe_dir == e.grit_debug_safe_dir
+            && self.git_trace_setup == e.git_trace_setup
+            && self.git_trace2_perf == e.git_trace2_perf
+            && self.grit_invocation_cwd == e.grit_invocation_cwd
+            && self.sudo_uid == e.sudo_uid
+            && self.git_test_utf8_nfd_to_nfc == e.git_test_utf8_nfd_to_nfc
+            && self.git_test_no_write_rev_index == e.git_test_no_write_rev_index
+            && self.git_test_reftable_autocompaction == e.git_test_reftable_autocompaction
+            && self.git_author_name == e.git_author_name
+            && self.git_author_email == e.git_author_email
+            && self.git_author_date == e.git_author_date
+            && self.git_committer_name == e.git_committer_name
+            && self.git_committer_email == e.git_committer_email
+            && self.git_committer_date == e.git_committer_date
+            && self.tz == e.tz
+            && self.user == e.user
+            && self.username == e.username
+            && self.program_files == e.program_files
+            && self.program_files_x86 == e.program_files_x86
+            && self.captured_vars == e.captured_vars
+    }
+
     /// Parse known discovery/config variables from `vars` without reading the process environment.
     ///
     /// Unknown keys from `vars` are retained for later lookup via [`Self::var`] / [`Self::var_os`].
@@ -738,6 +796,18 @@ fn process_cwd_fallback() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_fetch_options_default_matches_empty() {
+        assert!(Environment::empty().is_fetch_options_default());
+        let mut env = Environment::from_vars(
+            [(OsString::from("GIT_SSH_COMMAND"), OsString::from("/bin/wrap"))],
+            PathBuf::from("."),
+        );
+        assert!(!env.is_fetch_options_default());
+        env.captured_vars.clear();
+        assert!(env.is_fetch_options_default());
+    }
 
     #[test]
     fn from_vars_parses_config_count_pairs() {

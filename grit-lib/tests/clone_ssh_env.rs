@@ -131,6 +131,50 @@ fn clone_uses_git_ssh_program() {
 }
 
 #[test]
+fn fetch_with_default_options_uses_repository_git_ssh_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = bare_upstream(tmp.path());
+    let log = tmp.path().join("ssh-calls.log");
+    let script = write_logging_fake_ssh(tmp.path(), &log).expect("fake ssh");
+
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    git(Some(&local), &["init", "-q", "-b", "main"]);
+
+    let config_path = local.join(".git/config");
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    let mut config = ConfigFile::parse(&config_path, &content, ConfigScope::Local).unwrap();
+    config
+        .set(
+            "remote.origin.url",
+            &format!("git@localhost:{}", bare.display()),
+        )
+        .unwrap();
+    config
+        .set("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        .unwrap();
+    config.write().unwrap();
+
+    let repo_env = env_with_ssh_var("GIT_SSH_COMMAND", script.to_str().unwrap());
+    let repo = Repository::open(
+        &local.join(".git"),
+        &RepositoryOptions::with_environment(repo_env).with_work_tree(&local),
+    )
+    .unwrap();
+
+    let remote = Remote::from_config(&repo.config().unwrap(), "origin").unwrap();
+    remote
+        .fetch(&repo, FetchOptions::default(), &mut NoProgress, None)
+        .expect("fetch");
+
+    let calls = std::fs::read_to_string(&log).expect("log");
+    assert!(
+        !calls.trim().is_empty(),
+        "repository GIT_SSH_COMMAND must apply when FetchOptions::default() leaves environment empty"
+    );
+}
+
+#[test]
 fn fetch_honors_core_ssh_command_when_env_unset() {
     let tmp = tempfile::tempdir().unwrap();
     let bare = bare_upstream(tmp.path());

@@ -537,16 +537,13 @@ fn local_git_dir_from_url(
 
 fn ssh_transport(
     repo: Option<&Repository>,
-    override_env: Option<&crate::environment::Environment>,
+    fetch_env: Option<&crate::environment::Environment>,
 ) -> SshTransport {
     let mut transport = SshTransport::new();
     if let Some(r) = repo {
         transport = transport.with_command_runner(r.command_runner());
     }
-    let env = override_env
-        .cloned()
-        .or_else(|| repo.map(|r| r.environment().clone()))
-        .unwrap_or_else(crate::environment::Environment::empty);
+    let env = ssh_wire_environment(repo, fetch_env);
     transport = transport.with_ssh_environment(std::sync::Arc::new(env));
     if let Some(r) = repo {
         if let Ok(config) = r.config() {
@@ -554,6 +551,21 @@ fn ssh_transport(
         }
     }
     transport
+}
+
+/// Environment for SSH subprocess spawn: repository discovery env unless the fetch
+/// options carry an explicit non-default [`FetchOptions::environment`] snapshot.
+fn ssh_wire_environment(
+    repo: Option<&Repository>,
+    fetch_env: Option<&crate::environment::Environment>,
+) -> crate::environment::Environment {
+    if let Some(fe) = fetch_env {
+        if !fe.is_fetch_options_default() {
+            return fe.clone();
+        }
+    }
+    repo.map(|r| r.environment().clone())
+        .unwrap_or_else(crate::environment::Environment::empty)
 }
 
 fn http_client(
