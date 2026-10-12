@@ -709,3 +709,88 @@ fn t3908_stash_in_linked_worktree() {
     );
     assert_fsck_strict(&main);
 }
+
+/// Tracked directory replaced by an untracked file (`git stash push -u` must reset to HEAD).
+#[test]
+fn stash_push_u_dir_replaced_by_untracked_file_leaves_clean_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::create_dir_all(dir.path().join("d/e")).expect("mkdir");
+    std::fs::write(dir.path().join("d/c.txt"), "3\n").expect("write");
+    std::fs::write(dir.path().join("d/e/f.txt"), "4\n").expect("write");
+    git_cmd(dir.path(), &["add", "-A"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::remove_dir_all(dir.path().join("d")).expect("rm tree");
+    std::fs::write(dir.path().join("d"), "f\n").expect("untracked file");
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("stash oid");
+
+    let clean = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        clean.trim().is_empty(),
+        "push -u must leave a clean tree like git stash, got:\n{clean}"
+    );
+    assert!(dir.path().join("d/c.txt").is_file());
+    assert!(dir.path().join("d/e/f.txt").is_file());
+
+    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+
+    let restored = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(restored.contains("d/c.txt"), "deleted paths restored");
+    assert!(
+        restored.contains("?? d") || restored.contains(" d"),
+        "untracked file back"
+    );
+    assert_fsck_strict(dir.path());
+}
+
+/// Tracked file replaced by an untracked directory: pop must refuse and keep the stash.
+#[test]
+fn stash_push_u_tracked_file_replaced_by_untracked_dir_pop_refuses() {
+    use grit_lib::objects::parse_commit;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), "1\n").expect("write");
+    git_cmd(dir.path(), &["add", "a.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::remove_file(dir.path().join("a.txt")).expect("rm file");
+    std::fs::create_dir_all(dir.path().join("a.txt")).expect("mkdir");
+    std::fs::write(dir.path().join("a.txt/x"), "in\n").expect("nested");
+
+    let repo = open_grit(dir.path());
+    let stash_oid = push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("stash oid");
+
+    let stash_obj = repo.odb.read(&stash_oid).expect("read stash");
+    let stash_commit = parse_commit(&stash_obj.data).expect("parse stash");
+    assert_eq!(
+        stash_commit.parents.len(),
+        3,
+        "stash with -u and nested untracked under type swap needs three parents"
+    );
+
+    let clean = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        clean.trim().is_empty(),
+        "push -u must reset worktree, got:\n{clean}"
+    );
+    assert!(dir.path().join("a.txt").is_file());
+
+    let err = pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000")
+        .expect_err("pop must fail like git when untracked dir cannot be restored");
+    assert!(
+        matches!(err, Error::StashCouldNotRestoreUntracked { .. }),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).expect("file kept"),
+        "1\n"
+    );
+    assert_fsck_strict(dir.path());
+}

@@ -22,7 +22,7 @@ use crate::diff::{
     worktree_differs_from_index_entry, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
-use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK};
+use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
 #[cfg(unix)]
 use crate::index::MODE_EXECUTABLE;
@@ -40,7 +40,7 @@ use crate::reflog::{delete_reflog_entries_rechain, read_reflog, truncate_last_re
 use crate::refs::{self, append_reflog, delete_ref, write_ref};
 use crate::repo::Repository;
 use crate::state::{resolve_head, HeadState};
-use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+use crate::write_tree::{is_empty_tree_oid, write_tree_update_index, WriteTreeFlags};
 
 /// A single blob entry from a recursively flattened tree.
 #[derive(Clone)]
@@ -331,7 +331,7 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
         &[],
         UntrackedScan {
             ignored_mode: IgnoredMode::No,
-            show_all: false,
+            show_all: true,
             sort_paths: true,
             use_untracked_cache: false,
         },
@@ -511,7 +511,11 @@ fn stage_untracked_path_for_stash(
 
 fn write_stash_tree_from_index(repo: &Repository, index: &mut Index) -> Result<ObjectId> {
     index.sort();
-    write_tree_update_index(&repo.odb, index, "", WriteTreeFlags::silent())
+    let tree = write_tree_update_index(&repo.odb, index, "", WriteTreeFlags::silent())?;
+    if is_empty_tree_oid(&repo.odb, &tree) {
+        repo.odb.write_local(ObjectKind::Tree, b"")?;
+    }
+    Ok(tree)
 }
 
 fn write_untracked_stash_commit(
@@ -721,12 +725,12 @@ pub fn push_stash(repo: &Repository, options: &StashCreateOptions) -> Result<Opt
         let obj = repo.odb.read(&head_oid)?;
         parse_commit(&obj.data)?.tree
     };
-    checkout_between_trees(repo, Some(&built.w_tree), &head_tree)?;
-    let mut head_index = index_from_tree(repo, &head_tree)?;
-    repo.write_index(&mut head_index)?;
     if !built.untracked_paths.is_empty() {
         remove_stashed_untracked(repo, work_tree, &built.untracked_paths)?;
     }
+    checkout_between_trees(repo, Some(&built.w_tree), &head_tree)?;
+    let mut head_index = index_from_tree(repo, &head_tree)?;
+    repo.write_index(&mut head_index)?;
     Ok(Some(built.w_commit))
 }
 
@@ -834,6 +838,21 @@ fn materialize_flat_entry_in_worktree(
 ) -> Result<()> {
     let file_path = work_tree.join(&entry.path);
     if let Some(parent) = file_path.parent() {
+        if let Ok(rel) = parent.strip_prefix(work_tree) {
+            let mut cur = work_tree.to_path_buf();
+            for comp in rel.components() {
+                cur.push(comp);
+                if cur.exists() && !cur.is_dir() {
+                    let path = cur
+                        .strip_prefix(work_tree)
+                        .ok()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("")
+                        .to_owned();
+                    return Err(Error::StashCouldNotRestoreUntracked { path });
+                }
+            }
+        }
         fs::create_dir_all(parent)?;
     }
     if entry.mode == MODE_GITLINK {
@@ -978,7 +997,40 @@ pub(crate) fn check_stash_untracked_restore(
     if ut_entries.is_empty() {
         return Ok(());
     }
-    let existing_paths = collect_worktree_paths_blocking_stash_untracked_restore(repo, work_tree)?;
+    let head_at_stash = stash_commit
+        .parents
+        .first()
+        .ok_or(Error::CorruptStash("expected at least 2 parents"))?;
+    let head_obj = repo.odb.read(head_at_stash)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+    let base_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+    let stash_tree_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let wt_changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
+    let wt_deletions: HashSet<String> = wt_changes
+        .iter()
+        .filter(|(_, change)| change.is_none())
+        .map(|(path, _)| path.clone())
+        .collect();
+    let ut_file_paths: HashSet<String> = ut_entries
+        .iter()
+        .filter(|e| e.mode != MODE_GITLINK && e.mode != MODE_TREE)
+        .map(|e| e.path.clone())
+        .collect();
+    let existing_paths: Vec<String> =
+        collect_worktree_paths_blocking_stash_untracked_restore(repo, work_tree)?
+            .into_iter()
+            .filter(|path| {
+                for ut_file in &ut_file_paths {
+                    if path != ut_file
+                        && path.starts_with(&format!("{ut_file}/"))
+                        && wt_deletions.contains(path)
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
     let tree_changes: Vec<DiffEntry> = ut_entries
         .iter()
         .map(|entry| DiffEntry {
@@ -1070,24 +1122,6 @@ pub fn apply_stash(
 
     let mut has_conflicts = false;
     let mut new_index = current_index.clone();
-
-    // Pre-check: detect type conflicts where the stash wants to place a FILE
-    // at a path that is currently a DIRECTORY in the worktree, or vice-versa.
-    // We must check BEFORE removing anything (deletions below may clear dirs).
-    for (path, change) in &wt_changes {
-        if let Some(entry) = change {
-            if entry.mode == MODE_GITLINK {
-                continue;
-            }
-            let file_path = work_tree.join(path);
-            if file_path.is_dir() {
-                // A file from the stash conflicts with a directory in the worktree.
-                // Mark as conflicted and remove the directory so we can write the file.
-                has_conflicts = true;
-                let _ = fs::remove_dir_all(&file_path);
-            }
-        }
-    }
 
     // First pass: process deletions (None entries) before additions to avoid
     // type conflicts (e.g., trying to write a file where a directory exists).

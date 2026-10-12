@@ -362,11 +362,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
             par_untracked.sort_unstable();
             par_ignored.sort_unstable();
         }
-        return Ok((
-            par_untracked,
-            par_ignored,
-            UntrackedCollectMeta::default(),
-        ));
+        return Ok((par_untracked, par_ignored, UntrackedCollectMeta::default()));
     }
 
     visit_untracked_node(
@@ -692,7 +688,12 @@ fn visit_untracked_dir_entry(
     }
 
     if tracked_paths.contains(&child_rel) {
-        return Ok(UntrackedWalkStep::Continue);
+        let index_is_tree = index
+            .get(child_rel.as_bytes(), 0)
+            .is_some_and(|e| e.mode == MODE_TREE || e.mode == MODE_GITLINK);
+        if !(is_dir && !index_is_tree) {
+            return Ok(UntrackedWalkStep::Continue);
+        }
     }
 
     if is_dir {
