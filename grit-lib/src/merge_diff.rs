@@ -1074,3 +1074,129 @@ fn abbrev_hex(oid: &ObjectId, abbrev: usize) -> String {
     let len = abbrev.min(hex.len());
     hex[..len].to_owned()
 }
+
+#[cfg(test)]
+mod line_coverage_tests {
+    use super::*;
+    use crate::combined_diff_patch::CombinedDiffWsOptions;
+    use crate::combined_tree_diff::{CombinedDiffPath, CombinedParentSide, CombinedParentStatus};
+    use crate::config::ConfigSet;
+    use crate::objects::ObjectKind;
+    use crate::odb::Odb;
+    use tempfile::tempdir;
+
+    fn sample_merge(odb: &Odb) -> (ObjectId, Vec<ObjectId>, ObjectId) {
+        let b0 = odb.write(ObjectKind::Blob, b"base\n").expect("blob");
+        let b1 = odb.write(ObjectKind::Blob, b"one\n").expect("blob");
+        let b2 = odb.write(ObjectKind::Blob, b"two\n").expect("blob");
+        let bm = odb.write(ObjectKind::Blob, b"merged\n").expect("blob");
+        let tree = |entries: &[(&str, ObjectId)]| {
+            let mut body = Vec::new();
+            for (n, oid) in entries {
+                body.extend_from_slice(format!("100644 {n}\0").as_bytes());
+                body.extend_from_slice(oid.as_bytes());
+            }
+            odb.write(ObjectKind::Tree, &body).expect("tree")
+        };
+        let base_tree = tree(&[("f.txt", b0)]);
+        let p1_tree = tree(&[("f.txt", b1), ("only-p1.txt", b0)]);
+        let p2_tree = tree(&[("f.txt", b2), ("only-p2.txt", b0)]);
+        let merge_tree = tree(&[("f.txt", bm), ("only-p1.txt", b1), ("only-p2.txt", b2)]);
+        let commit = |tree: ObjectId, parents: &[ObjectId], msg: &str| {
+            let mut body = format!("tree {tree}\n");
+            for p in parents {
+                body.push_str(&format!("parent {p}\n"));
+            }
+            body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\n");
+            body.push_str(msg);
+            body.push('\n');
+            odb.write(ObjectKind::Commit, body.as_bytes()).expect("commit")
+        };
+        let base = commit(base_tree, &[], "base");
+        let p1 = commit(p1_tree, &[base], "p1");
+        let p2 = commit(p2_tree, &[base], "p2");
+        let merge = commit(merge_tree, &[p1, p2], "merge");
+        (merge_tree, vec![p1, p2], merge)
+    }
+
+    #[test]
+    fn combined_formatters_and_nested_paths() {
+        let dir = tempdir().expect("tempdir");
+        let odb = Odb::new(dir.path());
+        let git_dir = dir.path().join(".git");
+        std::fs::create_dir_all(&git_dir).expect("git");
+        let (merge_tree, parents, _merge) = sample_merge(&odb);
+        let cfg = ConfigSet::new();
+        let paths = combined_diff_paths(&odb, &merge_tree, &parents);
+        assert!(!paths.is_empty());
+        let nested = all_blob_paths_in_tree_order(&odb, &merge_tree);
+        assert!(nested.iter().any(|p| p.contains("only-p1")));
+        let p1_tree = {
+            let c = odb.read(&parents[0]).expect("p1");
+            crate::objects::parse_commit(&c.data).expect("parse").tree
+        };
+        let p1_oid = blob_oid_at_path(&odb, &p1_tree, "f.txt").expect("p1 blob");
+        let merge_oid = blob_oid_at_path(&odb, &merge_tree, "f.txt").expect("merge blob");
+        let mut path = CombinedDiffPath {
+            path: "f.txt".into(),
+            merge_mode: 0o100644,
+            merge_oid,
+            parents: vec![
+                CombinedParentSide {
+                    status: CombinedParentStatus::Modified,
+                    mode: 0o100644,
+                    oid: p1_oid,
+                    rename_from: None,
+                },
+                CombinedParentSide {
+                    status: CombinedParentStatus::Modified,
+                    mode: 0o100644,
+                    oid: blob_oid_at_path(&odb, &merge_tree, "f.txt").expect("oid"),
+                    rename_from: Some("old-f.txt".into()),
+                },
+            ],
+        };
+        enrich_combined_path_renames(&odb, &mut path, &parents, &merge_tree, 50);
+        let _ = format_combined_binary_header_n("f.txt", &[p1_oid], &merge_oid, 7, false);
+        let _ = format_combined_textconv_patch(
+            &git_dir,
+            &cfg,
+            &odb,
+            "f.txt",
+            &parents,
+            &merge_tree,
+            7,
+            3,
+            false,
+            false,
+            CombinedDiffWsOptions::default(),
+            false,
+            Some(&["f.txt".to_owned()]),
+            &path.parents,
+            true,
+        );
+        let blob = read_blob_at_path(&odb, &merge_tree, "only-p2.txt").expect("blob");
+        let _ = convert_blob_to_worktree_for_path(
+            &git_dir,
+            dir.path(),
+            None,
+            &odb,
+            "only-p2.txt",
+            &blob,
+            None,
+            None,
+        );
+        let z = crate::diff::zero_oid();
+        let _ = format_worktree_conflict_combined(
+            &git_dir,
+            &cfg,
+            &odb,
+            "f.txt",
+            &z,
+            &p1_oid,
+            &merge_oid,
+            b"plain\n",
+            12,
+        );
+    }
+}

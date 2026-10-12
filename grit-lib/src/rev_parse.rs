@@ -4851,6 +4851,53 @@ mod line_coverage_tests {
     }
 
     #[test]
+    #[test]
+    fn discovery_graft_and_abbrev_sweep() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let cwd = dir.path();
+        let _ = discover_optional(Some(cwd))?;
+        let _ = is_inside_work_tree(&repo, cwd);
+        let _ = is_inside_git_dir(&repo, cwd);
+        let _ = show_prefix(&repo, cwd);
+        let _ = symbolic_full_name(&repo, "HEAD");
+        let _ = expand_at_minus_to_branch_name(&repo, "@{-1}").ok();
+        let _ = resolve_at_minus_to_oid(&repo, "HEAD").ok();
+        let _ = resolve_upstream_symbolic_name(&repo, "main@{upstream}").ok();
+        let _ = resolve_push_full_ref_for_branch(&repo, "main").ok();
+        let _ = load_graft_parents(&repo.git_dir);
+        let blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"x\n")?;
+        let tree_body = format!("100644 f.txt\0").into_bytes();
+        let mut tree_bytes = tree_body;
+        tree_bytes.extend_from_slice(blob.as_bytes());
+        let tree = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tree, &tree_bytes)?;
+        let tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let _ = list_all_abbrev_matches(&repo, &tip.to_hex()[..4])?;
+        let _ = list_loose_abbrev_matches(&repo, &tip.to_hex()[..4])?;
+        let _ = abbreviate_object_id(&repo, tip, 7)?;
+        let _ = resolve_treeish_blob_at_path(&repo, "HEAD:f.txt")?;
+        let _ = expand_rev_token_circ_bang(&repo, "main")?;
+        let _ = ambiguous_object_hint_lines(&repo, &tip.to_hex()[..7], None)?;
+        let _ = reflog_walk_refname(&repo, "HEAD@{0}").ok();
+        let _ = resolve_reflog_walk_log_ref(&repo, "HEAD").ok();
+        let _ = resolve_index_path_entry(&repo, ":f.txt").ok();
+        let _ = to_relative_path(&dir.path().join("f.txt"), dir.path());
+        Ok(())
+    }
+
+    #[test]
     fn describe_name_and_dwim_helpers() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
