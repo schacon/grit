@@ -1538,29 +1538,30 @@ fn merge_sorted_index_entry_chunks(entries: &mut [(ObjectId, u64, u32)], chunk: 
     let n_chunks = entries.len().div_ceil(chunk);
     let mut cursors = vec![0usize; n_chunks];
     while merged.len() < entries.len() {
-        let mut best_chunk = None;
-        for (ci, cursor) in cursors.iter_mut().enumerate() {
+        let mut best: Option<(usize, usize)> = None;
+        for (ci, cursor) in cursors.iter().enumerate() {
             let start = ci * chunk;
-            if *cursor >= entries.len().saturating_sub(start).min(chunk) {
+            let chunk_len = entries.len().saturating_sub(start).min(chunk);
+            if cursors[ci] >= chunk_len {
                 continue;
             }
-            let idx = start + *cursor;
+            let idx = start + cursors[ci];
             let Some(entry) = entries.get(idx) else {
                 continue;
             };
-            match best_chunk {
-                None => best_chunk = Some((ci, entry.clone())),
-                Some((_, best)) if entry.0.as_bytes() < best.0.as_bytes() => {
-                    best_chunk = Some((ci, entry.clone()));
-                }
-                _ => {}
+            let replace = match best {
+                None => true,
+                Some((best_idx, _)) => entry.0.as_bytes() < entries[best_idx].0.as_bytes(),
+            };
+            if replace {
+                best = Some((idx, ci));
             }
         }
-        let Some((ci, entry)) = best_chunk else {
+        let Some((idx, ci)) = best else {
             break;
         };
         cursors[ci] += 1;
-        merged.push(entry);
+        merged.push(entries[idx].clone());
     }
     entries.copy_from_slice(&merged);
 }
