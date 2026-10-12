@@ -1267,12 +1267,14 @@ pub fn rev_list(
         ordered = simplify_merges_commit_list(
             repo,
             &ordered,
+            &include,
             &options.paths,
             &excluded,
             &effective_ancestry_path_bottoms,
             options.ordering,
             options.show_pulls,
             options.preserve_simplify_merges_graph_merges,
+            options.sparse,
         )?;
         if options.path_graph_reorder {
             ordered = reorder_path_limited_graph_commits(repo, &ordered, options.first_parent)?;
@@ -3744,59 +3746,301 @@ fn reorder_symmetric_topo_right_first(
     Ok(())
 }
 
+fn first_parent_spine_in_set(
+    repo: &Repository,
+    tip: ObjectId,
+    selected: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let mut spine = HashSet::new();
+    let mut seen = HashSet::new();
+    let mut cursor = Some(tip);
+    while let Some(oid) = cursor {
+        if !seen.insert(oid) {
+            break;
+        }
+        if selected.contains(&oid) {
+            spine.insert(oid);
+        }
+        cursor = load_commit(repo, oid)
+            .ok()
+            .and_then(|commit| commit.parents.first().copied());
+    }
+    spine
+}
+
+/// First-parent spines from every user tip, unioned (multi-tip `--simplify-merges`).
+fn first_parent_spines_for_positive_tips(
+    repo: &Repository,
+    positive_tips: &[ObjectId],
+    selected: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let mut spine = HashSet::new();
+    for tip in positive_tips {
+        spine.extend(first_parent_spine_in_set(repo, *tip, selected));
+    }
+    spine
+}
+
+fn commit_path_treesame_to_relevant_parents(
+    repo: &Repository,
+    oid: ObjectId,
+    paths: &[String],
+    parents: &[ObjectId],
+    selected: &HashSet<ObjectId>,
+) -> Result<bool> {
+    let relevant: Vec<ObjectId> = parents
+        .iter()
+        .copied()
+        .filter(|parent| selected.contains(parent))
+        .collect();
+    if relevant.is_empty() {
+        return Ok(true);
+    }
+    let commit = load_commit(repo, oid)?;
+    let commit_map: HashMap<String, (ObjectId, u32)> =
+        flatten_tree_with_mode(repo, commit.tree, "")?
+            .into_iter()
+            .collect();
+    for parent_oid in relevant {
+        let parent = load_commit(repo, parent_oid)?;
+        let parent_map: HashMap<String, (ObjectId, u32)> =
+            flatten_tree_with_mode(repo, parent.tree, "")?
+                .into_iter()
+                .collect();
+        if path_differs_for_specs(&commit_map, &parent_map, paths) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn one_relevant_parent_in_set(
+    parents: &[ObjectId],
+    selected: &HashSet<ObjectId>,
+) -> Option<ObjectId> {
+    let mut found = None;
+    for parent in parents {
+        if !selected.contains(parent) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(*parent);
+    }
+    found
+}
+
+fn remove_duplicate_parents(parents: &mut Vec<ObjectId>) {
+    parents.sort_unstable();
+    parents.dedup();
+}
+
+fn remove_path_treesame_root_parents(
+    repo: &Repository,
+    oid: ObjectId,
+    paths: &[String],
+    parents: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    parents.retain(|parent| {
+        let Ok(pcommit) = load_commit(repo, *parent) else {
+            return true;
+        };
+        if !pcommit.parents.is_empty() {
+            return true;
+        }
+        let parent_only = HashSet::from([*parent]);
+        !commit_path_treesame_to_relevant_parents(repo, oid, paths, &[*parent], &parent_only)
+            .unwrap_or(false)
+    });
+    Ok(())
+}
+
+fn leave_one_path_treesame_parent(
+    repo: &Repository,
+    oid: ObjectId,
+    paths: &[String],
+    parents: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if parents.len() <= 1 {
+        return Ok(());
+    }
+    let mut treesame: Vec<ObjectId> = Vec::new();
+    for parent in parents.iter().copied() {
+        if commit_path_treesame_to_relevant_parents(
+            repo,
+            oid,
+            paths,
+            &[parent],
+            &HashSet::from([parent]),
+        )? {
+            treesame.push(parent);
+        }
+    }
+    if treesame.len() != 1 {
+        return Ok(());
+    }
+    let only = treesame[0];
+    let default_parent = parents.first().copied();
+    if default_parent == Some(only) {
+        return Ok(());
+    }
+    if parents.contains(&only) {
+        parents.retain(|p| *p == only);
+    }
+    Ok(())
+}
+
+#[expect(clippy::too_many_arguments)]
+fn simplify_one_merge_for_paths(
+    repo: &Repository,
+    oid: ObjectId,
+    raw_parents: &[ObjectId],
+    selected: &HashSet<ObjectId>,
+    simplified: &HashMap<ObjectId, ObjectId>,
+    first_parent_spine: &HashSet<ObjectId>,
+    paths: &[String],
+    excluded: &HashSet<ObjectId>,
+    ancestry_path_bottoms: &[ObjectId],
+    show_pulls: bool,
+    preserve_graph_merges: bool,
+    sparse: bool,
+) -> Result<(ObjectId, Vec<ObjectId>)> {
+    if raw_parents.is_empty() {
+        return Ok((oid, Vec::new()));
+    }
+
+    let mut parents = visible_parents_for_graph_lib(repo, oid, selected, false)?;
+    for parent in &mut parents {
+        if selected.contains(parent) {
+            *parent = simplified.get(parent).copied().unwrap_or(*parent);
+        }
+    }
+    remove_duplicate_parents(&mut parents);
+
+    if parents.len() > 1 {
+        let treesame_parents = path_treesame_parents(repo, oid, paths, &parents)?;
+        parents = if preserve_graph_merges {
+            graph_simplify_parent_list_lib(repo, selected, &parents, &treesame_parents)?
+        } else {
+            graph_simplify_parent_list_lib(repo, selected, &parents, &HashSet::new())?
+        };
+        remove_duplicate_parents(&mut parents);
+        remove_path_treesame_root_parents(repo, oid, paths, &mut parents)?;
+        leave_one_path_treesame_parent(repo, oid, paths, &mut parents)?;
+    }
+
+    let parent_count = parents.len();
+    let path_treesame =
+        commit_path_treesame_to_relevant_parents(repo, oid, paths, &parents, selected)?;
+    let pull_merge = show_pulls
+        && raw_parents.len() > 1
+        && path_merge_survives_simplify(repo, oid, paths, excluded, &[])?;
+    let path_survives =
+        path_merge_survives_simplify(repo, oid, paths, excluded, ancestry_path_bottoms)?;
+    let one_relevant = one_relevant_parent_in_set(&parents, selected);
+
+    let mut simplifies_to_self = parent_count == 0
+        || !path_treesame
+        || one_relevant.is_none()
+        || pull_merge
+        || path_survives;
+
+    if !sparse
+        && raw_parents.len() > 1
+        && path_treesame
+        && !pull_merge
+        && !path_survives
+        && first_parent_spine.contains(&oid)
+    {
+        simplifies_to_self = false;
+    }
+
+    let representative = if simplifies_to_self {
+        oid
+    } else if !sparse
+        && raw_parents.len() > 1
+        && path_treesame
+        && !pull_merge
+        && !path_survives
+        && first_parent_spine.contains(&oid)
+    {
+        parents
+            .first()
+            .and_then(|parent| simplified.get(parent).copied().or(Some(*parent)))
+            .unwrap_or(oid)
+    } else if let Some(parent) = one_relevant {
+        simplified.get(&parent).copied().unwrap_or(parent)
+    } else {
+        oid
+    };
+
+    Ok((representative, parents))
+}
+
 #[expect(clippy::too_many_arguments)]
 fn simplify_merges_commit_list(
     repo: &Repository,
     commits: &[ObjectId],
+    positive_tips: &[ObjectId],
     paths: &[String],
     excluded: &HashSet<ObjectId>,
     ancestry_path_bottoms: &[ObjectId],
     ordering: OrderingMode,
     show_pulls: bool,
     preserve_graph_merges: bool,
+    sparse: bool,
 ) -> Result<Vec<ObjectId>> {
     let selected: HashSet<ObjectId> = commits.iter().copied().collect();
-    let mut out = Vec::new();
+    let mut simplified: HashMap<ObjectId, ObjectId> = HashMap::new();
+    let first_parent_spine = first_parent_spines_for_positive_tips(repo, positive_tips, &selected);
     let mut simplified_parents: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
-    for oid in commits {
-        let raw_parents = load_commit(repo, *oid)?.parents;
-        let rewritten = visible_parents_for_graph_lib(repo, *oid, &selected, false)?;
-        let path_survives =
-            path_merge_survives_simplify(repo, *oid, paths, excluded, ancestry_path_bottoms)?;
-        let pull_merge = show_pulls
-            && raw_parents.len() > 1
-            && path_merge_survives_simplify(repo, *oid, paths, excluded, &[])?;
-        if raw_parents.len() > 1 && rewritten.len() <= 1 {
-            if rewritten.is_empty() || pull_merge || path_survives {
-                simplified_parents.insert(*oid, rewritten);
-                out.push(*oid);
+
+    loop {
+        let mut progress = false;
+        for oid in commits {
+            if simplified.contains_key(oid) {
+                continue;
             }
-            continue;
-        }
-        if rewritten.len() <= 1 {
-            simplified_parents.insert(*oid, rewritten);
-            out.push(*oid);
-            continue;
-        }
-        let mut simplified = if preserve_graph_merges {
-            let treesame_rewritten = path_treesame_parents(repo, *oid, paths, &rewritten)?;
-            let all_rewritten_treesame =
-                !rewritten.is_empty() && treesame_rewritten.len() == rewritten.len();
-            if all_rewritten_treesame {
-                vec![rewritten[0]]
-            } else {
-                graph_simplify_parent_list_lib(repo, &selected, &rewritten, &treesame_rewritten)?
+            let raw_parents = load_commit(repo, *oid)?.parents;
+            let parents_ready = raw_parents
+                .iter()
+                .all(|parent| !selected.contains(parent) || simplified.contains_key(parent));
+            if !parents_ready {
+                continue;
             }
-        } else {
-            graph_simplify_parent_list_lib(repo, &selected, &rewritten, &HashSet::new())?
-        };
-        simplified.sort_unstable();
-        simplified.dedup();
-        if simplified.len() > 1 || pull_merge {
-            simplified_parents.insert(*oid, simplified);
-            out.push(*oid);
+            let (representative, parents_out) = simplify_one_merge_for_paths(
+                repo,
+                *oid,
+                &raw_parents,
+                &selected,
+                &simplified,
+                &first_parent_spine,
+                paths,
+                excluded,
+                ancestry_path_bottoms,
+                show_pulls,
+                preserve_graph_merges,
+                sparse,
+            )?;
+            simplified.insert(*oid, representative);
+            simplified_parents.insert(*oid, parents_out);
+            progress = true;
+        }
+        if !progress {
+            break;
         }
     }
+
+    let out: Vec<ObjectId> = commits
+        .iter()
+        .copied()
+        .filter(|oid| simplified.get(oid).is_none_or(|rep| *rep == *oid))
+        .collect();
+
     if ordering == OrderingMode::AuthorDateTopo {
         return simplify_merges_author_date_order(repo, &out, &simplified_parents);
     }
@@ -3811,7 +4055,10 @@ fn simplify_merges_author_date_order(
     let selected: HashSet<ObjectId> = commits.iter().copied().collect();
     let mut child_count: HashMap<ObjectId, usize> =
         commits.iter().copied().map(|oid| (oid, 0)).collect();
-    for parents in simplified_parents.values() {
+    for oid in commits {
+        let Some(parents) = simplified_parents.get(oid) else {
+            continue;
+        };
         for parent in parents {
             if selected.contains(parent) {
                 if let Some(count) = child_count.get_mut(parent) {

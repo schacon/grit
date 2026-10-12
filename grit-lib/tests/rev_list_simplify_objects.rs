@@ -2,11 +2,6 @@
 
 mod support;
 
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::ref_exclusions::RefExclusions;
@@ -17,24 +12,16 @@ use grit_lib::rev_list::{
     ObjectFilter, RevListOptions,
 };
 use grit_lib::rev_list_error::RevListError;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use support::{
     assert_grit_commits_match_git, git, git_rev_list, git_rev_list_object_set,
     git_rev_list_with_boundary, grit_rev_list_object_set, ordering_from_git_args,
+    setup_dual_merge_back_simplify_oracle, setup_first_parent_boundary_history,
     setup_path_simplify_history, setup_treesame_history, HistoryRepo,
 };
-
-fn run_fixture_script(name: &str, worktree: &Path) {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/support/fixtures")
-        .join(name);
-    let status = Command::new("bash")
-        .arg(script)
-        .arg(worktree)
-        .status()
-        .expect("bash fixture");
-    assert!(status.success(), "fixture {name} failed");
-}
 
 fn rev_list_opts_from_git_flags(flags: &[&str]) -> (RevListOptions, Vec<String>, Vec<String>) {
     let mut paths = Vec::new();
@@ -112,6 +99,24 @@ fn t6012_simplification_modes_match_git() {
         Some("rw6012-l"),
     );
     assert_grit_matches_git_rev_list(wt, &["--first-parent"], Some("rw6012-l"));
+}
+
+#[test]
+fn simplify_merges_two_positive_tips_match_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let (a0_tip, b0_tip) = setup_dual_merge_back_simplify_oracle(wt);
+    let git_args = [
+        a0_tip.as_str(),
+        b0_tip.as_str(),
+        "--simplify-merges",
+        "--",
+        "content.txt",
+    ];
+    let (opts, _pos, neg) =
+        rev_list_opts_from_git_flags(&["--simplify-merges", "--", "content.txt"]);
+    let pos = vec![a0_tip.clone(), b0_tip.clone()];
+    assert_grit_commits_match_git(wt, &git_args, &pos, &neg, &opts);
 }
 
 #[test]
@@ -508,7 +513,7 @@ fn t6004_path_limited_trivial_optimization_matches_git() {
 fn t6110_first_parent_boundary_matches_git() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
-    run_fixture_script("t6110_setup.sh", wt);
+    setup_first_parent_boundary_history(wt);
     let git_lines = git_rev_list_with_boundary(wt, &["--first-parent", "--boundary", "HEAD^.."]);
     let grit_repo = Repository::discover(Some(wt)).expect("discover");
     let opts = RevListOptions {
