@@ -10,29 +10,35 @@ pub use core::*;
 pub use handle::Objects;
 
 pub mod odb {
+    //! Object database backends and loose/packed storage.
     pub use crate::odb::builder;
     pub use crate::odb::store;
     pub use crate::odb::*;
 }
 
 pub mod pack {
+    //! Pack files, indexes, and packfile I/O.
     pub use crate::pack::*;
 }
 
 pub mod midx {
+    //! Multi-pack-index (MIDX) read and write.
     pub use crate::midx::*;
 }
 
 pub mod hash {
+    //! Object hashing and hash algorithm selection.
     pub use crate::hash::*;
 }
 
 pub mod commit_graph {
+    //! Commit-graph files for reachability and generation numbers.
     pub use crate::commit_graph_file::*;
     pub use crate::commit_graph_write::*;
 }
 
 pub mod bitmap {
+    //! Pack and commit reachability bitmaps.
     pub use crate::bitmap_walk::*;
     pub use crate::pack_bitmap::{
         BitmapError, BitmapIndex, BitmapIndexCache, CommitReachabilityBitmap, MidxBitmapWriter,
@@ -41,27 +47,35 @@ pub mod bitmap {
 }
 
 pub mod delta_encode {
+    //! Delta compression encoding for pack streams.
     pub use crate::delta_encode::*;
 }
 pub mod delta_islands {
+    //! Delta island boundaries for pack reuse.
     pub use crate::delta_islands::*;
 }
 pub mod index_pack {
+    //! Index-pack and thin-pack handling.
     pub use crate::index_pack::*;
 }
 pub mod pack_name_hash {
+    //! Name-hash tables for delta base selection.
     pub use crate::pack_name_hash::*;
 }
 pub mod pack_rev {
+    //! Reverse indexes for pack lookups.
     pub use crate::pack_rev::*;
 }
 pub mod pack_store {
+    //! Pack-backed object store implementation.
     pub use crate::pack_store::*;
 }
 pub mod unpack_objects {
+    //! Unpack loose objects from pack streams.
     pub use crate::unpack_objects::*;
 }
 pub mod prune_packed {
+    //! Prune unreachable packed objects.
     pub use crate::prune_packed::*;
 }
 pub mod promisor {
@@ -69,14 +83,18 @@ pub mod promisor {
     pub use crate::promisor::*;
 }
 pub mod promisor_remote {
+    //! Promisor remote configuration for partial clones.
     pub use crate::promisor_remote::*;
 }
 pub mod pack_objects {
+    //! Pack-objects negotiation and encoding.
     pub use crate::pack_objects::*;
 }
 pub mod pack_object_select {
+    //! Object selection heuristics for packing.
     pub use crate::pack_object_select::*;
 }
 pub mod pack_receive {
+    //! Receive-pack side pack ingestion.
     pub use crate::pack_receive::*;
 }

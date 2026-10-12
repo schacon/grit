@@ -33,12 +33,12 @@ Core engine areas use thin handles on [`Repository`](rustdoc:grit_lib::repo::Rep
 
 | Method | Handle | Role |
 | --- | --- | --- |
-| [`objects`](rustdoc:grit_lib::repo::Repository) | [`Objects`](rustdoc:grit_lib::objects::Objects) | read/write/contains for the ODB |
-| [`references`](rustdoc:grit_lib::repo::Repository) | [`References`](rustdoc:grit_lib::refs::References) | resolve, list, update refs; read reflog |
-| [`index_handle`](rustdoc:grit_lib::repo::Repository) | [`IndexHandle`](rustdoc:grit_lib::index::IndexHandle) | load/write the index |
-| [`config_handle`](rustdoc:grit_lib::repo::Repository) | [`ConfigHandle`](rustdoc:grit_lib::config::ConfigHandle) | merged get; local set + reload |
-| [`rev_walk`](rustdoc:grit_lib::repo::Repository) | [`RevWalk`](rustdoc:grit_lib::revwalk::RevWalk) | rev-parse specs; rev-list walks |
-| [`diff`](rustdoc:grit_lib::repo::Repository) | [`Diff`](rustdoc:grit_lib::diff::Diff) | tree↔tree, index↔tree, worktree↔index |
+| [`objects`](rustdoc:grit_lib::repo::Repository) | [`Objects`](rustdoc:grit_lib::objects::handle::Objects) | read/write/contains for the ODB |
+| [`references`](rustdoc:grit_lib::repo::Repository) | [`References`](rustdoc:grit_lib::refs::handle::References) | resolve, list, update refs; read reflog |
+| [`index_handle`](rustdoc:grit_lib::repo::Repository) | [`IndexHandle`](rustdoc:grit_lib::index::handle::IndexHandle) | load/write the index |
+| [`config_handle`](rustdoc:grit_lib::repo::Repository) | [`ConfigHandle`](rustdoc:grit_lib::config::handle::ConfigHandle) | merged get; local set + reload |
+| [`rev_walk`](rustdoc:grit_lib::repo::Repository) | [`RevWalk`](rustdoc:grit_lib::revwalk::handle::RevWalk) | rev-parse specs; rev-list walks |
+| [`diff`](rustdoc:grit_lib::repo::Repository) | [`Diff`](rustdoc:grit_lib::diff::handle::Diff) | tree↔tree, index↔tree, worktree↔index |
 
 [`Repository::refs`](rustdoc:grit_lib::repo::Repository) still returns the pluggable [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) trait object for embedders and low-level ref backends.
 
