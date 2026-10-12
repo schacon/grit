@@ -90,6 +90,17 @@ pub struct UnbundledRef {
     pub oid: ObjectId,
 }
 
+/// Result of ingesting a bundle's embedded pack into a repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnbundleOutcome {
+    /// Ref tips from the bundle header (refs are not updated on disk by unbundle).
+    pub refs: Vec<UnbundledRef>,
+    /// Objects and bytes installed from the bundle pack.
+    pub transfer: crate::transfer::TransferStats,
+    /// Object ids indexed from the installed pack.
+    pub pack_object_ids: HashSet<ObjectId>,
+}
+
 /// Outcome of [`Bundle::verify`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BundleVerifyReport {
@@ -270,7 +281,7 @@ impl Bundle {
         &self,
         repo: &Repository,
     ) -> std::result::Result<Vec<UnbundledRef>, BundleError> {
-        self.unbundle_with_progress(repo, &mut NullProgress)
+        Ok(self.unbundle_with_progress(repo, &mut NullProgress)?.refs)
     }
 
     /// Like [`Self::unbundle`], reporting receive and index-pack progress through `progress`.
@@ -278,7 +289,7 @@ impl Bundle {
         &self,
         repo: &Repository,
         progress: &mut dyn ProgressSink,
-    ) -> std::result::Result<Vec<UnbundledRef>, BundleError> {
+    ) -> std::result::Result<UnbundleOutcome, BundleError> {
         if self.header.object_format != repo.odb.hash_algo() {
             return Err(BundleError::ObjectFormatMismatch {
                 bundle_name: self.header.object_format.name(),
@@ -321,7 +332,9 @@ impl Bundle {
                 .map_err(|e| BundleError::Io(e.to_string()))?;
             repo.odb.invalidate_packs();
         }
-        Ok(self
+        let transfer = crate::transfer::TransferStats::from_ingested_pack(&ingested)
+            .map_err(|e| BundleError::Io(e.to_string()))?;
+        let refs = self
             .header
             .refs
             .iter()
@@ -329,7 +342,12 @@ impl Bundle {
                 name: name.clone(),
                 oid: *oid,
             })
-            .collect())
+            .collect();
+        Ok(UnbundleOutcome {
+            refs,
+            transfer,
+            pack_object_ids: ingested.object_ids,
+        })
     }
 }
 

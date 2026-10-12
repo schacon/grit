@@ -265,6 +265,17 @@ pub struct TransferStats {
     pub bytes: u64,
 }
 
+impl TransferStats {
+    /// Build stats from a pack installed under `objects/pack/`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Io`] when the pack file cannot be read.
+    pub fn from_ingested_pack(ingested: &crate::index_pack::IngestedPack) -> Result<Self> {
+        transfer_stats_from_ingested(ingested)
+    }
+}
+
 /// The structured result of a fetch, ready for the embedder's ref-store apply.
 #[derive(Clone, Debug, Default)]
 pub struct FetchOutcome {

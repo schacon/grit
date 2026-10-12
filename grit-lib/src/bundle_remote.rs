@@ -134,11 +134,14 @@ pub fn fetch_from_bundle_with_progress(
         .into_result()
         .map_err(map_bundle_err)?;
 
-    if !opts.dry_run {
-        bundle
+    let (transfer, pack_oids) = if opts.dry_run {
+        (TransferStats::default(), HashSet::new())
+    } else {
+        let unbundled = bundle
             .unbundle_with_progress(&repo, progress)
             .map_err(map_bundle_err)?;
-    }
+        (unbundled.transfer, unbundled.pack_object_ids)
+    };
 
     let header = bundle.header();
     let remote_refs = header.refs.clone();
@@ -157,7 +160,8 @@ pub fn fetch_from_bundle_with_progress(
         default_branch,
         opts,
         &HashSet::new(),
-        HashSet::new(),
+        pack_oids,
+        transfer,
     )
 }
 
@@ -215,6 +219,7 @@ fn complete_bundle_fetch(
     opts: &FetchOptions,
     remote_shallow: &HashSet<ObjectId>,
     pack_oids: HashSet<ObjectId>,
+    transfer: TransferStats,
 ) -> Result<FetchOutcome> {
     let mut positive: Vec<RefspecItem> = Vec::new();
     let mut negatives: Vec<RefspecItem> = Vec::new();
@@ -378,7 +383,7 @@ fn complete_bundle_fetch(
         default_branch,
         new_shallow,
         new_unshallow: Vec::new(),
-        transfer: TransferStats::default(),
+        transfer,
     })
 }
 

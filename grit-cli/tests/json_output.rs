@@ -490,6 +490,64 @@ fn shortlog_json() -> TestResult {
 }
 
 #[test]
+fn clone_json_bundle_reports_transfer_stats() -> TestResult {
+    let scratch = Scratch::new("clone-bundle-stats")?;
+    let seed = scratch.child("seed");
+    fs::create_dir_all(&seed)?;
+    assert!(Command::new("git")
+        .args(["init", "-q", "-b", "main", "."])
+        .current_dir(&seed)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()?
+        .success());
+    write_file(&seed.join("f.txt"), "x\n");
+    assert!(Command::new("git")
+        .args(["add", "f.txt"])
+        .current_dir(&seed)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()?
+        .success());
+    assert!(Command::new("git")
+        .args([
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.com",
+            "commit",
+            "-qm",
+            "c",
+        ])
+        .current_dir(&seed)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()?
+        .success());
+    let bundle = scratch.path().join("repo.bundle");
+    assert!(Command::new("git")
+        .args([
+            "bundle",
+            "create",
+            bundle.to_str().unwrap(),
+            "refs/heads/main",
+        ])
+        .current_dir(&seed)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()?
+        .success());
+    let clone = scratch.child("cloned");
+    let cloned = gs_json(
+        scratch.path(),
+        &["clone", &path_arg(&bundle), &path_arg(&clone)],
+    );
+    assert!(cloned["objects"].as_u64().unwrap_or(0) > 0);
+    assert!(cloned["bytes"].as_u64().unwrap_or(0) > 0);
+    Ok(())
+}
+
+#[test]
 fn clone_json_has_stats_fields() -> TestResult {
     let scratch = Scratch::new("clone-stats")?;
     let seed = scratch.child("seed");

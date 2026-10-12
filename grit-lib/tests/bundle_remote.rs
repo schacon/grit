@@ -172,6 +172,61 @@ fn clone_from_bundle_matches_git_default_branch_when_head_not_first() {
 }
 
 #[test]
+fn clone_from_bundle_reports_transfer_stats() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    init_with_commits(upstream.path(), &["one"]);
+    let bundle_path = upstream.path().join("stats.bundle");
+    assert!(git_in(
+        upstream.path(),
+        &[
+            "bundle",
+            "create",
+            bundle_path.to_str().unwrap(),
+            "refs/heads/main",
+        ],
+    ));
+
+    let dest = tempfile::tempdir().expect("dest");
+    let opts = CloneOptions {
+        url: bundle_path.to_str().unwrap().to_owned(),
+        dest: dest.path().to_path_buf(),
+        environment: Environment::empty(),
+        ..CloneOptions::new(bundle_path.to_str().unwrap(), dest.path().to_path_buf())
+    };
+    let outcome = clone_repo(opts, &mut NoProgress, None).expect("clone from bundle");
+
+    let count_out = Command::new("git")
+        .args(["count-objects", "-v"])
+        .current_dir(dest.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("count-objects");
+    assert!(count_out.status.success());
+    let count_text = String::from_utf8_lossy(&count_out.stdout);
+    let mut in_pack = None::<u64>;
+    for line in count_text.lines() {
+        if let Some(v) = line.strip_prefix("in-pack: ") {
+            in_pack = Some(v.trim().parse().expect("in-pack"));
+        }
+    }
+    let git_objects = in_pack.expect("in-pack");
+    let git_dir = dest.path().join(".git");
+    let pack_bytes = std::fs::read_dir(git_dir.join("objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+        .map(|p| std::fs::metadata(&p).expect("stat").len())
+        .sum::<u64>();
+
+    assert_eq!(outcome.transfer.objects, git_objects);
+    assert_eq!(outcome.transfer.bytes, pack_bytes);
+    assert!(outcome.transfer.objects > 0);
+    assert!(outcome.transfer.bytes > 0);
+}
+
+#[test]
 fn clone_from_bundle_passes_git_fsck() {
     let upstream = tempfile::tempdir().expect("upstream");
     init_with_commits(upstream.path(), &["base"]);
