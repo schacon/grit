@@ -15,10 +15,15 @@ use grit_lib::environment::Environment;
 use support::{
     assert_bad_line_error, assert_canonical_key_err, assert_file_get_matches_git,
     assert_typed_bool_matches, assert_typed_int_matches, git_color, git_file_get, git_file_get_all,
-    git_file_get_typed_with_home, git_get_urlmatch, grit_color, grit_file_from_content, grit_get,
-    grit_get_all, grit_path_optional, grit_path_value, isolated_env, null_device,
+    git_file_get_typed_with_home, git_get_urlmatch, git_version_at_least, grit_color,
+    grit_file_from_content, grit_get, grit_get_all, grit_path_optional, grit_path_value,
+    isolated_env, null_device,
 };
 use tempfile::tempdir;
+
+fn git_unquoted_literal_tab_matches_grit() -> bool {
+    git_version_at_least(2, 55)
+}
 
 fn tab(s: &str) -> String {
     s.replace("XX", "\t")
@@ -44,6 +49,10 @@ XXannotatedQuoted = "big blue"X# to be discarded
 
 #[test]
 fn t1300_whitespace_corpus_matches_git() {
+    if !git_unquoted_literal_tab_matches_grit() {
+        eprintln!("SKIP: Git < 2.55 collapses literal tabs in unquoted config values");
+        return;
+    }
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("config");
     let content = t1300_whitespace_config();
@@ -110,16 +119,27 @@ fn t1300_values_match_git_config_get() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("config");
 
+    if git_unquoted_literal_tab_matches_grit() {
+        let tab_literal_cases = [
+            (
+                tab("[section]\nXXsparse = big XX blue\n"),
+                ["section.sparse"].as_slice(),
+            ),
+            (
+                tab("[section]\nXXsparseAndTail = big XX blue $\n"),
+                ["section.sparseAndTail"].as_slice(),
+            ),
+        ];
+        for (content, keys) in tab_literal_cases {
+            std::fs::write(&path, &content).expect("write");
+            for key in keys {
+                assert_file_get_matches_git(&path, &content, key);
+            }
+        }
+    }
+
     let cases: &[(&str, &[&str])] = &[
         ("[section]\n\tsolid = rock\n", &["section.solid"]),
-        (
-            &tab("[section]\nXXsparse = big XX blue\n"),
-            &["section.sparse"],
-        ),
-        (
-            &tab("[section]\nXXsparseAndTail = big XX blue $\n"),
-            &["section.sparseAndTail"],
-        ),
         ("[section]\n\tbarekey\n", &["section.barekey"]),
         (
             "[section \"SubSec\"]\n\tkey = value\n",
@@ -130,12 +150,7 @@ fn t1300_values_match_git_config_get() {
             &["user.email", "user.name"],
         ),
         ("[core]\n\tbare = true\n", &["core.bare"]),
-        (
-            &tab(r#"[s]
-XXv = "hello\nworld"
-"#),
-            &["s.v"],
-        ),
+        ("[s]\n\tv = \"hello\\nworld\"\n", &["s.v"]),
         ("[multi]\n\tval = one\n\tval = two\n", &["multi.val"]),
     ];
 

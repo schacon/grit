@@ -1552,7 +1552,24 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
         return Err(Error::InvalidRef(format!("ref not found: {refname}")));
     }
     if open_ref_store(git_dir)?.format() != RefStorageFormat::Files {
-        return store_write_value(git_dir, refname, None, Expected::Exists, None);
+        let store = open_ref_store(git_dir)?;
+        let mut flags = legacy_ref_update_flags(refname);
+        if refname != "HEAD" {
+            if let Ok(Some(StoreRawRef::Symbolic(_))) = store.read_raw(refname) {
+                flags.no_deref = true;
+            }
+        }
+        return commit_store_update(
+            git_dir,
+            RefUpdate {
+                name: refname.to_owned(),
+                new_value: None,
+                expected: Expected::Exists,
+                reflog: None,
+                flags,
+            },
+        )
+        .map_err(|e| map_public_ref_store_error(e, refname));
     }
     ensure_refname_safe_for_storage(refname)?;
     let storage_dir = ref_storage_dir(git_dir, refname);
