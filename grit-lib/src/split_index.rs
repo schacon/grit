@@ -955,3 +955,137 @@ pub fn format_dump_split_index_file(data: &[u8], index: &Index) -> Result<String
     writeln!(s).map_err(|e| Error::IndexError(e.to_string()))?;
     Ok(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ConfigSet;
+    use crate::environment::Environment;
+    use crate::index::{Index, IndexEntry, MODE_REGULAR};
+    use crate::objects::{HashAlgo, ObjectKind};
+    use std::fs;
+
+    fn sample_entry(path: &str, ino: u32) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 1,
+            ctime_nsec: 0,
+            mtime_sec: 2,
+            mtime_nsec: 0,
+            dev: 1,
+            ino,
+            mode: MODE_REGULAR,
+            uid: 1,
+            gid: 1,
+            size: 3,
+            oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"abc"),
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn entries_equal_for_split_ignores_path_and_namehash() {
+        let mut a = sample_entry("a.txt", 1);
+        let mut b = sample_entry("b.txt", 1);
+        assert!(entries_equal_for_split(&a, &b));
+        b.mtime_sec = 3;
+        assert!(!entries_equal_for_split(&a, &b));
+        a.flags |= 0x2000;
+        b = a.clone();
+        b.path = b"b.txt".into();
+        assert!(entries_equal_for_split(&a, &b));
+    }
+
+    #[test]
+    fn parse_link_extension_round_trip_and_corrupt() {
+        let base = HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"base");
+        let mut del = EwahBitmap::new();
+        del.set_bit_extend(1);
+        let mut rep = EwahBitmap::new();
+        rep.set_bit_extend(3);
+        let payload = serialize_link_extension_payload(&base, &del, &rep);
+        let link = parse_link_extension(&payload, HashAlgo::Sha1).expect("parse");
+        assert_eq!(link.base_oid, base);
+        assert!(link.delete_bitmap.is_some());
+        assert!(link.replace_bitmap.is_some());
+
+        assert!(parse_link_extension(&[], HashAlgo::Sha1).is_err());
+        let mut garbage = payload.clone();
+        garbage.push(1);
+        assert!(parse_link_extension(&garbage, HashAlgo::Sha1).is_err());
+    }
+
+    #[test]
+    fn should_rebuild_shared_index_respects_max_percent_change() {
+        let mut idx = Index::empty(2);
+        for i in 0..10 {
+            idx.add_or_replace(sample_entry(&format!("f{i}.txt"), i));
+        }
+        for e in &mut idx.entries {
+            e.base_index_pos = (1) as u32;
+        }
+        idx.entries[0].base_index_pos = 0;
+        idx.entries[1].base_index_pos = 0;
+        idx.entries[2].base_index_pos = 0;
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("config"),
+            "[splitIndex]\n\tmaxPercentChange = 20\n",
+        )
+        .expect("write config");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert!(should_rebuild_shared_index(&idx, &cfg));
+        fs::write(
+            dir.path().join("config"),
+            "[splitIndex]\n\tmaxPercentChange = 100\n",
+        )
+        .expect("write config");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert!(!should_rebuild_shared_index(&idx, &cfg));
+    }
+
+    #[test]
+    fn write_split_index_request_explicit_overrides_config() {
+        let cfg = ConfigSet::new();
+        let idx = Index::empty(2);
+        assert!(WriteSplitIndexRequest {
+            explicit: Some(true),
+        }
+        .want_write_split(&cfg, &idx));
+        assert!(!WriteSplitIndexRequest {
+            explicit: Some(false),
+        }
+        .want_write_split(&cfg, &idx));
+    }
+
+    #[test]
+    fn merge_split_into_index_applies_delete_and_replace() {
+        let base_entries = vec![
+            sample_entry("a.txt", 1),
+            sample_entry("b.txt", 2),
+            sample_entry("c.txt", 3),
+        ];
+        let mut del = EwahBitmap::new();
+        del.set_bit_extend(1);
+        let mut rep = EwahBitmap::new();
+        rep.set_bit_extend(2);
+        let link = SplitIndexLink {
+            base_oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"shared"),
+            delete_bitmap: Some(del),
+            replace_bitmap: Some(rep),
+        };
+        let mut rep_entry = sample_entry("", 99);
+        rep_entry.oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"newc");
+        let mut index = Index::empty(2);
+        index.add_or_replace(rep_entry);
+        merge_split_into_index(&mut index, link, base_entries).expect("merge");
+        let paths: Vec<_> = index
+            .entries()
+            .iter()
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect();
+        assert_eq!(paths, vec!["a.txt".to_owned(), "c.txt".to_owned()]);
+    }
+}

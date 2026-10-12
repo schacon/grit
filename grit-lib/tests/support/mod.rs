@@ -4,6 +4,7 @@ mod attributes_harness;
 mod config_oracle;
 mod diff_harness;
 mod history_harness;
+mod index_ext_harness;
 mod index_harness;
 mod merge_harness;
 mod refs_harness;
@@ -36,6 +37,7 @@ pub use merge_harness::{
     grit_merge_result_tree, skip_merge_tree_git, CommitMergeLabels, GitMergeTreeOracle,
     GitUnmergedRow,
 };
+pub use index_ext_harness::*;
 pub use refs_harness::*;
 pub use refstore_conformance::*;
 pub use revparse_oracle::*;

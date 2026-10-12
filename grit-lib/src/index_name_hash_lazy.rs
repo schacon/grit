@@ -453,3 +453,47 @@ pub fn test_lazy_init_name_hash(index: &Index, try_threaded: bool) -> Result<usi
     }
     Ok(nr_threads)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{Index, IndexEntry, MODE_REGULAR};
+    use crate::objects::{HashAlgo, ObjectKind};
+
+    fn entry(path: &str, ino: u32) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 1,
+            ctime_nsec: 0,
+            mtime_sec: 1,
+            mtime_nsec: 0,
+            dev: 1,
+            ino,
+            mode: MODE_REGULAR,
+            uid: 1,
+            gid: 1,
+            size: 1,
+            oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"x"),
+            flags: path.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn memihash_is_case_insensitive() {
+        assert_eq!(memihash(b"ABC/def"), memihash(b"abc/DEF"));
+        assert_ne!(memihash(b"abc"), memihash_cont(memihash(b"dir"), b"/file"));
+    }
+
+    #[test]
+    fn lazy_init_uses_threads_on_large_index() {
+        let mut idx = Index::empty(2);
+        for i in 0..5000 {
+            idx.add_or_replace(entry(&format!("d{i:04}/f.txt"), i));
+        }
+        let threads = test_lazy_init_name_hash(&idx, true).expect("lazy init");
+        assert!(threads > 0, "large index should use threaded lazy init");
+        dump_lazy_init_name_hash(&idx, true).expect("dump multi");
+    }
+}

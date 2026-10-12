@@ -62,7 +62,12 @@ REQUIRED_HISTORY_INDEX: tuple[str, ...] = (
     "t7012",
     "t1015",
 )
-REQUIRED_HISTORY_INDEX_EXT: tuple[str, ...] = ("t1600",)
+REQUIRED_HISTORY_INDEX_EXT: tuple[str, ...] = (
+    "t1600",
+    "t1700",
+    "t1701",
+    "t7063",
+)
 REQUIRED_HISTORY_SPARSE: tuple[str, ...] = (
     "t1091",
     "t1092",
@@ -303,7 +308,13 @@ class UpstreamMappingTests(unittest.TestCase):
             (s for s in sections if "sparse" in s.lower()),
             index_section,
         )
-        index_ext_section = index_section
+        index_ext_start = text.index("#### Index extensions")
+        index_ext_end = text.find("\n#### ", index_ext_start + 1)
+        index_ext_section = (
+            text[index_ext_start:index_ext_end]
+            if index_ext_end != -1
+            else text[index_ext_start:]
+        )
 
         def upstream_ids(section: str) -> set[str]:
             found: set[str] = set()

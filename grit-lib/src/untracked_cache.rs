@@ -1840,4 +1840,43 @@ mod tests {
         assert_eq!(r.untracked.len(), 2);
         assert_eq!(r.dirs.len(), 1);
     }
+
+    #[test]
+    fn untracked_extension_truncated_and_corrupt_no_panic() {
+        let raw = write_untracked_extension(&UntrackedCache::new_shell(0, b"x\x00".to_vec()));
+        assert!(parse_untracked_extension(&raw[..raw.len().saturating_sub(5)]).is_none());
+        let mut no_nul = raw;
+        no_nul.pop();
+        assert!(parse_untracked_extension(&no_nul).is_none());
+    }
+
+    #[test]
+    fn dir_flags_from_config_all_vs_normal() {
+        use crate::environment::Environment;
+        assert_ne!(dir_flags_from_config(&ConfigSet::new()), 0);
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("config"),
+            "[status]\n\tshowUntrackedFiles = all\n",
+        )
+        .expect("write");
+        let cfg =
+            ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert_eq!(dir_flags_from_config(&cfg), 0);
+    }
+
+    #[test]
+    fn invalidate_path_clears_matching_directory() {
+        let mut uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
+        let mut root = UntrackedCacheDir::new(String::new());
+        root.valid = true;
+        let mut child = UntrackedCacheDir::new("sub".to_string());
+        child.valid = true;
+        child.untracked.push("file".to_string());
+        root.dirs.push(child);
+        uc.root = Some(root);
+        invalidate_path(&mut uc, "sub/file");
+        let r = uc.root.as_ref().expect("root");
+        assert!(!r.dirs[0].valid);
+    }
 }
