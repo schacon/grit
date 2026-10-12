@@ -233,7 +233,9 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Workspace tests take ~25 min on a cold cache, before the bench smokes and
+    # HTTP transport tests.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
