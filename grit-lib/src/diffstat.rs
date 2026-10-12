@@ -787,4 +787,66 @@ mod tests {
     fn display_width_minus_ansi_bare_escape_is_visible() {
         assert_eq!(display_width_minus_ansi("\x1bX"), 1);
     }
+
+    #[test]
+    fn write_diffstat_narrow_total_width_still_renders() {
+        let files = vec![FileStatInput {
+            path_display: "big-change.txt".into(),
+            insertions: 500,
+            deletions: 500,
+            is_binary: false,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 28,
+            line_prefix: "",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "\x1b[32m",
+            color_del: "\x1b[31m",
+            color_reset: "\x1b[m",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("1000"));
+        assert!(s.contains("insertion"));
+    }
+
+    #[test]
+    fn write_diffstat_binary_bin_only_with_prefix() {
+        let files = vec![FileStatInput {
+            path_display: "x.bin".into(),
+            insertions: 0,
+            deletions: 0,
+            is_binary: true,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 60,
+            line_prefix: "> ",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("> "));
+        assert!(s.contains("Bin"));
+    }
 }
