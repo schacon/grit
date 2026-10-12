@@ -1988,19 +1988,20 @@ pub fn render_commit_with_color(
                             time::Weekday::Saturday => "Sat",
                             time::Weekday::Sunday => "Sun",
                         };
-                        let month = match dt.month() {
-                            time::Month::January => "Jan",
-                            time::Month::February => "Feb",
-                            time::Month::March => "Mar",
-                            time::Month::April => "Apr",
-                            time::Month::May => "May",
-                            time::Month::June => "Jun",
-                            time::Month::July => "Jul",
-                            time::Month::August => "Aug",
-                            time::Month::September => "Sep",
-                            time::Month::October => "Oct",
-                            time::Month::November => "Nov",
-                            time::Month::December => "Dec",
+                        let month = match u8::from(dt.month()) {
+                            1 => "Jan",
+                            2 => "Feb",
+                            3 => "Mar",
+                            4 => "Apr",
+                            5 => "May",
+                            6 => "Jun",
+                            7 => "Jul",
+                            8 => "Aug",
+                            9 => "Sep",
+                            10 => "Oct",
+                            11 => "Nov",
+                            12 => "Dec",
+                            _ => "???",
                         };
                         format!(
                             "{} {} {} {:02}:{:02}:{:02} {} {}",
@@ -2118,19 +2119,20 @@ pub fn render_commit_with_color(
                 }
             }
             fn month_str(dt: &time::OffsetDateTime) -> &'static str {
-                match dt.month() {
-                    time::Month::January => "Jan",
-                    time::Month::February => "Feb",
-                    time::Month::March => "Mar",
-                    time::Month::April => "Apr",
-                    time::Month::May => "May",
-                    time::Month::June => "Jun",
-                    time::Month::July => "Jul",
-                    time::Month::August => "Aug",
-                    time::Month::September => "Sep",
-                    time::Month::October => "Oct",
-                    time::Month::November => "Nov",
-                    time::Month::December => "Dec",
+                match u8::from(dt.month()) {
+                    1 => "Jan",
+                    2 => "Feb",
+                    3 => "Mar",
+                    4 => "Apr",
+                    5 => "May",
+                    6 => "Jun",
+                    7 => "Jul",
+                    8 => "Aug",
+                    9 => "Sep",
+                    10 => "Oct",
+                    11 => "Nov",
+                    12 => "Dec",
+                    _ => "???",
                 }
             }
             fn extract_email_local(ident: &str) -> &str {

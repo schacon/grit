@@ -119,7 +119,7 @@ fn spawn_server(
         .arg(root)
         .arg("--bind")
         .arg(format!("127.0.0.1:{port}"))
-        .env_remove("GUST_BIN");
+        .env_remove("GRIT_BIN");
     if let Some(p) = log_headers {
         cmd.arg("--log-headers").arg(p);
     }

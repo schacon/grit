@@ -254,7 +254,7 @@ fn remote_refs_smart_http_matches_git() {
         .arg(&root)
         .arg("--bind")
         .arg(format!("127.0.0.1:{port}"))
-        .env("GUST_BIN", &grit_bin)
+        .env("GRIT_BIN", &grit_bin)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

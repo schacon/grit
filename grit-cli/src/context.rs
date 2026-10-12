@@ -22,7 +22,7 @@ pub fn set_thread_policy(threads: Option<usize>) {
     let _ = THREAD_POLICY.set(ThreadPolicy::with_threads_override(threads));
 }
 
-/// Thread policy for [`RepositoryOptions`] (global `--threads` when set).
+/// Thread policy for [`grit_lib::environment::RepositoryOptions`] (global `--threads` when set).
 pub fn thread_policy_for_repo() -> ThreadPolicy {
     THREAD_POLICY.get().copied().unwrap_or_default()
 }

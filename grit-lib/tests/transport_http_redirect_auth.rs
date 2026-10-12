@@ -106,7 +106,7 @@ fn spawn_authed_server(
         .arg(format!("{USER}:{PASS}"))
         .arg("--log-headers")
         .arg(log_headers)
-        .env_remove("GUST_BIN")
+        .env_remove("GRIT_BIN")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

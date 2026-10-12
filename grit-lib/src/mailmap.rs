@@ -4,7 +4,7 @@
 //! nofollow for in-tree `.mailmap`, and case-insensitive email/name matching with
 //! per-email buckets (simple remap vs name-specific entries).
 
-use crate::error::Error as GustError;
+use crate::error::Error;
 use crate::objects::ObjectKind;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -14,7 +14,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-type Result<T> = std::result::Result<T, GustError>;
+type Result<T> = std::result::Result<T, Error>;
 
 /// Legacy line-shaped entry kept for API compatibility; prefer [`MailmapTable`].
 #[derive(Debug, Clone)]
@@ -349,17 +349,17 @@ fn read_mailmap_file_nofollow(path: &Path) -> Result<String> {
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)
             .map_err(|_| {
-                GustError::PathError(format!("unable to open mailmap at {}", path.display()))
+                Error::PathError(format!("unable to open mailmap at {}", path.display()))
             })?;
         let mut s = String::new();
         file.read_to_string(&mut s)
-            .map_err(|e| GustError::PathError(format!("reading {}: {e}", path.display())))?;
+            .map_err(|e| Error::PathError(format!("reading {}: {e}", path.display())))?;
         Ok(s)
     }
     #[cfg(not(unix))]
     {
         fs::read_to_string(path)
-            .map_err(|e| GustError::PathError(format!("reading {}: {e}", path.display())))
+            .map_err(|e| Error::PathError(format!("reading {}: {e}", path.display())))
     }
 }
 
@@ -371,22 +371,20 @@ fn read_optional_mailmap_file(path: &Path, nofollow: bool) -> Result<String> {
         read_mailmap_file_nofollow(path)
     } else {
         fs::read_to_string(path)
-            .map_err(|e| GustError::PathError(format!("reading {}: {e}", path.display())))
+            .map_err(|e| Error::PathError(format!("reading {}: {e}", path.display())))
     }
 }
 
 /// Read mailmap text from a blob revision (for `mailmap.blob` / CLI `--mailmap-blob`).
 pub fn read_mailmap_blob(repo: &Repository, spec: &str) -> Result<String> {
     let oid = resolve_revision(repo, spec)
-        .map_err(|e| GustError::PathError(format!("resolving mailmap blob '{spec}': {e}")))?;
+        .map_err(|e| Error::PathError(format!("resolving mailmap blob '{spec}': {e}")))?;
     let obj = repo
         .odb
         .read(&oid)
-        .map_err(|e| GustError::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
+        .map_err(|e| Error::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
     if obj.kind != ObjectKind::Blob {
-        return Err(GustError::PathError(format!(
-            "mailmap is not a blob: {spec}"
-        )));
+        return Err(Error::PathError(format!("mailmap is not a blob: {spec}")));
     }
     Ok(String::from_utf8_lossy(&obj.data).into_owned())
 }
@@ -399,11 +397,9 @@ fn try_read_mailmap_blob(repo: &Repository, spec: &str) -> Result<Option<String>
     let obj = repo
         .odb
         .read(&oid)
-        .map_err(|e| GustError::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
+        .map_err(|e| Error::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
     if obj.kind != ObjectKind::Blob {
-        return Err(GustError::PathError(format!(
-            "mailmap is not a blob: {spec}"
-        )));
+        return Err(Error::PathError(format!("mailmap is not a blob: {spec}")));
     }
     Ok(Some(String::from_utf8_lossy(&obj.data).into_owned()))
 }

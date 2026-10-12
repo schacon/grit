@@ -30,7 +30,7 @@ cargo test -p grit-lib --lib --release
 
 ### Transport tests (fetch and push over smart HTTP)
 
-The smart-HTTP tests in `grit-lib/tests/` (`transport_http*`, `matrix_fetch`, `matrix_push`, `matrix_sha256`, `matrix_credentials`) start `grit-http-server`, which serves upload-pack and receive-pack **in-process** via `grit-lib` (no `grit` binary on `PATH` and no `GUST_BIN`). The library client fetches and pushes against it, and `git` checks the results. They need the `http-ureq` feature and the `grit-http-server` binary built first; without it they print `SKIP:` and pass, so build before running:
+The smart-HTTP tests in `grit-lib/tests/` (`transport_http*`, `matrix_fetch`, `matrix_push`, `matrix_sha256`, `matrix_credentials`) start `grit-http-server`, which serves upload-pack and receive-pack **in-process** via `grit-lib` (no `grit` binary on `PATH` and no `GRIT_BIN`). The library client fetches and pushes against it, and `git` checks the results. They need the `http-ureq` feature and the `grit-http-server` binary built first; without it they print `SKIP:` and pass, so build before running:
 
 ```bash
 cargo build -p grit-http-server

@@ -125,7 +125,7 @@ fn spawn_authed_server(server_bin: &Path, root: &Path, port: u16) -> Option<Chil
         .arg(format!("127.0.0.1:{port}"))
         .arg("--require-auth")
         .arg(format!("{USER}:{PASS}"))
-        .env_remove("GUST_BIN")
+        .env_remove("GRIT_BIN")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

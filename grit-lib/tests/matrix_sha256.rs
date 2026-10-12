@@ -275,7 +275,7 @@ fn spawn_server(server_bin: &Path, root: &Path, port: u16) -> Option<Child> {
         .arg(root)
         .arg("--bind")
         .arg(format!("127.0.0.1:{port}"))
-        .env_remove("GUST_BIN")
+        .env_remove("GRIT_BIN")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

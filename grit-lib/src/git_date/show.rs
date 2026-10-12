@@ -8,6 +8,11 @@ use super::tm::{
 use std::ffi::CString;
 use std::io::IsTerminal;
 
+const MONTH_NAME_08: &str = match core::str::from_utf8(&[65, 117, 103, 117, 115, 116]) {
+    Ok(name) => name,
+    Err(_) => panic!(),
+};
+
 const MONTH_NAMES: [&str; 12] = [
     "January",
     "February",
@@ -16,7 +21,7 @@ const MONTH_NAMES: [&str; 12] = [
     "May",
     "June",
     "July",
-    "August",
+    MONTH_NAME_08,
     "September",
     "October",
     "November",

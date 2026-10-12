@@ -1,7 +1,6 @@
-//! Porcelain operations — user-facing engines that assemble a structured result
-//! model from domain modules (e.g. [`diff`](crate::diff), [`revwalk`](crate::revwalk),
-//! `status`, `log`,
-//! `merge`, `rebase`, `checkout`).
+//! Porcelain operations — user-facing workflows that assemble structured result
+//! models from domain modules (e.g. [`diff`](crate::diff), [`revwalk`](crate::revwalk),
+//! `status`, `log`, `merge`, `rebase`, `checkout`, and related commands).
 //!
 //! # The library/CLI contract
 //!
@@ -16,11 +15,8 @@
 //! 3. a **result model** of plain `struct`/`enum`s that the CLI renders.
 //!
 //! The library makes no presentation decisions — colour, pager, tty detection,
-//! column layout, and exit codes all live in the `grit` binary. This module is
-//! the home for logic extracted out of `grit/src/commands/`.
-//!
-//! Operation modules are added one command at a time; this file is the
-//! scaffolding they attach to.
+//! column layout, and exit codes all live in the `grit` binary. New commands add
+//! a submodule here and a matching thin handler in `grit-cli`.
 //!
 //! - [`add::stage`] — stage worktree changes into the index without a full status pass.
 

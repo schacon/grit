@@ -137,14 +137,14 @@ fn find_binary(name: &str) -> Option<PathBuf> {
 }
 
 /// Spawn `grit-http-server --root <root> --bind 127.0.0.1:<port>` (in-process
-/// upload-pack/receive-pack; no `GUST_BIN` or `grit` on `PATH` required).
+/// upload-pack/receive-pack; no `GRIT_BIN` or `grit` on `PATH` required).
 fn spawn_server(server_bin: &Path, root: &Path, port: u16) -> Option<Child> {
     Command::new(server_bin)
         .arg("--root")
         .arg(root)
         .arg("--bind")
         .arg(format!("127.0.0.1:{port}"))
-        .env_remove("GUST_BIN")
+        .env_remove("GRIT_BIN")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -690,8 +690,14 @@ fn fetch_over_smart_http_v2_lands_refs_and_objects() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = http_fetch(recording.clone(), &local_git, &url, &mut opts, &mut NoProgress)
-        .expect("v2 http_fetch over grit-http-server");
+    let outcome = http_fetch(
+        recording.clone(),
+        &local_git,
+        &url,
+        &mut opts,
+        &mut NoProgress,
+    )
+    .expect("v2 http_fetch over grit-http-server");
 
     // PROVE v2: the recorded POSTs include a `command=ls-refs` and a
     // `command=fetch` body (the v2 stateless flow), not a v0/v1 want/have body.
@@ -802,8 +808,14 @@ fn fetch_over_smart_http_v2_lands_refs_and_objects() {
     assert_ne!(new_main_oid, main_oid, "source main should have advanced");
 
     let recording2 = Arc::new(RecordingClient::new("version=2"));
-    let outcome2 = http_fetch(recording2.clone(), &local_git, &url, &mut opts, &mut NoProgress)
-        .expect("incremental v2 http_fetch");
+    let outcome2 = http_fetch(
+        recording2.clone(),
+        &local_git,
+        &url,
+        &mut opts,
+        &mut NoProgress,
+    )
+    .expect("incremental v2 http_fetch");
     let commands2 = recording2.post_commands.lock().unwrap().clone();
     assert!(
         commands2.iter().any(|c| c == "command=ls-refs"),
@@ -943,8 +955,14 @@ fn fetch_from_config_client_v2_many_refs_and_large_pack() {
         tags: TagMode::All,
         ..Default::default()
     };
-    let outcome = http_fetch(recording.clone(), &local_git, &url, &mut opts, &mut NoProgress)
-        .expect("from_config v2 http_fetch over many-ref repo");
+    let outcome = http_fetch(
+        recording.clone(),
+        &local_git,
+        &url,
+        &mut opts,
+        &mut NoProgress,
+    )
+    .expect("from_config v2 http_fetch over many-ref repo");
 
     let commands = recording.post_commands.lock().unwrap().clone();
     assert!(
@@ -1784,14 +1802,8 @@ fn fetch_over_git_http_backend_cgi() {
         tags: TagMode::Following,
         ..Default::default()
     };
-    http_fetch(
-        client.clone(),
-        &local,
-        &url,
-        &mut fetch_opts,
-        &mut progress,
-    )
-    .expect("http_fetch over git http-backend CGI wrapper");
+    http_fetch(client.clone(), &local, &url, &mut fetch_opts, &mut progress)
+        .expect("http_fetch over git http-backend CGI wrapper");
 
     assert_eq!(
         resolve_ref(&local, "refs/remotes/origin/main").unwrap(),

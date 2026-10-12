@@ -2,18 +2,33 @@
 
 //! grit-lib — fast, linkable Git engine for Rust.
 //!
-//! # Architecture
+//! Grit reimplements Git's on-disk formats and wire protocols in idiomatic Rust
+//! so embedders can open repositories, walk history, diff, merge, fetch, and push
+//! without shelling out to the `git` binary. The [`grit`](https://github.com/gitbutlerapp/grit)
+//! CLI is a thin presentation layer over this crate; almost all behavior lives here.
 //!
-//! All Git-compatible logic lives here; the `grit` binary is a thin CLI shim
-//! that parses arguments and delegates to types exposed from this crate.
-//! Modules that only served out-of-scope Git commands or the removed `grit-git`
-//! CLI are not part of the crate; see `docs/v1-scope.md` (Removed from grit-lib).
+//! # Getting started
 //!
-//! ## Where to start
+//! [`Repository`](repo::Repository) is the primary entry point: discover or open a
+//! work tree, then use methods and focused modules for objects, refs, the index,
+//! config, remotes, and porcelain operations.
 //!
-//! - [`Repository`](repo::Repository) is the central handle — open or discover
-//!   one, then reach the object store, index, refs, and config through it.
-//! - [`prelude`] re-exports the handful of types most call sites need.
+//! ```
+//! use grit_lib::repo::{init_repository, Repository};
+//! use grit_lib::state::resolve_head;
+//! use grit_lib::RefStorageFormat;
+//!
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+//! let head = resolve_head(&repo.git_dir)?;
+//! assert!(matches!(head, grit_lib::state::HeadState::Branch { short_name, oid: None, .. } if short_name == "main"));
+//! let _ = Repository::open(&repo.git_dir, repo.work_tree.as_deref())?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! - [`prelude`] re-exports the types most call sites need.
 //! - [`porcelain`] holds user-facing operations that return structured result
 //!   *models* (the CLI renders them). The flat module list below remains the
 //!   low-level escape hatch and keeps every existing path valid.
@@ -24,7 +39,7 @@
 //! - [`progress`] defines how long-running operations report progress and
 //!   observe cancellation without touching the terminal.
 //!
-//! ## API layout (canonical domains)
+//! # API layout (canonical domains)
 //!
 //! | Flat path | Canonical path |
 //! | --- | --- |
@@ -41,15 +56,52 @@
 //! | `parallel` | [`parallel`] (root) |
 //! | `repo`, `error`, `porcelain`, `progress`, … | root (unchanged) |
 //!
-//! ## Core modules
+//! # Porcelain
 //!
-//! - [`error`] — shared error types using `thiserror`
-//! - [`objects`] — object ID, object kinds, and in-memory representations
-//! - [`odb`] — loose object store (read/write zlib-compressed objects)
-//! - [`repo`] — repository discovery and handle
-//! - [`index`] — Git index (staging area) read/write
-//! - [`ignore`] — ignore/exclude pattern matching for check-ignore
-//! - [`refs`] — reference storage (files backend)
+//! [`porcelain`] implements user-facing workflows (`status`, `log`, `merge`, …) as
+//! pure functions that return structured result models. The library/CLI contract
+//! is documented in [`porcelain`]: options in, models out, progress via
+//! [`ProgressSink`](progress::ProgressSink) — no terminal I/O in the library.
+//!
+//! # Storage and refs
+//!
+//! - **Object database ([`odb`])** — loose objects plus pack files, pack indexes,
+//!   multi-pack-index (MIDX), delta chains, and promisor/partial clone hooks.
+//!   Backends are pluggable via the ODB abstraction (see [`odb`] and [`pack_store`]).
+//! - **References ([`refs`], [`reftable`], [`ref_storage`])** — loose files,
+//!   `packed-refs`, and reftable stacks; reflog read/write in [`reflog`].
+//!   [`RefStorageFormat`] selects the on-disk ref layout at init.
+//!
+//! # Network and bundles
+//!
+//! [`remote`], [`fetch`], [`push`], and [`transport`] implement fetch, push, and
+//! ls-remote over local paths, git/ssh URLs, and (with the optional HTTP client)
+//! smart HTTP. [`bundle`] and [`bundle_remote`] read and write Git bundle files.
+//! Wire protocol helpers live under [`protocol`] and [`serve`].
+//!
+//! # Features
+//!
+//! | Feature | Default | Description |
+//! | ------- | ------- | ----------- |
+//! | *(none)* | — | Core library: ODB, refs, index, diff, merge, local transport |
+//! | `http-ureq` | disabled | [`ureq`](https://docs.rs/ureq) HTTP client for smart-HTTP fetch/push |
+//!
+//! Enable HTTP in `Cargo.toml`:
+//!
+//! ```toml
+//! grit-lib = { version = "0.1", features = ["http-ureq"] }
+//! ```
+//!
+//! # Errors and progress
+//!
+//! [`error`] defines typed failures with `thiserror`. Long-running work accepts a
+//! [`ProgressSink`](progress::ProgressSink) and optional cancellation; see [`progress`].
+//!
+//! # Scope
+//!
+//! Modules tied to removed Git-compatible CLI surface are documented in
+//! `docs/v1-scope.md`. Compatibility means **formats and protocols**, validated in
+//! tests against the system `git` binary — not argv or message strings.
 
 // --- Curated public API (additive; the flat `pub mod` list below is unchanged
 // so every existing `grit_lib::<module>::…` path keeps resolving) ---

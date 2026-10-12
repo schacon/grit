@@ -3,26 +3,49 @@
 Core library for [Grit](https://github.com/gitbutlerapp/grit), a from-scratch
 reimplementation of Git in Rust.
 
-`grit-lib` provides the low-level building blocks for working with Git
-repositories: object storage, index manipulation, refs, diffing, merge,
-revision walking, configuration, and more. It is the engine behind the `grit`
-CLI but is designed to be usable as a standalone library for anyone who wants
-to read, write, or inspect Git repositories from Rust without shelling out to
-`git`.
+`grit-lib` provides the engine for opening repositories, reading and writing
+objects and refs, diffing, merging, fetching, pushing, and the other workflows
+the `grit` CLI exposes. It is designed to be **linkable**: embed it in tools,
+agents, or services without shelling out to the `git` binary.
+
+Crate-level documentation (architecture, features, and a compiling example) lives
+in the [rustdoc](https://docs.rs/grit-lib) for `grit_lib`.
 
 ## Design philosophy
 
 - **Correctness first.** Behavior is validated with Rust tests cross-checked
   against the system `git` binary (on-disk formats and wire protocols).
-  Edge cases (empty trees, encoding quirks, unusual ref names) are handled the
-  way Git handles them.
-- **No unsafe code.** The workspace forbids `unsafe` — all I/O goes through
-  safe Rust and standard-library abstractions.
-- **Minimal dependencies.** The library leans on a small set of widely-used
-  crates (`sha1`, `flate2`, `hex`, `similar`, `regex`, `time`, `tempfile`,
-  `thiserror`) and nothing else.
-- **Granular errors.** Every module returns typed errors via `thiserror` so
-  callers can match on exactly what went wrong.
+- **Library-first.** Typed errors, no printing from the library, no global
+  state, and explicit inputs for time and environment where it matters.
+- **Performance.** Hot paths are benchmarked against stock `git`; see the
+  project benchmarks docs on [grit-scm.com](https://grit-scm.com/docs/benchmarks).
+- **Granular errors.** Public APIs return `thiserror` enums so callers can match
+  on failure modes.
+
+## Dependencies
+
+Direct dependencies are declared in [`Cargo.toml`](Cargo.toml) (workspace-pinned
+where noted). Highlights:
+
+| Area | Crates |
+| ---- | ------ |
+| Hashing | `sha1`, `sha2`, `crc32fast` |
+| Compression | `flate2` |
+| Diff / merge | `similar`, `merge3`, `imara-diff` |
+| Text / paths | `regex`, `hex`, `unicode-width`, `icu_normalizer`, `shell-words` |
+| Time / TZ | `time`, `tzdb`, `tz` |
+| I/O helpers | `tempfile`, `memmap2`, `filetime` |
+| Errors | `thiserror` |
+| Optional HTTP (`http-ureq` feature) | `ureq`, `base64` |
+| Unix-only | `nix`, `rustix` |
+| Windows-only | `windows-sys` |
+
+The workspace default denies `unsafe`, but this crate sets `unsafe_code = allow`
+in [`Cargo.toml`](Cargo.toml) because several areas use small, reviewed blocks:
+Git-compatible date/time (`git_date`, including `libc` FFI), memory-mapped pack
+files (`pack_map`), the parallel worker pool, validated UTF-8 object paths
+(`objects`), terminal and color detection, index extensions, and (on Windows)
+Credential Manager access in `credentials`.
 
 ## Quick start
 
@@ -33,18 +56,24 @@ Add the dependency:
 grit-lib = "0.1"
 ```
 
-### Open a repository and read an object
+For smart-HTTP remotes:
+
+```toml
+grit-lib = { version = "0.1", features = ["http-ureq"] }
+```
+
+### Open a repository and read HEAD
 
 ```rust
-use grit_lib::repo::Repository;
+use grit_lib::repo::{init_repository, Repository};
+use grit_lib::state::resolve_head;
+use grit_lib::RefStorageFormat;
 
-let repo = Repository::discover(".")?;
-let head = grit_lib::state::resolve_head(&repo.git_dir)?;
-
-if let Some(oid) = head.oid() {
-    let obj = repo.odb.read(oid)?;
-    println!("{} {} bytes", obj.kind, obj.data.len());
-}
+let dir = tempfile::tempdir()?;
+let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+let head = resolve_head(&repo.git_dir)?;
+let _again = Repository::open(&repo.git_dir, repo.work_tree.as_deref())?;
+# Ok::<(), grit_lib::error::Error>(())
 ```
 
 ### Walk the commit graph
@@ -71,45 +100,13 @@ for e in &entries {
 }
 ```
 
-### Read and write the index
+## Module map
 
-```rust
-use grit_lib::index::Index;
-
-let mut index = Index::load(&repo.index_path())?;
-index.add_or_replace(entry);
-index.sort();
-index.write(&repo.index_path())?;
-```
-
-## Module overview
-
-| Module | Purpose |
-|--------|---------|
-| `repo` | Discover and open repositories |
-| `objects` | Object model — `ObjectId`, `ObjectKind`, `CommitData`, `TagData`, `TreeEntry` |
-| `odb` | Loose-object database: read, write, hash, existence checks |
-| `pack` | Pack file and pack index reading, verification, delta application |
-| `index` | Index (staging area) parsing, writing, and entry manipulation |
-| `refs` | Loose reference reading, writing, deletion, listing |
-| `reflog` | Reflog entry parsing, appending, expiry |
-| `state` | HEAD resolution, in-progress operation detection |
-| `diff` | Tree-to-tree, index-to-tree, and worktree diffing with rename/copy detection |
-| `merge_base` | Merge-base computation, ancestry checks |
-| `merge_file` | Three-way line-level merge with conflict styles |
-| `rev_parse` | Revision string parsing (`HEAD~3`, `v1.0^{commit}`, etc.) |
-| `rev_list` | Commit graph traversal with filtering and ordering |
-| `config` | Multi-scope configuration loading and typed value parsing |
-| `ignore` | `.gitignore` pattern matching |
-| `hooks` | Hook resolution and execution |
-| `write_tree` | Build tree objects from index entries |
-| `patch_ids` | Patch ID computation for cherry-pick detection |
-| `check_ref_format` | Ref name validation per Git rules |
-| `stripspace` | Whitespace and comment normalization |
-| `fmt_merge_msg` | Merge commit message formatting |
-| `remote` | Typed remotes: list refs, fetch, and push over local, git, ssh, and HTTP |
-| `unpack_objects` | Unpack a pack stream into loose objects |
-| `error` | Typed error enum covering all failure modes |
+Prefer the [rustdoc](https://docs.rs/grit-lib) domain views (`object_store`,
+`references`, `worktree_index`, `revision`, `diffing`, `merging`, `configuration`)
+for navigation. Commonly used flat modules include `repo`, `odb`, `objects`, `pack`,
+`index`, `refs`, `remote`, `fetch`, `push`, `diff`, `rev_parse`, `rev_list`,
+`config`, `bundle`, and `error`.
 
 ## License
 
