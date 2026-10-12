@@ -10169,4 +10169,174 @@ mod line_coverage_tests {
         let _ = detect_renames(&odb, Some(wt), diff, 50);
         Ok(())
     }
+
+    #[test]
+    fn extended_diff_helpers_and_rotate_order() -> Result<()> {
+        use crate::crlf::{ConversionConfig, FileAttrs};
+        let temp = TempDir::new().expect("tempdir");
+        let wt = temp.path();
+        let git_dir = wt.join(".git");
+        std::fs::create_dir_all(git_dir.join("objects")).expect("objects");
+        let objects_dir = git_dir.join("objects");
+        let odb = Odb::new(&objects_dir);
+        let b_old = odb.write(ObjectKind::Blob, b"alpha\nbeta\n").expect("old");
+        let b_new = odb
+            .write(ObjectKind::Blob, b"alpha\nBETA\ngamma\n")
+            .expect("new");
+        let old_tree = write_tree(&odb, &[("a.txt", b_old), ("b.txt", b_old)]);
+        let new_tree = write_tree(
+            &odb,
+            &[("a.txt", b_new), ("b.txt", b_new), ("c.txt", b_new)],
+        );
+        let entries = diff_trees(&odb, Some(&old_tree), Some(&new_tree), "")?;
+        assert!(entries.len() >= 2);
+        let rotated = apply_rotate_skip_entries(entries.clone(), Some("b.txt"), None)?;
+        assert!(!rotated.is_empty());
+        let _ = apply_rotate_skip_log_entries(
+            &odb,
+            &new_tree,
+            entries.clone(),
+            Some("a.txt"),
+            None,
+        );
+        let _ = apply_rotate_skip_log_entries(
+            &odb,
+            &new_tree,
+            entries.clone(),
+            None,
+            Some("a.txt"),
+        );
+        let order_path = wt.join("order");
+        std::fs::write(&order_path, b"c.txt\na.txt\n").expect("order");
+        let _ = apply_orderfile_entries(
+            entries.clone(),
+            order_path.to_str().expect("utf8"),
+            wt,
+        );
+        let _ = read_orderfile_patterns(order_path.to_str().expect("utf8"), wt)?;
+
+        let cfg = ConfigSet::new();
+        assert!(indent_heuristic_from_config(&cfg));
+        let _ = unified_diff_histogram_hunks_only("a\nb\n", "a\nB\n", 3, 0);
+        let _ = unified_diff_histogram_with_prefix_and_funcname(
+            "x\n",
+            "y\n",
+            "a/f",
+            "b/f",
+            3,
+            0,
+            "",
+            "",
+            None,
+            false,
+        );
+        let _ = count_changes_with_algorithm("a\n", "b\n", Algorithm::Myers, false);
+        let _ = should_break_rewrite_pair(b"short", b"totally different body", 50);
+        let _ = head_path_states(&odb, Some(&new_tree))?;
+        std::fs::write(wt.join("tracked.txt"), b"hello\n").expect("wt");
+        let abs = wt.join("tracked.txt");
+        let meta = std::fs::metadata(&abs).expect("meta");
+        let mut index = Index::new();
+        index.add_or_replace(index_entry("tracked.txt", MODE_REGULAR, b_old));
+        let _ = stat_matches_with_policy(&index.entries()[0], &meta, StatMatchPolicy::default());
+        let _ = worktree_differs_from_index_entry(
+            &odb,
+            &git_dir,
+            wt,
+            &index.entries()[0],
+            false,
+            None,
+        )?;
+        let conv = ConversionConfig::from_config(&cfg);
+        let attrs = FileAttrs::default();
+        let params = WorktreeAddRefreshParams {
+            odb: &odb,
+            ie: &index.entries()[0],
+            meta: &meta,
+            abs_path: &abs,
+            rel_path: "tracked.txt",
+            conv: &conv,
+            file_attrs: &attrs,
+            index_mtime: None,
+            staged_mode: MODE_REGULAR,
+            filter_process: None,
+        };
+        let _ = classify_worktree_entry_for_add(&params)?;
+        let _ = hash_worktree_file(
+            &odb,
+            &abs,
+            &meta,
+            &conv,
+            &attrs,
+            "tracked.txt",
+            Some(&index.entries()[0]),
+            None,
+        )?;
+        let _ = materialize_worktree_blob(
+            &odb,
+            &abs,
+            &meta,
+            &conv,
+            &attrs,
+            "tracked.txt",
+            Some(&index.entries()[0]),
+            None,
+        )?;
+        let _ = read_worktree_bytes_for_mode(&abs, MODE_REGULAR);
+        let _ = mode_from_metadata(&meta);
+        let _ = smudge_racily_clean_entries(
+            &odb,
+            &git_dir,
+            &mut index,
+            wt,
+            None,
+            Some(&cfg),
+            None,
+        );
+        let _ = refresh_index_stat_content_verified(
+            &odb,
+            &git_dir,
+            &mut index,
+            wt,
+            None,
+            Some(&cfg),
+            None,
+        )?;
+        let _ = refresh_index_stat_content_verified_with_rules(
+            &odb,
+            &git_dir,
+            &mut index,
+            wt,
+            None,
+            Some(&cfg),
+            None,
+            None,
+        )?;
+        let _ = path_checkout_skip_blob_write_when_up_to_date(
+            &odb,
+            &git_dir,
+            wt,
+            &index,
+            &index.entries()[0],
+            &b_old,
+            MODE_REGULAR,
+            "tracked.txt",
+            None,
+        )?;
+        let patch = anchored_unified_diff(
+            "a\nb\n",
+            "a\nB\n",
+            "f",
+            "f",
+            3,
+            &[String::from("b")],
+            Algorithm::Myers,
+            false,
+            true,
+            false,
+        );
+        assert!(patch.contains("@@"));
+        let _ = annotate_unified_diff_no_newline_at_eof("@@\n+a\n\\ No newline\n", "a", "a\n");
+        Ok(())
+    }
 }

@@ -8854,4 +8854,87 @@ mod line_coverage_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn bisect_filters_and_cat_file_helpers() -> Result<()> {
+        use crate::ref_exclusions::RefExclusions;
+        let (_dir, repo, tip) = seed_repo(40, true);
+        let default_out = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions::default(),
+        )?;
+        let _ = select_bisect_commits(&repo, &default_out.commits, false)?;
+        let _ = select_bisect_commits(&repo, &default_out.commits, true)?;
+        assert!(is_symmetric_diff("main...side"));
+        if let Some((left, right)) = split_symmetric_diff("main...side") {
+            let _ = rev_list(
+                &repo,
+                &[format!("{left}...{right}")],
+                &[],
+                &RevListOptions {
+                    left_right: true,
+                    ..RevListOptions::default()
+                },
+            )?;
+        }
+        let _ = expand_object_filter_for_protocol("blob:limit=1k")
+            .map_err(|msg| Error::Message(msg))?;
+        let _ = url_encode_object_filter_subspec("path:src/");
+        let (pos, neg) = split_revision_token("main ^main~2 -- tracked.txt");
+        assert!(!pos.is_empty());
+        let _ = neg;
+        for oid in &default_out.commits {
+            let _ = commit_visible_for_dense_pathspecs(
+                &repo,
+                *oid,
+                &["tracked.txt".to_owned()],
+            )?;
+        }
+        let filter = ObjectFilter::BlobLimit(512);
+        let _ = reachable_object_ids_for_cat_file(&repo, Some(&filter), true)?;
+        let _ = object_ids_for_cat_file_filtered(&repo, &filter)?;
+        let _ = tag_targets(&repo.git_dir)?;
+        let pairs = vec![
+            (String::from("refs/heads/main"), tip),
+            (String::from("refs/heads/side"), tip),
+        ];
+        let _ = commit_tips_from_named_refs(&repo, &pairs, &RefExclusions::default())?;
+        let (_pos, _neg, _all, _paths) =
+            collect_revision_specs_with_stdin(&repo.git_dir, &[String::from("main")], false)?;
+        let borders = shallow_borders_reachable_from_wants(&repo, &[tip]);
+        let _ = borders;
+        Ok(())
+    }
+
+    #[test]
+    fn cherry_pick_and_commit_graph_walk_matrix() -> Result<()> {
+        let (_dir, repo, _) = seed_repo(48, true);
+        for use_graph in [false, true] {
+            for cherry_pick in [false, true] {
+                for cherry_mark in [false, true] {
+                    if cherry_pick && cherry_mark {
+                        continue;
+                    }
+                    let opts = RevListOptions {
+                        cherry_pick,
+                        cherry_mark,
+                        use_commit_graph: use_graph,
+                        first_parent: cherry_pick,
+                        simplify_merges: !cherry_pick,
+                        left_right: true,
+                        boundary: true,
+                        ordering: OrderingMode::Topo,
+                        paths: vec!["tracked.txt".to_owned()],
+                        ignore_missing: true,
+                        ..RevListOptions::default()
+                    };
+                    let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+                    let _ = rev_list(&repo, &[String::from("side")], &[], &opts)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }

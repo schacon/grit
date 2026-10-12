@@ -1153,7 +1153,6 @@ mod line_coverage_tests {
     }
 
     #[test]
-    #[test]
     fn large_pack_many_threads_exercises_parallel_scan() {
         let mut pb = PackBuilder::new(HashAlgo::Sha1);
         for i in 0..32 {
@@ -1189,5 +1188,36 @@ mod line_coverage_tests {
         assert!(
             build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(2)), true).is_err()
         );
+    }
+
+    #[test]
+    fn ref_delta_resolves_when_base_in_odb() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        let base_bytes = b"ref-delta base payload\n";
+        let base_oid = odb
+            .write(ObjectKind::Blob, base_bytes)
+            .expect("write base");
+        let target = b"ref-delta base PAYLOAD\n";
+        let delta = crate::delta_encode::encode_lcp_delta(base_bytes, target).expect("delta");
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        pb.add_ref_delta(base_oid.as_bytes(), &delta, delta.len());
+        let pack = pb.build().bytes;
+        let records = build_pack_index_records(
+            &pack,
+            &odb,
+            Parallelism::resolve(Some(1)),
+            true,
+        )
+        .expect("ref delta build");
+        assert_eq!(records.len(), 1);
+        let no_verify = build_pack_index_records(
+            &pack,
+            &odb,
+            Parallelism::resolve(Some(8)),
+            false,
+        )
+        .expect("parallel no verify");
+        assert_eq!(no_verify.len(), 1);
     }
 }
