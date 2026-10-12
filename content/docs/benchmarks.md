@@ -88,17 +88,18 @@ Baseline **`bitmaps-before.json`** (factory VM, 2026-10-10): **`rev-list-count-g
 
 ## grit-lib: parallel index-pack (in-memory)
 
-Release [`index_pack_bench`](https://github.com/gitbutlerapp/grit/tree/main/grit-lib/examples/index_pack_bench.rs) on a **75 015-object** depth-50 pack (`git repack -adf --depth=50`, factory VM 2026-10-12). Grit uses [`pack_index_records_with_threads`](https://docs.rs/grit-lib/latest/grit_lib/unpack_objects/fn.pack_index_records_with_threads.html) (`GRIT_INDEX_PACK_BENCH_PACK` / `GRIT_INDEX_PACK_THREADS`); timings cover in-memory record building only (no `.idx` write).
+Release [`index_pack_bench`](https://github.com/gitbutlerapp/grit/tree/main/grit-lib/examples/index_pack_bench.rs) on a **75 015-object** depth-50 pack (`git repack -adf --depth=50`, factory VM 2026-10-12). Grit uses [`pack_index_records_with_threads`](https://docs.rs/grit-lib/latest/grit_lib/unpack_objects/fn.pack_index_records_with_threads.html) (`GRIT_INDEX_PACK_BENCH_PACK` / `GRIT_INDEX_PACK_THREADS`); timings cover in-memory record building only (no `.idx` write). System **`git index-pack`** rows are end-to-end on a fresh temp directory each run (writes `.idx`).
 
 | Command | Median (3 runs) |
 | ------- | ---------------- |
-| grit index-pack, 1 thread | 2.34 s |
-| grit index-pack, 4 threads | 1.20 s |
-| grit index-pack, 8 threads | 1.17 s |
+| grit index-pack (records only), 1 thread | 0.66 s |
+| grit index-pack (records only), 4 threads | 0.36 s |
+| `git index-pack --threads=1` (end-to-end) | 1.25 s |
+| `git index-pack --threads=4` (end-to-end) | 0.43 s |
 
-**Speedup (8 vs 1 thread): ~1.83×** on this fixture (baseline before step 1002). Multi-threaded builds scan object boundaries (zlib skip), then parallel workers inflate and hash whole objects; ready deltas resolve in parallel rounds with per-delta work stealing. Whole objects at or above 4 MiB inflated are hashed serially so worker threads stay memory-bounded. v2 `.idx` writes sort OID rows on multiple threads when the entry count is large.
+**Speedup (4 vs 1 thread, grit records): ~1.84×.** Multi-threaded builds zlib-skip whole-object boundaries once, then parallel inflate+hash via an ordered work pool (pack order preserved in the public record list). The single-thread path removes the redundant second serial skip pass that inflated scaling ratios without matching upstream Git. Delta chains still inflate, apply, and hash in parallel rounds.
 
-Integration coverage uses a **≥ 50 000** object fixture built with `git fast-import` and shared across tests via `OnceLock` (`grit-lib/tests/index_pack_parallel.rs`), plus a deep OFS/REF delta chain checked for byte-identical `.idx` / `.rev` at thread counts **1, 2, 4, and 8**; the default release suite completes in about **41 s** on the factory VM.
+Integration coverage uses a **≥ 50 000** object fixture built with `git fast-import` and shared across tests via `OnceLock` (`grit-lib/tests/index_pack_parallel.rs`); the default release suite completes in about **41 s** on the factory VM.
 
 ## Hashing
 

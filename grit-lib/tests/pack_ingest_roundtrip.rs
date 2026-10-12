@@ -756,6 +756,24 @@ fn idx_and_rev_match_git_for_all_pack_shapes_sha256() {
 }
 
 #[test]
+fn pack_index_records_tiny_pack_many_threads_completes() {
+    use grit_test_support::objects::{HashAlgo as FixtureAlgo, ObjectKind as PK, PackBuilder};
+
+    let mut pb = PackBuilder::new(FixtureAlgo::Sha1);
+    pb.add_full(PK::Blob, b"one");
+    pb.add_full(PK::Blob, b"two");
+    let pack = pb.build().bytes;
+    let tmp = tempfile::tempdir().expect("odb");
+    let odb = Odb::new(tmp.path());
+    for threads in [1_usize, 8, 32] {
+        let records =
+            pack_index_records_with_threads(&pack, &odb, Parallelism::resolve(Some(threads)))
+                .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
+        assert_eq!(records.len(), 2, "threads={threads}");
+    }
+}
+
+#[test]
 fn pack_index_records_with_threads_matches_single_thread() {
     let fx = shared_pack(PackShape::GitDelta, HashAlgo::Sha1).expect("fixture");
     let tmp = tempfile::tempdir().expect("odb");
