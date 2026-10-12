@@ -439,9 +439,10 @@ fn worktree_against_tree(
         .index_handle()
         .load()
         .context("could not load the index")?;
-    let config = repo.config().context("could not load config")?;
     let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
         .context("could not load worktree rules")?;
+    let config_arc = worktree_rules.config_arc();
+    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(worktree_rules));
 
     let index_backed = base_tree
         .zip(index.cache_tree_root.as_ref())
@@ -456,7 +457,8 @@ fn worktree_against_tree(
             work_tree,
             DiffIndexToWorktreeOptions {
                 repository_git_dir: Some(repo.git_dir().to_path_buf()),
-                config: Some(config.clone()),
+                config: Some(std::sync::Arc::clone(&config_arc)),
+                worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
                 index_mtime: diff_index_mtime,
                 thread_policy: Some(repo.thread_policy()),
                 refresh_index_stat_in_pass: false,
@@ -468,26 +470,32 @@ fn worktree_against_tree(
         .context("could not diff the working tree")?;
         entries
     } else {
+        let rules = rules_arc
+            .lock()
+            .map_err(|e| anyhow::anyhow!("worktree rules lock poisoned: {e}"))?;
         grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
             repo.odb(),
             base_tree,
             work_tree,
             repo.git_dir(),
             &index,
-            Some(config.as_ref()),
-            Some(&worktree_rules),
+            Some(rules.config()),
+            Some(&rules),
         )
         .context("could not diff the working tree")?
     };
     sort_entries(&mut entries);
 
+    let rules = rules_arc
+        .lock()
+        .map_err(|e| anyhow::anyhow!("worktree rules lock poisoned: {e}"))?;
     let side_ctx = WorktreeDiffSideContext {
         work_root: work_tree,
         worktree: DiffPostprocessWorktree {
             repository_git_dir: repo.git_dir(),
             index: &index,
         },
-        rules: &worktree_rules,
+        rules: &rules,
     };
 
     entries

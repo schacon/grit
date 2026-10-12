@@ -1317,6 +1317,62 @@ fn diff_eol_crlf_nested_gitattributes_append_single_line() -> TestResult {
     Ok(())
 }
 
+/// Nested `eol=crlf`: mtime-only drift must not appear on default `grit diff` (issue #995 review).
+#[test]
+fn diff_eol_crlf_nested_mtime_only_clean_default_diff() -> TestResult {
+    let scratch = Scratch::new("diff-995-nested-mtime")?;
+    let repo = scratch.path();
+    gs_ok(repo, ["init", "."])?;
+    git_ok(repo, &["config", "user.name", "T"])?;
+    git_ok(repo, &["config", "user.email", "t@e.com"])?;
+    fs::create_dir_all(repo.join("dir"))?;
+    fs::write(repo.join("dir/.gitattributes"), b"*.txt text eol=crlf\n")?;
+    fs::write(repo.join("dir/f.txt"), b"a\r\nb\r\n")?;
+    gs_ok(repo, &["add"])?;
+    gs_ok(repo, ["commit", "-m", "base"])?;
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let touch = Command::new("touch")
+        .arg(repo.join("dir/f.txt"))
+        .current_dir(repo)
+        .status()?;
+    assert!(touch.success(), "touch must succeed");
+
+    let git_quiet = Command::new("git")
+        .args(["diff", "--quiet", "--", "dir/f.txt"])
+        .current_dir(repo)
+        .status()?;
+    assert!(
+        git_quiet.success(),
+        "git diff should be clean after mtime-only change"
+    );
+
+    let diff = gs(repo, ["--json", "diff"])?;
+    assert_eq!(diff.status, Some(0), "{}", diff.dump());
+    let diff_json: serde_json::Value = serde_json::from_str(&diff.stdout)?;
+    let files = diff_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .expect("diff json files");
+    assert!(
+        files.is_empty(),
+        "default grit diff must be empty when git is clean (nested eol=crlf): {diff_json}"
+    );
+
+    let unstaged = gs(repo, ["--json", "diff", "--unstaged"])?;
+    assert_eq!(unstaged.status, Some(0), "{}", unstaged.dump());
+    let unstaged_json: serde_json::Value = serde_json::from_str(&unstaged.stdout)?;
+    let unstaged_files = unstaged_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .expect("unstaged diff files");
+    assert!(
+        unstaged_files.is_empty(),
+        "grit diff --unstaged should stay empty: {unstaged_json}"
+    );
+    Ok(())
+}
+
 /// `core.autocrlf=true` and `core.filemode=false`: grit diff must match git/status (issue #947).
 #[test]
 fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {
