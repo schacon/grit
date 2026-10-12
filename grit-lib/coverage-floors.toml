@@ -14,7 +14,7 @@ minimum = 62.5
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
-minimum = 45.0
+minimum = 46.9
 
 [aggregate.refs-config]
 groups = ["refs", "reflog", "config", "ignore", "attributes"]
@@ -50,7 +50,7 @@ files = [
     "combined_diff_patch.rs",
     "merge_diff.rs",
 ]
-minimum = 54.0
+minimum = 55.1
 
 [group.ignore]
 files = [
@@ -175,6 +175,12 @@ minimum = 91.6
 [file."check_ref_format.rs"]
 minimum = 96.1
 
+[file."combined_diff_patch.rs"]
+minimum = 83.9
+
+[file."combined_tree_diff.rs"]
+minimum = 83.3
+
 [file."commit_graph_file.rs"]
 minimum = 85.0
 
@@ -195,6 +201,9 @@ minimum = 84.1
 
 [file."index_pack.rs"]
 minimum = 88.5
+
+[file."merge_diff.rs"]
+minimum = 33.7
 
 [file."midx.rs"]
 minimum = 84.9

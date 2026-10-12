@@ -9,9 +9,11 @@ use std::process::Command;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes_with_algorithm, count_git_lines,
-    diff_index_to_tree, diff_index_to_worktree, diff_trees, format_raw,
+    diff_commits, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
+    diff_trees_show_tree_entries, format_raw, format_raw_abbrev,
     indent_heuristic_from_config, normalize_ignore_space_change,
-    postprocess_diff_entries, tree_oid_of_commit, unified_diff_histogram_ignore_with_prefix_and_funcname,
+    postprocess_diff_entries, tree_oid_of_commit,
+    unified_diff_histogram_ignore_with_prefix_and_funcname,
     unified_diff_with_prefix_and_funcname_and_algorithm, DiffEntry, DiffPostprocessOptions,
 };
 use grit_lib::index::Index;
@@ -788,6 +790,15 @@ pub fn grit_raw_lines(entries: &[DiffEntry]) -> Vec<String> {
     lines
 }
 
+pub fn grit_raw_lines_abbrev(entries: &[DiffEntry], abbrev: usize) -> Vec<String> {
+    let mut lines: Vec<String> = entries
+        .iter()
+        .map(|e| format_raw_abbrev(e, abbrev))
+        .collect();
+    lines.sort();
+    lines
+}
+
 pub fn git_raw_lines(dir: &Path, args: &[&str]) -> Vec<String> {
     let out = git_output(dir, args);
     assert!(
@@ -895,6 +906,49 @@ pub fn index_to_worktree_raw(
     let raw = diff_index_to_worktree(&repo.odb, index, worktree, false, false)
         .expect("diff_index_to_worktree");
     let entries = postprocess(&repo.odb, raw, head_tree, Some(worktree), config, opts);
+    grit_raw_lines(&entries)
+}
+
+pub fn tree_to_worktree_raw(
+    repo: &Repository,
+    worktree: &Path,
+    index: &Index,
+    tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw =
+        diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
+    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    grit_raw_lines(&entries)
+}
+
+/// Like [`tree_to_worktree_raw`], but abbreviates OIDs like `git diff <tree> --raw`.
+pub fn tree_to_worktree_raw_abbrev(
+    repo: &Repository,
+    worktree: &Path,
+    index: &Index,
+    tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+    abbrev: usize,
+) -> Vec<String> {
+    let raw =
+        diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
+    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    grit_raw_lines_abbrev(&entries, abbrev)
+}
+
+pub fn commits_diff_raw(
+    repo: &Repository,
+    base: &ObjectId,
+    tip: &ObjectId,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw = diff_commits(&repo.odb, base, tip).expect("diff_commits");
+    let base_tree = tree_oid_of_commit(&repo.odb, base).expect("base tree");
+    let entries = postprocess(&repo.odb, raw, Some(&base_tree), None, config, opts);
     grit_raw_lines(&entries)
 }
 

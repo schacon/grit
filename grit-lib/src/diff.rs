@@ -4793,7 +4793,9 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             old_mode: format_mode(te.mode),
                             new_mode: format_mode(wt_mode),
                             old_oid: te.oid,
-                            new_oid: wt_oid,
+                            // Raw `git diff <tree>` uses a null OID on the worktree side (patch
+                            // output resolves content from the working tree).
+                            new_oid: zero_oid(),
                             score: None,
                         });
                     } else if trust_filemode && wt_mode != te.mode {
@@ -4823,6 +4825,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     filter_fp,
                 )?;
                 if wt_oid != te.oid || (trust_filemode && wt_mode != te.mode) {
+                    let new_oid = if wt_oid != te.oid { zero_oid() } else { te.oid };
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -4830,7 +4833,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         old_mode: format_mode(te.mode),
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
-                        new_oid: wt_oid,
+                        new_oid,
                         score: None,
                     });
                 }
