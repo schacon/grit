@@ -897,13 +897,14 @@ fn remote_service_cmd(service: Service, quoted_path: &str) -> String {
 /// How the [`SshTransport`] invokes ssh.
 ///
 /// `Auto` reproduces Git's precedence: `$GIT_SSH_COMMAND` (a shell command
-/// line, run via `sh -c`), else `$GIT_SSH` (a program, no shell), else the
-/// `ssh` program. Embedders that do not want to depend on process-global env
-/// can pin a [`SshCommand::Program`] or [`SshCommand::ShellCommand`] explicitly.
+/// line, run via `sh -c`), else `core.sshCommand` from config, else `$GIT_SSH`
+/// (a program, no shell), else the `ssh` program. Embedders that do not want to
+/// depend on process-global env can pin a [`SshCommand::Program`] or
+/// [`SshCommand::ShellCommand`] explicitly.
 #[derive(Clone, Debug, Default)]
 pub enum SshCommand {
-    /// Resolve from the environment: `GIT_SSH_COMMAND`, then `GIT_SSH`, then
-    /// the `ssh` program. This is the default and matches Git.
+    /// Resolve from the environment and optional config (see
+    /// [`resolve_effective_ssh_command`]).
     #[default]
     Auto,
     /// A bare program invoked directly (no shell), like Git's `$GIT_SSH`. The
@@ -915,21 +916,39 @@ pub enum SshCommand {
 }
 
 impl SshCommand {
-    /// Resolve `Auto` against `env` to a concrete variant.
-    fn resolve(&self, env: &crate::environment::Environment) -> SshCommand {
+    /// Resolve `Auto` against `env` and optional repo config to a concrete variant.
+    fn resolve(
+        &self,
+        env: &crate::environment::Environment,
+        config: Option<&crate::config::ConfigSet>,
+    ) -> SshCommand {
         match self {
-            SshCommand::Auto => {
-                if let Some(c) = env.var_os("GIT_SSH_COMMAND").filter(|v| !v.is_empty()) {
-                    SshCommand::ShellCommand(c)
-                } else if let Some(p) = env.var_os("GIT_SSH").filter(|v| !v.is_empty()) {
-                    SshCommand::Program(p)
-                } else {
-                    SshCommand::Program(OsString::from("ssh"))
-                }
-            }
+            SshCommand::Auto => resolve_effective_ssh_command(env, config),
             other => other.clone(),
         }
     }
+}
+
+/// Git-compatible ssh invocation for wire transports.
+///
+/// Precedence: `GIT_SSH_COMMAND` → `core.sshCommand` → `GIT_SSH` → `ssh`.
+#[must_use]
+pub fn resolve_effective_ssh_command(
+    env: &crate::environment::Environment,
+    config: Option<&crate::config::ConfigSet>,
+) -> SshCommand {
+    if let Some(c) = env.var_os("GIT_SSH_COMMAND").filter(|v| !v.is_empty()) {
+        return SshCommand::ShellCommand(c);
+    }
+    if let Some(cfg) = config {
+        if let Some(cmd) = cfg.get("core.sshCommand").filter(|s| !s.is_empty()) {
+            return SshCommand::ShellCommand(OsString::from(cmd));
+        }
+    }
+    if let Some(p) = env.var_os("GIT_SSH").filter(|v| !v.is_empty()) {
+        return SshCommand::Program(p);
+    }
+    SshCommand::Program(OsString::from("ssh"))
 }
 
 /// A live connection to a remote Git service over an ssh subprocess.
@@ -1019,6 +1038,8 @@ pub struct SshTransport {
     command_runner: Arc<dyn CommandRunner>,
     /// Environment used to resolve [`SshCommand::Auto`] (`GIT_SSH_COMMAND`, `GIT_SSH`).
     ssh_env: Arc<crate::environment::Environment>,
+    /// Repository config consulted for `core.sshCommand` when [`Self::ssh_command`] is `Auto`.
+    ssh_config: Option<Arc<crate::config::ConfigSet>>,
 }
 
 impl std::fmt::Debug for SshTransport {
@@ -1035,6 +1056,7 @@ impl Default for SshTransport {
             ssh_command: SshCommand::Auto,
             command_runner: system_command_runner(),
             ssh_env: Arc::new(crate::environment::Environment::empty()),
+            ssh_config: None,
         }
     }
 }
@@ -1061,6 +1083,13 @@ impl SshTransport {
         self
     }
 
+    /// Config consulted for `core.sshCommand` when [`Self::ssh_command`] is [`SshCommand::Auto`].
+    #[must_use]
+    pub fn with_ssh_config(mut self, config: Arc<crate::config::ConfigSet>) -> Self {
+        self.ssh_config = Some(config);
+        self
+    }
+
     /// A transport pinned to a specific ssh *program* (no shell), like
     /// `$GIT_SSH`.
     #[must_use]
@@ -1069,6 +1098,7 @@ impl SshTransport {
             ssh_command: SshCommand::Program(program.into()),
             command_runner: system_command_runner(),
             ssh_env: Arc::new(crate::environment::Environment::empty()),
+            ssh_config: None,
         }
     }
 
@@ -1080,6 +1110,7 @@ impl SshTransport {
             ssh_command: SshCommand::ShellCommand(command.into()),
             command_runner: system_command_runner(),
             ssh_env: Arc::new(crate::environment::Environment::empty()),
+            ssh_config: None,
         }
     }
 
@@ -1101,7 +1132,10 @@ impl SshTransport {
             ));
         }
 
-        match self.ssh_command.resolve(self.ssh_env.as_ref()) {
+        match self
+            .ssh_command
+            .resolve(self.ssh_env.as_ref(), self.ssh_config.as_deref())
+        {
             SshCommand::ShellCommand(cmd) => {
                 let cmd = cmd.to_string_lossy();
                 let port_opt = match port {
@@ -1328,6 +1362,43 @@ mod tests {
         assert_eq!(u.path, "/srv/repo.git");
         assert!(!u.scp_style);
         assert_eq!(u.port.as_deref(), Some("2222"));
+    }
+
+    #[test]
+    fn resolve_effective_ssh_command_precedence() {
+        use crate::config::ConfigSet;
+        use crate::environment::Environment;
+
+        let mut env = Environment::empty();
+        env.captured_vars
+            .insert("GIT_SSH_COMMAND".to_owned(), OsString::from("cmd-from-env"));
+        env.captured_vars
+            .insert("GIT_SSH".to_owned(), OsString::from("/bin/git-ssh"));
+        let mut cfg = ConfigSet::new();
+        cfg.add_command_override("core.sshCommand", "cmd-from-config")
+            .unwrap();
+        assert!(matches!(
+            resolve_effective_ssh_command(&env, Some(&cfg)),
+            SshCommand::ShellCommand(ref c) if c == "cmd-from-env"
+        ));
+
+        env.captured_vars.remove("GIT_SSH_COMMAND");
+        assert!(matches!(
+            resolve_effective_ssh_command(&env, Some(&cfg)),
+            SshCommand::ShellCommand(ref c) if c == "cmd-from-config"
+        ));
+
+        let empty_cfg = ConfigSet::new();
+        assert!(matches!(
+            resolve_effective_ssh_command(&env, Some(&empty_cfg)),
+            SshCommand::Program(ref p) if p == "/bin/git-ssh"
+        ));
+
+        env.captured_vars.remove("GIT_SSH");
+        assert!(matches!(
+            resolve_effective_ssh_command(&env, None),
+            SshCommand::Program(ref p) if p == "ssh"
+        ));
     }
 
     #[test]

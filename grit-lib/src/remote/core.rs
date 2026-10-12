@@ -424,7 +424,7 @@ impl Remote {
                 Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
             }
             RemoteUrl::Ssh(u) => {
-                let transport = ssh_transport(Some(repo));
+                let transport = ssh_transport(Some(repo), Some(&opts.environment));
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
                 Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
             }
@@ -471,7 +471,7 @@ impl Remote {
                 )?)
             }
             RemoteUrl::Ssh(u) => {
-                let transport = ssh_transport(Some(repo));
+                let transport = ssh_transport(Some(repo), None);
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
                 Ok(push_remote(
                     repo.git_dir(),
@@ -510,7 +510,7 @@ impl Remote {
                 list_refs_from_connection(&mut *conn, local_git_dir, odb, opts)
             }
             RemoteUrl::Ssh(_) => {
-                let transport = ssh_transport(repo);
+                let transport = ssh_transport(repo, None);
                 let mut conn = transport.connect(wire, Service::UploadPack, &connect_opts)?;
                 list_refs_from_connection(&mut *conn, local_git_dir, odb, opts)
             }
@@ -535,12 +535,23 @@ fn local_git_dir_from_url(
     Ok(resolve_local_remote_git_dir(&s, git_dir, work_tree))
 }
 
-fn ssh_transport(repo: Option<&Repository>) -> SshTransport {
+fn ssh_transport(
+    repo: Option<&Repository>,
+    override_env: Option<&crate::environment::Environment>,
+) -> SshTransport {
     let mut transport = SshTransport::new();
     if let Some(r) = repo {
-        transport = transport
-            .with_command_runner(r.command_runner())
-            .with_ssh_environment(std::sync::Arc::new(r.environment().clone()));
+        transport = transport.with_command_runner(r.command_runner());
+    }
+    let env = override_env
+        .cloned()
+        .or_else(|| repo.map(|r| r.environment().clone()))
+        .unwrap_or_else(crate::environment::Environment::empty);
+    transport = transport.with_ssh_environment(std::sync::Arc::new(env));
+    if let Some(r) = repo {
+        if let Ok(config) = r.config() {
+            transport = transport.with_ssh_config(config);
+        }
     }
     transport
 }

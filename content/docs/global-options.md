@@ -27,7 +27,7 @@ The `grit` CLI snapshots the process environment into [`Environment`](../library
 | `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n`, `GIT_CONFIG_PARAMETERS` | Config cascade |
 | `HOME`, `XDG_CONFIG_HOME`, `USERPROFILE`, `USER`, `USERNAME` | Home and identity fallbacks |
 | `GIT_AUTHOR_*`, `GIT_COMMITTER_*` | Author/committer name, email, and date overrides for new objects |
-| `GIT_SSH`, `GIT_SSH_COMMAND` | SSH transport command |
+| `GIT_SSH`, `GIT_SSH_COMMAND` | SSH transport command (`GIT_SSH_COMMAND` overrides `core.sshCommand` and `GIT_SSH`; see Git precedence) |
 | `GIT_HTTP_LOW_SPEED_LIMIT`, `GIT_HTTP_LOW_SPEED_TIME` | HTTP low-speed abort thresholds |
 | `GIT_NOTES_REF`, `GIT_NOTES_DISPLAY_REF` | Notes ref selection |
 | `GIT_ATTR_SOURCE`, `GIT_INDEX_VERSION`, `GIT_PRINT_SHA1_ELLIPSIS` | Attributes, index format, diff OID display |

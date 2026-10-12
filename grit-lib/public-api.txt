@@ -16114,6 +16114,7 @@ pub fn grit_lib::transport::SshTransport::with_command_runner(self, alloc::rcs::
 pub fn grit_lib::transport::SshTransport::with_program(impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
 pub fn grit_lib::transport::SshTransport::with_shell_command(impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
 pub fn grit_lib::transport::SshTransport::with_ssh_environment(self, alloc::rcs::arc::Arc<grit_lib::environment::Environment>) -> Self
+pub fn grit_lib::transport::SshTransport::with_ssh_config(self, alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>) -> Self
 impl core::clone::Clone for grit_lib::transport::SshTransport
 pub fn grit_lib::transport::SshTransport::clone(&self) -> Self
 impl core::default::Default for grit_lib::transport::SshTransport
@@ -16201,6 +16202,7 @@ pub fn grit_lib::remote::transport::is_ssh_url(&str) -> bool
 pub fn grit_lib::remote::transport::parse_git_url(&str) -> grit_lib::error::Result<grit_lib::transport::GitDaemonUrl>
 pub fn grit_lib::remote::transport::parse_ssh_url(&str) -> grit_lib::error::Result<grit_lib::transport::SshUrl>
 pub fn grit_lib::remote::transport::read_advertisement(&mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::transport::Advertisement>
+pub fn grit_lib::remote::transport::resolve_effective_ssh_command(&grit_lib::environment::Environment, core::option::Option<&grit_lib::config::ConfigSet>) -> grit_lib::transport::SshCommand
 pub mod grit_lib::remote::transport_path
 pub enum grit_lib::remote::transport_path::TransportPathError
 pub grit_lib::remote::transport_path::TransportPathError::OptionLikePath(alloc::string::String)
@@ -19266,6 +19268,7 @@ pub fn grit_lib::transport::SshTransport::with_command_runner(self, alloc::rcs::
 pub fn grit_lib::transport::SshTransport::with_program(impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
 pub fn grit_lib::transport::SshTransport::with_shell_command(impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
 pub fn grit_lib::transport::SshTransport::with_ssh_environment(self, alloc::rcs::arc::Arc<grit_lib::environment::Environment>) -> Self
+pub fn grit_lib::transport::SshTransport::with_ssh_config(self, alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>) -> Self
 impl core::clone::Clone for grit_lib::transport::SshTransport
 pub fn grit_lib::transport::SshTransport::clone(&self) -> Self
 impl core::default::Default for grit_lib::transport::SshTransport
@@ -19353,6 +19356,7 @@ pub fn grit_lib::transport::is_ssh_url(&str) -> bool
 pub fn grit_lib::transport::parse_git_url(&str) -> grit_lib::error::Result<grit_lib::transport::GitDaemonUrl>
 pub fn grit_lib::transport::parse_ssh_url(&str) -> grit_lib::error::Result<grit_lib::transport::SshUrl>
 pub fn grit_lib::transport::read_advertisement(&mut dyn alloc::io::read::Read) -> grit_lib::error::Result<grit_lib::transport::Advertisement>
+pub fn grit_lib::transport::resolve_effective_ssh_command(&grit_lib::environment::Environment, core::option::Option<&grit_lib::config::ConfigSet>) -> grit_lib::transport::SshCommand
 pub mod grit_lib::transport_path
 pub enum grit_lib::transport_path::TransportPathError
 pub grit_lib::transport_path::TransportPathError::OptionLikePath(alloc::string::String)
