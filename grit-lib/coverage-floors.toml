@@ -74,7 +74,7 @@ files = [
     "untracked_cache.rs",
     "index_name_hash_lazy.rs",
 ]
-minimum = 14.0
+minimum = 60.9
 
 [group.merge]
 files = [
@@ -206,7 +206,7 @@ minimum = 83.8
 minimum = 83.4
 
 [file."index_pack.rs"]
-minimum = 87.6
+minimum = 88.5
 
 [file."merge_diff.rs"]
 minimum = 33.7
@@ -239,7 +239,7 @@ minimum = 79.8
 minimum = 71.6
 
 [file."pack_bitmap/writer.rs"]
-minimum = 76.0
+minimum = 76.1
 
 [file."pack_index.rs"]
 minimum = 89.7
