@@ -3,7 +3,7 @@
 
 [meta]
 baseline = "183dacae1"
-updated = "2026-10-11"
+updated = "2026-10-12"
 
 [core]
 groups = ["odb", "pack", "midx", "commit-graph"]
@@ -14,7 +14,7 @@ minimum = 62.5
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
-minimum = 43.2
+minimum = 45.0
 
 [aggregate.refs-config]
 groups = ["refs", "reflog", "config", "ignore", "attributes"]
@@ -50,7 +50,7 @@ files = [
     "combined_diff_patch.rs",
     "merge_diff.rs",
 ]
-minimum = 43.1
+minimum = 48.8
 
 [group.ignore]
 files = [
@@ -224,7 +224,7 @@ minimum = 79.8
 minimum = 71.6
 
 [file."pack_bitmap/writer.rs"]
-minimum = 76.0
+minimum = 76.1
 
 [file."pack_index.rs"]
 minimum = 89.7
@@ -261,3 +261,12 @@ minimum = 95.9
 
 [file."zlib_inflate.rs"]
 minimum = 85.0
+
+[file."diff_indent_heuristic.rs"]
+minimum = 85.0
+
+[file."diffstat.rs"]
+minimum = 55.0
+
+[file."diff.rs"]
+minimum = 57.0
