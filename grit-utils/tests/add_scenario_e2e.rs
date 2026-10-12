@@ -22,7 +22,7 @@ fn build_grit_executable() -> PathBuf {
     );
     let grit = workspace.join("target/debug/grit");
     assert!(grit.is_file(), "expected grit binary at {}", grit.display());
-    grit.canonicalize().unwrap_or_else(|_| grit)
+    grit.canonicalize().unwrap_or(grit)
 }
 
 #[test]

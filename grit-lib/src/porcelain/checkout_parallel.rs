@@ -45,6 +45,7 @@ pub(crate) enum WriteJobOutcome {
     Delayed(DelayedCheckoutTarget),
 }
 
+#[cfg(test)]
 /// Whether two repository-relative paths can refer to the same on-disk file (Git `paths_collide`).
 #[must_use]
 pub(crate) fn paths_collide(a: &str, b: &str, ignorecase: bool) -> bool {
@@ -58,6 +59,7 @@ pub(crate) fn paths_collide(a: &str, b: &str, ignorecase: bool) -> bool {
     a.as_bytes().get(b.len()) == Some(&b'/') && paths_equal(&a[..b.len()], b, ignorecase)
 }
 
+#[cfg(test)]
 fn paths_equal(a: &str, b: &str, ignorecase: bool) -> bool {
     if ignorecase {
         a.eq_ignore_ascii_case(b)
@@ -322,6 +324,7 @@ fn materialize_write_job_serial(
     Ok(WriteJobOutcome::Index(entry))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flush_parallel_batch(
     repo: &Repository,
     config: &Arc<ConfigSet>,
@@ -370,6 +373,7 @@ fn flush_parallel_batch(
 ///
 /// Parallel-eligible jobs are batched, but each batch is flushed before the next serial job runs
 /// so missing blobs and filter errors match the historical serial checkout behavior.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_write_jobs(
     repo: &Repository,
     rules: &WorktreeRules,

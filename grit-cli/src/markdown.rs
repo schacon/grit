@@ -213,7 +213,7 @@ pub fn print_config_entries(entries: &[crate::commands::config::ConfigEntry]) {
 /// any remaining `\r`/`\n` with visible escapes, and escapes `|`.
 #[must_use]
 pub fn escape_table_cell(s: &str) -> String {
-    let trimmed = s.trim_end_matches(|c| c == '\n' || c == '\r');
+    let trimmed = s.trim_end_matches(['\n', '\r']);
     trimmed
         .replace('|', "\\|")
         .replace('\r', "\\r")

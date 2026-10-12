@@ -5,16 +5,16 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
-    DiffIndexToWorktreeOptions, DiffStatus, diff_index_to_tree, diff_index_to_worktree_with_options,
+    diff_index_to_tree, diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
-use crate::index::{Index, IndexEntry, MODE_TREE, index_file_mtime};
-use crate::objects::{ObjectId, parse_commit};
+use crate::index::{index_file_mtime, Index, IndexEntry, MODE_TREE};
+use crate::objects::{parse_commit, ObjectId};
 use crate::path_icase::paths_equal;
 use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
 use crate::porcelain::checkout::remove_empty_parent_dirs;
 use crate::repo::Repository;
-use crate::state::{HeadState, resolve_head};
+use crate::state::{resolve_head, HeadState};
 
 /// Options for [`remove_paths`].
 #[derive(Debug, Clone, Default)]
@@ -965,11 +965,11 @@ mod destination_exists_tests {
 mod index_lock_transaction_tests {
     use std::fs;
 
-    use crate::porcelain::add::{StageOptions, stage};
+    use crate::porcelain::add::{stage, StageOptions};
     use crate::progress::NullProgress;
-    use crate::repo::{Repository, init_repository, set_test_inject_index_write_fail};
+    use crate::repo::{init_repository, set_test_inject_index_write_fail, Repository};
 
-    use super::{RemoveOptions, move_path, remove_paths};
+    use super::{move_path, remove_paths, RemoveOptions};
 
     fn init_repo(root: &std::path::Path) -> Repository {
         init_repository(root, false, "main", None, Default::default()).expect("init")

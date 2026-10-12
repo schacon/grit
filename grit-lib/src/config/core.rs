@@ -2033,11 +2033,12 @@ impl ConfigSet {
             .parallelism())
     }
 
-    /// Like [`Self::try_pack_index_parallelism`] but panics when `pack.threads` is invalid.
+    /// Like [`Self::try_pack_index_parallelism`], but an invalid `pack.threads`
+    /// falls back to the default (all available cores) instead of an error.
     #[must_use]
     pub fn pack_index_parallelism(&self) -> crate::parallel::Parallelism {
         self.try_pack_index_parallelism()
-            .expect("invalid pack.threads config")
+            .unwrap_or_else(|_| crate::parallel::Parallelism::resolve(None))
     }
 
     /// Load config for `git_dir` (if any) and resolve [`crate::hash::Parallelism`] for index-pack.

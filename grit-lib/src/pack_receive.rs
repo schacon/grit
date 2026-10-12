@@ -240,44 +240,6 @@ impl TempPackReceive {
         self.seen_pack
     }
 
-    pub(crate) fn file_mut(&mut self) -> &mut dyn Write {
-        &mut self.file
-    }
-
-    pub(crate) fn mark_seen_pack(&mut self, seen: bool) {
-        if seen {
-            self.seen_pack = true;
-        }
-    }
-
-    pub(crate) fn read_sideband_pack_tail(
-        &mut self,
-        r: &mut dyn Read,
-        progress: &mut dyn Progress,
-        pending: &mut Vec<u8>,
-        seen: &mut bool,
-    ) -> Result<()> {
-        let mut target = PackReceiveTarget::File(&mut self.file);
-        read_sideband_pack_tail(
-            r,
-            &mut target,
-            progress,
-            pending,
-            seen,
-            &mut self.sideband_payload,
-        )
-    }
-
-    pub(crate) fn write_raw(&mut self, data: &[u8]) -> Result<()> {
-        if !data.is_empty() {
-            self.file.write_all(data).map_err(Error::Io)?;
-            if data.windows(4).any(|w| w == b"PACK") {
-                self.seen_pack = true;
-            }
-        }
-        Ok(())
-    }
-
     /// Demux side-band from `reader` into this temp file.
     ///
     /// # Errors
@@ -358,44 +320,6 @@ impl MemoryPackReceive {
         }
     }
 
-    fn file_mut(&mut self) -> &mut dyn Write {
-        &mut self.buf
-    }
-
-    fn mark_seen_pack(&mut self, seen: bool) {
-        if seen {
-            self.seen_pack = true;
-        }
-    }
-
-    fn read_sideband_pack_tail(
-        &mut self,
-        r: &mut dyn Read,
-        progress: &mut dyn Progress,
-        pending: &mut Vec<u8>,
-        seen: &mut bool,
-    ) -> Result<()> {
-        let mut target = PackReceiveTarget::Memory(&mut self.buf);
-        read_sideband_pack_tail(
-            r,
-            &mut target,
-            progress,
-            pending,
-            seen,
-            &mut self.sideband_payload,
-        )
-    }
-
-    fn write_raw(&mut self, data: &[u8]) -> Result<()> {
-        if !data.is_empty() {
-            self.buf.extend_from_slice(data);
-            if data.windows(4).any(|w| w == b"PACK") {
-                self.seen_pack = true;
-            }
-        }
-        Ok(())
-    }
-
     fn finish(self) -> Result<Option<Vec<u8>>> {
         if !self.seen_pack || self.buf.len() < 12 {
             return Ok(None);
@@ -418,40 +342,6 @@ impl PackReceiveSink {
     /// Accumulate the pack in memory (fresh clone over HTTP).
     pub fn create_in_memory() -> Self {
         Self(PackReceiveInner::Memory(MemoryPackReceive::new()))
-    }
-
-    pub(crate) fn file_mut(&mut self) -> &mut dyn Write {
-        match &mut self.0 {
-            PackReceiveInner::File(f) => f.file_mut(),
-            PackReceiveInner::Memory(m) => m.file_mut(),
-        }
-    }
-
-    pub(crate) fn mark_seen_pack(&mut self, seen: bool) {
-        match &mut self.0 {
-            PackReceiveInner::File(f) => f.mark_seen_pack(seen),
-            PackReceiveInner::Memory(m) => m.mark_seen_pack(seen),
-        }
-    }
-
-    pub(crate) fn read_sideband_pack_tail(
-        &mut self,
-        r: &mut dyn Read,
-        progress: &mut dyn Progress,
-        pending: &mut Vec<u8>,
-        seen: &mut bool,
-    ) -> Result<()> {
-        match &mut self.0 {
-            PackReceiveInner::File(f) => f.read_sideband_pack_tail(r, progress, pending, seen),
-            PackReceiveInner::Memory(m) => m.read_sideband_pack_tail(r, progress, pending, seen),
-        }
-    }
-
-    pub(crate) fn write_raw(&mut self, data: &[u8]) -> Result<()> {
-        match &mut self.0 {
-            PackReceiveInner::File(f) => f.write_raw(data),
-            PackReceiveInner::Memory(m) => m.write_raw(data),
-        }
     }
 
     /// Demux a side-band-64k stream from `reader` into this sink.

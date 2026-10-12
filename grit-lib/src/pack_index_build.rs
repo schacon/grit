@@ -5,14 +5,14 @@
 //! Single-threaded builds inflate and hash each whole object once in pack order.
 
 use crate::error::{Error, Result};
-use crate::hash::{Parallelism, hash_object};
+use crate::hash::{hash_object, Parallelism};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_zlib::{decompress_zlib_at_index, skip_zlib_at_with_scratch};
 use crate::parallel::run_ordered_pool;
 use crate::progress::{ProgressPhase, ProgressSink};
 use crate::unpack_objects::{
-    PackIndexRecord, PackReader, apply_delta, decompress_zlib_at, type_code_to_kind,
+    apply_delta, decompress_zlib_at, type_code_to_kind, PackIndexRecord, PackReader,
 };
 use crate::zlib_inflate::ZlibInflateScratch;
 use std::borrow::Cow;
@@ -405,12 +405,16 @@ impl WholeHashQueue {
     }
 
     fn finish_scan(&self) {
+        // Set the flag under the queue lock: a worker that saw `scan_done == false`
+        // still holds the lock until `wait` parks it, so the notify cannot be lost.
+        let _guard = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         self.scan_done.store(true, Ordering::Release);
         self.jobs_added.notify_all();
     }
 }
 
 /// Scan the pack while worker threads inflate+hash each whole object as soon as it is discovered.
+#[allow(clippy::too_many_arguments)]
 fn scan_and_hash_whole_slots_overlapped(
     pack: &[u8],
     header: &PackHeader,
@@ -677,6 +681,7 @@ fn hash_whole_slot_with_data(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_ofs_delta(
     pack: &[u8],
     rd: &mut PackReader<'_>,
@@ -708,6 +713,7 @@ fn push_ofs_delta(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_ref_delta(
     pack: &[u8],
     rd: &mut PackReader<'_>,

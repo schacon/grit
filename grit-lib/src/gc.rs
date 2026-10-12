@@ -474,7 +474,11 @@ mod update_refs_tests {
         }
 
         let gate = refs::new_ref_store_batch_pause_gate();
-        refs::set_test_inject_ref_store_batch_pause_after_apply(0, Some(Arc::clone(&gate)));
+        refs::set_test_inject_ref_store_batch_pause_after_apply(
+            0,
+            &git_dir,
+            Some(Arc::clone(&gate)),
+        );
 
         let updates = vec![
             RefTransactionItem {
@@ -525,7 +529,7 @@ mod update_refs_tests {
             c2
         );
 
-        refs::set_test_inject_ref_store_batch_pause_after_apply(0, None);
+        refs::set_test_inject_ref_store_batch_pause_after_apply(0, &git_dir, None);
     }
 
     #[test]
@@ -585,7 +589,11 @@ mod update_refs_tests {
         let c1 = rev_parse(&repo, "HEAD");
 
         let gate = refs::new_ref_store_batch_pause_gate();
-        refs::set_test_inject_ref_store_batch_pause_after_apply(0, Some(Arc::clone(&gate)));
+        refs::set_test_inject_ref_store_batch_pause_after_apply(
+            0,
+            &git_dir,
+            Some(Arc::clone(&gate)),
+        );
 
         let updates = vec![
             RefTransactionItem {
@@ -633,6 +641,6 @@ mod update_refs_tests {
         assert!(crate::refs::resolve_ref(&git_dir, "refs/heads/conflict").is_ok());
         assert!(crate::refs::resolve_ref(&git_dir, "refs/heads/conflict/child").is_err());
 
-        refs::set_test_inject_ref_store_batch_pause_after_apply(0, None);
+        refs::set_test_inject_ref_store_batch_pause_after_apply(0, &git_dir, None);
     }
 }

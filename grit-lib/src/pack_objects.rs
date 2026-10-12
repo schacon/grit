@@ -117,7 +117,7 @@ impl PackBuildOptions {
 }
 
 /// Extended options for [`PackObjects`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PackObjectsOptions {
     /// Core pack-objects behaviour flags.
     pub build: PackBuildOptions,
@@ -125,16 +125,6 @@ pub struct PackObjectsOptions {
     pub search_threads: Option<usize>,
     /// Override parallel pack-write workers (`None` = resolve [`crate::parallel::ParallelOp::PackWrite`] / `pack.threads` from the repo config attached to the [`Odb`]).
     pub write_threads: Option<usize>,
-}
-
-impl Default for PackObjectsOptions {
-    fn default() -> Self {
-        Self {
-            build: PackBuildOptions::default(),
-            search_threads: None,
-            write_threads: None,
-        }
-    }
 }
 
 impl From<PackBuildOptions> for PackObjectsOptions {
@@ -532,19 +522,6 @@ pub fn build_pack_from_send_list_with_parallel_threads(
         search_threads,
     )?;
     crate::pack_delta::serialize_pack_with_deltas(odb, &plan.entries, opts, write_threads)
-}
-
-/// Object list for a local fetch (remote source, local have boundary).
-pub(crate) fn send_list_for_local_fetch(
-    source_odb: &Odb,
-    have_odb: &Odb,
-    wants: &[ObjectId],
-    haves: &[ObjectId],
-    source_shallow: &HashSet<ObjectId>,
-    have_shallow: &HashSet<ObjectId>,
-) -> Result<Vec<ObjectId>> {
-    let have_closure = reachable_closure(have_odb, haves, &HashSet::new(), true, have_shallow)?;
-    collect_reachable_excluding(source_odb, wants, &have_closure, false, source_shallow)
 }
 
 /// Build a pack for local fetch: enumerate haves on `have_odb`, read payloads from `source_odb`.

@@ -15,13 +15,7 @@ pub(crate) struct RenameLimit {
     max: Option<NonZeroUsize>,
 }
 
-impl RenameLimit {
-    /// Side length of the maximum inexact rename matrix Git will build (`limit²` cells).
-    #[must_use]
-    pub(crate) fn max_side(self) -> Option<usize> {
-        self.max.map(NonZeroUsize::get)
-    }
-}
+impl RenameLimit {}
 
 /// Resolve `diff.renameLimit` the way Git does for inexact rename/copy matrices.
 #[must_use]
@@ -34,7 +28,7 @@ pub(crate) fn parse_rename_limit(config: &ConfigSet) -> RenameLimit {
         Some(n) if n <= 0 => RenameLimit { max: None },
         Some(n) => usize::try_from(n)
             .ok()
-            .and_then(|u| NonZeroUsize::new(u))
+            .and_then(NonZeroUsize::new)
             .map(|nz| RenameLimit { max: Some(nz) })
             .unwrap_or(RenameLimit { max: None }),
         None => RenameLimit {

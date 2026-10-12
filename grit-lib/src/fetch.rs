@@ -1392,7 +1392,6 @@ pub fn fetch_remote(
                     threads: index_threads,
                     merged_config: Some(pack_config),
                     environment: opts.environment.clone(),
-                    ..Default::default()
                 },
                 Some(progress),
             )?;

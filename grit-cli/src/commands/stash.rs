@@ -342,7 +342,7 @@ fn stash_oid_at(repo: &Repository, n: usize) -> Result<grit_lib::objects::Object
         .into_iter()
         .find(|e| e.index == n)
         .map(|e| e.oid)
-        .ok_or_else(|| Error::StashNotFound { n })
+        .ok_or(Error::StashNotFound { n })
         .map_err(map_stash_error)
 }
 

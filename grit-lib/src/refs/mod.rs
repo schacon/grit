@@ -1341,32 +1341,6 @@ impl PackedRefs {
         Ok(Self { map })
     }
 
-    /// Validate the full `packed-refs` file but retain only entries listed in `names`.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::load`].
-    pub(crate) fn load_for_ref_names(git_dir: &Path, names: &HashSet<String>) -> Result<Self> {
-        if names.is_empty() {
-            return Ok(Self {
-                map: HashMap::new(),
-            });
-        }
-        let store = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
-        let packed_path = store::paths::packed_refs_path(&store);
-        let data = match fs::read(&packed_path) {
-            Ok(d) => d,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    map: HashMap::new(),
-                })
-            }
-            Err(e) => return Err(Error::Io(e)),
-        };
-        let map = parse_packed_refs_to_map_with_names(&packed_path, &data, names)?;
-        Ok(Self { map })
-    }
-
     /// The packed value recorded for `refname`, if any.
     #[must_use]
     pub fn get(&self, refname: &str) -> Option<ObjectId> {
@@ -2192,10 +2166,12 @@ mod ref_store_batch_pause_inject {
     }
 
     // hygiene: test-only ref-store batch commit pause injection
-    static PAUSE_AFTER_REF_WRITE: OnceLock<Mutex<Option<(usize, std::sync::Arc<PauseGate>)>>> =
-        OnceLock::new();
+    /// Armed pause: ref index, the repository it applies to, and the gate.
+    pub type PauseSlot = Option<(usize, std::path::PathBuf, std::sync::Arc<PauseGate>)>;
 
-    pub fn pause_slot() -> &'static Mutex<Option<(usize, std::sync::Arc<PauseGate>)>> {
+    static PAUSE_AFTER_REF_WRITE: OnceLock<Mutex<PauseSlot>> = OnceLock::new();
+
+    pub fn pause_slot() -> &'static Mutex<PauseSlot> {
         PAUSE_AFTER_REF_WRITE.get_or_init(|| Mutex::new(None))
     }
 }
@@ -2214,14 +2190,18 @@ pub fn new_ref_store_batch_pause_gate() -> RefStoreBatchPauseGate {
 }
 
 /// Test-only: pause files ref-store batch commit after persisting the ref at `apply_index` (0-based).
+///
+/// Only ref stores for `git_dir` pause, so tests running in parallel against
+/// other repositories are unaffected.
 #[cfg(test)]
 pub fn set_test_inject_ref_store_batch_pause_after_apply(
     apply_index: usize,
+    git_dir: &Path,
     gate: Option<RefStoreBatchPauseGate>,
 ) {
     *ref_store_batch_pause_inject::pause_slot()
         .lock()
-        .unwrap_or_else(|e| e.into_inner()) = gate.map(|g| (apply_index, g));
+        .unwrap_or_else(|e| e.into_inner()) = gate.map(|g| (apply_index, git_dir.to_path_buf(), g));
 }
 
 #[cfg(test)]
@@ -2250,26 +2230,29 @@ pub(crate) fn ref_store_batch_pause_test_scope() -> RefStoreBatchPauseTestScope 
         "ref_store_batch_pause_test_scope must not nest"
     );
     serial.holder = Some(std::thread::current().id());
-    set_test_inject_ref_store_batch_pause_after_apply(0, None);
+    set_test_inject_ref_store_batch_pause_after_apply(0, Path::new(""), None);
     RefStoreBatchPauseTestScope { _serial: serial }
 }
 
 #[cfg(test)]
 impl Drop for RefStoreBatchPauseTestScope {
     fn drop(&mut self) {
-        set_test_inject_ref_store_batch_pause_after_apply(0, None);
+        set_test_inject_ref_store_batch_pause_after_apply(0, Path::new(""), None);
         self._serial.holder = None;
     }
 }
 
 #[cfg(test)]
-pub(crate) fn test_ref_store_batch_pause_after_ref_write(idx: usize) {
+pub(crate) fn test_ref_store_batch_pause_after_ref_write(idx: usize, git_dir: &Path) {
     let slot = ref_store_batch_pause_inject::pause_slot()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if let Some((target, gate)) = slot {
-        if idx != target {
+    if let Some((target, target_dir, gate)) = slot {
+        let same_repo = |a: &Path, b: &Path| {
+            a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+        };
+        if idx != target || !same_repo(git_dir, &target_dir) {
             return;
         }
         let mut wait = gate.wait.lock().unwrap_or_else(|e| e.into_inner());
@@ -2282,7 +2265,7 @@ pub(crate) fn test_ref_store_batch_pause_after_ref_write(idx: usize) {
 }
 
 #[cfg(not(test))]
-pub(crate) fn test_ref_store_batch_pause_after_ref_write(_idx: usize) {}
+pub(crate) fn test_ref_store_batch_pause_after_ref_write(_idx: usize, _git_dir: &Path) {}
 
 /// Loose branch ref lock held between CAS validation and the ref file commit.
 ///
@@ -2475,9 +2458,8 @@ fn finish_branch_commit_ref_lock_files(
         let mut file = fs::OpenOptions::new().write(true).open(&lock.lock_path)?;
         file.write_all(content.as_bytes())?;
     }
-    fs::rename(&lock.lock_path, &path).map_err(|err| {
+    fs::rename(&lock.lock_path, &path).inspect_err(|_| {
         abort_loose_ref_lock(&lock.lock_path);
-        err
     })?;
     Ok(())
 }

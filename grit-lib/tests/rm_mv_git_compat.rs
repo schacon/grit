@@ -4,9 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::porcelain::paths::{RemoveOptions, move_path, remove_paths};
+use grit_lib::porcelain::paths::{move_path, remove_paths, RemoveOptions};
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{WriteTreeFlags, cache_tree_fully_valid, write_tree_update_index};
+use grit_lib::write_tree::{cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git;
 
 fn git_porcelain(repo: &std::path::Path) -> String {

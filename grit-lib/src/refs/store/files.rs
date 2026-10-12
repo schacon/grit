@@ -453,17 +453,15 @@ impl FilesRefStore {
                 actual,
             });
         }
-        if update.new_value.is_some() && actual_ref.is_none() {
-            if !batch_differs {
-                let skip = HashSet::new();
-                if let Err(reason) = crate::refs::verify_refname_available_for_create(
-                    &self.git_dir,
-                    &update.name,
-                    batch_extras,
-                    &skip,
-                ) {
-                    return Err(reason.into());
-                }
+        if update.new_value.is_some() && actual_ref.is_none() && !batch_differs {
+            let skip = HashSet::new();
+            if let Err(reason) = crate::refs::verify_refname_available_for_create(
+                &self.git_dir,
+                &update.name,
+                batch_extras,
+                &skip,
+            ) {
+                return Err(reason.into());
             }
         }
         Ok(())
@@ -589,7 +587,7 @@ impl FilesRefStore {
             }
 
             running = next;
-            crate::refs::test_ref_store_batch_pause_after_ref_write(idx);
+            crate::refs::test_ref_store_batch_pause_after_ref_write(idx, &self.common_dir);
         }
 
         for name in before

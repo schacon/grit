@@ -7,7 +7,6 @@ mod core;
 
 pub use core::*;
 
-/// Loose and composite object database ([`crate::odb`]).
 pub mod odb {
     //! Loose and composite object database ([`crate::odb`]).
     pub use crate::odb::builder;
@@ -15,32 +14,27 @@ pub mod odb {
     pub use crate::odb::*;
 }
 
-/// Pack files, indexing, and object enumeration ([`crate::pack`]).
 pub mod pack {
     //! Canonical re-export of [`crate::pack`].
     pub use crate::pack::*;
 }
 
-/// Multi-pack index ([`crate::midx`]).
 pub mod midx {
     //! Canonical re-export of [`crate::midx`].
     pub use crate::midx::*;
 }
 
-/// Object hashing ([`crate::hash`]).
 pub mod hash {
     //! Canonical re-export of [`crate::hash`].
     pub use crate::hash::*;
 }
 
-/// Commit-graph files ([`crate::commit_graph_file`], [`crate::commit_graph_write`]).
 pub mod commit_graph {
     //! Commit-graph read/write ([`crate::commit_graph_file`], [`crate::commit_graph_write`]).
     pub use crate::commit_graph_file::*;
     pub use crate::commit_graph_write::*;
 }
 
-/// Pack and MIDX reachability bitmaps ([`crate::pack_bitmap`], [`crate::bitmap_walk`]).
 pub mod bitmap {
     //! Pack/MIDX bitmap decode and walks ([`crate::pack_bitmap`], [`crate::bitmap_walk`]).
     pub use crate::bitmap_walk::*;

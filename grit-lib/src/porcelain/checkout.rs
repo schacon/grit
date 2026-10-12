@@ -710,6 +710,7 @@ pub(crate) fn worktree_bytes_from_index_blob(
     .map_err(Error::from)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_delayed_checkouts(
     repo: &Repository,
     rules: &WorktreeRules,

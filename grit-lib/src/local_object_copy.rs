@@ -199,6 +199,10 @@ mod tests {
 
     fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .current_dir(dir)
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")

@@ -18,7 +18,7 @@ use crate::markdown;
 use crate::output::{HumanRender, MarkdownRender};
 use grit_lib::fetch::NoProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, ListRefsOptions, Remote, DEFAULT_REMOTE};
-use grit_lib::transfer::{PushOptions, resolve_push_delete_ref};
+use grit_lib::transfer::{resolve_push_delete_ref, PushOptions};
 use std::collections::HashSet;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
@@ -79,15 +79,11 @@ pub fn run(
 
     let (branch_label, remote, specs) = if !delete_refs.is_empty() {
         let remote = configured_remote_for_push(&repo, &config, remote_override);
-        let remote_handle = Remote::from_config(&config, &remote)
-            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        let remote_handle =
+            Remote::from_config(&config, &remote).map_err(|e| anyhow::Error::msg(e.to_string()))?;
         let factory = DefaultHttpClientFactory;
         let advertised = remote_handle
-            .list_refs(
-                Some(&repo),
-                &ListRefsOptions::default(),
-                Some(&factory),
-            )
+            .list_refs(Some(&repo), &ListRefsOptions::default(), Some(&factory))
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
         let remote_names: HashSet<String> = advertised
             .into_iter()

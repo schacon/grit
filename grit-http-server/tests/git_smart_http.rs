@@ -163,7 +163,7 @@ fn system_git_clone_fetch_v0_v2_and_push_over_grit_http_server() {
 
     let clone_dir = tmp.path().join("clone");
     git(
-        &tmp.path(),
+        tmp.path(),
         &[
             "clone",
             "-q",
@@ -259,7 +259,7 @@ fn global_receive_deny_non_fast_forward_rejects_force_push() {
     let url = format!("http://127.0.0.1:{port}/project.git");
     let clone_dir = tmp.path().join("clone");
     git(
-        &tmp.path(),
+        tmp.path(),
         &[
             "clone",
             "-q",

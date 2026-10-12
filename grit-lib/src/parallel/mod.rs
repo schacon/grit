@@ -8,7 +8,7 @@ mod map;
 mod policy;
 mod pool;
 
-pub(crate) use pool::{run_ordered_pool, run_ordered_pool_with_local};
+pub(crate) use pool::run_ordered_pool;
 
 pub use map::{
     par_map, parallel_worthwhile, try_par_map, try_par_map_force, try_par_map_with_local,
@@ -87,7 +87,6 @@ pub fn index_parallelism_from_config(config: &crate::config::ConfigSet) -> Paral
 ///
 /// Returns `Some(n)` only when `explicit` or a [`ThreadPolicy::threads_override`] is set.
 /// Otherwise returns `None` so index-pack reads `pack.threads` from the repository config.
-#[must_use]
 pub fn index_pack_threads_for_ingest(
     policy: ThreadPolicy,
     config: &crate::config::ConfigSet,

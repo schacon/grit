@@ -14,18 +14,14 @@ fn config_from(text: &str) -> ConfigSet {
 
 #[test]
 fn resolve_fetch_prune_cli_overrides_config() {
-    let config = config_from(
-        "[fetch]\n\tprune = true\n[remote \"origin\"]\n\tprune = true\n",
-    );
+    let config = config_from("[fetch]\n\tprune = true\n[remote \"origin\"]\n\tprune = true\n");
     assert!(!resolve_fetch_prune(&config, "origin", Some(false)).expect("resolve"));
     assert!(resolve_fetch_prune(&config, "origin", Some(true)).expect("resolve"));
 }
 
 #[test]
 fn resolve_fetch_prune_remote_before_fetch() {
-    let config = config_from(
-        "[fetch]\n\tprune = false\n[remote \"upstream\"]\n\tprune = true\n",
-    );
+    let config = config_from("[fetch]\n\tprune = false\n[remote \"upstream\"]\n\tprune = true\n");
     assert!(resolve_fetch_prune(&config, "upstream", None).expect("resolve"));
     assert!(!resolve_fetch_prune(&config, "origin", None).expect("resolve"));
 }

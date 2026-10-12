@@ -92,9 +92,7 @@ fn short_oid(full: &str) -> String {
 
 /// Strip trailing line terminators from blamed line text for display and JSON.
 fn normalize_blame_line_content(content: String) -> String {
-    content
-        .trim_end_matches(|c| c == '\n' || c == '\r')
-        .to_owned()
+    content.trim_end_matches(['\n', '\r']).to_owned()
 }
 
 pub fn run(file: String, rev: Option<String>, line_range: Option<String>) -> Result<BlameOutcome> {

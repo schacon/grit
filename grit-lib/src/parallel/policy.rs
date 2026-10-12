@@ -273,21 +273,11 @@ fn parse_pack_threads(config: &ConfigSet) -> Result<Option<usize>, ConfigError> 
         ))),
         Some(Ok(0)) => Ok(None),
         Some(Ok(n)) => Ok(Some(usize::try_from(n).unwrap_or(1))),
-        Some(Err(_)) | None => {
-            if matches!(config.get_bool(KEY), Some(Ok(_))) {
-                Err(ConfigError::BadNumericValue {
-                    key: KEY.into(),
-                    value: trimmed.into(),
-                    reason: BadNumericSource::InvalidUnit,
-                })
-            } else {
-                Err(ConfigError::BadNumericValue {
-                    key: KEY.into(),
-                    value: trimmed.into(),
-                    reason: BadNumericSource::InvalidUnit,
-                })
-            }
-        }
+        Some(Err(_)) | None => Err(ConfigError::BadNumericValue {
+            key: KEY.into(),
+            value: trimmed.into(),
+            reason: BadNumericSource::InvalidUnit,
+        }),
     }
 }
 
@@ -470,7 +460,9 @@ mod tests {
             config_from("[checkout]\n\tthresholdForParallelism = -5\n[checkout]\n\tworkers = 4\n");
         let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
         assert!(!pool_worthwhile(0, 0, opts));
-        assert!(pool_worthwhile(100, 0, opts));
+        // Threads are capped at the machine's cores (Miri reports one), and a
+        // single thread never uses the pool.
+        assert_eq!(pool_worthwhile(100, 0, opts), opts.threads.get() > 1);
     }
 
     #[test]
@@ -507,6 +499,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "creates a temp dir; Miri isolation blocks mkdir")]
     fn pack_index_parallelism_for_git_dir_matches_config() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("config"), "[pack]\n\tthreads = 3\n").expect("write config");

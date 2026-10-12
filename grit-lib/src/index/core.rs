@@ -123,6 +123,7 @@ pub(crate) fn metadata_times(meta: &fs::Metadata) -> ((u32, u32), (u32, u32)) {
     }
 }
 
+#[cfg(not(unix))]
 #[must_use]
 fn filetime_to_index_pair(ft: filetime::FileTime) -> (u32, u32) {
     let secs = ft.unix_seconds();
@@ -1353,23 +1354,6 @@ impl Index {
         self.write_to_path_with_config_and_lock_policy(path, skip_hash, config, None, policy)
     }
 
-    /// Persist the index using an already-held [`IndexLock`] from [`IndexLock::acquire`].
-    pub(crate) fn write_to_path_with_config_and_lock(
-        &self,
-        path: &Path,
-        skip_hash: bool,
-        config: Option<&ConfigSet>,
-        existing_lock: Option<&mut IndexLock>,
-    ) -> Result<()> {
-        self.write_to_path_with_config_and_lock_policy(
-            path,
-            skip_hash,
-            config,
-            existing_lock,
-            crate::parallel::ThreadPolicy::default(),
-        )
-    }
-
     pub(crate) fn write_to_path_with_config_and_lock_policy(
         &self,
         path: &Path,
@@ -1508,6 +1492,7 @@ impl Index {
         Ok(body)
     }
 
+    #[cfg(test)]
     /// Serialise the index body (without trailing checksum) into `out`.
     ///
     /// Callers must have sorted entries when using format 4 (path compression depends on order).
@@ -1783,46 +1768,6 @@ impl Index {
     /// Drop byte-for-byte `FSMN` preservation after index entries change.
     fn touch_fsmonitor_after_entry_change(&mut self) {
         self.invalidate_fsmonitor_bitmap();
-    }
-
-    /// Write the optional `FSMN` extension (`write_fsmonitor_extension`).
-    fn write_fsmonitor_extension(&self, out: &mut Vec<u8>) -> Result<()> {
-        if let Some(raw) = &self.fsmonitor_raw_extension {
-            if self.fsmonitor_raw_still_valid() {
-                out.extend_from_slice(&INDEX_EXT_FSMONITOR.to_be_bytes());
-                out.extend_from_slice(&(raw.len() as u32).to_be_bytes());
-                out.extend_from_slice(raw);
-                return Ok(());
-            }
-        }
-
-        let Some(token) = &self.fsmonitor_last_update else {
-            return Ok(());
-        };
-        let dirty = self
-            .fsmonitor_dirty
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| self.build_fsmonitor_dirty_from_entries());
-        if dirty.bit_size > self.fsmonitor_active_entry_count() {
-            return Ok(());
-        }
-
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&FSMONITOR_EXT_VERSION2.to_be_bytes());
-        payload.extend_from_slice(token.as_bytes());
-        payload.push(0);
-        let ewah_size_fixup = payload.len();
-        payload.extend_from_slice(&0u32.to_be_bytes());
-        let ewah_start = payload.len();
-        dirty.serialize(&mut payload);
-        let ewah_size = (payload.len() - ewah_start) as u32;
-        payload[ewah_size_fixup..ewah_size_fixup + 4].copy_from_slice(&ewah_size.to_be_bytes());
-
-        out.extend_from_slice(&INDEX_EXT_FSMONITOR.to_be_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        out.extend_from_slice(&payload);
-        Ok(())
     }
 
     /// Read-only view of index entries.

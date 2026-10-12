@@ -200,6 +200,7 @@ fn needs_head_tree_entries(restore_staged: bool, source: RestoreSource) -> bool 
     restore_staged && matches!(source, RestoreSource::Index)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_matched_paths(
     index: &Index,
     head_entries: &[FlatTreeEntry],
@@ -498,6 +499,7 @@ fn worktree_index_entry_up_to_date(
     Ok(wt_oid == entry.oid)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn restore_worktree_blob_from_index(
     repo: &Repository,
     work_tree: &Path,
@@ -605,14 +607,6 @@ fn index_entry_from_flat(path: &str, src: &FlatTreeEntry, size: u32) -> IndexEnt
         flags_extended: None,
         path: path.as_bytes().to_vec(),
         base_index_pos: 0,
-    }
-}
-
-fn index_entry_as_flat(entry: &IndexEntry) -> FlatTreeEntry {
-    FlatTreeEntry {
-        path: String::from_utf8_lossy(&entry.path).into_owned(),
-        mode: entry.mode,
-        oid: entry.oid,
     }
 }
 

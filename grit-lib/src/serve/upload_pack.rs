@@ -1,7 +1,5 @@
 //! Serving fetches and clones (`upload-pack`).
 
-use std::collections::{HashSet, VecDeque};
-use std::io::{Read, Write};
 use super::shallow_upload::{compute_shallow_response, ShallowRequest, ShallowResponse};
 use super::upload_pack_policy::{
     resolve_want_ref, validate_wants, validate_wants_filtered, UploadPackPolicy,
@@ -16,6 +14,8 @@ use crate::pack_objects::build_pack_for_upload;
 use crate::repo::Repository;
 use crate::rev_list::ObjectFilter;
 use crate::transfer::PackBuildOptions;
+use std::collections::{HashSet, VecDeque};
+use std::io::{Read, Write};
 
 /// Capabilities offered in a v0/v1 advertisement, before the per-repository ones.
 const V0_CAPABILITIES: &[&str] = &[

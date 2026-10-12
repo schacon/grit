@@ -211,6 +211,7 @@ fn bundle_branch_tip_matches(
         .any(|(name, oid)| name == &full && *oid == head_oid)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn complete_bundle_fetch(
     local_git_dir: &Path,
     local_odb: &crate::odb::Odb,

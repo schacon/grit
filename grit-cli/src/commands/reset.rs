@@ -52,13 +52,12 @@ impl MarkdownRender for ResetCliOutcome {
     }
 }
 
-pub fn run(rev: Option<String>, soft: bool, mixed: bool, hard: bool) -> Result<ResetCliOutcome> {
+/// `--mixed` is the default mode; the flag is accepted so Git habits keep working.
+pub fn run(rev: Option<String>, soft: bool, _mixed: bool, hard: bool) -> Result<ResetCliOutcome> {
     let mode = if soft {
         ResetMode::Soft
     } else if hard {
         ResetMode::Hard
-    } else if mixed {
-        ResetMode::Mixed
     } else {
         ResetMode::Mixed
     };

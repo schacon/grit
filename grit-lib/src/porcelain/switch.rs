@@ -136,7 +136,9 @@ fn resolve_unique_dwim_switch(repo: &Repository, spec: &str) -> Result<Option<Sw
     if hits.len() != 1 {
         return Ok(None);
     }
-    let (refname, oid) = hits.into_iter().next().expect("one hit");
+    let Some((refname, oid)) = hits.into_iter().next() else {
+        return Ok(None);
+    };
     if let Some(short) = refname.strip_prefix("refs/heads/") {
         return Ok(Some(SwitchMode::Existing {
             branch: short.to_owned(),

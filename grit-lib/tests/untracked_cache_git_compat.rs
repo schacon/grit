@@ -101,7 +101,11 @@ fn t7063_untracked_cache_reused_by_git_status() {
         Some(0),
         "warm status should not invalidate gitignore after grit populated UNTR"
     );
-    assert_eq!(stable.len(), before.len(), "UNTR payload size stable after grit write");
+    assert_eq!(
+        stable.len(),
+        before.len(),
+        "UNTR payload size stable after grit write"
+    );
 
     fsck_strict(root);
 }

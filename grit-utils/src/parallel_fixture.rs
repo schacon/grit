@@ -369,11 +369,11 @@ pub fn worktree_non_git_path_count(repo: &Path) -> Result<usize> {
         return Ok(0);
     }
     let mut count = 0usize;
-    count_worktree_paths(repo, repo, &mut count)?;
+    count_worktree_paths(repo, &mut count)?;
     Ok(count)
 }
 
-fn count_worktree_paths(base: &Path, dir: &Path, count: &mut usize) -> Result<()> {
+fn count_worktree_paths(dir: &Path, count: &mut usize) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -381,7 +381,7 @@ fn count_worktree_paths(base: &Path, dir: &Path, count: &mut usize) -> Result<()
             continue;
         }
         if path.is_dir() {
-            count_worktree_paths(base, &path, count)?;
+            count_worktree_paths(&path, count)?;
         } else {
             *count += 1;
         }

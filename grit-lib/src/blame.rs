@@ -1036,6 +1036,7 @@ impl<'a> BlameSession<'a> {
         Ok(resolved)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn parent_child_line_maps(
         &mut self,
         parent_oid: ObjectId,

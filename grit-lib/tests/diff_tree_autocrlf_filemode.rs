@@ -138,15 +138,9 @@ fn explicit_index_chmod_reported_when_filemode_false() {
     )
     .expect("config");
 
-    let diff = diff_tree_to_worktree_with_git_dir(
-        &odb,
-        Some(&tree_oid),
-        wt,
-        &git_dir,
-        &index,
-        Some(&cfg),
-    )
-    .expect("diff");
+    let diff =
+        diff_tree_to_worktree_with_git_dir(&odb, Some(&tree_oid), wt, &git_dir, &index, Some(&cfg))
+            .expect("diff");
 
     assert_eq!(
         diff.len(),

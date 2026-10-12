@@ -742,6 +742,10 @@ mod tests {
         fs::create_dir_all(&main).unwrap();
         let git = |args: &[&str]| {
             let out = Command::new("git")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
                 .current_dir(&main)
                 .args(args)
                 .output()
@@ -905,6 +909,10 @@ mod tests {
         fs::create_dir_all(&main).unwrap();
         let git = |args: &[&str]| {
             assert!(Command::new("git")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
                 .current_dir(&main)
                 .args(args)
                 .output()
@@ -956,6 +964,10 @@ mod tests {
         fs::create_dir_all(&main).unwrap();
         let git = |args: &[&str]| {
             assert!(Command::new("git")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
                 .current_dir(&main)
                 .args(args)
                 .output()

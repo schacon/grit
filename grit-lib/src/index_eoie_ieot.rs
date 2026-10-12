@@ -103,10 +103,7 @@ pub(crate) fn record_offset_table(config: Option<&ConfigSet>) -> bool {
 
 #[must_use]
 fn index_threads_explicitly_non_serial(config: &ConfigSet) -> bool {
-    match configured_index_threads_value(config) {
-        Some(v) if v != 1 => true,
-        _ => false,
-    }
+    matches!(configured_index_threads_value(config), Some(v) if v != 1)
 }
 
 fn configured_index_threads_value(config: &ConfigSet) -> Option<i64> {
@@ -247,7 +244,7 @@ fn parse_ieot_payload(payload: &[u8]) -> Option<IeotTable> {
         return None;
     }
     let rest = &payload[4..];
-    if rest.len() % 8 != 0 {
+    if !rest.len().is_multiple_of(8) {
         return None;
     }
     let nr = rest.len() / 8;
@@ -255,7 +252,7 @@ fn parse_ieot_payload(payload: &[u8]) -> Option<IeotTable> {
         return None;
     }
     let mut entries = Vec::with_capacity(nr);
-    for chunk in rest.chunks_exact(8) {
+    for chunk in rest.as_chunks::<8>().0 {
         let offset = u32::from_be_bytes(chunk[0..4].try_into().ok()?);
         let count = u32::from_be_bytes(chunk[4..8].try_into().ok()?);
         entries.push(IeotEntry { offset, nr: count });
@@ -488,36 +485,6 @@ pub(crate) fn write_ieot_payload(ieot: &IeotTable, out: &mut Vec<u8>) {
         out.extend_from_slice(&e.offset.to_be_bytes());
         out.extend_from_slice(&e.nr.to_be_bytes());
     }
-}
-
-pub(crate) fn write_eoie_payload(
-    extension_offset: usize,
-    body: &[u8],
-    eoie_start: usize,
-    hash_algo: HashAlgo,
-    out: &mut Vec<u8>,
-) {
-    out.extend_from_slice(&(extension_offset as u32).to_be_bytes());
-    if let Some(hash) = hash_extension_headers(body, extension_offset, eoie_start, hash_algo) {
-        out.extend_from_slice(&hash);
-    } else {
-        out.extend_from_slice(&vec![0u8; hash_algo.len()]);
-    }
-}
-
-pub(crate) fn index_write_thread_policy(
-    config: Option<&ConfigSet>,
-    policy: ThreadPolicy,
-) -> ThreadPolicy {
-    if policy.threads_override.is_some() {
-        return policy;
-    }
-    if let Some(cfg) = config {
-        if configured_index_threads_value(cfg).is_some() {
-            return policy;
-        }
-    }
-    policy
 }
 
 #[must_use]

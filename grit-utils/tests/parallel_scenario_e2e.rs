@@ -65,5 +65,4 @@ fn parallel_scenario_smoke_end_to_end() {
             scenario["id"]
         );
     }
-
 }

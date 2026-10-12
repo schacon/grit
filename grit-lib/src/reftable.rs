@@ -2677,7 +2677,7 @@ impl ReftableStack {
     /// compacted table layout stable for large `update-ref --stdin` batches.
     pub fn write_transaction(
         &mut self,
-        mut updates: Vec<ReftableTransactionUpdate>,
+        updates: Vec<ReftableTransactionUpdate>,
         opts: &WriteOptions,
     ) -> Result<()> {
         if updates.is_empty() {

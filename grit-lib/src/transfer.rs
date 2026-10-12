@@ -769,84 +769,6 @@ fn copy_objects_for_local_push(
     Ok(())
 }
 
-/// BFS over `roots` collecting every reachable object (commits, trees, blobs,
-/// tag targets) that is not in `exclude`, returned in discovery order with no
-/// duplicates.
-///
-/// Discovery order keeps commits before the trees/blobs they introduce, which
-/// is a reasonable, deterministic pack ordering.
-pub(crate) fn collect_reachable_excluding(
-    odb: &Odb,
-    roots: &[ObjectId],
-    exclude: &HashSet<ObjectId>,
-    skip_missing: bool,
-    shallow_grafts: &HashSet<ObjectId>,
-) -> Result<Vec<ObjectId>> {
-    let mut visited: HashSet<ObjectId> = HashSet::new();
-    let mut ordered: Vec<ObjectId> = Vec::new();
-    let mut queue: VecDeque<ObjectId> = VecDeque::new();
-
-    let enqueue = |oid: ObjectId,
-                   queue: &mut VecDeque<ObjectId>,
-                   visited: &mut HashSet<ObjectId>,
-                   ordered: &mut Vec<ObjectId>|
-     -> bool {
-        if exclude.contains(&oid) {
-            return false;
-        }
-        if visited.insert(oid) {
-            ordered.push(oid);
-            queue.push_back(oid);
-            true
-        } else {
-            false
-        }
-    };
-
-    for &root in roots {
-        enqueue(root, &mut queue, &mut visited, &mut ordered);
-    }
-
-    while let Some(oid) = queue.pop_front() {
-        let obj = match odb.read(&oid) {
-            Ok(o) => o,
-            // A root/have absent from this odb cannot be traversed; with
-            // `skip_missing` it simply contributes nothing (no descent), instead
-            // of failing the whole pack build.
-            Err(_) if skip_missing => continue,
-            Err(e) => return Err(e),
-        };
-        match obj.kind {
-            ObjectKind::Commit => {
-                let commit = parse_commit(&obj.data)?;
-                if !shallow_grafts.contains(&oid) {
-                    for parent in commit.parents {
-                        enqueue(parent, &mut queue, &mut visited, &mut ordered);
-                    }
-                }
-                enqueue(commit.tree, &mut queue, &mut visited, &mut ordered);
-            }
-            ObjectKind::Tree => {
-                for entry in parse_tree(&obj.data)? {
-                    // Skip submodule (gitlink) entries: the commit they name
-                    // lives in another object store and is not part of this pack.
-                    if entry.mode == 0o160000 {
-                        continue;
-                    }
-                    enqueue(entry.oid, &mut queue, &mut visited, &mut ordered);
-                }
-            }
-            ObjectKind::Tag => {
-                let tag = parse_tag(&obj.data)?;
-                enqueue(tag.object, &mut queue, &mut visited, &mut ordered);
-            }
-            ObjectKind::Blob => {}
-        }
-    }
-
-    Ok(ordered)
-}
-
 /// Like [`collect_reachable_excluding`], but treats every object already stored in
 /// `peer_odb` as a boundary (plus explicit `peer_boundary` tips). Used for local
 /// file fetch/push so incremental transfers do not walk full history from `haves`.
@@ -1740,7 +1662,6 @@ struct PushDecision {
 }
 
 /// Decide the status of a single [`PushRefSpec`] without mutating either repo.
-
 fn decide_push(
     spec: &PushRefSpec,
     local_odb: &Odb,
@@ -2329,6 +2250,10 @@ mod tests {
 
     fn git_ok(dir: &Path, args: &[&str]) -> bool {
         Command::new("git") // hygiene: git fixture comparison in cfg(test) module
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .current_dir(dir)
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")

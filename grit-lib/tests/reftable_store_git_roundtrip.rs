@@ -83,10 +83,7 @@ fn reftable_store_git_roundtrip() {
         if !git_refs.contains_key(&name) {
             continue;
         }
-        if !git_ok(
-            worktree,
-            &["reflog", "--format=%H %H %gs", &name],
-        ) {
+        if !git_ok(worktree, &["reflog", "--format=%H %H %gs", &name]) {
             continue;
         }
         let grit_log = {
@@ -119,23 +116,25 @@ fn reftable_store_git_roundtrip() {
     }
 
     // Git-written stack reads back equal through grit.
-    git(worktree, &["commit", "--allow-empty", "-q", "-m", "from-git-old"]);
+    git(
+        worktree,
+        &["commit", "--allow-empty", "-q", "-m", "from-git-old"],
+    );
     let oid_old: ObjectId = git(worktree, &["rev-parse", "HEAD"])
         .trim()
         .parse()
         .expect("from-git old");
-    git(worktree, &["commit", "--allow-empty", "-q", "-m", "from-git-new"]);
+    git(
+        worktree,
+        &["commit", "--allow-empty", "-q", "-m", "from-git-new"],
+    );
     let oid_new: ObjectId = git(worktree, &["rev-parse", "HEAD"])
         .trim()
         .parse()
         .expect("from-git new");
     git(
         worktree,
-        &[
-            "update-ref",
-            "refs/heads/from-git",
-            &oid_old.to_hex(),
-        ],
+        &["update-ref", "refs/heads/from-git", &oid_old.to_hex()],
     );
     git(
         worktree,
@@ -230,10 +229,7 @@ fn reftable_reflog_identity_with_digits_in_name_visible_to_git() {
         .expect("commit");
 
     assert!(
-        git_ok(
-            worktree,
-            &["reflog", "show", "-1", "refs/heads/digit-name"],
-        ),
+        git_ok(worktree, &["reflog", "show", "-1", "refs/heads/digit-name"],),
         "git must read grit-written reftable reflog"
     );
     let mut identity_line = String::new();

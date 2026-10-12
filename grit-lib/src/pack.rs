@@ -170,17 +170,6 @@ pub(crate) mod pack_cache {
         THREAD_WARM_EPOCH.set(new_epoch);
     }
 
-    /// Whether this thread's warmed TLS matches `objects_dir` (epoch + store identity).
-    pub(crate) fn thread_local_listing_trusted_for(objects_dir: &Path) -> bool {
-        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
-            return false;
-        }
-        let store = crate::pack_store::PackStore::active_for_reads();
-        PACK_DIR_LISTING_TRUSTED.get()
-            && THREAD_WARM_EPOCH.get() == store.cache_epoch()
-            && THREAD_WARM_STORE.get() == store_thread_local_key(&store)
-    }
-
     pub(crate) fn sync_thread_local_with_store(store: &crate::pack_store::PackStore) {
         if !crate::pack_store::PackStore::has_context() {
             return;
@@ -1562,7 +1551,7 @@ fn merge_sorted_index_entry_chunks(entries: &mut [(ObjectId, u64, u32)], chunk: 
             break;
         };
         cursors[ci] += 1;
-        merged.push(entries[idx].clone());
+        merged.push(entries[idx]);
     }
     entries.copy_from_slice(&merged);
 }

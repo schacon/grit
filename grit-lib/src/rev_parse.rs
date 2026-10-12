@@ -21,7 +21,7 @@ use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::ReflogEntry;
 use crate::refs;
-use crate::refs::store::{RawRef, RefStore as _};
+use crate::refs::store::RawRef;
 use crate::repo::Repository;
 use crate::rev_parse_error::{AmbiguousObjectHint, RevParseError};
 

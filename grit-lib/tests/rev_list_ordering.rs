@@ -13,8 +13,7 @@ use grit_lib::rev_list::{
 use support::{
     assert_rev_list_commits_match_git, build_commit_dag, commit_file, commit_labeled_with_dates,
     expand_token_for_rev_list, git, git_commit_graph_write, git_rev_list, git_rev_list_lines,
-    git_rev_parse,
-    grit_rev_list_commits_in_repo, open_grit_repo, HistoryRepo,
+    git_rev_parse, grit_rev_list_commits_in_repo, open_grit_repo, HistoryRepo,
 };
 
 fn topo_skew_dag(worktree: &Path) -> (ObjectId, HashMap<String, ObjectId>) {

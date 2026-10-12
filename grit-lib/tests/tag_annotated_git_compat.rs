@@ -11,7 +11,12 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
         .current_dir(dir)
         .output()
         .expect("git");
-    assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {:?}: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 

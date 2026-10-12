@@ -2507,7 +2507,6 @@ struct StagingHashJob {
     rel_path: String,
     file_path: PathBuf,
     entry: IndexEntry,
-    stat: crate::index::IndexStatFields,
     worktree_mode: u32,
     file_attrs: crate::crlf::FileAttrs,
 }
@@ -3210,7 +3209,6 @@ fn diff_index_to_worktree_inner(
                                 rel_path: path_str_ref.to_owned(),
                                 file_path,
                                 entry: ie.clone(),
-                                stat: crate::index::IndexStatFields::from_metadata(&meta),
                                 worktree_mode,
                                 file_attrs: file_attrs_for(path_str_ref),
                             });
@@ -5617,13 +5615,6 @@ fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
     Ok(odb.read(oid)?.data)
 }
 
-fn index_stage0_entry<'a>(index: &'a Index, rel_path: &str) -> Option<&'a IndexEntry> {
-    index
-        .entries
-        .iter()
-        .find(|e| e.stage() == 0 && e.path.as_slice() == rel_path.as_bytes())
-}
-
 /// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
 ///
 /// When `worktree` is set, worktree paths are normalized with the same attribute/filter rules as
@@ -5647,7 +5638,7 @@ fn read_new_side_bytes(
             path
         ))
     })?;
-    if let Some(wctx) = worktree {
+    if let Some(_wctx) = worktree {
         let file_path = root.join(path);
         let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
         let conv = crate::crlf::ConversionConfig::from_config(config);
@@ -5813,6 +5804,7 @@ fn prune_break_deletions_obviated_by_renames(entries: Vec<DiffEntry>) -> Vec<Dif
 /// # Errors
 ///
 /// Propagates object read failures while evaluating break scores.
+#[allow(clippy::too_many_arguments)]
 pub fn postprocess_diff_entries(
     odb: &Odb,
     entries: Vec<DiffEntry>,

@@ -253,14 +253,7 @@ fn pack_write_threads_byte_identical_delta_islands() {
         respect_islands: true,
         ..PackBuildOptions::default()
     };
-    assert_byte_identical_threads(
-        &odb,
-        &[tip_a, tip_b],
-        &[],
-        &opts,
-        "delta islands",
-        false,
-    );
+    assert_byte_identical_threads(&odb, &[tip_a, tip_b], &[], &opts, "delta islands", false);
 }
 
 fn build_sha256_delta_fixture() -> Option<(tempfile::TempDir, ObjectId)> {

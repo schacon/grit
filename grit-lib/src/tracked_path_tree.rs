@@ -4,8 +4,10 @@
 //! chain of intermediate directories), status and untracked walks can descend directly
 //! without listing the directory on disk.
 
+#[cfg(test)]
 use std::collections::BTreeSet;
 
+#[cfg(test)]
 /// Prefix for paths strictly under `rel_dir` (`""` when `rel_dir` is empty).
 #[must_use]
 pub(crate) fn directory_prefix(rel_dir: &str) -> String {
@@ -16,6 +18,7 @@ pub(crate) fn directory_prefix(rel_dir: &str) -> String {
     }
 }
 
+#[cfg(test)]
 /// Returns the sole next path component when every indexed path under `rel_dir` continues
 /// through the same subdirectory and none of them is a file directly in `rel_dir`.
 #[must_use]

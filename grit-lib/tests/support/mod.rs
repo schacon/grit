@@ -25,6 +25,7 @@ pub use history_harness::{
     grit_rev_list_object_set, open_grit_repo, ordering_from_git_args, rev_parse_many,
     skip_unless_git_at_least, symmetric_rev_list_specs, HistoryRepo,
 };
+pub use index_ext_harness::*;
 pub use index_harness::{
     assert_git_fsck_strict, assert_grit_index_matches_git_ls_files,
     assert_porcelain_v2_matches_git, assert_skip_worktree_matches_git,
@@ -37,7 +38,6 @@ pub use merge_harness::{
     grit_merge_result_tree, skip_merge_tree_git, CommitMergeLabels, GitMergeTreeOracle,
     GitUnmergedRow,
 };
-pub use index_ext_harness::*;
 pub use refs_harness::*;
 pub use refstore_conformance::*;
 pub use revparse_oracle::*;
