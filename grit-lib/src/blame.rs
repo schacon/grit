@@ -579,8 +579,8 @@ type CopySourceBlameCache = (
 
 /// Hook the CLI installs so blame can lazily hydrate missing objects from a
 /// promisor remote (partial clone). The lib does no transport itself; the CLI
-/// supplies a function that performs the fetch. Install with
-/// [`Repository::set_promisor_hydrate_hook`].
+/// supplies a function that performs the fetch. Install via
+/// [`RepoCaches::set_promisor_hydrate_hook`](crate::repo_caches::RepoCaches::set_promisor_hydrate_hook).
 pub type PromisorHydrateHook = fn(&Repository, ObjectId);
 
 /// A single line attribution produced by [`compute_blame`].

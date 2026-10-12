@@ -52,7 +52,7 @@ pub struct MoveOutcome {
 /// Refuses when a tracked path has staged or unstaged modifications unless `force` is set.
 /// Directory prefixes require `recursive`. Empty parent directories are removed after
 /// deleting files. Cache-tree entries for touched paths are invalidated before the index
-/// is written atomically after the index lock is acquired ([`Repository::begin_index_update`]).
+/// is written atomically after the index lock is acquired ([`IndexHandle::begin_update`](crate::index::IndexHandle::begin_update)).
 ///
 /// # Errors
 ///

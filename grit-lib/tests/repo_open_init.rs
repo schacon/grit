@@ -3,7 +3,7 @@
 use std::process::Command;
 
 use grit_lib::environment::RepositoryOptions;
-use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 use grit_lib::RefStorageFormat;
 use tempfile::TempDir;
 
@@ -109,4 +109,9 @@ fn open_discover_and_init_roundtrip_fsck() {
     )
     .expect("open skipping format validation");
     assert_eq!(skip_fmt.git_dir(), repo.git_dir());
+
+    let built = RepositoryBuilder::new(RepositoryOptions::empty().with_work_tree(normal.clone()))
+        .open(repo.git_dir(), Some(normal.as_path()))
+        .expect("builder open");
+    assert_eq!(built.git_dir(), repo.git_dir());
 }

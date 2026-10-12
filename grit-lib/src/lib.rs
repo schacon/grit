@@ -14,16 +14,19 @@
 //! config, remotes, and porcelain operations.
 //!
 //! ```
-//! use grit_lib::repo::{init_repository, Repository};
+//! use grit_lib::environment::RepositoryOptions;
+//! use grit_lib::repo::{InitOptions, Repository};
 //! use grit_lib::state::resolve_head;
-//! use grit_lib::RefStorageFormat;
 //!
 //! # fn main() -> grit_lib::error::Result<()> {
 //! let dir = tempfile::tempdir()?;
-//! let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-//! let head = resolve_head(&repo.git_dir)?;
+//! let repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let head = resolve_head(repo.git_dir())?;
 //! assert!(matches!(head, grit_lib::state::HeadState::Branch { short_name, oid: None, .. } if short_name == "main"));
-//! let _ = Repository::open(&repo.git_dir, repo.work_tree.as_deref())?;
+//! let _ = Repository::open(
+//!     repo.git_dir(),
+//!     &RepositoryOptions::empty().with_work_tree(dir.path()),
+//! )?;
 //! # Ok(())
 //! # }
 //! ```

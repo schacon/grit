@@ -3,7 +3,7 @@
 use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::pkt_line;
-use grit_lib::repo::Repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_protocol::upload_pack::stateless_rpc;
 
 fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
