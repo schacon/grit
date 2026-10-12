@@ -403,6 +403,10 @@ fn status_on_git_created_sparse_index_after_touch() {
 
 #[test]
 fn status_deep_linear_tree_second_run_stays_fast_with_autocrlf() {
+    if cfg!(coverage) {
+        eprintln!("SKIP: timing oracle under llvm-cov instrumentation");
+        return;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path();
     git(repo_root, &["init", "-q", "-b", "main", "."]);
