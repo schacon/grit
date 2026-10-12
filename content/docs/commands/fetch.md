@@ -57,6 +57,8 @@ $ grit fetch upstream
 
 ## JSON output
 
+Schema: [v1](/schemas/fetch/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

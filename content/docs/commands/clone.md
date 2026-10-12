@@ -63,6 +63,8 @@ $ grit clone /srv/git/project.git
 
 ## JSON output
 
+Schema: [v1](/schemas/clone/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

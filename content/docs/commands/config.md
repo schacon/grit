@@ -90,6 +90,8 @@ $ grit config --unset target.branch
 
 ## JSON output
 
+Schema: [v1](/schemas/config/v1.json)
+
 Pass `--json` for stable, scripting-friendly output. The object's `action` field says what happened:
 
 | Field | Type | Meaning |

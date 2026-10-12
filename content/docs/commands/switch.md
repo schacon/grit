@@ -71,6 +71,8 @@ error: you have uncommitted changes — commit them before switching
 
 ## JSON output
 
+Schema: [v1](/schemas/switch/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

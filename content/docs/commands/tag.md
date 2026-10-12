@@ -53,6 +53,8 @@ Deleted tag v0.1
 
 ## JSON output
 
+Schema: [v1](/schemas/tag/v1.json)
+
 Pass `--json` for stable, scripting-friendly output. The object's `action` field says what happened:
 
 | Field | Type | Meaning |

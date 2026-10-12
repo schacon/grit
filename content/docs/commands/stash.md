@@ -91,6 +91,8 @@ stash untracked restore blocked: 'notes.txt' already exists on disk
 
 ## JSON output
 
+Schema: [v1](/schemas/stash/v1.json) · [stash.push v1](/schemas/stash.push/v1.json) · [stash.list v1](/schemas/stash.list/v1.json) · [stash.show v1](/schemas/stash.show/v1.json) · [stash.apply v1](/schemas/stash.apply/v1.json) · [stash.pop v1](/schemas/stash.pop/v1.json) · [stash.drop v1](/schemas/stash.drop/v1.json)
+
 Pass `--json` for stable, scripting-friendly output.
 
 ### `grit stash` / `grit stash push`

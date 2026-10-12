@@ -3,7 +3,7 @@ title: Agent guide
 summary: Run grit from scripts and autonomous agents — JSON output, exit codes, non-interactive use, credentials, and where to read the docs.
 ---
 
-This page is for programs and agents that drive [`grit`](../install/) in automation. It describes **existing** CLI behavior only. Machine-readable **v1 JSON Schemas** for each command's `--json` success object live in the repository under `content/schemas/` (for example `status.v1.json`, with `$id` `https://grit-scm.com/schemas/status/v1.json`). Field-level tables on each command page remain the human-oriented reference; this guide covers the shared contract.
+This page is for programs and agents that drive [`grit`](../install/) in automation. It describes **existing** CLI behavior only. Machine-readable **v1 JSON Schemas** for each command's `--json` success object are published at `/schemas/<command>/v1.json` (see the [JSON schemas](../schemas/) index). Field-level tables on each command page remain the human-oriented reference; this guide covers the shared contract.
 
 Examples below were captured on 2026-10-08 with `grit` built from this repository (`cargo build --release -p grit-cli`), in a temporary repository on branch `main`, unless noted.
 
@@ -57,7 +57,9 @@ CI runs `json_schemas_are_current` (drift check) and `json_snapshots_match_schem
 
 ## Error object shape
 
-On failure with `--json`, stdout is a single object with an **`error`** string (the same message a human sees after `error:` on stderr). Some failures add a **`kind`** and optional fields (for example merge/pick **conflicts**); see `error.v1.json` for the plain vs structured union.
+Schema: [v1](/schemas/error/v1.json)
+
+On failure with `--json`, stdout is a single object with an **`error`** string (the same message a human sees after `error:` on stderr). Some failures add a **`kind`** and optional fields (for example merge/pick **conflicts**); see the error schema for the plain vs structured union.
 
 ```console
 $ grit commit --json

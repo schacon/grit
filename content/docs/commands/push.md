@@ -61,6 +61,8 @@ $ grit push
 
 ## JSON output
 
+Schema: [v1](/schemas/push/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

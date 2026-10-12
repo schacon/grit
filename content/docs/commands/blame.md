@@ -51,6 +51,8 @@ $ grit blame --json story.txt
 
 ## JSON output
 
+Schema: [v1](/schemas/blame/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

@@ -32,6 +32,8 @@ Install directory: /home/ada/.local/bin
 
 ## JSON output
 
+Schema: [v1](/schemas/update/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

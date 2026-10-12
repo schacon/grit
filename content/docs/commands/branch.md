@@ -59,6 +59,8 @@ Deleted branch spike (was a7020c2).
 
 ## JSON output
 
+Schema: [v1](/schemas/branch/v1.json)
+
 Pass `--json` for stable, scripting-friendly output. The object's `action` field says what happened:
 
 | Field | Type | Meaning |

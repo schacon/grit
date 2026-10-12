@@ -41,6 +41,8 @@ Already up to date.
 
 ## JSON output
 
+Schema: [v1](/schemas/pull/v1.json)
+
 The same shape as [`grit merge`](../merge/#json-output). Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

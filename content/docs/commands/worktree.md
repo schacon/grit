@@ -76,6 +76,8 @@ Pruned worktree /tmp/old-wt
 
 ## JSON output
 
+Schema: [v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json)
+
 Pass `--json` on any subcommand. The top-level `action` is `list`, `add`, `remove`, or `prune`.
 
 List:

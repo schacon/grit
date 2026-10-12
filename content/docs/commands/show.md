@@ -57,6 +57,8 @@ $ grit show HEAD~1 --json --filter .commit.subject
 
 ## JSON output
 
+Schema: [v1](/schemas/show/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |

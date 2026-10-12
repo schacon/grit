@@ -58,6 +58,8 @@ $ grit auth logout
 
 ## JSON output
 
+Schema: [v1](/schemas/auth/v1.json) · [auth.logout v1](/schemas/auth.logout/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
