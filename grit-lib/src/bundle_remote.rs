@@ -13,7 +13,8 @@ use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::repo::Repository;
 use crate::transfer::{
     apply_tag_mode, classify_update, match_positive, prune_tracking_refs, ref_excluded,
-    refspecs_force, FetchOptions, FetchOutcome, MatchedRef, RefUpdate, TagMode, UpdateMode,
+    refspecs_force, FetchOptions, FetchOutcome, MatchedRef, RefUpdate, TagMode, TransferStats,
+    UpdateMode,
 };
 
 const V2_SIGNATURE: &[u8] = b"# v2 git bundle\n";
@@ -377,6 +378,7 @@ fn complete_bundle_fetch(
         default_branch,
         new_shallow,
         new_unshallow: Vec::new(),
+        transfer: TransferStats::default(),
     })
 }
 

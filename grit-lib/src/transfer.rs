@@ -16,7 +16,8 @@
 //! [`crate::push_report::PushRefStatus`] rather than redefining it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::fetch::{NoProgress, Progress};
@@ -255,6 +256,15 @@ fn optional_config_bool(config: &crate::config::ConfigSet, key: &str) -> Result<
     }
 }
 
+/// Object and byte counts for objects received during a fetch or clone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TransferStats {
+    /// Objects installed from the received pack (zero when nothing was transferred).
+    pub objects: u64,
+    /// Size in bytes of the received pack file (zero when nothing was transferred).
+    pub bytes: u64,
+}
+
 /// The structured result of a fetch, ready for the embedder's ref-store apply.
 #[derive(Clone, Debug, Default)]
 pub struct FetchOutcome {
@@ -270,6 +280,62 @@ pub struct FetchOutcome {
     /// boundaries removed from the local `shallow` file because their history is
     /// now complete. Populated by a deepen / `--unshallow` fetch.
     pub new_unshallow: Vec<ObjectId>,
+    /// Objects and pack bytes ingested during this fetch.
+    pub transfer: TransferStats,
+}
+
+impl FetchOutcome {
+    /// Count of remote branch refs represented in [`Self::updates`].
+    #[must_use]
+    pub fn branch_count(&self) -> u64 {
+        self.updates
+            .iter()
+            .filter(|u| u.remote_ref.starts_with("refs/heads/"))
+            .count() as u64
+    }
+
+    /// Count of remote tag refs represented in [`Self::updates`] (peeled lines excluded).
+    #[must_use]
+    pub fn tag_count(&self) -> u64 {
+        self.updates
+            .iter()
+            .filter(|u| u.remote_ref.starts_with("refs/tags/") && !u.remote_ref.ends_with("^{}"))
+            .count() as u64
+    }
+}
+
+fn transfer_stats_from_ingested(
+    ingested: &crate::index_pack::IngestedPack,
+) -> Result<TransferStats> {
+    let bytes = fs::metadata(&ingested.pack_path).map_err(Error::Io)?.len();
+    Ok(TransferStats {
+        objects: u64::try_from(ingested.object_ids.len()).unwrap_or(u64::MAX),
+        bytes,
+    })
+}
+
+fn transfer_stats_from_pack_dir(pack_dir: &Path) -> Result<TransferStats> {
+    let mut stats = TransferStats::default();
+    if !pack_dir.is_dir() {
+        return Ok(stats);
+    }
+    for entry in fs::read_dir(pack_dir).map_err(Error::Io)? {
+        let path = entry.map_err(Error::Io)?.path();
+        if path.extension().is_none_or(|e| e != "pack") {
+            continue;
+        }
+        stats.bytes += fs::metadata(&path).map_err(Error::Io)?.len();
+        let idx = path.with_extension("idx");
+        if idx.is_file() {
+            let records = crate::pack::verify_pack_and_collect(&idx)?;
+            stats.objects += u64::try_from(records.len()).unwrap_or(u64::MAX);
+        }
+    }
+    Ok(stats)
+}
+
+fn local_objects_pack_dir(git_dir: &Path) -> PathBuf {
+    git_dir.join("objects").join("pack")
 }
 
 /// A single ref update requested by a push.
@@ -516,7 +582,7 @@ fn copy_objects_for_local_fetch(
     pack_build: &PackBuildOptions,
     fetch_opts: &FetchOptions,
     progress: &mut dyn ProgressSink,
-) -> Result<HashSet<ObjectId>> {
+) -> Result<(HashSet<ObjectId>, TransferStats)> {
     use crate::local_object_copy::{
         link_loose_objects_for_oids, linked_object_set, refresh_local_odb_after_link,
         try_satisfy_via_object_link,
@@ -530,7 +596,9 @@ fn copy_objects_for_local_fetch(
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)? {
             progress.set(wants.len() as u64);
             progress.finish();
-            return Ok(linked_object_set(local_odb, wants));
+            let oids = linked_object_set(local_odb, wants);
+            let transfer = transfer_stats_from_pack_dir(&local_objects_pack_dir(local_git_dir))?;
+            return Ok((oids, transfer));
         }
         progress.finish();
     }
@@ -550,7 +618,9 @@ fn copy_objects_for_local_fetch(
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, &send, false)? {
             progress.set(send.len() as u64);
             progress.finish();
-            return Ok(linked_object_set(local_odb, &send));
+            let oids = linked_object_set(local_odb, &send);
+            let transfer = transfer_stats_from_pack_dir(&local_objects_pack_dir(local_git_dir))?;
+            return Ok((oids, transfer));
         }
         progress.finish();
     }
@@ -561,7 +631,10 @@ fn copy_objects_for_local_fetch(
         .filter(|oid| !local_odb.exists(oid))
         .collect();
     if still_missing.is_empty() {
-        return Ok(linked_object_set(local_odb, &send));
+        return Ok((
+            linked_object_set(local_odb, &send),
+            TransferStats::default(),
+        ));
     }
 
     // Hard-link loose objects only for incremental transfers; initial clones should
@@ -577,7 +650,10 @@ fn copy_objects_for_local_fetch(
         }
         progress.finish();
         if still_missing.is_empty() {
-            return Ok(linked_object_set(local_odb, &send));
+            return Ok((
+                linked_object_set(local_odb, &send),
+                TransferStats::default(),
+            ));
         }
     }
 
@@ -600,9 +676,10 @@ fn copy_objects_for_local_fetch(
     progress.inc(ingested.object_ids.len() as u64);
     progress.finish();
     refresh_local_odb_after_link(local_odb);
+    let transfer = transfer_stats_from_ingested(&ingested)?;
     let mut out = linked_object_set(local_odb, &send);
     out.extend(ingested.object_ids);
-    Ok(out)
+    Ok((out, transfer))
 }
 
 /// Copy objects for a local push: link source packfiles into the remote when possible, then pack any remainder.
@@ -1180,10 +1257,11 @@ pub fn fetch_local_with_progress(
     }
 
     let mut pack_oids: HashSet<ObjectId> = HashSet::new();
+    let mut transfer = TransferStats::default();
     if !wants.is_empty() && !opts.dry_run {
         let remote_cfg = config_for_git_dir(remote_git_dir);
         let pack_opts = PackBuildOptions::for_local_copy(remote_cfg.as_ref());
-        pack_oids = copy_objects_for_local_fetch(
+        let (oids, fetch_transfer) = copy_objects_for_local_fetch(
             remote_git_dir,
             local_git_dir,
             &remote_odb,
@@ -1197,6 +1275,8 @@ pub fn fetch_local_with_progress(
             opts,
             progress,
         )?;
+        pack_oids = oids;
+        transfer = fetch_transfer;
     }
 
     if opts.initial_remote_fetch && !remote_shallow.is_empty() && !opts.dry_run {
@@ -1338,6 +1418,7 @@ pub fn fetch_local_with_progress(
         default_branch,
         new_shallow,
         new_unshallow: Vec::new(),
+        transfer,
     })
 }
 

@@ -1305,6 +1305,7 @@ pub fn fetch_remote(
     // to the local `shallow` file and surfaced in the outcome.
     let mut shallow_update = ShallowUpdate::default();
     let mut pack_oids: HashSet<ObjectId> = HashSet::new();
+    let mut transfer = crate::transfer::TransferStats::default();
 
     net_trace!(
         opts.network_trace,
@@ -1359,6 +1360,7 @@ pub fn fetch_remote(
                     default_branch: None,
                     new_shallow: shallow_update.shallow,
                     new_unshallow: shallow_update.unshallow,
+                    transfer: crate::transfer::TransferStats::default(),
                 });
             }
             let pack_config =
@@ -1368,7 +1370,7 @@ pub fn fetch_remote(
                 &pack_config,
                 opts.index_pack_threads,
             )?;
-            pack_oids = crate::index_pack::ingest_received_pack_path_with_progress(
+            let ingested = crate::index_pack::ingest_received_pack_path_with_progress(
                 path,
                 &local_odb,
                 &crate::index_pack::IngestPackOptions {
@@ -1380,8 +1382,15 @@ pub fn fetch_remote(
                     ..Default::default()
                 },
                 Some(progress),
-            )?
-            .object_ids;
+            )?;
+            pack_oids = ingested.object_ids;
+            let bytes = std::fs::metadata(&ingested.pack_path)
+                .map_err(crate::error::Error::Io)?
+                .len();
+            transfer = crate::transfer::TransferStats {
+                objects: u64::try_from(pack_oids.len()).unwrap_or(u64::MAX),
+                bytes,
+            };
         }
     }
 
@@ -1586,6 +1595,7 @@ pub fn fetch_remote(
         default_branch,
         new_shallow: shallow_update.shallow,
         new_unshallow: shallow_update.unshallow,
+        transfer,
     })
 }
 

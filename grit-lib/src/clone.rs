@@ -16,7 +16,7 @@ use crate::ref_storage::RefStorageFormat;
 use crate::refs;
 use crate::remote::{HttpClientFactory, Remote, DEFAULT_REMOTE};
 use crate::repo::{init_repository, Repository};
-use crate::transfer::{CloneReflog, FetchOptions, TagMode};
+use crate::transfer::{CloneReflog, FetchOptions, TagMode, TransferStats};
 use crate::transport_path::{
     absolute_local_clone_source_url, should_store_absolute_local_clone_url,
 };
@@ -93,6 +93,12 @@ pub struct CloneOutcome {
     pub checkout_oid: ObjectId,
     /// Open handle to the new repository.
     pub repo: Repository,
+    /// Objects and pack bytes received during the initial fetch.
+    pub transfer: TransferStats,
+    /// Remote branches fetched (from the fetch ref updates).
+    pub branches: u64,
+    /// Remote tags fetched (from the fetch ref updates).
+    pub tags: u64,
 }
 
 /// Derive a destination directory from a clone URL (last path component, minus `.git`).
@@ -266,6 +272,9 @@ pub fn clone(
         branch: default,
         checkout_oid: oid,
         repo: repo.with_thread_policy(opts.thread_policy),
+        transfer: fetch_outcome.transfer,
+        branches: fetch_outcome.branch_count(),
+        tags: fetch_outcome.tag_count(),
     })
 }
 
@@ -341,15 +350,96 @@ mod tests {
     }
 
     #[test]
+    fn outcome_reports_transfer_stats() {
+        use std::process::Command;
+
+        let upstream = tempfile::tempdir().expect("upstream");
+        let upstream_wt = upstream.path().join("src");
+        std::fs::create_dir_all(&upstream_wt).expect("mkdir");
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&upstream_wt)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(upstream_wt.join("README.md"), b"hello\n").expect("write");
+        git(&["add", "README.md"]);
+        git(&["commit", "-m", "init"]);
+        git(&["tag", "v1"]);
+        git(&["branch", "feature"]);
+        std::fs::write(upstream_wt.join("extra.txt"), b"x\n").expect("write");
+        git(&["add", "extra.txt"]);
+        git(&["commit", "-m", "on feature"]);
+        git(&["checkout", "main"]);
+
+        let dest = tempfile::tempdir().expect("dest");
+        let outcome = clone(
+            CloneOptions::new(upstream_wt.to_string_lossy(), dest.path().to_path_buf()),
+            &mut crate::fetch::NoProgress,
+            None,
+        )
+        .expect("clone");
+
+        let count_out = Command::new("git")
+            .args(["count-objects", "-v"])
+            .current_dir(dest.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("count-objects");
+        assert!(
+            count_out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&count_out.stderr)
+        );
+        let count_text = String::from_utf8_lossy(&count_out.stdout);
+        let mut in_pack = None::<u64>;
+        for line in count_text.lines() {
+            if let Some(v) = line.strip_prefix("in-pack: ") {
+                in_pack = Some(v.trim().parse().expect("in-pack"));
+            }
+        }
+        let git_objects = in_pack.expect("in-pack line");
+        let git_dir = dest.path().join(".git");
+        let pack_dir = git_dir.join("objects/pack");
+        let pack_bytes = std::fs::read_dir(&pack_dir)
+            .expect("pack dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+            .map(|p| std::fs::metadata(&p).expect("pack stat").len())
+            .sum::<u64>();
+        assert_eq!(
+            outcome.transfer.objects, git_objects,
+            "object count must match git count-objects -v in-pack"
+        );
+        assert_eq!(
+            outcome.transfer.bytes, pack_bytes,
+            "pack bytes must match on-disk .pack file size"
+        );
+        assert!(outcome.branches >= 2, "expected at least main and feature");
+        assert!(outcome.tags >= 1, "expected tag v1");
+    }
+
+    #[test]
     fn clone_rejects_nonempty_destination_without_git_dir() {
         let upstream = tempfile::tempdir().expect("upstream");
         let dest = tempfile::tempdir().expect("dest");
         fs::write(dest.path().join("notes.txt"), b"keep").expect("write");
         let err = clone(
-            CloneOptions::new(
-                upstream.path().to_string_lossy(),
-                dest.path().to_path_buf(),
-            ),
+            CloneOptions::new(upstream.path().to_string_lossy(), dest.path().to_path_buf()),
             &mut crate::fetch::NoProgress,
             None,
         )
