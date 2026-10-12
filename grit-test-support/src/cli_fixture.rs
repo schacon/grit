@@ -7,7 +7,38 @@ use std::process::{Command, Output as ProcessOutput};
 
 use serde::Serialize;
 
+/// Fixed author/committer timestamp for deterministic commits in CLI fixtures.
 pub const DETERMINISTIC_DATE: &str = "1700000000 +0000";
+
+/// Expected process exit code for each CLI output mode in a snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotExitCodes {
+    /// Exit code for default (human) output.
+    pub human: i32,
+    /// Exit code with `--json`.
+    pub json: i32,
+    /// Exit code with `--markdown`.
+    pub markdown: i32,
+}
+
+impl SnapshotExitCodes {
+    /// Exit code `0` for human, JSON, and Markdown.
+    pub const SUCCESS: Self = Self {
+        human: 0,
+        json: 0,
+        markdown: 0,
+    };
+
+    /// The same exit code for all three modes.
+    #[must_use]
+    pub const fn all(code: i32) -> Self {
+        Self {
+            human: code,
+            json: code,
+            markdown: code,
+        }
+    }
+}
 
 /// A temporary repository and isolated environment for CLI output snapshots.
 pub struct CliFixture {
@@ -23,25 +54,30 @@ impl Default for CliFixture {
 }
 
 impl CliFixture {
+    /// Temporary directory and config home without a Git repository.
+    pub fn workspace() -> Self {
+        let grit_bin = grit_bin();
+        let home = tempfile::tempdir().unwrap_or_else(|e| panic!("cli fixture home tempdir: {e}"));
+        let repo = tempfile::tempdir().unwrap_or_else(|e| panic!("cli fixture repo tempdir: {e}"));
+        Self {
+            repo,
+            home,
+            grit_bin,
+        }
+    }
+
+    /// Empty initialized repository with the same isolated environment as [`Self::new`].
+    pub fn empty() -> Self {
+        let fixture = Self::workspace();
+        fixture.run_grit(&["init"]).expect_success("init");
+        fixture
+    }
+
     /// Build the standard snapshot repository: two commits on `main`, a `feature`
     /// branch, one modified, one staged, and one untracked file.
     pub fn new() -> Self {
         let fixture = Self::empty();
         fixture.bootstrap();
-        fixture
-    }
-
-    /// Empty initialized repository with the same isolated environment as [`Self::new`].
-    pub fn empty() -> Self {
-        let grit_bin = grit_bin();
-        let home = tempfile::tempdir().unwrap_or_else(|e| panic!("cli fixture home tempdir: {e}"));
-        let repo = tempfile::tempdir().unwrap_or_else(|e| panic!("cli fixture repo tempdir: {e}"));
-        let fixture = Self {
-            repo,
-            home,
-            grit_bin,
-        };
-        fixture.run_grit(&["init"]).expect_success("init");
         fixture
     }
 
@@ -60,6 +96,17 @@ impl CliFixture {
     /// Run `grit` in this fixture with the standard snapshot environment.
     pub fn run(&self, args: &[&str]) -> crate::Output {
         self.run_grit(args)
+    }
+
+    /// Run `grit` and panic when the process exits non-zero.
+    pub fn run_ok(&self, args: &[&str]) -> crate::Output {
+        let label = args.join(" ");
+        self.run(args).expect_success(&label)
+    }
+
+    /// Write a repository-relative file for scenario setup.
+    pub fn write_repo_file(&self, name: &str, contents: &str) {
+        write_file(self.path(), name, contents);
     }
 
     fn run_grit(&self, args: &[&str]) -> crate::Output {
@@ -114,22 +161,93 @@ impl CliFixture {
     /// Run `grit` in human, `--json`, and `--markdown` modes and assert an insta
     /// snapshot of stdout, stderr, and exit status for each mode.
     ///
+    /// Each mode runs against a fresh copy of the repository as it existed immediately
+    /// before this call (after any setup the test performed on this fixture).
+    ///
     /// `snapshot_dir` is the directory for `.snap` files (typically
     /// `grit-cli/tests/snapshots` from an integration test).
     pub fn snapshot_all_modes(&self, snapshot_name: &str, args: &[&str], snapshot_dir: &Path) {
-        Self::assert_all_modes_snapshot(
+        self.snapshot_all_modes_exits(
             snapshot_name,
             args,
             snapshot_dir,
-            self,
-            self.capture_mode(args, ModeKind::Human),
-            self.capture_mode(args, ModeKind::Json),
-            self.capture_mode(args, ModeKind::Markdown),
+            SnapshotExitCodes::SUCCESS,
         );
     }
 
-    /// Like [`Self::snapshot_all_modes`], but builds a **new** repository for each
-    /// output mode. Use for commands that mutate history or branch state.
+    /// Like [`Self::snapshot_all_modes`], but require the given exit code in all three modes.
+    pub fn snapshot_all_modes_expect(
+        &self,
+        snapshot_name: &str,
+        args: &[&str],
+        snapshot_dir: &Path,
+        expected_exit: i32,
+    ) {
+        self.snapshot_all_modes_exits(
+            snapshot_name,
+            args,
+            snapshot_dir,
+            SnapshotExitCodes::all(expected_exit),
+        );
+    }
+
+    /// Like [`Self::snapshot_all_modes`], with per-mode exit expectations.
+    pub fn snapshot_all_modes_exits(
+        &self,
+        snapshot_name: &str,
+        args: &[&str],
+        snapshot_dir: &Path,
+        expected: SnapshotExitCodes,
+    ) {
+        let baseline = self.save_repo_baseline();
+
+        let human = self.capture_mode_from_baseline(&baseline, args, ModeKind::Human);
+        let json = self.capture_mode_from_baseline(&baseline, args, ModeKind::Json);
+        let markdown = self.capture_mode_from_baseline(&baseline, args, ModeKind::Markdown);
+
+        assert_eq!(
+            human.exit, expected.human,
+            "human exit for {snapshot_name} {args:?}"
+        );
+        assert_eq!(
+            json.exit, expected.json,
+            "json exit for {snapshot_name} {args:?}"
+        );
+        assert_eq!(
+            markdown.exit, expected.markdown,
+            "markdown exit for {snapshot_name} {args:?}"
+        );
+
+        Self::assert_all_modes_snapshot(
+            snapshot_name, args, snapshot_dir, self, human, json, markdown,
+        );
+    }
+
+    fn save_repo_baseline(&self) -> tempfile::TempDir {
+        let backup = tempfile::tempdir().unwrap_or_else(|e| panic!("cli fixture baseline: {e}"));
+        copy_dir_all(self.path(), backup.path())
+            .unwrap_or_else(|e| panic!("copy repo baseline from {}: {e}", self.path().display()));
+        backup
+    }
+
+    fn capture_mode_from_baseline(
+        &self,
+        baseline: &tempfile::TempDir,
+        args: &[&str],
+        kind: ModeKind,
+    ) -> ModeCapture {
+        clear_dir(self.path()).unwrap_or_else(|e| {
+            panic!(
+                "clear repo {} before snapshot mode: {e}",
+                self.path().display()
+            )
+        });
+        copy_dir_all(baseline.path(), self.path())
+            .unwrap_or_else(|e| panic!("restore repo baseline to {}: {e}", self.path().display()));
+        self.capture_mode(args, kind)
+    }
+
+
     pub fn snapshot_fresh_all_modes(
         snapshot_name: &str,
         args: &[&str],
@@ -142,15 +260,7 @@ impl CliFixture {
         let json = json_fixture.capture_mode(args, ModeKind::Json);
         let markdown_fixture = fresh();
         let markdown = markdown_fixture.capture_mode(args, ModeKind::Markdown);
-        Self::assert_all_modes_snapshot(
-            snapshot_name,
-            args,
-            snapshot_dir,
-            &human_fixture,
-            human,
-            json,
-            markdown,
-        );
+        Self::assert_all_modes_snapshot(snapshot_name, args, snapshot_dir, &human_fixture, human, json, markdown);
     }
 
     fn assert_all_modes_snapshot(
@@ -162,18 +272,11 @@ impl CliFixture {
         json: ModeCapture,
         markdown: ModeCapture,
     ) {
-        let payload = AllModesSnapshot {
-            human: &human,
-            json: &json,
-            markdown: &markdown,
-        };
-
+        let payload = AllModesSnapshot { human: &human, json: &json, markdown: &markdown };
         let mut settings = insta::Settings::clone_current();
         register_cli_snapshot_filters(&mut settings, filter_fixture);
         settings.set_snapshot_path(snapshot_dir);
-        settings.bind(|| {
-            insta::assert_json_snapshot!(snapshot_name, payload);
-        });
+        settings.bind(|| { insta::assert_json_snapshot!(snapshot_name, payload); });
     }
 
     fn capture_mode(&self, args: &[&str], kind: ModeKind) -> ModeCapture {
@@ -198,7 +301,7 @@ trait ExpectSuccess {
 }
 
 impl ExpectSuccess for crate::Output {
-    fn expect_success(self, label: &str) -> crate::Output {
+    fn expect_success(self, label: &str) -> Self {
         assert!(
             self.ok(),
             "grit {label} failed: exit={:?}\nstdout:\n{}\nstderr:\n{}",
@@ -258,6 +361,47 @@ pub fn with_cli_snapshot_filters<F: FnOnce()>(fixture: &CliFixture, callback: F)
 
 fn write_file(dir: &Path, name: &str, contents: &str) {
     fs::write(dir.join(name), contents).unwrap_or_else(|e| panic!("write {name}: {e}"));
+}
+
+fn clear_dir(dir: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    if !to.exists() {
+        fs::create_dir_all(to)?;
+    }
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest = to.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else if file_type.is_symlink() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::symlink;
+                let target = fs::read_link(entry.path())?;
+                symlink(target, dest)?;
+            }
+            #[cfg(not(unix))]
+            {
+                fs::copy(entry.path(), dest)?;
+            }
+        } else {
+            fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
 }
 
 fn grit_bin() -> OsString {
