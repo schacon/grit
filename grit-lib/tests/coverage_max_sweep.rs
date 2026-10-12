@@ -6,9 +6,10 @@ use grit_lib::apply::parse_patch;
 use grit_lib::blame::{blame_file, BlameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    diff_commits_with_renames, diff_index_to_tree, diff_index_to_worktree_for_staging,
-    diff_tree_to_worktree_with_git_dir_and_rules, diff_trees, diff_trees_with_renames,
-    postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions,
+    diff_commits_with_renames, diff_entry_worktree_side_bytes, diff_index_to_tree,
+    diff_index_to_worktree_for_staging, diff_tree_to_worktree_with_git_dir_and_rules, diff_trees,
+    diff_trees_with_renames, postprocess_diff_entries, DiffIndexToWorktreeOptions,
+    DiffPostprocessOptions, DiffPostprocessWorktree,
 };
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
@@ -187,7 +188,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         },
     )?;
     let rules = WorktreeRules::from_repository(&repo, &index)?;
-    let _ = diff_tree_to_worktree_with_git_dir_and_rules(
+    let tw_entries = diff_tree_to_worktree_with_git_dir_and_rules(
         repo.odb(),
         Some(&head_tree),
         dir.path(),
@@ -196,6 +197,20 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         Some(&cfg),
         Some(&rules),
     )?;
+    if let Some(e) = tw_entries.first() {
+        let wctx = DiffPostprocessWorktree {
+            repository_git_dir: repo.git_dir(),
+            index: &index,
+        };
+        let _ = diff_entry_worktree_side_bytes(
+            repo.odb(),
+            e,
+            dir.path(),
+            &wctx,
+            &cfg,
+            Some(rules.filter_process()),
+        )?;
+    }
     let patch = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n";
     let _ = parse_patch(patch, 1, "p", false, None)?;
     let specs = parse_pathspecs_from_source(b"*.txt\0dir/\0", true)?;
