@@ -38,52 +38,81 @@ impl std::fmt::Display for BadNumericSource {
 pub enum ConfigError {
     /// A line in a config file could not be parsed.
     #[error("bad config line {line} in {location}")]
-    BadConfigLine { location: String, line: usize },
+    BadConfigLine {
+        /// Config source label or path where the error was detected.
+        location: String,
+        /// One-based line number within that source.
+        line: usize,
+    },
 
     /// Same as [`Self::BadConfigLine`] with an explicit file path (Git file diagnostics).
     #[error("bad config line {line} in file '{file}'")]
-    BadConfigLineInFile { file: String, line: usize },
+    BadConfigLineInFile {
+        /// Path to the config file involved in the error.
+        file: String,
+        /// One-based line number within that file.
+        line: usize,
+    },
 
     /// A config key requires a value but none was given.
     #[error("missing value for '{key}'")]
-    MissingValue { key: String },
+    MissingValue {
+        /// Config key name that failed validation.
+        key: String,
+    },
 
     /// `fetch.negotiationalgorithm` and similar keys with missing values.
     #[error("bad config variable '{key}' in file '{file}' at line {line}")]
     BadConfigVariable {
+        /// Config key name that failed validation.
         key: String,
+        /// Path to the config file involved in the error.
         file: String,
+        /// One-based line number within the config source.
         line: usize,
     },
 
     /// Integer config value could not be parsed or is out of range.
     #[error("bad numeric config value '{value}' for '{key}': {reason}")]
     BadNumericValue {
+        /// Config key name that failed validation.
         key: String,
+        /// Raw config value that could not be parsed.
         value: String,
+        /// Why the value or operation was rejected.
         reason: BadNumericSource,
     },
 
     /// Same as [`Self::BadNumericValue`] with file context.
     #[error("bad numeric config value '{value}' for '{key}' in file {file}: {reason}")]
     BadNumericValueInFile {
+        /// Config key name that failed validation.
         key: String,
+        /// Raw config value that could not be parsed.
         value: String,
+        /// Path to the config file involved in the error.
         file: String,
+        /// Why the value or operation was rejected.
         reason: BadNumericSource,
     },
 
     /// `diff.context` (or similar) failed variable validation.
     #[error("bad config variable '{key}' in file '{file}' at line {line}")]
     BadConfigVariableAtLine {
+        /// Config key name that failed validation.
         key: String,
+        /// Path to the config file involved in the error.
         file: String,
+        /// One-based line number within the config source.
         line: usize,
     },
 
     /// Command-line config could not supply a parseable value for a key.
     #[error("unable to parse '{key}' from command-line config")]
-    UnableToParseFromCommandLine { key: String },
+    UnableToParseFromCommandLine {
+        /// Config key name that failed validation.
+        key: String,
+    },
 
     /// `includeIf.hasconfig:remote.*.url` cannot pull remote URLs from included files.
     #[error(
@@ -93,7 +122,12 @@ pub enum ConfigError {
 
     /// `[include]` / `[includeIf]` nesting exceeded the Git-compatible depth limit.
     #[error("exceeded maximum include depth (depth {depth} exceeds limit {limit})")]
-    IncludeDepthExceeded { depth: usize, limit: usize },
+    IncludeDepthExceeded {
+        /// Current include nesting depth when the limit was hit.
+        depth: usize,
+        /// Maximum allowed include nesting depth.
+        limit: usize,
+    },
 
     /// Generic config error with free-form detail (legacy call sites).
     #[error("{0}")]
@@ -101,11 +135,17 @@ pub enum ConfigError {
 
     /// The config file could not be written because a `.lock` file is already present.
     #[error("could not lock config file {path}: File exists")]
-    ConfigFileLocked { path: String },
+    ConfigFileLocked {
+        /// Path to the config file that could not be locked.
+        path: String,
+    },
 
     /// A single-value operation was requested but the key has multiple values.
     #[error("cannot overwrite multiple values with a single value for '{key}'")]
-    MultipleValues { key: String },
+    MultipleValues {
+        /// Config key name that failed validation.
+        key: String,
+    },
 
     /// Inline `--comment` text must not span lines.
     #[error("no multi-line comment allowed")]
@@ -140,11 +180,19 @@ pub enum RefLockError {
     #[error(
         "cannot lock ref '{refname}': there is a non-empty directory '{path}' blocking reference '{refname}'"
     )]
-    DirectoryInTheWay { refname: String, path: String },
+    DirectoryInTheWay {
+        /// Full ref name (for example `refs/heads/main`).
+        refname: String,
+        /// Directory path blocking creation of the ref file.
+        path: String,
+    },
 
     /// Another process holds the `packed-refs.lock` file (or it already exists).
     #[error("Unable to create '{lock_path}': File exists.")]
-    PackedRefsLockHeld { lock_path: String },
+    PackedRefsLockHeld {
+        /// Path to the lock file that could not be created.
+        lock_path: String,
+    },
 }
 
 /// Clean/smudge filter and EOL conversion failures.
@@ -154,14 +202,22 @@ pub enum FilterError {
     /// External clean or smudge filter command failed.
     #[error("{path}: {phase} filter '{driver}' failed")]
     ExternalFilterFailed {
+        /// Filter driver name from `.gitattributes`.
         driver: String,
+        /// Repository-relative or filesystem path related to the failure.
         path: String,
+        /// Whether the clean or smudge filter hook failed.
         phase: FilterPhase,
     },
 
     /// Filter output did not round-trip (clean/smudge mismatch).
     #[error("{path}: {detail}")]
-    NotFilteredProperly { path: String, detail: String },
+    NotFilteredProperly {
+        /// Repository-relative or filesystem path related to the failure.
+        path: String,
+        /// Why clean/smudge output did not round-trip.
+        detail: String,
+    },
 
     /// Invalid `working-tree-encoding` attribute value.
     #[error("true/false are no valid working-tree-encodings")]
@@ -169,11 +225,17 @@ pub enum FilterError {
 
     /// Line-ending conversion would modify the worktree against user settings.
     #[error("{detail}")]
-    LineEndingWouldChange { detail: String },
+    LineEndingWouldChange {
+        /// Additional human-readable detail for the failure.
+        detail: String,
+    },
 
     /// Shell filter subprocess exited non-zero.
     #[error("filter command exited with status {status}")]
-    Failed { status: i32 },
+    Failed {
+        /// Subprocess exit status from the filter command.
+        status: i32,
+    },
 }
 
 /// Which filter hook failed.
@@ -197,9 +259,22 @@ impl std::fmt::Display for FilterPhase {
 /// Sparse-checkout cone pattern parse warnings (non-fatal).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparseCheckoutWarning {
-    UnrecognizedPattern { pattern: String },
-    UnrecognizedNegativePattern { pattern: String },
-    RepeatedPattern { pattern: String },
+    /// A cone pattern line was not recognized.
+    UnrecognizedPattern {
+        /// Raw pattern text from the sparse-checkout file.
+        pattern: String,
+    },
+    /// A negative cone pattern line was not recognized.
+    UnrecognizedNegativePattern {
+        /// Raw negative pattern text from the sparse-checkout file.
+        pattern: String,
+    },
+    /// The same cone pattern appears more than once in the sparse-checkout file.
+    RepeatedPattern {
+        /// Duplicated pattern text.
+        pattern: String,
+    },
+    /// Cone pattern matching was disabled due to invalid sparse-checkout contents.
     DisablingConePatternMatching,
 }
 
@@ -234,7 +309,12 @@ impl SparseCheckoutWarning {
 pub enum ApplyError {
     /// Patch bytes are malformed at a known input location.
     #[error("corrupt patch at {input}:{line}")]
-    CorruptPatch { input: String, line: usize },
+    CorruptPatch {
+        /// Patch input label (file name or `stdin`).
+        input: String,
+        /// One-based line number within the patch input.
+        line: usize,
+    },
 
     /// Other apply parse failures.
     #[error("{0}")]
@@ -245,18 +325,26 @@ pub enum ApplyError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiffPathError {
+    /// The requested path is not part of the diff being formatted.
     #[error("No such path '{path}' in the diff")]
-    NoSuchPathInDiff { path: String },
+    NoSuchPathInDiff {
+        /// Path that was requested from the diff.
+        path: String,
+    },
 }
 
 /// Path outside the repository during pathspec or transport resolution.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PathOutsideRepoError {
+    /// A resolved path escapes the repository work tree or git directory.
     #[error("{path}: '{subpath}' is outside repository at '{repo_root}'")]
     OutsideRepository {
+        /// Repository-relative or filesystem path related to the failure.
         path: String,
+        /// Path component that lies outside the repository root.
         subpath: String,
+        /// Canonical repository root used for the outside-path check.
         repo_root: String,
     },
 }
@@ -287,7 +375,10 @@ pub enum Error {
 
     /// `extensions.refStorage` names an unsupported backend.
     #[error("invalid value for 'extensions.refstorage': '{value}'")]
-    InvalidRefStorageFormat { value: String },
+    InvalidRefStorageFormat {
+        /// Raw `extensions.refStorage` value from the repository config.
+        value: String,
+    },
 
     /// A supplied object ID string was not valid hex or the wrong length.
     #[error("invalid object id '{0}'")]
@@ -304,7 +395,10 @@ pub enum Error {
     /// In-pack delta resolution exceeded the read-side chain depth limit (guards
     /// against cyclic ref-delta chains and unbounded recursion; Git has no read limit).
     #[error("delta chain too deep (limit {limit})")]
-    DeltaChainTooDeep { limit: usize },
+    DeltaChainTooDeep {
+        /// Maximum delta chain depth allowed while reading packed objects.
+        limit: usize,
+    },
 
     /// An unsupported or unknown object type was encountered.
     #[error("unknown object type '{0}'")]
@@ -312,7 +406,10 @@ pub enum Error {
 
     /// Loose object header type field exceeds Git's 32-byte limit.
     #[error("header for {oid} too long, exceeds 32 bytes")]
-    ObjectHeaderTooLong { oid: String },
+    ObjectHeaderTooLong {
+        /// Object id (hex) of the loose object with an oversized header.
+        oid: String,
+    },
 
     /// An I/O error from the underlying filesystem.
     #[error("I/O error: {0}")]
@@ -376,7 +473,12 @@ pub enum Error {
 
     /// A `packed-refs` line Git would reject when reading the ref database.
     #[error("unexpected line in {path}: {line}")]
-    PackedRefsUnexpectedLine { path: String, line: String },
+    PackedRefsUnexpectedLine {
+        /// Path to the `packed-refs` file being read.
+        path: String,
+        /// Offending line contents.
+        line: String,
+    },
 
     /// A general path-related error (invalid UTF-8, out-of-bounds, etc.).
     #[error("path error: {0}")]
@@ -446,11 +548,17 @@ pub enum Error {
 
     /// A pathspec did not match any file known to Git (index or HEAD tree).
     #[error("pathspec '{spec}' did not match any file(s) known to git")]
-    PathspecNoMatch { spec: String },
+    PathspecNoMatch {
+        /// User-supplied pathspec that matched nothing.
+        spec: String,
+    },
 
     /// `remove_paths` refused because tracked paths have local modifications without `--force`.
     #[error("the following files have local changes:\n{}", paths.join("\n"))]
-    PathsHaveLocalModifications { paths: Vec<String> },
+    PathsHaveLocalModifications {
+        /// Worktree paths that still have local modifications.
+        paths: Vec<String>,
+    },
 
     /// A directory pathspec was used without `recursive` ([`crate::porcelain::paths::remove_paths`]).
     #[error("not removing '{0}' recursively without -r")]
@@ -476,7 +584,10 @@ pub enum Error {
     /// [`replay_commit`](crate::porcelain::replay::replay_commit) does not replay merge commits
     /// until callers can select a mainline parent explicitly.
     #[error("merge commit {oid}")]
-    MergeCommit { oid: crate::objects::ObjectId },
+    MergeCommit {
+        /// Object id of the merge commit that cannot be replayed yet.
+        oid: crate::objects::ObjectId,
+    },
 
     /// Cherry-pick source is already checked out as `HEAD`.
     #[error("commit already at HEAD")]
@@ -497,7 +608,10 @@ pub enum Error {
 
     /// `stash@{{n}}` is out of range for the current stash reflog.
     #[error("stash entry stash@{{{n}}} not found")]
-    StashNotFound { n: usize },
+    StashNotFound {
+        /// Stash reflog index (`stash@{{n}}`).
+        n: usize,
+    },
 
     /// [`create_stash`](crate::porcelain::stash::create_stash) requires at least one commit.
     #[error("cannot stash without a commit")]
@@ -511,7 +625,10 @@ pub enum Error {
     #[error(
         "your local changes to the following files would be overwritten by stash apply: {paths}"
     )]
-    StashWouldOverwriteLocalChanges { paths: String },
+    StashWouldOverwriteLocalChanges {
+        /// Space-separated list of paths that would be overwritten.
+        paths: String,
+    },
 
     /// The index could not be written after a successful stash apply.
     #[error("writing index after stash apply: {0}")]
@@ -523,7 +640,10 @@ pub enum Error {
 
     /// Applying a stash with an untracked-files parent would replace an existing worktree path.
     #[error("stash untracked restore blocked: '{path}' already exists on disk")]
-    StashCouldNotRestoreUntracked { path: String },
+    StashCouldNotRestoreUntracked {
+        /// Worktree path that already exists and blocks untracked restore.
+        path: String,
+    },
 
     /// [`CommitRequest::amend`](crate::porcelain::commit::CommitRequest::amend) was set on an unborn branch.
     #[error("cannot amend: no commits on this branch yet")]
@@ -548,7 +668,10 @@ pub enum Error {
     /// An [`ObjectStore`](crate::odb::store::ObjectStore) backend does not implement the
     /// requested operation (for example filesystem-only helpers on an in-memory store).
     #[error("object store does not support: {operation}")]
-    UnsupportedObjectStore { operation: &'static str },
+    UnsupportedObjectStore {
+        /// Object-store operation that the backend does not implement.
+        operation: &'static str,
+    },
 }
 
 impl Error {

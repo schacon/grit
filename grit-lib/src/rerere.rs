@@ -17,27 +17,39 @@ use crate::repo::Repository;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RerereAutoupdate {
     #[default]
+    /// Returned when from config.
     FromConfig,
+    /// Returned when yes.
     Yes,
+    /// Returned when no.
     No,
 }
 
 /// Outcome of rerere handling one path (replaces stderr status lines).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RerereEventKind {
+    /// Returned when recorded preimage.
     RecordedPreimage,
+    /// Returned when recorded resolution.
     RecordedResolution,
+    /// Returned when resolved from previous.
     ResolvedFromPrevious,
+    /// Returned when staged from previous.
     StagedFromPrevious,
+    /// Returned when updated preimage.
     UpdatedPreimage,
+    /// Returned when forgot.
     Forgot,
+    /// Returned when no remembered.
     NoRemembered,
 }
 
 /// One rerere status event for a path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RerereEvent {
+    /// Repository-relative or filesystem path related to the failure.
     pub path: String,
+    /// Object type name when known (`commit`, `tree`, etc.).
     pub kind: RerereEventKind,
 }
 
@@ -60,6 +72,7 @@ fn rr_root(git_dir: &Path) -> PathBuf {
     git_dir.join("rr-cache")
 }
 
+/// Rerere enabled.
 pub fn rerere_enabled(config: &ConfigSet, git_dir: &Path) -> bool {
     if let Some(val) = config.get("rerere.enabled") {
         let v = val.to_ascii_lowercase();

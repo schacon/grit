@@ -114,12 +114,19 @@ pub enum RevParseError {
 
     /// Tree path exists at `HEAD` but not at the requested revision.
     #[error("path '{path}' exists on disk, but not in '{revision}'")]
-    PathOnDiskNotInRevision { path: String, revision: String },
+    PathOnDiskNotInRevision {
+        /// Path from the revision spec.
+        path: String,
+        /// Revision label that lacks the path.
+        revision: String,
+    },
 
     /// Tree path missing; a related path exists under the current prefix.
     #[error("path '{candidate}' exists, but not '{path}'")]
     PathPrefixExists {
+        /// Related path that exists where the requested path does not.
         candidate: String,
+        /// Repository-relative or filesystem path related to the failure.
         path: String,
         /// Optional alternate `rev:path` spelling (no Git-style hint prefix).
         alternate_spec: Option<String>,
@@ -127,16 +134,26 @@ pub enum RevParseError {
 
     /// Path is absent from the named tree.
     #[error("path '{path}' does not exist in '{revision}'")]
-    PathNotInRevision { path: String, revision: String },
+    PathNotInRevision {
+        /// Path that is missing from the tree.
+        path: String,
+        /// Revision label for the tree that was searched.
+        revision: String,
+    },
 
     /// Index path lookup failed with no work-tree match.
     #[error("path '{path}' does not exist (neither on disk nor in the index)")]
-    PathMissingFromWorktreeAndIndex { path: String },
+    PathMissingFromWorktreeAndIndex {
+        /// Path that is missing from both the index and work tree.
+        path: String,
+    },
 
     /// Index path exists at another stage.
     #[error("path '{path}' is in the index, but not at stage {stage}")]
     PathWrongIndexStage {
+        /// Repository-relative or filesystem path related to the failure.
         path: String,
+        /// Index stage number (0–3) that was expected.
         stage: u8,
         /// Optional `:stage:path` spelling to try.
         alternate_spec: Option<String>,
@@ -145,18 +162,27 @@ pub enum RevParseError {
     /// Index path mismatch under a path prefix.
     #[error("path '{candidate}' is in the index, but not '{path}'")]
     PathIndexPrefixMismatch {
+        /// Related path that exists where the requested path does not.
         candidate: String,
+        /// Repository-relative or filesystem path related to the failure.
         path: String,
+        /// Optional alternate `rev:path` spelling to try.
         alternate_spec: Option<String>,
     },
 
     /// File exists in the work tree but is not staged.
     #[error("path '{path}' exists on disk, but not in the index")]
-    PathOnDiskNotInIndex { path: String },
+    PathOnDiskNotInIndex {
+        /// Work-tree path that is not staged in the index.
+        path: String,
+    },
 
     /// Path is not present in the index at all.
     #[error("path '{path}' does not exist in the index")]
-    PathNotInIndex { path: String },
+    PathNotInIndex {
+        /// Path that is absent from the index.
+        path: String,
+    },
 
     /// Internal describe helper failed to compile its regex.
     #[error("internal describe regex")]

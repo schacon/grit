@@ -23,53 +23,91 @@ use crate::ident_resolve::IdentityEnv;
 pub struct Environment {
     /// Process working directory used for relative path resolution during discovery.
     pub cwd: PathBuf,
+    /// Override for `GIT_DIR` when set (see Git environment variable of the same name).
     pub git_dir: Option<String>,
+    /// Override for `GIT_WORK_TREE` when set (see Git environment variable of the same name).
     pub git_work_tree: Option<String>,
+    /// Override for `GIT_CEILING_DIRECTORIES` when set (see Git environment variable of the same name).
     pub git_ceiling_directories: Option<String>,
+    /// Override for `GIT_INDEX_FILE` when set (see Git environment variable of the same name).
     pub git_index_file: Option<String>,
+    /// Override for `GIT_NAMESPACE` when set (see Git environment variable of the same name).
     pub git_namespace: Option<String>,
+    /// Override for `GIT_REPLACE_REF_BASE` when set (see Git environment variable of the same name).
     pub git_replace_ref_base: Option<String>,
+    /// When true, replacement objects from `GIT_REPLACE_OBJECT` are ignored.
     pub git_no_replace_objects: bool,
+    /// Override for `GIT_ALTERNATE_OBJECT_DIRECTORIES` when set (see Git environment variable of the same name).
     pub git_alternate_object_directories: Option<String>,
+    /// Override for `GIT_OBJECT_DIRECTORY` when set (see Git environment variable of the same name).
     pub git_object_directory: Option<String>,
     /// When set, overrides the repository-relative cwd prefix derived from `cwd`.
     pub git_prefix: Option<String>,
+    /// Override for `GIT_CONFIG_NOSYSTEM` when set (see Git environment variable of the same name).
     pub git_config_nosystem: Option<String>,
+    /// Override for `GIT_CONFIG_SYSTEM` when set (see Git environment variable of the same name).
     pub git_config_system: Option<String>,
+    /// Override for `GIT_CONFIG_GLOBAL` when set (see Git environment variable of the same name).
     pub git_config_global: Option<String>,
+    /// Override for `GIT_CONFIG` when set (see Git environment variable of the same name).
     pub git_config: Option<String>,
+    /// Override for `GIT_CONFIG_PARAMETERS` when set (see Git environment variable of the same name).
     pub git_config_parameters: Option<String>,
+    /// Override for `GIT_CONFIG_COUNT` when set (see Git environment variable of the same name).
     pub git_config_count: Option<String>,
     /// Pairs from `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` when `GIT_CONFIG_COUNT` is set.
     pub git_config_pairs: Vec<(String, String)>,
+    /// Override for `HOME` when set (see Git environment variable of the same name).
     pub home: Option<OsString>,
+    /// Override for `XDG_CONFIG_HOME` when set (see Git environment variable of the same name).
     pub xdg_config_home: Option<String>,
+    /// Override for `USERPROFILE` when set (see Git environment variable of the same name).
     pub userprofile: Option<OsString>,
+    /// Override for `HOMEDRIVE` when set (see Git environment variable of the same name).
     pub homedrive: Option<OsString>,
+    /// Override for `HOMEPATH` when set (see Git environment variable of the same name).
     pub homepath: Option<OsString>,
+    /// Override for `GIT_INSTALL_ROOT` when set (see Git environment variable of the same name).
     pub git_install_root: Option<OsString>,
+    /// Override for `GIT_EXEC_PATH` when set (see Git environment variable of the same name).
     pub git_exec_path: Option<OsString>,
     /// `$PWD` when set (symlink-preserving absolute path for include matching).
     pub pwd: Option<String>,
+    /// Override for `GIT_TEST_ASSUME_DIFFERENT_OWNER` when set (see Git environment variable of the same name).
     pub git_test_assume_different_owner: Option<String>,
+    /// When true, relaxes safe-directory checks for debugging.
     pub grit_debug_safe_dir: bool,
+    /// Override for `GIT_TRACE_SETUP` when set (see Git environment variable of the same name).
     pub git_trace_setup: Option<String>,
+    /// Override for `GIT_TRACE2_PERF` when set (see Git environment variable of the same name).
     pub git_trace2_perf: Option<String>,
+    /// Original working directory of the `grit` invocation (for messages).
     pub grit_invocation_cwd: Option<String>,
+    /// Override for `SUDO_UID` when set (see Git environment variable of the same name).
     pub sudo_uid: Option<String>,
+    /// Override for `GIT_TEST_UTF8_NFD_TO_NFC` when set (see Git environment variable of the same name).
     pub git_test_utf8_nfd_to_nfc: Option<String>,
+    /// Override for `GIT_TEST_NO_WRITE_REV_INDEX` when set (see Git environment variable of the same name).
     pub git_test_no_write_rev_index: Option<String>,
     /// Test knob: when `"false"`, reftable auto-compaction is disabled (CLI captures at open).
     pub git_test_reftable_autocompaction: Option<String>,
+    /// Override for `GIT_AUTHOR_NAME` when set (see Git environment variable of the same name).
     pub git_author_name: Option<String>,
+    /// Override for `GIT_AUTHOR_EMAIL` when set (see Git environment variable of the same name).
     pub git_author_email: Option<String>,
+    /// Override for `GIT_AUTHOR_DATE` when set (see Git environment variable of the same name).
     pub git_author_date: Option<String>,
+    /// Override for `GIT_COMMITTER_NAME` when set (see Git environment variable of the same name).
     pub git_committer_name: Option<String>,
+    /// Override for `GIT_COMMITTER_EMAIL` when set (see Git environment variable of the same name).
     pub git_committer_email: Option<String>,
+    /// Override for `GIT_COMMITTER_DATE` when set (see Git environment variable of the same name).
     pub git_committer_date: Option<String>,
     /// Timezone for local date formatting (`TZ`).
     pub tz: Option<String>,
+    /// Override for `USER` when set (see Git environment variable of the same name).
     pub user: Option<String>,
+    /// Override for `USERNAME` when set (see Git environment variable of the same name).
     pub username: Option<String>,
     /// Windows `%ProgramFiles%` (for Git for Windows system config discovery).
     pub program_files: Option<String>,
@@ -376,6 +414,7 @@ impl Environment {
     }
 
     #[must_use]
+    /// Var os.
     pub fn var_os(&self, key: &str) -> Option<OsString> {
         if key == "HOME" {
             return self.home.clone();
@@ -643,6 +682,7 @@ impl RepositoryOptions {
         Self::default()
     }
 
+    /// Build options around an explicit [`Environment`] snapshot.
     #[must_use]
     pub fn with_environment(environment: Environment) -> Self {
         Self {
@@ -651,6 +691,7 @@ impl RepositoryOptions {
         }
     }
 
+    /// Override the injectable subprocess runner used for hooks and filters.
     #[must_use]
     pub fn with_command_runner(mut self, runner: Arc<dyn CommandRunner>) -> Self {
         self.command_runner = runner;

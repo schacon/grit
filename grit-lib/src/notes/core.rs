@@ -34,10 +34,14 @@ use merge3::{Merge3, StandardMarkers};
 /// Per-worktree subdirectory holding the conflicted note blobs during a notes merge.
 pub const NOTES_MERGE_WORKTREE: &str = "NOTES_MERGE_WORKTREE";
 
+/// One leaf entry in a notes fanout tree (blob pointing at a note object).
 #[derive(Clone)]
 pub struct NotesTreeEntry {
+    /// Git tree entry mode for the note blob (typically `100644`).
     pub mode: u32,
+    /// Fanout path segments ending in the annotated object's hex id.
     pub path: Vec<u8>,
+    /// Note blob object id stored at this path.
     pub oid: ObjectId,
 }
 
@@ -45,10 +49,16 @@ pub struct NotesTreeEntry {
 type NoteBlobChange = (ObjectId, Option<ObjectId>, Option<ObjectId>);
 
 enum NotesTreeChild {
-    Blob { mode: u32, oid: ObjectId },
+    Blob {
+        /// Tree entry mode for the note blob.
+        mode: u32,
+        /// Note blob object id.
+        oid: ObjectId,
+    },
     Tree(Vec<NotesTreeEntry>),
 }
 
+/// Extract the annotated object's hex id from a notes tree entry path, if well-formed.
 pub fn note_object_name(path: &[u8]) -> Option<String> {
     let compact: Vec<u8> = path.iter().copied().filter(|byte| *byte != b'/').collect();
     if !ObjectId::is_hex_len(compact.len()) || !compact.iter().all(u8::is_ascii_hexdigit) {
@@ -59,6 +69,7 @@ pub fn note_object_name(path: &[u8]) -> Option<String> {
         .map(|name| name.to_ascii_lowercase())
 }
 
+/// Format a notes tree entry path for display (compact hex when the path is a valid object name).
 pub fn display_note_path(entry: &NotesTreeEntry) -> Cow<'_, str> {
     if let Some(name) = note_object_name(&entry.path) {
         Cow::Owned(name)
@@ -331,12 +342,18 @@ pub fn notes_merge_git_dir(repo: &Repository) -> std::path::PathBuf {
     repo.git_dir.clone()
 }
 
+/// How to combine conflicting note blobs during a notes merge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotesMergeStrategy {
+    /// Leave conflicts for the user to resolve in the worktree.
     Manual,
+    /// Keep the local note blob on conflict.
     Ours,
+    /// Keep the remote note blob on conflict.
     Theirs,
+    /// Concatenate both note blobs on conflict.
     Union,
+    /// Concatenate, sort lines, and deduplicate on conflict.
     CatSortUniq,
 }
 
@@ -366,6 +383,7 @@ pub fn expand_notes_ref(short_or_full: &str) -> String {
     }
 }
 
+/// Path to the per-merge worktree directory under the repository git dir.
 pub fn notes_merge_worktree_path(repo: &Repository) -> std::path::PathBuf {
     notes_merge_git_dir(repo).join(NOTES_MERGE_WORKTREE)
 }
@@ -381,6 +399,7 @@ pub fn notes_merge_worktree_nonempty(worktree: &std::path::Path) -> bool {
     entries.flatten().next().is_some()
 }
 
+/// Parse a notes merge strategy keyword (`manual`, `ours`, `theirs`, `union`, `cat_sort_uniq`).
 pub fn parse_notes_merge_strategy_value(s: &str) -> Option<NotesMergeStrategy> {
     match s {
         "manual" => Some(NotesMergeStrategy::Manual),
@@ -742,6 +761,7 @@ previous merge before you start a new notes merge."
     }
 }
 
+/// Replace or insert the note entry for `hex` in a flat notes entry list.
 pub fn upsert_note_entry(entries: &mut Vec<NotesTreeEntry>, hex: &str, blob: ObjectId) {
     entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex));
     entries.push(NotesTreeEntry {
@@ -911,6 +931,12 @@ pub fn write_notes_commit_with_parents(
     Ok(commit_oid)
 }
 
+/// Merge two notes refs and return the resulting notes commit, or a conflict commit oid.
+///
+/// # Errors
+///
+/// Returns [`Error`] when refs cannot be read, merge bases cannot be computed, or the
+/// chosen strategy fails while combining blobs.
 pub fn notes_merge_inner(
     repo: &Repository,
     local_ref: &str,

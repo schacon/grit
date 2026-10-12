@@ -69,8 +69,11 @@ impl CommandEnvironment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CommandStdio {
     #[default]
+    /// Returned when inherit.
     Inherit,
+    /// Returned when null.
     Null,
+    /// Returned when pipe.
     Pipe,
 }
 
@@ -78,8 +81,11 @@ pub enum CommandStdio {
 #[derive(Debug, Clone, Default)]
 pub enum CommandStdin {
     #[default]
+    /// Returned when inherit.
     Inherit,
+    /// Returned when null.
     Null,
+    /// Returned when pipe.
     Pipe(Vec<u8>),
 }
 
@@ -88,13 +94,18 @@ pub enum CommandStdin {
 pub enum ShellInvocation {
     /// `program` is `sh`: `-c script`, optional `argv0` positional (`hook`), then `args`.
     DashC {
+        /// Script for this error or warning.
         script: String,
+        /// Argv0 for this error or warning.
         argv0: Option<String>,
+        /// Args for this error or warning.
         args: Vec<OsString>,
     },
     /// Run `sh script_path` with `args` (traditional hook ENOEXEC retry).
     ScriptPath {
+        /// Script path for this error or warning.
         script_path: PathBuf,
+        /// Args for this error or warning.
         args: Vec<OsString>,
     },
 }
@@ -108,10 +119,15 @@ pub struct CommandSpec {
     pub args: Vec<OsString>,
     /// When set, `program` is invoked as a shell wrapper per [`ShellInvocation`].
     pub shell: Option<ShellInvocation>,
+    /// Process working directory used during repository discovery.
     pub cwd: Option<PathBuf>,
+    /// Env for this item.
     pub env: CommandEnvironment,
+    /// Stdin for this item.
     pub stdin: CommandStdin,
+    /// Stdout for this item.
     pub stdout: CommandStdio,
+    /// Stderr for this item.
     pub stderr: CommandStdio,
 }
 
@@ -157,8 +173,11 @@ impl From<ExitStatus> for CommandExit {
 /// Output from [`RunningCommand::wait_with_output`].
 #[derive(Debug, Clone)]
 pub struct CommandOutput {
+    /// Subprocess exit status from the filter command.
     pub status: CommandExit,
+    /// Stdout for this item.
     pub stdout: Vec<u8>,
+    /// Stderr for this item.
     pub stderr: Vec<u8>,
 }
 
@@ -503,14 +522,23 @@ pub fn system_command_runner() -> Arc<dyn CommandRunner> {
 /// Scripted responses for [`RecordingRunner`].
 #[derive(Debug, Clone)]
 pub enum RecordedResponse {
+    /// Returned when success.
     Success,
+    /// Returned when exit.
     Exit(i32),
-    Output { stdout: Vec<u8>, code: i32 },
+    /// Returned when output.
+    Output {
+        /// Stdout disposition for the child process.
+        stdout: Vec<u8>,
+        /// Code.
+        code: i32,
+    },
 }
 
 /// Records [`CommandSpec`] invocations and returns configurable exit statuses.
 #[derive(Debug, Default)]
 pub struct RecordingRunner {
+    /// Recorded for this item.
     pub recorded: Mutex<Vec<CommandSpec>>,
     stdin_payloads: Mutex<Vec<Arc<Mutex<Vec<u8>>>>>,
     responses: Mutex<VecDeque<RecordedResponse>>,

@@ -17,11 +17,19 @@ pub enum MidxError {
 
     /// On-disk format version byte is not supported.
     #[error("multi-pack-index version {version} not recognized")]
-    VersionNotRecognized { version: u8 },
+    VersionNotRecognized {
+        /// Format version byte read from the file header.
+        version: u8,
+    },
 
     /// Header hash-version byte does not match the repository object format.
     #[error("multi-pack-index hash version {found} does not match version {expected}")]
-    HashVersionMismatch { found: u8, expected: u8 },
+    HashVersionMismatch {
+        /// Hash version byte read from the MIDX header.
+        found: u8,
+        /// Hash version required by the repository object format.
+        expected: u8,
+    },
 
     /// Required pack-names chunk is missing or cannot be parsed.
     #[error("multi-pack-index required pack-name chunk missing or corrupted")]
@@ -38,9 +46,13 @@ pub enum MidxError {
     /// OID fanout table is not monotonically non-decreasing.
     #[error("oid fanout out of order: fanout[{index}] = {first:x} > {second:x} = fanout[{next}]")]
     OidFanoutOutOfOrder {
+        /// Zero-based fanout bucket index that violated ordering.
         index: usize,
+        /// Fanout count at `index` (must be ≤ `second`).
         first: u32,
+        /// Fanout count at the next bucket.
         second: u32,
+        /// Index of the next fanout bucket (`index + 1`).
         next: usize,
     },
 
@@ -66,7 +78,12 @@ pub enum MidxError {
 
     /// v1 MIDX pack names are not strictly increasing.
     #[error("multi-pack-index pack names out of order: '{previous}' before '{name}'")]
-    PackNamesOutOfOrder { previous: String, name: String },
+    PackNamesOutOfOrder {
+        /// Previous pack file name in sorted order.
+        previous: String,
+        /// Pack file name that breaks monotonic ordering.
+        name: String,
+    },
 
     /// Large-offset chunk does not cover a referenced large offset slot.
     #[error("multi-pack-index large offset out of bounds")]
@@ -74,7 +91,10 @@ pub enum MidxError {
 
     /// Chunk table of contents could not be parsed (Git `die()` cases in `read_table_of_contents`).
     #[error("{detail}")]
-    InvalidChunkTable { detail: String },
+    InvalidChunkTable {
+        /// Parse failure detail for the chunk table of contents.
+        detail: String,
+    },
 
     /// Write attempted with no pack indexes to cover.
     #[error("no packs to index")]
@@ -82,17 +102,29 @@ pub enum MidxError {
 
     /// Preferred pack has no objects in the MIDX.
     #[error("preferred pack '{pack}' is empty in multi-pack-index")]
-    PreferredPackEmpty { pack: String },
+    PreferredPackEmpty {
+        /// Pack file basename (`.pack` suffix).
+        pack: String,
+    },
 
     /// Preferred pack name does not appear in the pack list.
     #[error("unknown preferred pack '{name}'")]
-    UnknownPreferredPack { name: String },
+    UnknownPreferredPack {
+        /// Preferred pack basename that was not found in the MIDX pack list.
+        name: String,
+    },
 
     /// An existing MIDX names a pack whose `.pack` file is missing during rewrite.
     #[error("could not load pack {pack_index}")]
-    ReferencedPackMissing { pack_index: usize },
+    ReferencedPackMissing {
+        /// Zero-based index into the MIDX pack list.
+        pack_index: usize,
+    },
 
     /// Reachability bitmap generation for a MIDX failed.
     #[error("multi-pack-index bitmap write failed: {detail}")]
-    BitmapWriteFailed { detail: String },
+    BitmapWriteFailed {
+        /// Why bitmap generation or writing failed.
+        detail: String,
+    },
 }
