@@ -10,7 +10,9 @@ pub mod odb_conformance;
 pub mod parallel;
 
 pub use cli_fixture::{
-    register_cli_snapshot_filters, with_cli_snapshot_filters, CliFixture, SnapshotExitCodes,
+    register_cli_snapshot_filters, register_network_snapshot_filters, with_cli_snapshot_filters,
+    CliFixture, CliFixtureWithUpstream, NetworkSnapshotOptions, PreparedNetworkRun,
+    SnapshotExitCodes, SnapshotOutputMode,
 };
 pub use objects::{
     git_cat_file_batch_check, git_commit_graph_verify, git_fsck, git_hash_object_literally,

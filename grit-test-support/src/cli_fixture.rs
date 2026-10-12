@@ -8,8 +8,20 @@ use std::process::{Command, Output as ProcessOutput};
 use serde::de::Deserialize;
 use serde::Serialize;
 
+use crate::git_fsck;
+
 /// Fixed author/committer timestamp for deterministic commits in CLI fixtures.
 pub const DETERMINISTIC_DATE: &str = "1700000000 +0000";
+
+const PROGRESS_STDOUT_FORBIDDEN: &[&str] = &[
+    "Receiving objects",
+    "Cloning into '",
+    "Enumerating objects",
+    "Counting objects",
+    "Compressing objects",
+    "Writing objects",
+    "Resolving deltas",
+];
 
 /// Expected process exit code for each CLI output mode in a snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -334,11 +346,19 @@ impl CliFixture {
         json: ModeCapture,
         markdown: ModeCapture,
     ) {
+        assert_single_json_value(&json.stdout);
+        assert_no_progress_in_json_stdout(&json.stdout);
+        assert_progress_not_on_stdout(&human);
+
         let payload = AllModesSnapshot { human: &human, json: &json, markdown: &markdown };
         let mut settings = insta::Settings::clone_current();
         register_cli_snapshot_filters(&mut settings, filter_fixture);
         settings.set_snapshot_path(snapshot_dir);
         settings.bind(|| { insta::assert_json_snapshot!(snapshot_name, payload); });
+    }
+
+    fn capture_mode(&self, args: &[&str], kind: ModeKind) -> ModeCapture {
+        self.capture_mode_in(self.path(), args, kind)
     }
 
     fn capture_mode_in(&self, cwd: &Path, args: &[&str], kind: ModeKind) -> ModeCapture {
@@ -394,29 +414,157 @@ impl CliFixtureWithUpstream {
         dest
     }
 
-    /// Snapshot a network command from `cwd`.
-    pub fn snapshot_network(
+    /// Snapshot a network command with fresh repository state for each output mode.
+    ///
+    /// `prepare` runs once per mode so human, `--json`, and `--markdown` each exercise
+    /// the same scenario from an equivalent starting point (including a fresh upstream
+    /// when the command mutates it).
+    pub fn snapshot_network<F>(
         &self,
-        cwd: &Path,
         snapshot_name: &str,
-        args: &[&str],
         snapshot_dir: &Path,
         options: NetworkSnapshotOptions,
-    ) {
-        let ctx = NetworkSnapshotContext {
-            upstream: self.upstream_path(),
-            extra_paths: &[cwd],
-            options,
+        prepare: F,
+    ) where
+        F: Fn(SnapshotOutputMode) -> PreparedNetworkRun,
+    {
+        let human_run = prepare(SnapshotOutputMode::Human);
+        let human = {
+            let cap = self.capture_prepared(&human_run, ModeKind::Human);
+            if options.fsck_upstream {
+                fsck_upstream_strict(&human_run.upstream, "human");
+            }
+            cap
         };
-        self.fixture
-            .snapshot_all_modes_in(cwd, snapshot_name, args, snapshot_dir, Some(ctx));
+        let json_run = prepare(SnapshotOutputMode::Json);
+        let json = {
+            let cap = self.capture_prepared(&json_run, ModeKind::Json);
+            assert_single_json_value(&cap.stdout);
+            assert_no_progress_in_json_stdout(&cap.stdout);
+            if options.fsck_upstream {
+                fsck_upstream_strict(&json_run.upstream, "json");
+            }
+            cap
+        };
+        let markdown_run = prepare(SnapshotOutputMode::Markdown);
+        let markdown = {
+            let cap = self.capture_prepared(&markdown_run, ModeKind::Markdown);
+            if options.fsck_upstream {
+                fsck_upstream_strict(&markdown_run.upstream, "markdown");
+            }
+            cap
+        };
+
+        assert_progress_not_on_stdout(&human);
+
+        let payload = AllModesSnapshot {
+            human: &human,
+            json: &json,
+            markdown: &markdown,
+        };
+
+        let mut settings = insta::Settings::clone_current();
+        let redact_paths = collect_network_redact_paths([&human_run, &json_run, &markdown_run]);
+        let upstream = human_run.upstream.as_path();
+        register_network_snapshot_filters(&mut settings, &self.fixture, upstream, &redact_paths);
+        settings.set_snapshot_path(snapshot_dir);
+        settings.bind(|| {
+            insta::assert_json_snapshot!(snapshot_name, payload);
+        });
+    }
+
+    fn capture_prepared(&self, run: &PreparedNetworkRun, kind: ModeKind) -> ModeCapture {
+        let arg_refs: Vec<&str> = run.args.iter().map(String::as_str).collect();
+        self.fixture.capture_mode_in(&run.cwd, &arg_refs, kind)
     }
 }
 
-struct NetworkSnapshotContext<'a> {
-    upstream: &'a Path,
-    extra_paths: &'a [&'a Path],
-    options: NetworkSnapshotOptions,
+/// Output mode passed to network snapshot `prepare` callbacks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SnapshotOutputMode {
+    /// Default human-readable output.
+    Human,
+    /// `--json` output.
+    Json,
+    /// `--markdown` output.
+    Markdown,
+}
+
+impl SnapshotOutputMode {
+    /// Stable suffix for per-mode temporary directory names.
+    #[must_use]
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Json => "json",
+            Self::Markdown => "markdown",
+        }
+    }
+}
+
+/// One isolated network snapshot run (keeps tempdirs alive until the snapshot completes).
+pub struct PreparedNetworkRun {
+    #[allow(dead_code)]
+    keepalive: Option<Box<CliFixtureWithUpstream>>,
+    /// Working directory for `grit`.
+    pub cwd: PathBuf,
+    /// Arguments for `grit` (mode flags are added by the harness).
+    pub args: Vec<String>,
+    /// Bare upstream used for fsck and path redaction.
+    pub upstream: PathBuf,
+}
+
+impl PreparedNetworkRun {
+    /// Build a run that reuses an existing upstream fixture (fresh client/worktree only).
+    #[must_use]
+    pub fn from_shared_upstream(
+        net: &CliFixtureWithUpstream,
+        cwd: PathBuf,
+        args: Vec<String>,
+    ) -> Self {
+        Self {
+            keepalive: None,
+            cwd,
+            args,
+            upstream: net.upstream_path().to_path_buf(),
+        }
+    }
+
+    /// Build a run that owns a freshly created upstream fixture.
+    #[must_use]
+    pub fn from_owned_upstream(
+        net: Box<CliFixtureWithUpstream>,
+        cwd: PathBuf,
+        args: Vec<String>,
+    ) -> Self {
+        let upstream = net.upstream_path().to_path_buf();
+        Self {
+            keepalive: Some(net),
+            cwd,
+            args,
+            upstream,
+        }
+    }
+}
+
+fn fsck_upstream_strict(upstream: &Path, mode: &str) {
+    let fsck = git_fsck(upstream, true);
+    assert!(
+        fsck.ok,
+        "git fsck --strict upstream after push ({mode}): {:?}",
+        fsck.msg_ids
+    );
+}
+
+fn collect_network_redact_paths(runs: [&PreparedNetworkRun; 3]) -> Vec<&Path> {
+    let mut paths: Vec<&Path> = Vec::new();
+    for run in runs {
+        paths.push(run.cwd.as_path());
+        paths.push(run.upstream.as_path());
+    }
+    paths.sort_by_key(|p| p.as_os_str());
+    paths.dedup_by_key(|p| p.as_os_str());
+    paths
 }
 
 trait ExpectSuccess {
@@ -487,7 +635,6 @@ pub fn register_network_snapshot_filters(
     settings.add_filter(r" \([\d.]+ (?:KiB|MiB|B)\)", " ([SIZE])");
     settings.add_filter(r" in [\d.]+s\.", " in [ELAPSED].");
     settings.add_filter(r" \([\d.]+s\)", " ([ELAPSED])");
-    settings.add_filter(r"\d+ objects", "[OBJECTS] objects");
 }
 
 /// Run `callback` with [`register_cli_snapshot_filters`] applied.

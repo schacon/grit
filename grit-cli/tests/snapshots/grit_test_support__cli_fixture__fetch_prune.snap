@@ -10,12 +10,12 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\n  \"remote\": \"origin\",\n  \"updates\": [],\n  \"updated\": 0\n}\n",
+    "stdout": "{\n  \"remote\": \"origin\",\n  \"updates\": [\n    {\n      \"ref\": \"refs/remotes/origin/prune-me\",\n      \"old_oid\": \"b5ea30de417ac84c09b8cfc0acf5f2c39efc611f\",\n      \"new_oid\": null\n    }\n  ],\n  \"updated\": 1\n}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 0,
-    "stdout": "Already up to date with `origin`.\n",
+    "stdout": "## Updates from `origin`\n- `refs/remotes/origin/prune-me` · `b5ea30d` → `deleted`\n\nFetched **1** update.\n",
     "stderr": ""
   }
 }

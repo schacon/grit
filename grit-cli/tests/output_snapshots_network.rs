@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use grit_test_support::{
     git, git_fsck, grit, CliFixture, CliFixtureWithUpstream, NetworkSnapshotOptions,
+    PreparedNetworkRun, SnapshotOutputMode,
 };
 
 fn snapshot_dir() -> &'static Path {
@@ -49,186 +50,248 @@ fn empty_commit_on_bare(upstream: &Path, message: &str) {
 #[test]
 fn snapshot_clone_local() {
     let net = CliFixture::new().with_upstream();
-    let upstream = net.upstream_path().to_str().expect("upstream utf8");
-    net.snapshot_network(
-        net.workspace_path(),
-        "clone_local",
-        &["clone", upstream, "cloned"],
-        snapshot_dir(),
-        noop_opts(),
-    );
+    let upstream = net
+        .upstream_path()
+        .to_str()
+        .expect("upstream utf8")
+        .to_owned();
+    net.snapshot_network("clone_local", snapshot_dir(), noop_opts(), |mode| {
+        let dest = format!("cloned-{}", mode.suffix());
+        PreparedNetworkRun::from_shared_upstream(
+            &net,
+            net.workspace_path().to_path_buf(),
+            vec!["clone".into(), upstream.clone(), dest],
+        )
+    });
 }
 
 #[test]
 fn snapshot_fetch_noop() {
     let net = CliFixture::new().with_upstream();
-    let client = net.git_clone_client("client");
-    git(&client, &["fetch", "-q", "origin"]);
-    git(&client, &["reset", "--hard", "origin/main"]);
-    net.snapshot_network(
-        &client,
-        "fetch_noop",
-        &["fetch"],
-        snapshot_dir(),
-        noop_opts(),
-    );
+    net.snapshot_network("fetch_noop", snapshot_dir(), noop_opts(), |mode| {
+        let client = client_synced(&net, mode);
+        PreparedNetworkRun::from_shared_upstream(&net, client, vec!["fetch".into()])
+    });
 }
 
 #[test]
 fn snapshot_fetch_new() {
-    let net = CliFixture::new().with_upstream();
-    let client = net.git_clone_client("client");
-    git(&client, &["fetch", "-q", "origin"]);
-    git(&client, &["reset", "--hard", "origin/main"]);
-    empty_commit_on_bare(net.upstream_path(), "upstream-ahead");
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "fetch_new",
-        &["fetch"],
         snapshot_dir(),
         noop_opts(),
+        |mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            empty_commit_on_bare(net.upstream_path(), "upstream-ahead");
+            let client = client_synced(net.as_ref(), mode);
+            PreparedNetworkRun::from_owned_upstream(net, client, vec!["fetch".into()])
+        },
     );
 }
 
 #[test]
 fn snapshot_fetch_prune() {
-    let net = CliFixture::new().with_upstream();
-    let client = net.git_clone_client("client");
-    git(
-        net.upstream_path(),
-        &["update-ref", "refs/heads/prune-me", "HEAD"],
-    );
-    git(&client, &["fetch", "-q", "origin"]);
-    git(
-        net.upstream_path(),
-        &["update-ref", "-d", "refs/heads/prune-me"],
-    );
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "fetch_prune",
-        &["fetch", "--prune"],
         snapshot_dir(),
         noop_opts(),
+        |mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            git(
+                net.upstream_path(),
+                &["update-ref", "refs/heads/prune-me", "HEAD"],
+            );
+            let client = net.git_clone_client(&format!("client-{}", mode.suffix()));
+            git(&client, &["fetch", "-q", "origin"]);
+            git(
+                net.upstream_path(),
+                &["update-ref", "-d", "refs/heads/prune-me"],
+            );
+            PreparedNetworkRun::from_owned_upstream(
+                net,
+                client,
+                vec!["fetch".into(), "--prune".into()],
+            )
+        },
     );
 }
 
 #[test]
 fn snapshot_pull_ff() {
-    let net = CliFixture::new().with_upstream();
-    let client = net.git_clone_client("client");
-    git(&client, &["fetch", "-q", "origin"]);
-    git(&client, &["reset", "--hard", "origin/main"]);
-    empty_commit_on_bare(net.upstream_path(), "pull-ff-tip");
-    net.snapshot_network(&client, "pull_ff", &["pull"], snapshot_dir(), noop_opts());
+    CliFixture::new().with_upstream().snapshot_network(
+        "pull_ff",
+        snapshot_dir(),
+        noop_opts(),
+        |mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            empty_commit_on_bare(net.upstream_path(), "pull-ff-tip");
+            let client = client_synced(net.as_ref(), mode);
+            PreparedNetworkRun::from_owned_upstream(net, client, vec!["pull".into()])
+        },
+    );
 }
 
 #[test]
 fn snapshot_push_ok() {
-    let net = CliFixture::new().with_upstream();
-    let client = synced_client(&net);
-    std::fs::write(client.join("push.txt"), "push ok\n").unwrap();
-    let add = grit(&client, &["add", "push.txt"]);
-    assert!(add.ok(), "grit add: {}", add.stderr);
-    let commit = grit(&client, &["commit", "-m", "push ok"]);
-    assert!(commit.ok(), "grit commit: {}", commit.stderr);
-    net.snapshot_network(&client, "push_ok", &["push"], snapshot_dir(), push_opts());
+    CliFixture::new().with_upstream().snapshot_network(
+        "push_ok",
+        snapshot_dir(),
+        push_opts(),
+        |mode| prepared_push_with_commit(mode, "push ok", "push ok\n", "push.txt"),
+    );
 }
 
 #[test]
 fn snapshot_push_up_to_date() {
-    let net = CliFixture::new().with_upstream();
-    let client = synced_client(&net);
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "push_up_to_date",
-        &["push"],
         snapshot_dir(),
         push_opts(),
+        |_mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            let client = synced_client(net.as_ref());
+            PreparedNetworkRun::from_owned_upstream(net, client, vec!["push".into()])
+        },
     );
 }
 
 #[test]
 fn snapshot_push_rejected() {
-    let net = CliFixture::new().with_upstream();
-    let client = synced_client(&net);
-    empty_commit_on_bare(net.upstream_path(), "remote-first");
-    std::fs::write(client.join("local.txt"), "local only\n").unwrap();
-    let add = grit(&client, &["add", "local.txt"]);
-    assert!(add.ok(), "grit add: {}", add.stderr);
-    let commit = grit(&client, &["commit", "-m", "local"]);
-    assert!(commit.ok(), "grit commit: {}", commit.stderr);
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "push_rejected",
-        &["push"],
         snapshot_dir(),
-        noop_opts(),
+        push_opts(),
+        |_mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            let client = synced_client(net.as_ref());
+            empty_commit_on_bare(net.upstream_path(), "remote-first");
+            std::fs::write(client.join("local.txt"), "local only\n").unwrap();
+            let add = grit(&client, &["add", "local.txt"]);
+            assert!(add.ok(), "grit add: {}", add.stderr);
+            let commit = grit(&client, &["commit", "-m", "local"]);
+            assert!(commit.ok(), "grit commit: {}", commit.stderr);
+            PreparedNetworkRun::from_owned_upstream(net, client, vec!["push".into()])
+        },
     );
 }
 
 #[test]
 fn snapshot_push_tags() {
-    let net = CliFixture::new().with_upstream();
-    let client = synced_client(&net);
-    git(&client, &["tag", "-a", "v0.2", "-m", "two"]);
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "push_tags",
-        &["push", "--tags"],
         snapshot_dir(),
         push_opts(),
+        |_mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            let client = synced_client(net.as_ref());
+            git(&client, &["tag", "-a", "v0.2", "-m", "two"]);
+            PreparedNetworkRun::from_owned_upstream(
+                net,
+                client,
+                vec!["push".into(), "--tags".into()],
+            )
+        },
     );
 }
 
 #[test]
 fn snapshot_push_delete() {
-    let net = CliFixture::new().with_upstream();
-    let client = synced_client(&net);
-    git(&client, &["checkout", "-b", "old-topic"]);
-    git(&client, &["commit", "--allow-empty", "-qm", "topic"]);
-    git(&client, &["push", "-u", "origin", "old-topic"]);
-    git(&client, &["checkout", "main"]);
-    git(&client, &["branch", "-D", "old-topic"]);
-    let fsck_before = git_fsck(net.upstream_path(), true);
-    assert!(fsck_before.ok);
-    net.snapshot_network(
-        &client,
+    CliFixture::new().with_upstream().snapshot_network(
         "push_delete",
-        &["push", "--delete", "old-topic", "--remote", "origin"],
         snapshot_dir(),
         push_opts(),
+        |_mode| {
+            let net = Box::new(CliFixture::new().with_upstream());
+            let client = synced_client(net.as_ref());
+            git(&client, &["checkout", "-b", "old-topic"]);
+            git(&client, &["commit", "--allow-empty", "-qm", "topic"]);
+            git(&client, &["push", "-u", "origin", "old-topic"]);
+            git(&client, &["checkout", "main"]);
+            git(&client, &["branch", "-D", "old-topic"]);
+            let fsck_before = git_fsck(net.upstream_path(), true);
+            assert!(fsck_before.ok);
+            PreparedNetworkRun::from_owned_upstream(
+                net,
+                client,
+                vec![
+                    "push".into(),
+                    "--delete".into(),
+                    "old-topic".into(),
+                    "--remote".into(),
+                    "origin".into(),
+                ],
+            )
+        },
     );
 }
 
 #[test]
 fn snapshot_remote_refs_heads() {
     let net = CliFixture::new().with_upstream();
-    let upstream = net.upstream_path().to_str().expect("upstream utf8");
-    net.snapshot_network(
-        net.workspace_path(),
-        "remote_refs_heads",
-        &["remote", "refs", upstream, "--heads"],
-        snapshot_dir(),
-        noop_opts(),
-    );
+    let upstream = net
+        .upstream_path()
+        .to_str()
+        .expect("upstream utf8")
+        .to_owned();
+    net.snapshot_network("remote_refs_heads", snapshot_dir(), noop_opts(), |_mode| {
+        PreparedNetworkRun::from_shared_upstream(
+            &net,
+            net.workspace_path().to_path_buf(),
+            vec![
+                "remote".into(),
+                "refs".into(),
+                upstream.clone(),
+                "--heads".into(),
+            ],
+        )
+    });
 }
 
 #[test]
 fn snapshot_remote_refs_tags() {
     let net = CliFixture::new().with_upstream();
-    let upstream = net.upstream_path().to_str().expect("upstream utf8");
-    net.snapshot_network(
-        net.workspace_path(),
-        "remote_refs_tags",
-        &["remote", "refs", upstream, "--tags"],
-        snapshot_dir(),
-        noop_opts(),
-    );
+    let upstream = net
+        .upstream_path()
+        .to_str()
+        .expect("upstream utf8")
+        .to_owned();
+    net.snapshot_network("remote_refs_tags", snapshot_dir(), noop_opts(), |_mode| {
+        PreparedNetworkRun::from_shared_upstream(
+            &net,
+            net.workspace_path().to_path_buf(),
+            vec![
+                "remote".into(),
+                "refs".into(),
+                upstream.clone(),
+                "--tags".into(),
+            ],
+        )
+    });
 }
 
-fn synced_client(net: &CliFixtureWithUpstream) -> PathBuf {
-    let client = net.git_clone_client("client");
+fn client_synced(net: &CliFixtureWithUpstream, mode: SnapshotOutputMode) -> PathBuf {
+    let client = net.git_clone_client(&format!("client-{}", mode.suffix()));
     git(&client, &["fetch", "-q", "origin"]);
     git(&client, &["reset", "--hard", "origin/main"]);
     client
+}
+
+fn synced_client(net: &CliFixtureWithUpstream) -> PathBuf {
+    client_synced(net, SnapshotOutputMode::Human)
+}
+
+fn prepared_push_with_commit(
+    _mode: SnapshotOutputMode,
+    message: &str,
+    contents: &str,
+    filename: &str,
+) -> PreparedNetworkRun {
+    let net = Box::new(CliFixture::new().with_upstream());
+    let client = synced_client(net.as_ref());
+    std::fs::write(client.join(filename), contents).unwrap();
+    let add = grit(&client, &["add", filename]);
+    assert!(add.ok(), "grit add: {}", add.stderr);
+    let commit = grit(&client, &["commit", "-m", message]);
+    assert!(commit.ok(), "grit commit: {}", commit.stderr);
+    PreparedNetworkRun::from_owned_upstream(net, client, vec!["push".into()])
 }

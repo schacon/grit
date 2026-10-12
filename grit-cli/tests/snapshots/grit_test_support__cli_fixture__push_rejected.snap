@@ -5,8 +5,8 @@ expression: payload
 {
   "human": {
     "exit": 1,
-    "stdout": "",
-    "stderr": "  rejected origin refs/heads/main: not a fast-forward — run `grit pull` first\n"
+    "stdout": "  rejected origin refs/heads/main: not a fast-forward — run `grit pull` first\n",
+    "stderr": ""
   },
   "json": {
     "exit": 1,

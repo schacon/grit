@@ -10,12 +10,12 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\n  \"remote\": \"origin\",\n  \"branch\": \"--delete\",\n  \"results\": [\n    {\n      \"ref\": \"refs/heads/old-topic\",\n      \"status\": \"up_to_date\"\n    }\n  ],\n  \"rejected\": false\n}\n",
+    "stdout": "{\n  \"remote\": \"origin\",\n  \"branch\": \"--delete\",\n  \"results\": [\n    {\n      \"ref\": \"refs/heads/old-topic\",\n      \"status\": \"ok\"\n    }\n  ],\n  \"rejected\": false\n}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 0,
-    "stdout": "## Push to `origin`\n- **`refs/heads/old-topic`** · `origin refs/heads/old-topic` already up to date\n",
+    "stdout": "## Push to `origin`\n- **`refs/heads/old-topic`** · pushed `--delete` → `origin refs/heads/old-topic`\n",
     "stderr": ""
   }
 }

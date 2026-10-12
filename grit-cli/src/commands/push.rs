@@ -53,8 +53,8 @@ impl HumanRender for PushOutcome {
             match result.status.as_str() {
                 "ok" => outln!(w, "  pushed {} → {target}", self.branch),
                 "up_to_date" => outln!(w, "  {target} already up to date"),
-                // Rejections are diagnostics → stderr (as before).
-                _ => eprintln!(
+                _ => outln!(
+                    w,
                     "  rejected {target}: {}",
                     result.reason.as_deref().unwrap_or("rejected")
                 ),
