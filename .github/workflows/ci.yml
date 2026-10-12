@@ -12,6 +12,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Runners have no git identity; tests that commit with the system `git` (often with
+# GIT_CONFIG_GLOBAL=/dev/null) need one, as every developer machine already has.
+env:
+  GIT_AUTHOR_NAME: CI
+  GIT_AUTHOR_EMAIL: ci@example.com
+  GIT_COMMITTER_NAME: CI
+  GIT_COMMITTER_EMAIL: ci@example.com
+
 jobs:
   coverage:
     name: coverage
