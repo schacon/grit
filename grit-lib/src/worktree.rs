@@ -733,4 +733,261 @@ mod tests {
         let path = read_worktree_path(&admin).unwrap();
         assert_eq!(path, path_for_disk_compare(&wt));
     }
+
+    #[test]
+    fn add_and_remove_linked_worktree_via_library() {
+        use std::process::Command;
+        let tmp = TempDir::new().unwrap();
+        let main = tmp.path().join("main");
+        fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(&main)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(main.join("t"), b"1\n").unwrap();
+        git(&["add", "t"]);
+        git(&["commit", "-qm", "init"]);
+
+        let repo = Repository::discover(Some(&main)).unwrap();
+        let linked = tmp.path().join("linked");
+        add_linked_worktree(
+            &repo,
+            &AddLinkedWorktreeOptions {
+                path: linked.clone(),
+                branch: Some("wt".into()),
+                new_branch: true,
+                detach: false,
+                start_point: Some("HEAD".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(list_worktrees(&repo).unwrap().len(), 2);
+        remove_linked_worktree(&repo, &linked, false).unwrap();
+        assert_eq!(list_worktrees(&repo).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn registered_worktree_count_and_basename() {
+        let tmp = TempDir::new().unwrap();
+        let common = tmp.path().join("git");
+        fs::create_dir_all(common.join("worktrees/a")).unwrap();
+        fs::create_dir_all(common.join("worktrees/b")).unwrap();
+        assert_eq!(registered_worktree_count(&common), 3);
+        assert_eq!(
+            worktree_path_basename(Path::new("/tmp/my/project/")),
+            "project"
+        );
+    }
+
+    #[test]
+    fn registered_worktree_count_without_worktrees_dir() {
+        let tmp = TempDir::new().unwrap();
+        let common = tmp.path().join("only-main");
+        fs::create_dir_all(&common).unwrap();
+        assert_eq!(registered_worktree_count(&common), 1);
+    }
+
+    #[test]
+    fn common_git_dir_and_bare_detection() {
+        let tmp = TempDir::new().unwrap();
+        let git_dir = tmp.path().join("bare.git");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+        )
+        .unwrap();
+        assert!(is_bare_repository(&git_dir));
+        assert_eq!(common_git_dir(&git_dir), git_dir);
+    }
+
+    #[test]
+    fn sanitize_worktree_id_special_cases() {
+        assert_eq!(sanitize_worktree_id_component("@"), "-");
+        assert!(!sanitize_worktree_id_component("@{upstream}").contains('@'));
+        assert_eq!(sanitize_worktree_id_component("..name"), ".name");
+        assert_eq!(sanitize_worktree_id_component(".lock.lock"), "-lock");
+        let tmp = TempDir::new().unwrap();
+        let common = tmp.path().join("git");
+        fs::create_dir_all(&common).unwrap();
+        assert_eq!(
+            allocate_worktree_admin_dir(&common, Path::new("/")),
+            common.join("worktrees/worktree")
+        );
+    }
+
+    #[test]
+    fn copy_filtered_worktree_config_no_source_is_ok() {
+        let tmp = TempDir::new().unwrap();
+        let admin = tmp.path().join("admin");
+        fs::create_dir_all(&admin).unwrap();
+        copy_filtered_worktree_config(tmp.path(), &admin).unwrap();
+        assert!(!admin.join("config.worktree").exists());
+    }
+
+    #[test]
+    fn copy_filtered_worktree_config_copies_file() {
+        let tmp = TempDir::new().unwrap();
+        let common = tmp.path().join("common");
+        let admin = tmp.path().join("admin");
+        fs::create_dir_all(&common).unwrap();
+        fs::create_dir_all(&admin).unwrap();
+        fs::write(
+            common.join("config.worktree"),
+            "[core]\n\tbare = false\n\tworktree = /x\n[ext]\n\tk = v\n",
+        )
+        .unwrap();
+        copy_filtered_worktree_config(&common, &admin).unwrap();
+        let out = fs::read_to_string(admin.join("config.worktree")).unwrap();
+        assert!(out.contains("[ext]"));
+        assert!(!out.contains("worktree"));
+    }
+
+    #[test]
+    fn read_lock_state_and_missing_gitdir_path() {
+        let tmp = TempDir::new().unwrap();
+        let admin = tmp.path().join("admin");
+        fs::create_dir_all(&admin).unwrap();
+        assert_eq!(read_worktree_path(&admin).unwrap(), admin);
+        fs::write(admin.join("locked"), "maintenance\n").unwrap();
+        let (locked, reason) = read_lock_state(&admin).unwrap();
+        assert!(locked);
+        assert_eq!(reason.as_deref(), Some("maintenance"));
+    }
+
+    #[test]
+    fn ensure_empty_or_missing_rejects_nonempty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("occupied");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("file"), b"x").unwrap();
+        assert!(ensure_empty_or_missing(&dir).is_err());
+        let missing = tmp.path().join("missing");
+        assert!(ensure_empty_or_missing(&missing).is_ok());
+    }
+
+    #[test]
+    fn add_linked_worktree_rejects_bare_repository() {
+        let tmp = TempDir::new().unwrap();
+        let bare = tmp.path().join("bare.git");
+        fs::create_dir_all(bare.join("objects")).unwrap();
+        fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            bare.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+        )
+        .unwrap();
+        let repo = Repository::open(&bare, None).unwrap();
+        let err = add_linked_worktree(
+            &repo,
+            &AddLinkedWorktreeOptions {
+                path: tmp.path().join("wt"),
+                branch: Some("wt".into()),
+                new_branch: true,
+                detach: false,
+                start_point: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Message(_)));
+    }
+
+    #[test]
+    fn branch_checkout_exclusivity_helpers() {
+        use std::process::Command;
+        let tmp = TempDir::new().unwrap();
+        let main = tmp.path().join("main");
+        fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .current_dir(&main)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(main.join("t"), b"1\n").unwrap();
+        git(&["add", "t"]);
+        git(&["commit", "-qm", "init"]);
+
+        let repo = Repository::discover(Some(&main)).unwrap();
+        let linked = tmp.path().join("linked");
+        add_linked_worktree(
+            &repo,
+            &AddLinkedWorktreeOptions {
+                path: linked.clone(),
+                branch: Some("feature".into()),
+                new_branch: true,
+                detach: false,
+                start_point: Some("HEAD".into()),
+            },
+        )
+        .unwrap();
+
+        let linked_repo = Repository::discover(Some(&linked)).unwrap();
+        let linked_admin = linked_repo.git_dir.canonicalize().unwrap_or_else(|_| linked_repo.git_dir.clone());
+        assert_eq!(worktree_admin_dir(&linked_repo), linked_admin);
+
+        let found = find_worktree_with_branch_checked_out(&repo, "feature", None)
+            .unwrap()
+            .expect("linked checkout");
+        assert_eq!(found.branch, "feature");
+
+        assert!(ensure_branch_not_checked_out_in_any_worktree(&repo, "feature").is_err());
+        assert!(ensure_branch_not_checked_out_elsewhere(&linked_repo, "feature").is_ok());
+        assert!(ensure_branch_not_checked_out_elsewhere(&repo, "feature").is_err());
+    }
+
+    #[test]
+    fn remove_linked_worktree_refuses_main_and_locked() {
+        use std::process::Command;
+        let tmp = TempDir::new().unwrap();
+        let main = tmp.path().join("main");
+        fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .current_dir(&main)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(main.join("t"), b"1\n").unwrap();
+        git(&["add", "t"]);
+        git(&["commit", "-qm", "init"]);
+
+        let repo = Repository::discover(Some(&main)).unwrap();
+        assert!(remove_linked_worktree(&repo, &main, false).is_err());
+
+        let linked = tmp.path().join("linked");
+        add_linked_worktree(
+            &repo,
+            &AddLinkedWorktreeOptions {
+                path: linked.clone(),
+                branch: Some("wt".into()),
+                new_branch: true,
+                detach: false,
+                start_point: Some("HEAD".into()),
+            },
+        )
+        .unwrap();
+        let common = common_git_dir(&repo.git_dir);
+        let admin = fs::read_dir(common.join("worktrees"))
+            .unwrap()
+            .find_map(|e| e.ok())
+            .map(|e| e.path())
+            .expect("admin");
+        fs::write(admin.join("locked"), "hold\n").unwrap();
+        assert!(remove_linked_worktree(&repo, &linked, false).is_err());
+        assert!(remove_linked_worktree(&repo, &linked, true).is_ok());
+    }
 }

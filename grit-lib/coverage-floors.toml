@@ -135,7 +135,7 @@ files = [
     "rev_parse_error.rs",
     "merge_base.rs",
 ]
-minimum = 29.3
+minimum = 29.4
 
 [group.revwalk]
 files = [
@@ -152,7 +152,7 @@ files = [
     "worktree.rs",
     "worktree_ref.rs",
 ]
-minimum = 60.0
+minimum = 85.0
 
 [group.supporting]
 files = [
@@ -248,7 +248,7 @@ minimum = 82.0
 minimum = 84.2
 
 [file."refs/mod.rs"]
-minimum = 76.5
+minimum = 76.6
 
 [file."reftable.rs"]
 minimum = 83.8

@@ -17,7 +17,7 @@
 
 use similar::{ChangeTag, TextDiff};
 
-use crate::diff::{diff_trees, zero_oid, DiffEntry};
+use crate::diff::{diff_trees_with_renames, zero_oid, DiffEntry, DiffStatus};
 use crate::error::Result;
 use crate::hash::ObjectHasher;
 use crate::merge_file;
@@ -471,10 +471,14 @@ fn compute_patch_id_filtered(
         Some(parent_commit.tree)
     };
 
-    // Compute tree-to-tree diff.
-    let mut diffs = diff_trees(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "")?;
+    // Match `git show` / `git diff-tree -M`: pair renames before hashing.
+    let mut diffs =
+        diff_trees_with_renames(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "", 50)?;
     if !paths.is_empty() {
         diffs.retain(|entry| diff_entry_matches_paths(entry, paths));
+    }
+    if diffs.is_empty() {
+        return Ok(None);
     }
 
     // Sort by primary path (lexicographic), matching diffcore_std ordering.
@@ -483,6 +487,10 @@ fn compute_patch_id_filtered(
     let mut result = [0u8; PATCH_ID_DIGEST_MAX];
 
     for entry in &diffs {
+        if entry.status == DiffStatus::Renamed {
+            patch_id_hash_rename_entry(odb, algo, entry, &mut result, digest_len)?;
+            continue;
+        }
         // Git's patch-id header (`diff --git a/<x> b/<y>`) uses the present path on both sides for
         // pure additions/deletions (e.g. `diff --git a/file b/file` for a new file), so fall back to
         // the other side when one path is absent.
@@ -524,56 +532,46 @@ fn compute_patch_id_filtered(
             patch_id_add_mode(&mut ctx, new_mode);
         }
 
-        let old_bytes = read_blob(odb, &entry.old_oid)?;
-        let new_bytes = read_blob(odb, &entry.new_oid)?;
-
-        if merge_file::is_binary(&old_bytes) || merge_file::is_binary(&new_bytes) {
-            let a = entry.old_oid.to_hex();
-            let b = entry.new_oid.to_hex();
-            ctx.update(a.as_bytes());
-            ctx.update(b.as_bytes());
+        if entry.old_oid == entry.new_oid {
+            // Mode-only commits (and other metadata-only tree diffs) omit `---`/`+++` hunks.
         } else {
-            let old_str = std::str::from_utf8(&old_bytes).unwrap_or("");
-            let new_str = std::str::from_utf8(&new_bytes).unwrap_or("");
+            let old_bytes = read_blob(odb, &entry.old_oid)?;
+            let new_bytes = read_blob(odb, &entry.new_oid)?;
 
-            if old_mode == 0 {
-                patch_id_add_string(&mut ctx, b"---/dev/null");
-                patch_id_add_string(&mut ctx, b"+++b/");
-                ctx.update(&new_path_buf[..len2]);
-            } else if new_mode == 0 {
-                patch_id_add_string(&mut ctx, b"---a/");
-                ctx.update(&old_path_buf[..len1]);
-                patch_id_add_string(&mut ctx, b"+++/dev/null");
+            if merge_file::is_binary(&old_bytes) || merge_file::is_binary(&new_bytes) {
+                let a = entry.old_oid.to_hex();
+                let b = entry.new_oid.to_hex();
+                ctx.update(a.as_bytes());
+                ctx.update(b.as_bytes());
             } else {
-                patch_id_add_string(&mut ctx, b"---a/");
-                ctx.update(&old_path_buf[..len1]);
-                patch_id_add_string(&mut ctx, b"+++b/");
-                ctx.update(&new_path_buf[..len2]);
-            }
+                let old_str = std::str::from_utf8(&old_bytes).unwrap_or("");
+                let new_str = std::str::from_utf8(&new_bytes).unwrap_or("");
 
-            let diff = TextDiff::from_lines(old_str, new_str);
-            for change in diff.iter_all_changes() {
-                let prefix = match change.tag() {
-                    ChangeTag::Equal => b' ',
-                    ChangeTag::Delete => b'-',
-                    ChangeTag::Insert => b'+',
-                };
-                let text = change.as_str().unwrap_or("");
-                for piece in text.split_inclusive('\n') {
-                    let line_body = piece.strip_suffix('\n').unwrap_or(piece);
-                    let mut line_buf = Vec::with_capacity(1 + line_body.len() + 1);
-                    line_buf.push(prefix);
-                    line_buf.extend_from_slice(line_body.as_bytes());
-                    line_buf.push(b'\n');
-                    let n = remove_space_bytes(&mut line_buf);
-                    ctx.update(&line_buf[..n]);
+                if old_mode == 0 {
+                    patch_id_add_string(&mut ctx, b"---/dev/null");
+                    patch_id_add_string(&mut ctx, b"+++b/");
+                    ctx.update(&new_path_buf[..len2]);
+                } else if new_mode == 0 {
+                    patch_id_add_string(&mut ctx, b"---a/");
+                    ctx.update(&old_path_buf[..len1]);
+                    patch_id_add_string(&mut ctx, b"+++/dev/null");
+                } else {
+                    patch_id_add_string(&mut ctx, b"---a/");
+                    ctx.update(&old_path_buf[..len1]);
+                    patch_id_add_string(&mut ctx, b"+++b/");
+                    ctx.update(&new_path_buf[..len2]);
                 }
+
+                patch_id_hash_text_hunks(&mut ctx, old_str, new_str);
             }
         }
 
         text_flush_one_hunk(&mut result[..digest_len], digest_len, &mut ctx, algo);
     }
 
+    if result.iter().take(digest_len).all(|&b| b == 0) {
+        return Ok(None);
+    }
     ObjectId::from_bytes(&result[..digest_len]).map(Some)
 }
 
@@ -597,6 +595,90 @@ fn patch_id_add_string(ctx: &mut ObjectHasher, s: &[u8]) {
 fn patch_id_add_mode(ctx: &mut ObjectHasher, mode: u32) {
     let text = format!("{mode:06o}");
     ctx.update(text.as_bytes());
+}
+
+/// Hash a rename entry the same way `git patch-id` hashes `similarity index` /
+/// `rename from` / `rename to` lines from `git show --patch`.
+fn patch_id_hash_rename_entry(
+    odb: &Odb,
+    algo: HashAlgo,
+    entry: &DiffEntry,
+    result: &mut [u8],
+    digest_len: usize,
+) -> Result<()> {
+    let old_path = entry.old_path.as_deref().unwrap_or("");
+    let new_path = entry.new_path.as_deref().unwrap_or("");
+    let mut old_path_buf = old_path.as_bytes().to_vec();
+    let mut new_path_buf = new_path.as_bytes().to_vec();
+    let len1 = remove_space_bytes(&mut old_path_buf);
+    let len2 = remove_space_bytes(&mut new_path_buf);
+
+    let mut ctx = ObjectHasher::new(algo);
+    patch_id_add_string(&mut ctx, b"diff--git");
+    patch_id_add_string(&mut ctx, b"a/");
+    ctx.update(&old_path_buf[..len1]);
+    patch_id_add_string(&mut ctx, b"b/");
+    ctx.update(&new_path_buf[..len2]);
+
+    let score = entry.score.unwrap_or(100);
+    patch_id_add_string(&mut ctx, b"similarityindex");
+    ctx.update(format!("{score}%").as_bytes());
+    patch_id_add_string(&mut ctx, b"renamefrom");
+    ctx.update(&old_path_buf[..len1]);
+    patch_id_add_string(&mut ctx, b"renameto");
+    ctx.update(&new_path_buf[..len2]);
+
+    let old_mode = parse_mode_u32(&entry.old_mode);
+    let new_mode = parse_mode_u32(&entry.new_mode);
+    if old_mode != new_mode {
+        patch_id_add_string(&mut ctx, b"oldmode");
+        patch_id_add_mode(&mut ctx, old_mode);
+        patch_id_add_string(&mut ctx, b"newmode");
+        patch_id_add_mode(&mut ctx, new_mode);
+    }
+
+    if entry.old_oid != entry.new_oid {
+        let old_bytes = read_blob(odb, &entry.old_oid)?;
+        let new_bytes = read_blob(odb, &entry.new_oid)?;
+        if merge_file::is_binary(&old_bytes) || merge_file::is_binary(&new_bytes) {
+            let a = entry.old_oid.to_hex();
+            let b = entry.new_oid.to_hex();
+            ctx.update(a.as_bytes());
+            ctx.update(b.as_bytes());
+        } else {
+            let old_str = std::str::from_utf8(&old_bytes).unwrap_or("");
+            let new_str = std::str::from_utf8(&new_bytes).unwrap_or("");
+            patch_id_add_string(&mut ctx, b"---a/");
+            ctx.update(&old_path_buf[..len1]);
+            patch_id_add_string(&mut ctx, b"+++b/");
+            ctx.update(&new_path_buf[..len2]);
+            patch_id_hash_text_hunks(&mut ctx, old_str, new_str);
+        }
+    }
+
+    text_flush_one_hunk(result, digest_len, &mut ctx, algo);
+    Ok(())
+}
+
+fn patch_id_hash_text_hunks(ctx: &mut ObjectHasher, old_str: &str, new_str: &str) {
+    let diff = TextDiff::from_lines(old_str, new_str);
+    for change in diff.iter_all_changes() {
+        let prefix = match change.tag() {
+            ChangeTag::Equal => b' ',
+            ChangeTag::Delete => b'-',
+            ChangeTag::Insert => b'+',
+        };
+        let text = change.as_str().unwrap_or("");
+        for piece in text.split_inclusive('\n') {
+            let line_body = piece.strip_suffix('\n').unwrap_or(piece);
+            let mut line_buf = Vec::with_capacity(1 + line_body.len() + 1);
+            line_buf.push(prefix);
+            line_buf.extend_from_slice(line_body.as_bytes());
+            line_buf.push(b'\n');
+            let n = remove_space_bytes(&mut line_buf);
+            ctx.update(&line_buf[..n]);
+        }
+    }
 }
 
 /// Strip ASCII whitespace in-place; returns new length (prefix of `buf` is valid).
@@ -711,5 +793,165 @@ mod tests {
             assert_eq!(g_patch, git_patch, "patch-id mismatch");
             assert_eq!(g_commit, git_commit, "commit-id mismatch");
         }
+    }
+
+    fn git_patch_ids_from_log(dir: &std::path::Path, mode_flag: &str) -> Vec<(ObjectId, ObjectId)> {
+        let log_p = git_in(dir, &["log", "-p", "--reverse"]);
+        use std::io::Write;
+        let mut child = Command::new("git")
+            .current_dir(dir)
+            .args(["patch-id", mode_flag])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn git patch-id");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(log_p.as_bytes())
+            .expect("write log");
+        let out = child.wait_with_output().expect("wait");
+        assert!(
+            out.status.success(),
+            "git patch-id failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let mut parts = line.split_whitespace();
+                let patch_hex = parts.next().expect("patch id");
+                let commit_hex = parts.next().expect("commit id");
+                (
+                    ObjectId::from_hex(patch_hex).expect("patch hex"),
+                    ObjectId::from_hex(commit_hex).expect("commit hex"),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn t4204_patch_id_modes_match_git() {
+        let dir = TempDir::new().expect("tempdir");
+        git_in(dir.path(), &["init", "-q", "--initial-branch=main", "."]);
+        std::fs::write(dir.path().join("f.txt"), b"one\n").unwrap();
+        git_in(dir.path(), &["add", "f.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.path().join("f.txt"), b"one\ntwo\n").unwrap();
+        git_in(dir.path(), &["add", "f.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "second"]);
+        std::fs::write(dir.path().join("g.bin"), &[0u8, 1, 2, 3]).unwrap();
+        git_in(dir.path(), &["add", "g.bin"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "binary"]);
+        std::fs::write(dir.path().join("h.txt"), b"a\n").unwrap();
+        git_in(dir.path(), &["add", "h.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "add-h"]);
+        git_in(dir.path(), &["mv", "h.txt", "i.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "rename"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(dir.path().join("f.txt"))
+                .expect("f.txt")
+                .permissions();
+            perms.set_mode(0o100755);
+            std::fs::set_permissions(dir.path().join("f.txt"), perms).expect("chmod f.txt");
+        }
+        git_in(dir.path(), &["add", "f.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "mode-only"]);
+        let log_p = git_in(dir.path(), &["log", "-p", "--reverse"]);
+
+        for (mode, flag) in [
+            (PatchIdMode::Stable, "--stable"),
+            (PatchIdMode::Unstable, "--unstable"),
+            (PatchIdMode::Verbatim, "--verbatim"),
+        ] {
+            let grit_ids = compute_patch_ids_from_text(HashAlgo::Sha1, log_p.as_bytes(), mode);
+            let git_ids = git_patch_ids_from_log(dir.path(), flag);
+            assert_eq!(grit_ids.len(), git_ids.len(), "patch-id count for {flag:?}");
+            for ((g_patch, g_commit), (git_patch, git_commit)) in
+                grit_ids.iter().zip(git_ids.iter())
+            {
+                assert_eq!(g_patch, git_patch, "patch-id {flag}");
+                assert_eq!(g_commit, git_commit, "commit-id {flag}");
+            }
+        }
+
+        let repo =
+            crate::repo::Repository::open(&dir.path().join(".git"), Some(dir.path())).unwrap();
+        let git_stable = git_patch_ids_from_log(dir.path(), "--stable");
+        let assert_odb_matches_git = |commit_hex: &str, label: &str| {
+            let commit: ObjectId = commit_hex.trim().parse().expect("commit oid");
+            let grit = compute_patch_id(HashAlgo::Sha1, &repo.odb, &commit)
+                .expect("patch")
+                .expect("some");
+            let git_patch = git_stable
+                .iter()
+                .find(|(_, c)| c == &commit)
+                .expect(label)
+                .0;
+            assert_eq!(grit, git_patch, "{label}");
+        };
+
+        let second = git_in(
+            dir.path(),
+            &["rev-list", "--max-count=1", "--skip=4", "HEAD"],
+        );
+        assert_odb_matches_git(&second, "git patch-id for second commit");
+        let rename = git_in(
+            dir.path(),
+            &["rev-list", "--max-count=1", "--skip=1", "HEAD"],
+        );
+        assert_odb_matches_git(&rename, "git patch-id for rename commit");
+        let mode_only = git_in(dir.path(), &["rev-parse", "HEAD"]);
+        assert_odb_matches_git(&mode_only, "git patch-id for mode-only commit");
+
+        let add_h = git_in(
+            dir.path(),
+            &["rev-list", "--max-count=1", "--skip=2", "HEAD"],
+        );
+        let add_h: ObjectId = add_h.trim().parse().unwrap();
+        let filtered =
+            compute_patch_id_for_paths(HashAlgo::Sha1, &repo.odb, &add_h, &[String::from("h.txt")])
+                .expect("filtered h.txt")
+                .expect("some h.txt");
+        let git_h = git_stable
+            .iter()
+            .find(|(_, c)| c == &add_h)
+            .expect("git patch-id for add-h")
+            .0;
+        assert_eq!(
+            filtered, git_h,
+            "ODB path-filter h.txt vs full commit patch-id"
+        );
+        assert!(
+            compute_patch_id_for_paths(
+                HashAlgo::Sha1,
+                &repo.odb,
+                &add_h,
+                &[String::from("f.txt")],
+            )
+            .expect("filtered f.txt")
+            .is_none(),
+            "path filter excluding all changes must be None"
+        );
+
+        git_in(dir.path(), &["checkout", "-q", "HEAD~4"]);
+        git_in(dir.path(), &["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.path().join("side.txt"), b"s\n").unwrap();
+        git_in(dir.path(), &["add", "side.txt"]);
+        git_in(dir.path(), &["commit", "-q", "-m", "side"]);
+        git_in(dir.path(), &["checkout", "-q", "main"]);
+        git_in(dir.path(), &["merge", "-q", "--no-ff", "side"]);
+        let merge_tip: ObjectId = git_in(dir.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(compute_patch_id(HashAlgo::Sha1, &repo.odb, &merge_tip)
+            .expect("merge")
+            .is_none());
     }
 }
