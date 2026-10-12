@@ -24,8 +24,8 @@
 //! zero/null OID, the empty-pack trailer, and the advertisement parsing are all
 //! hash-width aware.
 
-use std::collections::HashMap;
-use std::io::Cursor;
+use std::collections::{HashMap, HashSet};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
 
 use crate::branch_tracking;
@@ -183,11 +183,20 @@ pub fn push_remote(
     // exits. It is still reading its input while we read its report, so closing
     // our write half early makes it see a premature EOF ("the remote end hung up
     // unexpectedly") and abort without sending the report. The server closes its
-    // own output once the report is written, ending `read_to_end`; the write
-    // half is released when the connection is dropped (after the child has
-    // already exited, so the `Drop` teardown does not block).
-    let mut raw = Vec::new();
-    conn.reader().read_to_end(&mut raw)?;
+    // own output once the report is written; the write half is released when the
+    // connection is dropped (after the child has already exited, so the `Drop`
+    // teardown does not block).
+    //
+    // Some receive-pack hosts (notably Git-for-Windows `git daemon` on Windows)
+    // reset the TCP connection immediately after sending a complete report-status
+    // instead of shutting down cleanly. Treat that as success when the bytes we
+    // already received parse as a full report for every ref we sent.
+    let sent_refs: Vec<&str> = plan
+        .to_send
+        .iter()
+        .map(|&i| plan.decisions[i].result.remote_ref.as_str())
+        .collect();
+    let raw = read_receive_pack_response(conn.reader(), &sent_refs, adv.server_sideband)?;
     let report = if adv.server_sideband {
         demux_report_and_remote_messages(&raw, progress)?
     } else {
@@ -697,6 +706,84 @@ fn decide_push_wire(
     }
 }
 
+/// Read the receive-pack report stream until EOF or an abrupt connection close.
+///
+/// When the server resets the connection after sending a complete
+/// `report-status`, the accumulated bytes are returned as success so tracking
+/// refs can be updated. Incomplete buffers still surface as I/O errors.
+fn read_receive_pack_response(
+    reader: &mut dyn Read,
+    sent_refs: &[&str],
+    server_sideband: bool,
+) -> Result<Vec<u8>> {
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&buf[..n]),
+            Err(e) if receive_pack_read_recoverable(&e) => {
+                if receive_pack_response_complete(&raw, sent_refs, server_sideband)? {
+                    break;
+                }
+                return Err(Error::Io(e));
+            }
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+    if !receive_pack_response_complete(&raw, sent_refs, server_sideband)? {
+        return Err(Error::Message(
+            "receive-pack response ended before a complete report-status".to_owned(),
+        ));
+    }
+    Ok(raw)
+}
+
+fn receive_pack_read_recoverable(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::ConnectionReset | ErrorKind::BrokenPipe | ErrorKind::UnexpectedEof
+    )
+}
+
+/// Whether `raw` (optionally side-band wrapped) contains a full report-status
+/// for every ref named in `sent_refs`.
+fn receive_pack_response_complete(
+    raw: &[u8],
+    sent_refs: &[&str],
+    server_sideband: bool,
+) -> Result<bool> {
+    let report = if server_sideband {
+        demux_sideband_report(raw, None)?
+    } else {
+        raw.to_vec()
+    };
+    Ok(report_lines_complete(&report, sent_refs))
+}
+
+/// True when `report` includes an `unpack …` line and an `ok`/`ng` line for
+/// every ref the client sent on the wire.
+fn report_lines_complete(report: &[u8], sent_refs: &[&str]) -> bool {
+    let mut saw_unpack = false;
+    let mut per_ref = HashSet::<String>::new();
+    let mut cursor = Cursor::new(report);
+    while let Ok(Some(pkt)) = pkt_line::read_packet(&mut cursor) {
+        let Packet::Data(line) = pkt else {
+            continue;
+        };
+        let line = line.trim_end();
+        if line.starts_with("unpack ") {
+            saw_unpack = true;
+        } else if let Some(refname) = line.strip_prefix("ok ") {
+            per_ref.insert(refname.trim().to_owned());
+        } else if let Some(rest) = line.strip_prefix("ng ") {
+            let (refname, _) = rest.split_once(' ').unwrap_or((rest, ""));
+            per_ref.insert(refname.trim().to_owned());
+        }
+    }
+    saw_unpack && sent_refs.iter().all(|r| per_ref.contains(*r))
+}
+
 /// Parse the server's `report-status` / `report-status-v2` stream and fold each
 /// per-ref `ok`/`ng` line back into the matching decision.
 ///
@@ -765,11 +852,11 @@ fn apply_report_status(report: &[u8], decisions: &mut [PushDecision]) {
     }
 }
 
-/// Split a side-band stream: band 1 (report-status) is returned; band 2/3
-/// (remote diagnostics) is forwarded to `progress`. Lifted from the CLI's
-/// `demux_report_and_remote_messages`, but progress goes to the callback rather
-/// than directly to stderr (the public API must not assume stdout/stderr).
-fn demux_report_and_remote_messages(input: &[u8], progress: &mut dyn Progress) -> Result<Vec<u8>> {
+/// Extract band 1 (report-status) from a side-band receive-pack response.
+///
+/// Bands 2 and 3 are optionally forwarded to `progress`; pass `None` for
+/// side-effect-free completeness checks.
+fn demux_sideband_report(input: &[u8], mut progress: Option<&mut dyn Progress>) -> Result<Vec<u8>> {
     let mut report = Vec::new();
     let mut i = 0usize;
     while i + 4 <= input.len() {
@@ -794,11 +881,23 @@ fn demux_report_and_remote_messages(input: &[u8], progress: &mut dyn Progress) -
         let data = &payload[1..];
         match band {
             1 => report.extend_from_slice(data),
-            2 | 3 => progress.message(data),
+            2 | 3 => {
+                if let Some(p) = progress.as_deref_mut() {
+                    p.message(data);
+                }
+            }
             _ => {}
         }
     }
     Ok(report)
+}
+
+/// Split a side-band stream: band 1 (report-status) is returned; band 2/3
+/// (remote diagnostics) is forwarded to `progress`. Lifted from the CLI's
+/// `demux_report_and_remote_messages`, but progress goes to the callback rather
+/// than directly to stderr (the public API must not assume stdout/stderr).
+fn demux_report_and_remote_messages(input: &[u8], progress: &mut dyn Progress) -> Result<Vec<u8>> {
+    demux_sideband_report(input, Some(progress))
 }
 
 /// Peel `oid` to the commit it ultimately names, following annotated tags, using
@@ -1031,5 +1130,153 @@ mod tests {
         let report = demux_report_and_remote_messages(&wire, &mut cap).unwrap();
         assert_eq!(report, b"unpack ok\n");
         assert_eq!(cap.0, b"hello from hook\n");
+    }
+
+    #[test]
+    fn report_lines_complete_requires_unpack_and_every_sent_ref() {
+        let sent = ["refs/heads/main"];
+        let full = report_bytes(&["unpack ok", "ok refs/heads/main"]);
+        assert!(report_lines_complete(&full, &sent));
+        let missing_ok = report_bytes(&["unpack ok"]);
+        assert!(!report_lines_complete(&missing_ok, &sent));
+        let missing_unpack = report_bytes(&["ok refs/heads/main"]);
+        assert!(!report_lines_complete(&missing_unpack, &sent));
+        let ng_ok = report_bytes(&["unpack ok", "ng refs/heads/main denied"]);
+        assert!(report_lines_complete(&ng_ok, &sent));
+    }
+
+    struct AbruptAfterRead {
+        payload: Vec<u8>,
+        pos: usize,
+        err_kind: ErrorKind,
+    }
+
+    impl Read for AbruptAfterRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos < self.payload.len() {
+                let n = std::cmp::min(buf.len(), self.payload.len() - self.pos);
+                buf[..n].copy_from_slice(&self.payload[self.pos..self.pos + n]);
+                self.pos += n;
+                return Ok(n);
+            }
+            Err(std::io::Error::new(self.err_kind, "forcibly closed"))
+        }
+    }
+
+    fn sideband_receive_pack_wire(hook_line: &[u8]) -> Vec<u8> {
+        let report_body = report_bytes(&["unpack ok", "ok refs/heads/main"]);
+        let mut band1 = vec![1u8];
+        band1.extend_from_slice(&report_body);
+        let mut wire = Vec::new();
+        pkt_line::write_packet_raw(&mut wire, &band1).unwrap();
+        let mut band2 = vec![2u8];
+        band2.extend_from_slice(hook_line);
+        pkt_line::write_packet_raw(&mut wire, &band2).unwrap();
+        wire.extend_from_slice(b"0000");
+        wire
+    }
+
+    struct EofAfterRead {
+        payload: Vec<u8>,
+        pos: usize,
+    }
+
+    impl Read for EofAfterRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos < self.payload.len() {
+                let n = std::cmp::min(buf.len(), self.payload.len() - self.pos);
+                buf[..n].copy_from_slice(&self.payload[self.pos..self.pos + n]);
+                self.pos += n;
+                Ok(n)
+            } else {
+                Ok(0)
+            }
+        }
+    }
+
+    /// Mirrors `push_remote`: read the wire response, then demux side-band once.
+    fn read_push_report(
+        reader: &mut dyn Read,
+        sent_refs: &[&str],
+        sideband: bool,
+        progress: &mut dyn Progress,
+    ) -> Result<Vec<u8>> {
+        let raw = read_receive_pack_response(reader, sent_refs, sideband)?;
+        if sideband {
+            demux_report_and_remote_messages(&raw, progress)
+        } else {
+            Ok(raw)
+        }
+    }
+
+    #[test]
+    fn read_receive_pack_response_tolerates_reset_after_full_report() {
+        let report = report_bytes(&["unpack ok", "ok refs/heads/main"]);
+        let mut reader = AbruptAfterRead {
+            payload: report.clone(),
+            pos: 0,
+            err_kind: ErrorKind::ConnectionReset,
+        };
+        let out =
+            read_receive_pack_response(&mut reader, &["refs/heads/main"], false).expect("reset");
+        assert_eq!(out, report);
+    }
+
+    #[test]
+    fn read_receive_pack_response_fails_reset_on_incomplete_report() {
+        let partial = report_bytes(&["unpack ok"]);
+        let mut reader = AbruptAfterRead {
+            payload: partial,
+            pos: 0,
+            err_kind: ErrorKind::ConnectionReset,
+        };
+        let err = read_receive_pack_response(&mut reader, &["refs/heads/main"], false).unwrap_err();
+        assert!(
+            matches!(err, Error::Io(_)),
+            "incomplete report must stay an I/O error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn sideband_diagnostics_delivered_once_on_clean_eof() {
+        struct Cap(Vec<u8>);
+        impl crate::progress::ProgressSink for Cap {}
+        impl Progress for Cap {
+            fn message(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let hook = b"hook output\n";
+        let wire = sideband_receive_pack_wire(hook);
+        let mut reader = EofAfterRead {
+            payload: wire,
+            pos: 0,
+        };
+        let mut cap = Cap(Vec::new());
+        read_push_report(&mut reader, &["refs/heads/main"], true, &mut cap)
+            .expect("clean eof side-band push report");
+        assert_eq!(cap.0.as_slice(), hook);
+    }
+
+    #[test]
+    fn sideband_diagnostics_delivered_once_on_connection_reset() {
+        struct Cap(Vec<u8>);
+        impl crate::progress::ProgressSink for Cap {}
+        impl Progress for Cap {
+            fn message(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let hook = b"hook output\n";
+        let wire = sideband_receive_pack_wire(hook);
+        let mut reader = AbruptAfterRead {
+            payload: wire,
+            pos: 0,
+            err_kind: ErrorKind::ConnectionReset,
+        };
+        let mut cap = Cap(Vec::new());
+        read_push_report(&mut reader, &["refs/heads/main"], true, &mut cap)
+            .expect("reset after complete side-band report");
+        assert_eq!(cap.0.as_slice(), hook);
     }
 }

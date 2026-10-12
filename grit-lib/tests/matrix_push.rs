@@ -1084,6 +1084,46 @@ fn write_fake_receive_pack(
     Some(script)
 }
 
+/// Like [`write_fake_receive_pack`], but exits immediately after printing the
+/// report (no `sleep`). Mimics Git-for-Windows `git daemon` closing the
+/// connection abruptly after report-status (issue #975).
+#[cfg(unix)]
+fn write_fake_receive_pack_abrupt_exit(
+    dir: &Path,
+    name: &str,
+    adv_oid: &str,
+    report_bytes: &[u8],
+) -> Option<PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+
+    let adv_line = format!(
+        "{adv_oid} refs/heads/main\0report-status report-status-v2 delete-refs ofs-delta object-format=sha1\n"
+    );
+    let mut adv = Vec::new();
+    write_pkt(&mut adv, adv_line.as_bytes());
+    adv.extend_from_slice(b"0000");
+    let adv_escaped = octal_escape(&adv);
+    let report_escaped = octal_escape(report_bytes);
+    let script = dir.join(name);
+    // Hold the process open while the client streams commands + pack (the
+    // background drain keeps stdin open), then emit the report and exit
+    // immediately — no post-report sleep — so the client often sees a reset
+    // while reading rather than a clean stdout EOF (Windows git daemon #975).
+    let body = format!(
+        "#!/bin/sh\nprintf '{adv}'\ncat >/dev/null &\nsleep 1\nprintf '{report}'\n",
+        adv = adv_escaped,
+        report = report_escaped,
+    );
+    let mut f = std::fs::File::create(&script).ok()?;
+    f.write_all(body.as_bytes()).ok()?;
+    drop(f);
+    let mut perms = std::fs::metadata(&script).ok()?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).ok()?;
+    Some(script)
+}
+
 /// Append a single pkt-line (`<4-hex-len><payload>`) to `out`.
 fn write_pkt(out: &mut Vec<u8>, payload: &[u8]) {
     let len = payload.len() + 4;
@@ -1225,4 +1265,57 @@ fn report_status_v1_and_v2_both_parse_over_ssh() {
             r.message
         );
     }
+}
+
+/// End-to-end push over fake SSH when the receive-pack process exits right after
+/// emitting report-status (no post-report sleep). Exercises the full
+/// read/demux/apply path on Unix; abrupt TCP reset coverage lives in the
+/// `read_receive_pack_response` / side-band unit tests (issue #975).
+#[cfg(unix)]
+#[test]
+fn push_succeeds_when_fake_receive_pack_exits_immediately_after_report() {
+    if Command::new("sh").arg("-c").arg("exit 0").status().is_err() {
+        eprintln!("SKIP: no POSIX sh available");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let graph = build_source(&local);
+    let local_git = local.join(".git");
+    let adv_oid = graph.c1.to_hex();
+    let push_specs = [spec(Some(graph.c2), "refs/heads/main")];
+
+    let mut report = Vec::new();
+    report.extend_from_slice(&pkt("unpack ok\n"));
+    report.extend_from_slice(&pkt("ok refs/heads/main\n"));
+    report.extend_from_slice(b"0000");
+
+    let Some(rp) =
+        write_fake_receive_pack_abrupt_exit(tmp.path(), "rp-abrupt.sh", &adv_oid, &report)
+    else {
+        eprintln!("SKIP: could not create abrupt fake receive-pack script");
+        return;
+    };
+    let Some(ssh) = write_fake_ssh_to(tmp.path(), "ssh-abrupt.sh", &rp) else {
+        eprintln!("SKIP: could not create fake-ssh wrapper");
+        return;
+    };
+    let transport = SshTransport::with_program(ssh.as_os_str());
+    let url = "ssh://git@fakehost/whatever.git".to_owned();
+    let mut conn = transport
+        .connect(&url, Service::ReceivePack, &ConnectOptions::default())
+        .expect("connect abrupt fake receive-pack");
+    let out = push_remote(
+        &local_git,
+        &mut *conn,
+        &push_specs,
+        &PushOptions::default(),
+        &mut NoProgress,
+    )
+    .expect("push must succeed when report-status was complete before reset");
+    drop(conn);
+    let r = result_for(&out, "refs/heads/main");
+    assert_eq!(r.status, PushRefStatus::Ok);
 }

@@ -187,7 +187,10 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
         &local_git,
         &mut *conn,
         &[spec],
-        &PushOptions::default(),
+        &PushOptions {
+            tracking_remote: Some("origin".to_owned()),
+            ..PushOptions::default()
+        },
         &mut NoProgress,
     )
     .expect("push_remote over git daemon");
@@ -204,6 +207,12 @@ fn push_over_git_daemon_lands_ref_and_objects_and_reports_rejection() {
     );
     assert_eq!(r.new_oid, Some(main_oid));
     assert!(r.old_oid.is_none(), "new ref has no old value");
+
+    let tracking = resolve_ref(&local_git, "refs/remotes/origin/main").expect("tracking ref");
+    assert_eq!(
+        tracking, main_oid,
+        "PushOptions.tracking_remote must update refs/remotes/origin/main"
+    );
 
     // The remote ref now points at our main, and the objects are present.
     let remote_main = resolve_ref(&bare, "refs/heads/main").expect("remote main written");
