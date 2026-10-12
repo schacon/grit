@@ -13,20 +13,21 @@ MAP_FILE = ROOT / "grit-lib" / "canonical-modules.toml"
 
 
 def external_modules() -> set[str]:
-    cmd = [
-        "rg",
-        "-o",
-        r"grit_lib::[a-z_][a-z0-9_]*",
-        str(ROOT),
-        "--glob",
-        "*.rs",
-        "--glob",
-        "!grit-lib/src/**",
-    ]
-    out = subprocess.check_output(cmd, text=True)
+    # `git ls-files` instead of ripgrep: CI runners do not ship `rg`.
+    files = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.rs"],
+        cwd=ROOT,
+        text=True,
+    ).splitlines()
+    pattern = re.compile(r"grit_lib::([a-z_][a-z0-9_]*)")
     mods: set[str] = set()
-    for line in out.splitlines():
-        mods.add(line.rsplit("grit_lib::", 1)[-1])
+    for rel in files:
+        if rel.startswith("grit-lib/src/"):
+            continue
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        mods.update(pattern.findall(path.read_text(encoding="utf-8", errors="replace")))
     return mods
 
 
