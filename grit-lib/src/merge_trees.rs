@@ -53,9 +53,10 @@ pub struct TreeMergeConflictPresentation<'a> {
     pub style: ConflictStyle,
     /// `git checkout -m`: always leave unmerged index entries when ours ≠ theirs.
     pub checkout_merge: bool,
-    /// Commit oid whose tree introduced a directory that collides with our file at the
-    /// same path (Git `dir~<commit>` file/directory conflicts in merge-ort).
-    pub df_directory_side_commit: Option<ObjectId>,
+    /// Ours-side commit oid for `path~<commit>` when relocating a blocking **ours** file.
+    pub df_directory_ours_commit: Option<ObjectId>,
+    /// Theirs-side commit oid for `path~<commit>` when relocating a blocking **theirs** file.
+    pub df_directory_theirs_commit: Option<ObjectId>,
 }
 
 impl Default for TreeMergeConflictPresentation<'_> {
@@ -66,7 +67,8 @@ impl Default for TreeMergeConflictPresentation<'_> {
             label_base: "merged common ancestors",
             style: ConflictStyle::Merge,
             checkout_merge: false,
-            df_directory_side_commit: None,
+            df_directory_ours_commit: None,
+            df_directory_theirs_commit: None,
         }
     }
 }
@@ -101,16 +103,25 @@ pub fn merge_trees_three_way(
     let odb = &repo.odb;
     let base = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
     let mut ours = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-    let theirs = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    let mut theirs = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
     let mut ours_old_to_new_pairs = rename_pairs_base_to_other(odb, &base_tree, &ours_tree)?;
     augment_renames_with_same_blob(&base, &ours, &mut ours_old_to_new_pairs);
     let mut theirs_pairs = rename_pairs_base_to_other(odb, &base_tree, &theirs_tree)?;
     augment_renames_with_same_blob(&base, &theirs, &mut theirs_pairs);
 
-    let mut df_stage2_only: BTreeMap<Vec<u8>, IndexEntry> = BTreeMap::new();
-    if let Some(df_commit) = presentation.df_directory_side_commit {
-        relocate_df_file_directory_conflicts(&mut ours, &theirs, df_commit, &mut df_stage2_only);
+    let mut df_escapes = DfEscapes::default();
+    if let (Some(ours_commit), Some(theirs_commit)) = (
+        presentation.df_directory_ours_commit,
+        presentation.df_directory_theirs_commit,
+    ) {
+        df_escapes = apply_df_file_directory_conflicts(
+            &base,
+            &mut ours,
+            &mut theirs,
+            ours_commit,
+            theirs_commit,
+        );
     }
 
     let mut ours_new_to_old: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
@@ -156,9 +167,13 @@ pub fn merge_trees_three_way(
         diff_algorithm,
         presentation,
     )?;
-    for (path, entry) in df_stage2_only {
+    for (path, entry) in df_escapes.stage2 {
         output.index.remove_path_all_stages(&path);
         stage_entry(&mut output.index, &path, &entry, 2);
+    }
+    for (path, entry) in df_escapes.stage3 {
+        output.index.remove_path_all_stages(&path);
+        stage_entry(&mut output.index, &path, &entry, 3);
     }
     output.index.sort();
     Ok(output)
@@ -181,38 +196,138 @@ fn augment_renames_with_same_blob(
     }
 }
 
-/// When we have a regular file at `path` but the other side has a directory at `path/…`,
-/// move our file to `path~<commit>` (merge-ort file/directory conflict).
-fn relocate_df_file_directory_conflicts(
-    ours: &mut HashMap<Vec<u8>, IndexEntry>,
+#[derive(Default)]
+struct DfEscapes {
+    stage2: BTreeMap<Vec<u8>, IndexEntry>,
+    stage3: BTreeMap<Vec<u8>, IndexEntry>,
+}
+
+fn side_has_descendant(side: &HashMap<Vec<u8>, IndexEntry>, prefix: &[u8]) -> bool {
+    side.keys()
+        .any(|p| p.len() > prefix.len() && p.starts_with(prefix) && p[prefix.len()] == b'/')
+}
+
+/// Git skips D/F relocation when one side only expanded a base file into `path/…`.
+fn skip_df_expansion_ours_file(
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
-    directory_side_commit: ObjectId,
-    df_stage2_only: &mut BTreeMap<Vec<u8>, IndexEntry>,
+    path: &[u8],
+) -> bool {
+    let Some(base_e) = base.get(path) else {
+        return false;
+    };
+    let Some(ours_e) = ours.get(path) else {
+        return false;
+    };
+    if base_e.mode == 0o040000 {
+        return false;
+    }
+    if !same_blob(base_e, ours_e) {
+        return false;
+    }
+    if theirs.contains_key(path) {
+        return false;
+    }
+    side_has_descendant(theirs, path)
+}
+
+fn skip_df_expansion_theirs_file(
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+    path: &[u8],
+) -> bool {
+    let Some(base_e) = base.get(path) else {
+        return false;
+    };
+    let Some(theirs_e) = theirs.get(path) else {
+        return false;
+    };
+    if base_e.mode == 0o040000 {
+        return false;
+    }
+    if !same_blob(base_e, theirs_e) {
+        return false;
+    }
+    if ours.contains_key(path) {
+        return false;
+    }
+    side_has_descendant(ours, path)
+}
+
+fn parent_has_file(side: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]) -> bool {
+    let Some(pos) = path.iter().rposition(|b| *b == b'/') else {
+        return false;
+    };
+    side.get(&path[..pos]).is_some_and(|e| e.mode != 0o040000)
+}
+
+fn escape_df_path(
+    side: &mut HashMap<Vec<u8>, IndexEntry>,
+    path: &[u8],
+    side_commit: ObjectId,
+    staged: &mut BTreeMap<Vec<u8>, IndexEntry>,
 ) {
-    let hex = directory_side_commit.to_hex();
-    let mut escape: Vec<(Vec<u8>, IndexEntry)> = Vec::new();
-    for (path, entry) in ours.iter() {
+    let Some(mut entry) = side.remove(path) else {
+        return;
+    };
+    let hex = side_commit.to_hex();
+    let mut escaped_path = path.to_vec();
+    escaped_path.extend_from_slice(b"~");
+    escaped_path.extend_from_slice(hex.as_bytes());
+    entry.path = escaped_path.clone();
+    entry.flags = path_len_flags(&escaped_path);
+    staged.insert(escaped_path.clone(), entry.clone());
+    side.insert(escaped_path, entry);
+}
+
+/// File/directory conflicts: relocate blocking files to `path~<ours-commit>` before path merge.
+fn apply_df_file_directory_conflicts(
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &mut HashMap<Vec<u8>, IndexEntry>,
+    theirs: &mut HashMap<Vec<u8>, IndexEntry>,
+    ours_commit: ObjectId,
+    theirs_commit: ObjectId,
+) -> DfEscapes {
+    let mut out = DfEscapes::default();
+    for path in ours.keys().cloned().collect::<Vec<_>>() {
+        let Some(entry) = ours.get(&path) else {
+            continue;
+        };
         if entry.mode == 0o040000 {
             continue;
         }
-        let prefix = path.as_slice();
-        let blocked = theirs
-            .keys()
-            .any(|p| p.len() > prefix.len() && p.starts_with(prefix) && p[prefix.len()] == b'/');
-        if blocked {
-            escape.push((path.clone(), entry.clone()));
+        if !side_has_descendant(theirs, &path) {
+            continue;
         }
+        if skip_df_expansion_ours_file(base, ours, theirs, &path) {
+            continue;
+        }
+        if parent_has_file(theirs, &path) {
+            continue;
+        }
+        escape_df_path(ours, &path, ours_commit, &mut out.stage2);
     }
-    for (path, mut entry) in escape {
-        ours.remove(&path);
-        let mut escaped_path = path;
-        escaped_path.extend_from_slice(b"~");
-        escaped_path.extend_from_slice(hex.as_bytes());
-        entry.path = escaped_path.clone();
-        entry.flags = path_len_flags(&escaped_path);
-        df_stage2_only.insert(escaped_path.clone(), entry.clone());
-        ours.insert(escaped_path, entry);
+    for path in theirs.keys().cloned().collect::<Vec<_>>() {
+        let Some(entry) = theirs.get(&path) else {
+            continue;
+        };
+        if entry.mode == 0o040000 {
+            continue;
+        }
+        if !side_has_descendant(ours, &path) {
+            continue;
+        }
+        if skip_df_expansion_theirs_file(base, ours, theirs, &path) {
+            continue;
+        }
+        if parent_has_file(ours, &path) {
+            continue;
+        }
+        escape_df_path(theirs, &path, theirs_commit, &mut out.stage3);
     }
+    out
 }
 
 type RenamePathPair = (Vec<u8>, Vec<u8>, u32);
@@ -408,7 +523,9 @@ fn merge_one_path(
             index.push_entry_unsorted(e);
         }
         (Some(be), Some(oe), Some(te))
-            if be.mode == 0o160000 && oe.mode == 0o160000 && te.mode == 0o160000 =>
+            if be.mode == oe.mode
+                && oe.mode == te.mode
+                && matches!(be.mode, 0o120000 | 0o160000) =>
         {
             if same_blob(oe, te) {
                 let mut e = oe.clone();
@@ -507,6 +624,44 @@ fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
     a.oid == b.oid && a.mode == b.mode
 }
 
+fn file_attrs_for_merge_path(repo: &Repository, path: &[u8]) -> Option<crate::crlf::FileAttrs> {
+    let index = repo.load_index().ok()?;
+    let rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index).ok()?;
+    let path_str = String::from_utf8_lossy(path);
+    Some(rules.file_attrs(path_str.as_ref(), false))
+}
+
+fn merge_favor_for_path(repo: &Repository, path: &[u8], favor: MergeFavor) -> MergeFavor {
+    if favor != MergeFavor::None {
+        return favor;
+    }
+    let Some(attrs) = file_attrs_for_merge_path(repo, path) else {
+        return favor;
+    };
+    if let crate::crlf::MergeAttr::Driver(name) = &attrs.merge {
+        if name == "union" {
+            return MergeFavor::Union;
+        }
+    }
+    favor
+}
+
+fn blob_is_binary_for_merge(repo: &Repository, path: &[u8], data: &[u8]) -> bool {
+    if crate::merge_file::is_binary(data) {
+        return true;
+    }
+    let Some(attrs) = file_attrs_for_merge_path(repo, path) else {
+        return false;
+    };
+    if matches!(attrs.merge, crate::crlf::MergeAttr::Unset) {
+        return true;
+    }
+    if attrs.text == crate::crlf::TextAttr::Unset {
+        return true;
+    }
+    matches!(attrs.diff_attr, crate::crlf::DiffAttr::Unset)
+}
+
 fn stage_entry(index: &mut Index, path: &[u8], src: &IndexEntry, stage: u8) {
     let mut e = src.clone();
     e.path = path.to_vec();
@@ -527,7 +682,10 @@ fn content_merge_or_conflict(
     diff_algorithm: Option<&str>,
     presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<()> {
-    if base.mode == 0o160000 || ours.mode == 0o160000 || theirs.mode == 0o160000 {
+    if matches!(base.mode, 0o120000 | 0o160000)
+        || matches!(ours.mode, 0o120000 | 0o160000)
+        || matches!(theirs.mode, 0o120000 | 0o160000)
+    {
         stage_entry(index, path, base, 1);
         stage_entry(index, path, ours, 2);
         stage_entry(index, path, theirs, 3);
@@ -542,10 +700,11 @@ fn content_merge_or_conflict(
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
+    let favor = merge_favor_for_path(repo, path, favor);
 
-    if crate::merge_file::is_binary(&base_obj.data)
-        || crate::merge_file::is_binary(&ours_obj.data)
-        || crate::merge_file::is_binary(&theirs_obj.data)
+    if blob_is_binary_for_merge(repo, path, &base_obj.data)
+        || blob_is_binary_for_merge(repo, path, &ours_obj.data)
+        || blob_is_binary_for_merge(repo, path, &theirs_obj.data)
     {
         match favor {
             MergeFavor::Theirs => {
@@ -637,7 +796,7 @@ fn add_add_content_conflict(
     presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<()> {
     // Gitlink add/add: no textual merge is possible; leave unmerged stages.
-    if ours.mode == 0o160000 || theirs.mode == 0o160000 {
+    if matches!(ours.mode, 0o120000 | 0o160000) || matches!(theirs.mode, 0o120000 | 0o160000) {
         stage_entry(index, path, ours, 2);
         stage_entry(index, path, theirs, 3);
         return Ok(());
@@ -645,10 +804,11 @@ fn add_add_content_conflict(
 
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
+    let favor = merge_favor_for_path(repo, path, favor);
 
     // Binary add/add: honour an explicit favour, else leave unmerged stages.
-    if crate::merge_file::is_binary(&ours_obj.data)
-        || crate::merge_file::is_binary(&theirs_obj.data)
+    if blob_is_binary_for_merge(repo, path, &ours_obj.data)
+        || blob_is_binary_for_merge(repo, path, &theirs_obj.data)
     {
         match favor {
             MergeFavor::Theirs => {
@@ -799,6 +959,64 @@ mod tests {
     use crate::index::{IndexEntry, MODE_REGULAR};
     use crate::objects::{parse_commit, ObjectId};
     use crate::repo::Repository;
+
+    #[test]
+    fn merge_trees_df_skips_relocation_when_theirs_expands_base_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("dir"), "base\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "dir"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let base_tree = {
+            let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("base");
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "-c", "theirs"]);
+        grit_test_support::git(tmp.path(), &["rm", "-f", "dir"]);
+        std::fs::create_dir_all(tmp.path().join("dir")).expect("mkdir");
+        std::fs::write(tmp.path().join("dir/foo"), "foo\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "dir/foo"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs"]);
+        let theirs_commit: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("theirs");
+        let theirs_tree = {
+            let obj = repo.odb.read(&theirs_commit).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        let ours_tree = base_tree;
+        let ours_commit: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("ours");
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::default(),
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation {
+                df_directory_ours_commit: Some(ours_commit),
+                df_directory_theirs_commit: Some(theirs_commit),
+                ..TreeMergeConflictPresentation::default()
+            },
+        )
+        .expect("merge");
+        assert!(out.index.get(b"dir/foo", 0).is_some());
+        assert!(
+            out.index.entries().iter().all(|e| e.stage() == 0),
+            "expected clean merge without df escape entries"
+        );
+    }
 
     #[test]
     fn merge_trees_three_way_theirs_only_addition() {

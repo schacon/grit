@@ -154,7 +154,8 @@ fn main() -> grit_lib::error::Result<()> {
             label_base: "parent of picked commit",
             style: grit_lib::merge_file::ConflictStyle::Merge,
             checkout_merge: false,
-            df_directory_side_commit: None,
+            df_directory_ours_commit: None,
+            df_directory_theirs_commit: None,
         },
     )?;
 

@@ -282,7 +282,8 @@ pub fn integrate_branch(
 
     let presentation = TreeMergeConflictPresentation {
         label_theirs: crate::merge_trees::TheirsConflictLabel::Fixed(label),
-        df_directory_side_commit: Some(other_oid),
+        df_directory_ours_commit: Some(into_oid),
+        df_directory_theirs_commit: Some(other_oid),
         ..TreeMergeConflictPresentation::default()
     };
     let merged = merge_trees_three_way(

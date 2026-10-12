@@ -20,25 +20,39 @@ fn t6406_merge_drivers_match_git() {
         return;
     }
     let history = init_repo();
-    commit_file(history.worktree(), "bin.dat", "\x01\x02\x03", "base");
+    fs::write(
+        history.worktree().join(".gitattributes"),
+        "*.bin binary\nunion.txt merge=union\n",
+    )
+    .unwrap();
+    hist_git(history.worktree(), &["add", ".gitattributes"]);
+    fs::write(history.worktree().join("f.bin"), b"v1").unwrap();
+    fs::write(history.worktree().join("union.txt"), b"a\nb\nc\n").unwrap();
+    hist_git(history.worktree(), &["add", "f.bin", "union.txt"]);
+    hist_git(history.worktree(), &["commit", "-m", "base"]);
     let base = hist_git(history.worktree(), &["rev-parse", "HEAD"])
         .trim()
         .parse()
         .unwrap();
-    hist_git(history.worktree(), &["switch", "-c", "bin-side"]);
-    fs::write(history.worktree().join("bin.dat"), [1, 2, 4]).unwrap();
-    hist_git(history.worktree(), &["add", "bin.dat"]);
+
+    hist_git(history.worktree(), &["switch", "-c", "driver-theirs"]);
+    fs::write(history.worktree().join("f.bin"), b"v2").unwrap();
+    fs::write(history.worktree().join("union.txt"), b"a\nB\nc\n").unwrap();
+    hist_git(history.worktree(), &["add", "f.bin", "union.txt"]);
     hist_git(history.worktree(), &["commit", "-m", "theirs"]);
+
     hist_git(history.worktree(), &["switch", "main"]);
-    fs::write(history.worktree().join("bin.dat"), [1, 2, 5]).unwrap();
-    hist_git(history.worktree(), &["add", "bin.dat"]);
+    fs::write(history.worktree().join("f.bin"), b"v3").unwrap();
+    fs::write(history.worktree().join("union.txt"), b"a\nX\nc\n").unwrap();
+    hist_git(history.worktree(), &["add", "f.bin", "union.txt"]);
     hist_git(history.worktree(), &["commit", "-m", "ours"]);
+
     let grit = open_grit_repo(&history);
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
         .unwrap();
-    let theirs: ObjectId = hist_git(history.worktree(), &["rev-parse", "bin-side"])
+    let theirs: ObjectId = hist_git(history.worktree(), &["rev-parse", "driver-theirs"])
         .trim()
         .parse()
         .unwrap();
@@ -50,7 +64,7 @@ fn t6406_merge_drivers_match_git() {
         &ours,
         &theirs,
         labels.presentation(),
-        "t6406 binary driver",
+        "t6406 binary attribute conflict",
     );
 }
 
@@ -176,9 +190,9 @@ fn t6400_df_conflicts_match_git_merge_tree() {
     }
     let history = init_repo();
     let base = commit_file(history.worktree(), "init", "Hello\n", "initial");
-    hist_git(history.worktree(), &["branch", "B"]);
+    hist_git(history.worktree(), &["switch", "-c", "B"]);
     commit_file(history.worktree(), "dir/foo", "foo\n", "file dir/foo");
-    hist_git(history.worktree(), &["checkout", "B"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "dir", "file dir\n", "file dir");
 
     let grit = open_grit_repo(&history);
@@ -213,7 +227,7 @@ fn t6402_rename_merges_match_git_merge_tree() {
         .trim()
         .parse()
         .unwrap();
-    hist_git(history.worktree(), &["branch", "rename-theirs"]);
+    hist_git(history.worktree(), &["switch", "-c", "rename-theirs"]);
     hist_git(history.worktree(), &["mv", "old.txt", "new.txt"]);
     commit_file(
         history.worktree(),
@@ -221,7 +235,7 @@ fn t6402_rename_merges_match_git_merge_tree() {
         "content\n",
         "rename on theirs",
     );
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     commit_file(
         history.worktree(),
         "old.txt",
@@ -298,26 +312,31 @@ fn t6411_filemode_merge_matches_git() {
         return;
     }
     let history = init_repo();
-    commit_file(history.worktree(), "script.sh", "#!/bin/sh\n", "base");
-    let base = hist_git(history.worktree(), &["rev-parse", "HEAD"])
-        .trim()
-        .parse()
-        .unwrap();
-    hist_git(history.worktree(), &["branch", "mode-theirs"]);
     fs::write(history.worktree().join("script.sh"), "#!/bin/sh\n").unwrap();
     hist_git(history.worktree(), &["add", "script.sh"]);
     hist_git(
         history.worktree(),
         &["update-index", "--chmod=+x", "script.sh"],
     );
+    hist_git(history.worktree(), &["commit", "-m", "base executable"]);
+    let base: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+    hist_git(history.worktree(), &["switch", "-c", "mode-theirs"]);
     hist_git(
         history.worktree(),
-        &["commit", "-m", "executable on theirs"],
+        &["commit", "--allow-empty", "-m", "theirs unchanged exec"],
     );
-
-    hist_git(history.worktree(), &["checkout", "main"]);
-    fs::write(history.worktree().join("script.sh"), "#!/bin/sh\n").unwrap();
-    hist_git(history.worktree(), &["add", "script.sh"]);
+    hist_git(
+        history.worktree(),
+        &["branch", "-f", "main", &base.to_hex()],
+    );
+    hist_git(history.worktree(), &["switch", "-f", "main"]);
+    hist_git(
+        history.worktree(),
+        &["update-index", "--chmod=-x", "script.sh"],
+    );
     hist_git(history.worktree(), &["commit", "-m", "non-exec on ours"]);
 
     let grit = open_grit_repo(&history);
@@ -355,13 +374,13 @@ fn t6405_symlink_merge_matches_git() {
         .parse()
         .unwrap();
 
-    hist_git(history.worktree(), &["branch", "sym-theirs"]);
+    hist_git(history.worktree(), &["switch", "-c", "sym-theirs"]);
     fs::remove_file(history.worktree().join("link")).unwrap();
     symlink("target-b", history.worktree().join("link")).unwrap();
     hist_git(history.worktree(), &["add", "link"]);
     hist_git(history.worktree(), &["commit", "-m", "theirs symlink"]);
 
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     fs::remove_file(history.worktree().join("link")).unwrap();
     symlink("target-c", history.worktree().join("link")).unwrap();
     hist_git(history.worktree(), &["add", "link"]);
@@ -402,12 +421,12 @@ fn t6407_binary_conflict_matches_git() {
         .parse()
         .unwrap();
 
-    hist_git(history.worktree(), &["branch", "bin-theirs"]);
+    hist_git(history.worktree(), &["switch", "-c", "bin-theirs"]);
     fs::write(history.worktree().join("bin"), [0, 1, 3]).unwrap();
     hist_git(history.worktree(), &["add", "bin"]);
     hist_git(history.worktree(), &["commit", "-m", "theirs"]);
 
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     fs::write(history.worktree().join("bin"), [0, 1, 4]).unwrap();
     hist_git(history.worktree(), &["add", "bin"]);
     hist_git(history.worktree(), &["commit", "-m", "ours"]);
@@ -444,9 +463,9 @@ fn t4301_merge_tree_write_tree_clean_merge_matches_git() {
         .trim()
         .parse()
         .unwrap();
-    hist_git(history.worktree(), &["branch", "side"]);
+    hist_git(history.worktree(), &["switch", "-c", "side"]);
     commit_file(history.worktree(), "b.txt", "new\n", "add on side");
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     commit_file(
         history.worktree(),
         "a.txt",
@@ -522,9 +541,9 @@ fn t6417_merge_ours_theirs_favor_matches_git() {
         .trim()
         .parse()
         .unwrap();
-    hist_git(history.worktree(), &["branch", "favor-theirs"]);
+    hist_git(history.worktree(), &["switch", "-c", "favor-theirs"]);
     commit_file(history.worktree(), "f.txt", "theirs\n", "theirs");
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "f.txt", "ours\n", "ours");
 
     let grit = open_grit_repo(&history);
@@ -555,24 +574,30 @@ fn cherry_pick_tree_remap_matches_git() {
     }
     let history = init_repo();
     commit_file(history.worktree(), "on-main.txt", "main\n", "main");
-    let main_head = hist_git(history.worktree(), &["rev-parse", "HEAD"])
-        .trim()
-        .to_owned();
-    hist_git(history.worktree(), &["branch", "topic"]);
+    hist_git(history.worktree(), &["switch", "-c", "topic"]);
     commit_file(
         history.worktree(),
         "on-topic.txt",
         "topic\n",
         "topic commit",
     );
-    let pick = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+    let pick = hist_git(history.worktree(), &["rev-parse", "topic"])
         .trim()
         .to_owned();
-    hist_git(history.worktree(), &["checkout", "main"]);
+    hist_git(history.worktree(), &["switch", "main"]);
+    commit_file(
+        history.worktree(),
+        "on-main.txt",
+        "main evolved\n",
+        "main advance",
+    );
 
     let grit = open_grit_repo(&history);
     let pick_oid: ObjectId = pick.parse().unwrap();
-    let main_oid: ObjectId = main_head.parse().unwrap();
+    let main_oid: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
     let pick_parent = {
         let obj = grit.odb.read(&pick_oid).unwrap();
         grit_lib::objects::parse_commit(&obj.data).unwrap().parents[0]
@@ -601,6 +626,11 @@ fn cherry_pick_tree_remap_matches_git() {
     git(git_dir.path(), &["cherry-pick", "--no-commit", &pick]);
     let git_tree = git(git_dir.path(), &["write-tree"]).trim().to_owned();
     let grit_tree = {
+        let presentation = grit_lib::merge_trees::TreeMergeConflictPresentation {
+            df_directory_ours_commit: Some(main_oid),
+            df_directory_theirs_commit: Some(pick_oid),
+            ..labels.presentation()
+        };
         let merged = grit_lib::merge_trees::merge_trees_three_way(
             &grit,
             commit_tree(&grit, &pick_parent).unwrap(),
@@ -609,7 +639,7 @@ fn cherry_pick_tree_remap_matches_git() {
             grit_lib::merge_file::MergeFavor::default(),
             grit_lib::merge_trees::WhitespaceMergeOptions::default(),
             None,
-            labels.presentation(),
+            presentation,
         )
         .unwrap();
         grit_merge_result_tree(&grit, &merged).unwrap().to_hex()

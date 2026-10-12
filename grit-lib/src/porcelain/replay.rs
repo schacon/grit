@@ -117,6 +117,11 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         return Ok(ReplayOutcome::Empty);
     }
 
+    let presentation = TreeMergeConflictPresentation {
+        df_directory_ours_commit: Some(head_oid),
+        df_directory_theirs_commit: Some(req.commit),
+        ..TreeMergeConflictPresentation::default()
+    };
     let merged = merge_trees_three_way(
         repo,
         base_tree,
@@ -125,7 +130,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         MergeFavor::default(),
         WhitespaceMergeOptions::default(),
         None,
-        TreeMergeConflictPresentation::default(),
+        presentation,
     )?;
 
     if has_merge_conflicts(&merged) {

@@ -142,11 +142,16 @@ pub fn grit_merge_result_tree(
             };
             entry.flags = (path.len().min(0xFFF) as u16);
             index.add_or_replace(entry);
-        } else if index.get(&path, 2).is_some() {
+        } else if let Some(stage2) = index.get(&path, 2) {
             // Binary / submodule conflicts: git's result tree keeps stage-2 (ours) blob.
-            let stage2 = index.get(&path, 2).expect("stage2").clone();
+            let mut entry = stage2.clone();
             index.remove_path_all_stages(&path);
-            let mut entry = stage2;
+            entry.flags = (path.len().min(0xFFF) as u16);
+            index.add_or_replace(entry);
+        } else if let Some(stage3) = index.get(&path, 3) {
+            // File/directory escapes and similar: result tree uses stage-3 when ours is absent.
+            let mut entry = stage3.clone();
+            index.remove_path_all_stages(&path);
             entry.flags = (path.len().min(0xFFF) as u16);
             index.add_or_replace(entry);
         }
@@ -258,8 +263,8 @@ pub fn assert_merge_commits_match_git_with_favor(
     let ours_tree = commit_tree(grit_repo, ours).expect("ours tree");
     let theirs_tree = commit_tree(grit_repo, theirs).expect("theirs tree");
     let presentation = TreeMergeConflictPresentation {
-        // Git suffixes `path~<commit>` with the commit that introduced the file over a directory.
-        df_directory_side_commit: Some(*ours),
+        df_directory_ours_commit: presentation.df_directory_ours_commit.or(Some(*ours)),
+        df_directory_theirs_commit: presentation.df_directory_theirs_commit.or(Some(*theirs)),
         ..presentation
     };
     let merged = merge_trees_three_way(
@@ -347,7 +352,8 @@ impl CommitMergeLabels {
             label_base: "merged common ancestors",
             style: grit_lib::merge_file::ConflictStyle::Merge,
             checkout_merge: false,
-            df_directory_side_commit: None,
+            df_directory_ours_commit: None,
+            df_directory_theirs_commit: None,
         }
     }
 }
