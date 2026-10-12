@@ -79,22 +79,21 @@ pub mod references {
 /// Index and working tree: the index, sparse checkout, attributes, ignore, CRLF.
 pub mod worktree_index {
     pub use crate::{
-        attributes, crlf, ignore, index, index_name_hash_lazy, path_walk, resolve_undo,
-        sparse_checkout, split_index, untracked_cache, worktree, worktree_cwd, worktree_ref,
-        write_tree,
+        attributes, crlf, ignore, index, index_name_hash_lazy, resolve_undo, sparse_checkout,
+        split_index, untracked_cache, worktree, worktree_cwd, worktree_ref, write_tree,
     };
 }
 
-/// Revision machinery: rev-parse, rev-list, name-rev, commit-graph.
+/// Revision machinery: rev-parse, rev-list, commit-graph.
 pub mod revision {
-    pub use crate::{commit_graph_file, commit_graph_write, name_rev, rev_list, rev_parse};
+    pub use crate::{commit_graph_file, commit_graph_write, rev_list, rev_parse};
 }
 
-/// Diffing: tree/content diff, rename detection, diffstat, line-log, pickaxe bloom.
+/// Diffing: tree/content diff, rename detection, diffstat, pickaxe bloom.
 pub mod diffing {
     pub use crate::{
-        bloom, combined_diff_patch, combined_tree_diff, diff, diff_indent_heuristic, diff_moved,
-        diffstat, line_log, patch_ids, userdiff,
+        bloom, combined_diff_patch, combined_tree_diff, diff, diff_indent_heuristic, diffstat,
+        patch_ids, userdiff,
     };
 }
 
@@ -138,7 +137,6 @@ pub mod delta_islands;
 pub mod diagnostics;
 pub mod diff;
 pub mod diff_indent_heuristic;
-pub mod diff_moved;
 mod diff_rename_parallel;
 pub mod diffstat;
 pub mod dotfile;
@@ -154,7 +152,6 @@ pub mod bitmap_walk;
 pub mod fetch;
 pub mod fetch_head;
 pub mod fetch_negotiator;
-pub mod fetch_submodules;
 pub mod filter_process;
 pub mod fmt_merge_msg;
 pub mod fsck_standalone;
@@ -176,7 +173,6 @@ pub mod index_name_hash_lazy;
 pub mod index_pack;
 pub mod init_filesystem;
 pub mod interpret_trailers;
-pub mod line_log;
 pub(crate) mod local_object_copy;
 pub mod mailmap;
 pub mod merge_base;
@@ -185,7 +181,6 @@ pub mod merge_file;
 pub mod merge_trees;
 pub mod midx;
 pub mod midx_error;
-pub mod name_rev;
 pub mod net_trace;
 pub mod notes;
 pub mod objects;
@@ -207,7 +202,6 @@ pub mod parallel;
 pub mod patch_ids;
 pub mod path;
 pub mod path_icase;
-pub mod path_walk;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod precompose_config;
@@ -219,7 +213,6 @@ pub mod prune_packed;
 pub mod push;
 pub mod push_cert;
 pub mod push_report;
-pub mod push_submodules;
 pub mod quote_path;
 pub mod receive_pack;
 pub mod receive_quarantine;
@@ -250,7 +243,6 @@ pub mod state;
 pub mod stripspace;
 pub mod submodule_active;
 pub mod submodule_config;
-pub mod submodule_config_cache;
 pub mod submodule_gitdir;
 pub mod terminal;
 pub mod textconv_cache;

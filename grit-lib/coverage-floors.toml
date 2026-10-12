@@ -10,7 +10,7 @@ groups = ["odb", "pack", "midx", "commit-graph"]
 minimum = 85.0
 
 [total]
-minimum = 60.9
+minimum = 62.5
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
@@ -113,7 +113,7 @@ files = [
     "bitmap_walk.rs",
     "pack_bitmap/writer.rs",
 ]
-minimum = 84.2
+minimum = 84.3
 
 [group.reflog]
 files = [
@@ -164,7 +164,7 @@ files = [
     "promisor.rs",
     "fsck_standalone.rs",
 ]
-minimum = 85.9
+minimum = 86.1
 
 [file."attributes.rs"]
 minimum = 85.0
@@ -194,7 +194,7 @@ minimum = 86.1
 minimum = 84.1
 
 [file."index_pack.rs"]
-minimum = 87.6
+minimum = 88.5
 
 [file."midx.rs"]
 minimum = 84.9
@@ -230,7 +230,7 @@ minimum = 76.0
 minimum = 89.7
 
 [file."pack_index_build.rs"]
-minimum = 87.4
+minimum = 88.5
 
 [file."pack_map.rs"]
 minimum = 91.1
@@ -254,7 +254,7 @@ minimum = 76.5
 minimum = 83.8
 
 [file."unpack_objects.rs"]
-minimum = 83.8
+minimum = 83.9
 
 [file."wildmatch.rs"]
 minimum = 95.9

@@ -22,6 +22,13 @@ const REMOVED_SOURCE_FILES: &[&str] = &[
     "pack_geometry.rs",
     "instaweb/mod.rs",
     "porcelain/format_patch.rs",
+    "line_log.rs",
+    "path_walk.rs",
+    "name_rev.rs",
+    "diff_moved.rs",
+    "submodule_config_cache.rs",
+    "push_submodules.rs",
+    "fetch_submodules.rs",
 ];
 
 /// Module names that must not appear as `mod` / `pub mod` declarations.
@@ -41,6 +48,13 @@ const REMOVED_MODULE_NAMES: &[&str] = &[
     "branch_ref_format",
     "unix_process",
     "pack_geometry",
+    "line_log",
+    "path_walk",
+    "name_rev",
+    "diff_moved",
+    "submodule_config_cache",
+    "push_submodules",
+    "fetch_submodules",
 ];
 
 #[test]

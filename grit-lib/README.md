@@ -99,7 +99,6 @@ index.write(&repo.index_path())?;
 | `merge_file` | Three-way line-level merge with conflict styles |
 | `rev_parse` | Revision string parsing (`HEAD~3`, `v1.0^{commit}`, etc.) |
 | `rev_list` | Commit graph traversal with filtering and ordering |
-| `name_rev` | Map commit OIDs to human-readable ref-based names |
 | `config` | Multi-scope configuration loading and typed value parsing |
 | `ignore` | `.gitignore` pattern matching |
 | `hooks` | Hook resolution and execution |
