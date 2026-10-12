@@ -86,6 +86,7 @@ pub fn run_refstore_conformance(factory: StoreFactory) {
     symref_head_deref_delete_recreate_branch(&factory);
     symref_no_deref_delete(&factory);
     symref_unborn_referent_created(&factory);
+    symref_dual_deref_conflicting_target_rejected(&factory);
     batch_apply_rejected_leaves_store_unchanged(&factory);
     empty_reflog_exists(&factory);
     prefix_iteration_order(&factory);
@@ -471,6 +472,37 @@ fn symref_unborn_referent_created(factory: &StoreFactory) {
     assert_eq!(
         store.read_raw("refs/heads/unborn").expect("unborn"),
         Some(RawRef::Direct(oid(8)))
+    );
+}
+
+fn symref_dual_deref_conflicting_target_rejected(factory: &StoreFactory) {
+    let store = factory();
+    seed_direct(store.as_ref(), "refs/heads/target", oid(1));
+    seed_symref(store.as_ref(), "refs/heads/sym1", "refs/heads/target");
+    seed_symref(store.as_ref(), "refs/heads/sym2", "refs/heads/target");
+
+    let txn = RefTransaction::new()
+        .update(update(
+            "refs/heads/sym1",
+            Some(RawRef::Direct(oid(2))),
+            Expected::Any,
+        ))
+        .expect("sym1")
+        .update(update(
+            "refs/heads/sym2",
+            Some(RawRef::Direct(oid(3))),
+            Expected::Any,
+        ))
+        .expect("sym2");
+    assert!(matches!(
+        prepare_err(store.as_ref(), txn),
+        RefStoreError::DuplicateUpdate {
+            name
+        } if name == "refs/heads/target"
+    ));
+    assert_eq!(
+        store.read_raw("refs/heads/target").expect("target"),
+        Some(RawRef::Direct(oid(1)))
     );
 }
 

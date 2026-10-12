@@ -1,6 +1,6 @@
 //! Shared ref-update semantics for in-memory simulation and commit application.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::diff::zero_oid;
 use crate::objects::ObjectId;
@@ -34,9 +34,66 @@ impl RefBatchState {
     }
 }
 
+/// One physical ref file affected by an update (directly or via symref peel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorageWriteKind {
+    Deleted,
+    Written(ObjectId),
+}
+
+/// Reject batches that would touch the same storage ref twice, except delete-then-create.
+pub(crate) fn check_storage_write(
+    prior: &mut HashMap<String, StorageWriteKind>,
+    state: &RefBatchState,
+    update: &RefUpdate,
+) -> StoreResult<()> {
+    let Some((name, kind)) = storage_write_for_update(state, update)? else {
+        return Ok(());
+    };
+    match prior.get(&name) {
+        None => {
+            prior.insert(name, kind);
+            Ok(())
+        }
+        Some(StorageWriteKind::Deleted) if matches!(kind, StorageWriteKind::Written(_)) => {
+            prior.insert(name, kind);
+            Ok(())
+        }
+        Some(_) => Err(RefStoreError::DuplicateUpdate { name }),
+    }
+}
+
+fn storage_write_for_update(
+    state: &RefBatchState,
+    update: &RefUpdate,
+) -> StoreResult<Option<(String, StorageWriteKind)>> {
+    if update.flags.log_only {
+        return Ok(None);
+    }
+    match &update.new_value {
+        None => {
+            if should_deref_symref(state, update) {
+                let target = symref_peel_write_target(&state.refs, &update.name)?;
+                Ok(Some((target, StorageWriteKind::Deleted)))
+            } else {
+                Ok(Some((update.name.clone(), StorageWriteKind::Deleted)))
+            }
+        }
+        Some(RawRef::Direct(oid)) if should_deref_symref_update(state, update) => {
+            let target = symref_peel_write_target(&state.refs, &update.name)?;
+            Ok(Some((target, StorageWriteKind::Written(*oid))))
+        }
+        Some(RawRef::Direct(oid)) => {
+            Ok(Some((update.name.clone(), StorageWriteKind::Written(*oid))))
+        }
+        Some(RawRef::Symbolic(_)) => Ok(None),
+    }
+}
+
 /// Verify CAS and apply every update to `trial`, returning the first error.
 pub fn simulate_batch_apply(state: &RefBatchState, updates: &[RefUpdate]) -> StoreResult<()> {
     let mut trial = state.snapshot();
+    let mut storage_writes = HashMap::new();
     for update in updates {
         let actual = trial.refs.get(&update.name);
         if !expected_matches(actual, &update.expected) {
@@ -46,6 +103,7 @@ pub fn simulate_batch_apply(state: &RefBatchState, updates: &[RefUpdate]) -> Sto
                 actual: actual.cloned(),
             });
         }
+        check_storage_write(&mut storage_writes, &trial, update)?;
         apply_update(&mut trial, update)?;
     }
     Ok(())
@@ -238,5 +296,83 @@ pub fn resolve_map(
     match value {
         RawRef::Direct(oid) => Ok(*oid),
         RawRef::Symbolic(target) => resolve_map(refs, target, depth + 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::refs::store::Expected;
+
+    fn oid(byte: u8) -> ObjectId {
+        let mut bytes = [0u8; 20];
+        bytes[19] = byte;
+        ObjectId::from_bytes(&bytes).expect("valid oid")
+    }
+
+    fn direct_update(name: &str, value: ObjectId) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            new_value: Some(RawRef::Direct(value)),
+            expected: Expected::Any,
+            reflog: None,
+            flags: RefUpdateFlags::default(),
+        }
+    }
+
+    #[test]
+    fn dual_symref_deref_to_same_target_is_rejected() {
+        let mut state = RefBatchState::default();
+        state
+            .refs
+            .insert("refs/heads/target".to_owned(), RawRef::Direct(oid(1)));
+        state.refs.insert(
+            "refs/heads/sym1".to_owned(),
+            RawRef::Symbolic("refs/heads/target".to_owned()),
+        );
+        state.refs.insert(
+            "refs/heads/sym2".to_owned(),
+            RawRef::Symbolic("refs/heads/target".to_owned()),
+        );
+        let updates = vec![
+            direct_update("refs/heads/sym1", oid(2)),
+            direct_update("refs/heads/sym2", oid(3)),
+        ];
+        let err = simulate_batch_apply(&state, &updates).expect_err("conflicting peel writes");
+        assert!(matches!(
+            err,
+            RefStoreError::DuplicateUpdate {
+                name
+            } if name == "refs/heads/target"
+        ));
+    }
+
+    #[test]
+    fn symref_deref_delete_then_recreate_target_is_allowed() {
+        let mut state = RefBatchState::default();
+        state
+            .refs
+            .insert("refs/heads/main".to_owned(), RawRef::Direct(oid(1)));
+        state.refs.insert(
+            "HEAD".to_owned(),
+            RawRef::Symbolic("refs/heads/main".to_owned()),
+        );
+        let updates = vec![
+            RefUpdate {
+                name: "HEAD".to_owned(),
+                new_value: None,
+                expected: Expected::Any,
+                reflog: None,
+                flags: RefUpdateFlags::default(),
+            },
+            RefUpdate {
+                name: "refs/heads/main".to_owned(),
+                new_value: Some(RawRef::Direct(oid(2))),
+                expected: Expected::Missing,
+                reflog: None,
+                flags: RefUpdateFlags::default(),
+            },
+        ];
+        simulate_batch_apply(&state, &updates).expect("delete-then-create on peeled target");
     }
 }
