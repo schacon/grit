@@ -1639,6 +1639,131 @@ fn apply_status_renames(
     ))
 }
 
+/// Render [`StatusModel`] as `git status --porcelain=v2` lines (no `#` headers).
+///
+/// Covers ordinary tracked changes, untracked paths, and unmerged entries for
+/// non-submodule repositories. Submodule and rename/copy extended lines are omitted
+/// when rename detection is disabled (the default [`StatusOptions`]).
+pub fn format_porcelain_v2(
+    model: &StatusModel,
+    odb: &crate::odb::Odb,
+    work_tree: Option<&std::path::Path>,
+) -> Vec<String> {
+    use crate::diff::{format_mode, head_path_states};
+    use std::collections::BTreeMap;
+
+    let head_states = head_path_states(odb, model.head_tree.as_ref()).unwrap_or_default();
+
+    let mut staged_by_path: BTreeMap<String, &DiffEntry> = BTreeMap::new();
+    for e in &model.staged {
+        staged_by_path.insert(e.path().to_owned(), e);
+    }
+    let mut unstaged_by_path: BTreeMap<String, &DiffEntry> = BTreeMap::new();
+    for e in &model.unstaged {
+        unstaged_by_path.insert(e.path().to_owned(), e);
+    }
+
+    let mut paths: BTreeMap<String, ()> = BTreeMap::new();
+    for p in staged_by_path.keys().chain(unstaged_by_path.keys()) {
+        paths.insert(p.clone(), ());
+    }
+
+    let mut out = Vec::new();
+
+    for path in paths.keys() {
+        let x = staged_by_path
+            .get(path.as_str())
+            .map(|e| e.status.letter())
+            .unwrap_or('.');
+        let y = unstaged_by_path
+            .get(path.as_str())
+            .map(|e| e.status.letter())
+            .unwrap_or('.');
+        if x == '.' && y == '.' {
+            continue;
+        }
+
+        let (m_h, h_h) = head_states
+            .get(path.as_str())
+            .map(|(m, oid)| (format_mode(*m), oid.to_hex()))
+            .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
+
+        let idx_e = model
+            .index
+            .entries()
+            .iter()
+            .find(|e| e.stage() == 0 && String::from_utf8_lossy(&e.path) == *path);
+        let (m_i, h_i) = idx_e
+            .map(|e| (format_mode(e.mode), e.oid.to_hex()))
+            .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
+
+        let m_w = if y != '.' { m_i.clone() } else { m_h.clone() };
+
+        out.push(format!(
+            "1 {}{} N... {m_h} {m_i} {m_w} {h_h} {h_i} {path}",
+            x, y
+        ));
+    }
+
+    for path in &model.untracked {
+        out.push(format!("? {path}"));
+    }
+
+    for path in &model.conflicts {
+        let stages: Vec<_> = model
+            .index
+            .entries()
+            .iter()
+            .filter(|e| String::from_utf8_lossy(&e.path) == *path && e.stage() != 0)
+            .collect();
+        if stages.is_empty() {
+            continue;
+        }
+        let mut xy = ['.', '.'];
+        if staged_by_path.contains_key(path) {
+            xy[0] = 'U';
+        }
+        if unstaged_by_path.contains_key(path) {
+            xy[1] = 'U';
+        }
+        if xy == ['.', '.'] {
+            xy = ['U', 'U'];
+        }
+        let mut fields = vec![
+            "u".to_owned(),
+            format!("{}{}", xy[0], xy[1]),
+            "N...".to_owned(),
+            "000000".to_owned(),
+            "000000".to_owned(),
+            "000000".to_owned(),
+            ObjectId::zero().to_hex(),
+            ObjectId::zero().to_hex(),
+            path.clone(),
+        ];
+        for stage in 1u8..=3 {
+            let mode = stages
+                .iter()
+                .find(|e| e.stage() == stage)
+                .map(|e| format_mode(e.mode))
+                .unwrap_or_else(|| "000000".to_owned());
+            fields.push(mode);
+        }
+        for stage in 1u8..=3 {
+            let oid = stages
+                .iter()
+                .find(|e| e.stage() == stage)
+                .map(|e| e.oid.to_hex())
+                .unwrap_or_else(|| ObjectId::zero().to_hex());
+            fields.push(oid);
+        }
+        out.push(fields.join(" "));
+        let _ = work_tree;
+    }
+
+    out.sort();
+    out
+}
+
 #[cfg(test)]
 mod status_op_tests {
     use super::*;

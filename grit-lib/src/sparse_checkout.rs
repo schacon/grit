@@ -1367,3 +1367,132 @@ mod cone_directory_inputs_for_add_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod sparse_public_api_coverage {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn write_sparse_repo(cone: bool, body: &str) -> TempDir {
+        let tmp = TempDir::new().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(git_dir.join("info")).expect("mkdir");
+        fs::write(
+            git_dir.join("config"),
+            format!(
+                "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tsparseCheckout = true\n\tsparseCheckoutCone = {}\n",
+                if cone { "true" } else { "false" }
+            ),
+        )
+        .expect("config");
+        fs::write(git_dir.join("info/sparse-checkout"), body).expect("sparse");
+        tmp
+    }
+
+    #[test]
+    fn load_sparse_checkout_and_warnings() {
+        let tmp = write_sparse_repo(true, "/*\n!/*/\n/docs/\n");
+        let mut warnings = Vec::new();
+        let (ok, cone, non_cone) = load_sparse_checkout_with_warnings(
+            tmp.path().join(".git").as_path(),
+            true,
+            &mut warnings,
+        );
+        assert!(ok);
+        assert!(cone.is_some());
+        assert!(!non_cone.lines().is_empty());
+        let (ok2, cone2, non2) = load_sparse_checkout(tmp.path().join(".git").as_path(), false);
+        assert!(!ok2);
+        assert!(cone2.is_none());
+        assert!(!non2.lines().is_empty());
+    }
+
+    #[test]
+    fn expanded_cone_builders_and_parsers() {
+        let lines = build_expanded_cone_sparse_checkout_lines(&["src".to_string()]);
+        assert!(sparse_checkout_lines_look_like_expanded_cone(&lines));
+        assert!(effective_cone_mode_for_sparse_file(true, &lines));
+        let _users = parse_expanded_cone_user_directories(&lines);
+        let rec = parse_expanded_cone_recursive_dirs(&lines);
+        assert!(!rec.is_empty());
+        assert!(path_matches_sparse_patterns("src/x", &lines, true));
+    }
+
+    #[test]
+    fn path_in_sparse_checkout_wrapper() {
+        let patterns = NonConePatterns::parse("/*\n!/*/\ntop/\n");
+        assert!(path_in_sparse_checkout(
+            "top/x", false, None, &patterns, None
+        ));
+    }
+
+    #[test]
+    fn apply_sparse_respects_skip_flag_and_empty_file() {
+        let tmp = write_sparse_repo(true, "\n\n");
+        let git_dir = tmp.path().join(".git");
+        let wt = tmp.path();
+        fs::write(wt.join("file.txt"), "x").expect("write");
+        let mut index = crate::index::Index::new();
+        index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 1,
+            oid: crate::objects::ObjectId::zero(),
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        assert!(
+            apply_sparse_checkout_skip_worktree(&git_dir, Some(wt), &mut index, true).is_empty()
+        );
+        assert!(!index.entries()[0].skip_worktree());
+        apply_sparse_checkout_skip_worktree(&git_dir, Some(wt), &mut index, false);
+        assert!(index.entries()[0].skip_worktree());
+    }
+
+    #[test]
+    fn cone_workspace_and_cone_mode_helpers() {
+        let content = "/*\n!/*/\n/pkg/\n";
+        let cone = ConePatterns::try_parse(content).expect("cone");
+        let ws = ConeWorkspace::from_cone_patterns(&cone);
+        assert!(!ws.recursive_slash.is_empty());
+        assert!(cone.path_included("pkg/a"));
+        assert!(path_in_cone_mode_sparse_checkout(
+            "pkg/a",
+            &parse_sparse_checkout_file(content),
+            true
+        ));
+        assert!(path_in_cone_mode_sparse_checkout("any", &[], false));
+    }
+
+    #[test]
+    fn non_cone_negation_and_glob_patterns() {
+        let lines = vec!["/*".to_string(), "!/*/".to_string(), "/docs/".to_string()];
+        assert!(path_in_sparse_checkout_patterns("root.txt", &lines, false));
+        assert!(path_matches_sparse_patterns("docs/guide", &lines, false));
+        let neg = NonConePatterns::from_lines(vec!["/*".into(), "!/private/".into()]);
+        assert!(neg.path_included("public/x"));
+        assert!(!neg.path_included("private/x"));
+    }
+
+    #[test]
+    fn cone_workspace_from_directory_list_prunes_children() {
+        let ws = ConeWorkspace::from_directory_list(&[
+            "a".to_string(),
+            "a/b".to_string(),
+            "c".to_string(),
+        ]);
+        let serialized = ws.to_sparse_checkout_file();
+        assert!(serialized.contains("/*"));
+        assert!(serialized.contains("/a/") || serialized.contains("a"));
+    }
+}

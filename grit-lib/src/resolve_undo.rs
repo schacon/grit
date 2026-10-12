@@ -106,3 +106,49 @@ pub fn record_resolve_undo_for_entry(
     ru.modes[idx] = entry.mode;
     ru.oids[idx] = entry.oid;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{IndexEntry, MODE_REGULAR};
+
+    #[test]
+    fn payload_roundtrip_and_record_merge() {
+        let oid = ObjectId::from_hex("0123456789abcdef0123456789abcdef01234567").expect("oid");
+        let mut map = BTreeMap::new();
+        map.insert(
+            b"f".to_vec(),
+            ResolveUndoRecord {
+                modes: [0o100644, 0, 0o100644],
+                oids: [oid, ObjectId::zero(), oid],
+            },
+        );
+        let payload = write_resolve_undo_payload(&map);
+        assert_eq!(parse_resolve_undo_payload(&payload).expect("parse"), map);
+
+        let mut merged = None;
+        let mut entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: 4 | (2 << 12),
+            flags_extended: None,
+            path: b"f".to_vec(),
+            base_index_pos: 0,
+        };
+        record_resolve_undo_for_entry(&mut merged, &entry);
+        entry.flags = (entry.flags & 0x0FFF) | (3 << 12);
+        record_resolve_undo_for_entry(&mut merged, &entry);
+        assert!(merged
+            .as_ref()
+            .is_some_and(|m| m.contains_key(b"f".as_slice())));
+    }
+}

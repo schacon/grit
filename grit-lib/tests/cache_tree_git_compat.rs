@@ -50,7 +50,7 @@ fn fsck_clean(repo_dir: &Path) {
 }
 
 #[test]
-fn grit_cache_tree_matches_git_write_tree_after_single_path_change() {
+fn t0090_cache_tree_matches_git_write_tree() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_dir = tmp.path().join("repo");
     std::fs::create_dir_all(&repo_dir).unwrap();

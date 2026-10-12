@@ -4,6 +4,7 @@ mod attributes_harness;
 mod config_oracle;
 mod diff_harness;
 mod history_harness;
+mod index_harness;
 mod refs_harness;
 mod refstore_conformance;
 mod revparse_oracle;
@@ -21,6 +22,11 @@ pub use history_harness::{
     git_version_at_least, grit_rev_list_commits, grit_rev_list_commits_in_repo,
     grit_rev_list_object_set, open_grit_repo, ordering_from_git_args, rev_parse_many,
     skip_unless_git_at_least, symmetric_rev_list_specs, HistoryRepo,
+};
+pub use index_harness::{
+    assert_git_fsck_strict, assert_grit_index_matches_git_ls_files,
+    assert_porcelain_v2_matches_git, assert_skip_worktree_matches_git, git_ls_files_tag_map,
+    git_ls_files_verbose_map, grit_skip_worktree_map, seed_multidir_repo,
 };
 pub use refs_harness::*;
 pub use refstore_conformance::*;
