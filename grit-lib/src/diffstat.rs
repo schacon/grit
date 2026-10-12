@@ -31,11 +31,16 @@ pub fn display_width_minus_ansi(s: &str) -> usize {
 /// `term_columns()` approximation: `COLUMNS` env, then TTY width, then 80.
 #[must_use]
 pub fn terminal_columns() -> usize {
-    if let Some(cols) = crate::environment::Environment::empty().var("COLUMNS") {
-        if let Ok(w) = cols.parse::<usize>() {
-            if w > 0 {
-                return w;
-            }
+    if let Some(w) = parse_columns_env(
+        crate::environment::Environment::empty()
+            .var("COLUMNS")
+            .as_deref(),
+    ) {
+        return w;
+    }
+    if let Ok(cols) = std::env::var("COLUMNS") {
+        if let Some(w) = parse_columns_env(Some(cols.as_str())) {
+            return w;
         }
     }
     // The terminal size is constant for the life of the process (matching
@@ -49,6 +54,12 @@ pub fn terminal_columns() -> usize {
         return w;
     }
     80
+}
+
+fn parse_columns_env(cols: Option<&str>) -> Option<usize> {
+    let cols = cols?;
+    let w = cols.parse::<usize>().ok()?;
+    (w > 0).then_some(w)
 }
 
 /// Default total width for `format-patch` diffstat (`MAIL_DEFAULT_WRAP` in Git).
@@ -677,6 +688,25 @@ mod tests {
     }
 
     #[test]
+    fn terminal_columns_honors_columns_env_var() {
+        let key = "COLUMNS";
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "132");
+        assert_eq!(terminal_columns(), 132);
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn parse_columns_env_rejects_zero_and_invalid() {
+        assert_eq!(parse_columns_env(Some("0")), None);
+        assert_eq!(parse_columns_env(Some("nope")), None);
+        assert_eq!(parse_columns_env(Some("40")), Some(40));
+    }
+
+    #[test]
     fn truncate_path_prefers_suffix_after_slash() {
         let long = "aaaa/bbbb/cccc/dddd/eeee/ffff/gggg/hhhh/iiii/jjjj/kkkk/llll/mmmm/nnnn/oooo/pppp/qqqq/rrrr/ssss/tttt/uuuu/vvvv/wwww/xxxx/yyyy/zzzz/final.rs";
         let (display, w) = truncate_path_for_name_area(long, 24);
@@ -823,6 +853,37 @@ mod tests {
         assert!(s.contains("file changed"));
         assert!(s.contains("insertion"));
         assert!(s.contains("deletion"));
+    }
+
+    #[test]
+    fn write_diffstat_summary_uses_line_prefix() {
+        let files = vec![FileStatInput {
+            path_display: "a.txt".into(),
+            insertions: 2,
+            deletions: 0,
+            is_binary: false,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: ">> ",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains(">> 1 file changed"));
+        assert!(s.contains("2 insertion"));
     }
 
     #[test]
