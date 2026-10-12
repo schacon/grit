@@ -53,6 +53,9 @@ pub struct TreeMergeConflictPresentation<'a> {
     pub style: ConflictStyle,
     /// `git checkout -m`: always leave unmerged index entries when ours ≠ theirs.
     pub checkout_merge: bool,
+    /// Commit oid whose tree introduced a directory that collides with our file at the
+    /// same path (Git `dir~<commit>` file/directory conflicts in merge-ort).
+    pub df_directory_side_commit: Option<ObjectId>,
 }
 
 impl Default for TreeMergeConflictPresentation<'_> {
@@ -63,6 +66,7 @@ impl Default for TreeMergeConflictPresentation<'_> {
             label_base: "merged common ancestors",
             style: ConflictStyle::Merge,
             checkout_merge: false,
+            df_directory_side_commit: None,
         }
     }
 }
@@ -96,15 +100,22 @@ pub fn merge_trees_three_way(
 ) -> crate::error::Result<TreeMergeOutput> {
     let odb = &repo.odb;
     let base = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-    let ours = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+    let mut ours = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
     let theirs = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
-    let ours_old_to_new = rename_pairs_base_to_other(odb, &base_tree, &ours_tree)?;
-    let theirs_pairs = rename_pairs_base_to_other(odb, &base_tree, &theirs_tree)?;
+    let mut ours_old_to_new_pairs = rename_pairs_base_to_other(odb, &base_tree, &ours_tree)?;
+    augment_renames_with_same_blob(&base, &ours, &mut ours_old_to_new_pairs);
+    let mut theirs_pairs = rename_pairs_base_to_other(odb, &base_tree, &theirs_tree)?;
+    augment_renames_with_same_blob(&base, &theirs, &mut theirs_pairs);
+
+    let mut df_stage2_only: BTreeMap<Vec<u8>, IndexEntry> = BTreeMap::new();
+    if let Some(df_commit) = presentation.df_directory_side_commit {
+        relocate_df_file_directory_conflicts(&mut ours, &theirs, df_commit, &mut df_stage2_only);
+    }
 
     let mut ours_new_to_old: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
     let mut ours_best_by_dest: HashMap<Vec<u8>, (Vec<u8>, u32)> = HashMap::new();
-    for (old, new, score) in &ours_old_to_new {
+    for (old, new, score) in &ours_old_to_new_pairs {
         let new_b = new.clone();
         let should_take = match ours_best_by_dest.get(&new_b) {
             None => true,
@@ -133,7 +144,7 @@ pub fn merge_trees_three_way(
         theirs_old_to_new.insert(old_path, new_path);
     }
 
-    three_way_on_aligned_paths(
+    let mut output = three_way_on_aligned_paths(
         repo,
         &base,
         &ours,
@@ -144,7 +155,64 @@ pub fn merge_trees_three_way(
         ws,
         diff_algorithm,
         presentation,
-    )
+    )?;
+    for (path, entry) in df_stage2_only {
+        output.index.remove_path_all_stages(&path);
+        stage_entry(&mut output.index, &path, &entry, 2);
+    }
+    output.index.sort();
+    Ok(output)
+}
+
+fn augment_renames_with_same_blob(
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    side: &HashMap<Vec<u8>, IndexEntry>,
+    pairs: &mut Vec<RenamePathPair>,
+) {
+    use crate::porcelain::cherry_pick::same_blob_renames;
+    for (old, new) in same_blob_renames(base, side) {
+        if pairs
+            .iter()
+            .any(|(o, n, _)| o.as_slice() == old.as_slice() && n.as_slice() == new.as_slice())
+        {
+            continue;
+        }
+        pairs.push((old, new, 100));
+    }
+}
+
+/// When we have a regular file at `path` but the other side has a directory at `path/…`,
+/// move our file to `path~<commit>` (merge-ort file/directory conflict).
+fn relocate_df_file_directory_conflicts(
+    ours: &mut HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+    directory_side_commit: ObjectId,
+    df_stage2_only: &mut BTreeMap<Vec<u8>, IndexEntry>,
+) {
+    let hex = directory_side_commit.to_hex();
+    let mut escape: Vec<(Vec<u8>, IndexEntry)> = Vec::new();
+    for (path, entry) in ours.iter() {
+        if entry.mode == 0o040000 {
+            continue;
+        }
+        let prefix = path.as_slice();
+        let blocked = theirs
+            .keys()
+            .any(|p| p.len() > prefix.len() && p.starts_with(prefix) && p[prefix.len()] == b'/');
+        if blocked {
+            escape.push((path.clone(), entry.clone()));
+        }
+    }
+    for (path, mut entry) in escape {
+        ours.remove(&path);
+        let mut escaped_path = path;
+        escaped_path.extend_from_slice(b"~");
+        escaped_path.extend_from_slice(hex.as_bytes());
+        entry.path = escaped_path.clone();
+        entry.flags = path_len_flags(&escaped_path);
+        df_stage2_only.insert(escaped_path.clone(), entry.clone());
+        ours.insert(escaped_path, entry);
+    }
 }
 
 type RenamePathPair = (Vec<u8>, Vec<u8>, u32);
@@ -416,7 +484,7 @@ fn merge_one_path(
             )?;
         }
         (Some(_), None, None) => {}
-        (Some(be), Some(oe), None) if same_blob(be, oe) => {}
+        (Some(be), Some(oe), None) if same_blob(be, oe) && be.path.as_slice() == out_path => {}
         (Some(be), None, Some(te)) if same_blob(be, te) => {}
         (Some(be), Some(oe), None) => {
             stage_entry(index, out_path, be, 1);
@@ -722,4 +790,364 @@ pub fn index_tree_oid_matches_head(
 ) -> crate::error::Result<bool> {
     let merged = write_tree_from_index(odb, index, "")?;
     Ok(merged == *head_tree_oid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::zero_oid;
+    use crate::index::{IndexEntry, MODE_REGULAR};
+    use crate::objects::{parse_commit, ObjectId};
+    use crate::repo::Repository;
+
+    #[test]
+    fn merge_trees_three_way_theirs_only_addition() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("base.txt"), "b\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "base.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("base");
+        let base_tree = {
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("theirs-only.txt"), "t\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "theirs-only.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "topic"]);
+        let theirs: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("theirs");
+        let theirs_tree = {
+            let obj = repo.odb.read(&theirs).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        let ours: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("ours");
+        let ours_tree = {
+            let obj = repo.odb.read(&ours).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::default(),
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation::default(),
+        )
+        .expect("merge");
+        assert!(out.index.get(b"theirs-only.txt", 0).is_some());
+        assert!(out.conflict_content.is_empty());
+    }
+
+    #[test]
+    fn merge_trees_clean_textual_merge_auto_resolves() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("f.txt"), "1\n2\n3\n4\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let base_tree = {
+            let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("base");
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("f.txt"), "1\n2\n3\nFOUR\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs"]);
+        let theirs_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("theirs");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        std::fs::write(tmp.path().join("f.txt"), "1\nTWO\n3\n4\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "ours"]);
+        let ours_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("ours");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::default(),
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation::default(),
+        )
+        .expect("merge");
+        assert!(out.index.get(b"f.txt", 0).is_some());
+        assert!(out.conflict_content.is_empty());
+        let blob = repo
+            .odb
+            .read(&out.index.get(b"f.txt", 0).expect("entry").oid)
+            .expect("blob");
+        assert_eq!(blob.data, b"1\nTWO\n3\nFOUR\n");
+    }
+
+    #[test]
+    fn merge_trees_gitlink_three_way_conflict_stages() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let nested = tmp.path().join("nested");
+        std::fs::create_dir_all(&nested).expect("mkdir");
+        grit_test_support::git(&nested, &["init", "-q"]);
+        std::fs::write(nested.join("inner.txt"), "x\n").expect("write");
+        grit_test_support::git(&nested, &["add", "inner.txt"]);
+        grit_test_support::git(&nested, &["commit", "-m", "nested"]);
+        let sub_a = grit_test_support::git(&nested, &["rev-parse", "HEAD"])
+            .trim()
+            .to_owned();
+        std::process::Command::new("git")
+            .current_dir(tmp.path())
+            .args([
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{sub_a},sub"),
+            ])
+            .status()
+            .expect("update-index");
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let base_tree = {
+            let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("base");
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(&nested, &["commit", "--allow-empty", "-m", "bump"]);
+        let sub_b = grit_test_support::git(&nested, &["rev-parse", "HEAD"])
+            .trim()
+            .to_owned();
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::process::Command::new("git")
+            .current_dir(tmp.path())
+            .args([
+                "update-index",
+                "--cacheinfo",
+                &format!("160000,{sub_b},sub"),
+            ])
+            .status()
+            .expect("update-index");
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs sub"]);
+        let theirs_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("theirs");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(&nested, &["commit", "--allow-empty", "-m", "bump2"]);
+        let sub_c = grit_test_support::git(&nested, &["rev-parse", "HEAD"])
+            .trim()
+            .to_owned();
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        std::process::Command::new("git")
+            .current_dir(tmp.path())
+            .args([
+                "update-index",
+                "--cacheinfo",
+                &format!("160000,{sub_c},sub"),
+            ])
+            .status()
+            .expect("update-index");
+        grit_test_support::git(tmp.path(), &["commit", "-m", "ours sub"]);
+        let ours_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("ours");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::default(),
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation::default(),
+        )
+        .expect("merge");
+        assert!(out.index.get(b"sub", 1).is_some());
+        assert!(out.index.get(b"sub", 2).is_some());
+        assert!(out.index.get(b"sub", 3).is_some());
+    }
+
+    #[test]
+    fn merge_trees_binary_conflict_honors_ours_favor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 2]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let base_tree = {
+            let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("base");
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 3]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs"]);
+        let theirs_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("theirs");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 4]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "ours"]);
+        let ours_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("ours");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::Ours,
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation::default(),
+        )
+        .expect("merge");
+        let entry = out.index.get(b"bin.dat", 0).expect("stage 0");
+        let blob = repo.odb.read(&entry.oid).expect("blob");
+        assert_eq!(blob.data, vec![0, 1, 4]);
+    }
+
+    #[test]
+    fn merge_trees_binary_conflict_honors_theirs_favor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 2]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        let base: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("base");
+        let base_tree = {
+            let obj = repo.odb.read(&base).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 3]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs"]);
+        let theirs_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("theirs");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        grit_test_support::git(tmp.path(), &["switch", "main"]);
+        std::fs::write(tmp.path().join("bin.dat"), [0, 1, 4]).expect("write");
+        grit_test_support::git(tmp.path(), &["add", "bin.dat"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "ours"]);
+        let ours_tree = {
+            let oid: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("ours");
+            let obj = repo.odb.read(&oid).expect("read");
+            parse_commit(&obj.data).expect("parse").tree
+        };
+        let out = merge_trees_three_way(
+            &repo,
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            MergeFavor::Theirs,
+            WhitespaceMergeOptions::default(),
+            None,
+            TreeMergeConflictPresentation::default(),
+        )
+        .expect("merge");
+        let entry = out.index.get(b"bin.dat", 0).expect("stage 0");
+        let theirs_blob = repo.odb.read(&entry.oid).expect("blob");
+        assert_eq!(theirs_blob.data, vec![0, 1, 3]);
+    }
+
+    #[test]
+    fn augment_renames_includes_same_blob_pairs() {
+        let mut base = HashMap::new();
+        let mut side = HashMap::new();
+        let oid = zero_oid();
+        let mut old_e = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: 0,
+            flags_extended: None,
+            path: b"old".to_vec(),
+            base_index_pos: 0,
+        };
+        let mut new_e = old_e.clone();
+        new_e.path = b"new".to_vec();
+        base.insert(b"old".to_vec(), old_e);
+        side.insert(b"new".to_vec(), new_e);
+        let mut pairs = Vec::new();
+        augment_renames_with_same_blob(&base, &side, &mut pairs);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].2, 100);
+    }
 }

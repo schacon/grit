@@ -372,6 +372,27 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t6010-merge-base.sh | `--fork-point` reflog ref name | `merge_base_git_compat.rs` (`fork_point_reflog_matches_git_t6010_fixture`) | covered |
 | t6010-merge-base.sh | commit-graph vs walk | `merge_base_git_compat.rs` (`merge_base_identical_with_and_without_commit_graph`) | covered |
 | t6099-merge-base-side-exhaustion.sh | `--all` drops ancestor among candidates; with/without commit-graph | `merge_base_git_compat.rs` (`t6099_side_exhaustion_merge_base_matches_git`) | covered |
+| t6400-merge-df.sh | file/directory conflicts; `dir~<commit>` escape paths | `grit-lib/tests/merge_ort_git_compat.rs` (`t6400_df_conflicts_match_git_merge_tree`) | covered |
+| t6402-merge-rename.sh | rename + content merge vs merge-tree | `merge_ort_git_compat.rs` (`t6402_rename_merges_match_git_merge_tree`) | partial (core rename subset) |
+| t6403-merge-file.sh | line merge, diff3/zdiff3, union, marker size | `grit-lib/tests/merge_file_git_compat.rs` (`t6427_diff3_and_zdiff3_markers_match_git_merge_file`, `t6417_merge_union_and_marker_size_match_git_merge_file`) | partial (whitespace flags: grit API only) |
+| t6405-merge-symlinks.sh | symlink three-way conflicts | `merge_ort_git_compat.rs` (`t6405_symlink_merge_matches_git`) | covered |
+| t6406-merge-attr.sh | merge drivers (binary, union, text) | `merge_ort_git_compat.rs` (`t6406_merge_drivers_match_git`), `merge_file_git_compat.rs` (union) | partial (text driver matrix deferred) |
+| t6407-merge-binary.sh | binary merge conflicts | `merge_ort_git_compat.rs` (`t6407_binary_conflict_matches_git`) | covered |
+| t6408-merge-up-to-date.sh | fast-forward index composition | `grit-lib/src/porcelain/merge.rs` (`compose_fast_forward_index_keeps_staged_additions`) | partial |
+| t6411-merge-filemode.sh | mode-only add/add conflicts | `merge_ort_git_compat.rs` (`t6411_filemode_merge_matches_git`) | covered |
+| t6414-merge-rename-nocruft.sh | rename without crud | `merge_ort_git_compat.rs` (rename scenarios) | partial |
+| t6415-merge-dir-to-symlink.sh | directory ↔ symlink | — | gap (follow-up) |
+| t6416-recursive-corner-cases.sh | single merge-base corner cases | `merge_ort_git_compat.rs` (rename/delete subset) | partial |
+| t6417-merge-ours-theirs.sh | `-Xours`/`-Xtheirs` favor | `merge_file_git_compat.rs` (`t6417_merge_favor_ours_theirs_grit_api`), `merge_ort_git_compat.rs` (`t6417_merge_ours_theirs_favor_matches_git`) | partial |
+| t6418-merge-text-auto.sh | text=auto / binary detection | `merge_file.rs` (`is_binary_detects_nul_byte`) | partial |
+| t6422-merge-rename-corner-cases.sh | rename/delete and rename/rename | `merge_ort_git_compat.rs` (`t6422_rename_corner_cases_match_git_merge_tree`) | partial |
+| t6425-merge-rename-delete.sh | rename/delete | `merge_ort_git_compat.rs` (`t6422_rename_corner_cases_match_git_merge_tree`) | partial |
+| t6427-diff3-conflict-markers.sh | diff3 / zdiff3 markers | `merge_file_git_compat.rs` (`t6427_diff3_and_zdiff3_markers_match_git_merge_file`) | covered |
+| t6423-merge-rename-detection.sh | directory rename detection | — | gap (directory renames not implemented in merge-ort path) |
+| t6401/t6404/t6431 | criss-cross / virtual merge bases | — | gap (virtual bases not implemented) |
+| t4301-merge-tree-write-tree.sh | `--write-tree` oracle | `merge_ort_git_compat.rs` (`t4301_merge_tree_write_tree_clean_merge_matches_git`) | covered |
+| t7603 | octopus parent reduction | `grit-lib/src/porcelain/merge.rs` (`reduce_octopus_merge_heads_drops_ancestor`) | covered |
+| — | cherry-pick tree vs `git cherry-pick --no-commit` | `merge_ort_git_compat.rs` (`cherry_pick_tree_remap_matches_git`) | covered |
 
 #### Stash/notes/worktrees/patch-ids
 

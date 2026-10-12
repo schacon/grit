@@ -202,3 +202,104 @@ pub fn path_has_unmerged_entry(index: &Index, path: &[u8]) -> bool {
         .iter()
         .any(|entry| entry.path == path && entry.stage() != 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::zero_oid;
+    use crate::index::{Index, IndexEntry, MODE_REGULAR};
+
+    fn entry(path: &str) -> IndexEntry {
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: zero_oid(),
+            flags: 0,
+            flags_extended: None,
+            path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn same_blob_renames_pairs_deleted_and_added_paths() {
+        let mut base = HashMap::new();
+        base.insert(b"old.txt".to_vec(), entry("old.txt"));
+        let mut side = HashMap::new();
+        side.insert(b"new.txt".to_vec(), entry("new.txt"));
+        let renames = same_blob_renames(&base, &side);
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].0, b"old.txt");
+        assert_eq!(renames[0].1, b"new.txt");
+    }
+
+    #[test]
+    fn remap_path_by_directory_renames_longest_prefix() {
+        let mut dirs = HashMap::new();
+        dirs.insert(b"old".to_vec(), b"new".to_vec());
+        let remapped = remap_path_by_directory_renames(b"old/deep/file.txt", &dirs);
+        assert_eq!(remapped.as_deref(), Some(b"new/deep/file.txt".as_slice()));
+    }
+
+    #[test]
+    fn stage_entry_at_and_unmerged_detection() {
+        let mut index = Index::new();
+        let e = entry("x.txt");
+        stage_entry_at(&mut index, b"x.txt", &e, 2);
+        assert!(path_has_unmerged_entry(&index, b"x.txt"));
+    }
+
+    #[test]
+    fn directory_renames_from_file_renames_picks_majority() {
+        let renames = vec![
+            (b"a/x".to_vec(), b"b/x".to_vec()),
+            (b"a/y".to_vec(), b"b/y".to_vec()),
+        ];
+        let dirs = directory_renames_from_file_renames(&renames);
+        assert_eq!(
+            dirs.get(b"a".as_slice()).map(|v| v.as_slice()),
+            Some(b"b".as_slice())
+        );
+    }
+
+    #[test]
+    fn parse_strategy_options_recognizes_favor_whitespace_and_diff_algo() {
+        let opts = vec![
+            "ours".into(),
+            "ignore-all-space".into(),
+            "diff-algorithm=histogram".into(),
+            "patience".into(),
+        ];
+        let (favor, ws, algo) = parse_strategy_options(&opts);
+        assert_eq!(favor, MergeFavor::Ours);
+        assert!(ws.ignore_all_space);
+        assert_eq!(algo.as_deref(), Some("patience"));
+    }
+
+    #[test]
+    fn parent_dir_and_root_level_directory_remap() {
+        assert_eq!(parent_dir(b"a/b/c"), b"a/b");
+        let mut dirs = HashMap::new();
+        dirs.insert(Vec::new(), b"top".to_vec());
+        let remapped = remap_path_by_directory_renames(b"file.txt", &dirs);
+        assert_eq!(remapped.as_deref(), Some(b"top/file.txt".as_slice()));
+    }
+
+    #[test]
+    fn directory_renames_tie_drops_ambiguous_mapping() {
+        let renames = vec![
+            (b"a/x".to_vec(), b"b/x".to_vec()),
+            (b"a/y".to_vec(), b"c/y".to_vec()),
+        ];
+        let dirs = directory_renames_from_file_renames(&renames);
+        assert!(!dirs.contains_key(b"a".as_slice()));
+    }
+}

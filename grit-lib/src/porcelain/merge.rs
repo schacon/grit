@@ -282,6 +282,7 @@ pub fn integrate_branch(
 
     let presentation = TreeMergeConflictPresentation {
         label_theirs: crate::merge_trees::TheirsConflictLabel::Fixed(label),
+        df_directory_side_commit: Some(other_oid),
         ..TreeMergeConflictPresentation::default()
     };
     let merged = merge_trees_three_way(
@@ -558,6 +559,118 @@ mod integrate_tests {
     }
 
     #[test]
+    fn reduce_octopus_merge_heads_drops_ancestor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("f.txt"), "a\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "a"]);
+        let a: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("a");
+        std::fs::write(tmp.path().join("f.txt"), "b\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "b"]);
+        let b: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("b");
+        let (oids, names) =
+            reduce_octopus_merge_heads(&repo, &[a, b], &["a".into(), "b".into()]).expect("reduce");
+        assert_eq!(oids, vec![b]);
+        assert_eq!(names, vec!["b".to_owned()]);
+    }
+
+    #[test]
+    fn compose_fast_forward_index_keeps_staged_additions() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("tracked.txt"), "v1\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "tracked.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "head"]);
+        let head: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("head");
+        let head_tree = commit_tree(&repo, &head).expect("head tree");
+        std::fs::write(tmp.path().join("tracked.txt"), "v2\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "tracked.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "target"]);
+        let target_tree = commit_tree(
+            &repo,
+            &grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+                .trim()
+                .parse()
+                .expect("target"),
+        )
+        .expect("target tree");
+        std::fs::write(tmp.path().join("new.txt"), "staged\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "new.txt"]);
+        let index = repo.load_index().expect("index");
+        let ff = compose_fast_forward_index(&repo, target_tree, head_tree, &index).expect("ff");
+        assert!(ff.get(b"new.txt", 0).is_some());
+        assert!(ff.get(b"tracked.txt", 0).is_some());
+    }
+
+    #[test]
+    fn integrate_branch_fast_forward_and_up_to_date() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("f.txt"), "v1\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "one"]);
+        let head: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("head");
+        grit_test_support::git(tmp.path(), &["branch", "topic"]);
+        std::fs::write(tmp.path().join("f.txt"), "v2\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "two"]);
+        let tip: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("tip");
+        grit_test_support::git(tmp.path(), &["checkout", "main"]);
+        let up = integrate_branch(&repo, "refs/heads/main", head, head, "topic").expect("up");
+        assert_eq!(up, IntegrateBranchOutcome::UpToDate);
+        let ff = integrate_branch(&repo, "refs/heads/main", head, tip, "topic").expect("ff");
+        assert!(matches!(ff, IntegrateBranchOutcome::FastForward { .. }));
+    }
+
+    #[test]
+    fn compose_octopus_final_index_carries_staged_paths() {
+        let mut pre = Index::new();
+        pre.add_or_replace(index_entry("staged.txt", 0));
+        let mut final_index = Index::new();
+        final_index.add_or_replace(index_entry("merged.txt", 0));
+        compose_octopus_final_index(&pre, &mut final_index);
+        assert!(final_index.get(b"staged.txt", 0).is_some());
+        assert!(final_index.get(b"merged.txt", 0).is_some());
+    }
+
+    #[test]
+    fn tree_to_index_entries_and_map_roundtrip() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("a.txt"), "a\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "a.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "c"]);
+        let tree: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD^{tree}"])
+            .trim()
+            .parse()
+            .expect("tree");
+        let entries = tree_to_index_entries(&repo, &tree, "").expect("entries");
+        let map = tree_to_map(entries.clone());
+        assert_eq!(map.len(), entries.len());
+    }
+
+    #[test]
     fn tree_merge_conflict_paths_unions_markers_and_unmerged_index() {
         let mut index = Index::new();
         index.add_or_replace(index_entry("b.txt", 1));
@@ -572,5 +685,83 @@ mod integrate_tests {
             tree_merge_conflict_paths(&merged),
             vec!["a.txt".to_owned(), "b.txt".to_owned()]
         );
+        assert!(has_tree_merge_conflicts(&merged));
+    }
+
+    #[test]
+    fn integrate_branch_merged_without_conflicts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("shared.txt"), "base\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "shared.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("shared.txt"), "topic\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "shared.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "topic"]);
+        let topic: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "topic"])
+            .trim()
+            .parse()
+            .expect("topic");
+        grit_test_support::git(tmp.path(), &["checkout", "main"]);
+        std::fs::write(tmp.path().join("main-only.txt"), "main\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "main-only.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "main"]);
+        let main: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("main");
+        let outcome =
+            integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
+        let IntegrateBranchOutcome::Merged { oid } = outcome else {
+            panic!("expected clean merge, got {outcome:?}");
+        };
+        let tip: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "refs/heads/main"])
+            .trim()
+            .parse()
+            .expect("tip");
+        assert_eq!(tip, oid);
+        grit_test_support::git(tmp.path(), &["fsck", "--strict"]);
+    }
+
+    #[test]
+    fn integrate_branch_conflicts_then_abort() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        std::fs::write(tmp.path().join("f.txt"), "base\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
+        grit_test_support::git(tmp.path(), &["switch", "-c", "topic"]);
+        std::fs::write(tmp.path().join("f.txt"), "theirs\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "theirs"]);
+        let topic: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "topic"])
+            .trim()
+            .parse()
+            .expect("topic");
+        grit_test_support::git(tmp.path(), &["checkout", "main"]);
+        std::fs::write(tmp.path().join("f.txt"), "ours\n").expect("write");
+        grit_test_support::git(tmp.path(), &["add", "f.txt"]);
+        grit_test_support::git(tmp.path(), &["commit", "-m", "ours"]);
+        let main: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("main");
+        let outcome =
+            integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
+        let IntegrateBranchOutcome::Conflicts { paths } = outcome else {
+            panic!("expected conflicts, got {outcome:?}");
+        };
+        assert!(paths.iter().any(|p| p == "f.txt"));
+        assert!(tmp.path().join(".git/MERGE_HEAD").exists());
+        abort_branch_merge(&repo).expect("abort");
+        assert!(!tmp.path().join(".git/MERGE_HEAD").exists());
+        let tip: ObjectId = grit_test_support::git(tmp.path(), &["rev-parse", "HEAD"])
+            .trim()
+            .parse()
+            .expect("tip");
+        assert_eq!(tip, main);
     }
 }

@@ -40,6 +40,15 @@ REQUIRED_UPSTREAM_IDS = (
     "t5613",
     "t5615",
     "t5616",
+    "t4301",
+    "t6400",
+    "t6402",
+    "t6403",
+    "t6405",
+    "t6407",
+    "t6411",
+    "t6422",
+    "t6427",
 )
 
 REQUIRED_HISTORY_INDEX: tuple[str, ...] = (

@@ -1659,6 +1659,403 @@ mod tests {
     }
 
     #[test]
+    fn is_binary_detects_nul_byte() {
+        assert!(is_binary(b"text\0more"));
+        assert!(!is_binary(b"just text\n"));
+    }
+
+    #[test]
+    fn diff3_style_emits_base_section() {
+        let input = MergeInput {
+            base: b"a\nb\nc\n",
+            ours: b"a\nOURS\nc\n",
+            theirs: b"a\nTHEIRS\nc\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Diff3,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        let s = String::from_utf8(out.content).unwrap();
+        assert!(s.contains("||||||| base"));
+    }
+
+    #[test]
+    fn ignore_space_change_merges_space_only_edits() {
+        let input = MergeInput {
+            base: b"a  b\n",
+            ours: b"a b\n",
+            theirs: b"a  b\nline\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: true,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 0);
+    }
+
+    #[test]
+    fn ignore_all_space_can_clean_merge() {
+        let input = MergeInput {
+            base: b"a  \nb\n",
+            ours: b"a\nb\n",
+            theirs: b"a\nb changed\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: true,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 0);
+    }
+
+    #[test]
+    fn custom_marker_size_shortens_conflict_markers() {
+        let input = MergeInput {
+            base: b"a\nb\nc\n",
+            ours: b"a\nX\nc\n",
+            theirs: b"a\nY\nc\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 5,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        let s = String::from_utf8(out.content).unwrap();
+        assert!(s.contains("<<<<< ours"));
+        assert!(!s.contains("<<<<<<< ours"));
+    }
+
+    #[test]
+    fn zealous_diff3_prefix_suppressed_when_carried_by_previous_hunk() {
+        let input = MergeInput {
+            base: b"keep\nbase\nline\n",
+            ours: b"keep\nours\nline\n",
+            theirs: b"keep\ntheirs\nline\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::ZealousDiff3,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 1);
+        let s = String::from_utf8(out.content).unwrap();
+        assert!(s.contains("<<<<<<< ours"));
+    }
+
+    #[test]
+    fn histogram_diff_algorithm_runs() {
+        let input = MergeInput {
+            base: b"a\nb\nc\n",
+            ours: b"a\nB\nc\n",
+            theirs: b"a\nb\nc\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: Some("histogram".to_string()),
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.content, b"a\nB\nc\n");
+    }
+
+    #[test]
+    fn patience_diff_algorithm_runs() {
+        let input = MergeInput {
+            base: b"x\ny\n",
+            ours: b"x\nY\n",
+            theirs: b"x\ny\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: Some("patience".to_string()),
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.content, b"x\nY\n");
+    }
+
+    #[test]
+    fn ignore_space_at_eol_treats_trailing_whitespace_as_equal() {
+        let input = MergeInput {
+            base: b"line \n",
+            ours: b"line\n",
+            theirs: b"line  \n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: true,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 0);
+    }
+
+    #[test]
+    fn add_add_without_base_performs_content_merge() {
+        let input = MergeInput {
+            base: b"",
+            ours: b"ours\n",
+            theirs: b"theirs\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 1);
+        let s = String::from_utf8(out.content).unwrap();
+        assert!(s.contains("<<<<<<< ours"));
+    }
+
+    #[test]
+    fn crlf_inputs_use_cr_lf_in_conflict_markers() {
+        let input = MergeInput {
+            base: b"a\r\nb\r\n",
+            ours: b"a\r\nOURS\r\n",
+            theirs: b"a\r\nTHEIRS\r\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        let s = String::from_utf8(out.content).unwrap();
+        assert_eq!(out.conflicts, 1);
+        assert!(s.contains("<<<<<<< ours\r\n"));
+    }
+
+    #[test]
+    fn append_lines_separates_when_buffer_lacks_trailing_newline() {
+        let input = MergeInput {
+            base: b"no-final-newline",
+            ours: b"no-final-newline\nours-line\n",
+            theirs: b"no-final-newline",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.content, b"no-final-newline\nours-line\n");
+    }
+
+    #[test]
+    fn ignore_cr_at_eol_normalizes_cr_only_ends() {
+        let input = MergeInput {
+            base: b"a\r\nb\r\n",
+            ours: b"a\r\nB\r\n",
+            theirs: b"a\r\nb\r\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: true,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.conflicts, 0);
+    }
+
+    #[test]
+    fn unknown_diff_algorithm_falls_back_to_myers() {
+        let input = MergeInput {
+            base: b"a\n",
+            ours: b"b\n",
+            theirs: b"a\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: Some("unknown-algo".to_string()),
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.content, b"b\n");
+    }
+
+    #[test]
+    fn refine_splits_large_conflict_regions() {
+        let base = b"alpha beta gamma\n";
+        let ours = b"alpha BETA gamma\n";
+        let theirs = b"alpha beta GAMMA\n";
+        let input = MergeInput {
+            base,
+            ours,
+            theirs,
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert!(out.conflicts >= 1);
+    }
+
+    #[test]
+    fn merge_style_conflict_uses_shared_prefix_outside_markers() {
+        let input = MergeInput {
+            base: b"pre\nmid\npost\n",
+            ours: b"pre\nOURS\npost\n",
+            theirs: b"pre\nTHEIRS\npost\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        let s = String::from_utf8(out.content).unwrap();
+        assert_eq!(out.conflicts, 1);
+        assert!(s.starts_with("pre\n"));
+        assert!(s.ends_with("post\n"));
+    }
+
+    #[test]
+    fn marker_size_zero_defaults_to_seven() {
+        let input = MergeInput {
+            base: b"a\nb\nc\n",
+            ours: b"a\nX\nc\n",
+            theirs: b"a\nY\nc\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 0,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        let s = String::from_utf8(out.content).unwrap();
+        assert!(s.contains("<<<<<<< ours"));
+    }
+
+    #[test]
+    fn favor_theirs_resolves_without_markers() {
+        let input = MergeInput {
+            base: b"a\nb\nc\n",
+            ours: b"a\nX\nc\n",
+            theirs: b"a\nY\nc\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::Theirs,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let out = merge(&input).unwrap();
+        assert_eq!(out.content, b"a\nY\nc\n");
+        assert_eq!(out.conflicts, 0);
+    }
+
+    #[test]
     fn preserves_shared_and_superset_insertions() {
         let input = MergeInput {
             base: b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
