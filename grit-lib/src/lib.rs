@@ -28,6 +28,12 @@
 //! # }
 //! ```
 //!
+//! - [`Repository`](repo::Repository) exposes typed handles for objects, refs, the
+//!   index, config, revision walking, and diffs ([`objects::Objects`](objects::Objects),
+//!   [`refs::References`](refs::References), [`index::IndexHandle`](index::IndexHandle),
+//!   [`config::ConfigHandle`](config::ConfigHandle), [`revwalk::RevWalk`](revwalk::RevWalk),
+//!   [`diff::Diff`](diff::Diff)), plus [`repo_handles`] for remotes, worktrees, stash,
+//!   notes, and bundles.
 //! - [`prelude`] re-exports the types most call sites need.
 //! - [`porcelain`] holds user-facing operations that return structured result
 //!   *models* (the CLI renders them). The flat module list below remains the

@@ -29,9 +29,22 @@ Bare repositories have `work_tree: None`. Linked worktrees and gitfile indirecti
 
 [`Repository::config`](rustdoc:grit_lib::repo::Repository) returns a lazily loaded snapshot of the merged cascade (system / global / local / worktree / environment overrides). Prefer it on hot paths instead of calling `ConfigSet::load` repeatedly. Keys use Git’s dotted names (`user.name`, `core.bare`, …).
 
-## Typed domain handles
+## Typed handles
 
-Beyond [`Repository::refs`](rustdoc:grit_lib::repo::Repository) and the object store on [`Repository::odb`](rustdoc:grit_lib::repo::Repository), the repository exposes scoped handles for larger subsystems:
+Core engine areas use thin handles on [`Repository`](rustdoc:grit_lib::repo::Repository) (no duplicated logic):
+
+| Method | Handle | Role |
+| --- | --- | --- |
+| [`objects`](rustdoc:grit_lib::repo::Repository) | [`Objects`](rustdoc:grit_lib::objects::Objects) | read/write/contains for the ODB |
+| [`references`](rustdoc:grit_lib::repo::Repository) | [`References`](rustdoc:grit_lib::refs::References) | resolve, list, update refs; read reflog |
+| [`index_handle`](rustdoc:grit_lib::repo::Repository) | [`IndexHandle`](rustdoc:grit_lib::index::IndexHandle) | load/write the index |
+| [`config_handle`](rustdoc:grit_lib::repo::Repository) | [`ConfigHandle`](rustdoc:grit_lib::config::ConfigHandle) | merged get; local set + reload |
+| [`rev_walk`](rustdoc:grit_lib::repo::Repository) | [`RevWalk`](rustdoc:grit_lib::revwalk::RevWalk) | rev-parse specs; rev-list walks |
+| [`diff`](rustdoc:grit_lib::repo::Repository) | [`Diff`](rustdoc:grit_lib::diff::Diff) | tree↔tree, index↔tree, worktree↔index |
+
+[`Repository::refs`](rustdoc:grit_lib::repo::Repository) still returns the pluggable [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) trait object for embedders and low-level ref backends.
+
+Larger subsystems use [`repo_handles`](rustdoc:grit_lib::repo_handles):
 
 | Method | Handle | Role |
 | --- | --- | --- |
@@ -41,7 +54,7 @@ Beyond [`Repository::refs`](rustdoc:grit_lib::repo::Repository) and the object s
 | [`Repository::notes`](rustdoc:grit_lib::repo::Repository) | [`RepositoryNotes`](rustdoc:grit_lib::repo_handles::RepositoryNotes) | Notes list/read/add/remove via [`NotesRef`](rustdoc:grit_lib::notes::NotesRef) |
 | [`Repository::bundles`](rustdoc:grit_lib::repo::Repository) | [`RepositoryBundles`](rustdoc:grit_lib::repo_handles::RepositoryBundles) | Bundle create/verify/list-heads/unbundle |
 
-Transport options, stash identity, and notes author/committer lines are passed in as arguments on these methods (no hidden wall-clock reads in the handle layer).
+Transport options, stash identity, and notes author/committer lines are passed in as arguments on those methods (no hidden wall-clock reads in the handle layer).
 
 ## Errors
 
