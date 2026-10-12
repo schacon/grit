@@ -33,6 +33,8 @@ fn hermetic_git(home: &Path, repo: &Path, args: &[&str]) -> std::process::Output
         .current_dir(repo)
         .args(args)
         .env("HOME", home)
+        // CI runners export XDG_CONFIG_HOME, which would hide `$HOME/.config/git`.
+        .env_remove("XDG_CONFIG_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_AUTHOR_NAME", AUTHOR)
@@ -61,6 +63,7 @@ fn git_check_ignore_verbose(
         full_args.push(path);
         let out = git_cmd(&full_args)
             .env("HOME", home)
+            .env_remove("XDG_CONFIG_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .in_dir(repo)
