@@ -1,8 +1,8 @@
 //! Build v2 pack index records from an in-memory pack (index-pack hashing path).
 //!
-//! Multi-threaded builds zlib-skip whole objects in bounded batches, then parallel
-//! inflate+hash each batch; delta chains inflate+apply+hash in parallel rounds.
-//! Single-threaded builds inflate and hash one whole object at a time.
+//! Multi-threaded builds overlap pack scanning with parallel inflate+hash workers;
+//! delta chains inflate+apply+hash in parallel rounds. Single-threaded builds scan once
+//! and inflate+hash each whole object serially.
 
 use crate::error::{Error, Result};
 use crate::hash::{hash_object, Parallelism};
@@ -15,6 +15,7 @@ use crate::unpack_objects::{apply_delta, type_code_to_kind, PackIndexRecord, Pac
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 /// Poll the coordinating thread every N object slots / resolved deltas.
 const PROGRESS_POLL_EVERY: u64 = 32;
@@ -143,13 +144,16 @@ struct WholeHashed {
     kind: ObjectKind,
     zlib_offset: usize,
     uncompressed_size: usize,
-    retain_payload: bool,
 }
 
-/// Hash oversized whole objects outside the parallel pool to cap per-thread memory.
-const LARGE_WHOLE_OBJECT: usize = 4 * 1024 * 1024;
+/// Whole objects in the first hash batch (start overlap early).
+const WHOLE_SCAN_HASH_FIRST_BATCH: usize = 512;
+/// Whole objects per later hash batch while the scan runs ahead of the hash worker.
+const WHOLE_SCAN_HASH_BATCH: usize = 8192;
+/// Work-stealing chunk for parallel whole-object inflate+hash within each batch.
+const WHOLE_HASH_STEAL_CHUNK: usize = 128;
 /// Work-stealing step when resolving a batch of ready deltas.
-const DELTA_STEAL_CHUNK: usize = 1;
+const DELTA_STEAL_CHUNK: usize = 4;
 struct PackHeader {
     #[allow(dead_code)]
     version: u32,
@@ -199,21 +203,27 @@ pub fn build_pack_index_records_with_progress(
         records: &mut records,
     };
 
-    let whole_slots = scan_whole_object_slots(
-        pack,
-        &header,
-        &mut pending,
-        &mut state,
-        verify_trailer,
-        reporter.as_mut(),
-    )?;
     if threads.get() <= 1 {
-        // Git's single-threaded index-pack re-walks object boundaries before hashing; match
-        // that extra serial skip pass so 1→N thread scaling reflects parallel inflate+hash.
-        rescan_pack_object_bodies_skip(pack, &header, state.odb.hash_algo().len())?;
+        let whole_slots = scan_whole_object_slots(
+            pack,
+            &header,
+            &mut pending,
+            &mut state,
+            verify_trailer,
+            reporter.as_mut(),
+        )?;
         hash_whole_slots_serial(pack, whole_slots, algo, &mut state)?;
     } else {
-        hash_whole_slots_parallel(pack, whole_slots, threads, algo, &mut state)?;
+        scan_and_hash_whole_slots_overlapped(
+            pack,
+            &header,
+            &mut pending,
+            &mut state,
+            algo,
+            verify_trailer,
+            threads,
+            reporter.as_mut(),
+        )?;
     }
 
     let delta_total = u64::try_from(pending.len()).unwrap_or(u64::MAX);
@@ -321,37 +331,139 @@ fn scan_whole_object_slots(
     Ok(whole_slots)
 }
 
-/// Second serial skip pass over object bodies (single-threaded index-pack only).
-fn rescan_pack_object_bodies_skip(pack: &[u8], header: &PackHeader, hb: usize) -> Result<()> {
-    let mut rd = PackReader::new(pack);
-    rd.read_exact(4)?;
-    rd.read_u32_be()?;
-    rd.read_u32_be()?;
-    for _ in 0..header.nr_objects {
-        let (type_code, size) = rd.read_type_size()?;
-        match type_code {
-            1..=4 => {
-                let zlib_offset = rd.pos;
-                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
-                rd.pos += consumed;
+/// Scan the pack while a background worker hashes batched whole objects (scan does not wait per batch).
+fn scan_and_hash_whole_slots_overlapped(
+    pack: &[u8],
+    header: &PackHeader,
+    pending: &mut Vec<PendingIndexDelta>,
+    state: &mut IndexBuildState<'_>,
+    algo: HashAlgo,
+    verify_trailer: bool,
+    threads: std::num::NonZeroUsize,
+    mut progress: Option<&mut PackIndexReporter<'_>>,
+) -> Result<()> {
+    use std::sync::mpsc::sync_channel;
+
+    let (batch_tx, batch_rx) = sync_channel::<Vec<WholeSlot>>(8);
+    let (hash_tx, hash_rx) =
+        std::sync::mpsc::channel::<std::result::Result<Vec<WholeHashed>, Error>>();
+    let n_workers = threads.get();
+    let mut hashed_batches: Vec<Vec<WholeHashed>> = Vec::new();
+    let mut scan_error: Option<Error> = None;
+
+    thread::scope(|scope| {
+        scope.spawn(move || {
+            for batch in batch_rx {
+                if batch.is_empty() {
+                    let _ = hash_tx.send(Ok(Vec::new()));
+                    break;
+                }
+                let workers = n_workers.min(batch.len()).max(1);
+                let chunk = (batch.len() / workers).max(1).min(WHOLE_HASH_STEAL_CHUNK);
+                let hashed = run_ordered_pool(&batch, workers, chunk, |slot| {
+                    hash_one_whole_slot(pack, slot, algo)
+                });
+                let _ = hash_tx.send(hashed);
             }
-            6 => {
-                let _ = rd.read_ofs_neg_offset()?;
-                let zlib_offset = rd.pos;
-                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
-                rd.pos += consumed;
+        });
+
+        let mut batch = Vec::with_capacity(WHOLE_SCAN_HASH_BATCH);
+        let scan_result = (|| -> Result<usize> {
+            let mut batch_serial: usize = 0;
+            let hb = state.odb.hash_algo().len();
+            let mut rd = PackReader::new(pack);
+            rd.read_exact(4)?;
+            rd.read_u32_be()?;
+            rd.read_u32_be()?;
+
+            let flush_batch = |batch: &mut Vec<WholeSlot>| -> Result<()> {
+                if batch.is_empty() {
+                    return Ok(());
+                }
+                batch_tx
+                    .send(std::mem::take(batch))
+                    .map_err(|_| Error::CorruptObject("index-pack hash worker stopped".into()))?;
+                Ok(())
+            };
+
+            for _ in 0..header.nr_objects {
+                let obj_offset = rd.pos;
+                let (type_code, size) = rd.read_type_size()?;
+                match type_code {
+                    1..=4 => {
+                        let kind = type_code_to_kind(type_code)?;
+                        let zlib_offset = rd.pos;
+                        let consumed = skip_zlib_at(pack, zlib_offset, size)?;
+                        let pack_end = rd.pos + consumed;
+                        rd.pos = pack_end;
+                        batch.push(WholeSlot {
+                            offset: obj_offset,
+                            pack_end,
+                            zlib_offset,
+                            kind,
+                            uncompressed_size: size,
+                        });
+                        let batch_limit = if batch_serial == 0 {
+                            WHOLE_SCAN_HASH_FIRST_BATCH
+                        } else {
+                            WHOLE_SCAN_HASH_BATCH
+                        };
+                        if batch.len() >= batch_limit {
+                            flush_batch(&mut batch)?;
+                            batch_serial += 1;
+                        }
+                    }
+                    6 => {
+                        push_ofs_delta(pack, &mut rd, obj_offset, size, hb, pending, state)?;
+                    }
+                    7 => {
+                        push_ref_delta(pack, &mut rd, obj_offset, size, hb, pending, state)?;
+                    }
+                    other => {
+                        return Err(Error::CorruptObject(format!(
+                            "unknown packed-object type {other}"
+                        )));
+                    }
+                }
+                if let Some(r) = progress.as_mut() {
+                    r.on_object_slot();
+                }
             }
-            7 => {
-                rd.read_exact(hb)?;
-                let zlib_offset = rd.pos;
-                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
-                rd.pos += consumed;
+
+            let consumed = rd.pos;
+            flush_batch(&mut batch)?;
+            batch_tx
+                .send(Vec::new())
+                .map_err(|_| Error::CorruptObject("index-pack hash worker stopped".into()))?;
+            if verify_trailer {
+                verify_pack_trailer(pack, consumed, state.odb.hash_algo())?;
             }
-            other => {
-                return Err(Error::CorruptObject(format!(
-                    "unknown packed-object type {other}"
-                )));
+            Ok(consumed)
+        })();
+
+        if let Err(err) = scan_result {
+            scan_error = Some(err);
+            let _ = batch_tx.send(Vec::new());
+        }
+
+        drop(batch_tx);
+        for result in hash_rx {
+            match result {
+                Ok(h) if !h.is_empty() => hashed_batches.push(h),
+                Ok(_) => {}
+                Err(err) if scan_error.is_none() => scan_error = Some(err),
+                Err(_) => {}
             }
+        }
+    });
+
+    if let Some(err) = scan_error {
+        return Err(err);
+    }
+
+    for batch in hashed_batches {
+        for item in batch {
+            apply_whole_hashed(state, item);
         }
     }
     Ok(())
@@ -364,35 +476,7 @@ fn hash_whole_slots_serial(
     state: &mut IndexBuildState<'_>,
 ) -> Result<()> {
     for slot in whole_slots {
-        let item =
-            hash_one_whole_slot(pack, &slot, algo, state.ofs_base_refs, state.oid_base_refs)?;
-        apply_whole_hashed(state, item);
-    }
-    Ok(())
-}
-
-fn hash_whole_slots_parallel(
-    pack: &[u8],
-    whole_slots: Vec<WholeSlot>,
-    threads: std::num::NonZeroUsize,
-    algo: HashAlgo,
-    state: &mut IndexBuildState<'_>,
-) -> Result<()> {
-    let ofs_base_refs = state.ofs_base_refs.clone();
-    let oid_base_refs = state.oid_base_refs.clone();
-    let (large, normal): (Vec<WholeSlot>, Vec<WholeSlot>) = whole_slots
-        .into_iter()
-        .partition(|s| s.uncompressed_size >= LARGE_WHOLE_OBJECT);
-    for slot in large {
-        let item = hash_one_whole_slot(pack, &slot, algo, &ofs_base_refs, &oid_base_refs)?;
-        apply_whole_hashed(state, item);
-    }
-
-    let n_workers = threads.get().min(normal.len()).max(1);
-    let hashed = run_ordered_pool(&normal, n_workers, 1, |slot| {
-        hash_one_whole_slot(pack, slot, algo, &ofs_base_refs, &oid_base_refs)
-    })?;
-    for item in hashed {
+        let item = hash_one_whole_slot(pack, &slot, algo)?;
         apply_whole_hashed(state, item);
     }
     Ok(())
@@ -400,7 +484,9 @@ fn hash_whole_slots_parallel(
 
 fn apply_whole_hashed(state: &mut IndexBuildState<'_>, item: WholeHashed) {
     state.records.push(item.record);
-    if item.retain_payload {
+    let retain_ofs = state.ofs_base_refs.get(&item.offset).copied().unwrap_or(0) > 0;
+    let retain_oid = state.oid_base_refs.get(&item.oid).copied().unwrap_or(0) > 0;
+    if retain_ofs || retain_oid {
         retain_pack_base_for_whole(
             item.offset,
             item.oid,
@@ -415,17 +501,9 @@ fn apply_whole_hashed(state: &mut IndexBuildState<'_>, item: WholeHashed) {
     }
 }
 
-fn hash_one_whole_slot(
-    pack: &[u8],
-    work: &WholeSlot,
-    algo: HashAlgo,
-    ofs_base_refs: &HashMap<usize, u32>,
-    oid_base_refs: &HashMap<ObjectId, u32>,
-) -> Result<WholeHashed> {
+fn hash_one_whole_slot(pack: &[u8], work: &WholeSlot, algo: HashAlgo) -> Result<WholeHashed> {
     let data = decompress_zlib_at_index(pack, work.zlib_offset, work.uncompressed_size)?;
     let oid = hash_object(algo, work.kind, &data);
-    let retain_ofs = ofs_base_refs.get(&work.offset).copied().unwrap_or(0) > 0;
-    let retain_oid = oid_base_refs.get(&oid).copied().unwrap_or(0) > 0;
     Ok(WholeHashed {
         record: PackIndexRecord {
             oid,
@@ -437,7 +515,6 @@ fn hash_one_whole_slot(
         kind: work.kind,
         zlib_offset: work.zlib_offset,
         uncompressed_size: work.uncompressed_size,
-        retain_payload: retain_ofs || retain_oid,
     })
 }
 
@@ -677,24 +754,27 @@ fn resolve_pending_deltas_parallel(
             )));
         }
 
-        let ofs_out_refs = state.ofs_base_refs.clone();
-        let oid_out_refs = state.oid_base_refs.clone();
         let mut base_release: Vec<(Option<usize>, Option<ObjectId>)> = Vec::new();
 
         materialize_bases_for_ready_deltas(pack, &ready, state.ofs_bases, state.oid_bases)?;
 
         let ready_count = u64::try_from(ready.len()).unwrap_or(u64::MAX);
         let n_workers = threads.get().min(ready.len()).max(1);
+        let ofs_out_refs = &state.ofs_base_refs;
+        let oid_out_refs = &state.oid_base_refs;
+        let ofs_bases = &state.ofs_bases;
+        let oid_bases = &state.oid_bases;
+        let odb = state.odb;
         let hashed = run_ordered_pool(&ready, n_workers, DELTA_STEAL_CHUNK, |delta| {
             resolve_one_delta(
                 pack,
                 delta,
-                state.ofs_bases,
-                state.oid_bases,
-                state.odb,
+                ofs_bases,
+                oid_bases,
+                odb,
                 algo,
-                &ofs_out_refs,
-                &oid_out_refs,
+                ofs_out_refs,
+                oid_out_refs,
             )
         })?;
 
