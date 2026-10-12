@@ -200,6 +200,7 @@ pub mod init_filesystem;
 pub mod interpret_trailers;
 pub(crate) mod local_object_copy;
 pub mod mailmap;
+pub mod maintenance;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
