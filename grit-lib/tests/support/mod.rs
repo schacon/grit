@@ -10,6 +10,7 @@ mod merge_harness;
 mod refs_harness;
 mod refstore_conformance;
 mod revparse_oracle;
+mod revparse_seed;
 mod revwalk_fixtures;
 
 pub use attributes_harness::*;
@@ -41,6 +42,7 @@ pub use merge_harness::{
 pub use refs_harness::*;
 pub use refstore_conformance::*;
 pub use revparse_oracle::*;
+pub use revparse_seed::*;
 pub use revwalk_fixtures::{
     setup_dual_merge_back_simplify_oracle, setup_first_parent_boundary_history,
     setup_path_simplify_history, setup_treesame_history,

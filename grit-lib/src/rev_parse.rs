@@ -3851,7 +3851,7 @@ mod line_coverage_tests {
         max_commits: usize,
     ) -> String {
         let mut counter = oids.len() as i32;
-        while oids.len() < max_commits {
+        while oids.len() < max_commits && max_commits > 0 {
             let body = format!(
                 "tree {tree}\nauthor T <t@e.com> {counter} +0000\ncommitter T <t@e.com> {counter} +0000\n\nc{counter}\n"
             );
@@ -4363,7 +4363,7 @@ mod line_coverage_tests {
         .map_err(crate::error::Error::Io)?;
         let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
-        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
@@ -4541,7 +4541,7 @@ mod line_coverage_tests {
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
         let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
-        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
@@ -5034,11 +5034,25 @@ mod line_coverage_tests {
         )
         .map_err(crate::error::Error::Io)?;
         let mut oids = Vec::new();
-        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let _ = resolve_revision(&repo, &prefix);
         let _ = resolve_revision_as_commit(&repo, &prefix);
         let _ = resolve_revision_for_verify(&repo, &prefix);
         Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "could not find")]
+    fn seed_commits_until_ambiguous_prefix_exhaustion() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
+        let repo = crate::repo::Repository::open(dir.path(), None).expect("open");
+        let tree = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tree, b"")
+            .expect("tree");
+        let mut oids = Vec::new();
+        let _ = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 40, 0);
     }
 }
 
