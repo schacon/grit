@@ -2,6 +2,7 @@
 //!
 //! Run: `cargo run -p grit-lib --example repo_init_and_open`
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::{init_repository, Repository};
 use std::fs;
 
@@ -10,10 +11,17 @@ fn main() -> grit_lib::error::Result<()> {
     let path = root.path();
 
     let repo = init_repository(path, false, "main", None, grit_lib::RefStorageFormat::Files)?;
-    println!("opened after init: git_dir = {}", repo.git_dir.display());
-    println!("work tree: {}", repo.work_tree.as_ref().unwrap().display());
+    println!("opened after init: git_dir = {}", repo.git_dir().display());
+    println!("work tree: {}", repo.work_tree().unwrap().display());
 
-    let again = Repository::open(&repo.git_dir, repo.work_tree.as_deref())?;
+    let again = Repository::open(
+        repo.git_dir(),
+        &RepositoryOptions::empty().with_work_tree(
+            repo.work_tree()
+                .expect("non-bare")
+                .to_path_buf(),
+        ),
+    )?;
     println!("re-open by path: bare = {}", again.is_bare());
 
     let marker = path.join("marker.txt");
@@ -21,10 +29,10 @@ fn main() -> grit_lib::error::Result<()> {
     let sub = path.join("subdir");
     fs::create_dir_all(&sub)?;
     assert!(std::env::set_current_dir(&sub).is_ok());
-    let discovered = Repository::discover(None)?;
+    let discovered = Repository::discover(None, &RepositoryOptions::empty())?;
     println!(
         "discover from subdir: same git_dir = {}",
-        discovered.git_dir == repo.git_dir
+        discovered.git_dir() == repo.git_dir()
     );
 
     Ok(())

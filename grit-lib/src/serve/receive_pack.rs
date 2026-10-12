@@ -179,7 +179,7 @@ pub fn receive_pack(
 
     let needs_pack = request.commands.iter().any(|c| c.new.is_some());
     let mut quarantine = if needs_pack {
-        Some(ReceiveQuarantine::create(&repo.odb, &repo.git_dir)?)
+        Some(ReceiveQuarantine::create(repo.odb(), repo.git_dir())?)
     } else {
         None
     };
@@ -253,7 +253,7 @@ fn write_advertisement(
     {
         caps.push("push-options".to_owned());
     }
-    caps.push(format!("object-format={}", repo.odb.hash_algo().name()));
+    caps.push(format!("object-format={}", repo.odb().hash_algo().name()));
     if !opts.agent.is_empty() {
         caps.push(format!("agent={}", opts.agent));
     }
@@ -261,7 +261,7 @@ fn write_advertisement(
 
     let refs = advertised_refs(repo, &opts.hidden_refs)?;
     if refs.is_empty() {
-        let zero = ObjectId::null(repo.odb.hash_algo());
+        let zero = ObjectId::null(repo.odb().hash_algo());
         write_line(
             output,
             &format!("{} capabilities^{{}}\0{caps}", zero.to_hex()),
@@ -419,7 +419,7 @@ fn apply_commands_with_hooks(
         return Ok(results);
     }
 
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let push_option_env = push_option_env_owned(&request.push_options);
     let mut pre_hook_env_owned = push_option_env.clone();
     if let Some(q) = quarantine.as_ref() {
@@ -460,7 +460,7 @@ fn apply_commands_with_hooks(
 
     if let Some(q) = quarantine {
         q.migrate().map_err(ServeError::Repository)?;
-        repo.odb.invalidate_packs();
+        repo.odb().invalidate_packs();
     }
 
     for (cmd, result) in request.commands.iter().zip(results.iter_mut()) {
@@ -498,7 +498,7 @@ fn apply_commands_with_hooks(
 
     if request.caps.contains("atomic") {
         let batch: Vec<_> = pending.iter().map(|(_, u)| u.clone()).collect();
-        if let Err(e) = crate::refs::commit_ref_store_batch(&repo.git_dir, &batch) {
+        if let Err(e) = crate::refs::commit_ref_store_batch(repo.git_dir(), &batch) {
             let msg = format!("failed to update ref: {e}");
             for (idx, _) in pending {
                 if results[idx].error.is_none() {
@@ -508,7 +508,7 @@ fn apply_commands_with_hooks(
         }
     } else {
         for (idx, update) in pending {
-            if let Err(e) = crate::refs::commit_store_update(&repo.git_dir, update) {
+            if let Err(e) = crate::refs::commit_store_update(repo.git_dir(), update) {
                 results[idx].error = Some(format!("failed to update ref: {e}"));
             }
         }
@@ -638,7 +638,7 @@ fn check_command(
     if crate::hide_refs::ref_is_hidden(&cmd.refname, &cmd.refname, &opts.hidden_refs) {
         return Some("deny updating a hidden ref");
     }
-    let current = crate::refs::resolve_ref(&repo.git_dir, &cmd.refname).ok();
+    let current = crate::refs::resolve_ref(repo.git_dir(), &cmd.refname).ok();
     if current != cmd.old {
         return Some("stale info");
     }
@@ -653,7 +653,7 @@ fn check_command(
         }
         return None;
     };
-    let odb = lookup.unwrap_or(&repo.odb);
+    let odb = lookup.unwrap_or(repo.odb());
     if !odb.exists(&new) {
         return Some("missing necessary objects");
     }

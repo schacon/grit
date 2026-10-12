@@ -21,7 +21,7 @@ const MAX_PEEL_DEPTH: usize = 16;
 /// before [`commit_date`] / [`read_parents`] parse it as a commit.
 fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<Option<ObjectId>> {
     for _ in 0..MAX_PEEL_DEPTH {
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.odb().read(&oid)?;
         match obj.kind {
             ObjectKind::Commit => return Ok(Some(oid)),
             ObjectKind::Tag => oid = parse_tag(&obj.data)?.object,
@@ -49,13 +49,13 @@ fn committer_unix_seconds(committer: &str) -> Result<i64> {
 }
 
 fn commit_date(repo: &Repository, oid: ObjectId) -> Result<i64> {
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     let c = parse_commit(&obj.data)?;
     committer_unix_seconds(&c.committer)
 }
 
 fn read_parents(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>> {
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     Ok(parse_commit(&obj.data)?.parents)
 }
 
@@ -66,7 +66,7 @@ fn read_parents(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>> {
 /// `register_shallow()` rewrites the commit graph during `rev-list` so negotiation never tries to
 /// load (and fails on) objects past the shallow cut (t5539 shallow http fetch/deepen).
 fn read_shallow_boundary(repo: &Repository) -> HashSet<ObjectId> {
-    let shallow_path = repo.git_dir.join("shallow");
+    let shallow_path = repo.git_dir().join("shallow");
     let mut set = HashSet::new();
     if let Ok(contents) = std::fs::read_to_string(&shallow_path) {
         for line in contents.lines().map(str::trim).filter(|l| !l.is_empty()) {

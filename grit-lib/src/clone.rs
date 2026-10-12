@@ -190,12 +190,12 @@ pub fn clone(
         ],
     )?;
 
-    let config = ConfigSet::load(&opts.environment, Some(&repo.git_dir), true)
+    let config = ConfigSet::load(&opts.environment, Some(repo.git_dir()), true)
         .map_err(CloneError::Library)?;
     let remote = Remote::from_config(&config, &opts.remote_name)?;
     let clone_message = format!("clone: from {}", opts.url);
     let identity =
-        fetch_operation_identity(&opts.environment, &repo.git_dir).map_err(CloneError::Library)?;
+        fetch_operation_identity(&opts.environment, repo.git_dir()).map_err(CloneError::Library)?;
     let clone_reflog = CloneReflog {
         identity: identity.clone(),
         message: clone_message.clone(),
@@ -227,13 +227,13 @@ pub fn clone(
         })?;
 
     let tracking = format!("refs/remotes/{}/{default}", opts.remote_name);
-    let oid = refs::resolve_ref(&repo.git_dir, &tracking).map_err(CloneError::Library)?;
+    let oid = refs::resolve_ref(repo.git_dir(), &tracking).map_err(CloneError::Library)?;
 
     let branch_ref = format!("refs/heads/{default}");
-    refs::write_ref(&repo.git_dir, &branch_ref, &oid).map_err(CloneError::Library)?;
+    refs::write_ref(repo.git_dir(), &branch_ref, &oid).map_err(CloneError::Library)?;
     let zero = ObjectId::zero();
     refs::append_reflog(
-        &repo.git_dir,
+        repo.git_dir(),
         &branch_ref,
         &zero,
         &oid,
@@ -242,9 +242,9 @@ pub fn clone(
         false,
     )
     .map_err(CloneError::Library)?;
-    refs::write_symbolic_ref(&repo.git_dir, "HEAD", &branch_ref).map_err(CloneError::Library)?;
+    refs::write_symbolic_ref(repo.git_dir(), "HEAD", &branch_ref).map_err(CloneError::Library)?;
     refs::append_reflog(
-        &repo.git_dir,
+        repo.git_dir(),
         "HEAD",
         &zero,
         &oid,
@@ -288,7 +288,7 @@ fn stored_clone_remote_url(url: &str) -> String {
 }
 
 fn set_local_config(repo: &Repository, entries: &[(&str, String)]) -> Result<()> {
-    let path = repo.git_dir.join("config");
+    let path = repo.git_dir().join("config");
     let content = fs::read_to_string(&path).unwrap_or_default();
     let mut config = ConfigFile::parse(&path, &content, ConfigScope::Local)?;
     for (key, value) in entries {
@@ -301,7 +301,7 @@ fn set_local_config(repo: &Repository, entries: &[(&str, String)]) -> Result<()>
 fn pick_default_branch(repo: &Repository, remote_name: &str) -> Option<String> {
     for candidate in ["main", "master"] {
         if refs::resolve_ref(
-            &repo.git_dir,
+            repo.git_dir(),
             &format!("refs/remotes/{remote_name}/{candidate}"),
         )
         .is_ok()
@@ -309,7 +309,7 @@ fn pick_default_branch(repo: &Repository, remote_name: &str) -> Option<String> {
             return Some(candidate.to_owned());
         }
     }
-    refs::list_refs(&repo.git_dir, &format!("refs/remotes/{remote_name}/"))
+    refs::list_refs(repo.git_dir(), &format!("refs/remotes/{remote_name}/"))
         .ok()?
         .into_iter()
         .find_map(|(name, _)| {

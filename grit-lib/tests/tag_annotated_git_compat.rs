@@ -1,5 +1,6 @@
 //! Annotated tag creation round-trips with system `git`.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_tag, ObjectKind};
 use grit_lib::porcelain::tag::{create_tag, tag_ref_metadata, CreateTagRequest, TagKind};
 use grit_lib::repo::Repository;
@@ -30,8 +31,9 @@ fn grit_annotated_tag_round_trips_with_git() {
     git(&root, &["add", "f"]);
     git(&root, &["commit", "-qm", "seed"]);
 
-    let repo = Repository::discover(Some(&root)).expect("discover");
-    let head = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD").unwrap();
+    let repo = Repository::discover(Some(root.as_path()), &RepositoryOptions::empty())
+        .expect("discover");
+    let head = grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD").unwrap();
     let tagger = "Tagger <t@example.com> 946684800 +0000";
     let outcome = create_tag(
         &repo,
@@ -56,7 +58,7 @@ fn grit_annotated_tag_round_trips_with_git() {
     assert_eq!(kind, TagKind::Annotated);
     assert_eq!(peeled, Some(head));
 
-    let obj = repo.odb.read(&outcome.oid).unwrap();
+    let obj = repo.odb().read(&outcome.oid).unwrap();
     assert_eq!(obj.kind, ObjectKind::Tag);
     let parsed = parse_tag(&obj.data).unwrap();
     assert_eq!(parsed.tag, "v1");

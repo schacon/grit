@@ -1,5 +1,7 @@
 //! Fetch and remote helpers for on-disk bundle files (clone / `grit fetch` from a `.bundle`).
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -86,7 +88,7 @@ fn display_ref_for_spec(repo: &Repository, spec: &str, _oid: ObjectId) -> Result
     if spec.starts_with("refs/") {
         return Ok(spec.to_owned());
     }
-    let exists = |name: &str| crate::refs::resolve_ref(&repo.git_dir, name).is_ok();
+    let exists = |name: &str| crate::refs::resolve_ref(repo.git_dir(), name).is_ok();
     if let Some(name) = crate::worktree_ref::sole_dwim_ref_name(exists, spec) {
         return Ok(name);
     }
@@ -127,7 +129,7 @@ pub fn fetch_from_bundle_with_progress(
     progress: &mut dyn Progress,
 ) -> Result<FetchOutcome> {
     let bundle = Bundle::open(bundle_path).map_err(map_bundle_err)?;
-    let repo = Repository::open(local_git_dir, None)?;
+    let repo = Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     bundle
         .verify(&repo)
         .map_err(map_bundle_err)?
@@ -155,7 +157,7 @@ pub fn fetch_from_bundle_with_progress(
 
     complete_bundle_fetch(
         local_git_dir,
-        &repo.odb,
+        repo.odb(),
         &remote_refs,
         default_branch,
         opts,
@@ -290,7 +292,7 @@ fn complete_bundle_fetch(
     let local_repo = if opts.dry_run {
         None
     } else {
-        Repository::open(local_git_dir, None).ok()
+        Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
     };
 
     let mut updates: Vec<RefUpdate> = Vec::new();
@@ -469,7 +471,7 @@ mod tests {
             .unwrap()
             .success());
 
-        let repo = Repository::discover(Some(dir)).expect("open repo");
+        let repo = Repository::discover(Some(dir), &RepositoryOptions::empty()).expect("open repo");
         let bundle_path = dir.join("t1.bundle");
         write_bundle_from_rev_specs(&repo, &bundle_path, &["lite".to_owned(), "main".to_owned()])
             .expect("write bundle");

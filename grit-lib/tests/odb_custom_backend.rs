@@ -13,7 +13,7 @@ use grit_lib::objects::{serialize_tree, ObjectKind, TreeEntry};
 use grit_lib::odb::store::{MemoryStore, ObjectStore};
 use grit_lib::odb::OdbBuilder;
 use grit_lib::refs::write_ref;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{init_repository, Repository, RepositoryBuilder};
 use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::process::Command;
@@ -81,23 +81,20 @@ fn memory_repo() -> (tempfile::TempDir, Repository, Arc<MemoryStore>) {
     let builder = OdbBuilder::files(&objects)
         .primary(store.clone())
         .alternates(false);
-    let repo = Repository::open_with_odb(
-        &RepositoryOptions::empty(),
-        &git_dir,
-        Some(dir.path()),
-        builder,
-    )
-    .expect("open");
+    let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+        .odb_builder(builder)
+        .open(&git_dir, Some(dir.path()))
+        .expect("open");
     (dir, repo, store)
 }
 
 #[test]
 fn memory_primary_revwalk_diff_without_loose_objects() {
     let (_dir, repo, _store) = memory_repo();
-    let objects_snapshot_before = list_files_under(repo.odb.objects_dir());
+    let objects_snapshot_before = list_files_under(repo.odb().objects_dir());
 
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"payload\n")
         .expect("blob");
     let tree_body = serialize_tree(&[TreeEntry {
@@ -105,15 +102,18 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
         name: b"f".to_vec(),
         oid: blob,
     }]);
-    let tree = repo.odb.write(ObjectKind::Tree, &tree_body).expect("tree");
+    let tree = repo
+        .odb()
+        .write(ObjectKind::Tree, &tree_body)
+        .expect("tree");
     let commit_body = format!(
         "tree {tree}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\nmsg\n"
     );
     let commit = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+    write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
 
     let tip = commit.to_hex();
     let listed =
@@ -121,21 +121,24 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
     assert_eq!(listed.commits.len(), 1);
     assert_eq!(listed.commits[0], commit);
 
-    let blob2 = repo.odb.write(ObjectKind::Blob, b"other\n").expect("blob2");
+    let blob2 = repo
+        .odb()
+        .write(ObjectKind::Blob, b"other\n")
+        .expect("blob2");
     let tree2_body = serialize_tree(&[TreeEntry {
         mode: 0o100644,
         name: b"g".to_vec(),
         oid: blob2,
     }]);
     let tree2 = repo
-        .odb
+        .odb()
         .write(ObjectKind::Tree, &tree2_body)
         .expect("tree2");
-    let diff = diff_trees(&repo.odb, Some(&tree2), Some(&tree), "").expect("diff");
+    let diff = diff_trees(&repo.odb(), Some(&tree2), Some(&tree), "").expect("diff");
     assert!(!diff.is_empty());
 
     assert_eq!(
-        list_files_under(repo.odb.objects_dir()),
+        list_files_under(repo.odb().objects_dir()),
         objects_snapshot_before,
         "custom primary must not mutate the on-disk objects/ tree"
     );
@@ -145,7 +148,7 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
 fn memory_primary_resolve_abbrev_via_lookup_prefix() {
     let (_dir, repo, _store) = memory_repo();
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"abbrev-test\n")
         .expect("blob");
     let prefix = &blob.to_hex()[..8];
@@ -175,18 +178,17 @@ fn memory_primary_write_raw_ignores_seeded_loose_on_disk() {
     fs::write(&loose, b"placeholder").expect("seed loose");
 
     let store = Arc::new(MemoryStore::new(grit_lib::objects::HashAlgo::Sha1));
-    let repo = Repository::open_with_odb(
-        &RepositoryOptions::empty(),
-        &git_dir,
-        Some(dir.path()),
-        OdbBuilder::files(&objects)
-            .primary(store.clone())
-            .alternates(false),
-    )
-    .expect("open");
+    let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+        .odb_builder(
+            OdbBuilder::files(&objects)
+                .primary(store.clone())
+                .alternates(false),
+        )
+        .open(&git_dir, Some(dir.path()))
+        .expect("open");
 
     assert!(!store.contains(&oid).expect("contains"));
-    repo.odb.write_raw(&store_bytes).expect("write_raw");
+    repo.odb().write_raw(&store_bytes).expect("write_raw");
     assert!(store.contains(&oid).expect("contains after"));
 }
 
@@ -201,21 +203,24 @@ fn files_primary_gc_prunes_unreachable_loose() {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("init");
-    let kept_blob = repo.odb.write(ObjectKind::Blob, b"keep\n").expect("keep");
+    let kept_blob = repo.odb().write(ObjectKind::Blob, b"keep\n").expect("keep");
     let tree_body = serialize_tree(&[TreeEntry {
         mode: 0o100644,
         name: b"f".to_vec(),
         oid: kept_blob,
     }]);
-    let tree = repo.odb.write(ObjectKind::Tree, &tree_body).expect("tree");
+    let tree = repo
+        .odb()
+        .write(ObjectKind::Tree, &tree_body)
+        .expect("tree");
     let commit_body = format!(
         "tree {tree}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\nm\n"
     );
     let commit = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+    write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
 
     let orphan_payload = b"orphan\n";
     let orphan_oid = grit_lib::hash::hash_object(
@@ -223,17 +228,17 @@ fn files_primary_gc_prunes_unreachable_loose() {
         ObjectKind::Blob,
         orphan_payload,
     );
-    let orphan_path = repo.odb.object_path(&orphan_oid);
+    let orphan_path = repo.odb().object_path(&orphan_oid);
     fs::create_dir_all(orphan_path.parent().unwrap()).expect("shard");
     fs::write(&orphan_path, b"x").expect("orphan loose");
 
-    repo.odb.gc().expect("gc");
+    repo.odb().gc().expect("gc");
     assert!(
         !orphan_path.exists(),
         "gc must prune unreachable loose objects"
     );
-    assert!(repo.odb.read(&kept_blob).is_ok());
-    let stats = prune_loose_unreachable(&repo.odb, &[commit], None).expect("verify prune");
+    assert!(repo.odb().read(&kept_blob).is_ok());
+    let stats = prune_loose_unreachable(&repo.odb(), &[commit], None).expect("verify prune");
     assert_eq!(stats.pruned, 0, "gc should have already pruned orphans");
 }
 
@@ -247,7 +252,7 @@ fn memory_primary_abbrev_unique_prefix_considers_store_collisions() {
     let mut pair = None;
     for i in 0..100_000u32 {
         let oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, format!("collide-{i}\n").as_bytes())
             .expect("blob");
         let prefix4 = oid.to_hex()[..4].to_owned();
@@ -283,18 +288,21 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
     .expect("init");
 
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"tagged-blob\n")
         .expect("blob");
-    write_ref(&repo.git_dir, "refs/tags/blob-tip", &blob).expect("blob ref");
+    write_ref(&repo.git_dir(), "refs/tags/blob-tip", &blob).expect("blob ref");
 
     let tree_body = serialize_tree(&[TreeEntry {
         mode: 0o100644,
         name: b"t".to_vec(),
         oid: blob,
     }]);
-    let tree = repo.odb.write(ObjectKind::Tree, &tree_body).expect("tree");
-    write_ref(&repo.git_dir, "refs/tags/tree-tip", &tree).expect("tree ref");
+    let tree = repo
+        .odb()
+        .write(ObjectKind::Tree, &tree_body)
+        .expect("tree");
+    write_ref(&repo.git_dir(), "refs/tags/tree-tip", &tree).expect("tree ref");
 
     let tag_bytes = serialize_tag(&TagData {
         object: blob,
@@ -304,16 +312,16 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
         message: "annotated\n".into(),
     });
     let tag_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Tag, &tag_bytes)
         .expect("tag object");
-    write_ref(&repo.git_dir, "refs/tags/annotated", &tag_oid).expect("tag ref");
+    write_ref(&repo.git_dir(), "refs/tags/annotated", &tag_oid).expect("tag ref");
 
-    repo.odb.gc().expect("gc");
+    repo.odb().gc().expect("gc");
 
-    assert!(repo.odb.read(&blob).is_ok());
-    assert!(repo.odb.read(&tree).is_ok());
-    assert!(repo.odb.read(&tag_oid).is_ok());
+    assert!(repo.odb().read(&blob).is_ok());
+    assert!(repo.odb().read(&tree).is_ok());
+    assert!(repo.odb().read(&tag_oid).is_ok());
     git_fsck_full(dir.path());
 }
 
@@ -321,11 +329,11 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
 fn memory_primary_rejects_filesystem_gc_and_commit_graph() {
     let (_dir, repo, _store) = memory_repo();
     assert!(matches!(
-        repo.odb.gc(),
+        repo.odb().gc(),
         Err(Error::UnsupportedObjectStore { operation: "gc" })
     ));
     assert!(matches!(
-        repo.odb.write_commit_graph(),
+        repo.odb().write_commit_graph(),
         Err(Error::UnsupportedObjectStore {
             operation: "commit-graph write"
         })

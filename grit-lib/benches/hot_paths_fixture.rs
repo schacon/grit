@@ -82,18 +82,22 @@ impl HotPathsFixture {
     pub fn tree_with_fraction_changed(&self, fraction: f64) -> ObjectId {
         let n = ((self.file_paths.len() as f64) * fraction).round() as usize;
         let n = n.max(1);
-        let work_tree = self.repo.work_tree.as_ref().expect("work tree");
+        let work_tree = self.repo.work_tree().expect("work tree");
         let mut index = self.repo.load_index().expect("load index");
         for path in self.file_paths.iter().take(n) {
             let abs = work_tree.join(path);
             std::fs::write(&abs, format!("changed-{path}\n")).expect("write");
             let data = std::fs::read(&abs).expect("read");
-            let oid = self.repo.odb.write(ObjectKind::Blob, &data).expect("blob");
+            let oid = self
+                .repo
+                .odb()
+                .write(ObjectKind::Blob, &data)
+                .expect("blob");
             let entry = entry_from_stat(&abs, path.as_bytes(), oid, MODE_REGULAR).expect("entry");
             index.add_or_replace(entry);
         }
         index.sort();
-        write_tree_update_index(&self.repo.odb, &mut index, "", WriteTreeFlags::silent())
+        write_tree_update_index(&self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree")
     }
 
@@ -126,7 +130,7 @@ impl HotPathsFixture {
     }
 
     pub fn modify_worktree_files(&self, count: usize) {
-        let work_tree = self.repo.work_tree.as_ref().expect("work tree");
+        let work_tree = self.repo.work_tree().expect("work tree");
         for path in self.file_paths.iter().take(count) {
             std::fs::write(work_tree.join(path), format!("modified-{path}\n")).expect("write");
         }
@@ -140,7 +144,7 @@ impl HotPathsFixture {
     pub fn build_stash_touching_fraction(&self, fraction: f64) -> ObjectId {
         self.reset_worktree_to_head();
         let stash_tree = self.tree_with_fraction_changed(fraction);
-        let head_oid = refs::resolve_ref(&self.repo.git_dir, "HEAD").expect("head");
+        let head_oid = refs::resolve_ref(&self.repo.git_dir(), "HEAD").expect("head");
         let index_parent = write_tree_commit(
             &self.repo,
             self.head_tree,
@@ -159,7 +163,7 @@ impl HotPathsFixture {
     pub fn pick_three_trees(&self, path_count: usize) -> (ObjectId, ObjectId, ObjectId) {
         self.reset_worktree_to_head();
         let head_tree = self.head_tree;
-        let head_oid = refs::resolve_ref(&self.repo.git_dir, "HEAD").expect("head");
+        let head_oid = refs::resolve_ref(&self.repo.git_dir(), "HEAD").expect("head");
         let source_tree = self.tree_with_path_count_changed(path_count);
         let _source_commit = write_tree_commit(&self.repo, source_tree, &[head_oid], "pick source");
         (head_tree, head_tree, source_tree)
@@ -167,18 +171,22 @@ impl HotPathsFixture {
 
     fn tree_with_path_count_changed(&self, path_count: usize) -> ObjectId {
         let n = path_count.min(self.file_paths.len()).max(1);
-        let work_tree = self.repo.work_tree.as_ref().expect("work tree");
+        let work_tree = self.repo.work_tree().expect("work tree");
         let mut index = self.repo.load_index().expect("load index");
         for path in self.file_paths.iter().take(n) {
             let abs = work_tree.join(path);
             std::fs::write(&abs, format!("pick-{path}\n")).expect("write");
             let data = std::fs::read(&abs).expect("read");
-            let oid = self.repo.odb.write(ObjectKind::Blob, &data).expect("blob");
+            let oid = self
+                .repo
+                .odb()
+                .write(ObjectKind::Blob, &data)
+                .expect("blob");
             let entry = entry_from_stat(&abs, path.as_bytes(), oid, MODE_REGULAR).expect("entry");
             index.add_or_replace(entry);
         }
         index.sort();
-        write_tree_update_index(&self.repo.odb, &mut index, "", WriteTreeFlags::silent())
+        write_tree_update_index(&self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree")
     }
 }
@@ -189,7 +197,7 @@ fn build_index_mutate_plan(repo: &Repository) -> IndexMutatePlan {
     let n = ((baseline.entries().len() as f64) * 0.10).round() as usize;
     let n = n.max(1);
     let replace_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, REPLACEMENT)
         .expect("replacement blob");
     let touched: Vec<IndexEntry> = baseline.entries().iter().take(n).cloned().collect();
@@ -254,19 +262,19 @@ fn walk_txt(base: &Path, dir: &Path, out: &mut Vec<String>) {
 }
 
 fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
-    let work_tree = repo.work_tree.as_deref().expect("work tree");
+    let work_tree = repo.work_tree().expect("work tree");
     let mut index = repo.load_index()?;
     for rel in list_txt_paths(work_tree) {
         let abs = work_tree.join(&rel);
         let data = std::fs::read(&abs)?;
-        let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+        let oid = repo.odb().write(ObjectKind::Blob, &data)?;
         let entry = entry_from_stat(&abs, rel.as_bytes(), oid, MODE_REGULAR)?;
         index.add_or_replace(entry);
     }
     index.sort();
-    let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.write_index(&mut index)?;
-    let parent = refs::resolve_ref(&repo.git_dir, "HEAD").ok();
+    let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -280,8 +288,8 @@ fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
         extra_headers: Vec::new(),
     };
     let bytes = serialize_commit(&commit_data);
-    let oid = repo.odb.write(ObjectKind::Commit, &bytes)?;
-    refs::write_ref(&repo.git_dir, "HEAD", &oid)?;
+    let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
+    refs::write_ref(&repo.git_dir(), "HEAD", &oid)?;
     Ok(tree)
 }
 
@@ -312,7 +320,7 @@ fn write_tree_commit(
         extra_headers: Vec::new(),
     };
     let bytes = serialize_commit(&commit_data);
-    repo.odb
+    repo.odb()
         .write(ObjectKind::Commit, &bytes)
         .expect("write commit")
 }
@@ -328,7 +336,7 @@ pub fn bench_push_stash(fx: &HotPathsFixture) {
 }
 
 pub fn bench_apply_stash(fx: &HotPathsFixture, stash_oid: &ObjectId) {
-    let wt = fx.repo.work_tree.as_ref().expect("work tree");
+    let wt = fx.repo.work_tree().expect("work tree");
     let _ = apply_stash(
         &fx.repo,
         wt,
@@ -353,7 +361,8 @@ pub fn bench_pick_path(fx: &HotPathsFixture, path_count: usize) {
     )
     .expect("merge");
     let mut index = merged.index;
-    let new_tree = write_tree_update_index(&fx.repo.odb, &mut index, "", WriteTreeFlags::silent())
-        .expect("write tree");
+    let new_tree =
+        write_tree_update_index(&fx.repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            .expect("write tree");
     checkout_between_trees(&fx.repo, Some(&head), &new_tree).expect("checkout");
 }

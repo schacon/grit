@@ -97,7 +97,7 @@ fn serve_error_client_message(err: &ServeError) -> String {
 }
 
 fn repo_config(repo: &Repository) -> ConfigSet {
-    ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default()
+    ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default()
 }
 
 fn upload_policy(repo: &Repository) -> UploadPackPolicy {
@@ -174,7 +174,7 @@ fn serve_v0(
                     )));
                 };
                 let oid = parse_oid(repo, hex.trim())?;
-                if !seen.insert(oid) || !repo.odb.exists(&oid) {
+                if !seen.insert(oid) || !repo.odb().exists(&oid) {
                     continue;
                 }
                 common.push(oid);
@@ -240,7 +240,7 @@ fn write_v0_advertisement(
     if let (Some(target), Some(_)) = (&head.target, head.oid) {
         caps.push(format!("symref=HEAD:{target}"));
     }
-    caps.push(format!("object-format={}", repo.odb.hash_algo().name()));
+    caps.push(format!("object-format={}", repo.odb().hash_algo().name()));
     if !opts.agent.is_empty() {
         caps.push(format!("agent={}", opts.agent));
     }
@@ -258,7 +258,7 @@ fn write_v0_advertisement(
     }
 
     if lines.is_empty() {
-        let zero = ObjectId::null(repo.odb.hash_algo());
+        let zero = ObjectId::null(repo.odb().hash_algo());
         write_line(
             output,
             &format!("{} capabilities^{{}}\0{caps}", zero.to_hex()),
@@ -385,7 +385,7 @@ fn resolve_deepen_not(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if let Ok(oid) = ObjectId::from_hex(spec) {
         return Ok(oid);
     }
-    crate::refs::resolve_ref(&repo.git_dir, spec)
+    crate::refs::resolve_ref(repo.git_dir(), spec)
         .map_err(|_| ServeError::Protocol(format!("invalid deepen-not '{spec}'")))
 }
 
@@ -458,7 +458,7 @@ fn serve_v2(
         write_line(output, &format!("fetch={fetch_caps}"))?;
         write_line(
             output,
-            &format!("object-format={}", repo.odb.hash_algo().name()),
+            &format!("object-format={}", repo.odb().hash_algo().name()),
         )?;
         write_flush(output)?;
         if opts.advertise_refs {
@@ -667,7 +667,7 @@ fn fetch_v2(
     let mut seen = HashSet::new();
     let common: Vec<ObjectId> = haves
         .into_iter()
-        .filter(|h| seen.insert(*h) && repo.odb.exists(h))
+        .filter(|h| seen.insert(*h) && repo.odb().exists(h))
         .collect();
 
     if !done {
@@ -842,7 +842,7 @@ fn commit_closure(
         if stop.contains(&oid) || !seen.insert(oid) {
             continue;
         }
-        let Ok(obj) = repo.odb.read(&oid) else {
+        let Ok(obj) = repo.odb().read(&oid) else {
             continue;
         };
         if obj.kind != ObjectKind::Commit {

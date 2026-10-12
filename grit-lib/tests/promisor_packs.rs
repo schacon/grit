@@ -1,6 +1,7 @@
 //! Promisor packs and partial-clone object visibility — t5616 / t5330 object-level scenarios.
 
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -104,7 +105,11 @@ fn promisor_partial_clone_pack_markers_and_config() {
     let objects = git_dir.join("objects");
     clear_pack_cache();
 
-    let repo = Repository::open(&git_dir, Some(partial.path())).expect("open");
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(partial.path()),
+    )
+    .expect("open");
     let cfg = ConfigSet::load(
         &grit_lib::environment::Environment::capture_process(),
         Some(&git_dir),
@@ -131,11 +136,11 @@ fn promisor_partial_clone_pack_markers_and_config() {
     let head_oid = ObjectId::from_hex(head.trim()).expect("head");
 
     assert!(
-        repo.odb.exists(&head_oid),
+        repo.odb().exists(&head_oid),
         "commits remain readable in promisor packs"
     );
     assert!(
-        !repo.odb.exists_local(&head_oid),
+        !repo.odb().exists_local(&head_oid),
         "promisor-only commit must not count as local materialization"
     );
 
@@ -150,17 +155,17 @@ fn promisor_partial_clone_pack_markers_and_config() {
         .exec()
         .stdout;
     let tree = ObjectId::from_hex(tree_hex.trim()).expect("tree oid");
-    assert!(repo.odb.exists(&tree));
+    assert!(repo.odb().exists(&tree));
 
     let missing_blob_hex = git_cmd(&["rev-parse", "HEAD~1:second.txt"])
         .in_dir(partial.path())
         .exec()
         .stdout;
     let missing_blob = ObjectId::from_hex(missing_blob_hex.trim()).expect("older blob");
-    if repo.odb.exists(&missing_blob) {
+    if repo.odb().exists(&missing_blob) {
         return;
     }
-    let err = repo.odb.read(&missing_blob).unwrap_err();
+    let err = repo.odb().read(&missing_blob).unwrap_err();
     assert!(
         matches!(err, Error::ObjectNotFound(_)),
         "missing filtered blob must be typed not-found, not fetch: {err:?}"

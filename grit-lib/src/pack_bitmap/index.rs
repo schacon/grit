@@ -125,13 +125,13 @@ impl BitmapIndex {
     ///
     /// Propagates unexpected I/O failures while discovering bitmap paths.
     pub fn open(repo: &Repository) -> Result<Option<Arc<Self>>, BitmapError> {
-        if !repo.odb.uses_files_primary() {
+        if !repo.odb().uses_files_primary() {
             return Ok(None);
         }
         if let Some(cached) = repo.caches().bitmap_index().get() {
             return Ok(Some(cached));
         }
-        let objects_dir = repo.odb.files_objects_dir().ok_or(BitmapError::Corrupt)?;
+        let objects_dir = repo.odb().files_objects_dir().ok_or(BitmapError::Corrupt)?;
         let loaded = try_open_bitmap(objects_dir, repo)?;
         repo.caches().bitmap_index().set(loaded.clone());
         Ok(loaded)
@@ -418,7 +418,7 @@ fn open_bitmap_file(
     if data.is_empty() {
         return Err(BitmapError::TooSmall);
     }
-    let hash_len = repo.odb.hash_algo().len();
+    let hash_len = repo.odb().hash_algo().len();
     if !hashfile_checksum_valid(data, hash_len) {
         return Err(BitmapError::FileChecksumMismatch);
     }

@@ -83,16 +83,16 @@ mod tests {
         // the repository config cache once when using a shared repository snapshot.
         assert_at_most_config_loads("create_commit", 4);
 
-        let head = crate::refs::resolve_ref(&repo3.git_dir, "HEAD").unwrap();
+        let head = crate::refs::resolve_ref(repo3.git_dir(), "HEAD").unwrap();
         let parent_tree = {
-            let obj = repo3.odb.read(&head).unwrap();
+            let obj = repo3.odb().read(&head).unwrap();
             crate::objects::parse_commit(&obj.data).unwrap().tree
         };
         fs::write(commit_root.join("other.txt"), b"y\n").unwrap();
         stage(&repo3, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut index = repo3.load_index().unwrap();
         let tree2 = crate::write_tree::write_tree_update_index(
-            &repo3.odb,
+            repo3.odb(),
             &mut index,
             "",
             crate::write_tree::WriteTreeFlags::silent(),
@@ -133,10 +133,9 @@ mod tests {
         env.git_config_system = Some("/dev/null".into());
 
         let git_dir = root.join(".git");
-        let repo = Repository::open_with(
-            &RepositoryOptions::with_environment(env),
+        let repo = Repository::open(
             &git_dir,
-            Some(&root),
+            &RepositoryOptions::with_environment(env).with_work_tree(root.clone()),
         )
         .expect("open");
         assert_eq!(
@@ -163,7 +162,7 @@ mod tests {
 
         assert!(repo.config().unwrap().get("grit.factoryTestKey").is_none());
 
-        let config_path = repo.git_dir.join("config");
+        let config_path = repo.git_dir().join("config");
         let mut cfg = ConfigFile::from_path(&config_path, ConfigScope::Local)
             .unwrap()
             .expect("local config");
@@ -236,22 +235,26 @@ mod tests {
             .unwrap()
             .success());
 
-        let linked_repo = Repository::discover(Some(&linked)).unwrap();
+        let linked_repo =
+            Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).unwrap();
         fs::write(linked.join("crlf.txt"), b"line\r\n").unwrap();
-        let wt_oid = linked_repo.odb.write(ObjectKind::Blob, b"line\n").unwrap();
+        let wt_oid = linked_repo
+            .odb()
+            .write(ObjectKind::Blob, b"line\n")
+            .unwrap();
         let mut index = Index::new();
         let entry =
             entry_from_stat(&linked.join("crlf.txt"), b"crlf.txt", wt_oid, MODE_REGULAR).unwrap();
         index.add_or_replace(entry);
         let tree_oid =
-            crate::write_tree::write_tree_from_index(&linked_repo.odb, &index, "").expect("tree");
+            crate::write_tree::write_tree_from_index(linked_repo.odb(), &index, "").expect("tree");
 
         let cfg = linked_repo.config().unwrap();
         let entries = diff_tree_to_worktree_with_git_dir(
-            &linked_repo.odb,
+            linked_repo.odb(),
             Some(&tree_oid),
             &linked,
-            &linked_repo.git_dir,
+            linked_repo.git_dir(),
             &index,
             Some(cfg.as_ref()),
         )
@@ -280,19 +283,19 @@ mod tests {
         gitfile_repo.reload_config().unwrap();
 
         fs::write(wt.join("g.txt"), b"a\r\n").unwrap();
-        let blob = gitfile_repo.odb.write(ObjectKind::Blob, b"a\n").unwrap();
+        let blob = gitfile_repo.odb().write(ObjectKind::Blob, b"a\n").unwrap();
         let mut idx = Index::new();
         idx.add_or_replace(
             entry_from_stat(&wt.join("g.txt"), b"g.txt", blob, MODE_REGULAR).unwrap(),
         );
         let tree =
-            crate::write_tree::write_tree_from_index(&gitfile_repo.odb, &idx, "").expect("tree");
+            crate::write_tree::write_tree_from_index(gitfile_repo.odb(), &idx, "").expect("tree");
         let cfg = gitfile_repo.config().unwrap();
         let clean = diff_tree_to_worktree_with_git_dir(
-            &gitfile_repo.odb,
+            gitfile_repo.odb(),
             Some(&tree),
             &wt,
-            &gitfile_repo.git_dir,
+            gitfile_repo.git_dir(),
             &idx,
             Some(cfg.as_ref()),
         )
@@ -311,7 +314,7 @@ mod tests {
 
         for (skip, label) in [(false, "false"), (true, "true")] {
             fs::write(
-                repo.git_dir.join("config"),
+                repo.git_dir().join("config"),
                 format!(
                     "[core]\n\trepositoryformatversion = 0\n\tbare = false\n[index]\n\tskipHash = {label}\n"
                 ),
@@ -354,7 +357,7 @@ mod tests {
             );
 
             let index_bytes = fs::read(&path).expect("read index");
-            let hash_len = repo.odb.hash_algo().len();
+            let hash_len = repo.odb().hash_algo().len();
             let trailing = &index_bytes[index_bytes.len().saturating_sub(hash_len)..];
             if skip {
                 assert!(
@@ -387,7 +390,8 @@ mod tests {
         env::set_var("GIT_CONFIG_GLOBAL", &global);
         env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
 
-        let discovered = Repository::discover(Some(&root)).expect("discover");
+        let discovered = Repository::discover(Some(root.as_path()), &RepositoryOptions::empty())
+            .expect("discover");
         let result = status(&discovered, &StatusOptions::default(), &mut NullProgress);
 
         if let Some(v) = prev_global {
@@ -403,7 +407,7 @@ mod tests {
 
         result.expect("global extensions must not fail repository format check");
         assert!(
-            !RefStorageFormat::detect(&discovered.git_dir).is_ok_and(|f| f.is_reftable()),
+            !RefStorageFormat::detect(&discovered.git_dir()).is_ok_and(|f| f.is_reftable()),
             "global refstorage must not enable reftable backend"
         );
     }
@@ -413,7 +417,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("real");
         let repo = init_repo(&root);
-        let git_dir = repo.git_dir.clone();
+        let git_dir = repo.git_dir().to_path_buf();
         fs::write(
             git_dir.join("config"),
             "[includeIf \"onbranch:main\"]\n\tpath = branch.conf\n",

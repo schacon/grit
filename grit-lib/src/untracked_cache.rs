@@ -571,7 +571,7 @@ fn global_excludes_path(repo: &Repository, config: &ConfigSet) -> Option<PathBuf
         if p.is_absolute() {
             return Some(p.to_path_buf());
         }
-        return repo.work_tree.as_ref().map(|wt| wt.join(p));
+        return repo.work_tree().map(|wt| wt.join(p));
     }
     env.default_xdg_config_git_file("ignore")
 }
@@ -813,8 +813,8 @@ fn fill_exclude_oids(
     config: &ConfigSet,
     uc: &mut UntrackedCache,
 ) -> Result<()> {
-    let info_path = repo.git_dir.join("info/exclude");
-    let algo = repo.odb.hash_algo();
+    let info_path = repo.git_dir().join("info/exclude");
+    let algo = repo.odb().hash_algo();
     let (st_i, oid_i) = file_stat_and_blob_oid(&info_path, algo)?;
     if uc.ss_info_exclude.valid
         && (uc.ss_info_exclude.stat != st_i || uc.ss_info_exclude.oid != oid_i)
@@ -1048,7 +1048,7 @@ fn read_directory_recursive(
             if tracked_ignore_oid.is_some() {
                 ObjectId::zero()
             } else {
-                file_stat_and_blob_oid(&parent_exclude_path, repo.odb.hash_algo())
+                file_stat_and_blob_oid(&parent_exclude_path, repo.odb().hash_algo())
                     .map(|(_, oid)| oid)
                     .unwrap_or_else(|_| ObjectId::zero())
             }

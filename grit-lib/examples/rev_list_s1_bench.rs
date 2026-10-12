@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::time::Instant;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 
@@ -16,7 +17,7 @@ fn git_git_bare() -> std::path::PathBuf {
 
 fn main() -> grit_lib::error::Result<()> {
     let bare = git_git_bare();
-    let repo = Repository::open(Path::new(&bare), None)?;
+    let repo = Repository::open(Path::new(&bare), &RepositoryOptions::empty())?;
     let opts = RevListOptions {
         objects: true,
         ..Default::default()

@@ -192,7 +192,7 @@ fn read_config(global: bool) -> Result<ConfigSet> {
         }
         Ok(set)
     } else if let Ok(repo) = context::discover() {
-        ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
+        ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir()), true)
             .context("could not load config")
     } else {
         ConfigSet::load(&crate::context::environment(), None, true).context("could not load config")
@@ -207,7 +207,7 @@ fn target_file(global: bool) -> Result<(ConfigScope, PathBuf)> {
         Ok((ConfigScope::Global, path))
     } else {
         let repo = context::discover()?;
-        Ok((ConfigScope::Local, repo.git_dir.join("config")))
+        Ok((ConfigScope::Local, repo.git_dir().join("config")))
     }
 }
 

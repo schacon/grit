@@ -4415,7 +4415,7 @@ mod tests {
             crate::RefStorageFormat::Reftable,
         )
         .unwrap();
-        let git_dir = repo.git_dir;
+        let git_dir = repo.git_dir();
         let tables_list = git_dir.join("reftable/tables.list");
         let before = fs::read_to_string(&tables_list).unwrap_or_default();
 

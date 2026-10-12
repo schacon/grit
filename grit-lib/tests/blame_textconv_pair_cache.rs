@@ -7,6 +7,7 @@ use std::process::Command;
 use grit_lib::blame::{
     compute_blame, parse_diff_algorithm_name, BlameDiffAlgorithm, BlameTextconvContext,
 };
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::load_graft_parents;
@@ -143,14 +144,14 @@ fn build_textconv_copy_fixture() -> (tempfile::TempDir, Repository) {
     git_run(root, &["add", "source.txt", "target.txt"]);
     git_run(root, &["commit", "-m", "c2"]);
 
-    let repo = Repository::discover(Some(root)).expect("open repo");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open repo");
     (tmp, repo)
 }
 
 #[test]
 fn blame_pair_map_cache_respects_textconv_path() {
     let (_tmp, repo) = build_textconv_copy_fixture();
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let dir = repo.work_tree().expect("worktree");
     let head = git_output(dir, &["rev-parse", "HEAD"])
         .trim()
         .parse::<ObjectId>()
@@ -171,11 +172,11 @@ fn blame_pair_map_cache_respects_textconv_path() {
         .get_bool("diff.indentHeuristic")
         .and_then(|v| v.ok())
         .unwrap_or(false);
-    let grafts = load_graft_parents(&repo.git_dir);
+    let grafts = load_graft_parents(&repo.git_dir());
     let ctx = BlameTextconvContext::new(&repo);
 
     let grit_lines = compute_blame(
-        &repo.odb,
+        &repo.odb(),
         head,
         "target.txt",
         &HashSet::new(),

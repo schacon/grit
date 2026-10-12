@@ -16,7 +16,7 @@ fn main() -> grit_lib::error::Result<()> {
         grit_lib::RefStorageFormat::Files,
     )?;
 
-    let blob_oid = repo.odb.write(ObjectKind::Blob, b"staged content\n")?;
+    let blob_oid = repo.odb().write(ObjectKind::Blob, b"staged content\n")?;
 
     let path = b"notes.txt".to_vec();
     let entry = IndexEntry {

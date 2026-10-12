@@ -29,9 +29,8 @@ fn discover_with_global_config_from_environment_not_process() {
     env.git_config_global = Some(global.to_string_lossy().into_owned());
     env.git_config_nosystem = Some("true".into());
 
-    let repo =
-        Repository::discover_with(&RepositoryOptions::with_environment(env), Some(&repo_root))
-            .expect("discover");
+    let repo = Repository::discover(Some(&repo_root), &RepositoryOptions::with_environment(env))
+        .expect("discover");
     let cfg = repo.config().expect("config");
     assert_eq!(cfg.get("user.name").as_deref(), Some("FromEnvGlobal"));
 
@@ -65,12 +64,11 @@ fn discover_with_git_dir_and_work_tree() {
     env.git_dir = Some(git_dir.to_string_lossy().into_owned());
     env.git_work_tree = Some(wt.to_string_lossy().into_owned());
 
-    let repo = Repository::discover_with(&RepositoryOptions::with_environment(env), Some(&inner))
+    let repo = Repository::discover(Some(&inner), &RepositoryOptions::with_environment(env))
         .expect("discover");
     assert_eq!(
-        repo.work_tree
-            .as_ref()
-            .map(|p| p.canonicalize().unwrap_or(p.clone())),
+        repo.work_tree()
+            .map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf())),
         Some(wt.canonicalize().unwrap_or(wt))
     );
 }
@@ -99,7 +97,7 @@ fn ceiling_directories_stop_discovery() {
             .into_owned(),
     );
 
-    let err = Repository::discover_with(&RepositoryOptions::with_environment(env), Some(&child))
+    let err = Repository::discover(Some(&child), &RepositoryOptions::with_environment(env))
         .expect_err("ceiling blocks parent .git");
     assert!(matches!(err, grit_lib::error::Error::NotARepository(_)));
 }
@@ -117,9 +115,12 @@ fn git_round_trip_same_git_dir_with_matching_env() {
     env.cwd = repo_root.clone();
     env.git_dir = Some(repo_root.join(".git").to_string_lossy().into_owned());
 
-    let grit = Repository::discover_with(&RepositoryOptions::with_environment(env.clone()), None)
+    let grit = Repository::discover(None, &RepositoryOptions::with_environment(env.clone()))
         .expect("grit discover");
-    let grit_git = grit.git_dir.canonicalize().unwrap_or(grit.git_dir);
+    let grit_git = grit
+        .git_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| grit.git_dir().to_path_buf());
 
     let git_out = Command::new("git")
         .args(["rev-parse", "--git-dir"])
@@ -147,11 +148,14 @@ fn git_round_trip_same_git_dir_with_matching_env() {
     let git_wt = PathBuf::from(String::from_utf8_lossy(&git_wt.stdout).trim());
     let git_wt = git_wt.canonicalize().unwrap_or(git_wt);
     let grit_wt = grit
-        .work_tree
-        .as_ref()
+        .work_tree()
         .expect("work tree")
         .canonicalize()
-        .unwrap_or_else(|_| grit.work_tree.clone().expect("work tree"));
+        .unwrap_or_else(|_| {
+            grit.work_tree()
+                .map(|p| p.to_path_buf())
+                .expect("work tree")
+        });
     assert_eq!(grit_wt, git_wt);
 }
 
@@ -178,9 +182,9 @@ fn relative_global_config_resolved_from_environment_cwd() {
     env.git_config_global = Some("global.cfg".into());
     env.git_config_nosystem = Some("true".into());
 
-    let repo = Repository::discover_with(
-        &RepositoryOptions::with_environment(env.clone()),
+    let repo = Repository::discover(
         Some(&repo_root),
+        &RepositoryOptions::with_environment(env.clone()),
     )
     .expect("discover");
     let cfg = repo.config().expect("config");
@@ -241,7 +245,7 @@ fn safe_directory_from_environment_global_config() {
 
     let mut options = RepositoryOptions::with_environment(env);
     options.test_assume_different_owner = true;
-    let repo = Repository::discover_with(&options, Some(&repo_root))
+    let repo = Repository::discover(Some(&repo_root), &options)
         .expect("discover must honor safe.directory from Environment global config");
     repo.enforce_safe_directory()
         .expect("safe.directory allows");

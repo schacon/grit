@@ -705,7 +705,7 @@ enum DiffAttrValue {
 }
 
 fn load_attr_rules(repo: &Repository) -> GitAttributes {
-    if let Some(work_tree) = repo.work_tree.as_deref() {
+    if let Some(work_tree) = repo.work_tree() {
         let rules = load_gitattributes(work_tree);
         if !rules.is_empty() {
             return rules;
@@ -713,7 +713,7 @@ fn load_attr_rules(repo: &Repository) -> GitAttributes {
     }
 
     if let Ok(index) = repo.load_index() {
-        return load_gitattributes_from_index(&index, &repo.odb);
+        return load_gitattributes_from_index(&index, repo.odb());
     }
 
     Vec::new()
@@ -722,7 +722,7 @@ fn load_attr_rules(repo: &Repository) -> GitAttributes {
 fn load_diff_attr_rules(repo: &Repository) -> Vec<DiffAttrRule> {
     let mut rules = Vec::new();
 
-    if let Some(work_tree) = repo.work_tree.as_deref() {
+    if let Some(work_tree) = repo.work_tree() {
         parse_diff_attr_file(&work_tree.join(".gitattributes"), &mut rules);
         parse_diff_attr_file(&work_tree.join(".git/info/attributes"), &mut rules);
     }
@@ -730,14 +730,14 @@ fn load_diff_attr_rules(repo: &Repository) -> Vec<DiffAttrRule> {
     if rules.is_empty() {
         if let Ok(index) = repo.load_index() {
             if let Some(entry) = index.get(b".gitattributes", 0) {
-                if let Ok(obj) = repo.odb.read(&entry.oid) {
+                if let Ok(obj) = repo.odb().read(&entry.oid) {
                     if let Ok(content) = String::from_utf8(obj.data) {
                         parse_diff_attr_content(&content, &mut rules);
                     }
                 }
             }
         }
-        parse_diff_attr_file(&repo.git_dir.join("info/attributes"), &mut rules);
+        parse_diff_attr_file(&repo.git_dir().join("info/attributes"), &mut rules);
     }
 
     rules
@@ -2110,7 +2110,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     let start_oid = resolve_blame_start(repo, options.start)?;
     let file_path = normalize_blame_path(repo, path);
     let config = repo.config().map(|cfg| (*cfg).clone()).unwrap_or_default();
-    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let diff_algorithm = config
         .get("diff.algorithm")
         .as_ref()
@@ -2124,7 +2124,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
 
     let thread_policy = repo.thread_policy();
     let raw = compute_blame(
-        &repo.odb,
+        repo.odb(),
         start_oid,
         &file_path,
         &ignore_revs,
@@ -2156,7 +2156,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     for line in &lines {
         commits
             .entry(line.commit)
-            .or_insert_with(|| load_blame_commit_info(&repo.odb, line.commit));
+            .or_insert_with(|| load_blame_commit_info(repo.odb(), line.commit));
     }
 
     Ok(BlameResult { lines, commits })
@@ -2167,7 +2167,7 @@ fn resolve_blame_start(repo: &Repository, start: Option<ObjectId>) -> Result<Obj
         return Ok(oid);
     }
     use crate::state::{resolve_head, HeadState};
-    match resolve_head(&repo.git_dir)? {
+    match resolve_head(repo.git_dir())? {
         HeadState::Detached { oid } => Ok(oid),
         HeadState::Branch { oid: Some(oid), .. } => Ok(oid),
         HeadState::Branch { oid: None, .. } | HeadState::Invalid => Err(LibError::Message(
@@ -2177,7 +2177,7 @@ fn resolve_blame_start(repo: &Repository, start: Option<ObjectId>) -> Result<Obj
 }
 
 fn normalize_blame_path(repo: &Repository, path: &str) -> String {
-    if let Some(work_tree) = repo.work_tree.as_deref() {
+    if let Some(work_tree) = repo.work_tree() {
         crate::pathspec::normalize_worktree_file_path(path, work_tree, None)
     } else {
         path.to_string()

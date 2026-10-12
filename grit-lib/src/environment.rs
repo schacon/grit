@@ -3,7 +3,8 @@
 //! [`Environment`] holds the variables Git reads during repository discovery and config
 //! cascade loading. Library code must not read the process environment for these values;
 //! embedders (including the `grit` CLI) construct an [`Environment`] and pass it into
-//! [`crate::repo::Repository::discover_with`](crate::repo::Repository::discover_with) and
+//! [`crate::repo::Repository::discover`](crate::repo::Repository::discover) and
+//! [`crate::repo::Repository::open`](crate::repo::Repository::open), and
 //! [`ConfigSet::load`](crate::config::ConfigSet::load).
 
 use std::collections::HashMap;
@@ -648,6 +649,12 @@ pub struct RepositoryOptions {
     pub reference_unix_time: Option<i64>,
     /// Parallel worker overrides (`--threads` in the CLI).
     pub thread_policy: crate::parallel::ThreadPolicy,
+    /// Work tree path for [`crate::repo::Repository::open`] (non-bare repos).
+    pub work_tree: Option<std::path::PathBuf>,
+    /// When false, skip [`crate::repo::validate_repo_format`] during open.
+    pub validate_repository_format: bool,
+    /// When true, [`crate::repo::Repository::open`] resolves `path` like wire-protocol serving.
+    pub open_for_serving: bool,
 }
 
 impl std::fmt::Debug for RepositoryOptions {
@@ -671,6 +678,9 @@ impl Default for RepositoryOptions {
             force_split_index: false,
             reference_unix_time: None,
             thread_policy: crate::parallel::ThreadPolicy::default(),
+            work_tree: None,
+            validate_repository_format: true,
+            open_for_serving: false,
         }
     }
 }
@@ -695,6 +705,27 @@ impl RepositoryOptions {
     #[must_use]
     pub fn with_command_runner(mut self, runner: Arc<dyn CommandRunner>) -> Self {
         self.command_runner = runner;
+        self
+    }
+
+    /// Attach an explicit work tree for [`crate::repo::Repository::open`].
+    #[must_use]
+    pub fn with_work_tree(mut self, work_tree: impl Into<std::path::PathBuf>) -> Self {
+        self.work_tree = Some(work_tree.into());
+        self
+    }
+
+    /// Skip repository format validation when opening (discovery follow-up paths).
+    #[must_use]
+    pub fn without_format_validation(mut self) -> Self {
+        self.validate_repository_format = false;
+        self
+    }
+
+    /// Resolve `path` for smart-HTTP / upload-pack serving instead of a bare git directory.
+    #[must_use]
+    pub fn for_serving(mut self) -> Self {
+        self.open_for_serving = true;
         self
     }
 }

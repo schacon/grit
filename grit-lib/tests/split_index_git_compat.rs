@@ -4,6 +4,7 @@ mod support;
 
 use filetime::FileTime;
 use grit_lib::diff::diff_index_to_worktree;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use grit_lib::split_index::{
@@ -47,7 +48,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
     init_repo_with_files(root, 40);
     enable_split_index(&root.join(".git"));
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx).expect("write split index");
 
@@ -57,7 +58,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
         "grit index must contain link extension"
     );
     assert_eq!(
-        list_sharedindex_paths(&repo.git_dir).len(),
+        list_sharedindex_paths(&repo.git_dir()).len(),
         1,
         "expected one sharedindex file"
     );
@@ -76,7 +77,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
     let mut entry = idx.entries()[pos].clone();
     entry.size = 8;
     entry.oid = repo
-        .odb
+        .odb()
         .write(grit_lib::objects::ObjectKind::Blob, b"changed\n")
         .expect("blob");
     idx.add_or_replace(entry);
@@ -95,7 +96,7 @@ fn t1700_git_split_index_read_by_grit() {
     let bytes = fs::read(root.join(".git/index")).expect("read index");
     assert!(index_contains_extension(&bytes, b"link"));
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     assert_index_matches_git(root, &repo);
 
     // resolve_split_index_if_needed on raw parse (Git-shaped on-disk index).
@@ -104,7 +105,7 @@ fn t1700_git_split_index_read_by_grit() {
         raw.split_index_base_oid().is_some(),
         "on-disk index keeps link before merge"
     );
-    resolve_split_index_if_needed(&mut raw, &repo.git_dir, &repo.index_path())
+    resolve_split_index_if_needed(&mut raw, &repo.git_dir(), &repo.index_path())
         .expect("resolve split");
     assert_eq!(raw.entries().len(), 30);
     assert_index_matches_git(root, &repo);
@@ -117,7 +118,7 @@ fn t1700_split_index_delete_and_replace_bitmaps_match_git() {
     init_repo_with_files(root, 12);
     git_update_index_split(root);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
 
     idx.remove_path_all_stages(b"f0005.txt");
@@ -128,7 +129,7 @@ fn t1700_split_index_delete_and_replace_bitmaps_match_git() {
         .expect("f0008");
     let mut entry = idx.entries()[pos].clone();
     entry.oid = repo
-        .odb
+        .odb()
         .write(grit_lib::objects::ObjectKind::Blob, b"replaced\n")
         .expect("blob");
     entry.size = 9;
@@ -147,10 +148,10 @@ fn t1700_max_percent_change_rewrites_shared_index() {
     init_repo_with_files(root, 10);
     enable_split_index(&root.join(".git"));
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx).expect("initial split");
-    let first_shared = list_sharedindex_paths(&repo.git_dir);
+    let first_shared = list_sharedindex_paths(&repo.git_dir());
     assert_eq!(first_shared.len(), 1);
     let first_oid = first_shared[0]
         .file_name()
@@ -177,7 +178,7 @@ fn t1700_max_percent_change_rewrites_shared_index() {
 
     repo.write_index(&mut idx)
         .expect("rewrite after local additions");
-    let shared = list_sharedindex_paths(&repo.git_dir);
+    let shared = list_sharedindex_paths(&repo.git_dir());
     let second_oid = shared
         .iter()
         .map(|p| {
@@ -205,10 +206,10 @@ fn t1700_shared_index_expire_removes_stale_file() {
     init_repo_with_files(root, 8);
     enable_split_index(&root.join(".git"));
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx).expect("split");
-    let first = list_sharedindex_paths(&repo.git_dir);
+    let first = list_sharedindex_paths(&repo.git_dir());
     assert_eq!(first.len(), 1);
 
     // Force a rebuild with a new shared base while leaving the old file on disk.
@@ -217,7 +218,7 @@ fn t1700_shared_index_expire_removes_stale_file() {
     idx.add_or_replace(entry_from_worktree_path(&repo, "force-rebuild.txt", b"x\n"));
     repo.write_index(&mut idx).expect("rebuild shared");
 
-    let all = list_sharedindex_paths(&repo.git_dir);
+    let all = list_sharedindex_paths(&repo.git_dir());
     assert_eq!(
         all.len(),
         2,
@@ -239,7 +240,7 @@ fn t1700_shared_index_expire_removes_stale_file() {
     idx.add_or_replace(entry_from_worktree_path(&repo, "touch.txt", b"y\n"));
     repo.write_index(&mut idx).expect("write triggers cleanup");
 
-    let remaining: Vec<_> = list_sharedindex_paths(&repo.git_dir)
+    let remaining: Vec<_> = list_sharedindex_paths(&repo.git_dir())
         .into_iter()
         .filter(|p| p != stale)
         .collect();
@@ -270,7 +271,7 @@ fn t1701_racy_split_index_entries_rechecked() {
     enable_split_index(&root.join(".git"));
     git_update_index_split(root);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let index = repo.load_index().expect("load");
     let entry = index
         .entries()
@@ -302,7 +303,7 @@ fn t1701_racy_split_index_entries_rechecked() {
     let mut grit_index = repo.load_index().expect("reload");
     assert_eq!(grit_index.source_mtime, Some(index_mtime));
     let diff =
-        diff_index_to_worktree(&repo.odb, &mut grit_index, root, false, false).expect("diff");
+        diff_index_to_worktree(&repo.odb(), &mut grit_index, root, false, false).expect("diff");
     assert_eq!(
         diff.len(),
         1,
@@ -359,9 +360,9 @@ fn split_index_explicit_no_split_writes_unified_index() {
     enable_split_index(&root.join(".git"));
     git_update_index_split(root);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
-    repo.write_index_at_split(
+    repo.write_index_at_with_split(
         &repo.index_path(),
         &mut idx,
         WriteSplitIndexRequest {

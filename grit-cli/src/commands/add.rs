@@ -57,7 +57,7 @@ pub fn run(paths: &[String]) -> Result<AddOutcome> {
 /// Returns the number of paths staged. Shared with `grit commit -a`.
 pub fn stage(repo: &Repository, selectors: &[String]) -> Result<usize> {
     let work_tree = repo
-        .work_tree
+        .work_tree()
         .clone()
         .context("grit add needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;

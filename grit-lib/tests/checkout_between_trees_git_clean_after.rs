@@ -2,6 +2,7 @@
 
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::refs;
@@ -112,12 +113,15 @@ fn checkout_between_trees_git_clean_after() {
 
     git(tmp.path(), &["reset", "--hard", &from_commit_hex]);
 
-    let grit_repo =
-        Repository::open(&tmp.path().join(".git"), Some(tmp.path())).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
     checkout_between_trees(&grit_repo, Some(&from_tree), &to_tree).expect("checkout");
 
     let to_commit = ObjectId::from_hex(&to_commit_hex).expect("commit oid");
-    refs::write_ref(&grit_repo.git_dir, "HEAD", &to_commit).expect("head");
+    refs::write_ref(grit_repo.git_dir(), "HEAD", &to_commit).expect("head");
 
     assert!(
         git_porcelain(tmp.path()).trim().is_empty(),

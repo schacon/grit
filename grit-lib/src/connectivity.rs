@@ -27,7 +27,7 @@ fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> 
         "refs/remotes/",
         "refs/bundles/",
     ] {
-        if let Ok(entries) = refs::list_refs(&repo.git_dir, prefix) {
+        if let Ok(entries) = refs::list_refs(repo.git_dir(), prefix) {
             for (_, oid) in entries {
                 seeds.push(oid);
             }
@@ -38,7 +38,7 @@ fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> 
     let mut queue: VecDeque<ObjectId> = VecDeque::new();
 
     for oid in seeds {
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.odb().read(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
@@ -50,7 +50,7 @@ fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> 
             }
             ObjectKind::Tag => {
                 if let Some(target) = peel_tag_to_object(repo, &obj.data)? {
-                    if let Ok(tobj) = repo.odb.read(&target) {
+                    if let Ok(tobj) = repo.odb().read(&target) {
                         if tobj.kind == ObjectKind::Commit && seen.insert(target) {
                             queue.push_back(target);
                         }
@@ -62,7 +62,7 @@ fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> 
     }
 
     while let Some(c) = queue.pop_front() {
-        let obj = repo.odb.read(&c)?;
+        let obj = repo.odb().read(&c)?;
         if obj.kind != ObjectKind::Commit {
             continue;
         }
@@ -97,7 +97,7 @@ fn peel_tag_to_object(repo: &Repository, tag_data: &[u8]) -> Result<Option<Objec
     let tag = parse_tag(tag_data)?;
     let mut oid = tag.object;
     loop {
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.odb().read(&oid)?;
         match obj.kind {
             ObjectKind::Tag => {
                 let inner = parse_tag(&obj.data)?;
@@ -132,7 +132,7 @@ fn walk_commit_graph_for_push(
     let mut tree_q: VecDeque<ObjectId> = VecDeque::new();
 
     for &root in roots {
-        let tip_obj = match repo.odb.read(&root) {
+        let tip_obj = match repo.odb().read(&root) {
             Err(_) => return Ok(false),
             Ok(o) => o,
         };
@@ -147,7 +147,7 @@ fn walk_commit_graph_for_push(
     }
 
     while let Some(c) = commit_q.pop_front() {
-        let obj = match repo.odb.read(&c) {
+        let obj = match repo.odb().read(&c) {
             Err(_) => return Ok(false),
             Ok(o) => o,
         };
@@ -169,7 +169,7 @@ fn walk_commit_graph_for_push(
     }
 
     while let Some(t) = tree_q.pop_front() {
-        let obj = match repo.odb.read(&t) {
+        let obj = match repo.odb().read(&t) {
             Err(_) => return Ok(false),
             Ok(o) => o,
         };
@@ -187,7 +187,7 @@ fn walk_commit_graph_for_push(
                 if !seen_blobs.insert(entry.oid) {
                     continue;
                 }
-                if repo.odb.read(&entry.oid).is_err() {
+                if repo.odb().read(&entry.oid).is_err() {
                     return Ok(false);
                 }
             }
@@ -197,7 +197,7 @@ fn walk_commit_graph_for_push(
     Ok(true)
 }
 
-/// Verifies that every object reachable from `tip` exists in `repo.odb`.
+/// Verifies that every object reachable from `tip` exists in `repo.odb()`.
 ///
 /// # Errors
 ///
@@ -226,7 +226,7 @@ fn read_object_for_push(
             return Ok(o.clone());
         }
     }
-    repo.odb.read(oid)
+    repo.odb().read(oid)
 }
 
 /// Objects reachable from `tip` that are not already reachable from existing refs (plus

@@ -13,6 +13,7 @@ use anyhow::Result;
 use clap::Parser;
 use grit_examples::remote;
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::push_report::PushRefStatus;
 use grit_lib::repo::Repository;
@@ -52,8 +53,8 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
-    let git_dir = repo.git_dir.clone();
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
+    let git_dir = repo.git_dir().to_path_buf();
     let config = ConfigSet::load(
         &grit_lib::environment::Environment::capture_process(),
         Some(&git_dir),

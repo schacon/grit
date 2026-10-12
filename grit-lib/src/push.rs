@@ -24,6 +24,8 @@
 //! zero/null OID, the empty-pack trailer, and the advertisement parsing are all
 //! hash-width aware.
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
@@ -652,7 +654,9 @@ fn decide_push_wire(
         false
     } else if crate::merge_base::is_ancestor_odb_walk(local_odb, old, src)? {
         true
-    } else if let Ok(repo) = crate::repo::Repository::open(local_git_dir, None) {
+    } else if let Ok(repo) =
+        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())
+    {
         crate::merge_base::is_ancestor(&repo, old, src).unwrap_or(false)
     } else {
         false

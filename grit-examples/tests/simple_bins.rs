@@ -75,11 +75,11 @@ fn simple_bins_cover_a_tiny_commit_workflow() -> Result<()> {
     assert!(raw_commit.contains("tree "));
     assert!(raw_commit.contains("initial example"));
 
-    let object = repo.odb.read(&commit.parse()?)?;
+    let object = repo.odb().read(&commit.parse()?)?;
     assert_eq!(object.kind, ObjectKind::Commit);
     assert_eq!(parse_commit(&object.data)?.message, "initial example\n");
     assert_eq!(
-        refs::resolve_ref(&repo.git_dir, "refs/heads/main")?.to_string(),
+        refs::resolve_ref(&repo.git_dir(), "refs/heads/main")?.to_string(),
         commit
     );
 
@@ -108,7 +108,7 @@ fn simple_bins_cover_a_tiny_commit_workflow() -> Result<()> {
         "hello again\n"
     );
     assert_eq!(
-        refs::resolve_ref(&repo.git_dir, "refs/heads/main")?.to_string(),
+        refs::resolve_ref(&repo.git_dir(), "refs/heads/main")?.to_string(),
         second_commit
     );
 

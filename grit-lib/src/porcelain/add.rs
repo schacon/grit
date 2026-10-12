@@ -12,6 +12,7 @@ use crate::diff::{
     materialize_worktree_blob, mode_from_metadata, read_submodule_head_oid, DiffEntry,
     DiffIndexToWorktreeOptions, DiffStatus,
 };
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::hash::{try_par_hash_with, ParallelHashError, Parallelism};
 use crate::index::{
@@ -144,8 +145,7 @@ fn stage_inner(
     tracked_scan: bool,
 ) -> Result<StageOutcome> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     let index_path = repo.index_path();
@@ -183,15 +183,15 @@ fn stage_inner(
     } else {
         let diff_opts = DiffIndexToWorktreeOptions {
             index_mtime,
-            repository_git_dir: Some(repo.git_dir.clone()),
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
             config: Some(std::sync::Arc::clone(&rules_config)),
             worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
             thread_policy: Some(repo.thread_policy()),
             ..DiffIndexToWorktreeOptions::default()
         };
         let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
-            &repo.odb,
-            &repo.git_dir,
+            repo.odb(),
+            repo.git_dir(),
             &mut index,
             work_tree,
             diff_opts,
@@ -534,7 +534,7 @@ fn stage_untracked_paths_parallel(
     }
 
     let prepared = prepare_worktree_blobs_parallel(
-        &repo.odb,
+        repo.odb(),
         &batch_inputs,
         rules.conversion(),
         parallelism,
@@ -542,13 +542,13 @@ fn stage_untracked_paths_parallel(
     )?;
 
     if !prepared.is_empty() {
-        repo.odb.ensure_all_loose_prefix_dirs()?;
+        repo.odb().ensure_all_loose_prefix_dirs()?;
     }
     let write_opts = BULK_NEW_LOOSE_WRITE;
     let write_bytes: usize = prepared.iter().map(|p| p.zlib_store.len()).sum();
     let threads = parallelism.threads();
     let _written: Vec<ObjectId> = try_par_hash_with(&prepared, threads, write_bytes, |prep| {
-        repo.odb
+        repo.odb()
             .write_loose_zlib_prehashed(&prep.oid, &prep.zlib_store, write_opts)
             .map_err(|e| Error::Message(format!("could not store {}: {e}", prep.index_relpath)))
     })
@@ -638,7 +638,7 @@ fn stage_untracked_path(
     let file_attrs = rules.file_attrs(&index_relpath, false);
     let mode = mode_from_metadata(&meta);
     let oid = materialize_worktree_blob(
-        &repo.odb,
+        repo.odb(),
         &abs,
         &meta,
         rules.conversion(),
@@ -717,11 +717,11 @@ fn known_paths(
 }
 
 fn head_tree_paths(repo: &Repository) -> Result<Vec<String>> {
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let Some(head_oid) = head.oid() else {
         return Ok(Vec::new());
     };
-    let obj = repo.odb.read(head_oid)?;
+    let obj = repo.odb().read(head_oid)?;
     let commit = parse_commit(&obj.data)?;
     let mut paths = HashSet::new();
     collect_tree_paths(repo, commit.tree, "", &mut paths)?;
@@ -734,7 +734,7 @@ fn collect_tree_paths(
     prefix: &str,
     out: &mut HashSet<String>,
 ) -> Result<()> {
-    let obj = repo.odb.read(&tree_oid)?;
+    let obj = repo.odb().read(&tree_oid)?;
     for entry in parse_tree(&obj.data)? {
         let name = String::from_utf8_lossy(&entry.name);
         let path = if prefix.is_empty() {
@@ -811,17 +811,17 @@ mod tests {
             "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
         )
         .unwrap();
-        Repository::open(&git, Some(root)).unwrap()
+        Repository::open(&git, &RepositoryOptions::empty().with_work_tree(root)).unwrap()
     }
 
     fn stage_file_in_index(repo: &Repository, index: &mut Index, rel: &str, contents: &[u8]) {
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let abs = wt.join(rel);
         if let Some(parent) = abs.parent() {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&abs, contents).unwrap();
-        let oid = repo.odb.write(ObjectKind::Blob, contents).unwrap();
+        let oid = repo.odb().write(ObjectKind::Blob, contents).unwrap();
         let entry = entry_from_stat(&abs, rel.as_bytes(), oid, MODE_REGULAR).unwrap();
         index.add_or_replace(entry);
     }
@@ -955,8 +955,8 @@ mod tests {
         let index = repo.load_index().unwrap();
         let a_oid = index.get(b"a.txt", 0).unwrap().oid;
         let b_oid = index.get(b"b.txt", 0).unwrap().oid;
-        let a_blob = repo.odb.read(&a_oid).unwrap();
-        let b_blob = repo.odb.read(&b_oid).unwrap();
+        let a_blob = repo.odb().read(&a_oid).unwrap();
+        let b_blob = repo.odb().read(&b_oid).unwrap();
         assert_eq!(a_blob.data, b"a2\n");
         assert_eq!(b_blob.data, b"b\n");
     }
@@ -997,7 +997,7 @@ mod tests {
         let index = repo.load_index().unwrap();
         let entry = index.get("caf\u{e9}.txt".as_bytes(), 0).unwrap();
         assert!(index.get(nfd.as_bytes(), 0).is_none());
-        assert_eq!(repo.odb.read(&entry.oid).unwrap().data, b"content\n");
+        assert_eq!(repo.odb().read(&entry.oid).unwrap().data, b"content\n");
     }
 
     #[test]
@@ -1011,13 +1011,13 @@ mod tests {
         write_index(&repo, &mut index);
         fs::write(root.join("dirty.txt"), b"new\n").unwrap();
 
-        repo.odb.enable_mem_overlay();
+        repo.odb().enable_mem_overlay();
         let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         assert_eq!(outcome.modified, 1);
         assert_eq!(outcome.total(), 1);
 
         let overlay_len = repo
-            .odb
+            .odb()
             .mem_overlay_len_for_tests()
             .expect("overlay enabled");
         assert_eq!(
@@ -1034,7 +1034,7 @@ mod tests {
         let mut index = Index::new();
         stage_file_in_index(&repo, &mut index, "alpha/one.txt", b"1\n");
         stage_file_in_index(&repo, &mut index, "beta/two.txt", b"2\n");
-        let cache = crate::write_tree::build_cache_tree_from_index(&repo.odb, &index).unwrap();
+        let cache = crate::write_tree::build_cache_tree_from_index(&repo.odb(), &index).unwrap();
         index.set_cache_tree(cache);
         write_index(&repo, &mut index);
 
@@ -1074,9 +1074,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let repo = init_repo(root);
-        let base = repo.odb.write(ObjectKind::Blob, b"base\n").unwrap();
-        let ours = repo.odb.write(ObjectKind::Blob, b"ours\n").unwrap();
-        let theirs = repo.odb.write(ObjectKind::Blob, b"theirs\n").unwrap();
+        let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
+        let ours = repo.odb().write(ObjectKind::Blob, b"ours\n").unwrap();
+        let theirs = repo.odb().write(ObjectKind::Blob, b"theirs\n").unwrap();
 
         let mut index = Index::new();
         index
@@ -1111,7 +1111,7 @@ mod tests {
             "unmerged stages must be cleared"
         );
         let staged = index.get(b"f.txt", 0).expect("stage 0 entry");
-        let blob = repo.odb.read(&staged.oid).unwrap();
+        let blob = repo.odb().read(&staged.oid).unwrap();
         assert_eq!(blob.data, b"resolved\n");
     }
 
@@ -1165,13 +1165,14 @@ mod tests {
             .expect("worktree add")
             .success());
 
-        let repo = Repository::discover(Some(&linked)).unwrap();
+        let repo =
+            Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).unwrap();
         std::fs::write(linked.join("grit.txt"), b"grit\r\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let index = repo.load_index().unwrap();
         let oid = index.get(b"grit.txt", 0).unwrap().oid;
         assert_eq!(
-            repo.odb.read(&oid).unwrap().data,
+            repo.odb().read(&oid).unwrap().data,
             b"grit\n",
             "linked worktree must use common repo autocrlf config"
         );
@@ -1193,25 +1194,25 @@ mod tests {
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let index = repo.load_index().unwrap();
         let oid = index.get(b"f.txt", 0).unwrap().oid;
-        assert_eq!(repo.odb.read(&oid).unwrap().data, b"changed\n");
+        assert_eq!(repo.odb().read(&oid).unwrap().data, b"changed\n");
     }
 
     fn commit_in_repo(repo: &Repository, rel_file: &str, content: &[u8], msg: &str) -> ObjectId {
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let abs = wt.join(rel_file);
         if let Some(p) = abs.parent() {
             fs::create_dir_all(p).unwrap();
         }
         fs::write(&abs, content).unwrap();
-        let blob = repo.odb.write(ObjectKind::Blob, content).unwrap();
+        let blob = repo.odb().write(ObjectKind::Blob, content).unwrap();
         let tree_body = format!("100644 {blob}\t{rel_file}\n");
         let tree = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tree, tree_body.as_bytes())
             .unwrap();
         let commit_body =
             format!("tree {tree}\nauthor t <t@t> 0 +0000\ncommitter t <t@t> 0 +0000\n\n{msg}\n");
-        repo.odb
+        repo.odb()
             .write(ObjectKind::Commit, commit_body.as_bytes())
             .unwrap()
     }
@@ -1226,11 +1227,15 @@ mod tests {
             "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
         )
         .unwrap();
-        Repository::open(&git, Some(nested_root)).unwrap()
+        Repository::open(
+            &git,
+            &RepositoryOptions::empty().with_work_tree(nested_root),
+        )
+        .unwrap()
     }
 
     fn set_branch_head(repo: &Repository, head: ObjectId) {
-        let main = repo.git_dir.join("refs/heads/main");
+        let main = repo.git_dir().join("refs/heads/main");
         fs::write(main, format!("{head}\n")).unwrap();
     }
 

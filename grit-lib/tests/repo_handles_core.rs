@@ -172,8 +172,9 @@ fn diff_tree_to_tree_matches_git_diff_raw() {
     let head = repo.rev_walk().resolve("HEAD").expect("head");
     let parent = repo.rev_walk().resolve("HEAD~1").expect("parent");
 
-    let head_tree = grit_lib::diff::tree_oid_of_commit(&repo.odb, &head).expect("head tree");
-    let parent_tree = grit_lib::diff::tree_oid_of_commit(&repo.odb, &parent).expect("parent tree");
+    let head_tree = grit_lib::diff::tree_oid_of_commit(&repo.odb(), &head).expect("head tree");
+    let parent_tree =
+        grit_lib::diff::tree_oid_of_commit(&repo.odb(), &parent).expect("parent tree");
 
     let entries = repo
         .diff()
@@ -208,7 +209,7 @@ fn diff_index_to_tree_matches_git_diff_cached_raw() {
         .rev_walk()
         .resolve("HEAD")
         .ok()
-        .and_then(|oid| grit_lib::diff::tree_oid_of_commit(&repo.odb, &oid).ok());
+        .and_then(|oid| grit_lib::diff::tree_oid_of_commit(&repo.odb(), &oid).ok());
 
     let entries = repo
         .diff()

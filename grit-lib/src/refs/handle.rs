@@ -113,7 +113,7 @@ impl<'repo> References<'repo> {
     /// ```
     #[inline]
     pub fn update(&self, name: &RefName, oid: &ObjectId) -> Result<()> {
-        update_direct_ref_on_store(self.repo.refs(), &self.repo.git_dir, name.as_str(), oid)
+        update_direct_ref_on_store(self.repo.refs(), self.repo.git_dir(), name.as_str(), oid)
     }
 
     /// Read reflog entries for `name` (oldest first).

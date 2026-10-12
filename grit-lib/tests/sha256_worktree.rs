@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::HashAlgo;
 use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::porcelain::add::{stage, StageOptions};
@@ -90,9 +91,12 @@ fn sha256_stat_refresh_staging_patch_id_and_prune_packed() {
 
     touch_all_tracked(repo_root);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
-    assert_eq!(grit_repo.odb.hash_algo(), HashAlgo::Sha256);
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
+    assert_eq!(grit_repo.odb().hash_algo(), HashAlgo::Sha256);
 
     let model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress)
         .expect("status after touch");
@@ -135,7 +139,7 @@ fn sha256_stat_refresh_staging_patch_id_and_prune_packed() {
     let commit2 = git(repo_root, &["rev-parse", "HEAD"]).trim().to_string();
 
     let commit_oid: grit_lib::objects::ObjectId = commit2.parse().expect("parse commit oid");
-    let grit_patch = compute_patch_id(HashAlgo::Sha256, &grit_repo.odb, &commit_oid)
+    let grit_patch = compute_patch_id(HashAlgo::Sha256, grit_repo.odb(), &commit_oid)
         .expect("patch-id")
         .expect("non-merge patch-id")
         .to_hex();

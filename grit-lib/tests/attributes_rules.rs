@@ -15,6 +15,7 @@ use grit_lib::attributes::{
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use support::{
     assert_all_attrs_match, assert_attrs_match, grit_attr_value, grit_repo, hermetic_git,
@@ -429,7 +430,7 @@ fn t0003_crlf_in_gitattributes_blob_from_index() {
     hermetic_git_ok(wt, &["add", ".gitattributes"]);
     let repo = grit_repo(wt);
     let index = Index::load(&wt.join(".git/index")).expect("index");
-    let parsed = load_gitattributes_from_index(&index, &repo.odb, wt).expect("from index");
+    let parsed = load_gitattributes_from_index(&index, &repo.odb(), wt).expect("from index");
     let map = collect_attrs_for_path(&parsed.rules, &parsed.macros, "any.txt", false);
     assert_eq!(map.get("text"), Some(&AttrValue::Set));
 }
@@ -522,7 +523,7 @@ fn t0003_bare_repo_info_attributes_and_index() {
         &["clone", "--bare", ".", bare_dir.to_str().expect("utf8")],
     );
     std::fs::write(bare_dir.join("info/attributes"), "f test=info\n").expect("info");
-    let repo = Repository::open(&bare_dir, None).expect("bare open");
+    let repo = Repository::open(&bare_dir, &RepositoryOptions::empty()).expect("bare open");
     let bare_parsed = load_gitattributes_bare(&repo).expect("bare load");
     assert_eq!(grit_attr_value(&bare_parsed, &repo, "f", "test"), "info");
 }
@@ -581,7 +582,8 @@ fn t0003_resolve_attr_treeish_and_tree_oid_errors() {
     env.git_config_system = Some(null_dev().to_string());
     env.git_config_global = Some(null_dev().to_string());
     let options = RepositoryOptions::with_environment(env);
-    let repo2 = Repository::open_with(&options, &wt.join(".git"), Some(wt)).expect("open2");
+    let repo2 =
+        Repository::open(&wt.join(".git"), &&options.clone().with_work_tree(wt)).expect("open2");
     let err = load_gitattributes_for_diff(&repo2).unwrap_err();
     assert!(matches!(err, Error::InvalidRef(_)));
 }
@@ -624,7 +626,7 @@ fn t0003_gitattributes_blob_literal_backslash_n_not_invented_from_index() {
     hermetic_git_ok(wt, &["add", ".gitattributes"]);
     let repo = grit_repo(wt);
     let index = Index::load(&wt.join(".git/index")).expect("index");
-    let parsed = load_gitattributes_from_index(&index, &repo.odb, wt).expect("from index");
+    let parsed = load_gitattributes_from_index(&index, &repo.odb(), wt).expect("from index");
     let map = collect_attrs_for_path(&parsed.rules, &parsed.macros, "file", false);
     assert!(map.get("text").is_none());
     assert_attrs_match(wt, &repo, &parsed, "text", &["file"], &["--cached"]);

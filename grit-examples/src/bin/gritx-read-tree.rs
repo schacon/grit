@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::{checkout_tree, commit_tree, entries_from_tree, resolve_name};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -27,9 +28,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let oid = resolve_name(&repo, &cli.treeish)?;
-    let tree_oid = match repo.odb.read(&oid)?.kind {
+    let tree_oid = match repo.odb().read(&oid)?.kind {
         ObjectKind::Commit => commit_tree(&repo, oid)?,
         ObjectKind::Tree => oid,
         _ => anyhow::bail!("{oid} is not a tree or commit"),

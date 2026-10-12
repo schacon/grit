@@ -42,7 +42,7 @@ impl<'repo> Objects<'repo> {
     /// ```
     #[inline]
     pub fn contains(&self, oid: &ObjectId) -> bool {
-        self.repo.odb.exists(oid)
+        self.repo.odb().exists(oid)
     }
 
     /// Read the object named `oid`.
@@ -68,7 +68,7 @@ impl<'repo> Objects<'repo> {
     /// ```
     #[inline]
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
-        self.repo.odb.read(oid)
+        self.repo.odb().read(oid)
     }
 
     /// Read object type and size without inflating full blob bodies when possible.
@@ -78,14 +78,14 @@ impl<'repo> Objects<'repo> {
     /// Propagates object lookup failures from the ODB.
     #[inline]
     pub fn read_info(&self, oid: &ObjectId) -> Result<ObjectInfo> {
-        self.repo.odb.read_info(oid)
+        self.repo.odb().read_info(oid)
     }
 
     /// Hash `data` as a Git object of `kind` without writing to disk.
     #[inline]
     #[must_use]
     pub fn hash(&self, kind: ObjectKind, data: &[u8]) -> ObjectId {
-        self.repo.odb.hash(kind, data)
+        self.repo.odb().hash(kind, data)
     }
 
     /// Store a loose object and return its id.
@@ -99,6 +99,6 @@ impl<'repo> Objects<'repo> {
     /// See also the [`guide_objects`](https://grit-scm.com/docs/library/objects/) example program.
     #[inline]
     pub fn write(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
-        self.repo.odb.write(kind, data)
+        self.repo.odb().write(kind, data)
     }
 }

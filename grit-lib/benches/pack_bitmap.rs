@@ -74,7 +74,7 @@ fn load_fixture() -> Option<PackBitmapFixture> {
         );
         return None;
     }
-    let repo = Repository::open(&bare, None).ok()?;
+    let repo = Repository::open(&bare, &RepositoryOptions::empty()).ok()?;
     let out = Command::new("git")
         .current_dir(&bare)
         .args(["rev-parse", "HEAD"])
@@ -128,7 +128,7 @@ fn bench_pack_bitmap(c: &mut Criterion) {
     let mut group = c.benchmark_group("pack_bitmap_git_sized");
     group.bench_function("open", |b| {
         b.iter(|| {
-            let repo = Repository::open(&bare, None).expect("open repo");
+            let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open repo");
             black_box(
                 BitmapIndex::open(&repo)
                     .expect("open")
@@ -138,7 +138,7 @@ fn bench_pack_bitmap(c: &mut Criterion) {
     });
     group.bench_function("first_commit_lookup", |b| {
         b.iter(|| {
-            let repo = Repository::open(&bare, None).expect("open repo");
+            let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open repo");
             let index = BitmapIndex::open(&repo)
                 .expect("open")
                 .expect("bitmap present");
@@ -147,7 +147,7 @@ fn bench_pack_bitmap(c: &mut Criterion) {
     });
     group.bench_function("reachability_count_all", |b| {
         b.iter(|| {
-            let repo = Repository::open(&bare, None).expect("open repo");
+            let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open repo");
             let index = BitmapIndex::open(&repo)
                 .expect("open")
                 .expect("bitmap present");
@@ -164,7 +164,7 @@ fn bench_pack_bitmap(c: &mut Criterion) {
     });
     group.bench_function("write_from_git_bitmap", |b| {
         b.iter(|| {
-            let repo = Repository::open(&bare, None).expect("open repo");
+            let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open repo");
             let indexes = read_local_pack_indexes(bare.join("objects").as_path()).expect("idx");
             let idx = indexes
                 .into_iter()

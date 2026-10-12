@@ -2,6 +2,7 @@
 //!
 //! Source for the library guide "Index" page (included in the docs site).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::{init_repository, Repository};
@@ -20,7 +21,11 @@ fn open_repo(root: &Path) -> Result<Repository, grit_lib::error::Error> {
     } else {
         None
     };
-    Repository::open(&git_dir, work_tree)
+    let mut opts = RepositoryOptions::empty();
+    if let Some(wt) = work_tree {
+        opts = opts.with_work_tree(wt);
+    }
+    Repository::open(&git_dir, &opts)
 }
 
 fn main() -> Result<(), grit_lib::error::Error> {
@@ -54,7 +59,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
     );
 
     let index = repo.load_index()?;
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
     println!("tree_oid={}", tree_oid.to_hex());
 
     Ok(())

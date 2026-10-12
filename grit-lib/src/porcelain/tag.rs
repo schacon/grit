@@ -71,11 +71,11 @@ pub struct CreateTagOutcome {
 pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTagOutcome> {
     validate_tag_short_name(&req.name).map_err(|e| Error::Message(e.to_string()))?;
     let tag_ref = format!("refs/tags/{}", req.name);
-    if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
+    if refs::resolve_ref(repo.git_dir(), &tag_ref).is_ok() {
         return Err(Error::Message(format!("tag '{}' already exists", req.name)));
     }
 
-    let target_obj = repo.odb.read(&req.target)?;
+    let target_obj = repo.odb().read(&req.target)?;
     let peeled = match target_obj.kind {
         ObjectKind::Commit => Some(req.target),
         _ => peel_to_commit(repo, &req.target),
@@ -100,13 +100,13 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
             message,
         };
         let bytes = serialize_tag(&tag);
-        let tag_oid = repo.odb.write(ObjectKind::Tag, &bytes)?;
+        let tag_oid = repo.odb().write(ObjectKind::Tag, &bytes)?;
         (tag_oid, TagKind::Annotated)
     } else {
         (req.target, TagKind::Lightweight)
     };
 
-    refs::write_ref(&repo.git_dir, &tag_ref, &ref_oid)?;
+    refs::write_ref(repo.git_dir(), &tag_ref, &ref_oid)?;
 
     Ok(CreateTagOutcome {
         name: req.name.clone(),
@@ -119,7 +119,7 @@ pub fn create_tag(repo: &Repository, req: &CreateTagRequest) -> Result<CreateTag
 /// Classify a tag ref target and peel to a commit when possible.
 #[must_use]
 pub fn tag_ref_metadata(repo: &Repository, ref_oid: &ObjectId) -> (TagKind, Option<ObjectId>) {
-    let Ok(obj) = repo.odb.read(ref_oid) else {
+    let Ok(obj) = repo.odb().read(ref_oid) else {
         return (TagKind::Lightweight, None);
     };
     if obj.kind == ObjectKind::Tag {
@@ -140,7 +140,7 @@ pub fn get_tag_annotation(repo: &Repository, oid: &ObjectId, n: u32) -> Option<S
     if n == 0 {
         return None;
     }
-    let obj = repo.odb.read(oid).ok()?;
+    let obj = repo.odb().read(oid).ok()?;
     let tag = parse_tag(&obj.data).ok()?;
     if tag.message.trim().is_empty() {
         return None;
@@ -184,7 +184,7 @@ pub fn tag_contains(repo: &Repository, tag_oid: &ObjectId, target: &ObjectId) ->
         if &oid == target {
             return true;
         }
-        if let Ok(obj) = repo.odb.read(&oid) {
+        if let Ok(obj) = repo.odb().read(&oid) {
             if obj.kind == ObjectKind::Commit {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     for parent in commit.parents {
@@ -209,7 +209,7 @@ pub fn tag_points_at(repo: &Repository, tag_oid: &ObjectId, target: &ObjectId) -
     // Peel through tag objects
     let mut current = *tag_oid;
     for _ in 0..10 {
-        let obj = match repo.odb.read(&current) {
+        let obj = match repo.odb().read(&current) {
             Ok(o) => o,
             Err(_) => return false,
         };
@@ -235,7 +235,7 @@ pub fn tag_points_at(repo: &Repository, tag_oid: &ObjectId, target: &ObjectId) -
 pub fn peel_to_commit(repo: &Repository, oid: &ObjectId) -> Option<ObjectId> {
     let mut current = *oid;
     for _ in 0..10 {
-        let obj = repo.odb.read(&current).ok()?;
+        let obj = repo.odb().read(&current).ok()?;
         match obj.kind {
             ObjectKind::Commit => return Some(current),
             ObjectKind::Tag => {
@@ -255,7 +255,7 @@ pub fn peel_to_commit(repo: &Repository, oid: &ObjectId) -> Option<ObjectId> {
 /// Returns 0 if the date cannot be determined.
 #[must_use]
 pub fn creator_date(repo: &Repository, oid: &ObjectId) -> i64 {
-    let obj = match repo.odb.read(oid) {
+    let obj = match repo.odb().read(oid) {
         Ok(o) => o,
         Err(_) => return 0,
     };

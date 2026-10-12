@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::midx::{
     compact_multi_pack_index, midx_checksum_hex, resolve_midx_bitmap_layer,
     write_multi_pack_index_with_options, MidxBitmapWriteOutcome, WriteMultiPackIndexOptions,
@@ -46,7 +47,7 @@ fn git_stdout(repo: &RepoFixture, args: &[&str]) -> String {
 }
 
 fn open_repo(path: &Path) -> Repository {
-    Repository::discover(Some(path)).expect("open repo")
+    Repository::discover(Some(path), &RepositoryOptions::empty()).expect("open repo")
 }
 
 fn pack_objects(repo: &RepoFixture, object_list: &str) -> String {
@@ -181,7 +182,7 @@ fn reachability_positions(repo: &Repository, index: &BitmapIndex, tip: &ObjectId
 
 fn verify_all_commit_bitmaps(repo: &Repository, index: &BitmapIndex) {
     let out = Command::new("git")
-        .current_dir(repo.work_tree.as_ref().unwrap_or(&repo.git_dir))
+        .current_dir(repo.work_tree().unwrap_or(&repo.git_dir()))
         .args(["rev-list", "--all"])
         .output()
         .expect("rev-list");

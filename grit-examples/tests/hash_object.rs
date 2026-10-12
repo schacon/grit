@@ -34,7 +34,7 @@ fn hash_object_writes_file_contents_as_blob() -> Result<()> {
 
     let stdout = String::from_utf8(output.stdout)?.trim().to_owned();
     let object_id = stdout.parse()?;
-    let object = repo.odb.read(&object_id)?;
+    let object = repo.odb().read(&object_id)?;
 
     assert_eq!(object.kind, ObjectKind::Blob);
     assert_eq!(object.data, contents);

@@ -13,11 +13,11 @@ fn identity() -> String {
 }
 
 fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<ObjectId>) {
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     std::fs::write(wt.join(path), contents).expect("write");
     let mut index = repo.load_index().expect("index");
     let oid = repo
-        .odb
+        .odb()
         .write(objects::ObjectKind::Blob, contents.as_bytes())
         .expect("blob");
     let entry = grit_lib::index::entry_from_stat(
@@ -29,8 +29,8 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
     .expect("entry");
     index.add_or_replace(entry);
     index.sort();
-    let tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     repo.write_index(&mut index).expect("write index");
     let commit = objects::CommitData {
         tree,
@@ -45,14 +45,14 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
         extra_headers: Vec::new(),
     };
     let co = repo
-        .odb
+        .odb()
         .write(
             objects::ObjectKind::Commit,
             &objects::serialize_commit(&commit),
         )
         .expect("commit");
-    refs::write_ref(&repo.git_dir, "HEAD", &co).expect("head");
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &co).expect("branch");
+    refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &co).expect("branch");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn mixed_reset_readable_by_git() {
         init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
     let c1 = {
         commit_file(&repo, "f", "1\n", None);
-        refs::resolve_ref(&repo.git_dir, "HEAD").expect("head")
+        refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head")
     };
     commit_file(&repo, "f", "2\n", Some(c1));
 

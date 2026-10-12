@@ -4,6 +4,8 @@
 //! `gitdir`, `commondir`, `HEAD`, and optional `locked` / `prunable` files.
 //! This module reads that layout and implements linked worktree add/remove.
 
+use crate::environment::RepositoryOptions;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -98,9 +100,9 @@ pub struct BranchWorktreeCheckout {
 /// Administrative git directory for the worktree `repo` was opened from.
 #[must_use]
 pub fn worktree_admin_dir(repo: &Repository) -> PathBuf {
-    let common = common_git_dir(&repo.git_dir);
-    if repo.git_dir.starts_with(common.join("worktrees")) {
-        repo.git_dir.clone()
+    let common = common_git_dir(repo.git_dir());
+    if repo.git_dir().starts_with(common.join("worktrees")) {
+        repo.git_dir().to_path_buf()
     } else {
         common
     }
@@ -197,15 +199,15 @@ fn branch_checked_out_error(branch: &str, worktree_path: &Path) -> Error {
 ///
 /// Order matches Git: main worktree first, then linked worktrees sorted by admin id.
 pub fn list_worktrees(repo: &Repository) -> Result<Vec<WorktreeEntry>> {
-    let common = common_git_dir(&repo.git_dir);
+    let common = common_git_dir(repo.git_dir());
     let mut entries = Vec::new();
 
     let bare = is_bare_repository(&common);
     let main_path = if bare {
         common.clone()
-    } else if let Some(wt) = repo.work_tree.as_ref() {
+    } else if let Some(wt) = repo.work_tree() {
         // When opened from the main worktree, use the discovered work tree path.
-        if repo.git_dir == common || !repo.git_dir.starts_with(common.join("worktrees")) {
+        if repo.git_dir() == common || !repo.git_dir().starts_with(common.join("worktrees")) {
             path_for_disk_compare(wt)
         } else {
             common.parent().unwrap_or(&common).to_path_buf()
@@ -444,7 +446,7 @@ pub fn add_linked_worktree(
     repo: &Repository,
     opts: &AddLinkedWorktreeOptions,
 ) -> Result<WorktreeEntry> {
-    let common = common_git_dir(&repo.git_dir);
+    let common = common_git_dir(repo.git_dir());
     if is_bare_repository(&common) {
         return Err(Error::Message(
             "cannot add a worktree to a bare repository".into(),
@@ -461,7 +463,7 @@ pub fn add_linked_worktree(
 
     let start_spec = opts.start_point.as_deref().unwrap_or("HEAD");
     let start_oid = resolve_revision(repo, start_spec)?;
-    let start_obj = repo.odb.read(&start_oid)?;
+    let start_obj = repo.odb().read(&start_oid)?;
     if start_obj.kind != ObjectKind::Commit {
         return Err(Error::Message(format!(
             "revision '{start_spec}' does not resolve to a commit"
@@ -475,14 +477,14 @@ pub fn add_linked_worktree(
         validate_branch_short_name(branch).map_err(|e| Error::Message(e.to_string()))?;
         let branch_ref = format!("refs/heads/{branch}");
         if opts.new_branch {
-            if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+            if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
                 return Err(Error::Message(format!("branch '{branch}' already exists")));
             }
-            refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
-        } else if refs::resolve_ref(&repo.git_dir, &branch_ref).is_err() {
+            refs::write_ref(repo.git_dir(), &branch_ref, &start_oid)?;
+        } else if refs::resolve_ref(repo.git_dir(), &branch_ref).is_err() {
             return Err(Error::Message(format!("no branch named '{branch}'")));
         } else {
-            let tip = refs::resolve_ref(&repo.git_dir, &branch_ref)?;
+            let tip = refs::resolve_ref(repo.git_dir(), &branch_ref)?;
             if tip != start_oid {
                 return Err(Error::Message(format!(
                     "branch '{branch}' does not match start commit"
@@ -502,10 +504,10 @@ pub fn add_linked_worktree(
         let branch = worktree_path_basename(&wt_path);
         validate_branch_short_name(&branch).map_err(|e| Error::Message(e.to_string()))?;
         let branch_ref = format!("refs/heads/{branch}");
-        if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
             return Err(Error::Message(format!("branch '{branch}' already exists")));
         }
-        refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+        refs::write_ref(repo.git_dir(), &branch_ref, &start_oid)?;
         branch_checked_out_elsewhere(repo, &branch_ref)?;
         Some(branch_ref)
     };
@@ -548,7 +550,8 @@ pub fn add_linked_worktree(
 
         copy_filtered_worktree_config(&common, &admin)?;
 
-        let linked = Repository::discover(Some(&wt_path))?;
+        let linked =
+            Repository::discover(Some(wt_path.as_path()), &RepositoryOptions::empty())?;
         checkout_between_trees(&linked, None, &tree_oid)?;
 
         linked_worktree_entry(&admin, &common)
@@ -798,7 +801,7 @@ fn plan_admin_dir_for_add(
 /// Refuses to remove the main worktree, locked worktrees (unless `force`), or dirty
 /// trees (unless `force`).
 pub fn remove_linked_worktree(repo: &Repository, path: &Path, force: bool) -> Result<()> {
-    let common = common_git_dir(&repo.git_dir);
+    let common = common_git_dir(repo.git_dir());
     let target = path_for_disk_compare(path);
     let entry = list_worktrees(repo)?
         .into_iter()
@@ -821,7 +824,7 @@ pub fn remove_linked_worktree(repo: &Repository, path: &Path, force: bool) -> Re
         ));
     }
 
-    let linked = Repository::discover(Some(&entry.path))?;
+    let linked = Repository::discover(Some(entry.path.as_path()), &RepositoryOptions::empty())?;
     if !force && worktree_has_local_changes(&linked)? {
         return Err(Error::Message(
             "worktree contains modified or untracked files; use -f or --force to remove".into(),
@@ -841,7 +844,7 @@ fn resolve_existing_branch(repo: &Repository, spec: &str) -> Option<String> {
     } else {
         format!("refs/heads/{spec}")
     };
-    refs::resolve_ref(&repo.git_dir, &full).ok()?;
+    refs::resolve_ref(repo.git_dir(), &full).ok()?;
     Some(full)
 }
 
@@ -938,7 +941,11 @@ mod tests {
         )
         .unwrap();
 
-        let repo = Repository::open(&root.join(".git"), Some(&root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(&root),
+        )
+        .unwrap();
         let list = list_worktrees(&repo).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].path, path_for_disk_compare(&root));
@@ -1017,7 +1024,7 @@ mod tests {
         git(&["add", "t"]);
         git(&["commit", "-qm", "init"]);
 
-        let repo = Repository::discover(Some(&main)).unwrap();
+        let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).unwrap();
         let linked = tmp.path().join("linked");
         add_linked_worktree(
             &repo,
@@ -1147,7 +1154,7 @@ mod tests {
             "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
         )
         .unwrap();
-        let repo = Repository::open(&bare, None).unwrap();
+        let repo = Repository::open(&bare, &RepositoryOptions::empty()).unwrap();
         let err = add_linked_worktree(
             &repo,
             &AddLinkedWorktreeOptions {
@@ -1187,7 +1194,7 @@ mod tests {
         git(&["add", "t"]);
         git(&["commit", "-qm", "init"]);
 
-        let repo = Repository::discover(Some(&main)).unwrap();
+        let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).unwrap();
         let linked = tmp.path().join("linked");
         add_linked_worktree(
             &repo,
@@ -1202,11 +1209,12 @@ mod tests {
         )
         .unwrap();
 
-        let linked_repo = Repository::discover(Some(&linked)).unwrap();
+        let linked_repo =
+            Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).unwrap();
         let linked_admin = linked_repo
-            .git_dir
+            .git_dir()
             .canonicalize()
-            .unwrap_or_else(|_| linked_repo.git_dir.clone());
+            .unwrap_or_else(|_| linked_repo.git_dir().to_path_buf());
         assert_eq!(worktree_admin_dir(&linked_repo), linked_admin);
 
         let found = find_worktree_with_branch_checked_out(&repo, "feature", None)
@@ -1295,7 +1303,7 @@ mod tests {
         git(&["add", "t"]);
         git(&["commit", "-qm", "init"]);
 
-        let repo = Repository::discover(Some(&main)).unwrap();
+        let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).unwrap();
         assert!(remove_linked_worktree(&repo, &main, false).is_err());
 
         let linked = tmp.path().join("linked");
@@ -1311,7 +1319,7 @@ mod tests {
             },
         )
         .unwrap();
-        let common = common_git_dir(&repo.git_dir);
+        let common = common_git_dir(&repo.git_dir());
         let admin = fs::read_dir(common.join("worktrees"))
             .unwrap()
             .find_map(|e| e.ok())

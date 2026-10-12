@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, IgnoredMode, StatusOptions, UntrackedMode};
 use grit_lib::progress::NullProgress;
@@ -48,7 +49,7 @@ fn refresh_normal(
     ignored: UntrackedIgnoredMode,
 ) {
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     refresh_untracked_cache_for_status(repo, idx, wt, cfg.as_ref(), uc, false, ignored)
         .expect("refresh");
 }
@@ -66,9 +67,9 @@ fn untracked_cache_respects_gitignore_and_info_exclude() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         dir_flags_from_config(&ConfigSet::new()),
         untracked_cache_ident(wt),
@@ -98,9 +99,9 @@ fn untracked_cache_traditional_and_matching_ignored_modes() {
     git(root, &["add", "src.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let ident = untracked_cache_ident(wt);
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
@@ -141,10 +142,10 @@ fn untracked_cache_all_mode_and_mode_switch() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_untracked_cache_for_status(
         &repo,
@@ -187,9 +188,9 @@ fn untracked_cache_reuses_valid_subtree_on_second_refresh() {
     }
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -214,9 +215,9 @@ fn untracked_cache_invalidate_path_and_hidden_dotfile() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -243,9 +244,9 @@ fn untracked_cache_empty_directory_hidden_when_configured() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -296,9 +297,9 @@ fn split_index_git_index_file_writes_unified() {
     git_update_index_split(root);
 
     let alt = root.join("alt-index");
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
-    repo.write_index_at_split(&alt, &mut idx, WriteSplitIndexRequest::default())
+    repo.write_index_at(&alt, &mut idx)
         .expect("write alternate index");
     let data = fs::read(&alt).expect("read alt");
     assert!(!data.windows(4).any(|w| w == b"link"));
@@ -320,7 +321,7 @@ fn split_index_shared_expire_and_rebuild() {
     git(root, &["commit", "-qm", "c"]);
     git_update_index_split(root);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     idx.add_or_replace(entry_from_worktree_path(&repo, "new-file.txt", b"new\n"));
     repo.write_index(&mut idx).expect("rewrite split index");
@@ -347,11 +348,11 @@ fn split_index_rebuild_when_change_exceeds_max_percent() {
         std::fs::write(root.join(format!("f{i:04}.txt")), format!("changed {i}\n")).expect("write");
     }
     git(root, &["add", "-A"]);
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx)
         .expect("rewrite triggers rebuild");
-    assert!(support::list_sharedindex_paths(&repo.git_dir).len() >= 1);
+    assert!(support::list_sharedindex_paths(&repo.git_dir()).len() >= 1);
 }
 
 #[test]
@@ -403,14 +404,14 @@ fn untracked_cache_global_excludes_and_gitlink_skip() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     let mut sub = entry_from_worktree_path(&repo, "submod", b"gitlink");
     sub.mode = grit_lib::index::MODE_GITLINK;
     idx.add_or_replace(sub);
     repo.write_index(&mut idx).expect("write gitlink");
 
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -431,9 +432,9 @@ fn untracked_cache_directory_stat_invalidation() {
     git(root, &["add", "bucket/tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -465,7 +466,7 @@ fn untracked_cache_wide_tree_normal_status() {
     }
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let opts = StatusOptions {
         untracked: UntrackedMode::Normal,
         ahead_behind: false,
@@ -475,7 +476,7 @@ fn untracked_cache_wide_tree_normal_status() {
     assert_eq!(model.untracked.len(), 40);
 
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = idx
         .untracked_cache
         .clone()
@@ -502,7 +503,7 @@ fn split_index_incremental_update_reuses_shared_base() {
     std::fs::write(root.join("f0001.txt"), "one byte longer\n").expect("write");
     git(root, &["add", "f0001.txt"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx).expect("incremental split write");
     let after = support::list_sharedindex_paths(&root.join(".git"));
@@ -526,9 +527,9 @@ fn untracked_cache_ignored_only_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -552,9 +553,9 @@ fn untracked_cache_nested_gitignore_per_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -581,7 +582,7 @@ fn split_index_remove_entries_emits_delete_bitmaps() {
     for i in (0..10).map(|n| format!("f{n:04}.txt")) {
         git(root, &["rm", "--cached", &i]);
     }
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx)
         .expect("write split after deletes");
@@ -603,10 +604,10 @@ fn untracked_cache_many_loose_files_normal_and_all() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_untracked_cache_for_status(
         &repo,
@@ -648,7 +649,7 @@ fn split_index_write_with_shared_repository_group() {
     git(root, &["add", "-A"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     repo.write_index(&mut idx)
         .expect("split write with group perm");
@@ -667,9 +668,9 @@ fn untracked_traditional_refresh_ignored_only_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -691,10 +692,10 @@ fn untracked_matching_all_mode_skips_excluded_directories() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_untracked_cache_for_status(
         &repo,
@@ -721,9 +722,9 @@ fn untracked_cache_rebuilds_after_info_exclude_changes() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -757,7 +758,7 @@ fn untracked_cache_deep_status_integration() {
     }
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let opts = StatusOptions {
         untracked: UntrackedMode::Normal,
         ignored: IgnoredMode::Matching,
@@ -771,7 +772,7 @@ fn untracked_cache_deep_status_integration() {
 
     let idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     for (show_all, mode) in [
         (false, UntrackedIgnoredMode::No),
@@ -803,7 +804,7 @@ fn status_ignored_modes_exercise_untracked_collect_paths() {
     git(root, &["add", "mixed/tracked/t.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     for ignored in [IgnoredMode::Traditional, IgnoredMode::Matching] {
         let opts = StatusOptions {
             untracked: UntrackedMode::Normal,
@@ -838,9 +839,9 @@ fn untracked_cache_populates_check_only_subtree_for_collapsed_dir() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -868,9 +869,9 @@ fn untracked_cache_mixed_visible_and_ignored_in_one_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -891,9 +892,9 @@ fn untracked_cache_hidden_dotfile_forces_materialized_subtree() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -916,9 +917,9 @@ fn untracked_cache_fully_ignored_directory_placeholder() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -941,9 +942,9 @@ fn untracked_cache_combo_visible_and_ignored_files_expand_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -964,9 +965,9 @@ fn untracked_cache_empty_gitignored_directory_materializes_check_only() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -988,9 +989,9 @@ fn untracked_cache_tracked_subdirectory_expands_full_directory_walk() {
     git(root, &["add", "tracked.txt", "parent/tracked/t.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_normal(&repo, &idx, &mut uc, UntrackedIgnoredMode::Traditional);
     let paths = collect_untracked_from_cache(&uc);
@@ -1009,9 +1010,9 @@ fn untracked_cache_reuses_existing_check_only_on_fully_ignored_rescan() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -1032,9 +1033,9 @@ fn untracked_cache_nested_untracked_only_directory_collapses_in_collect() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -1054,9 +1055,9 @@ fn untracked_cache_gitignore_change_invalidates_cached_tree() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_normal(&repo, &idx, &mut uc, UntrackedIgnoredMode::No);
     assert!(collect_untracked_from_cache(&uc)
@@ -1082,9 +1083,9 @@ fn untracked_cache_check_only_reuse_surfaces_visible_collapsed_directory() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -1108,9 +1109,9 @@ fn untracked_cache_mixed_entries_recurses_into_both_lists() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -1133,9 +1134,9 @@ fn untracked_cache_hidden_dotfile_inside_ignored_only_shell() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),

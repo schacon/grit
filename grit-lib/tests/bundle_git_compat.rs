@@ -5,6 +5,7 @@ use std::process::Command;
 
 use grit_lib::bundle::{read_header, write_bundle, Bundle, BundleError, BundleSpec, FilterSpec};
 use grit_lib::bundle_remote::write_bundle_from_rev_specs;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index_pack::{install_pack_bytes, IngestPackOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
@@ -58,7 +59,7 @@ fn init_repo_with_two_commits(dir: &Path) -> (ObjectId, ObjectId) {
 }
 
 fn grit_repo(dir: &Path) -> Repository {
-    Repository::discover(Some(dir)).expect("open grit repo")
+    Repository::discover(Some(dir), &RepositoryOptions::empty()).expect("open grit repo")
 }
 
 #[test]
@@ -369,7 +370,7 @@ fn unbundle_promisor_marks_installed_pack_not_preexisting() {
     let src_repo = grit_repo(src);
     let bare = grit_repo(consumer.path());
     let seed_pack = build_pack(
-        &src_repo.odb,
+        src_repo.odb(),
         &[tip],
         &[],
         &PackBuildOptions {
@@ -378,7 +379,7 @@ fn unbundle_promisor_marks_installed_pack_not_preexisting() {
         },
     )
     .expect("seed pack");
-    let seeded = install_pack_bytes(seed_pack, &bare.odb, &IngestPackOptions::default())
+    let seeded = install_pack_bytes(seed_pack, bare.odb(), &IngestPackOptions::default())
         .expect("install seed");
     let old_pack = seeded.pack_path;
     assert!(old_pack.is_file());

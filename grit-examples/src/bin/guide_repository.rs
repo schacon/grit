@@ -12,23 +12,23 @@ fn main() -> Result<(), Error> {
     let env = Environment::from_vars(std::env::vars_os(), cwd.clone());
     let options = RepositoryOptions::with_environment(env.clone());
 
-    let repo = match Repository::discover_with(&options, None) {
+    let repo = match Repository::discover(None, &options) {
         Ok(r) => r,
         Err(Error::NotARepository(_)) => {
             let git_dir = cwd.join(".git");
-            Repository::open_with(&options, &git_dir, Some(&cwd))?
+            Repository::open(&git_dir, &&options.clone().with_work_tree(&cwd))?
         }
         Err(err) => return Err(err),
     };
 
-    println!("git_dir={}", repo.git_dir.display());
-    if let Some(wt) = &repo.work_tree {
+    println!("git_dir={}", repo.git_dir().display());
+    if let Some(wt) = &repo.work_tree() {
         println!("work_tree={}", wt.display());
     } else {
         println!("work_tree=<bare>");
     }
 
-    let cfg = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true)?;
+    let cfg = ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true)?;
     let name = cfg.get("user.name").unwrap_or_default();
     if !name.is_empty() {
         println!("user.name={name}");

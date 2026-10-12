@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::hash::hash_object;
 use grit_lib::index::{Index, IndexParseContext};
 use grit_lib::objects::HashAlgo;
@@ -47,7 +47,7 @@ fn git_add_all(repo: &Path, version: u32) {
 }
 
 fn load_config(repo: &Repository) -> ConfigSet {
-    ConfigSet::load(&Environment::empty(), Some(&repo.git_dir), true).expect("config")
+    ConfigSet::load(&Environment::empty(), Some(&repo.git_dir()), true).expect("config")
 }
 
 fn grit_parse_parallel(bytes: &[u8], algo: HashAlgo, cfg: &ConfigSet, threads: usize) -> Index {
@@ -82,9 +82,13 @@ fn git_writes_index_grit_reads(version: u32) {
 
     let index_path = root.join(".git/index");
     let bytes = fs::read(&index_path).expect("read git index");
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let cfg = load_config(&repo);
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
 
     let hash_len = algo.len();
     let body = &bytes[..bytes.len() - hash_len];
@@ -132,18 +136,18 @@ fn grit_write_git_accepts(version: u32) {
     populate_files(root, ENTRY_COUNT);
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
-    let mut cfg_text = fs::read_to_string(repo.git_dir.join("config")).expect("config");
+    let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
     );
-    fs::write(repo.git_dir.join("config"), cfg_text).expect("write config");
+    fs::write(repo.git_dir().join("config"), cfg_text).expect("write config");
 
     let mut idx = Index::empty(version);
     for i in 0..ENTRY_COUNT {
         let path = format!("d{:04}/f{i:05}.txt", i / 100);
         let data = format!("body {i}\n");
-        let oid = hash_object(repo.odb.hash_algo(), ObjectKind::Blob, data.as_bytes());
-        repo.odb
+        let oid = hash_object(repo.odb().hash_algo(), ObjectKind::Blob, data.as_bytes());
+        repo.odb()
             .write_loose_materialize(ObjectKind::Blob, data.as_bytes())
             .expect("write blob");
         idx.add_or_replace(grit_lib::index::IndexEntry {
@@ -190,18 +194,18 @@ fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
     populate_files(root, 8);
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
-    let mut cfg_text = fs::read_to_string(repo.git_dir.join("config")).expect("config");
+    let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
     );
-    fs::write(repo.git_dir.join("config"), cfg_text).expect("write config");
+    fs::write(repo.git_dir().join("config"), cfg_text).expect("write config");
 
     let mut idx = Index::empty(4);
     for i in 0..8 {
         let path = format!("d{:04}/f{i:05}.txt", i / 100);
         let data = format!("body {i}\n");
-        let oid = hash_object(repo.odb.hash_algo(), ObjectKind::Blob, data.as_bytes());
-        repo.odb
+        let oid = hash_object(repo.odb().hash_algo(), ObjectKind::Blob, data.as_bytes());
+        repo.odb()
             .write_loose_materialize(ObjectKind::Blob, data.as_bytes())
             .expect("write blob");
         idx.add_or_replace(grit_lib::index::IndexEntry {
@@ -235,7 +239,7 @@ fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
     );
 
     let bytes = fs::read(repo.index_path()).expect("read index");
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let parsed = grit_parse_serial(&bytes, algo);
     assert_eq!(parsed.entries().len(), 8);
 }
@@ -247,20 +251,20 @@ fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
     populate_files(root, ENTRY_COUNT);
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
-    let mut cfg_text = fs::read_to_string(repo.git_dir.join("config")).expect("config");
+    let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
     );
-    fs::write(repo.git_dir.join("config"), cfg_text).expect("write config");
+    fs::write(repo.git_dir().join("config"), cfg_text).expect("write config");
 
     let mut idx = Index::empty(2);
     for i in 0..ENTRY_COUNT {
         let path = format!("d{:04}/f{i:05}.txt", i / 100);
         let data = format!("body {i}\n");
-        repo.odb
+        repo.odb()
             .write_loose_materialize(ObjectKind::Blob, data.as_bytes())
             .expect("blob");
-        let oid = hash_object(repo.odb.hash_algo(), ObjectKind::Blob, data.as_bytes());
+        let oid = hash_object(repo.odb().hash_algo(), ObjectKind::Blob, data.as_bytes());
         let mut entry = grit_lib::index::IndexEntry {
             ctime_sec: 1_700_000_000,
             ctime_nsec: 0,
@@ -290,7 +294,7 @@ fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
         .expect("write ieot index");
 
     let bytes = fs::read(repo.index_path()).expect("read index");
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let body = &bytes[..bytes.len() - algo.len()];
     assert!(body.windows(4).any(|w| w == b"EOIE"));
 
@@ -331,7 +335,11 @@ fn invalid_eoie_falls_back_to_serial_parse() {
             bytes[body_len..].copy_from_slice(trailer.as_bytes());
         }
     }
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let cfg = load_config(&repo);
     let ctx = IndexParseContext::from_policy(ThreadPolicy::with_threads_override(Some(4)));
     let parsed =

@@ -231,11 +231,11 @@ fn confirm(prompt: &str) -> Result<bool> {
 /// `grit auth` works anywhere.
 fn load_config() -> ConfigSet {
     let env = crate::context::environment();
-    if let Ok(repo) = Repository::discover_with(
-        &grit_lib::environment::RepositoryOptions::with_environment(env.clone()),
+    if let Ok(repo) = Repository::discover(
         None,
+        &grit_lib::environment::RepositoryOptions::with_environment(env.clone()),
     ) {
-        if let Ok(config) = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true) {
+        if let Ok(config) = ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true) {
             return config;
         }
     }

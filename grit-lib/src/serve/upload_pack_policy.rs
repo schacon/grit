@@ -117,15 +117,15 @@ pub(crate) fn resolve_want_ref(
     if !allowed.contains(full.as_str()) && !allowed.contains(name) {
         return Err(ServeError::Protocol(format!("unknown ref {name}")));
     }
-    crate::refs::resolve_ref(&repo.git_dir, &full)
-        .or_else(|_| crate::refs::resolve_ref(&repo.git_dir, name))
+    crate::refs::resolve_ref(repo.git_dir(), &full)
+        .or_else(|_| crate::refs::resolve_ref(repo.git_dir(), name))
         .map_err(|_| ServeError::Protocol(format!("unknown ref {name}")))
 }
 
 /// Validate `want` OIDs for a filtered fetch (object must exist in the ODB).
 pub(crate) fn validate_wants_filtered(repo: &Repository, wants: &[ObjectId]) -> Result<()> {
     for w in wants {
-        if !repo.odb.exists(w) {
+        if !repo.odb().exists(w) {
             return Err(ServeError::NotOurRef(*w));
         }
     }
@@ -174,12 +174,12 @@ pub(crate) fn validate_wants(
 /// Peeled commit tips for every ref in the repository (including hidden refs).
 fn repository_tip_commits(repo: &Repository) -> Result<HashSet<ObjectId>> {
     let mut tips = HashSet::new();
-    for (_, oid) in crate::refs::list_refs(&repo.git_dir, "refs/")? {
+    for (_, oid) in crate::refs::list_refs(repo.git_dir(), "refs/")? {
         if let Ok(p) = super::peel_tag(repo, oid) {
             tips.insert(p);
         }
     }
-    if let Ok(head) = crate::refs::resolve_ref(&repo.git_dir, "HEAD") {
+    if let Ok(head) = crate::refs::resolve_ref(repo.git_dir(), "HEAD") {
         if let Ok(p) = super::peel_tag(repo, head) {
             tips.insert(p);
         }
@@ -195,7 +195,7 @@ fn reachable_from_repository_tips(repo: &Repository) -> Result<HashSet<ObjectId>
         if !seen.insert(oid) {
             continue;
         }
-        let Ok(obj) = repo.odb.read(&oid) else {
+        let Ok(obj) = repo.odb().read(&oid) else {
             continue;
         };
         match obj.kind {

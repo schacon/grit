@@ -16,10 +16,10 @@ fn main() -> grit_lib::error::Result<()> {
     )?;
 
     let payload = b"hello, object database\n";
-    let oid = repo.odb.write(ObjectKind::Blob, payload)?;
+    let oid = repo.odb().write(ObjectKind::Blob, payload)?;
     println!("stored blob: {oid}");
 
-    let Object { kind, data } = repo.odb.read(&oid)?;
+    let Object { kind, data } = repo.odb().read(&oid)?;
     assert_eq!(kind, ObjectKind::Blob);
     println!("round-trip: {}", String::from_utf8_lossy(&data));
 

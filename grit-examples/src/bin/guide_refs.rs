@@ -2,6 +2,7 @@
 //!
 //! Source for the library guide "Refs" page (included in the docs site).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs::{self, Ref};
@@ -22,7 +23,11 @@ fn open_repo(root: &Path) -> Result<Repository, grit_lib::error::Error> {
     } else {
         None
     };
-    Repository::open(&git_dir, work_tree)
+    let mut opts = RepositoryOptions::empty();
+    if let Some(wt) = work_tree {
+        opts = opts.with_work_tree(wt);
+    }
+    Repository::open(&git_dir, &opts)
 }
 
 fn main() -> Result<(), grit_lib::error::Error> {
@@ -32,7 +37,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| grit_lib::error::Error::Message("missing repository path".into()))?;
     let repo = open_repo(&root)?;
-    let git_dir = &repo.git_dir;
+    let git_dir = &repo.git_dir();
 
     let head = resolve_head(git_dir)?;
     match &head {

@@ -29,7 +29,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover grit repo")
+    Repository::discover(Some(wt), &options).expect("discover grit repo")
 }
 
 fn setup_linear_main() -> HistoryRepo {
@@ -355,7 +355,7 @@ fn t1512_disambiguation_matches_git() {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    let bare_repo = Repository::discover_with(&options, Some(&bare)).expect("bare repo");
+    let bare_repo = Repository::discover(Some(&bare), &options).expect("bare repo");
     for prefix in ["dead", "beef"] {
         assert!(
             git_rev_parse_verify(&bare, prefix).is_none(),

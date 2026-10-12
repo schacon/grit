@@ -27,7 +27,7 @@ fn init_grit_repo(root: &Path, sha256: bool, threads: Option<usize>) -> Reposito
     if let Some(n) = threads {
         options.thread_policy = ThreadPolicy::with_threads_override(Some(n));
     }
-    Repository::open_with(&options, &git_dir, Some(root)).expect("open grit repo")
+    Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open grit repo")
 }
 
 fn write_wide_tree(root: &Path, count: usize) {
@@ -49,7 +49,7 @@ fn pin_all_file_mtrees(root: &Path, count: usize) {
 }
 
 fn reset_staging_area(repo: &Repository) {
-    let git_dir = repo.git_dir.as_path();
+    let git_dir = repo.git_dir();
     let _ = fs::remove_file(git_dir.join("index"));
     let objects = git_dir.join("objects");
     if objects.is_dir() {

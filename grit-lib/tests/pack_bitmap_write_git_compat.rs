@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::time::SystemTime;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::pack::{read_local_pack_indexes, read_pack_index};
 use grit_lib::pack_bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
@@ -37,7 +38,7 @@ fn git_stdout(repo: &RepoFixture, args: &[&str]) -> String {
 }
 
 fn open_repo(path: &std::path::Path) -> Repository {
-    Repository::discover(Some(path)).expect("open repo")
+    Repository::discover(Some(path), &RepositoryOptions::empty()).expect("open repo")
 }
 
 fn build_rich_history_with_nested_tree(repo: &RepoFixture) {
@@ -101,7 +102,7 @@ fn reachability_positions(repo: &Repository, index: &BitmapIndex, tip: &ObjectId
 }
 
 fn all_commits(repo: &Repository) -> Vec<ObjectId> {
-    let dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let dir = repo.work_tree().unwrap_or(&repo.git_dir());
     let out = Command::new("git")
         .current_dir(dir)
         .args(["rev-list", "--all"])
@@ -462,7 +463,7 @@ fn git_git_sized_write_smoke() {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    let repo = Repository::open(&bare, None).expect("open");
+    let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open");
     let idx = read_local_pack_indexes(&bare.join("objects"))
         .expect("idx")
         .into_iter()

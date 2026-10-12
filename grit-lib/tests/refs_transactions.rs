@@ -403,7 +403,7 @@ fn concurrent_reftable_cas_single_winner() {
         grit_lib::RefStorageFormat::Reftable,
     )
     .expect("init");
-    let git_dir = repo.git_dir.clone();
+    let git_dir = repo.git_dir().to_path_buf();
     let c1: ObjectId = "67bf698f3ab735e92fb011a99cff3497c44d30c1"
         .parse()
         .expect("c1");

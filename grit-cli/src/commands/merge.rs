@@ -166,7 +166,7 @@ pub fn run(branch: Option<&str>, abort: bool) -> Result<MergeOutcome> {
         .map_err(anyhow::Error::new)
         .context("could not verify worktree is clean")?;
 
-    let (refname, head_oid) = match resolve_head(&repo.git_dir)? {
+    let (refname, head_oid) = match resolve_head(&repo.git_dir())? {
         HeadState::Branch {
             refname,
             oid: Some(oid),
@@ -205,7 +205,7 @@ fn resolve_branch(repo: &Repository, name: &str) -> Result<ObjectId> {
         format!("refs/remotes/{name}"),
         name.to_owned(),
     ] {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &candidate) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir(), &candidate) {
             return Ok(oid);
         }
     }

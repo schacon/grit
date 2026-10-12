@@ -1,5 +1,6 @@
 //! Linked worktree admin layout and per-worktree refs vs system `git`.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::{init_worktree_config, Repository};
 use grit_lib::worktree::{
@@ -23,7 +24,7 @@ fn init_repo(root: &Path) {
 }
 
 fn open_grit(root: &Path) -> Repository {
-    Repository::discover(Some(root)).expect("discover")
+    Repository::discover(Some(root), &RepositoryOptions::empty()).expect("discover")
 }
 
 fn assert_fsck_strict(root: &Path) {
@@ -214,7 +215,7 @@ fn per_worktree_refs_resolve_like_git() {
 
     let linked_repo = open_grit(&linked);
     write_ref(
-        linked_repo.git_dir.as_path(),
+        linked_repo.git_dir(),
         "refs/worktree/exclusive",
         &tip.parse().expect("oid"),
     )
@@ -223,7 +224,7 @@ fn per_worktree_refs_resolve_like_git() {
     let git_oid = git_cmd(&linked, &["rev-parse", "refs/worktree/exclusive"])
         .trim()
         .to_owned();
-    let grit_oid = resolve_ref(linked_repo.git_dir.as_path(), "refs/worktree/exclusive")
+    let grit_oid = resolve_ref(linked_repo.git_dir(), "refs/worktree/exclusive")
         .expect("resolve")
         .to_hex();
     assert_eq!(grit_oid, git_oid);

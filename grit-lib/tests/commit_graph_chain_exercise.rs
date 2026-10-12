@@ -8,6 +8,7 @@ use grit_lib::commit_graph_file::{
     diff_changed_paths_for_bloom, dump_bloom_filters, CommitGraphChain,
 };
 use grit_lib::commit_graph_write::load_commit_graph_commit_info;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
 
@@ -73,8 +74,8 @@ fn chain_accessors_and_bloom_helpers_on_split_graph() {
             "--split",
         ],
     );
-    let repo = Repository::discover(Some(dir.path())).expect("open");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     let _ = chain.top_layer_bloom_settings();
     let _ = chain.total_commits();
     let _ = chain.layer_paths_oldest_first();
@@ -105,20 +106,20 @@ fn chain_accessors_and_bloom_helpers_on_split_graph() {
             },
         );
         if let Some((parents, time)) = chain.graph_commit(&oid) {
-            let obj = repo.odb.read(&oid).expect("read");
+            let obj = repo.odb().read(&oid).expect("read");
             let c = parse_commit(&obj.data).expect("parse");
             if c.parents.len() <= 2 {
                 assert_eq!(c.parents, parents);
             }
-            let info = load_commit_graph_commit_info(&repo.odb, oid).expect("info");
+            let info = load_commit_graph_commit_info(&repo.odb(), oid).expect("info");
             if let Some(p) = c.parents.first() {
-                let ptree = load_commit_graph_commit_info(&repo.odb, *p)
+                let ptree = load_commit_graph_commit_info(&repo.odb(), *p)
                     .expect("pinfo")
                     .tree;
-                let _ = diff_changed_paths_for_bloom(&repo.odb, Some(ptree), info.tree);
+                let _ = diff_changed_paths_for_bloom(&repo.odb(), Some(ptree), info.tree);
             }
             let _ = chain.bloom_precheck_for_paths(
-                &repo.odb,
+                &repo.odb(),
                 oid,
                 &["z.txt".to_owned(), ":exclude:missing".to_owned()],
                 None,

@@ -46,7 +46,7 @@ fn submodule_active_pattern_values(
 /// configured pattern [`wildmatch`]s the submodule path (flags `0`, matching Git).
 #[must_use]
 pub fn submodule_add_should_set_active(repo: &Repository, sm_path: &str) -> bool {
-    let Ok(cfg) = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true) else {
+    let Ok(cfg) = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true) else {
         return true;
     };
     let path = sm_path.replace('\\', "/");
@@ -75,7 +75,7 @@ fn read_gitmodules_text(
     let Some(ie) = index.get(b".gitmodules", 0) else {
         return Ok(None);
     };
-    let obj = repo.odb.read(&ie.oid)?;
+    let obj = repo.odb().read(&ie.oid)?;
     if obj.kind != ObjectKind::Blob {
         return Ok(None);
     }
@@ -92,7 +92,7 @@ pub fn submodule_name_for_path(
     repo: &Repository,
     path: &str,
 ) -> crate::error::Result<Option<String>> {
-    let Some(wt) = repo.work_tree.as_ref() else {
+    let Some(wt) = repo.work_tree() else {
         return Ok(None);
     };
     let Some(content) = read_gitmodules_text(repo, wt)? else {

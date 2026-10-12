@@ -98,10 +98,10 @@ pub fn promisor_pack_object_ids(objects_dir: &Path) -> HashSet<ObjectId> {
 /// annotated tag object still in the promisor pack (t0410).
 #[must_use]
 pub fn promisor_pack_peeled_tag_targets(repo: &Repository) -> HashSet<ObjectId> {
-    let seeds = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+    let seeds = promisor_pack_object_ids(&repo.git_dir().join("objects"));
     let mut out = HashSet::new();
     for oid in seeds {
-        let Ok(obj) = repo.odb.read(&oid) else {
+        let Ok(obj) = repo.odb().read(&oid) else {
             continue;
         };
         if obj.kind != ObjectKind::Tag {
@@ -117,10 +117,10 @@ pub fn promisor_pack_peeled_tag_targets(repo: &Repository) -> HashSet<ObjectId> 
 
 /// Promisor pack member OIDs plus peeled tag targets (one hop from each tag in the pack).
 pub fn promisor_pack_and_tag_targets(repo: &Repository) -> Result<HashSet<ObjectId>> {
-    let seeds = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+    let seeds = promisor_pack_object_ids(&repo.git_dir().join("objects"));
     let mut out = seeds.clone();
     for oid in seeds {
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.odb().read(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
@@ -141,7 +141,7 @@ pub fn promisor_pack_and_tag_targets(repo: &Repository) -> Result<HashSet<Object
 ///
 /// Returns [`crate::error::Error::CorruptObject`] if a packed object has invalid bytes.
 pub fn promisor_expanded_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
-    let objects_dir = repo.git_dir.join("objects");
+    let objects_dir = repo.git_dir().join("objects");
     let seeds = promisor_pack_object_ids(&objects_dir);
     let mut set: HashSet<ObjectId> = HashSet::new();
     let mut queue: VecDeque<ObjectId> = seeds.iter().copied().collect();
@@ -150,7 +150,7 @@ pub fn promisor_expanded_object_ids(repo: &Repository) -> Result<HashSet<ObjectI
         if !set.insert(oid) {
             continue;
         }
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.odb().read(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
@@ -178,7 +178,7 @@ pub fn promisor_expanded_object_ids(repo: &Repository) -> Result<HashSet<ObjectI
         }
     }
 
-    for oid in read_promisor_missing_oids(&repo.git_dir) {
+    for oid in read_promisor_missing_oids(repo.git_dir()) {
         set.insert(oid);
     }
     Ok(set)

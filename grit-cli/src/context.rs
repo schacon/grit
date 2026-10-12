@@ -69,14 +69,14 @@ pub struct CommitSummary {
 /// Discover the repository containing the current directory.
 pub fn discover() -> Result<Repository> {
     let (options, _sink) = diagnostics::repository_options(false);
-    Repository::discover_with_options(None, options).context("not in a repository")
+    Repository::discover(None, &options).context("not in a repository")
 }
 
 /// Like [`discover`], but returns the diagnostic sink used for warnings.
 pub fn discover_with_warnings(
 ) -> Result<(Repository, std::sync::Arc<diagnostics::CliDiagnosticSink>)> {
     let (options, sink) = diagnostics::repository_options(false);
-    let repo = Repository::discover_with_options(None, options).context("not in a repository")?;
+    let repo = Repository::discover(None, &options).context("not in a repository")?;
     Ok((repo, sink))
 }
 
@@ -114,7 +114,7 @@ fn target_branch_candidates(repo: &Repository) -> Result<Vec<String>> {
 
 fn resolve_branch_candidate(repo: &Repository, candidate: &str) -> Option<ObjectId> {
     for refname in candidate_refnames(candidate) {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &refname) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir(), &refname) {
             return Some(oid);
         }
     }
@@ -283,7 +283,7 @@ pub fn commit_tree(repo: &Repository, oid: &ObjectId) -> Result<ObjectId> {
 /// Read and parse a commit object.
 pub fn read_commit(repo: &Repository, oid: &ObjectId) -> Result<CommitData> {
     let object = repo
-        .odb
+        .odb()
         .read(oid)
         .with_context(|| format!("could not read commit {oid}"))?;
     if object.kind != ObjectKind::Commit {

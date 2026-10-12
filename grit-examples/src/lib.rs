@@ -14,19 +14,19 @@ pub mod sqlite_odb;
 
 /// Resolve a revision-like string as a ref first, then as a raw object id.
 pub fn resolve_name(repo: &Repository, name: &str) -> Result<ObjectId> {
-    grit_lib::refs::resolve_ref(&repo.git_dir, name)
+    grit_lib::refs::resolve_ref(&repo.git_dir(), name)
         .or_else(|_| name.parse::<ObjectId>().map_err(anyhow::Error::from))
         .with_context(|| format!("could not resolve {name}"))
 }
 
 /// Return the current HEAD object id.
 pub fn head_oid(repo: &Repository) -> Result<ObjectId> {
-    grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD").context("could not resolve HEAD")
+    grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD").context("could not resolve HEAD")
 }
 
 /// Return the object id of a commit's tree.
 pub fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
-    let object = repo.odb.read(&commit_oid)?;
+    let object = repo.odb().read(&commit_oid)?;
     if object.kind != ObjectKind::Commit {
         bail!("{commit_oid} is not a commit");
     }
@@ -46,7 +46,7 @@ fn append_tree_entries(
     prefix: &Path,
     entries: &mut Vec<IndexEntry>,
 ) -> Result<()> {
-    let object = repo.odb.read(&tree_oid)?;
+    let object = repo.odb().read(&tree_oid)?;
     if object.kind != ObjectKind::Tree {
         bail!("{tree_oid} is not a tree");
     }
@@ -71,15 +71,14 @@ fn append_tree_entries(
 /// Write tree contents to the work tree for blob and subtree entries.
 pub fn checkout_tree(repo: &Repository, tree_oid: ObjectId) -> Result<()> {
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .context("bare repository has no work tree")?;
     checkout_tree_at(repo, tree_oid, work_tree)
 }
 
 fn checkout_tree_at(repo: &Repository, tree_oid: ObjectId, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)?;
-    let object = repo.odb.read(&tree_oid)?;
+    let object = repo.odb().read(&tree_oid)?;
     if object.kind != ObjectKind::Tree {
         bail!("{tree_oid} is not a tree");
     }
@@ -90,7 +89,7 @@ fn checkout_tree_at(repo: &Repository, tree_oid: ObjectId, dir: &Path) -> Result
             checkout_tree_at(repo, entry.oid, &path)?;
             continue;
         }
-        let blob = repo.odb.read(&entry.oid)?;
+        let blob = repo.odb().read(&entry.oid)?;
         if blob.kind != ObjectKind::Blob {
             continue;
         }
@@ -137,8 +136,7 @@ pub fn index_entry(
 /// Stage one work-tree file in the index.
 pub fn add_path(repo: &Repository, index: &mut Index, path: &Path) -> Result<()> {
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .context("bare repository has no work tree")?;
     let full_path = if path.is_absolute() {
         path.to_path_buf()
@@ -153,7 +151,7 @@ pub fn add_path(repo: &Repository, index: &mut Index, path: &Path) -> Result<()>
     } else {
         MODE_REGULAR
     };
-    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+    let oid = repo.odb().write(ObjectKind::Blob, &data)?;
     let rel = path_relative_to_worktree(work_tree, &full_path)?;
     let rel_bytes = rel.as_os_str().as_encoded_bytes().to_vec();
     index.add_or_replace(index_entry(

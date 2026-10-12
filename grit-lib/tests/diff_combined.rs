@@ -10,6 +10,7 @@ use grit_lib::combined_tree_diff::{
     CombinedTreeDiffOptions,
 };
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::merge_diff::{
     combined_diff_paths, enrich_combined_path_renames, format_combined_textconv_patch,
     format_worktree_conflict_combined,
@@ -19,8 +20,9 @@ use grit_lib::objects::{parse_commit, ObjectId};
 use support::{git_output, git_quiet, git_raw_lines, DiffRepo};
 
 fn read_merge(wt: &std::path::Path, commit: &ObjectId) -> (ObjectId, Vec<ObjectId>) {
-    let repo = grit_lib::repo::Repository::discover(Some(wt)).expect("open");
-    let data = repo.odb.read(commit).expect("read").data;
+    let repo =
+        grit_lib::repo::Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
+    let data = repo.odb().read(commit).expect("read").data;
     let parsed = parse_commit(&data).expect("parse");
     (parsed.tree, parsed.parents)
 }
@@ -80,7 +82,7 @@ fn t4038_combined_raw_matches_git() {
     let (result_tree, parents) = read_merge(wt, &merge_commit);
     assert_eq!(parents.len(), 2);
     let walk = CombinedTreeDiffOptions::default();
-    let paths = combined_diff_paths_filtered(&dr.repo.odb, &result_tree, &parents, &walk, None)
+    let paths = combined_diff_paths_filtered(&dr.repo.odb(), &result_tree, &parents, &walk, None)
         .expect("combined paths");
     let mut grit_lines: Vec<String> = paths
         .iter()
@@ -188,7 +190,7 @@ fn t4057_combined_paths_octopus_matches_git() {
         names
     };
 
-    let mut grit_sorted = combined_diff_paths(&dr.repo.odb, &tree, &parents);
+    let mut grit_sorted = combined_diff_paths(&dr.repo.odb(), &tree, &parents);
     grit_sorted.sort();
 
     assert_eq!(
@@ -198,7 +200,7 @@ fn t4057_combined_paths_octopus_matches_git() {
 
     let git_raw = git_raw_lines(wt, &["diff-tree", "--cc", "-r", "--raw", &merge.to_hex()]);
     let walk = CombinedTreeDiffOptions::default();
-    let paths = combined_diff_paths_filtered(&dr.repo.odb, &tree, &parents, &walk, None)
+    let paths = combined_diff_paths_filtered(&dr.repo.odb(), &tree, &parents, &walk, None)
         .expect("combined paths");
     let mut grit_raw: Vec<String> = paths
         .iter()
@@ -287,14 +289,14 @@ fn t4038_combined_patch_matches_git() {
 
     let walk = CombinedTreeDiffOptions::default();
     let paths =
-        combined_diff_paths_filtered(&dr.repo.odb, &result_tree, &parent_trees, &walk, None)
+        combined_diff_paths_filtered(&dr.repo.odb(), &result_tree, &parent_trees, &walk, None)
             .expect("paths");
     let path = paths.iter().find(|p| p.path == "file").expect("file path");
     let config = ConfigSet::new();
     let grit_patch = format_combined_textconv_patch(
-        &dr.repo.git_dir,
+        &dr.repo.git_dir(),
         &config,
-        &dr.repo.odb,
+        &dr.repo.odb(),
         "file",
         &parent_trees,
         &result_tree,
@@ -374,16 +376,16 @@ fn t4048_combined_binary_matches_git() {
     let (result_tree, parents) = read_merge(wt, &merge);
     let config = ConfigSet::new();
     let walk = CombinedTreeDiffOptions::default();
-    let paths = combined_diff_paths_filtered(&dr.repo.odb, &result_tree, &parents, &walk, None)
+    let paths = combined_diff_paths_filtered(&dr.repo.odb(), &result_tree, &parents, &walk, None)
         .expect("paths");
     let side = paths
         .iter()
         .find(|p| p.path == "bin.dat")
         .expect("bin path");
     let grit = format_combined_textconv_patch(
-        &dr.repo.git_dir,
+        &dr.repo.git_dir(),
         &config,
-        &dr.repo.odb,
+        &dr.repo.odb(),
         "bin.dat",
         &parents,
         &result_tree,
@@ -477,9 +479,14 @@ fn combined_find_object_and_recursive_raw() {
         recursive: true,
         tree_in_recursive: true,
     };
-    let filtered =
-        combined_diff_paths_filtered(&dr.repo.odb, &result_tree, &parents, &walk, Some(&blob_oid))
-            .expect("find-object paths");
+    let filtered = combined_diff_paths_filtered(
+        &dr.repo.odb(),
+        &result_tree,
+        &parents,
+        &walk,
+        Some(&blob_oid),
+    )
+    .expect("find-object paths");
     assert!(
         filtered.iter().any(|p| p.path.contains("a.txt")),
         "find-object must retain matching blob path"
@@ -536,11 +543,12 @@ fn combined_all_paths_enrich_renames_raw() {
         .unwrap();
     let (result_tree, parents) = read_merge(wt, &merge);
     let walk = CombinedTreeDiffOptions::default();
-    let mut paths = combined_diff_paths_filtered(&dr.repo.odb, &result_tree, &parents, &walk, None)
-        .expect("paths");
+    let mut paths =
+        combined_diff_paths_filtered(&dr.repo.odb(), &result_tree, &parents, &walk, None)
+            .expect("paths");
     assert!(!paths.is_empty(), "merge must produce combined paths");
     for path in &mut paths {
-        enrich_combined_path_renames(&dr.repo.odb, path, &parents, &result_tree, 50);
+        enrich_combined_path_renames(&dr.repo.odb(), path, &parents, &result_tree, 50);
         let line = format_combined_raw_line_all_paths(path, None, true, false);
         assert!(line.starts_with(':'), "all-paths raw line: {line}");
     }
@@ -561,20 +569,20 @@ fn format_worktree_conflict_combined_smoke() {
     let stage1 = base;
     let stage2 = dr
         .repo
-        .odb
+        .odb()
         .write(grit_lib::objects::ObjectKind::Blob, b"ours\n")
         .expect("stage2 blob");
     let stage3 = dr
         .repo
-        .odb
+        .odb()
         .write(grit_lib::objects::ObjectKind::Blob, b"theirs\n")
         .expect("stage3 blob");
     let wt_bytes = b"<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n";
     let config = ConfigSet::new();
     let patch = format_worktree_conflict_combined(
-        &dr.repo.git_dir,
+        &dr.repo.git_dir(),
         &config,
-        &dr.repo.odb,
+        &dr.repo.odb(),
         "f",
         &stage1,
         &stage2,

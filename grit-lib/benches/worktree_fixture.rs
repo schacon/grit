@@ -150,8 +150,8 @@ fn build_status_nested_l_fixtures(base: &Path) -> (Repository, Repository) {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("plain status repo");
-    populate(nested_repo.work_tree.as_ref().expect("wt"), true);
-    populate(plain_repo.work_tree.as_ref().expect("wt"), false);
+    populate(nested_repo.work_tree().expect("wt"), true);
+    populate(plain_repo.work_tree().expect("wt"), false);
     (nested_repo, plain_repo)
 }
 
@@ -304,10 +304,10 @@ impl WorktreeBenchFixtures {
             grit_lib::RefStorageFormat::Files,
         )
         .expect("ignore repo init");
-        let wt = ignore_repo.work_tree.as_ref().expect("work tree");
+        let wt = ignore_repo.work_tree().expect("work tree");
         write_realistic_gitignore(&wt.join(".gitignore"));
         std::fs::write(
-            ignore_repo.git_dir.join("info/exclude"),
+            ignore_repo.git_dir().join("info/exclude"),
             "*.local\n/build/\n",
         )
         .expect("info/exclude");
@@ -327,7 +327,7 @@ impl WorktreeBenchFixtures {
             grit_lib::RefStorageFormat::Files,
         )
         .expect("attr repo init");
-        let attr_wt = attr_repo.work_tree.as_ref().expect("work tree");
+        let attr_wt = attr_repo.work_tree().expect("work tree");
         write_realistic_gitattributes(&attr_wt.join(".gitattributes"));
         for d in 0..32 {
             let sub = attr_wt.join(format!("pkg{d:02}"));
@@ -349,7 +349,7 @@ impl WorktreeBenchFixtures {
             grit_lib::RefStorageFormat::Files,
         )
         .expect("scan repo init");
-        let scan_wt = scan_repo.work_tree.as_ref().expect("work tree");
+        let scan_wt = scan_repo.work_tree().expect("work tree");
         let mut scan_index = Index::empty(2);
         for i in 0..10_000 {
             let dir = format!("d{:04}", i / 100);
@@ -361,7 +361,7 @@ impl WorktreeBenchFixtures {
             let bytes = format!("payload {i}\n");
             std::fs::write(&path, &bytes).expect("scan blob");
             let oid = scan_repo
-                .odb
+                .odb()
                 .write(grit_lib::objects::ObjectKind::Blob, bytes.as_bytes())
                 .expect("hash scan blob");
             let meta = std::fs::symlink_metadata(&path).expect("stat scan file");

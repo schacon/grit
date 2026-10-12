@@ -3,6 +3,7 @@
 use std::fs;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::merge::{abort_branch_merge, integrate_branch, IntegrateBranchOutcome};
@@ -64,14 +65,14 @@ fn issue_960_repo() -> (tempfile::TempDir, Repository) {
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "main"]);
 
-    let repo = Repository::discover(Some(root)).expect("open repo");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open repo");
     (tmp, repo)
 }
 
 #[test]
 fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
     let (_tmp, repo) = issue_960_repo();
-    let root = repo.work_tree.as_ref().expect("worktree");
+    let root = repo.work_tree().expect("worktree");
 
     let main_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
     let feature_oid =
@@ -95,9 +96,9 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
         "expected conflicts, got {outcome:?}"
     );
 
-    assert!(repo.git_dir.join("MERGE_HEAD").exists());
-    assert!(repo.git_dir.join("ORIG_HEAD").exists());
-    assert!(repo.git_dir.join("MERGE_MSG").exists());
+    assert!(repo.git_dir().join("MERGE_HEAD").exists());
+    assert!(repo.git_dir().join("ORIG_HEAD").exists());
+    assert!(repo.git_dir().join("MERGE_MSG").exists());
 
     let index = repo.load_index().expect("index");
     assert!(index.has_unmerged_entries());
@@ -134,7 +135,7 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
     );
 
     let grit_stage0 =
-        grit_lib::write_tree::write_tree_from_index(&repo.odb, &index, "").expect("stage0 tree");
+        grit_lib::write_tree::write_tree_from_index(&repo.odb(), &index, "").expect("stage0 tree");
     for path in ["b.txt", "x.txt"] {
         let grit_oid = git_out(root, &["ls-tree", "-r", &grit_stage0.to_hex(), "--", path]);
         let git_oid = git_out(root, &["ls-tree", "-r", git_tree, "--", path]);
@@ -169,7 +170,7 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
 #[test]
 fn resolve_and_commit_matches_git_merge() {
     let (_tmp, repo) = issue_960_repo();
-    let root = repo.work_tree.as_ref().expect("worktree");
+    let root = repo.work_tree().expect("worktree");
 
     let main_oid = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("main");
     let feature_oid =
@@ -196,16 +197,16 @@ fn resolve_and_commit_matches_git_merge() {
         .expect("merge commit");
 
     let side_tip = ObjectId::from_hex(&git_out(root, &["rev-parse", "feature-x"])).expect("side");
-    let commit_obj = repo.odb.read(&outcome.oid).expect("commit");
+    let commit_obj = repo.odb().read(&outcome.oid).expect("commit");
     let parsed = parse_commit(&commit_obj.data).expect("parse");
     assert_eq!(parsed.parents, vec![main_oid, side_tip]);
-    assert!(!repo.git_dir.join("MERGE_HEAD").exists());
+    assert!(!repo.git_dir().join("MERGE_HEAD").exists());
 }
 
 #[test]
 fn merge_abort_restores_pre_merge_state() {
     let (_tmp, repo) = issue_960_repo();
-    let root = repo.work_tree.as_ref().expect("worktree");
+    let root = repo.work_tree().expect("worktree");
 
     let main_before = git_out(root, &["rev-parse", "HEAD"]);
     let main_tree_before = git_out(root, &["rev-parse", "HEAD^{tree}"]);
@@ -221,7 +222,7 @@ fn merge_abort_restores_pre_merge_state() {
 
     abort_branch_merge(&repo).expect("abort");
 
-    assert!(!repo.git_dir.join("MERGE_HEAD").exists());
+    assert!(!repo.git_dir().join("MERGE_HEAD").exists());
     assert_eq!(git_out(root, &["rev-parse", "HEAD"]), main_before);
     assert_eq!(
         git_out(root, &["rev-parse", "HEAD^{tree}"]),

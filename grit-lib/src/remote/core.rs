@@ -398,16 +398,15 @@ impl Remote {
     ) -> RemoteResult<FetchOutcome> {
         match url {
             RemoteUrl::Bundle(path) => Ok(crate::bundle_remote::fetch_from_bundle_with_progress(
-                &repo.git_dir,
+                repo.git_dir(),
                 path,
                 opts,
                 progress,
             )?),
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
-                let remote_git =
-                    local_git_dir_from_url(url, &repo.git_dir, repo.work_tree.as_deref())?;
+                let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
                 Ok(fetch_local_with_progress(
-                    &repo.git_dir,
+                    repo.git_dir(),
                     &remote_git,
                     opts,
                     progress,
@@ -417,17 +416,17 @@ impl Remote {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(&repo.git_dir, &mut *conn, opts, progress)?)
+                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
             }
             RemoteUrl::Git(u) => {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(&repo.git_dir, &mut *conn, opts, progress)?)
+                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
             }
             RemoteUrl::Ssh(u) => {
                 let transport = ssh_transport(Some(repo));
                 let mut conn = transport.connect(u, Service::UploadPack, &connect)?;
-                Ok(fetch_remote(&repo.git_dir, &mut *conn, opts, progress)?)
+                Ok(fetch_remote(repo.git_dir(), &mut *conn, opts, progress)?)
             }
         }
     }
@@ -445,16 +444,15 @@ impl Remote {
     ) -> RemoteResult<PushOutcome> {
         match url {
             RemoteUrl::Local(_) | RemoteUrl::File(_) => {
-                let remote_git =
-                    local_git_dir_from_url(url, &repo.git_dir, repo.work_tree.as_deref())?;
-                Ok(push_local(&repo.git_dir, &remote_git, refs, opts)?)
+                let remote_git = local_git_dir_from_url(url, repo.git_dir(), repo.work_tree())?;
+                Ok(push_local(repo.git_dir(), &remote_git, refs, opts)?)
             }
             RemoteUrl::Http(u) | RemoteUrl::Https(u) => {
                 let client: Arc<dyn HttpClient> = Arc::from(http_client(http_factory, repo)?);
                 let transport = SmartHttpTransport::new(client);
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
                 Ok(push_remote(
-                    &repo.git_dir,
+                    repo.git_dir(),
                     &mut *conn,
                     refs,
                     opts,
@@ -465,7 +463,7 @@ impl Remote {
                 let mut conn =
                     GitDaemonTransport::new().connect(u, Service::ReceivePack, &connect)?;
                 Ok(push_remote(
-                    &repo.git_dir,
+                    repo.git_dir(),
                     &mut *conn,
                     refs,
                     opts,
@@ -476,7 +474,7 @@ impl Remote {
                 let transport = ssh_transport(Some(repo));
                 let mut conn = transport.connect(u, Service::ReceivePack, &connect)?;
                 Ok(push_remote(
-                    &repo.git_dir,
+                    repo.git_dir(),
                     &mut *conn,
                     refs,
                     opts,
@@ -523,11 +521,7 @@ impl Remote {
 
 fn repo_context(repo: Option<&Repository>) -> (&Path, Option<&Path>, Option<Odb>) {
     match repo {
-        Some(r) => (
-            r.git_dir.as_path(),
-            r.work_tree.as_deref(),
-            Some(r.odb.clone()),
-        ),
+        Some(r) => (r.git_dir(), r.work_tree(), Some(r.odb().clone())),
         None => (Path::new("."), None, None),
     }
 }

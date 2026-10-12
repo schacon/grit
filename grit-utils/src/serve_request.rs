@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -21,7 +22,7 @@ pub const SERVE_CLONE_REQUEST_FILE: &str = ".grit-bench-serve-clone-req.bin";
 pub fn write_v0_serve_clone_request(repo: &Repository, out: &mut impl Write) -> Result<()> {
     let mut tips = ref_want_oids(repo)?;
     if tips.is_empty() {
-        tips.push(ObjectId::null(repo.odb.hash_algo()));
+        tips.push(ObjectId::null(repo.odb().hash_algo()));
     }
     tips.sort_by_key(|oid| oid.to_hex());
     tips.dedup();
@@ -48,13 +49,13 @@ fn serve_clone_capability_string(repo: &Repository) -> String {
         .iter()
         .map(|c| (*c).to_owned())
         .collect();
-    caps.push(format!("object-format={}", repo.odb.hash_algo().name()));
+    caps.push(format!("object-format={}", repo.odb().hash_algo().name()));
     caps.join(" ")
 }
 
 /// Collect ref tips in the same order Git uses for a full-clone want list.
 fn ref_want_oids(repo: &Repository) -> Result<Vec<ObjectId>> {
-    let mut refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")?;
+    let mut refs = grit_lib::refs::list_refs(&repo.git_dir(), "refs/")?;
     refs.sort_by(|a, b| a.0.cmp(&b.0));
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -75,7 +76,8 @@ pub fn ensure_serve_clone_request(repo: &Path) -> Result<std::path::PathBuf> {
     if path.is_file() {
         return Ok(path);
     }
-    let repository = Repository::open(repo, None).context("open repo for serve request")?;
+    let repository = Repository::open(repo, &RepositoryOptions::empty())
+        .context("open repo for serve request")?;
     let mut file = std::fs::File::create(&path).context("create serve-clone request file")?;
     write_v0_serve_clone_request(&repository, &mut file)?;
     Ok(path)
@@ -114,6 +116,7 @@ pub fn parse_v0_request_lines(body: &[u8]) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use grit_lib::environment::RepositoryOptions;
     use grit_lib::repo::Repository;
     use tempfile::TempDir;
 
@@ -128,7 +131,8 @@ mod tests {
             .status()
             .expect("git init");
         assert!(status.success(), "git init failed");
-        let repo = Repository::discover(Some(dir.path())).expect("discover");
+        let repo =
+            Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("discover");
         let mut body = Vec::new();
         write_v0_serve_clone_request(&repo, &mut body).expect("write request");
         let lines = parse_v0_request_lines(&body).expect("parse");

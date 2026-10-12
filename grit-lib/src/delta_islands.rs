@@ -204,7 +204,7 @@ pub fn load_delta_islands(
 
     // Collect refs and assign each to an island by name.
     let mut by_name: HashMap<String, RemoteIsland> = HashMap::new();
-    let refs = crate::refs::list_refs(&repo.git_dir, "refs/").unwrap_or_default();
+    let refs = crate::refs::list_refs(repo.git_dir(), "refs/").unwrap_or_default();
     for (ref_name, oid) in &refs {
         let Some(name) = island_name_for_ref(&regexes, ref_name) else {
             continue;
@@ -302,13 +302,13 @@ fn propagate_marks(
         .marks
         .keys()
         .copied()
-        .filter(|oid| matches!(repo.odb.read(oid).map(|o| o.kind), Ok(ObjectKind::Tag)))
+        .filter(|oid| matches!(repo.odb().read(oid).map(|o| o.kind), Ok(ObjectKind::Tag)))
         .collect();
     for tag_oid in tag_oids {
         let marks = islands.marks.get(&tag_oid).cloned();
         let Some(marks) = marks else { continue };
         let mut cur = tag_oid;
-        while let Ok(obj) = repo.odb.read(&cur) {
+        while let Ok(obj) = repo.odb().read(&cur) {
             if obj.kind != ObjectKind::Tag {
                 break;
             }
@@ -325,7 +325,7 @@ fn propagate_marks(
     let mut commit_marks: Vec<(ObjectId, IslandBitmap)> = islands
         .marks
         .iter()
-        .filter(|(oid, _)| matches!(repo.odb.read(oid).map(|o| o.kind), Ok(ObjectKind::Commit)))
+        .filter(|(oid, _)| matches!(repo.odb().read(oid).map(|o| o.kind), Ok(ObjectKind::Commit)))
         .map(|(oid, m)| (*oid, m.clone()))
         .collect();
 
@@ -336,7 +336,7 @@ fn propagate_marks(
         let Some(marks) = islands.marks.get(&cid).cloned() else {
             continue;
         };
-        let Ok(obj) = repo.odb.read(&cid) else {
+        let Ok(obj) = repo.odb().read(&cid) else {
             continue;
         };
         if obj.kind != ObjectKind::Commit {
@@ -377,7 +377,7 @@ fn propagate_marks(
         // Record that we've expanded this tree. Re-expanding is harmless (add_marks only ORs
         // bits) but we only re-queue a sub-tree below when its marks actually grew.
         tree_visited.insert(tid);
-        let Ok(obj) = repo.odb.read(&tid) else {
+        let Ok(obj) = repo.odb().read(&tid) else {
             continue;
         };
         if obj.kind != ObjectKind::Tree {

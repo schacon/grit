@@ -5,6 +5,7 @@
 use std::time::Instant;
 
 use grit_lib::diff::refresh_index_stat_content_verified;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 
@@ -28,19 +29,23 @@ fn refresh_index_stat_only_timing() {
         filetime::set_file_mtime(&path, filetime::FileTime::now()).expect("touch");
     }
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let mut index = repo.load_index().expect("index");
     let index_mtime = index.source_mtime;
     let config = grit_lib::config::ConfigSet::load(
         &grit_lib::environment::Environment::capture_process(),
-        Some(&repo.git_dir),
+        Some(&repo.git_dir()),
         true,
     )
     .unwrap_or_default();
     let start = Instant::now();
     let _ = refresh_index_stat_content_verified(
-        &repo.odb,
-        &repo.git_dir,
+        &repo.odb(),
+        &repo.git_dir(),
         &mut index,
         root,
         index_mtime,

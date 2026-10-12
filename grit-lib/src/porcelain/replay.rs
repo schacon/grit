@@ -86,7 +86,7 @@ pub enum ReplayOutcome {
 pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOutcome> {
     ensure_worktree_clean_for_pick(repo)?;
 
-    let (refname, head_oid) = match resolve_head(&repo.git_dir)? {
+    let (refname, head_oid) = match resolve_head(repo.git_dir())? {
         HeadState::Branch {
             refname,
             oid: Some(oid),
@@ -103,7 +103,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         return Err(Error::ReplaySourceAtHead);
     }
 
-    let source_obj = repo.odb.read(&req.commit)?;
+    let source_obj = repo.odb().read(&req.commit)?;
     let source = parse_commit(&source_obj.data)?;
     if source.parents.len() > 1 {
         return Err(Error::MergeCommit { oid: req.commit });
@@ -140,7 +140,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
     }
 
     let mut index = merged.index;
-    let new_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let new_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     if new_tree == head_tree {
         return Ok(ReplayOutcome::AlreadyApplied);
     }
@@ -181,19 +181,19 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
 
     let index_snapshot = fs::read(repo.index_path()).ok();
 
-    if crate::refs::store::open_ref_store(&repo.git_dir)?.format()
+    if crate::refs::store::open_ref_store(repo.git_dir())?.format()
         != crate::refs::store::RefStorageFormat::Files
     {
-        let current = resolve_ref(&repo.git_dir, &refname).ok();
+        let current = resolve_ref(repo.git_dir(), &refname).ok();
         crate::refs::verify_branch_commit_cas(Some(head_oid), current, &refname)?;
 
         prepare_tree_checkout(repo, Some(&head_tree), &new_tree)?;
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
 
         if let Err(err) =
-            update_branch_for_commit_with_config(&repo.git_dir, &ref_update, config.as_ref())
+            update_branch_for_commit_with_config(repo.git_dir(), &ref_update, config.as_ref())
         {
-            undo_prepared_branch_commit_reflogs(&repo.git_dir, &refname, config.as_ref());
+            undo_prepared_branch_commit_reflogs(repo.git_dir(), &refname, config.as_ref());
             restore_worktree_after_failed_ref_commit(
                 repo,
                 &head_tree,
@@ -204,14 +204,14 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         }
     } else {
         let mut branch_ref_lock =
-            BranchCommitRefLock::acquire(&repo.git_dir, &refname, Some(head_oid))?;
-        branch_ref_lock.write_reflogs(&repo.git_dir, &ref_update, &head_oid, config.as_ref())?;
+            BranchCommitRefLock::acquire(repo.git_dir(), &refname, Some(head_oid))?;
+        branch_ref_lock.write_reflogs(repo.git_dir(), &ref_update, &head_oid, config.as_ref())?;
 
         prepare_tree_checkout(repo, Some(&head_tree), &new_tree)?;
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
 
-        if let Err(err) = branch_ref_lock.finish_ref_commit(&repo.git_dir, &ref_update) {
-            undo_prepared_branch_commit_reflogs(&repo.git_dir, &refname, config.as_ref());
+        if let Err(err) = branch_ref_lock.finish_ref_commit(repo.git_dir(), &ref_update) {
+            undo_prepared_branch_commit_reflogs(repo.git_dir(), &refname, config.as_ref());
             restore_worktree_after_failed_ref_commit(
                 repo,
                 &head_tree,
@@ -290,7 +290,7 @@ fn commit_message(req: &ReplayRequest, source: &CommitData) -> Result<String> {
 }
 
 fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit_oid)?;
+    let obj = repo.odb().read(commit_oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
             "expected commit, got {}",
@@ -301,7 +301,7 @@ fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
 }
 
 fn empty_tree(repo: &Repository) -> Result<ObjectId> {
-    repo.odb.write(ObjectKind::Tree, &[])
+    repo.odb().write(ObjectKind::Tree, &[])
 }
 
 fn has_merge_conflicts(merged: &crate::merge_trees::TreeMergeOutput) -> bool {

@@ -171,7 +171,7 @@ pub(crate) fn advertised_refs(repo: &Repository, hidden: &[String]) -> Result<Ve
 pub(crate) fn peel_tag(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     // Bound the walk so a corrupt tag cycle cannot loop forever.
     for _ in 0..64 {
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.odb().read(&oid)?;
         if obj.kind != ObjectKind::Tag {
             return Ok(oid);
         }
@@ -191,10 +191,10 @@ pub(crate) struct HeadInfo {
 /// Read `HEAD` for the advertisement.
 pub(crate) fn head_info(repo: &Repository) -> HeadInfo {
     HeadInfo {
-        target: crate::refs::read_symbolic_ref(&repo.git_dir, "HEAD")
+        target: crate::refs::read_symbolic_ref(repo.git_dir(), "HEAD")
             .ok()
             .flatten(),
-        oid: crate::refs::resolve_ref(&repo.git_dir, "HEAD").ok(),
+        oid: crate::refs::resolve_ref(repo.git_dir(), "HEAD").ok(),
     }
 }
 
@@ -240,7 +240,7 @@ pub(crate) enum Packet {
 pub(crate) fn parse_oid(repo: &Repository, hex: &str) -> Result<ObjectId> {
     let oid = ObjectId::from_hex(hex)
         .map_err(|_| ServeError::Protocol(format!("invalid object id '{hex}'")))?;
-    if oid.algo() != repo.odb.hash_algo() {
+    if oid.algo() != repo.odb().hash_algo() {
         return Err(ServeError::Protocol(format!(
             "object id '{hex}' does not match the repository hash algorithm"
         )));
@@ -250,7 +250,7 @@ pub(crate) fn parse_oid(repo: &Repository, hex: &str) -> Result<ObjectId> {
 
 /// Check a client's `object-format=` capability against the repository.
 pub(crate) fn check_object_format(repo: &Repository, client: Option<&str>) -> Result<()> {
-    let ours = repo.odb.hash_algo().name();
+    let ours = repo.odb().hash_algo().name();
     match client {
         Some(name) if name != ours => Err(ServeError::ObjectFormatMismatch {
             client: name.to_owned(),

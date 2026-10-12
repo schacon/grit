@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
 use crate::diff::DiffEntry;
+use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
@@ -343,7 +344,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     let mut untracked = Vec::new();
     let mut ignored = Vec::new();
     let precompose_unicode =
-        effective_core_precomposeunicode_with_config(Some(&repo.git_dir), Some(rules.config()));
+        effective_core_precomposeunicode_with_config(Some(repo.git_dir()), Some(rules.config()));
 
     if effective_pathspecs.is_empty() {
         let (mut par_untracked, mut par_ignored) = collect_untracked_parallel_top_level(
@@ -534,7 +535,8 @@ fn collect_untracked_parallel_top_level(
 
     let mut untracked = Vec::new();
     let mut ignored = Vec::new();
-    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
+    let config =
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let parallelism = repo
         .thread_policy()
         .resolve(ParallelOp::IndexRefresh, &config)
@@ -827,7 +829,7 @@ fn visit_untracked_node(
 
     if !rel.is_empty()
         && abs.is_dir()
-        && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
+        && dir_is_nested_submodule_worktree(repo.git_dir(), abs)
         && has_tracked_under(index, gitlinks, rel)
     {
         return Ok(());
@@ -953,7 +955,7 @@ fn visit_untracked_directory(
     }
 
     if ignored_mode != IgnoredMode::No
-        && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
+        && dir_is_nested_submodule_worktree(repo.git_dir(), abs)
         && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         ignored_out.push(format!("{rel}/"));
@@ -1310,7 +1312,10 @@ pub fn status_path_matches_worktree_with_rules(
             .map(|ctx| ctx.attribute_rules_for_path(normalized))
             .unwrap_or_else(|| {
                 crate::crlf::load_gitattributes_for_checkout(
-                    work_tree, normalized, index, &repo.odb,
+                    work_tree,
+                    normalized,
+                    index,
+                    repo.odb(),
                 )
             })
     };
@@ -1437,12 +1442,12 @@ pub fn status(
     opts: &StatusOptions,
     _progress: &mut dyn ProgressSink,
 ) -> Result<StatusModel> {
-    let work_tree = repo.work_tree.as_deref().ok_or_else(|| {
+    let work_tree = repo.work_tree().ok_or_else(|| {
         crate::error::Error::Message("this operation must be run in a work tree".into())
     })?;
 
-    let head = crate::state::resolve_head(&repo.git_dir)?;
-    let state = crate::state::wt_status_get_state(&repo.git_dir, &head, true)?;
+    let head = crate::state::resolve_head(repo.git_dir())?;
+    let state = crate::state::wt_status_get_state(repo.git_dir(), &head, true)?;
     let repo_config = repo.config().ok();
 
     // Load the index, remembering whether it was sparse on disk, then expand
@@ -1465,11 +1470,11 @@ pub fn status(
         .collect();
     let index_sparse_on_disk =
         index.sparse_directories || index.has_sparse_directory_placeholders();
-    let _ = index.expand_sparse_directory_placeholders(&repo.odb);
+    let _ = index.expand_sparse_directory_placeholders(repo.odb());
 
     let head_tree = match head.oid() {
         Some(oid) => {
-            let obj = repo.odb.read(oid)?;
+            let obj = repo.odb().read(oid)?;
             Some(crate::objects::parse_commit(&obj.data)?.tree)
         }
         None => None,
@@ -1489,7 +1494,7 @@ pub fn status(
     {
         Vec::new()
     } else {
-        crate::diff::diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?
+        crate::diff::diff_index_to_tree(repo.odb(), &index, head_tree.as_ref(), false)?
             .into_iter()
             .filter(|e| status_path_matches(e.path(), &opts.pathspecs))
             .collect()
@@ -1499,13 +1504,13 @@ pub fn status(
     let diff_index_mtime = crate::diff::index_mtime_for_diff(&index, index_mtime);
     let (unstaged_raw, index_stat_refresh_changed) =
         crate::diff::diff_index_to_worktree_with_options(
-            &repo.odb,
+            repo.odb(),
             &mut index,
             work_tree,
             crate::diff::DiffIndexToWorktreeOptions {
                 index_mtime: diff_index_mtime,
                 ignore_submodule_untracked: opts.untracked == UntrackedMode::No,
-                repository_git_dir: Some(repo.git_dir.clone()),
+                repository_git_dir: Some(repo.git_dir().to_path_buf()),
                 refresh_index_stat_in_pass: true,
                 config: repo_config.clone(),
                 stat_parallel_threads: opts.stat_parallel_threads,
@@ -1525,7 +1530,7 @@ pub fn status(
         let thread_policy = repo.thread_policy();
         let rename_config = repo.config().map(|c| (*c).clone()).unwrap_or_default();
         staged = apply_status_renames(
-            &repo.odb,
+            repo.odb(),
             staged,
             rd,
             head_tree.as_ref(),
@@ -1533,7 +1538,7 @@ pub fn status(
             &thread_policy,
         )?;
         unstaged = apply_status_renames(
-            &repo.odb,
+            repo.odb(),
             unstaged,
             rd,
             head_tree.as_ref(),
@@ -1568,7 +1573,7 @@ pub fn status(
         index.source_mtime = crate::index::index_file_mtime(&index_path);
     }
 
-    let stash_count = crate::reflog::read_reflog(&repo.git_dir, "refs/stash")
+    let stash_count = crate::reflog::read_reflog(repo.git_dir(), "refs/stash")
         .map(|e| e.len())
         .unwrap_or(0);
 
@@ -1868,7 +1873,11 @@ mod status_op_tests {
         init_min_repo(root);
         fs::write(root.join("foo.txt"), b"hello\n").unwrap();
 
-        let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
         let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
 
         assert!(model.head_tree.is_none(), "unborn HEAD has no tree");
@@ -1900,7 +1909,11 @@ mod status_op_tests {
             fs::write(scratch.join(format!("u{i}.rs")), format!("{i}\n")).unwrap();
         }
 
-        let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
         untracked_walk_probe::reset();
         let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
 
@@ -1937,7 +1950,11 @@ mod status_op_tests {
         grit_test_support::git(root, &["add", "."]);
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
 
-        let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
         let _probe = reset_worktree_metadata_probe(root);
         let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
         let tracked = repo.load_index().unwrap().entries.len();
@@ -1961,7 +1978,11 @@ mod status_op_tests {
         grit_test_support::git(root, &["commit", "-qm", "seed"]);
         fs::write(root.join("a/b/untracked.txt"), b"new\n").unwrap();
 
-        let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
         let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
         assert!(
             model.untracked.iter().any(|p| p == "a/b/untracked.txt"),
@@ -1977,7 +1998,11 @@ mod status_op_tests {
         init_min_repo(root);
         fs::write(root.join("foo.txt"), b"hi\n").unwrap();
 
-        let repo = Repository::open(&root.join(".git"), Some(root)).unwrap();
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
         let opts = StatusOptions {
             untracked: UntrackedMode::No,
             ..StatusOptions::default()

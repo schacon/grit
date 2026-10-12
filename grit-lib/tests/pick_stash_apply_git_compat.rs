@@ -2,6 +2,7 @@
 
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::merge_file::MergeFavor;
 use grit_lib::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
@@ -63,17 +64,17 @@ fn create_pick_commit(repo: &std::path::Path) {
 
 fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()> {
     let source_oid = ObjectId::from_hex(source_hex).expect("source");
-    let source_obj = repo.odb.read(&source_oid)?;
+    let source_obj = repo.odb().read(&source_oid)?;
     let source = grit_lib::objects::parse_commit(&source_obj.data)?;
-    let head_oid = refs::resolve_ref(&repo.git_dir, "HEAD").expect("head");
-    let head_obj = repo.odb.read(&head_oid)?;
+    let head_oid = refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head");
+    let head_obj = repo.odb().read(&head_oid)?;
     let head_commit = grit_lib::objects::parse_commit(&head_obj.data)?;
     let head_tree = head_commit.tree;
     let base_tree = if let Some(parent) = source.parents.first() {
-        let pobj = repo.odb.read(parent)?;
+        let pobj = repo.odb().read(parent)?;
         grit_lib::objects::parse_commit(&pobj.data)?.tree
     } else {
-        repo.odb.write(ObjectKind::Tree, &[]).expect("empty tree")
+        repo.odb().write(ObjectKind::Tree, &[]).expect("empty tree")
     };
     let merged = merge_trees_three_way(
         repo,
@@ -86,7 +87,7 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
         TreeMergeConflictPresentation::default(),
     )?;
     let mut index = merged.index;
-    let new_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let new_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
     let commit_data = CommitData {
         tree: new_tree,
@@ -101,9 +102,9 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
         extra_headers: Vec::new(),
     };
     let new_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit_data))?;
-    refs::write_ref(&repo.git_dir, "HEAD", &new_oid).expect("update head");
+    refs::write_ref(&repo.git_dir(), "HEAD", &new_oid).expect("update head");
     Ok(())
 }
 
@@ -142,8 +143,11 @@ fn grit_pick_at_3k_matches_git_cherry_pick_tree() {
 
     let grit_dir = tempfile::tempdir().expect("grit dir");
     copy_repo(base.path(), grit_dir.path());
-    let grit_repo =
-        Repository::open(&grit_dir.path().join(".git"), Some(grit_dir.path())).expect("grit open");
+    let grit_repo = Repository::open(
+        &grit_dir.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_dir.path()),
+    )
+    .expect("grit open");
     grit_pick(&grit_repo, &pick_source).expect("pick");
     let grit_tree = tree_of_head(grit_dir.path());
 
@@ -188,8 +192,11 @@ fn grit_stash_apply_at_3k_matches_git_without_index() {
 
     let grit_dir = tempfile::tempdir().expect("grit copy");
     copy_repo(base.path(), grit_dir.path());
-    let grit_repo =
-        Repository::open(&grit_dir.path().join(".git"), Some(grit_dir.path())).expect("grit open");
+    let grit_repo = Repository::open(
+        &grit_dir.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_dir.path()),
+    )
+    .expect("grit open");
     let stash_oid = ObjectId::from_hex(&stash_oid_hex).expect("stash oid");
     apply_stash(
         &grit_repo,

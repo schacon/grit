@@ -2,6 +2,7 @@
 
 mod support;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::ref_exclusions::RefExclusions;
@@ -135,7 +136,7 @@ fn t6111_treesame_matches_git() {
         wt,
         &["rw6111-f..rw6111-m", "--ancestry-path", "--", "content.txt"],
     );
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let opts = RevListOptions {
         ancestry_path: true,
         paths: vec!["content.txt".to_owned()],
@@ -165,7 +166,7 @@ fn t4216_bloom_and_no_bloom_identical() {
     );
 
     let git_oids = git_rev_list(wt, &["HEAD", "--", "A/file1"]);
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     for use_bloom in [false, true] {
         let opts = RevListOptions {
             paths: vec!["A/file1".to_owned()],
@@ -193,9 +194,9 @@ fn t6018_ref_globs_and_exclude_match_git() {
     commit_file(wt, "foo", "two\n", "two");
     git(wt, &["checkout", "main"]);
 
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let (pos, _neg, _all, _paths) = collect_revision_specs_from_stdin_lines(
-        &grit_repo.git_dir,
+        grit_repo.git_dir(),
         &[],
         &["--glob=refs/heads/subspace/*"],
     )
@@ -225,7 +226,7 @@ fn t6002_bisect_all_matches_git() {
     }
     let git_out = git(wt, &["rev-list", "--bisect-all", "HEAD"]);
     let git_lines: Vec<_> = git_out.lines().filter(|l| !l.is_empty()).collect();
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let commits = rev_list(
         &grit_repo,
         &[String::from("HEAD")],
@@ -302,12 +303,12 @@ fn t6022_missing_actions_match_git() {
     let wt = repo.worktree();
     commit_file(wt, "1.t", "a\n", "1");
     commit_file(wt, "2.t", "b\n", "2");
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let blob_oid: ObjectId = git(wt, &["rev-parse", "HEAD:1.t"])
         .trim()
         .parse()
         .expect("blob");
-    let blob_loose = grit_repo.git_dir.join("objects").join(format!(
+    let blob_loose = grit_repo.git_dir().join("objects").join(format!(
         "{}/{}",
         &blob_oid.to_hex()[..2],
         &blob_oid.to_hex()[2..]
@@ -329,7 +330,8 @@ fn t6022_missing_actions_match_git() {
             ],
         };
         let git_set = git_rev_list_object_set(wt, &git_args);
-        let grit_repo = Repository::discover(Some(wt)).expect("discover");
+        let grit_repo =
+            Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
         let opts = RevListOptions {
             objects: true,
             no_object_names: true,
@@ -357,7 +359,7 @@ fn t6102_unexpected_object_types_typed_error() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     commit_file(wt, "foo", "foo\n", "first");
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let blob: ObjectId = git(wt, &["rev-parse", "HEAD:foo"])
         .trim()
         .parse()
@@ -366,7 +368,7 @@ fn t6102_unexpected_object_types_typed_error() {
     let mut broken_body = b"40000 foo\0".to_vec();
     broken_body.extend_from_slice(blob.as_bytes());
     let broken_tree = grit_repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, &broken_body)
         .expect("broken tree");
     let broken_tree_hex = broken_tree.to_hex();
@@ -387,7 +389,7 @@ fn t6102_unexpected_object_types_typed_error() {
     let mut broken_blob_body = b"100644 foo\0".to_vec();
     broken_blob_body.extend_from_slice(head_tree.as_bytes());
     let broken_blob_tree = grit_repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, &broken_blob_body)
         .expect("broken blob tree");
     let broken_blob_hex = broken_blob_tree.to_hex();
@@ -414,9 +416,9 @@ fn t6017_stdin_revision_specs_match_git_semantics() {
     let wt = repo.worktree();
     commit_file(wt, "a", "1\n", "one");
     commit_file(wt, "b", "2\n", "two");
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let (pos, neg, all, paths) = collect_revision_specs_from_stdin_lines(
-        &grit_repo.git_dir,
+        grit_repo.git_dir(),
         &[String::from("HEAD")],
         &["--not", "HEAD~1"],
     )
@@ -458,9 +460,9 @@ fn t6021_exclude_hidden_refs_match_git() {
         "hidden commit must be omitted with --exclude-hidden=uploadpack"
     );
 
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let config = grit_repo.config().expect("config");
-    let pairs = grit_lib::refs::list_refs(&grit_repo.git_dir, "refs/").expect("refs");
+    let pairs = grit_lib::refs::list_refs(grit_repo.git_dir(), "refs/").expect("refs");
     let mut exclusions = RefExclusions::default();
     exclusions.load_hidden_refs_from_config(&config, "uploadpack");
     let tips = commit_tips_from_named_refs(&grit_repo, &pairs, &exclusions).expect("tips");
@@ -500,7 +502,7 @@ fn t6004_path_limited_trivial_optimization_matches_git() {
     .to_string();
     assert_eq!(git_rev_list(wt, &[&commit]).len(), 2);
     assert_eq!(git_rev_list(wt, &[&commit, "--", "."]).len(), 1);
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let opts = RevListOptions {
         paths: vec![".".to_owned()],
         ..RevListOptions::default()
@@ -515,7 +517,7 @@ fn t6110_first_parent_boundary_matches_git() {
     let wt = repo.worktree();
     setup_first_parent_boundary_history(wt);
     let git_lines = git_rev_list_with_boundary(wt, &["--first-parent", "--boundary", "HEAD^.."]);
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let opts = RevListOptions {
         first_parent: true,
         boundary: true,
@@ -539,7 +541,7 @@ fn reachable_objects_cat_file_all_refs() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     commit_file(wt, "f", "x\n", "c");
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let ids = reachable_object_ids_for_cat_file(&grit_repo, None, false).expect("reachable");
     assert!(ids.len() >= 3);
     let filtered =

@@ -207,7 +207,7 @@ fn peel_one(
     out: &mut PeeledTips,
 ) -> std::result::Result<(), BitmapWalkError> {
     loop {
-        let object = match repo.odb.read(&oid) {
+        let object = match repo.odb().read(&oid) {
             Ok(obj) => obj,
             Err(Error::ObjectNotFound(_)) if missing != MissingAction::Error => return Ok(()),
             Err(err) => return Err(err.into()),
@@ -242,8 +242,8 @@ impl BitmapIndex {
         query: ReachabilityQuery<'_>,
         missing: MissingAction,
     ) -> std::result::Result<ReachableSet, BitmapWalkError> {
-        if !shallow_boundary_oids(&repo.git_dir).is_empty()
-            || repo.git_dir.join("shallow").is_file()
+        if !shallow_boundary_oids(repo.git_dir()).is_empty()
+            || repo.git_dir().join("shallow").is_file()
         {
             return Err(BitmapWalkUnsupported.into());
         }
@@ -295,8 +295,8 @@ impl BitmapIndex {
         missing: MissingAction,
         filter_want_tips: &[ObjectId],
     ) -> std::result::Result<ReachableSet, BitmapWalkError> {
-        if !shallow_boundary_oids(&repo.git_dir).is_empty()
-            || repo.git_dir.join("shallow").is_file()
+        if !shallow_boundary_oids(repo.git_dir()).is_empty()
+            || repo.git_dir().join("shallow").is_file()
         {
             return Err(BitmapWalkUnsupported.into());
         }
@@ -377,7 +377,7 @@ fn find_objects_peeled(
     }
     for oid in peeled.extra_objects {
         let kind = repo
-            .odb
+            .odb()
             .read_info(&oid)
             .map_err(BitmapWalkError::from)?
             .kind;
@@ -525,7 +525,7 @@ fn walk_tree(
     if already_marked(index, bits, extended_set, &tree) {
         return Ok(());
     }
-    let object = match repo.odb.read(&tree) {
+    let object = match repo.odb().read(&tree) {
         Ok(obj) => obj,
         Err(Error::ObjectNotFound(_)) if missing != MissingAction::Error => return Ok(()),
         Err(err) => return Err(err.into()),
@@ -569,7 +569,7 @@ fn read_commit(
     oid: ObjectId,
     missing: MissingAction,
 ) -> std::result::Result<crate::objects::CommitData, Error> {
-    match repo.odb.read(&oid) {
+    match repo.odb().read(&oid) {
         Ok(obj) if obj.kind == ObjectKind::Commit => parse_commit(&obj.data),
         Ok(_) => Err(Error::CorruptObject(format!("{oid} is not a commit"))),
         Err(Error::ObjectNotFound(_)) if missing != MissingAction::Error => {
@@ -650,10 +650,10 @@ fn rebuild_extended_set(set: &mut ReachableSet) {
 }
 
 fn blob_under_limit(repo: &Repository, oid: &ObjectId, limit: u64) -> bool {
-    match read_object_info_from_packs(repo.odb.objects_dir(), oid) {
+    match read_object_info_from_packs(repo.odb().objects_dir(), oid) {
         Ok(info) => info.size < limit,
         Err(_) => repo
-            .odb
+            .odb()
             .read_info(oid)
             .map(|info| info.size < limit)
             .unwrap_or(false),
@@ -698,7 +698,7 @@ fn explicit_filter_roots(
     let mut blobs = HashSet::new();
     for oid in peeled.extra_objects {
         match repo
-            .odb
+            .odb()
             .read_info(&oid)
             .map_err(BitmapWalkError::from)?
             .kind
@@ -783,7 +783,7 @@ fn filter_blob_limit(
 ) -> std::result::Result<(), BitmapWalkError> {
     let mut blob_type = expand_type(index, ObjectKind::Blob)?;
     blob_type.and_assign(bits);
-    let objects_dir = repo.odb.objects_dir();
+    let objects_dir = repo.odb().objects_dir();
     for pos in blob_type.set_bits().collect::<Vec<_>>() {
         let pos_u32 = u32::try_from(pos).unwrap_or(u32::MAX);
         let Ok(oid) = index.oid_at(pos_u32) else {

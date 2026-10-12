@@ -16,6 +16,7 @@ use crate::bitmap_walk::{bitmap_filter_supported, BitmapWalkError, PeeledTips};
 use crate::commit_graph_file::{BloomPrecheck, BloomWalkStatsHandle, CommitGraphChain};
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_in_sparse_checkout};
@@ -1063,7 +1064,7 @@ pub fn rev_list(
         let read_changed = read_paths && options.commit_graph_read_changed_paths;
         let chain = if use_bloom {
             CommitGraphChain::try_load_with_caches(
-                &repo.git_dir.join("objects"),
+                &repo.git_dir().join("objects"),
                 Some(repo.caches().as_ref()),
             )
             .ok()
@@ -1555,7 +1556,7 @@ pub fn rev_list(
     let sparse_lines = sparse_oid_lines_from_filter(repo, options.filter.as_ref())?;
     let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
     let walk_cfg = repo_config.as_ref().clone();
-    let promisor_repo = crate::promisor::repo_treats_promisor_packs(&repo.git_dir, &walk_cfg);
+    let promisor_repo = crate::promisor::repo_treats_promisor_packs(repo.git_dir(), &walk_cfg);
     let object_walk_missing_action = if options.objects
         && options.missing_action == MissingAction::Error
         && (promisor_repo || options.exclude_promisor_objects)
@@ -1577,7 +1578,7 @@ pub fn rev_list(
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts, object_segments) =
         if options.objects {
-            repo.odb.with_pack_read_context(|| {
+            repo.odb().with_pack_read_context(|| {
                 let excluded_object_ids = excluded_object_root_ids(
                     repo,
                     &negative_object_roots,
@@ -2044,7 +2045,7 @@ pub fn render_commit_with_color(
             // Verify the commit signature only when a `%G` placeholder is present
             // in the format (matches git's lazy `%G?`/`%GS` evaluation).
             let signature: Option<crate::signing::SignatureCheck> = if raw_fmt.contains("%G") {
-                repo.odb.read(&oid).ok().map(|obj| {
+                repo.odb().read(&oid).ok().map(|obj| {
                     let config = repo.config().map(|c| (*c).clone()).unwrap_or_default();
                     match crate::signing::GpgConfig::from_config(&config) {
                         Ok(cfg) => crate::signing::verify_commit(&cfg, &obj.data)
@@ -2866,10 +2867,10 @@ struct RootObject {
 }
 
 fn indexed_object_roots(repo: &Repository) -> Result<Vec<RootObject>> {
-    let Some(_) = &repo.work_tree else {
+    let Some(_) = &repo.work_tree() else {
         return Ok(Vec::new());
     };
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     if !index_path.is_file() {
         return Ok(Vec::new());
     }
@@ -2987,7 +2988,7 @@ fn sparse_filter_includes_path(
     sparse_lines: Option<&[String]>,
 ) -> bool {
     sparse_lines
-        .map(|lines| path_in_sparse_checkout(path, lines, repo.work_tree.as_deref()))
+        .map(|lines| path_in_sparse_checkout(path, lines, repo.work_tree()))
         .unwrap_or(true)
 }
 
@@ -3019,7 +3020,7 @@ fn sparse_oid_lines_from_filter(
                     .map_err(|_| sparse_blob_access_error(spec))?
             };
             let obj = repo
-                .odb
+                .odb()
                 .read(&blob_oid)
                 .map_err(|_| sparse_blob_access_error(spec))?;
             // A resolved object that is not a parseable sparse blob (e.g. a tree) fails parsing:
@@ -3059,7 +3060,7 @@ fn sparse_blob_access_error(spec: &str) -> Error {
 
 fn packed_object_set(repo: &Repository) -> HashSet<ObjectId> {
     let mut out = HashSet::new();
-    if let Ok(primary) = repo.odb.primary() {
+    if let Ok(primary) = repo.odb().primary() {
         let _ = primary.packed_objects().for_each_object(&mut |oid| {
             out.insert(*oid);
             std::ops::ControlFlow::Continue(())
@@ -3157,7 +3158,7 @@ fn resolve_specs_for_objects_with_options(
 
     for spec in specs {
         if let Ok(raw_oid) = spec.parse::<ObjectId>() {
-            let raw_object = match repo.odb.read(&raw_oid) {
+            let raw_object = match repo.odb().read(&raw_oid) {
                 Ok(obj) => obj,
                 Err(Error::ObjectNotFound(_)) if ignore_missing => continue,
                 Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
@@ -3230,7 +3231,7 @@ fn resolve_specs_for_objects_with_options(
                     }
                     Err(err) => return Err(err),
                 };
-                let expected_kind = match repo.odb.read_info(&object_oid) {
+                let expected_kind = match repo.odb().read_info(&object_oid) {
                     Ok(info) => ExpectedObjectKind::from_object_kind(info.kind),
                     Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => None,
                     Err(Error::ObjectNotFound(_)) if ignore_missing => continue,
@@ -3252,7 +3253,7 @@ fn resolve_specs_for_objects_with_options(
             Err(Error::ObjectNotFound(_) | Error::InvalidRef(_)) if ignore_missing => continue,
             Err(err) => return Err(err),
         };
-        if let Ok(obj) = repo.odb.read(&oid) {
+        if let Ok(obj) = repo.odb().read(&oid) {
             if obj.kind == ObjectKind::Tag {
                 if let Ok(commit_oid) = peel_to_commit(repo, oid) {
                     tip_annotated_tag_by_commit.insert(commit_oid, oid);
@@ -3284,7 +3285,7 @@ fn resolve_specs_for_objects_with_options(
 /// tip: such a tip is silently ignored, whereas a genuinely missing/corrupt object is an error.
 fn object_peels_to_non_commit(repo: &Repository, mut oid: ObjectId) -> bool {
     loop {
-        let Ok(object) = repo.odb.read(&oid) else {
+        let Ok(object) = repo.odb().read(&oid) else {
             return false;
         };
         match object.kind {
@@ -3301,7 +3302,7 @@ fn object_peels_to_non_commit(repo: &Repository, mut oid: ObjectId) -> bool {
 /// Peel an object (possibly a tag) to the underlying commit.
 fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     loop {
-        let object = repo.odb.read(&oid)?;
+        let object = repo.odb().read(&oid)?;
         match object.kind {
             ObjectKind::Commit => return Ok(oid),
             ObjectKind::Tag => {
@@ -3321,8 +3322,8 @@ fn reflog_commit_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
     let z = zero_oid();
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for refname in list_reflog_refs(&repo.git_dir)? {
-        let entries = read_reflog(&repo.git_dir, &refname)?;
+    for refname in list_reflog_refs(repo.git_dir())? {
+        let entries = read_reflog(repo.git_dir(), &refname)?;
         for e in entries {
             for oid in [e.old_oid, e.new_oid] {
                 if oid == z {
@@ -4372,7 +4373,7 @@ fn path_limited_rewrite_parents_for_boundary(
     first_parent_only: bool,
     omitted_by_date_filter: &HashSet<ObjectId>,
 ) -> Result<Vec<ObjectId>> {
-    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let mut raw = load_navigation_parents_lib(repo, oid, &grafts)?;
     if first_parent_only && raw.len() > 1 {
         raw.truncate(1);
@@ -4413,7 +4414,7 @@ fn visible_parents_for_graph_lib(
     included: &HashSet<ObjectId>,
     first_parent_only: bool,
 ) -> Result<Vec<ObjectId>> {
-    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let mut direct = load_navigation_parents_lib(repo, oid, &grafts)?;
     if first_parent_only && direct.len() > 1 {
         direct.truncate(1);
@@ -4457,7 +4458,7 @@ fn reorder_path_limited_graph_commits(
     }
 
     let included: HashSet<ObjectId> = commits.iter().copied().collect();
-    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let mut chain = Vec::new();
     let mut chain_seen = HashSet::new();
     let mut cursor = Some(commits[0]);
@@ -4506,7 +4507,7 @@ fn expand_sparse_path_limited_graph_history(
 
     let mut expanded = Vec::new();
     let mut seen = HashSet::new();
-    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let grafts = crate::rev_parse::load_graft_parents(repo.git_dir());
     let mut push_unique = |oid: ObjectId, out: &mut Vec<ObjectId>| {
         if seen.insert(oid) {
             out.push(oid);
@@ -4645,7 +4646,7 @@ fn commit_touches_paths(
         let mut bloom_ret = BloomPrecheck::Inapplicable;
         if let Some(chain) = bloom_chain {
             bloom_ret = chain.bloom_precheck_for_paths(
-                &repo.odb,
+                repo.odb(),
                 oid,
                 paths,
                 bloom_cwd,
@@ -4700,7 +4701,7 @@ fn commit_touches_paths(
         if nth == 0 {
             if let Some(chain) = bloom_chain {
                 bloom_ret = chain.bloom_precheck_for_paths(
-                    &repo.odb,
+                    repo.odb(),
                     oid,
                     paths,
                     bloom_cwd,
@@ -4945,7 +4946,7 @@ fn consult_dense_bloom_filters(
             continue;
         };
         let pre = chain.bloom_precheck_for_paths(
-            &repo.odb,
+            repo.odb(),
             *oid,
             paths,
             bloom.cwd,
@@ -5137,11 +5138,11 @@ fn compute_cherry_patch_id(
     oid: &ObjectId,
     paths: &[String],
 ) -> Result<Option<ObjectId>> {
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     if paths.is_empty() {
-        compute_patch_id(algo, &repo.odb, oid)
+        compute_patch_id(algo, repo.odb(), oid)
     } else {
-        compute_patch_id_for_paths(algo, &repo.odb, oid, paths)
+        compute_patch_id_for_paths(algo, repo.odb(), oid, paths)
     }
 }
 
@@ -5174,11 +5175,11 @@ fn rev_list_unexpected_kind(oid: ObjectId, expected: &'static str) -> Error {
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     if object.kind != ObjectKind::Commit {
         return Err(rev_list_unexpected_kind(oid, "commit"));
     }
-    repo.odb.hot_path_metrics().record_commit_parse();
+    repo.odb().hot_path_metrics().record_commit_parse();
     parse_commit(&object.data)
 }
 
@@ -5283,18 +5284,18 @@ fn try_commit_graph_count_only(
     if !options.count || options.objects || !options.use_commit_graph {
         return Ok(None);
     }
-    if !crate::rev_parse::load_graft_parents(&repo.git_dir).is_empty() {
+    if !crate::rev_parse::load_graft_parents(repo.git_dir()).is_empty() {
         return Ok(None);
     }
     let Some(chain) = CommitGraphChain::try_load_with_caches(
-        &repo.git_dir.join("objects"),
+        &repo.git_dir().join("objects"),
         Some(repo.caches().as_ref()),
     )
     .ok()
     .flatten() else {
         return Ok(None);
     };
-    let shallow = load_shallow_boundaries(&repo.git_dir);
+    let shallow = load_shallow_boundaries(repo.git_dir());
     let Some(n) = chain.count_reachable_commits(include, exclude, false, &shallow) else {
         return Ok(None);
     };
@@ -5333,7 +5334,10 @@ fn try_rev_list_accelerated(
         return try_commit_graph_count_only(repo, include, exclude, options);
     }
 
-    let index = match repo.odb.with_pack_read_context(|| BitmapIndex::open(repo)) {
+    let index = match repo
+        .odb()
+        .with_pack_read_context(|| BitmapIndex::open(repo))
+    {
         Ok(Some(index)) => index,
         Ok(None) => {
             return try_commit_graph_count_only(repo, include, exclude, options);
@@ -5864,11 +5868,11 @@ impl<'r> CommitGraph<'r> {
         first_parent_only: bool,
         use_commit_graph: bool,
     ) -> Self {
-        let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
-        let graft_parents = crate::rev_parse::load_graft_parents(&repo.git_dir);
+        let shallow_boundaries = load_shallow_boundaries(repo.git_dir());
+        let graft_parents = crate::rev_parse::load_graft_parents(repo.git_dir());
         let graph_chain = if use_commit_graph {
             CommitGraphChain::try_load_with_caches(
-                &repo.git_dir.join("objects"),
+                &repo.git_dir().join("objects"),
                 Some(repo.caches().as_ref()),
             )
             .ok()
@@ -6167,10 +6171,10 @@ fn relevant_parent_reaches(
 
 fn ref_pairs_for_all(repo: &Repository) -> Result<Vec<(String, ObjectId)>> {
     let mut pairs = Vec::new();
-    if let Ok(head) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+    if let Ok(head) = refs::resolve_ref(repo.git_dir(), "HEAD") {
         pairs.push(("HEAD".to_owned(), head));
     }
-    pairs.extend(refs::list_refs(&repo.git_dir, "refs/")?);
+    pairs.extend(refs::list_refs(repo.git_dir(), "refs/")?);
     Ok(pairs)
 }
 
@@ -6193,7 +6197,7 @@ fn all_ref_commit_tips_and_object_roots(
         if exclusions.ref_excluded(strip_git_namespace(&refname, &namespace_prefix), &refname) {
             continue;
         }
-        let Ok(object) = repo.odb.read(&oid) else {
+        let Ok(object) = repo.odb().read(&oid) else {
             continue;
         };
         match object.kind {
@@ -6277,7 +6281,7 @@ pub fn shallow_borders_reachable_from_wants(
     repo: &Repository,
     wants: &[ObjectId],
 ) -> Vec<ObjectId> {
-    let boundaries = shallow_boundary_oids(&repo.git_dir);
+    let boundaries = shallow_boundary_oids(repo.git_dir());
     if boundaries.is_empty() || wants.is_empty() {
         return Vec::new();
     }
@@ -6326,7 +6330,7 @@ pub fn shallow_grafts_for_upload_pack_deepen(
         return Vec::new();
     }
 
-    let server_shallow = shallow_boundary_oids(&repo.git_dir);
+    let server_shallow = shallow_boundary_oids(repo.git_dir());
     let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
 
     // For a fresh (non-shallow) client, an absolute `deepen N` keeps exactly N commits counting
@@ -6356,14 +6360,14 @@ pub fn shallow_grafts_for_upload_pack_target_depth(
     if target_depth == 0 || wants.is_empty() {
         return Vec::new();
     }
-    let server_shallow = shallow_boundary_oids(&repo.git_dir);
+    let server_shallow = shallow_boundary_oids(repo.git_dir());
     let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
     let included_depths = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
     border_commits_for_depth_fetch(repo, &included_depths, target_depth, &client_set)
 }
 
 fn commit_parent_ids(repo: &Repository, oid: ObjectId) -> Vec<ObjectId> {
-    let Ok(obj) = repo.odb.read(&oid) else {
+    let Ok(obj) = repo.odb().read(&oid) else {
         return Vec::new();
     };
     if obj.kind != ObjectKind::Commit {
@@ -6720,7 +6724,7 @@ impl TreeWalkState {
         if let Some(entries) = self.parsed_trees.get(&tree_oid) {
             return Ok(Arc::clone(entries));
         }
-        let object = repo.odb.read(&tree_oid)?;
+        let object = repo.odb().read(&tree_oid)?;
         if object.kind != ObjectKind::Tree {
             return Err(rev_list_unexpected_kind(tree_oid, "tree"));
         }
@@ -6841,7 +6845,7 @@ fn collect_pathspec_matching_tree_objects_inner(
     seen: &mut HashSet<ObjectId>,
     out: &mut Vec<(ObjectId, String)>,
 ) -> Result<()> {
-    let object = repo.odb.read(&tree_oid)?;
+    let object = repo.odb().read(&tree_oid)?;
     if object.kind != ObjectKind::Tree {
         return Err(Error::CorruptObject(format!(
             "object {tree_oid} is not a tree"
@@ -7440,7 +7444,7 @@ fn collect_tree_objects_filtered(
         };
         if entry.mode == 0o040000 {
             if needs_child_read_info {
-                let child_info = match repo.odb.read_info(&entry.oid) {
+                let child_info = match repo.odb().read_info(&entry.oid) {
                     Ok(info) => info,
                     Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
                         if missing_action.reports_missing() && missing_seen.insert(entry.oid) {
@@ -7504,7 +7508,7 @@ fn collect_tree_objects_filtered(
                 }
             }
             if needs_child_read_info {
-                let child_info = match repo.odb.read_info(&entry.oid) {
+                let child_info = match repo.odb().read_info(&entry.oid) {
                     Ok(info) => info,
                     Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
                         if missing_action.reports_missing() && missing_seen.insert(entry.oid) {
@@ -7576,7 +7580,7 @@ fn collect_tree_objects_filtered(
                     }
                 }
             } else {
-                let child_info = match repo.odb.read_info(&entry.oid) {
+                let child_info = match repo.odb().read_info(&entry.oid) {
                     Ok(info) => info,
                     Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
                         if missing_action.reports_missing() && missing_seen.insert(entry.oid) {
@@ -7660,7 +7664,7 @@ fn collect_root_object(
         }
     }
 
-    let object = match repo.odb.read(&root.oid) {
+    let object = match repo.odb().read(&root.oid) {
         Ok(object) => object,
         Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
             if missing_action.reports_missing() && missing_seen.insert(root.oid) {
@@ -7972,7 +7976,10 @@ fn collect_reachable_objects_in_commit_order(
 
 /// Collect OIDs of all objects in packs that have a `.keep` file.
 fn kept_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
-    repo.odb.primary()?.packed_objects().kept_pack_object_ids()
+    repo.odb()
+        .primary()?
+        .packed_objects()
+        .kept_pack_object_ids()
 }
 
 /// Like [`flatten_tree`] but also carries each blob's file mode, so callers can detect
@@ -7985,7 +7992,7 @@ fn flatten_tree_with_mode(
     prefix: &str,
 ) -> Result<Vec<(String, (ObjectId, u32))>> {
     let mut result = Vec::new();
-    let object = match repo.odb.read(&tree_oid) {
+    let object = match repo.odb().read(&tree_oid) {
         Ok(o) => o,
         Err(_) => return Ok(result),
     };
@@ -8000,7 +8007,7 @@ fn flatten_tree_with_mode(
         } else {
             format!("{prefix}/{name}")
         };
-        let child_info = match repo.odb.read_info(&entry.oid) {
+        let child_info = match repo.odb().read_info(&entry.oid) {
             Ok(info) => info,
             Err(Error::ObjectNotFound(_)) => continue,
             Err(err) => return Err(err),
@@ -8265,19 +8272,19 @@ mod tests {
     fn reachable_object_ids_respects_blob_none_filter() {
         let dir = tempdir().expect("tempdir");
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, b"filter test\n")
             .expect("blob");
-        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
         let mut body = format!("tree {tree}\n");
         body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
         let commit = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("commit");
-        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
         let _ = blob;
         let ids = reachable_object_ids_for_cat_file(&repo, Some(&ObjectFilter::BlobNone), false)
             .expect("reachable");
@@ -8352,16 +8359,16 @@ mod tests {
     fn object_ids_for_cat_file_filtered_includes_provided() {
         let dir = tempdir().expect("tempdir");
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
-        let blob = repo.odb.write(ObjectKind::Blob, b"x").expect("blob");
-        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
+        let blob = repo.odb().write(ObjectKind::Blob, b"x").expect("blob");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
         let mut body = format!("tree {tree}\n");
         body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
         let commit = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("commit");
-        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
         let filter = ObjectFilter::BlobNone;
         let ids = object_ids_for_cat_file_filtered(&repo, &filter).expect("filtered");
         assert!(ids.contains(&commit));
@@ -8371,45 +8378,45 @@ mod tests {
     fn unit_test_repo_with_merge() -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
         let dir = tempdir().expect("tempdir");
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
-        let blob = repo.odb.write(ObjectKind::Blob, b"file\n").expect("blob");
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
+        let blob = repo.odb().write(ObjectKind::Blob, b"file\n").expect("blob");
         let mut tree_body = format!("100644 blob {blob}\0f.txt");
         let tree = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tree, tree_body.as_bytes())
             .expect("tree");
         let ident = "A <a@e.com> 100 +0000";
         let mut c1 = format!("tree {tree}\nauthor {ident}\ncommitter {ident}\n\none\n");
         let parent = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, c1.as_bytes())
             .expect("c1");
         tree_body = format!("100644 blob {blob}\0f.txt");
         let tree2 = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tree, tree_body.as_bytes())
             .expect("tree2");
         c1 = format!("tree {tree2}\nparent {parent}\nauthor {ident}\ncommitter {ident}\n\ntwo\n");
         let child = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, c1.as_bytes())
             .expect("child");
-        let side_tree = repo.odb.write(ObjectKind::Tree, b"").expect("side tree");
+        let side_tree = repo.odb().write(ObjectKind::Tree, b"").expect("side tree");
         let side_body = format!(
             "tree {side_tree}\nparent {parent}\nauthor {ident}\ncommitter {ident}\n\nside\n"
         );
         let side = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, side_body.as_bytes())
             .expect("side");
         let merge_body = format!(
             "tree {tree2}\nparent {child}\nparent {side}\nauthor {ident}\ncommitter {ident}\n\nmerge\n"
         );
         let merge = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, merge_body.as_bytes())
             .expect("merge");
-        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &merge).expect("ref");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &merge).expect("ref");
         (dir, repo, parent, merge)
     }
 
@@ -8485,9 +8492,9 @@ mod tests {
     fn select_bisect_commits_ranks_linear_history() {
         let dir = tempdir().expect("tempdir");
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let ident = "T <t@e.com> 1 +0000";
-        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
         let mut parent: Option<ObjectId> = None;
         let mut tips = Vec::new();
         for i in 0..5 {
@@ -8497,7 +8504,7 @@ mod tests {
             }
             body.push_str(&format!("author {ident}\ncommitter {ident}\n\nc{i}\n"));
             let oid = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Commit, body.as_bytes())
                 .expect("c");
             parent = Some(oid);
@@ -8576,19 +8583,19 @@ mod tests {
     fn cat_file_filtered_with_blob_limit_and_combine() {
         let dir = tempdir().expect("tempdir");
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
+        let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, b"0123456789")
             .expect("blob");
-        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
         let mut body = format!("tree {tree}\n");
         body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
         let commit = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("commit");
-        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
         let _ = blob;
         let filter = ObjectFilter::parse("combine:blob%3Alimit%3D5+tree%3A1").expect("combine");
         let ids = object_ids_for_cat_file_filtered(&repo, &filter).expect("ids");

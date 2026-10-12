@@ -44,7 +44,7 @@ pub fn revision_set_newest_first(
         if !excluded.insert(oid) {
             continue;
         }
-        if let Ok(obj) = repo.odb.read(&oid) {
+        if let Ok(obj) = repo.odb().read(&oid) {
             if let Ok(commit) = parse_commit(&obj.data) {
                 stack.extend(commit.parents.iter().copied());
             }
@@ -59,7 +59,7 @@ pub fn revision_set_newest_first(
         if excluded.contains(&oid) || !seen.insert(oid) {
             continue;
         }
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.odb().read(&oid)?;
         let commit = parse_commit(&obj.data)?;
         let ts = committer_timestamp(&commit.committer);
         collected.push((ts, oid));

@@ -19,6 +19,7 @@ use std::fs;
 use crate::commit::{assemble_identity, identity_now_from_epoch};
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident_resolve::IdentityEnv;
 use crate::merge_base::merge_bases_first_vs_rest;
@@ -84,7 +85,7 @@ fn collect_notes_tree_entries(
     prefix: &[u8],
     out: &mut Vec<NotesTreeEntry>,
 ) -> Result<()> {
-    let tree_obj = repo.odb.read(tree_oid)?;
+    let tree_obj = repo.odb().read(tree_oid)?;
     if tree_obj.kind != ObjectKind::Tree {
         return Err(Error::Message("notes commit has invalid tree".into()));
     }
@@ -113,9 +114,9 @@ fn collect_notes_tree_entries(
 /// Read the notes tree entries from the notes ref.  Returns an empty vec if
 /// the ref doesn't exist yet.
 pub fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<NotesTreeEntry>> {
-    let tree_oid = match resolve_ref(&repo.git_dir, notes_ref) {
+    let tree_oid = match resolve_ref(repo.git_dir(), notes_ref) {
         Ok(oid) => {
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.odb().read(&oid)?;
             match obj.kind {
                 ObjectKind::Commit => parse_commit(&obj.data)?.tree,
                 ObjectKind::Tree => oid,
@@ -131,7 +132,7 @@ pub fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<NotesTr
                 Ok(o) => o,
                 Err(_) => return Ok(Vec::new()),
             };
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.odb().read(&oid)?;
             match obj.kind {
                 ObjectKind::Commit => parse_commit(&obj.data)?.tree,
                 ObjectKind::Tree => oid,
@@ -223,7 +224,7 @@ fn write_notes_subtree(repo: &Repository, entries: &[NotesTreeEntry]) -> Result<
         .sort_by(|a, b| tree_entry_cmp(&a.name, a.mode == 0o040000, &b.name, b.mode == 0o040000));
 
     let tree_data = serialize_tree(&tree_entries);
-    repo.odb.write(ObjectKind::Tree, &tree_data)
+    repo.odb().write(ObjectKind::Tree, &tree_data)
 }
 
 /// Write a new notes tree and commit, updating the notes ref.
@@ -247,7 +248,7 @@ pub fn write_notes_commit(
     let tree_oid = write_notes_subtree(repo, &rewritten_entries)?;
 
     // Get existing notes commit as parent (if any)
-    let parent = resolve_ref(&repo.git_dir, notes_ref).ok();
+    let parent = resolve_ref(repo.git_dir(), notes_ref).ok();
 
     // Build committer/author ident
     let config = repo.config()?;
@@ -273,15 +274,15 @@ pub fn write_notes_commit(
     };
 
     let commit_data = serialize_commit(&commit);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
+    let commit_oid = repo.odb().write(ObjectKind::Commit, &commit_data)?;
 
-    let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
-    write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
-    if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+    let old_oid = resolve_ref(repo.git_dir(), notes_ref).unwrap_or_else(|_| zero_oid());
+    write_ref(repo.git_dir(), notes_ref, &commit_oid)?;
+    if should_autocreate_reflog(repo.git_dir(), notes_ref) {
         let msg = message.trim_end_matches('\n');
         let reflog_msg = format!("notes: {msg}");
         let _ = append_reflog(
-            &repo.git_dir,
+            repo.git_dir(),
             notes_ref,
             &old_oid,
             &commit_oid,
@@ -416,7 +417,7 @@ fn build_ident_role<E: IdentityEnv>(
 
 /// Per-worktree git directory for `NOTES_MERGE_*` (main: `.git/`, linked: `.git/worktrees/<id>/`).
 pub fn notes_merge_git_dir(repo: &Repository) -> std::path::PathBuf {
-    repo.git_dir.clone()
+    repo.git_dir().to_path_buf()
 }
 
 /// How to combine conflicting note blobs during a notes merge.
@@ -614,7 +615,7 @@ fn build_merge_pairs(
 }
 
 fn read_blob_bytes(repo: &Repository, oid: &ObjectId) -> Result<Vec<u8>> {
-    let obj = repo.odb.read(oid)?;
+    let obj = repo.odb().read(oid)?;
     if obj.kind != ObjectKind::Blob {
         return Err(Error::Message("expected blob for note".into()));
     }
@@ -629,7 +630,7 @@ pub fn combine_notes_concatenate(
 ) -> Result<ObjectId> {
     let new_data = match new_oid {
         Some(n) => {
-            let obj = repo.odb.read(n)?;
+            let obj = repo.odb().read(n)?;
             if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
                 Vec::new()
             } else {
@@ -649,7 +650,7 @@ pub fn combine_notes_concatenate(
 
     let cur_data = match cur {
         Some(c) => {
-            let obj = repo.odb.read(c)?;
+            let obj = repo.odb().read(c)?;
             if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
                 Vec::new()
             } else {
@@ -660,7 +661,7 @@ pub fn combine_notes_concatenate(
     };
 
     if cur_data.is_empty() {
-        return repo.odb.write(ObjectKind::Blob, &new_data);
+        return repo.odb().write(ObjectKind::Blob, &new_data);
     }
 
     let mut cur_len = cur_data.len();
@@ -672,7 +673,7 @@ pub fn combine_notes_concatenate(
     buf.push(b'\n');
     buf.push(b'\n');
     buf.extend_from_slice(&new_data);
-    repo.odb.write(ObjectKind::Blob, &buf)
+    repo.odb().write(ObjectKind::Blob, &buf)
 }
 
 fn note_blob_lines(data: &[u8]) -> Vec<String> {
@@ -691,7 +692,7 @@ pub fn combine_notes_cat_sort_uniq(
 ) -> Result<ObjectId> {
     let mut lines: Vec<String> = Vec::new();
     for oid in [cur, new_oid].into_iter().flatten() {
-        let obj = repo.odb.read(oid)?;
+        let obj = repo.odb().read(oid)?;
         if obj.kind == ObjectKind::Blob && !obj.data.is_empty() {
             lines.extend(note_blob_lines(&obj.data));
         }
@@ -704,7 +705,7 @@ pub fn combine_notes_cat_sort_uniq(
         buf.push_str(l);
         buf.push('\n');
     }
-    repo.odb.write(ObjectKind::Blob, buf.as_bytes())
+    repo.odb().write(ObjectKind::Blob, buf.as_bytes())
 }
 
 fn blob_to_lines(data: &[u8]) -> Vec<String> {
@@ -953,7 +954,7 @@ fn merge_changes_into_entries(
 }
 
 fn resolve_commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit_oid)?;
+    let obj = repo.odb().read(commit_oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::Message("expected commit".into()));
     }
@@ -961,11 +962,11 @@ fn resolve_commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<Objec
 }
 
 fn resolve_notes_commit_optional(repo: &Repository, notes_ref: &str) -> Result<Option<ObjectId>> {
-    let oid = match resolve_ref(&repo.git_dir, notes_ref) {
+    let oid = match resolve_ref(repo.git_dir(), notes_ref) {
         Ok(o) => o,
         Err(_) => return Ok(None),
     };
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::Message(format!(
             "{notes_ref} does not point to a commit"
@@ -1017,15 +1018,15 @@ pub fn write_notes_commit_with_parents(
         extra_headers: Vec::new(),
     };
     let commit_data = serialize_commit(&commit);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
+    let commit_oid = repo.odb().write(ObjectKind::Commit, &commit_data)?;
     if update_ref {
-        let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
-        write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
-        if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+        let old_oid = resolve_ref(repo.git_dir(), notes_ref).unwrap_or_else(|_| zero_oid());
+        write_ref(repo.git_dir(), notes_ref, &commit_oid)?;
+        if should_autocreate_reflog(repo.git_dir(), notes_ref) {
             let msg = message.trim_end_matches('\n');
             let reflog_msg = format!("notes: {msg}");
             let _ = append_reflog(
-                &repo.git_dir,
+                repo.git_dir(),
                 notes_ref,
                 &old_oid,
                 &commit_oid,
@@ -1147,7 +1148,11 @@ mod tests {
         std::fs::write(dir.join("f"), b"x\n").unwrap();
         git(dir, &["add", "f"]);
         git(dir, &["commit", "-qm", "init"]);
-        Repository::open(&dir.join(".git"), Some(dir)).expect("open")
+        Repository::open(
+            &dir.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(dir),
+        )
+        .expect("open")
     }
 
     #[test]
@@ -1190,10 +1195,10 @@ mod tests {
     fn combine_notes_helpers_and_upsert() {
         let tmp = TempDir::new().unwrap();
         let repo = open_repo(tmp.path());
-        let a = repo.odb.write(ObjectKind::Blob, b"line1\n").unwrap();
-        let b = repo.odb.write(ObjectKind::Blob, b"line2\n").unwrap();
+        let a = repo.odb().write(ObjectKind::Blob, b"line1\n").unwrap();
+        let b = repo.odb().write(ObjectKind::Blob, b"line2\n").unwrap();
         let cat = combine_notes_concatenate(&repo, Some(&a), Some(&b)).unwrap();
-        let merged = repo.odb.read(&cat).unwrap();
+        let merged = repo.odb().read(&cat).unwrap();
         assert!(String::from_utf8_lossy(&merged.data).contains("line1"));
         let _uniq = combine_notes_cat_sort_uniq(&repo, Some(&a), Some(&b)).unwrap();
 
@@ -1215,7 +1220,7 @@ mod tests {
             .output()
             .unwrap();
         let commit = ObjectId::from_hex(std::str::from_utf8(&head.stdout).unwrap().trim()).unwrap();
-        let blob = repo.odb.write(ObjectKind::Blob, b"hello\n").unwrap();
+        let blob = repo.odb().write(ObjectKind::Blob, b"hello\n").unwrap();
         upsert_note_entry(&mut vec![], &commit.to_hex(), blob);
         let entries = vec![NotesTreeEntry {
             mode: 0o100644,
@@ -1249,12 +1254,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1312,12 +1317,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1354,7 +1359,7 @@ mod tests {
             "partial merge commit must differ from the pre-merge tip"
         );
         assert_eq!(
-            crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap(),
+            crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap(),
             local,
             "manual merge conflicts must leave the live notes ref at the local tip"
         );

@@ -37,7 +37,8 @@ fn recording_runner_pre_commit_hook_argv_and_failure() {
     env.cwd = tmp.path().to_path_buf();
     let opts = RepositoryOptions::with_environment(env).with_command_runner(runner.clone());
 
-    let repo = Repository::open_with(&opts, &git_dir, Some(tmp.path())).expect("open repo");
+    let repo =
+        Repository::open(&git_dir, &&opts.clone().with_work_tree(tmp.path())).expect("open repo");
 
     let err = run_commit_hook_checked(&repo, "pre-commit", &[], None, &CommitHookEnv::default())
         .expect_err("hook should fail");
@@ -81,8 +82,11 @@ fn hook_environment_exports_repository_snapshot_not_process() {
     env.git_config_global = Some("/snapshot/home/global.cfg".to_owned());
     let opts = RepositoryOptions::with_environment(env).with_command_runner(runner.clone());
 
-    let repo =
-        Repository::open_with(&opts, &tmp.path().join(".git"), Some(tmp.path())).expect("open");
+    let repo = Repository::open(
+        &tmp.path().join(".git"),
+        &&opts.clone().with_work_tree(tmp.path()),
+    )
+    .expect("open");
 
     let config = repo.config().expect("config");
     run_hook_opts(

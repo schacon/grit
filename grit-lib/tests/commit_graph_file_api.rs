@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::commit_graph_file::{parse_graph_file, CommitGraphChain, CommitGraphLayer};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -75,10 +76,11 @@ fn incompatible_bloom_settings_disable_lower_layer() {
             "--split",
         ],
     );
-    let repo = Repository::discover(Some(dir.path())).expect("open");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     assert!(chain.num_layers() >= 2);
     let tip: ObjectId = chain.all_oids_in_order().into_iter().last().expect("tip");
-    let pre = chain.bloom_precheck_for_paths(&repo.odb, tip, &["g.txt".to_owned()], None, -1, true);
+    let pre =
+        chain.bloom_precheck_for_paths(&repo.odb(), tip, &["g.txt".to_owned()], None, -1, true);
     assert!(pre.is_ok());
 }

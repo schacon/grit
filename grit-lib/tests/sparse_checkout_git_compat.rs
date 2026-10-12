@@ -4,6 +4,7 @@ mod support;
 
 use std::fs;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 
@@ -13,7 +14,7 @@ use support::{
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
-    Repository::discover(Some(wt)).expect("open")
+    Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open")
 }
 
 #[test]
@@ -32,7 +33,7 @@ fn t1092_cone_patterns_match_git_skip_worktree() {
     let grit = open_grit(wt);
     let mut index = grit.load_index().expect("load");
     clear_all_skip_worktree(&mut index);
-    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);
@@ -59,7 +60,7 @@ fn t1091_non_cone_sparse_list_matches_git() {
     let oracle = git_ls_files_tag_map(wt);
     let mut index = grit.load_index().expect("load");
     clear_all_skip_worktree(&mut index);
-    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
 
@@ -80,7 +81,7 @@ fn t1011_read_tree_sparse_checkout_applies_skip_worktree() {
     let grit = open_grit(wt);
     let mut index = grit.load_index().expect("load");
     clear_all_skip_worktree(&mut index);
-    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
 

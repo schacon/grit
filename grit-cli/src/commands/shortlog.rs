@@ -73,7 +73,7 @@ impl MarkdownRender for ShortlogOutcome {
 
 pub fn run() -> Result<ShortlogOutcome> {
     let repo = context::discover()?;
-    let head = resolve_head(&repo.git_dir).context("could not resolve HEAD")?;
+    let head = resolve_head(&repo.git_dir()).context("could not resolve HEAD")?;
     let (branch_name, head_oid) = current_branch_and_oid(&head)?;
 
     let Some(target) = context::find_target_branch(&repo)? else {

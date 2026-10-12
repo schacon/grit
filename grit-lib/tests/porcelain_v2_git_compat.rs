@@ -2,6 +2,7 @@
 
 mod support;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 use support::{assert_porcelain_v2_matches_git, git, git_ok, HistoryRepo};
@@ -15,7 +16,7 @@ fn t_porcelain_v2_tracked_file_deletion_matches_git() {
     git(wt, &["commit", "-m", "add file"]);
     std::fs::remove_file(wt.join("file.txt")).expect("delete worktree file");
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -28,7 +29,7 @@ fn t_porcelain_v2_modified_file_matches_git() {
     git(wt, &["commit", "-m", "init"]);
     std::fs::write(wt.join("file.txt"), "b\n").expect("modify");
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -41,7 +42,7 @@ fn t_porcelain_v2_staged_add_matches_git() {
     git(wt, &["commit", "-m", "base"]);
     std::fs::write(wt.join("new.txt"), "n\n").expect("write");
     git(wt, &["add", "new.txt"]);
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -53,7 +54,7 @@ fn t_porcelain_v2_staged_delete_matches_git() {
     git(wt, &["add", "f.txt"]);
     git(wt, &["commit", "-m", "base"]);
     git(wt, &["rm", "--cached", "f.txt"]);
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -69,7 +70,7 @@ fn t_porcelain_v2_staged_chmod_matches_git() {
     std::fs::set_permissions(wt.join("exec.sh"), std::fs::Permissions::from_mode(0o755))
         .expect("chmod");
     git(wt, &["add", "exec.sh"]);
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -80,7 +81,7 @@ fn t_porcelain_v2_intent_to_add_matches_git() {
     std::fs::write(wt.join("u.txt"), "payload\n").expect("write");
     git(wt, &["add", "-N", "u.txt"]);
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -100,7 +101,7 @@ fn t_porcelain_v2_intent_to_add_sha256_matches_git() {
     std::fs::write(wt.join("u.txt"), "payload\n").expect("write");
     git(wt, &["add", "-N", "u.txt"]);
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }
 
@@ -122,6 +123,6 @@ fn t_porcelain_v2_unmerged_conflict_matches_git() {
         "merge should stop with a conflict"
     );
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     assert_porcelain_v2_matches_git(wt, &grit);
 }

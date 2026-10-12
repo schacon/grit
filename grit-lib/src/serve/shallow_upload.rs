@@ -52,7 +52,7 @@ pub(crate) fn compute_shallow_response(
         return Ok(out);
     }
 
-    let server_shallow = shallow_boundary_oids(&repo.git_dir);
+    let server_shallow = shallow_boundary_oids(repo.git_dir());
     let client_set: HashSet<ObjectId> = req.client_shallow.iter().copied().collect();
 
     if req.depth == Some(INFINITE_DEPTH) && server_shallow.is_empty() {
@@ -124,7 +124,7 @@ pub(crate) fn compute_shallow_response(
 }
 
 fn parent_commits(repo: &Repository, oid: ObjectId) -> crate::error::Result<Vec<ObjectId>> {
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     if obj.kind != ObjectKind::Commit {
         return Ok(Vec::new());
     }
@@ -133,7 +133,7 @@ fn parent_commits(repo: &Repository, oid: ObjectId) -> crate::error::Result<Vec<
 
 fn parents_in_repo(repo: &Repository, oid: ObjectId) -> crate::error::Result<bool> {
     for p in parent_commits(repo, oid)? {
-        if !repo.odb.exists(&p) {
+        if !repo.odb().exists(&p) {
             return Ok(false);
         }
     }

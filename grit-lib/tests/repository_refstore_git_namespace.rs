@@ -61,7 +61,7 @@ fn repository_files_refstore_honors_git_namespace_option() {
     let mut env = Environment::empty();
     env.git_namespace = Some("acme".to_owned());
     let opts = RepositoryOptions::with_environment(env);
-    let repo = Repository::open_with(&opts, &git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &opts).expect("open");
 
     let oid = sample_oid();
     repo.refs()
@@ -106,7 +106,7 @@ fn repository_namespaced_refstore_resolves_global_head() {
     let mut env = Environment::empty();
     env.git_namespace = Some("acme".to_owned());
     let opts = RepositoryOptions::with_environment(env);
-    let repo = Repository::open_with(&opts, &git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &opts).expect("open");
 
     assert_eq!(repo.resolve_ref_name("refs/heads/main").expect("main"), oid);
     assert_eq!(repo.resolve_ref_name("HEAD").expect("HEAD"), oid);
@@ -128,7 +128,7 @@ fn repository_namespaced_packed_refs_exclude_unscoped_branches() {
     let mut env = Environment::empty();
     env.git_namespace = Some("acme".to_owned());
     let opts = RepositoryOptions::with_environment(env);
-    let repo = Repository::open_with(&opts, &git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &opts).expect("open");
 
     let grit_heads = head_branch_names(&repo);
     assert_eq!(grit_heads, BTreeSet::from(["refs/heads/scoped".to_owned()]));

@@ -34,8 +34,7 @@ pub struct WorktreeSnapshot {
 /// Returns errors from index I/O, ODB reads, or when the repository has no work tree.
 pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
     let _work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     let index_path = repo.index_path();
@@ -44,12 +43,12 @@ pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e),
     };
-    let _ = index.expand_sparse_directory_placeholders(&repo.odb);
+    let _ = index.expand_sparse_directory_placeholders(repo.odb());
 
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let head_tree = match head.oid() {
         Some(oid) => {
-            let obj = repo.odb.read(oid)?;
+            let obj = repo.odb().read(oid)?;
             Some(parse_commit(&obj.data)?.tree)
         }
         None => None,
@@ -66,12 +65,11 @@ pub(crate) fn local_change_diffs(
     head_tree: Option<ObjectId>,
 ) -> Result<(Vec<DiffEntry>, Vec<DiffEntry>, bool)> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let index_path = repo.index_path();
     let index_mtime = index_file_mtime(&index_path);
-    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true)
+    let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)
         .ok()
         .map(Arc::new);
     let worktree_rules = match config.as_ref() {
@@ -83,15 +81,15 @@ pub(crate) fn local_change_diffs(
         None => None,
     };
 
-    let staged = diff_index_to_tree(&repo.odb, index, head_tree.as_ref(), false)?;
+    let staged = diff_index_to_tree(repo.odb(), index, head_tree.as_ref(), false)?;
     let (unstaged, index_changed) = diff_index_to_worktree_with_options(
-        &repo.odb,
+        repo.odb(),
         index,
         work_tree,
         crate::diff::DiffIndexToWorktreeOptions {
             index_mtime: crate::diff::index_mtime_for_diff(index, index_mtime),
             ignore_submodule_untracked: true,
-            repository_git_dir: Some(repo.git_dir.clone()),
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
             refresh_index_stat_in_pass: true,
             config,
             worktree_rules,
@@ -177,8 +175,7 @@ pub fn prepare_tree_switch(
     }
 
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let (untracked, _) = collect_untracked_and_ignored(
         repo,
@@ -188,7 +185,7 @@ pub fn prepare_tree_switch(
         true,
         &[],
     )?;
-    let tree_changes = diff_trees(&repo.odb, from_tree, Some(to_tree), "")?;
+    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
     Ok(TreeSwitchPlan {
         untracked,
         tree_changes,
@@ -281,8 +278,7 @@ pub fn prepare_tree_checkout(
 ) -> Result<()> {
     let mut snapshot = load_worktree_snapshot(repo)?;
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let (untracked, _) = collect_untracked_and_ignored(
         repo,
@@ -292,7 +288,7 @@ pub fn prepare_tree_checkout(
         true,
         &[],
     )?;
-    let tree_changes = diff_trees(&repo.odb, from_tree, Some(to_tree), "")?;
+    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
     ensure_no_untracked_overwrite(&untracked, &tree_changes)
 }
 
@@ -405,11 +401,11 @@ mod tests {
     #[test]
     fn ensure_worktree_clean_for_pick_passes_on_fresh_commit() {
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         let mut index = repo.load_index().expect("index");
         let data = std::fs::read(wt.join("tracked.txt")).expect("read");
         let oid = repo
-            .odb
+            .odb()
             .write(crate::objects::ObjectKind::Blob, &data)
             .expect("blob");
         let entry = crate::index::entry_from_stat(
@@ -423,7 +419,7 @@ mod tests {
         index.sort();
         repo.write_index(&mut index).expect("write index");
         let tree = crate::write_tree::write_tree_update_index(
-            &repo.odb,
+            &repo.odb(),
             &mut index,
             "",
             crate::write_tree::WriteTreeFlags::silent(),
@@ -442,13 +438,13 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let co = repo
-            .odb
+            .odb()
             .write(
                 crate::objects::ObjectKind::Commit,
                 &crate::objects::serialize_commit(&commit),
             )
             .expect("commit");
-        crate::refs::write_ref(&repo.git_dir, "HEAD", &co).expect("head");
+        crate::refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
         ensure_worktree_clean_for_pick(&repo).expect("clean");
     }
 }

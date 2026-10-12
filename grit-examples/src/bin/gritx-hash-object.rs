@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 
@@ -28,10 +29,11 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None).context("not in a repository")?;
+    let repo =
+        Repository::discover(None, &RepositoryOptions::empty()).context("not in a repository")?;
     let contents = std::fs::read(&cli.file)
         .with_context(|| format!("could not read {}", cli.file.display()))?;
-    let oid = repo.odb.write(ObjectKind::Blob, &contents)?;
+    let oid = repo.odb().write(ObjectKind::Blob, &contents)?;
     println!("{oid}");
     Ok(())
 }

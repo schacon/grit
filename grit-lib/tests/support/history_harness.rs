@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Result;
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::ObjectId;
@@ -289,7 +290,7 @@ pub fn grit_rev_list_commits(
     negative: &[String],
     options: &RevListOptions,
 ) -> Result<Vec<ObjectId>> {
-    let repo = Repository::discover(Some(worktree))?;
+    let repo = Repository::discover(Some(worktree), &RepositoryOptions::empty())?;
     grit_rev_list_commits_in_repo(&repo, positive, negative, options)
 }
 
@@ -337,7 +338,7 @@ pub fn grit_rev_list_object_set(
     negative: &[String],
     filter: Option<ObjectFilter>,
 ) -> HashSet<ObjectId> {
-    let repo = Repository::discover(Some(worktree)).expect("discover");
+    let repo = Repository::discover(Some(worktree), &RepositoryOptions::empty()).expect("discover");
     let opts = RevListOptions {
         objects: true,
         no_object_names: true,
@@ -433,7 +434,7 @@ pub fn git_ls_files_stage0_map(dir: &Path) -> BTreeMap<String, ObjectId> {
 
 /// Open a grit [`Repository`] for a harness work tree.
 pub fn open_grit_repo(worktree: &Path) -> Repository {
-    Repository::discover(Some(worktree)).expect("discover grit repo")
+    Repository::discover(Some(worktree), &RepositoryOptions::empty()).expect("discover grit repo")
 }
 
 /// Write a reachable commit-graph with system `git` (matches CI / user repos).

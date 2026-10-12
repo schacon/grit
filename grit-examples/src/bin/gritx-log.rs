@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::{head_oid, resolve_name};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectKind};
 use grit_lib::repo::Repository;
 
@@ -23,14 +24,14 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let mut current = match cli.start {
         Some(name) => resolve_name(&repo, &name)?,
         None => head_oid(&repo)?,
     };
 
     loop {
-        let object = repo.odb.read(&current)?;
+        let object = repo.odb().read(&current)?;
         if object.kind != ObjectKind::Commit {
             break;
         }

@@ -95,7 +95,7 @@ pub fn run(
     remote_override: Option<String>,
 ) -> Result<PushOutcome> {
     let repo = context::discover()?;
-    let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
+    let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir()), true)
         .context("could not load config")?;
 
     let (branch_label, remote, specs) = if !delete_refs.is_empty() {
@@ -113,12 +113,12 @@ pub fn run(
             .collect();
         let specs = delete_refs
             .iter()
-            .map(|name| map_delete_ref(&repo.git_dir, name, &remote_names))
+            .map(|name| map_delete_ref(&repo.git_dir(), name, &remote_names))
             .collect::<Result<Vec<_>>>()?;
         ("--delete".to_owned(), remote, specs)
     } else if tags {
         let entries =
-            refs::list_refs(&repo.git_dir, "refs/tags/").context("could not list tags")?;
+            refs::list_refs(&repo.git_dir(), "refs/tags/").context("could not list tags")?;
         if entries.is_empty() {
             bail!("no tags to push");
         }
@@ -139,7 +139,7 @@ pub fn run(
             specs,
         )
     } else {
-        let (short_name, oid) = match resolve_head(&repo.git_dir)? {
+        let (short_name, oid) = match resolve_head(&repo.git_dir())? {
             HeadState::Branch {
                 short_name,
                 oid: Some(oid),
@@ -235,7 +235,7 @@ fn configured_remote_for_push(
     if let Some(remote) = remote_override {
         return remote;
     }
-    if let Ok(HeadState::Branch { short_name, .. }) = resolve_head(&repo.git_dir) {
+    if let Ok(HeadState::Branch { short_name, .. }) = resolve_head(&repo.git_dir()) {
         if let Some(remote) = config
             .get(&format!("branch.{short_name}.remote"))
             .filter(|r| !r.trim().is_empty())

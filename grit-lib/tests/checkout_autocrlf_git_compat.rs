@@ -40,10 +40,10 @@ fn init_autocrlf_repo(root: &std::path::Path) -> Repository {
 fn commit_all(repo: &Repository, message: &str) -> grit_lib::objects::ObjectId {
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let mut index = repo.load_index().expect("index");
-    let tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     repo.write_index(&mut index).expect("write index");
-    let parent = refs::resolve_ref(&repo.git_dir, "HEAD").ok();
+    let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -57,8 +57,11 @@ fn commit_all(repo: &Repository, message: &str) -> grit_lib::objects::ObjectId {
         extra_headers: Vec::new(),
     };
     let bytes = serialize_commit(&commit_data);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &bytes).expect("commit");
-    refs::write_ref(&repo.git_dir, "HEAD", &commit_oid).expect("head");
+    let commit_oid = repo
+        .odb()
+        .write(ObjectKind::Commit, &bytes)
+        .expect("commit");
+    refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).expect("head");
     tree
 }
 
@@ -66,7 +69,7 @@ fn commit_all(repo: &Repository, message: &str) -> grit_lib::objects::ObjectId {
 fn checkout_autocrlf_writes_crlf_to_worktree() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = init_autocrlf_repo(tmp.path());
-    let wt = repo.work_tree.as_ref().expect("worktree");
+    let wt = repo.work_tree().expect("worktree");
 
     fs::write(wt.join("f.txt"), b"a\r\nb\r\nc\r\n").expect("write");
     let main_tree = commit_all(&repo, "base");

@@ -1,5 +1,6 @@
 //! Additional linked worktree scenarios for admin layout and branch rules.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
     add_linked_worktree, ensure_branch_not_checked_out_elsewhere,
@@ -32,7 +33,7 @@ fn add_detach_linked_worktree_and_list_locked_state() {
 
     let linked = tmp.path().join("detached");
     add_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &AddLinkedWorktreeOptions {
             path: linked.clone(),
             branch: None,
@@ -44,23 +45,27 @@ fn add_detach_linked_worktree_and_list_locked_state() {
     )
     .expect("detach add");
 
-    let entry = list_worktrees(&Repository::discover(Some(&main)).expect("discover"))
-        .expect("list")
-        .into_iter()
-        .find(|e| e.path == linked.canonicalize().unwrap_or(linked.clone()))
-        .expect("listed");
+    let entry = list_worktrees(
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
+    )
+    .expect("list")
+    .into_iter()
+    .find(|e| e.path == linked.canonicalize().unwrap_or(linked.clone()))
+    .expect("listed");
     assert!(entry.head.is_detached());
 
     let admin = entry.admin_dir;
     fs::write(admin.join("locked"), "reason\n").expect("lock");
-    let listed =
-        list_worktrees(&Repository::discover(Some(&main)).expect("discover")).expect("list");
+    let listed = list_worktrees(
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
+    )
+    .expect("list");
     let locked = listed.iter().find(|e| e.path == entry.path).expect("find");
     assert!(locked.is_locked);
     assert_eq!(locked.lock_reason.as_deref(), Some("reason"));
 
     remove_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &linked,
         true,
     )
@@ -80,7 +85,7 @@ fn add_worktree_on_existing_branch() {
 
     let linked = tmp.path().join("feature-wt");
     add_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &AddLinkedWorktreeOptions {
             path: linked.clone(),
             branch: Some("feature".into()),
@@ -106,7 +111,7 @@ fn remove_dirty_worktree_requires_force() {
 
     let linked = tmp.path().join("dirty");
     add_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &AddLinkedWorktreeOptions {
             path: linked.clone(),
             branch: Some("dirty".into()),
@@ -118,7 +123,7 @@ fn remove_dirty_worktree_requires_force() {
     )
     .expect("add");
     fs::write(linked.join("f"), "dirty change\n").unwrap();
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
     assert!(remove_linked_worktree(&repo, &linked, false).is_err());
     remove_linked_worktree(&repo, &linked, true).expect("force remove");
 }
@@ -135,7 +140,7 @@ fn second_worktree_same_branch_is_rejected() {
 
     let first = tmp.path().join("first");
     add_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &AddLinkedWorktreeOptions {
             path: first.clone(),
             branch: Some("shared".into()),
@@ -149,7 +154,7 @@ fn second_worktree_same_branch_is_rejected() {
 
     let second = tmp.path().join("second");
     assert!(add_linked_worktree(
-        &Repository::discover(Some(&main)).expect("discover"),
+        &Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover"),
         &AddLinkedWorktreeOptions {
             path: second,
             branch: Some("shared".into()),
@@ -160,7 +165,7 @@ fn second_worktree_same_branch_is_rejected() {
         },
     )
     .is_err());
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
     let found = find_worktree_with_branch_checked_out(&repo, "shared", None).expect("find");
     assert!(found.is_some());
     assert!(ensure_branch_not_checked_out_elsewhere(&repo, "shared").is_err());

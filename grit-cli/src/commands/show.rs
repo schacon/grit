@@ -179,7 +179,7 @@ fn classify(
     repo: &Repository,
     target: &str,
 ) -> Result<(ShowKind, Option<String>, Option<TagInfo>)> {
-    let git_dir = &repo.git_dir;
+    let git_dir = repo.git_dir();
 
     if target == "HEAD" {
         if let Ok(Some(sym)) = refs::read_symbolic_ref(git_dir, "HEAD") {
@@ -195,7 +195,7 @@ fn classify(
     }
 
     if let Ok(tag_oid) = refs::resolve_ref(git_dir, &format!("refs/tags/{target}")) {
-        let object = repo.odb.read(&tag_oid)?;
+        let object = repo.odb().read(&tag_oid)?;
         if object.kind == ObjectKind::Tag {
             let td = parse_tag(&object.data)?;
             let info = TagInfo {
@@ -214,7 +214,7 @@ fn classify(
 /// Follow tag objects until reaching a commit.
 fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     loop {
-        let object = repo.odb.read(&oid)?;
+        let object = repo.odb().read(&oid)?;
         match object.kind {
             ObjectKind::Commit => return Ok(oid),
             ObjectKind::Tag => oid = parse_tag(&object.data)?.object,

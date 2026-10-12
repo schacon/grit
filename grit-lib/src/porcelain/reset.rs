@@ -68,7 +68,7 @@ pub struct ResetOutcome {
 /// Returns an error when there is no current commit, the work tree is required but
 /// missing (hard reset), or ref/index/checkout I/O fails.
 pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOutcome> {
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let previous = head
         .oid()
         .copied()
@@ -76,7 +76,7 @@ pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOu
 
     let target_tree = commit_tree_oid(repo, &opts.target)?;
 
-    if opts.mode == ResetMode::Hard && repo.work_tree.is_none() {
+    if opts.mode == ResetMode::Hard && repo.work_tree().is_none() {
         return Err(Error::PathError(
             "cannot hard reset a bare repository's working tree".into(),
         ));
@@ -101,7 +101,7 @@ pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOu
                 refname.clone()
             }
             HeadState::Detached { .. } => {
-                refs::write_ref(&repo.git_dir, "HEAD", &opts.target)?;
+                refs::write_ref(repo.git_dir(), "HEAD", &opts.target)?;
                 write_head_reflog(repo, previous, opts.target, opts)?;
                 "HEAD".to_owned()
             }
@@ -128,7 +128,7 @@ fn ref_label_for_head(head: &HeadState) -> String {
 }
 
 fn commit_tree_oid(repo: &Repository, commit: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit)?;
+    let obj = repo.odb().read(commit)?;
     Ok(parse_commit(&obj.data)?.tree)
 }
 
@@ -149,7 +149,7 @@ fn update_moving_ref(
     new: ObjectId,
     opts: &ResetOptions,
 ) -> Result<()> {
-    refs::write_ref(&repo.git_dir, refname, &new)?;
+    refs::write_ref(repo.git_dir(), refname, &new)?;
     write_branch_and_head_reflogs(repo, refname, old, new, opts)
 }
 
@@ -160,10 +160,11 @@ fn write_branch_and_head_reflogs(
     new: ObjectId,
     opts: &ResetOptions,
 ) -> Result<()> {
-    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
-    if refs::should_autocreate_reflog_with_config(&config, &repo.git_dir, refname) {
+    let config =
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
+    if refs::should_autocreate_reflog_with_config(&config, repo.git_dir(), refname) {
         append_reflog(
-            &repo.git_dir,
+            repo.git_dir(),
             refname,
             &old,
             &new,
@@ -172,9 +173,9 @@ fn write_branch_and_head_reflogs(
             false,
         )?;
     }
-    if refs::should_autocreate_reflog_with_config(&config, &repo.git_dir, "HEAD") {
+    if refs::should_autocreate_reflog_with_config(&config, repo.git_dir(), "HEAD") {
         append_reflog(
-            &repo.git_dir,
+            repo.git_dir(),
             "HEAD",
             &old,
             &new,
@@ -192,10 +193,11 @@ fn write_head_reflog(
     new: ObjectId,
     opts: &ResetOptions,
 ) -> Result<()> {
-    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true).unwrap_or_default();
-    if refs::should_autocreate_reflog_with_config(&config, &repo.git_dir, "HEAD") {
+    let config =
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
+    if refs::should_autocreate_reflog_with_config(&config, repo.git_dir(), "HEAD") {
         append_reflog(
-            &repo.git_dir,
+            repo.git_dir(),
             "HEAD",
             &old,
             &new,
@@ -231,11 +233,11 @@ mod tests {
         contents: &str,
         parent: Option<ObjectId>,
     ) -> ObjectId {
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join(path), contents).expect("write");
         let mut index = repo.load_index().expect("index");
         let oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, contents.as_bytes())
             .expect("blob");
         let entry = crate::index::entry_from_stat(
@@ -247,7 +249,7 @@ mod tests {
         .expect("entry");
         index.add_or_replace(entry);
         index.sort();
-        let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         repo.write_index(&mut index).expect("write index");
         let commit = CommitData {
@@ -263,11 +265,11 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let co = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, &serialize_commit(&commit))
             .expect("commit");
-        refs::write_ref(&repo.git_dir, "refs/heads/main", &co).expect("branch");
-        refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("symhead");
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &co).expect("branch");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
         co
     }
 
@@ -285,7 +287,7 @@ mod tests {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "1\n", None);
         let c2 = commit_file(&repo, "f", "2\n", Some(c1));
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "2\n").expect("wt");
 
         let outcome = reset_to_commit(&repo, &reset_opts(c1, ResetMode::Mixed)).expect("reset");
@@ -293,12 +295,12 @@ mod tests {
         assert_eq!(outcome.target, c1);
         assert_eq!(outcome.previous, c2);
         assert_eq!(
-            refs::resolve_ref(&repo.git_dir, "refs/heads/main").expect("ref"),
+            refs::resolve_ref(&repo.git_dir(), "refs/heads/main").expect("ref"),
             c1
         );
         let index = repo.load_index().expect("index");
         let entry = index.get(b"f", 0).expect("indexed");
-        let blob = repo.odb.read(&entry.oid).expect("blob");
+        let blob = repo.odb().read(&entry.oid).expect("blob");
         assert_eq!(blob.data, b"1\n");
         let disk = std::fs::read(wt.join("f")).expect("disk");
         assert_eq!(disk, b"2\n");
@@ -308,10 +310,13 @@ mod tests {
     fn mixed_reset_at_current_head_clears_staged_changes() {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "base\n", None);
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "staged\n").expect("wt");
         let mut index = repo.load_index().expect("index");
-        let oid = repo.odb.write(ObjectKind::Blob, b"staged\n").expect("blob");
+        let oid = repo
+            .odb()
+            .write(ObjectKind::Blob, b"staged\n")
+            .expect("blob");
         let entry =
             crate::index::entry_from_stat(&wt.join("f"), b"f", oid, crate::index::MODE_REGULAR)
                 .expect("entry");
@@ -328,7 +333,7 @@ mod tests {
     fn hard_reset_at_current_head_restores_worktree() {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "base\n", None);
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "precious\n").expect("wt");
 
         reset_to_commit(&repo, &reset_opts(c1, ResetMode::Hard)).expect("reset");
@@ -342,14 +347,14 @@ mod tests {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "base\n", None);
         let c2 = commit_file(&repo, "g", "other\n", Some(c1));
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "precious\n").expect("wt");
 
         reset_to_commit(&repo, &reset_opts(c1, ResetMode::Hard)).expect("reset");
 
         assert_eq!(std::fs::read(wt.join("f")).expect("disk"), b"base\n");
         assert_eq!(
-            refs::resolve_ref(&repo.git_dir, "refs/heads/main").expect("ref"),
+            refs::resolve_ref(&repo.git_dir(), "refs/heads/main").expect("ref"),
             c1
         );
         let st = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
@@ -362,10 +367,13 @@ mod tests {
     fn hard_reset_clears_unmerged_index_stages() {
         let (_dir, repo) = init_repo();
         let c1 = commit_file(&repo, "f", "clean\n", None);
-        let wt = repo.work_tree.as_ref().expect("wt");
-        let b1 = repo.odb.write(ObjectKind::Blob, b"base\n").expect("blob");
-        let b2 = repo.odb.write(ObjectKind::Blob, b"ours\n").expect("blob");
-        let b3 = repo.odb.write(ObjectKind::Blob, b"theirs\n").expect("blob");
+        let wt = repo.work_tree().expect("wt");
+        let b1 = repo.odb().write(ObjectKind::Blob, b"base\n").expect("blob");
+        let b2 = repo.odb().write(ObjectKind::Blob, b"ours\n").expect("blob");
+        let b3 = repo
+            .odb()
+            .write(ObjectKind::Blob, b"theirs\n")
+            .expect("blob");
         let mut index = Index::new();
         for (stage, oid, size) in [(1u8, b1, 5u32), (2, b2, 5), (3, b3, 7)] {
             let mut entry = crate::index::IndexEntry {
@@ -401,7 +409,7 @@ mod tests {
         );
         assert_eq!(index.entries.len(), 1);
         let blob = repo
-            .odb
+            .odb()
             .read(&index.get(b"f", 0).expect("entry").oid)
             .expect("blob");
         assert_eq!(blob.data, b"clean\n");
@@ -416,7 +424,7 @@ mod tests {
         let repo =
             init_repository(dir.path(), true, "main", None, RefStorageFormat::Files).expect("init");
         let mut index = Index::new();
-        let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         let commit = CommitData {
             tree,
@@ -431,16 +439,16 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let c1 = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, &serialize_commit(&commit))
             .expect("commit");
-        refs::write_ref(&repo.git_dir, "refs/heads/main", &c1).expect("branch");
-        refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("symhead");
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &c1).expect("branch");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
 
         let err = reset_to_commit(&repo, &reset_opts(c1, ResetMode::Hard)).expect_err("bare");
         assert!(matches!(err, Error::PathError(_)));
         assert_eq!(
-            refs::resolve_ref(&repo.git_dir, "refs/heads/main").expect("ref"),
+            refs::resolve_ref(&repo.git_dir(), "refs/heads/main").expect("ref"),
             c1
         );
     }

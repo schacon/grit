@@ -77,7 +77,7 @@ fn resolve_one(repo: &Repository, sel: &str) -> Result<String> {
         bail!("invalid path ''");
     }
     let work_tree = repo
-        .work_tree
+        .work_tree()
         .clone()
         .context("grit mv needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;

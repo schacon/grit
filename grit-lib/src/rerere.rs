@@ -513,9 +513,9 @@ fn synthesize_conflict_from_index(
     let marker_size = conflict_marker_size(path);
     let out = match (&stages[0], &stages[1], &stages[2]) {
         (Some(e1), Some(e2), Some(e3)) => {
-            let base = read_blob(&repo.odb, e1.oid)?;
-            let ours = read_blob(&repo.odb, e2.oid)?;
-            let theirs = read_blob(&repo.odb, e3.oid)?;
+            let base = read_blob(repo.odb(), e1.oid)?;
+            let ours = read_blob(repo.odb(), e2.oid)?;
+            let theirs = read_blob(repo.odb(), e3.oid)?;
             merge(&MergeInput {
                 base: &base,
                 ours: &ours,
@@ -534,8 +534,8 @@ fn synthesize_conflict_from_index(
             })?
         }
         (None, Some(e2), Some(e3)) => {
-            let ours = read_blob(&repo.odb, e2.oid)?;
-            let theirs = read_blob(&repo.odb, e3.oid)?;
+            let ours = read_blob(repo.odb(), e2.oid)?;
+            let theirs = read_blob(repo.odb(), e3.oid)?;
             merge(&MergeInput {
                 base: &[],
                 ours: &ours,
@@ -698,12 +698,11 @@ fn write_preimage_normalized(
 
 fn stage_resolved_path(repo: &Repository, index: &mut Index, path: &str) -> Result<()> {
     let wt = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| crate::error::Error::PathError("no work tree".to_string()))?;
     let abs = wt.join(path);
     let data = fs::read(&abs)?;
-    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+    let oid = repo.odb().write(ObjectKind::Blob, &data)?;
     let path_b = path.as_bytes().to_vec();
     // Preserve the mode recorded for the conflicting path (stage 2, else stage 3) so
     // executable bits / symlinks survive auto-staging; default to a regular file.
@@ -752,24 +751,23 @@ fn stage_resolved_path(repo: &Repository, index: &mut Index, path: &str) -> Resu
 /// Invoked after mergy operations with conflicts (`merge`, `rebase`, …).
 pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Vec<RerereEvent>> {
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(Vec::new());
     }
     let mut events = Vec::new();
     let autoupdate_on = autoupdate_flag(&config, autoupdate);
-    let wt = match &repo.work_tree {
-        Some(w) => w,
-        None => return Ok(events),
+    let Some(wt) = repo.work_tree() else {
+        return Ok(events);
     };
 
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     if !index_path.exists() {
         return Ok(events);
     }
     let mut index = repo.load_index_at(&index_path)?;
-    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+    let mut merge_rr = read_merge_rr(repo.git_dir())?;
 
-    fs::create_dir_all(rr_root(&repo.git_dir))?;
+    fs::create_dir_all(rr_root(repo.git_dir()))?;
 
     // Match Git `do_plain_rerere` first loop: `handle_file` reads the working tree and hashes
     // conflict markers (same path as `find_conflict` three-way conflicts).
@@ -782,7 +780,7 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
             String::new()
         };
         let marker_size = conflict_marker_size(path);
-        let algo = repo.odb.hash_algo();
+        let algo = repo.odb().hash_algo();
         let digest_len = algo.len();
         let mut hash = [0u8; 32];
         let ret = handle_path(
@@ -831,16 +829,16 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
         if id.variant < 0 {
             let hex = id.hex.clone();
             let mut replayed = false;
-            for v in list_complete_variants(&repo.git_dir, &hex) {
+            for v in list_complete_variants(repo.git_dir(), &hex) {
                 let vid = RerereId {
                     hex: hex.clone(),
                     variant: v,
                 };
-                let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
+                let pre = match fs::read(preimage_path(repo.git_dir(), &vid)) {
                     Ok(b) => b,
                     Err(_) => continue,
                 };
-                let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
+                let post = match fs::read(postimage_path(repo.git_dir(), &vid)) {
                     Ok(b) => b,
                     Err(_) => continue,
                 };
@@ -848,7 +846,7 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
                     try_replay_merge(repo, &path, work_content.as_bytes(), &pre, &post)
                 {
                     fs::write(&file_path, &res)?;
-                    touch_postimage(&repo.git_dir, &vid);
+                    touch_postimage(repo.git_dir(), &vid);
                     if autoupdate_on {
                         to_stage.push(path.clone());
                     } else {
@@ -865,8 +863,8 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
                 ent.id = None;
                 continue;
             }
-            id.variant = assign_variant(&repo.git_dir, &id.hex);
-            write_preimage_normalized(&repo.git_dir, &id, &work_content, marker_size)?;
+            id.variant = assign_variant(repo.git_dir(), &id.hex);
+            write_preimage_normalized(repo.git_dir(), &id, &work_content, marker_size)?;
             ent.id = Some(id);
             events.push(RerereEvent {
                 path: path.clone(),
@@ -875,8 +873,8 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
             continue;
         }
 
-        if handle_path(&work_content, marker_size, repo.odb.hash_algo(), None) == 0 {
-            fs::copy(&file_path, postimage_path(&repo.git_dir, &id))?;
+        if handle_path(&work_content, marker_size, repo.odb().hash_algo(), None) == 0 {
+            fs::copy(&file_path, postimage_path(repo.git_dir(), &id))?;
             events.push(RerereEvent {
                 path: path.clone(),
                 kind: RerereEventKind::RecordedResolution,
@@ -899,24 +897,24 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
         // Prefer the working tree; fall back to the in-core conflict from index stages when
         // marker labels differ but the rerere conflict id still matches.
         let mut try_cur = |cur: &[u8]| -> bool {
-            for v in list_complete_variants(&repo.git_dir, &hex) {
+            for v in list_complete_variants(repo.git_dir(), &hex) {
                 let vid = RerereId {
                     hex: hex.clone(),
                     variant: v,
                 };
-                let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
+                let pre = match fs::read(preimage_path(repo.git_dir(), &vid)) {
                     Ok(b) => b,
                     Err(_) => continue,
                 };
-                let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
+                let post = match fs::read(postimage_path(repo.git_dir(), &vid)) {
                     Ok(b) => b,
                     Err(_) => continue,
                 };
                 if let Some(res) = try_replay_merge(repo, &path, cur, &pre, &post) {
                     let _ = fs::write(&file_path, &res);
-                    touch_postimage(&repo.git_dir, &vid);
+                    touch_postimage(repo.git_dir(), &vid);
                     if id.variant != v {
-                        remove_variant(&repo.git_dir, &id);
+                        remove_variant(repo.git_dir(), &id);
                     }
                     if autoupdate_on {
                         to_stage.push(path.clone());
@@ -942,8 +940,8 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
             continue;
         }
 
-        id.variant = assign_variant(&repo.git_dir, &id.hex);
-        write_preimage_normalized(&repo.git_dir, &id, &work_content, marker_size)?;
+        id.variant = assign_variant(repo.git_dir(), &id.hex);
+        write_preimage_normalized(repo.git_dir(), &id, &work_content, marker_size)?;
         ent.id = Some(id);
         events.push(RerereEvent {
             path: path.clone(),
@@ -952,7 +950,7 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
     }
 
     merge_rr.retain(|_, e| e.id.is_some());
-    write_merge_rr(&repo.git_dir, &merge_rr)?;
+    write_merge_rr(repo.git_dir(), &merge_rr)?;
 
     if !to_stage.is_empty() {
         for p in &to_stage {
@@ -973,19 +971,18 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<Ve
 /// After successful commit: record postimages, clear `MERGE_RR` entries.
 pub fn rerere_post_commit(repo: &Repository) -> Result<Vec<RerereEvent>> {
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(Vec::new());
     }
     let mut events = Vec::new();
-    let wt = match &repo.work_tree {
-        Some(w) => w,
-        None => return Ok(events),
+    let Some(wt) = repo.work_tree() else {
+        return Ok(events);
     };
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     if !index_path.exists() {
         return Ok(events);
     }
-    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+    let mut merge_rr = read_merge_rr(repo.git_dir())?;
     if merge_rr.is_empty() {
         return Ok(events);
     }
@@ -1001,8 +998,8 @@ pub fn rerere_post_commit(repo: &Repository) -> Result<Vec<RerereEvent>> {
         if id.variant < 0 {
             continue;
         }
-        let pre = preimage_path(&repo.git_dir, &id);
-        let post = postimage_path(&repo.git_dir, &id);
+        let pre = preimage_path(repo.git_dir(), &id);
+        let post = postimage_path(repo.git_dir(), &id);
         if !pre.exists() || post.exists() {
             continue;
         }
@@ -1012,7 +1009,7 @@ pub fn rerere_post_commit(repo: &Repository) -> Result<Vec<RerereEvent>> {
         }
         let content = fs::read_to_string(&fp)?;
         let marker_size = conflict_marker_size(&path);
-        if handle_path(&content, marker_size, repo.odb.hash_algo(), None) != 0 {
+        if handle_path(&content, marker_size, repo.odb().hash_algo(), None) != 0 {
             continue;
         }
         fs::write(&post, content.as_bytes())?;
@@ -1024,7 +1021,7 @@ pub fn rerere_post_commit(repo: &Repository) -> Result<Vec<RerereEvent>> {
     }
 
     merge_rr.retain(|_, e| e.id.is_some());
-    write_merge_rr(&repo.git_dir, &merge_rr)?;
+    write_merge_rr(repo.git_dir(), &merge_rr)?;
     Ok(events)
 }
 
@@ -1037,7 +1034,7 @@ pub fn rerere_post_commit(repo: &Repository) -> Result<Vec<RerereEvent>> {
 /// Propagates rerere and I/O failures.
 pub fn finish_merge_rerere(repo: &Repository) -> Result<Vec<RerereEvent>> {
     let events = rerere_post_commit(repo)?;
-    let path = merge_rr_path(&repo.git_dir);
+    let path = merge_rr_path(repo.git_dir());
     if path.exists() {
         fs::write(&path, [])?;
     }
@@ -1179,20 +1176,20 @@ pub fn rerere_gc(env: &crate::environment::Environment, git_dir: &Path, now: i64
 /// Lines for `git rerere status` (paths listed in `MERGE_RR`).
 pub fn rerere_status_lines(repo: &Repository) -> Result<Vec<String>> {
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(Vec::new());
     }
-    let mm = read_merge_rr(&repo.git_dir)?;
+    let mm = read_merge_rr(repo.git_dir())?;
     Ok(mm.keys().cloned().collect())
 }
 
 /// Unified diff: recorded preimage vs working tree (Git/xdiff style header).
 pub fn rerere_diff_for_path(repo: &Repository, path: &str) -> Result<Option<String>> {
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(None);
     }
-    let mm = read_merge_rr(&repo.git_dir)?;
+    let mm = read_merge_rr(repo.git_dir())?;
     let ent = match mm.get(path) {
         Some(e) => e,
         None => return Ok(None),
@@ -1200,12 +1197,12 @@ pub fn rerere_diff_for_path(repo: &Repository, path: &str) -> Result<Option<Stri
     let Some(id) = &ent.id else {
         return Ok(None);
     };
-    let pre_path = preimage_path(&repo.git_dir, id);
+    let pre_path = preimage_path(repo.git_dir(), id);
     if !pre_path.exists() {
         return Ok(None);
     }
     let recorded = fs::read_to_string(&pre_path)?;
-    let wt = repo.work_tree.as_ref();
+    let wt = repo.work_tree();
     let Some(wt) = wt else {
         return Ok(None);
     };
@@ -1231,17 +1228,17 @@ pub fn rerere_diff_for_path(repo: &Repository, path: &str) -> Result<Option<Stri
 /// that was not marked resolved.
 pub fn rerere_remaining_lines(repo: &Repository) -> Result<Vec<String>> {
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(Vec::new());
     }
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     if !index_path.exists() {
         return Ok(Vec::new());
     }
     let index = repo.load_index_at(&index_path)?;
 
     // Tracked conflicts come from MERGE_RR; map path -> resolved?.
-    let merge_rr = read_merge_rr(&repo.git_dir)?;
+    let merge_rr = read_merge_rr(repo.git_dir())?;
     // Preserve the MERGE_RR insertion/sorted order for output.
     let mut entries: Vec<(String, bool)> = merge_rr.keys().map(|p| (p.clone(), false)).collect();
     let mut index_of: BTreeMap<String, usize> = BTreeMap::new();
@@ -1287,12 +1284,11 @@ pub fn rerere_remaining_lines(repo: &Repository) -> Result<Vec<String>> {
 pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEvent>> {
     let mut events = Vec::new();
     let config = repo.config()?;
-    if !rerere_enabled(&config, &repo.git_dir) {
+    if !rerere_enabled(&config, repo.git_dir()) {
         return Ok(events);
     }
     let wt = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| crate::error::Error::PathError("no work tree".to_string()))?;
     let path = {
         let cwd = repo.environment().cwd.clone();
@@ -1314,7 +1310,7 @@ pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEve
             "no such path '{path}' in the working tree"
         )));
     }
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     let index = repo.load_index_at(&index_path)?;
     let has_base_stage = index
         .entries
@@ -1341,7 +1337,7 @@ pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEve
         }
     };
     let marker_size = conflict_marker_size(path);
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let digest_len = algo.len();
     let mut hash = [0u8; 32];
     if handle_path(&synth, marker_size, algo, Some(&mut hash[..digest_len])) != 1 {
@@ -1352,19 +1348,19 @@ pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEve
     let hex = hex::encode(&hash[..digest_len]);
     let work = fs::read_to_string(&fp)?;
     let mut forgot_id: Option<RerereId> = None;
-    for v in list_complete_variants(&repo.git_dir, &hex) {
+    for v in list_complete_variants(repo.git_dir(), &hex) {
         let id = RerereId {
             hex: hex.clone(),
             variant: v,
         };
-        let pre = fs::read(preimage_path(&repo.git_dir, &id)).ok();
-        let post = fs::read(postimage_path(&repo.git_dir, &id)).ok();
+        let pre = fs::read(preimage_path(repo.git_dir(), &id)).ok();
+        let post = fs::read(postimage_path(repo.git_dir(), &id)).ok();
         let (Some(pre_b), Some(post_b)) = (pre, post) else {
             continue;
         };
         if try_replay_merge(repo, path, work.as_bytes(), &pre_b, &post_b).is_some() {
-            let _ = fs::remove_file(postimage_path(&repo.git_dir, &id));
-            write_preimage_normalized(&repo.git_dir, &id, &work, marker_size)?;
+            let _ = fs::remove_file(postimage_path(repo.git_dir(), &id));
+            write_preimage_normalized(repo.git_dir(), &id, &work, marker_size)?;
             events.push(RerereEvent {
                 path: path.to_string(),
                 kind: RerereEventKind::UpdatedPreimage,
@@ -1387,8 +1383,8 @@ pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<Vec<RerereEve
         });
         return Ok(events);
     };
-    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+    let mut merge_rr = read_merge_rr(repo.git_dir())?;
     merge_rr.insert(path.to_string(), MergeRrEntry { id: Some(id) });
-    write_merge_rr(&repo.git_dir, &merge_rr)?;
+    write_merge_rr(repo.git_dir(), &merge_rr)?;
     Ok(events)
 }

@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use grit_lib::repo::Repository;
@@ -34,7 +35,11 @@ fn init_repo() -> (tempfile::TempDir, Repository) {
     git_cmd(dir.path(), &["config", "user.email", "test@example.com"]);
     git_cmd(dir.path(), &["config", "user.name", "Test"]);
     let root = dir.path();
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     (dir, repo)
 }
 
@@ -143,7 +148,7 @@ fn restore_source_head_parent() {
             pathspecs: vec!["c.txt".into()],
             pathspec_sources: vec!["c.txt".into()],
             source: RestoreSource::Tree({
-                let obj = repo.odb.read(&tree).unwrap();
+                let obj = repo.odb().read(&tree).unwrap();
                 grit_lib::objects::parse_commit(&obj.data).unwrap().tree
             }),
             staged: false,
@@ -171,7 +176,7 @@ fn restore_source_worktree_only_leaves_index_at_head() {
 
     let parent = grit_lib::rev_parse::resolve_revision(&repo, "HEAD~1").unwrap();
     let parent_tree = {
-        let obj = repo.odb.read(&parent).unwrap();
+        let obj = repo.odb().read(&parent).unwrap();
         grit_lib::objects::parse_commit(&obj.data).unwrap().tree
     };
     restore_paths(
@@ -213,7 +218,7 @@ fn restore_deletion_skips_directory_collision() {
 
     let head_tree = grit_lib::rev_parse::resolve_revision(&repo, "HEAD").unwrap();
     let head_tree_oid = {
-        let obj = repo.odb.read(&head_tree).unwrap();
+        let obj = repo.odb().read(&head_tree).unwrap();
         grit_lib::objects::parse_commit(&obj.data).unwrap().tree
     };
     restore_paths(
@@ -248,14 +253,14 @@ fn restore_removes_path_missing_in_source() {
     git_cmd(dir.path(), &["commit", "-qm", "drop gone"]);
 
     let head_tree = grit_lib::rev_parse::resolve_revision(&repo, "HEAD").unwrap();
-    let head_obj = repo.odb.read(&head_tree).unwrap();
+    let head_obj = repo.odb().read(&head_tree).unwrap();
     let head_tree_oid = grit_lib::objects::parse_commit(&head_obj.data)
         .unwrap()
         .tree;
 
     use grit_lib::index::IndexEntry;
     use grit_lib::objects::ObjectKind;
-    let blob = repo.odb.write(ObjectKind::Blob, b"g\n").unwrap();
+    let blob = repo.odb().write(ObjectKind::Blob, b"g\n").unwrap();
     let mut index = repo.load_index().unwrap();
     index.stage_file(IndexEntry {
         ctime_sec: 0,

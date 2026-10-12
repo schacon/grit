@@ -3,6 +3,8 @@
 //! Holds object metadata (not payloads) during planning; reads object bytes from the
 //! [`Odb`] on demand when encoding.
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 
@@ -384,7 +386,7 @@ pub fn build_pack_for_upload(
     opts: &PackBuildOptions,
 ) -> Result<Vec<u8>> {
     build_pack_with_shallow_and_filter(
-        &repo.odb,
+        repo.odb(),
         wants,
         haves,
         have_shallow,
@@ -960,7 +962,7 @@ fn load_islands_for_pack(
     let Some(git_dir) = odb.config_git_dir() else {
         return crate::delta_islands::DeltaIslands::default();
     };
-    let Ok(repo) = crate::repo::Repository::open(git_dir, None) else {
+    let Ok(repo) = crate::repo::Repository::open(git_dir, &RepositoryOptions::empty()) else {
         return crate::delta_islands::DeltaIslands::default();
     };
     let env = crate::environment::Environment::empty();

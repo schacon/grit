@@ -1656,8 +1656,8 @@ mod tests {
         )
         .expect("init");
         let mut index = Index::new();
-        index.hash_algo = repo.odb.hash_algo();
-        let blob = repo.odb.write(ObjectKind::Blob, b"x\n").expect("blob");
+        index.hash_algo = repo.odb().hash_algo();
+        let blob = repo.odb().write(ObjectKind::Blob, b"x\n").expect("blob");
         index.add_or_replace(IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,
@@ -1675,7 +1675,7 @@ mod tests {
             path: b"f.txt".to_vec(),
             base_index_pos: 0,
         });
-        let tree = write_tree_from_index(&repo.odb, &index, "").expect("tree");
+        let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
         let raw = serialize_commit(&CommitData {
             tree,
             parents: vec![],
@@ -1688,8 +1688,8 @@ mod tests {
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        let commit = repo.odb.write(ObjectKind::Commit, &raw).expect("commit");
-        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        let commit = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
         (dir, repo, commit)
     }
 
@@ -1704,14 +1704,14 @@ mod tests {
     #[test]
     fn try_parse_rejects_bad_signature_and_truncated_toc() {
         let (_dir, repo, commit) = one_commit_repo();
-        let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1722,7 +1722,7 @@ mod tests {
             true,
         )
         .expect("write");
-        let algo = repo.odb.hash_algo();
+        let algo = repo.odb().hash_algo();
         bytes[0] = 0;
         reseal_graph(&mut bytes, algo);
         let err = super::CommitGraphLayer::try_parse(std::path::PathBuf::from("g"), bytes.clone())
@@ -1735,7 +1735,7 @@ mod tests {
         let (mut good, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1754,7 +1754,7 @@ mod tests {
         let (mut checksum_bad, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1795,16 +1795,16 @@ mod tests {
     #[test]
     fn try_load_across_finds_single_graph() {
         let (_dir, repo, _commit) = one_commit_repo();
-        let objects = repo.odb.objects_dir();
+        let objects = repo.odb().objects_dir();
         let sorted = vec![_commit];
-        let info = load_commit_graph_commit_info(&repo.odb, _commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), _commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(_commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1825,14 +1825,14 @@ mod tests {
     #[test]
     fn try_parse_rejects_oidf_toc_offset_out_of_range() {
         let (_dir, repo, commit) = one_commit_repo();
-        let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1843,7 +1843,7 @@ mod tests {
             true,
         )
         .expect("write");
-        let algo = repo.odb.hash_algo();
+        let algo = repo.odb().hash_algo();
         let num_chunks = bytes[6] as usize;
         for i in 0..num_chunks {
             let e = 8 + i * 12;
@@ -1862,14 +1862,14 @@ mod tests {
     #[test]
     fn generation_overflow_without_gdo2_fails_parse() {
         let (_dir, repo, commit) = one_commit_repo();
-        let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (mut bytes, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -1899,14 +1899,14 @@ mod tests {
     #[test]
     fn bloom_precheck_not_in_graph_for_missing_oid() {
         let (_dir, repo, commit) = one_commit_repo();
-        let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &[commit],
             &infos,
-            &repo.odb,
+            &repo.odb(),
             true,
             &bloom,
             None,
@@ -1917,11 +1917,11 @@ mod tests {
             true,
         )
         .expect("write");
-        std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), bytes).expect("write");
-        let chain = super::CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+        std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write");
+        let chain = super::CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
         let missing = ObjectId::from_hex("1234567890123456789012345678901234567890").expect("oid");
         let pre = chain
-            .bloom_precheck_for_paths(&repo.odb, missing, &[], None, -1, true)
+            .bloom_precheck_for_paths(&repo.odb(), missing, &[], None, -1, true)
             .expect("precheck");
         assert_eq!(pre, super::BloomPrecheck::NotInGraph);
     }
@@ -1930,14 +1930,14 @@ mod tests {
     fn bloom_precheck_respects_read_changed_paths_flag() {
         let (_dir, repo, commit) = one_commit_repo();
         let mut sorted = vec![commit];
-        let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+        let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
         let mut infos = HashMap::new();
         infos.insert(commit, info);
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
             &infos,
-            &repo.odb,
+            &repo.odb(),
             true,
             &bloom,
             None,
@@ -1948,10 +1948,10 @@ mod tests {
             true,
         )
         .expect("write");
-        std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), bytes).expect("write");
-        let chain = super::CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+        std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write");
+        let chain = super::CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
         let pre = chain
-            .bloom_precheck_for_paths(&repo.odb, commit, &["f.txt".to_owned()], None, -1, false)
+            .bloom_precheck_for_paths(&repo.odb(), commit, &["f.txt".to_owned()], None, -1, false)
             .expect("precheck");
         assert_eq!(pre, super::BloomPrecheck::Inapplicable);
         sorted.clear();

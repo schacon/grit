@@ -249,7 +249,7 @@ impl Bundle {
         &self,
         repo: &Repository,
     ) -> std::result::Result<BundleVerifyReport, BundleError> {
-        let repo_algo = repo.odb.hash_algo();
+        let repo_algo = repo.odb().hash_algo();
         if self.header.object_format != repo_algo {
             return Err(BundleError::ObjectFormatMismatch {
                 bundle_name: self.header.object_format.name(),
@@ -258,7 +258,7 @@ impl Bundle {
         }
         let mut report = BundleVerifyReport::default();
         for (oid, subject) in &self.header.prerequisites {
-            if repo.odb.read(oid).is_err() {
+            if repo.odb().read(oid).is_err() {
                 report.missing_prerequisites.push((*oid, subject.clone()));
             }
         }
@@ -290,10 +290,10 @@ impl Bundle {
         repo: &Repository,
         progress: &mut dyn ProgressSink,
     ) -> std::result::Result<UnbundleOutcome, BundleError> {
-        if self.header.object_format != repo.odb.hash_algo() {
+        if self.header.object_format != repo.odb().hash_algo() {
             return Err(BundleError::ObjectFormatMismatch {
                 bundle_name: self.header.object_format.name(),
-                repo_name: repo.odb.hash_algo().name(),
+                repo_name: repo.odb().hash_algo().name(),
             });
         }
         let pack_bytes = std::fs::metadata(&self.path)
@@ -304,7 +304,7 @@ impl Bundle {
             ProgressUnit::Bytes,
             Some(pack_bytes),
         );
-        let tmp = tempfile::NamedTempFile::new_in(repo.git_dir.join("objects").join("pack"))
+        let tmp = tempfile::NamedTempFile::new_in(repo.git_dir().join("objects").join("pack"))
             .map_err(|e| BundleError::Io(e.to_string()))?;
         {
             let mut input = File::open(&self.path)?;
@@ -322,7 +322,7 @@ impl Bundle {
         };
         let ingested = ingest_received_pack_path_with_progress(
             tmp.path().to_path_buf(),
-            &repo.odb,
+            repo.odb(),
             &opts,
             Some(progress),
         )
@@ -330,7 +330,7 @@ impl Bundle {
         if self.header.filter.is_some() {
             std::fs::write(ingested.pack_path.with_extension("promisor"), b"")
                 .map_err(|e| BundleError::Io(e.to_string()))?;
-            repo.odb.invalidate_packs();
+            repo.odb().invalidate_packs();
         }
         let transfer = crate::transfer::TransferStats::from_ingested_pack(&ingested)
             .map_err(|e| BundleError::Io(e.to_string()))?;
@@ -456,7 +456,7 @@ pub fn write_bundle(
     if spec.include.is_empty() {
         return Err(BundleError::EmptyRefs);
     }
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let version = if algo != HashAlgo::Sha1 || spec.filter.is_some() {
         BundleVersion::V3
     } else {
@@ -471,7 +471,7 @@ pub fn write_bundle(
     }
 
     let include_oids: Vec<ObjectId> = spec.include.iter().map(|(o, _)| *o).collect();
-    let boundaries = prerequisite_commits(&repo.odb, &include_oids, &spec.exclude)?;
+    let boundaries = prerequisite_commits(repo.odb(), &include_oids, &spec.exclude)?;
     for (oid, subject) in &boundaries {
         write!(out, "-{} ", oid.to_hex()).map_err(|e| BundleError::Io(e.to_string()))?;
         if let Some(s) = subject {
@@ -488,14 +488,14 @@ pub fn write_bundle(
     let mut haves: Vec<ObjectId> = spec
         .exclude
         .iter()
-        .map(|oid| peel_to_commit(&repo.odb, *oid))
+        .map(|oid| peel_to_commit(repo.odb(), *oid))
         .collect::<std::result::Result<Vec<_>, Error>>()
         .map_err(|e| BundleError::Io(e.to_string()))?;
     haves.sort();
     haves.dedup();
     let pack_opts = PackBuildOptions::for_local_push(None);
     let empty_shallow = HashSet::new();
-    let have_closure = reachable_closure(&repo.odb, &haves, &HashSet::new(), true, &empty_shallow)
+    let have_closure = reachable_closure(repo.odb(), &haves, &HashSet::new(), true, &empty_shallow)
         .map_err(|e| BundleError::Io(e.to_string()))?;
     let pack = if let Some(filter) = spec.filter.as_ref() {
         let send = filtered_pack_objects(
@@ -506,10 +506,16 @@ pub fn write_bundle(
             &have_closure,
         )
         .map_err(|e| BundleError::Io(e.to_string()))?;
-        build_pack_from_send_list(&repo.odb, &send, &have_closure, &pack_opts, &HashMap::new())
-            .map_err(|e| BundleError::Io(e.to_string()))?
+        build_pack_from_send_list(
+            repo.odb(),
+            &send,
+            &have_closure,
+            &pack_opts,
+            &HashMap::new(),
+        )
+        .map_err(|e| BundleError::Io(e.to_string()))?
     } else {
-        build_pack(&repo.odb, &include_oids, &haves, &pack_opts)
+        build_pack(repo.odb(), &include_oids, &haves, &pack_opts)
             .map_err(|e| BundleError::Io(e.to_string()))?
     };
     out.write_all(&pack)

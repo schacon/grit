@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{HashAlgo, ObjectKind};
 use grit_lib::repo::Repository;
@@ -141,8 +142,11 @@ fn grit_fsmn_index_round_trips_with_git() {
     let repo_root = init_repo_with_fsmn(tmp.path());
     let token_before = fsmn_token(&repo_root);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(&repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&repo_root),
+    )
+    .expect("open grit repo");
     let mut index = grit_repo.load_index().expect("load index");
     assert_eq!(
         index.fsmonitor_last_update.as_deref(),
@@ -153,7 +157,10 @@ fn grit_fsmn_index_round_trips_with_git() {
         let path = format!("new-{i}.txt");
         fs::write(repo_root.join(&path), format!("added {i}\n")).expect("write worktree");
         let data = fs::read(repo_root.join(&path)).expect("read");
-        let oid = grit_repo.odb.write(ObjectKind::Blob, &data).expect("blob");
+        let oid = grit_repo
+            .odb()
+            .write(ObjectKind::Blob, &data)
+            .expect("blob");
         let mut entry = make_replacement_entry(path.as_bytes(), &data);
         entry.oid = oid;
         entry.set_fsmonitor_valid(true);
@@ -187,8 +194,11 @@ fn git_fsmn_index_rewritten_by_grit_preserves_token() {
     let repo_root = init_repo_with_fsmn(tmp.path());
     let token_before = fsmn_token(&repo_root);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(&repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&repo_root),
+    )
+    .expect("open grit repo");
     let mut index = grit_repo.load_index().expect("load");
     grit_repo.write_index(&mut index).expect("rewrite index");
 

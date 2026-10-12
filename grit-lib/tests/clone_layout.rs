@@ -296,7 +296,7 @@ fn library_clone_api_passes_fsck_and_status() {
 
     let commit = outcome
         .repo
-        .odb
+        .odb()
         .read(&outcome.checkout_oid)
         .expect("commit obj");
     let parsed = grit_lib::objects::parse_commit(&commit.data).expect("parse commit");

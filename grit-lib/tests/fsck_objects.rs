@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use grit_lib::gitmodules::{fsck_dot_special_object, fsck_dot_special_tree_pass, DotFsckTracker};
 use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
@@ -1092,9 +1093,12 @@ fn dot_fsck_tracker_finish_pending_inner(algo: FixtureAlgo) {
     let tree_hex = write_loose_object(&repo.objects_dir(), algo, "tree", &tree_body).expect("tree");
     let tree_oid: ObjectId = tree_hex.parse().expect("oid");
 
-    let grit_repo =
-        Repository::open(&repo.path().join(".git"), Some(repo.path())).expect("open grit repo");
-    let odb = &grit_repo.odb;
+    let grit_repo = Repository::open(
+        &repo.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo.path()),
+    )
+    .expect("open grit repo");
+    let odb = grit_repo.odb();
     let mut tracker = DotFsckTracker::default();
     tracker.on_tree(&tree_oid, &tree_body).expect("on_tree");
     let pending = tracker.finish_pending(&odb).expect("finish");

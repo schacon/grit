@@ -5,6 +5,7 @@ mod support;
 use std::fs;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{
     entry_from_metadata, format_index_lock_blocked_detail, index_entries_stat_equivalent,
     munge_index_size, normalize_mode, worktree_path_from_index_rel, Index, IndexEntry,
@@ -67,11 +68,11 @@ fn dump_cache_tree_and_format_dump() {
     let repo = HistoryRepo::init();
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let index = grit.load_index().expect("load");
     assert!(index.cache_tree.is_some());
     let _ = index.format_cache_tree_dump();
-    let dump = index.dump_cache_tree(&grit.odb).expect("dump");
+    let dump = index.dump_cache_tree(&grit.odb()).expect("dump");
     assert!(!dump.is_empty());
 }
 
@@ -81,7 +82,7 @@ fn overlay_tree_on_index_from_head() {
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
     fs::write(wt.join("a/f0.txt"), "dirty\n").expect("modify");
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let mut index = grit.load_index().expect("load");
     index
         .overlay_tree_on_index(&grit, "HEAD", b"")
@@ -99,20 +100,20 @@ fn load_expand_sparse_optional_and_collapse_roundtrip() {
     git(wt, &["read-tree", "-mu", "HEAD"]);
     git(wt, &["config", "index.sparse", "true"]);
     git(wt, &["add", "-A"]);
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let head_commit = rev_parse::resolve_revision(&grit, "HEAD").expect("head");
-    let head_obj = grit.odb.read(&head_commit).expect("commit");
+    let head_obj = grit.odb().read(&head_commit).expect("commit");
     let head = grit_lib::objects::parse_commit(&head_obj.data)
         .expect("parse")
         .tree;
     let patterns = vec!["/*".to_string(), "!/*/".to_string(), "/a/".to_string()];
     let mut index =
-        Index::load_expand_sparse_optional(&grit.index_path(), &grit.odb).expect("load");
+        Index::load_expand_sparse_optional(&grit.index_path(), &grit.odb()).expect("load");
     index
-        .try_collapse_sparse_directories(&grit.odb, &head, &patterns, true, true)
+        .try_collapse_sparse_directories(&grit.odb(), &head, &patterns, true, true)
         .expect("collapse");
     if index.has_sparse_directory_placeholders() {
-        let expanded = Index::load_expand_sparse(&grit.index_path(), &grit.odb).expect("expand");
+        let expanded = Index::load_expand_sparse(&grit.index_path(), &grit.odb()).expect("expand");
         assert!(!expanded.has_sparse_directory_placeholders());
     }
 }
@@ -147,9 +148,9 @@ fn git_index_v4_long_paths_parse_and_rewrite() {
     parsed.write(&wt.join("out-index")).expect("rewrite");
     let reload = Index::load(&wt.join("out-index")).expect("reload");
     assert_eq!(reload.entries().len(), parsed.entries().len());
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let mut idx = reload;
-    write_tree_update_index(&grit.odb, &mut idx, "", WriteTreeFlags::default()).expect("tree");
+    write_tree_update_index(&grit.odb(), &mut idx, "", WriteTreeFlags::default()).expect("tree");
 }
 
 #[test]

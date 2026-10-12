@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::fetch::{NoProgress, Progress};
 use grit_lib::progress::{ProgressPhase, ProgressSink, ProgressUnit};
 use grit_lib::remote::{Remote, RemoteUrl};
@@ -64,7 +64,11 @@ fn fetch_from_git_bundle_matches_git_fetch() {
     let remote = Remote::from_url(bundle_path.to_str().unwrap()).expect("bundle url");
     assert!(matches!(remote.fetch_url(), RemoteUrl::Bundle(_)));
 
-    let repo = Repository::open(&dest.path().join(".git"), Some(dest.path())).unwrap();
+    let repo = Repository::open(
+        &dest.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(dest.path()),
+    )
+    .unwrap();
     let mut progress = NoProgress;
     let outcome = remote
         .fetch(

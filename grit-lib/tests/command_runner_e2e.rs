@@ -26,10 +26,9 @@ fn init_repo(root: &Path) -> Repository {
     fs::create_dir_all(git_dir.join("hooks")).expect("hooks dir");
     let mut env = Environment::empty();
     env.cwd = root.to_path_buf();
-    Repository::open_with(
-        &RepositoryOptions::with_environment(env),
+    Repository::open(
         &git_dir,
-        Some(root),
+        &RepositoryOptions::with_environment(env).with_work_tree(root.to_path_buf()),
     )
     .expect("open")
 }
@@ -86,8 +85,11 @@ fn create_commit_aborts_on_pre_commit_hook_failure() {
     let mut env = Environment::empty();
     env.cwd = tmp.path().to_path_buf();
     let opts = RepositoryOptions::with_environment(env).with_command_runner(runner);
-    let repo =
-        Repository::open_with(&opts, &tmp.path().join(".git"), Some(tmp.path())).expect("open");
+    let repo = Repository::open(
+        &tmp.path().join(".git"),
+        &&opts.clone().with_work_tree(tmp.path()),
+    )
+    .expect("open");
 
     fs::write(tmp.path().join("f.txt"), b"data\n").expect("write");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");

@@ -5,6 +5,7 @@ mod support;
 use std::fs;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
@@ -19,7 +20,7 @@ use support::{
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
-    Repository::discover(Some(wt)).expect("open grit repo")
+    Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open grit repo")
 }
 
 #[test]
@@ -70,7 +71,8 @@ fn t1600_index_versions_roundtrip_with_git() {
             _ => unreachable!(),
         }
         let bytes = fs::read(wt.join(".git/index")).expect("read git index");
-        let parsed = Index::parse_with_algo(&bytes, grit.odb.hash_algo()).expect("parse git index");
+        let parsed =
+            Index::parse_with_algo(&bytes, grit.odb().hash_algo()).expect("parse git index");
         let on_disk_version = u32::from_be_bytes(bytes[4..8].try_into().expect("header"));
         assert_eq!(parsed.version, on_disk_version);
         match version {
@@ -134,7 +136,7 @@ fn t1015_read_index_unmerged_stages_roundtrip() {
     let wt = repo.worktree();
     let grit = open_grit(wt);
 
-    let blob = grit.odb.write(ObjectKind::Blob, b"base\n").expect("blob");
+    let blob = grit.odb().write(ObjectKind::Blob, b"base\n").expect("blob");
     let mut index = grit.load_index().expect("load");
     for stage in 1u8..=3 {
         let mut e = IndexEntry {
@@ -173,8 +175,11 @@ fn t2030_resolve_undo_roundtrip() {
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
     let grit = open_grit(wt);
-    let oid1 = grit.odb.write(ObjectKind::Blob, b"ours\n").expect("blob");
-    let oid2 = grit.odb.write(ObjectKind::Blob, b"theirs\n").expect("blob");
+    let oid1 = grit.odb().write(ObjectKind::Blob, b"ours\n").expect("blob");
+    let oid2 = grit
+        .odb()
+        .write(ObjectKind::Blob, b"theirs\n")
+        .expect("blob");
     let mut map = std::collections::BTreeMap::new();
     map.insert(
         b"path.txt".to_vec(),
@@ -207,7 +212,7 @@ fn t2107_intent_to_add_forces_index_version_three() {
     let grit = open_grit(wt);
     let mut index = grit.load_index().expect("load");
     assert_eq!(index.version, 2);
-    let blob = grit.odb.write(ObjectKind::Blob, b"n\n").expect("blob");
+    let blob = grit.odb().write(ObjectKind::Blob, b"n\n").expect("blob");
     let mut e = IndexEntry {
         ctime_sec: 1,
         ctime_nsec: 0,

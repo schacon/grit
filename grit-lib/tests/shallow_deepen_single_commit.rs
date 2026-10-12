@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::shallow_grafts_for_upload_pack_deepen;
@@ -14,14 +15,14 @@ fn init_single_commit_bare(dir: &Path) -> (Repository, ObjectId) {
         grit_lib::ref_storage::RefStorageFormat::Files,
     )
     .expect("init");
-    let repo = Repository::open(dir, None).expect("open");
+    let repo = Repository::open(dir, &RepositoryOptions::empty()).expect("open");
     let tree = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("empty tree");
     let commit_body = format!(
         "tree {}\nauthor T <t@x> 1 +0000\ncommitter T <t@x> 1 +0000\n\nonly\n",
         tree.to_hex()
     );
     let tip = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
     grit_lib::refs::write_ref(dir, "refs/heads/main", &tip).expect("ref");

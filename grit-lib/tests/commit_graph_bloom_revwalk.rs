@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use grit_lib::commit_graph_file::BloomWalkStats;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 
@@ -37,7 +38,7 @@ fn rev_list_uses_bloom_filters_with_pathspec() {
         dir.path(),
         &["commit-graph", "write", "--reachable", "--changed-paths"],
     );
-    let repo = Repository::discover(Some(dir.path())).expect("open");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let stats = Arc::new(Mutex::new(BloomWalkStats::default()));
     let opts = RevListOptions {
         paths: vec!["keep.txt".to_owned()],

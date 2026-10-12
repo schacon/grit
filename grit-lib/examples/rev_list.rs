@@ -12,7 +12,7 @@ use grit_lib::write_tree::write_tree_from_index;
 fn make_initial_commit(repo: &Repository) -> grit_lib::error::Result<grit_lib::objects::ObjectId> {
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 
-    let blob_oid = repo.odb.write(ObjectKind::Blob, b"log line\n")?;
+    let blob_oid = repo.odb().write(ObjectKind::Blob, b"log line\n")?;
     let path = b"file.txt".to_vec();
     let entry = IndexEntry {
         ctime_sec: 0,
@@ -35,7 +35,7 @@ fn make_initial_commit(repo: &Repository) -> grit_lib::error::Result<grit_lib::o
     index.add_or_replace(entry);
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
 
     let commit = CommitData {
         tree: tree_oid,
@@ -50,9 +50,9 @@ fn make_initial_commit(repo: &Repository) -> grit_lib::error::Result<grit_lib::o
         extra_headers: Vec::new(),
     };
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))?;
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &oid)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &oid)?;
     Ok(oid)
 }
 

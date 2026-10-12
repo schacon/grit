@@ -8,6 +8,7 @@ use grit_lib::commit_graph_file::{CommitGraphChain, CommitGraphLayer};
 use grit_lib::commit_graph_write::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
 };
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{HashAlgo, ObjectId};
 use grit_lib::repo::Repository;
@@ -290,8 +291,8 @@ fn corrupt_graph_generation_inconsistency_and_trailer() {
     bytes[trailer_start] ^= 0xff;
     expect_corrupt_load(&objects, &path, bytes.clone());
 
-    let repo = Repository::discover(Some(dir.path())).expect("open");
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir, &repo.odb)
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -300,14 +301,14 @@ fn corrupt_graph_generation_inconsistency_and_trailer() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (good, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -371,7 +372,7 @@ fn revwalk_ignores_corrupt_on_disk_graph() {
     }
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_verify_fixture_graph(dir.path());
-    let repo = Repository::discover(Some(dir.path())).expect("open");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let good = grit_rev_list(&repo, "commits/3", false);
     let mut bytes = std::fs::read(&path).expect("read");
     bytes[0] = 0;

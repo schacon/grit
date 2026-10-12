@@ -1,5 +1,6 @@
 //! Issue #940: merge conflicts should appear once in status with merge-in-progress state.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -39,7 +40,7 @@ fn merge_conflict_repo() -> TempDir {
 fn status_lists_each_conflict_path_once_and_sets_merge_state() {
     let tmp = merge_conflict_repo();
     let root = tmp.path();
-    let repo = Repository::discover(Some(root)).expect("open repo");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open repo");
     let model = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
 
     assert!(

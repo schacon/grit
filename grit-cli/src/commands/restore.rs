@@ -70,7 +70,7 @@ pub fn run(
 ) -> Result<RestoreCliOutcome> {
     let repo = context::discover()?;
     let work_tree = repo
-        .work_tree
+        .work_tree()
         .clone()
         .context("grit restore needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;
@@ -88,7 +88,7 @@ pub fn run(
         Some(rev) => {
             let oid = resolve_revision(&repo, &rev)
                 .with_context(|| format!("could not resolve '{rev}'"))?;
-            let obj = repo.odb.read(&oid).context("reading source object")?;
+            let obj = repo.odb().read(&oid).context("reading source object")?;
             use grit_lib::objects::{parse_commit, ObjectKind};
             let tree = match obj.kind {
                 ObjectKind::Commit => parse_commit(&obj.data)?.tree,

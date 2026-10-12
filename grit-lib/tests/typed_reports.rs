@@ -3,6 +3,7 @@
 use std::fs;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
@@ -57,7 +58,7 @@ fn reflog_expire_reports_actions_dry_run_and_real() {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("init");
-    let git_dir = repo.git_dir.clone();
+    let git_dir = repo.git_dir().to_path_buf();
 
     fs::write(tmp.path().join("f.txt"), "a\n").expect("write");
     git(tmp.path(), &["add", "f.txt"]);
@@ -236,13 +237,17 @@ fn rerere_records_then_reuses_resolution() {
     }
     fs::create_dir_all(tmp.path().join(".git/rr-cache")).expect("rr-cache");
     let git_dir = tmp.path().join(".git");
-    let repo = Repository::open(&git_dir, Some(tmp.path())).expect("reopen");
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("reopen");
 
     let path = "conflict.txt";
-    let base = repo.odb.write(ObjectKind::Blob, b"base\n").expect("base");
-    let ours = repo.odb.write(ObjectKind::Blob, b"ours\n").expect("ours");
+    let base = repo.odb().write(ObjectKind::Blob, b"base\n").expect("base");
+    let ours = repo.odb().write(ObjectKind::Blob, b"ours\n").expect("ours");
     let theirs = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"theirs\n")
         .expect("theirs");
     let conflict_body = "<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n";

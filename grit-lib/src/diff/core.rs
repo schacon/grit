@@ -9099,7 +9099,7 @@ mod gitlink_tree_worktree_tests {
             .parse()
             .expect("gitlink oid");
         let tree_oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tree, &encode_tree_gitlink("sub", &gitlink))
             .expect("write tree");
 
@@ -9123,7 +9123,7 @@ mod gitlink_tree_worktree_tests {
             base_index_pos: 0,
         });
 
-        let entries = diff_tree_to_worktree(&repo.odb, Some(&tree_oid), work_tree, &index)
+        let entries = diff_tree_to_worktree(&repo.odb(), Some(&tree_oid), work_tree, &index)
             .expect("diff_tree_to_worktree");
         assert!(
             entries.is_empty(),
@@ -9181,7 +9181,7 @@ mod gitlink_tree_worktree_tests {
             .expect("oid");
 
         let tree_oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tree, &encode_tree_gitlink("sub", &gitlink))
             .expect("tree");
         let path = b"sub".to_vec();
@@ -9206,7 +9206,7 @@ mod gitlink_tree_worktree_tests {
 
         fs::write(sub.join("untracked.txt"), b"extra\n").expect("untracked");
 
-        let entries = diff_tree_to_worktree(&repo.odb, Some(&tree_oid), work_tree, &index)
+        let entries = diff_tree_to_worktree(&repo.odb(), Some(&tree_oid), work_tree, &index)
             .expect("diff_tree_to_worktree");
         assert!(
             entries.is_empty(),

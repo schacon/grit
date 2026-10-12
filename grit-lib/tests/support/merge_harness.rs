@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{IndexEntry, MODE_REGULAR};
 use grit_lib::merge_file::MergeFavor;
 use grit_lib::merge_trees::{
@@ -157,7 +158,7 @@ pub fn grit_merge_result_tree(
         }
     }
     index.sort();
-    write_tree_from_index(&repo.odb, &index, "")
+    write_tree_from_index(&repo.odb(), &index, "")
 }
 
 fn conflict_path_bytes(merged: &TreeMergeOutput) -> BTreeSet<Vec<u8>> {
@@ -190,7 +191,7 @@ pub fn grit_unmerged_rows(merged: &TreeMergeOutput) -> Vec<GitUnmergedRow> {
 }
 
 pub fn tree_blob_map(repo: &Repository, tree: &ObjectId) -> BTreeMap<String, ObjectId> {
-    let worktree = repo.work_tree.as_ref().expect("worktree");
+    let worktree = repo.work_tree().expect("worktree");
     let out = refs_git(worktree, &["ls-tree", "-r", &tree.to_hex()]);
     let mut map = BTreeMap::new();
     for line in out.lines() {
@@ -308,8 +309,8 @@ pub fn assert_merge_output_matches_oracle(
             .any(|row| row.path == *path && row.stage != 0)
         {
             if let Some(marker) = merged.conflict_content.get(path.as_bytes()) {
-                let grit_body = repo.odb.read(oid).expect("read grit blob").data;
-                let marker_body = repo.odb.read(marker).expect("read marker").data;
+                let grit_body = repo.odb().read(oid).expect("read grit blob").data;
+                let marker_body = repo.odb().read(marker).expect("read marker").data;
                 assert_eq!(
                     grit_body, marker_body,
                     "{context}: conflict marker blob for {path}"
@@ -320,13 +321,14 @@ pub fn assert_merge_output_matches_oracle(
 }
 
 pub fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> grit_lib::error::Result<ObjectId> {
-    let obj = repo.odb.read(commit_oid)?;
+    let obj = repo.odb().read(commit_oid)?;
     Ok(parse_commit(&obj.data)?.tree)
 }
 
 /// Open the same repo path as `HistoryRepo` for grit.
 pub fn open_grit_repo(history: &HistoryRepo) -> Repository {
-    Repository::discover(Some(history.worktree())).expect("discover grit repo")
+    Repository::discover(Some(history.worktree()), &RepositoryOptions::empty())
+        .expect("discover grit repo")
 }
 
 /// Labels matching `git merge-tree` when invoked with raw commit object ids.
@@ -404,5 +406,5 @@ pub fn skip_merge_tree_git() -> bool {
 }
 
 pub fn empty_tree(repo: &Repository) -> ObjectId {
-    repo.odb.write(ObjectKind::Tree, &[]).expect("empty tree")
+    repo.odb().write(ObjectKind::Tree, &[]).expect("empty tree")
 }

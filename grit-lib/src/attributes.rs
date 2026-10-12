@@ -843,8 +843,7 @@ pub fn path_relative_to_worktree(
     path_str: &str,
 ) -> std::result::Result<String, String> {
     let wt = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| "bare repository — no work tree".to_string())?;
     let cwd = repo.environment().cwd.clone();
     let p = Path::new(path_str);
@@ -982,7 +981,7 @@ pub(crate) fn collect_stack_stamps(
     let root_ga = work_tree.join(".gitattributes");
     let stamp = attr_file_stamp(&root_ga);
     file_stamps.push((root_ga, stamp));
-    let info = repo.git_dir.join("info/attributes");
+    let info = repo.git_dir().join("info/attributes");
     let stamp = attr_file_stamp(&info);
     file_stamps.push((info, stamp));
     let dir_stamps = vec![(work_tree.to_path_buf(), attr_dir_stamp(work_tree))];
@@ -1070,7 +1069,7 @@ pub(crate) fn load_gitattributes_stack_uncached(
         }
     }
 
-    let info = repo.git_dir.join("info/attributes");
+    let info = repo.git_dir().join("info/attributes");
     if info.exists() {
         if let Ok(content) = fs::read_to_string(&info) {
             if content.len() <= MAX_ATTR_FILE_BYTES {
@@ -1111,7 +1110,7 @@ pub(crate) fn load_gitattributes_bare_uncached(
             }
         }
     }
-    let info = repo.git_dir.join("info/attributes");
+    let info = repo.git_dir().join("info/attributes");
     if info.exists() {
         if let Ok(content) = fs::read_to_string(&info) {
             if content.len() <= MAX_ATTR_FILE_BYTES {
@@ -1126,8 +1125,9 @@ pub(crate) fn load_gitattributes_bare_uncached(
     // `read_attr_from_index`), so e.g. `git -C .git diff-tree --check` still honours a
     // committed `* -whitespace` attribute. Prepend index rules so work-tree-equivalent
     // ordering (closer paths win) is preserved relative to info/global.
-    if let Ok(index) = Index::load(&repo.git_dir.join("index")) {
-        if let Ok(mut from_index) = load_gitattributes_from_index(&index, &repo.odb, &repo.git_dir)
+    if let Ok(index) = Index::load(&repo.git_dir().join("index")) {
+        if let Ok(mut from_index) =
+            load_gitattributes_from_index(&index, repo.odb(), repo.git_dir())
         {
             // info/global attributes are lower priority than per-tree `.gitattributes`,
             // so place the index rules ahead of what we have collected so far.
@@ -1194,10 +1194,10 @@ pub fn load_gitattributes_from_tree(
     tree_oid: &ObjectId,
 ) -> std::result::Result<ParsedGitAttributes, crate::error::Error> {
     repo.caches()
-        .load_gitattributes_from_tree_cached(&repo.odb, tree_oid, || {
+        .load_gitattributes_from_tree_cached(repo.odb(), tree_oid, || {
             let mut merged = ParsedGitAttributes::default();
             let mut collected = Vec::new();
-            walk_tree_attrs_collect(&repo.odb, tree_oid, "", &mut collected)?;
+            walk_tree_attrs_collect(repo.odb(), tree_oid, "", &mut collected)?;
             merge_collected_gitattributes(&mut collected, &mut merged);
             Ok(merged)
         })
@@ -1300,7 +1300,7 @@ pub fn load_gitattributes_for_diff(
             }
         }
     }
-    if let Some(wt) = repo.work_tree.as_deref() {
+    if let Some(wt) = repo.work_tree() {
         return load_gitattributes_stack(repo, wt);
     }
     load_gitattributes_bare(repo)
@@ -1319,7 +1319,7 @@ pub fn resolve_attr_treeish(
         .environment()
         .var("GIT_ATTR_SOURCE")
         .filter(|s| !s.is_empty());
-    let config = ConfigSet::load(repo.environment(), Some(&repo.git_dir), true)?;
+    let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)?;
     let cfg_tree = config.get("attr.tree");
     if let Some(s) = source_arg.map(|s| s.to_string()) {
         return Ok((Some(s), false));
@@ -1430,7 +1430,7 @@ fn merge_global_attributes_file(
 }
 
 fn merge_info_attributes(repo: &Repository, merged: &mut ParsedGitAttributes) {
-    let info = repo.git_dir.join("info/attributes");
+    let info = repo.git_dir().join("info/attributes");
     if info.exists() {
         if let Ok(content) = fs::read_to_string(&info) {
             if content.len() <= MAX_ATTR_FILE_BYTES {
@@ -1463,9 +1463,9 @@ pub fn load_gitattributes_for_check_attr_cached(
 ) -> std::result::Result<ParsedGitAttributes, crate::error::Error> {
     let mut merged = ParsedGitAttributes::default();
     merge_global_attributes_file(repo, &mut merged)?;
-    let index = Index::load(&repo.git_dir.join("index"))?;
-    let wt = repo.work_tree.as_deref().unwrap_or(repo.git_dir.as_path());
-    let mut from_index = load_gitattributes_from_index(&index, &repo.odb, wt)?;
+    let index = Index::load(&repo.git_dir().join("index"))?;
+    let wt = repo.work_tree().unwrap_or(repo.git_dir());
+    let mut from_index = load_gitattributes_from_index(&index, repo.odb(), wt)?;
     merged.rules.append(&mut from_index.rules);
     merged.macros.defs.extend(from_index.macros.defs.drain());
     merged.warnings.append(&mut from_index.warnings);
@@ -1484,7 +1484,7 @@ pub fn load_gitattributes_for_check_attr_source(
 ) -> std::result::Result<ParsedGitAttributes, crate::error::Error> {
     let mut merged = ParsedGitAttributes::default();
     merge_global_attributes_file(repo, &mut merged)?;
-    append_gitattributes_from_tree(&repo.odb, tree_oid, &mut merged)?;
+    append_gitattributes_from_tree(repo.odb(), tree_oid, &mut merged)?;
     merge_info_attributes(repo, &mut merged);
     Ok(merged)
 }
@@ -1495,7 +1495,7 @@ pub fn load_gitattributes_for_check_attr_source(
 /// like Git, not `040000`.
 #[must_use]
 pub fn builtin_objectmode_worktree(repo: &Repository, rel_path: &str) -> Option<String> {
-    let wt = repo.work_tree.as_ref()?;
+    let wt = repo.work_tree()?;
     let p = wt.join(rel_path);
     let meta = fs::symlink_metadata(&p).ok()?;
     let ft = meta.file_type();
@@ -1787,7 +1787,7 @@ mod attr_cache_tests {
         let wt = td.path();
         let repo = test_repo(wt);
         fs::write(wt.join(".gitattributes"), "f test=root\n").expect("ga");
-        fs::write(repo.git_dir.join("info/attributes"), "f test=info\n").expect("info");
+        fs::write(repo.git_dir().join("info/attributes"), "f test=info\n").expect("info");
         let cached = load_gitattributes_for_check_attr_cached(&repo).expect("cached");
         assert_eq!(
             collect_attrs_for_path(&cached.rules, &cached.macros, "f", false).get("test"),
@@ -1814,7 +1814,8 @@ mod attr_cache_tests {
         env.cwd = wt.join("a");
         fs::create_dir_all(wt.join("a")).expect("mkdir");
         let options = crate::environment::RepositoryOptions::with_environment(env);
-        let repo2 = Repository::open_with(&options, &repo.git_dir, Some(wt)).expect("reopen");
+        let repo2 = Repository::open(&repo.git_dir(), &&options.clone().with_work_tree(wt))
+            .expect("reopen");
         let rel = path_relative_to_worktree(&repo2, "../f").expect("rel");
         assert_eq!(rel, "f");
     }
@@ -1827,7 +1828,7 @@ mod attr_cache_tests {
         assert!(rules_for(&repo, wt).is_empty());
 
         // info/attributes appearing after a cached empty load must be seen.
-        fs::write(repo.git_dir.join("info/attributes"), "from-info text\n").expect("write info");
+        fs::write(repo.git_dir().join("info/attributes"), "from-info text\n").expect("write info");
         assert_eq!(rules_for(&repo, wt), vec!["from-info".to_string()]);
     }
 }

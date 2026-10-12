@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::reflog::{
     all_reflog_oids, all_reflog_oids_ordered, delete_reflog_entries, expire_reflog,
@@ -59,7 +59,11 @@ fn load_repo_config(git_dir: &Path) -> ConfigSet {
 }
 
 fn open_repo(worktree: &Path) -> Repository {
-    Repository::open(&worktree.join(".git"), Some(worktree)).expect("Repository::open")
+    Repository::open(
+        &worktree.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(worktree),
+    )
+    .expect("Repository::open")
 }
 
 fn write_controlled_reflog(repo: &TestRepo, refname: &str, entries: &[ReflogEntry]) {

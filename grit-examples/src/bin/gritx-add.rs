@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::add_path;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 #[derive(Debug, Parser)]
@@ -22,7 +23,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let mut index = repo.load_index()?;
     for file in cli.files {
         add_path(&repo, &mut index, &file)?;

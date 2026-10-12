@@ -165,8 +165,8 @@ pub fn collect_decorations_inner(
     filter: &DecorationFilter,
 ) -> Result<DecorationMap> {
     let mut map: DecorationMap = HashMap::new();
-    let git_dir = &repo.git_dir;
-    let odb = &repo.odb;
+    let git_dir = &repo.git_dir();
+    let odb = &repo.odb();
 
     let head = resolve_head(git_dir)?;
     let hide_remote_update_noise = repo

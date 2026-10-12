@@ -72,7 +72,7 @@ pub fn run(
     mode: OutputMode,
 ) -> Result<FetchOutcome> {
     let repo = context::discover()?;
-    let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
+    let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir()), true)
         .context("could not load config")?;
     let remote_name = remote.unwrap_or_else(|| DEFAULT_REMOTE.to_owned());
     let cli_prune = if prune {

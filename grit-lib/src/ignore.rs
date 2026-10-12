@@ -405,10 +405,10 @@ fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
         let expanded = parse_path(env, &raw_path);
         let resolved = if Path::new(&expanded).is_absolute() {
             PathBuf::from(&expanded)
-        } else if let Some(work_tree) = &repo.work_tree {
+        } else if let Some(work_tree) = &repo.work_tree() {
             work_tree.join(&expanded)
         } else {
-            repo.git_dir.join(&expanded)
+            repo.git_dir().join(&expanded)
         };
         (resolved, raw_path)
     } else if let Some(path) = env.default_xdg_config_git_file("ignore") {
@@ -423,7 +423,7 @@ fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
-    let path = repo.git_dir.join("info/exclude");
+    let path = repo.git_dir().join("info/exclude");
     let mut sink = Vec::new();
     load_rules_from_file(
         &path,
@@ -441,7 +441,7 @@ fn load_gitignore_for_dir(
     per_dir_name: Option<&str>,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<IgnoreRule>> {
-    let Some(work_tree) = &repo.work_tree else {
+    let Some(work_tree) = &repo.work_tree() else {
         return Ok(Vec::new());
     };
     let file_name = per_dir_name.unwrap_or(".gitignore");
@@ -480,7 +480,7 @@ fn load_gitignore_for_dir(
 
     if let Some(ix) = index {
         if let Some(entry) = ix.get(rel_key.as_bytes(), 0) {
-            if let Ok(obj) = repo.odb.read(&entry.oid) {
+            if let Ok(obj) = repo.odb().read(&entry.oid) {
                 if obj.kind == ObjectKind::Blob {
                     if let Ok(text) = std::str::from_utf8(&obj.data) {
                         return parse_gitignore_content(text, &source_display, dir, warnings);
@@ -1065,7 +1065,7 @@ pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<S
 ///
 /// Returns [`Error::PathError`] if the path resolves outside the work tree.
 pub fn normalize_repo_relative(repo: &Repository, cwd: &Path, path: &str) -> Result<String> {
-    let Some(work_tree) = &repo.work_tree else {
+    let Some(work_tree) = &repo.work_tree() else {
         return Err(Error::PathError(
             "this operation must be run in a work tree".to_owned(),
         ));

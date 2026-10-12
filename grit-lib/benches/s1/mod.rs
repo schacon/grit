@@ -24,7 +24,7 @@ impl S1Fixture {
                     eprintln!("SKIP s1: bare repo not found at {}", bare.display());
                     return None;
                 }
-                let repo = Repository::open(&bare, None).ok()?;
+                let repo = Repository::open(&bare, &RepositoryOptions::empty()).ok()?;
                 Some(S1Fixture { repo })
             })
             .as_ref()
@@ -54,5 +54,5 @@ pub fn run_rev_list_objects_v1(repo: &Repository) -> usize {
 }
 
 pub fn open_repo(path: &Path) -> Repository {
-    Repository::open(path, None).expect("open bare git.git")
+    Repository::open(path, &RepositoryOptions::empty()).expect("open bare git.git")
 }

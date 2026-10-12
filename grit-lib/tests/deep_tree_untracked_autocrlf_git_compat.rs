@@ -3,6 +3,7 @@
 use std::fs;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::add::{stage, stage_for_commit, StageMode, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
@@ -29,7 +30,11 @@ fn status_and_add_see_interior_untracked_on_indexed_chain() {
     git(root, &["commit", "-qm", "seed"]);
     fs::write(root.join("a/b/untracked.txt"), b"new\n").expect("write untracked");
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let model = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
     assert!(
         model.untracked.iter().any(|p| p == "a/b/untracked.txt"),
@@ -75,7 +80,11 @@ fn full_tree_add_and_commit_store_lf_with_autocrlf() {
 
     fs::write(root.join("f.txt"), b"after\r\n").expect("write crlf");
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     stage(
         &repo,
         &StageOptions {
@@ -93,7 +102,7 @@ fn full_tree_add_and_commit_store_lf_with_autocrlf() {
         .get(b"f.txt", 0)
         .expect("f.txt staged")
         .oid;
-    let grit_blob = repo.odb.read(&grit_staged_oid).expect("read blob");
+    let grit_blob = repo.odb().read(&grit_staged_oid).expect("read blob");
     assert_eq!(
         grit_blob.data, b"after\n",
         "grit add must store LF-normalized bytes with autocrlf"
@@ -102,7 +111,7 @@ fn full_tree_add_and_commit_store_lf_with_autocrlf() {
     git(root, &["add", "f.txt"]);
     let git_blob_hex = git(root, &["rev-parse", ":f.txt"]);
     let git_oid = ObjectId::from_hex(git_blob_hex.trim()).expect("git blob oid");
-    let git_blob = repo.odb.read(&git_oid).expect("git blob");
+    let git_blob = repo.odb().read(&git_oid).expect("git blob");
     assert_eq!(
         git_blob.data, grit_blob.data,
         "grit staged blob must match system git index for same worktree"

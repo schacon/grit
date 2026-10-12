@@ -47,7 +47,7 @@ fn main() -> Result<(), Error> {
             options.diagnostics = sink;
 
             let git_dir = root.join(".git");
-            let repo = Repository::open_with(&options, &git_dir, Some(&root))?;
+            let repo = Repository::open(&git_dir, &&options.clone().with_work_tree(&root))?;
             Ok((repo, diagnostics))
         };
 

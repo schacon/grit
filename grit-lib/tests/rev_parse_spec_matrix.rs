@@ -25,7 +25,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn linear_specs() -> Vec<&'static str> {

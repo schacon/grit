@@ -20,7 +20,7 @@ fn main() -> grit_lib::error::Result<()> {
     )?;
 
     let blob_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"hello from grit-lib examples\n")?;
     let path = b"README".to_vec();
     let entry = IndexEntry {
@@ -46,7 +46,7 @@ fn main() -> grit_lib::error::Result<()> {
     repo.write_index(&mut index)?;
 
     let index = repo.load_index()?;
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
     println!("tree: {tree_oid}");
 
     let commit = CommitData {
@@ -62,10 +62,10 @@ fn main() -> grit_lib::error::Result<()> {
         extra_headers: Vec::new(),
     };
     let raw = serialize_commit(&commit);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &raw)?;
+    let commit_oid = repo.odb().write(ObjectKind::Commit, &raw)?;
     println!("commit: {commit_oid}");
 
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &commit_oid)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_oid)?;
     println!("updated refs/heads/main -> {commit_oid}");
 
     Ok(())

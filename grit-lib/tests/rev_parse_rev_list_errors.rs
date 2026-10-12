@@ -1,5 +1,6 @@
 //! Integration tests for typed [`RevParseError`] and [`RevListError`] variants.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -28,9 +29,9 @@ fn write_commit(odb: &Odb, msg: &str) -> grit_lib::error::Result<ObjectId> {
 
 fn open_bare_with_main(dir: &Path) -> grit_lib::error::Result<(Repository, ObjectId)> {
     init_bare_clone_minimal(dir, "main", grit_lib::ref_storage::RefStorageFormat::Files)?;
-    let repo = Repository::open(dir, None)?;
-    let tip = write_commit(&repo.odb, "init")?;
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))?;
+    let repo = Repository::open(dir, &RepositoryOptions::empty())?;
+    let tip = write_commit(&repo.odb(), "init")?;
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))?;
     Ok((repo, tip))
 }
 
@@ -43,7 +44,7 @@ fn upstream_missing_reports_no_upstream_variant() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir,
+        &repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n[branch \"main\"]\n",
     );
     let err = resolve_upstream_symbolic_name(&repo, "main@{u}").unwrap_err();
@@ -58,15 +59,15 @@ fn push_default_nothing_reports_variant() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir,
+        &repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n\
          [remote \"origin\"]\n\turl = /tmp/x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
          [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n\
          [push]\n\tdefault = nothing\n",
     );
-    fs::create_dir_all(repo.git_dir.join("refs/remotes/origin")).expect("remotes dir");
+    fs::create_dir_all(repo.git_dir().join("refs/remotes/origin")).expect("remotes dir");
     fs::write(
-        repo.git_dir.join("refs/remotes/origin/main"),
+        repo.git_dir().join("refs/remotes/origin/main"),
         b"0000000000000000000000000000000000000001\n",
     )
     .expect("tracking ref");
@@ -119,7 +120,7 @@ fn sparse_filter_unparsable_on_invalid_utf8_blob() {
     let dir = tempdir().expect("tempdir");
     let (repo, tip) = open_bare_with_main(dir.path()).expect("repo");
     let blob = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, &[0xff, 0xfe])
         .expect("blob");
     let mut opts = RevListOptions::default();
@@ -136,7 +137,7 @@ fn push_refspec_missing_when_branch_not_mapped() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir,
+        &repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n\
          [remote \"origin\"]\n\turl = /tmp/x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
          \tpush = refs/heads/other:refs/heads/other\n\

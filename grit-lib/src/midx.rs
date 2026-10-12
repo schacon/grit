@@ -9,6 +9,8 @@
 //! `pack/multi-pack-index.d/multi-pack-index-<sha1>.midx` with ordering in
 //! `multi-pack-index-chain` (oldest hash first, newest last).
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -2927,7 +2929,7 @@ fn repository_for_pack_dir(pack_dir: &Path) -> Result<Repository> {
             "objects directory has no parent",
         ))
     })?;
-    Repository::open(git_dir, None)
+    Repository::open(git_dir, &RepositoryOptions::empty())
 }
 
 fn midx_bitmap_sidecar_matches(path: &Path, midx_checksum: &[u8]) -> bool {

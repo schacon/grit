@@ -293,8 +293,7 @@ pub fn run_show(index: Option<String>, patch: bool) -> Result<StashShowOutcome> 
 pub fn run_apply(index: Option<String>) -> Result<StashApplyOutcome> {
     let repo = context::discover()?;
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .context("grit stash apply needs a working tree")?;
     let n = parse_stash_index(index.as_deref())?;
     let env = context::environment();
@@ -318,8 +317,7 @@ pub fn run_apply(index: Option<String>) -> Result<StashApplyOutcome> {
 pub fn run_pop(index: Option<String>) -> Result<StashPopOutcome> {
     let repo = context::discover()?;
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .context("grit stash pop needs a working tree")?;
     let n = parse_stash_index(index.as_deref())?;
     let env = context::environment();

@@ -2,6 +2,7 @@
 
 mod support;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 
@@ -16,7 +17,7 @@ fn history_harness_smoke_three_commit_dag_matches_grit_rev_list() {
     let git_oids = git_rev_list(wt, &["--reverse", "main"]);
     assert_eq!(git_oids.len(), 3, "expected three commits on main");
 
-    let grit_repo = Repository::discover(Some(wt)).expect("discover");
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
     let opts = RevListOptions {
         reverse: true,
         ..RevListOptions::default()

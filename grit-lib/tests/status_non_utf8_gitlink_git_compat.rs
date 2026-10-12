@@ -6,6 +6,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
@@ -67,7 +68,11 @@ fn non_utf8_gitlink_path_is_not_untracked() {
     );
     git(repo_root, &["commit", "-qm", "record gitlink"]);
 
-    let repo = Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open");
+    let repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open");
     let index = repo.load_index().expect("load index");
     let entry = index
         .get(gitlink_path_bytes, 0)

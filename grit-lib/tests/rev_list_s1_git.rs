@@ -6,6 +6,7 @@
 
 use std::time::Instant;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 
@@ -28,7 +29,7 @@ fn rev_list_objects_v1_s1_median_under_ceiling() {
             bare.display()
         );
     }
-    let repo = Repository::open(&bare, None).expect("open git.git bare");
+    let repo = Repository::open(&bare, &RepositoryOptions::empty()).expect("open git.git bare");
     let opts = RevListOptions {
         objects: true,
         ..Default::default()

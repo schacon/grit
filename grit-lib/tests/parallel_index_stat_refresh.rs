@@ -40,7 +40,7 @@ fn diff_paths(model: &grit_lib::porcelain::status::StatusModel) -> (Vec<String>,
 }
 
 fn append_repo_config(repo: &Repository, section: &str, key: &str, value: &str) {
-    let path = repo.git_dir.join("config");
+    let path = repo.git_dir().join("config");
     let mut text = fs::read_to_string(&path).unwrap_or_default();
     if !text.ends_with('\n') {
         text.push('\n');

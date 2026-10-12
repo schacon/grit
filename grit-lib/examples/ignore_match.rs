@@ -16,7 +16,7 @@ fn main() -> grit_lib::error::Result<()> {
         grit_lib::RefStorageFormat::Files,
     )?;
 
-    let wt = repo.work_tree.as_ref().expect("non-bare");
+    let wt = repo.work_tree().expect("non-bare");
     fs::write(wt.join(".gitignore"), "*.log\n")?;
 
     let mut matcher = IgnoreMatcher::from_repository(&repo)?;

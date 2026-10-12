@@ -4,6 +4,7 @@ mod support;
 
 use std::fs;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -16,7 +17,7 @@ use support::{
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
-    Repository::discover(Some(wt)).expect("open")
+    Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open")
 }
 
 #[test]
@@ -44,7 +45,7 @@ fn t7012_skip_worktree_bits_match_git_ls_files_v() {
         index.entries().iter().all(|e| !e.skip_worktree()),
         "cleared index must not yet match sparse cone"
     );
-    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);
@@ -89,11 +90,11 @@ fn t2104_skip_worktree_excluded_from_status_like_git() {
     let grit = open_grit(wt);
     let mut index = grit.load_index().expect("load");
     clear_all_skip_worktree(&mut index);
-    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
 
     fs::write(wt.join("a/f0.txt"), "changed\n").expect("touch included");
     let blob = grit
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"changed excluded\n")
         .expect("blob");
     let excluded = index

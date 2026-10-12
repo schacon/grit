@@ -3,7 +3,7 @@
 use std::process::Command;
 
 use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::fetch::NoProgress;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectId;
@@ -67,7 +67,7 @@ fn grit_clone_and_checkout(source: &std::path::Path, dest: &std::path::Path) {
     let outcome = clone_repo(opts, &mut NoProgress, None).expect("grit clone");
     let commit = outcome
         .repo
-        .odb
+        .odb()
         .read(&outcome.checkout_oid)
         .expect("commit");
     let parsed = grit_lib::objects::parse_commit(&commit.data).expect("parse commit");
@@ -124,7 +124,8 @@ fn empty_index_checkout_populated_tree_applies_eol_crlf() {
     let dest = tempfile::tempdir().expect("dest");
     grit_clone_and_checkout(upstream.path(), dest.path());
     let tree = tree_of_head(dest.path());
-    let repo = Repository::discover(Some(dest.path())).expect("open clone");
+    let repo =
+        Repository::discover(Some(dest.path()), &RepositoryOptions::empty()).expect("open clone");
 
     let mut index = Index::new();
     repo.write_index(&mut index).expect("clear index");
@@ -143,7 +144,8 @@ fn checkout_populated_tree_smudge_when_gitattributes_sorts_before_target() {
     let dest = tempfile::tempdir().expect("dest");
     grit_clone_and_checkout(upstream.path(), dest.path());
     let tree = tree_of_head(dest.path());
-    let repo = Repository::discover(Some(dest.path())).expect("open clone");
+    let repo =
+        Repository::discover(Some(dest.path()), &RepositoryOptions::empty()).expect("open clone");
 
     let mut index = Index::new();
     repo.write_index(&mut index).expect("clear index");

@@ -2513,7 +2513,7 @@ impl Index {
 }
 
 fn peel_to_tree_oid(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     match obj.kind {
         ObjectKind::Tree => Ok(oid),
         ObjectKind::Commit => {
@@ -2538,7 +2538,7 @@ fn read_tree_into_overlay(
     use_replace_path: bool,
     out: &mut Vec<IndexEntry>,
 ) -> Result<()> {
-    let obj = repo.odb.read(tree_oid)?;
+    let obj = repo.odb().read(tree_oid)?;
     if obj.kind != ObjectKind::Tree {
         return Err(Error::ObjectNotFound(format!(
             "object {tree_oid} is not a tree"

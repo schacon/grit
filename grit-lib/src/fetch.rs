@@ -28,6 +28,8 @@
 //! `read_v2_fetch_pack_response`, `v2_ls_refs_for_fetch`). Smart-HTTP stays on
 //! v0/v1 (its stateless multi-POST v2 flow is out of scope for this pass).
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -163,7 +165,7 @@ fn read_sideband_pack(
 fn peel_to_commit(repo: &crate::repo::Repository, oid: ObjectId) -> Option<ObjectId> {
     let mut current = oid;
     for _ in 0..16 {
-        let obj = repo.odb.read(&current).ok()?;
+        let obj = repo.odb().read(&current).ok()?;
         match obj.kind {
             crate::objects::ObjectKind::Commit => return Some(current),
             crate::objects::ObjectKind::Tag => {
@@ -245,7 +247,7 @@ fn negotiate_pack(
     local_shallow: &[ObjectId],
     progress: &mut dyn Progress,
 ) -> Result<(Option<std::path::PathBuf>, ShallowUpdate)> {
-    let local_repo = crate::repo::Repository::open(local_git_dir, None)?;
+    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
 
     let Some(first_want) = wants.first().copied() else {
@@ -657,7 +659,7 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
 /// caller, which differs between a duplex socket and stateless POSTs.
 pub(crate) fn v2_local_haves(local_git_dir: &Path, wants: &[ObjectId]) -> Result<Vec<ObjectId>> {
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
-    let local_repo = crate::repo::Repository::open(local_git_dir, None)?;
+    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     let mut negotiator = SkippingNegotiator::new(local_repo);
     let mut tips: Vec<ObjectId> = Vec::new();
     let mut seen_tip: HashSet<ObjectId> = HashSet::new();
@@ -1449,7 +1451,7 @@ pub fn fetch_remote(
     let local_repo = if opts.dry_run {
         None
     } else {
-        crate::repo::Repository::open(local_git_dir, None).ok()
+        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
     };
     let d_repo_open = t_apply.elapsed();
 

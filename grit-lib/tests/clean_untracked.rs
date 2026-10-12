@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::clean::{clean_untracked, CleanOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
@@ -105,7 +106,7 @@ fn init_tracked_repo(root: &Path) -> Repository {
     git(root, &["config", "user.email", "clean@example.com"]);
     git(root, &["config", "user.name", "Clean Test"]);
     fs::write(root.join("tracked.txt"), b"tracked\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     grit_lib::porcelain::add::stage(
         &repo,
         &grit_lib::porcelain::add::StageOptions::default(),
@@ -144,7 +145,7 @@ fn dry_run_lists_same_as_git_clean_nd() {
     init_tracked_repo(root);
     populate_fixture(root);
 
-    let repo = Repository::discover(Some(root)).expect("reopen");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("reopen");
     let before = worktree_file_set(root);
     let outcome = clean_untracked(
         &repo,
@@ -178,7 +179,8 @@ fn force_removes_same_as_git_clean_fd() {
     init_tracked_repo(git_root.path());
     populate_fixture(git_root.path());
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -209,7 +211,8 @@ fn include_ignored_matches_git_clean_fdx() {
     init_tracked_repo(git_root.path());
     populate_fixture(git_root.path());
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -247,7 +250,8 @@ fn collapsed_parent_with_nested_repo_preserves_nested_and_matches_git() {
     open_nested_repo(&git_container.join("nested"));
     fs::write(git_container.join("loose.txt"), b"u\n").unwrap();
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     let preview = clean_untracked(
         &repo,
         &CleanOptions {
@@ -302,7 +306,8 @@ fn nested_empty_directories_removed_at_highest_level_like_git() {
     init_tracked_repo(git_root.path());
     fs::create_dir_all(git_root.path().join("outer/inner")).unwrap();
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -330,13 +335,13 @@ fn collapsed_dir_preserves_ignored_files_like_git() {
     init_tracked_repo(grit_root.path());
     fs::write(grit_root.path().join(".gitignore"), b"ignored.log\n").unwrap();
     grit_lib::porcelain::add::stage(
-        &Repository::discover(Some(grit_root.path())).unwrap(),
+        &Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).unwrap(),
         &grit_lib::porcelain::add::StageOptions::default(),
         &mut NullProgress,
     )
     .unwrap();
     create_commit(
-        &Repository::discover(Some(grit_root.path())).unwrap(),
+        &Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).unwrap(),
         &commit_req("ignore"),
         &mut NullProgress,
     )
@@ -354,7 +359,8 @@ fn collapsed_dir_preserves_ignored_files_like_git() {
     fs::write(git_root.path().join("mixed/untracked.txt"), b"u\n").unwrap();
     fs::write(git_root.path().join("mixed/ignored.log"), b"i\n").unwrap();
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     let preview = clean_untracked(
         &repo,
         &CleanOptions {
@@ -408,7 +414,7 @@ fn nested_repo_directory_is_untouched() {
     fs::write(nested.join("inside.txt"), b"stay\n").unwrap();
     fs::write(root.join("loose.txt"), b"go\n").unwrap();
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -432,7 +438,7 @@ fn directories_false_preserves_empty_parent_dir() {
     fs::create_dir_all(root.path().join("untracked-dir")).unwrap();
     fs::write(root.path().join("untracked-dir/file.txt"), b"u\n").unwrap();
 
-    let repo = Repository::discover(Some(root.path())).expect("open");
+    let repo = Repository::discover(Some(root.path()), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -460,13 +466,13 @@ fn empty_ignored_directory_preserves_collapsed_parent_like_git() {
     init_tracked_repo(grit_root.path());
     fs::write(grit_root.path().join(".gitignore"), b"cache/\n").unwrap();
     grit_lib::porcelain::add::stage(
-        &Repository::discover(Some(grit_root.path())).unwrap(),
+        &Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).unwrap(),
         &grit_lib::porcelain::add::StageOptions::default(),
         &mut NullProgress,
     )
     .unwrap();
     create_commit(
-        &Repository::discover(Some(grit_root.path())).unwrap(),
+        &Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).unwrap(),
         &commit_req("ignore cache dir"),
         &mut NullProgress,
     )
@@ -484,7 +490,8 @@ fn empty_ignored_directory_preserves_collapsed_parent_like_git() {
     fs::write(git_root.path().join("container/loose.txt"), b"u\n").unwrap();
     fs::create_dir_all(git_root.path().join("container/cache")).unwrap();
 
-    let repo = Repository::discover(Some(grit_root.path())).expect("open");
+    let repo =
+        Repository::discover(Some(grit_root.path()), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {
@@ -522,7 +529,7 @@ fn pathspec_limits_removal() {
     fs::create_dir_all(root.join("only")).unwrap();
     fs::write(root.join("only/remove.txt"), b"r\n").unwrap();
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     clean_untracked(
         &repo,
         &CleanOptions {

@@ -1,5 +1,6 @@
 //! Notes tree read/write/merge round-trips with system `git`.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::notes::{
     notes_merge_inner, read_notes_tree, upsert_note_entry, write_notes_commit, NotesMergeStrategy,
 };
@@ -18,7 +19,11 @@ fn init_repo(root: &std::path::Path) {
 }
 
 fn open_grit(root: &std::path::Path) -> Repository {
-    Repository::open(&root.join(".git"), Some(root)).expect("open grit repo")
+    Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open grit repo")
 }
 
 fn assert_fsck_strict(root: &std::path::Path) {
@@ -49,13 +54,13 @@ fn grit_note_blob(repo: &Repository, notes_ref: &str, object: &ObjectId) -> Opti
     let entry = entries
         .iter()
         .find(|e| grit_lib::notes::note_object_name(&e.path).as_deref() == Some(hex.as_str()))?;
-    let blob = repo.odb.read(&entry.oid).ok()?;
+    let blob = repo.odb().read(&entry.oid).ok()?;
     String::from_utf8(blob.data).ok()
 }
 
 fn write_grit_note(repo: &Repository, object: &ObjectId, text: &str, message: &str) {
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, text.as_bytes())
         .expect("blob");
     let mut entries = read_notes_tree(repo, "refs/notes/commits").unwrap_or_default();

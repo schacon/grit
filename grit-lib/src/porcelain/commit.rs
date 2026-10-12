@@ -6,6 +6,7 @@
 
 use crate::config::ConfigSet;
 use crate::diff::{diff_trees, zero_oid};
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::hooks::{run_commit_hook_checked, CommitHookEnv};
 use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -76,7 +77,7 @@ pub fn create_commit(
     req: &CommitRequest,
     _progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let (refname, short_name, mut parent) = match head {
         HeadState::Branch {
             refname,
@@ -99,7 +100,7 @@ pub fn create_commit(
         let Some(tip) = parent.take() else {
             return Err(Error::AmendUnborn);
         };
-        let obj = repo.odb.read(&tip)?;
+        let obj = repo.odb().read(&tip)?;
         if obj.kind != ObjectKind::Commit {
             return Err(Error::CorruptObject(format!(
                 "expected commit, got {}",
@@ -120,9 +121,9 @@ pub fn create_commit(
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
-    let merge_heads = read_merge_heads(&repo.git_dir)?;
+    let merge_heads = read_merge_heads(repo.git_dir())?;
     let concluding_merge = !merge_heads.is_empty();
-    let index_path = repo.git_dir.join("index");
+    let index_path = repo.git_dir().join("index");
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
         git_editor: Some(":"),
@@ -136,10 +137,10 @@ pub fn create_commit(
         .map(|parent_oid| commit_tree_oid(repo, parent_oid))
         .transpose()?;
 
-    let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
 
     if !req.allow_empty && !req.amend {
-        if parent_tree.is_none() && is_empty_tree_oid(&repo.odb, &tree) {
+        if parent_tree.is_none() && is_empty_tree_oid(repo.odb(), &tree) {
             return Err(Error::NothingToCommit);
         }
         if !concluding_merge {
@@ -158,7 +159,7 @@ pub fn create_commit(
     if !message.is_empty() && !message.ends_with('\n') {
         message.push('\n');
     }
-    let editmsg_path = repo.git_dir.join("COMMIT_EDITMSG");
+    let editmsg_path = repo.git_dir().join("COMMIT_EDITMSG");
     fs::write(&editmsg_path, &message).map_err(Error::Io)?;
     let editmsg_arg = commit_editmsg_hook_argument(repo, &editmsg_path);
     run_commit_hook_checked(
@@ -207,7 +208,7 @@ pub fn create_commit(
     };
     let config = repo.config()?;
     let bytes = prepare_commit_bytes(repo, config.as_ref(), &commit_data, req.sign_override)?;
-    let oid = repo.odb.write(ObjectKind::Commit, &bytes)?;
+    let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
 
     let previous_tip = replaced_tip.or(parent);
     let reflog_old = previous_tip.unwrap_or_else(zero_oid);
@@ -221,7 +222,7 @@ pub fn create_commit(
     };
 
     let expected_old = previous_tip.or_else(|| {
-        if crate::refs::resolve_ref(&repo.git_dir, &refname).is_ok() {
+        if crate::refs::resolve_ref(repo.git_dir(), &refname).is_ok() {
             Some(reflog_old)
         } else {
             None
@@ -230,10 +231,10 @@ pub fn create_commit(
 
     repo.write_index(&mut index)?;
 
-    let changes = diff_trees(&repo.odb, parent_tree.as_ref(), Some(&tree), "")?.len();
+    let changes = diff_trees(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?.len();
 
     update_branch_for_commit_with_config(
-        &repo.git_dir,
+        repo.git_dir(),
         &BranchCommitRefUpdate {
             branch_ref: &refname,
             expected_old,
@@ -275,7 +276,13 @@ pub fn prepare_commit_bytes(
         return Ok(unsigned);
     }
     let gpg = GpgConfig::from_config(config)?.with_command_runner(repo.command_runner());
-    sign_serialized_commit(&gpg, &unsigned, &data.committer, None, repo.odb.hash_algo())
+    sign_serialized_commit(
+        &gpg,
+        &unsigned,
+        &data.committer,
+        None,
+        repo.odb().hash_algo(),
+    )
 }
 
 /// Write a commit object to the ODB, honoring `commit.gpgsign` and `sign_override`.
@@ -290,11 +297,11 @@ pub fn write_commit_object(
 ) -> Result<ObjectId> {
     let config = repo.config()?;
     let bytes = prepare_commit_bytes(repo, config.as_ref(), data, sign_override)?;
-    repo.odb.write(ObjectKind::Commit, &bytes)
+    repo.odb().write(ObjectKind::Commit, &bytes)
 }
 
 fn commit_tree_oid(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit_oid)?;
+    let obj = repo.odb().read(commit_oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
             "expected commit, got {}",
@@ -310,7 +317,7 @@ fn commit_subject(message: &str) -> &str {
 
 /// Path passed as `argv[1]` to the `commit-msg` hook (Git: `.git/COMMIT_EDITMSG` when possible).
 fn commit_editmsg_hook_argument(repo: &Repository, editmsg_path: &Path) -> String {
-    if let Some(wt) = repo.work_tree.as_deref() {
+    if let Some(wt) = repo.work_tree() {
         if let Ok(rel) = editmsg_path.strip_prefix(wt) {
             let s = rel.to_string_lossy();
             if !s.is_empty() {
@@ -348,7 +355,7 @@ mod tests {
             "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n",
         )
         .unwrap();
-        Repository::open(&git, Some(root)).unwrap()
+        Repository::open(&git, &RepositoryOptions::empty().with_work_tree(root)).unwrap()
     }
 
     fn ident() -> String {
@@ -356,13 +363,13 @@ mod tests {
     }
 
     fn stage_file_in_index(repo: &Repository, index: &mut Index, rel: &str, contents: &[u8]) {
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let abs = wt.join(rel);
         if let Some(parent) = abs.parent() {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&abs, contents).unwrap();
-        let oid = repo.odb.write(ObjectKind::Blob, contents).unwrap();
+        let oid = repo.odb().write(ObjectKind::Blob, contents).unwrap();
         let entry = entry_from_stat(&abs, rel.as_bytes(), oid, MODE_REGULAR).unwrap();
         index.add_or_replace(entry);
     }
@@ -397,7 +404,7 @@ mod tests {
         assert_eq!(outcome.branch, "main");
         assert_eq!(outcome.changes, 1);
         assert_eq!(
-            resolve_ref(&repo.git_dir, "refs/heads/main").unwrap(),
+            resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap(),
             outcome.oid
         );
     }
@@ -408,7 +415,7 @@ mod tests {
         let repo = init_repo(tmp.path());
         let err = create_commit(&repo, &commit_req("empty"), &mut NullProgress).unwrap_err();
         assert!(matches!(err, Error::NothingToCommit));
-        assert!(resolve_ref(&repo.git_dir, "refs/heads/main").is_err());
+        assert!(resolve_ref(&repo.git_dir(), "refs/heads/main").is_err());
     }
 
     #[test]
@@ -448,7 +455,7 @@ mod tests {
         fs::write(root.join("a.txt"), b"1\n").unwrap();
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let first = create_commit(&repo, &commit_req("first"), &mut NullProgress).unwrap();
-        fs::write(repo.git_dir.join("HEAD"), first.oid.to_hex()).unwrap();
+        fs::write(repo.git_dir().join("HEAD"), first.oid.to_hex()).unwrap();
 
         let err = create_commit(&repo, &commit_req("detached"), &mut NullProgress).unwrap_err();
         assert!(matches!(err, Error::DetachedHead));
@@ -463,12 +470,12 @@ mod tests {
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let outcome = create_commit(&repo, &commit_req("subject line"), &mut NullProgress).unwrap();
 
-        let branch_log = read_reflog(&repo.git_dir, "refs/heads/main").unwrap();
+        let branch_log = read_reflog(&repo.git_dir(), "refs/heads/main").unwrap();
         assert_eq!(branch_log.len(), 1);
         assert_eq!(branch_log[0].new_oid, outcome.oid);
         assert_eq!(branch_log[0].message, "commit (initial): subject line");
 
-        let head_log = read_reflog(&repo.git_dir, "HEAD").unwrap();
+        let head_log = read_reflog(&repo.git_dir(), "HEAD").unwrap();
         assert_eq!(head_log.len(), 1);
         assert_eq!(head_log[0].new_oid, outcome.oid);
     }
@@ -487,7 +494,7 @@ mod tests {
         assert!(!matches!(err, Error::NothingToCommit));
 
         assert!(
-            resolve_ref(&repo.git_dir, "refs/heads/main").is_err(),
+            resolve_ref(&repo.git_dir(), "refs/heads/main").is_err(),
             "branch must not advance when index write fails"
         );
     }
@@ -506,13 +513,13 @@ mod tests {
         assert!(!matches!(err, Error::NothingToCommit));
 
         assert!(
-            resolve_ref(&repo.git_dir, "refs/heads/main").is_err(),
+            resolve_ref(&repo.git_dir(), "refs/heads/main").is_err(),
             "branch must not advance when HEAD reflog fails"
         );
-        assert!(read_reflog(&repo.git_dir, "refs/heads/main")
+        assert!(read_reflog(&repo.git_dir(), "refs/heads/main")
             .unwrap()
             .is_empty());
-        assert!(read_reflog(&repo.git_dir, "HEAD").unwrap().is_empty());
+        assert!(read_reflog(&repo.git_dir(), "HEAD").unwrap().is_empty());
     }
 
     #[test]
@@ -529,8 +536,11 @@ mod tests {
 
         let index = repo.load_index().unwrap();
         verify_cache_tree(&index).expect("cache-tree valid");
-        assert!(cache_tree_fully_valid(&repo.odb, index.cache_tree.as_ref()));
-        let commit_obj = repo.odb.read(&outcome.oid).unwrap();
+        assert!(cache_tree_fully_valid(
+            &repo.odb(),
+            index.cache_tree.as_ref()
+        ));
+        let commit_obj = repo.odb().read(&outcome.oid).unwrap();
         let tree = parse_commit(&commit_obj.data).unwrap().tree;
         assert_eq!(index.cache_tree_root, Some(tree));
     }
@@ -549,7 +559,7 @@ mod tests {
 
         let mut req = commit_req("");
         req.amend = true;
-        let tip = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+        let tip = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
         assert_eq!(
             outcome.oid, tip,
@@ -557,7 +567,7 @@ mod tests {
         );
         assert!(outcome.parent.is_some());
 
-        let branch_log = read_reflog(&repo.git_dir, "refs/heads/main").unwrap();
+        let branch_log = read_reflog(&repo.git_dir(), "refs/heads/main").unwrap();
         assert_eq!(branch_log.len(), 3);
         assert_eq!(branch_log[2].message, "commit (amend): second");
     }
@@ -571,8 +581,8 @@ mod tests {
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).unwrap();
         let baseline = {
-            let oid = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
-            parse_commit(&repo.odb.read(&oid).unwrap().data)
+            let oid = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
+            parse_commit(&repo.odb().read(&oid).unwrap().data)
                 .unwrap()
                 .message
         };
@@ -583,8 +593,8 @@ mod tests {
             let mut req = commit_req("");
             req.amend = true;
             create_commit(&repo, &req, &mut NullProgress).unwrap();
-            let oid = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
-            let message = parse_commit(&repo.odb.read(&oid).unwrap().data)
+            let oid = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
+            let message = parse_commit(&repo.odb().read(&oid).unwrap().data)
                 .unwrap()
                 .message;
             assert_eq!(message, baseline, "after amend {extra}");
@@ -614,7 +624,7 @@ mod tests {
 
         let mut req = commit_req("empty");
         req.allow_empty = true;
-        let parent = resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+        let parent = resolve_ref(&repo.git_dir(), "refs/heads/main").unwrap();
         let outcome = create_commit(&repo, &req, &mut NullProgress).unwrap();
         assert_eq!(outcome.changes, 0);
         assert_eq!(outcome.parent, Some(parent));

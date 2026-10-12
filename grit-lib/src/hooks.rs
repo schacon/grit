@@ -94,10 +94,10 @@ fn absolute_index_path(index_file: &Path, cwd: &Path) -> PathBuf {
 /// `GIT_PREFIX` for the invoking cwd relative to the work tree (Git sets this from the user's
 /// `pwd`, not from the hook subprocess cwd, which is usually the work tree root).
 fn git_prefix_for_invocation(repo: &Repository, invocation_cwd: &Path) -> String {
-    let Some(wt) = repo.work_tree.as_deref() else {
+    let Some(wt) = repo.work_tree() else {
         return String::new();
     };
-    if invocation_cwd == repo.git_dir.as_path() {
+    if invocation_cwd == repo.git_dir() {
         return String::new();
     }
     let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf());
@@ -261,7 +261,7 @@ enum ResolvedHook {
 pub fn resolve_hooks_dir(repo: &Repository) -> PathBuf {
     resolve_hooks_dir_for_config(
         repo.environment(),
-        Some(&repo.git_dir),
+        Some(repo.git_dir()),
         repo.config().ok().as_deref(),
     )
 }
@@ -287,12 +287,12 @@ fn resolve_hooks_dir_for_config(
 }
 
 fn hook_argv0(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: &Path) -> PathBuf {
-    let default_hooks_dir = repo.git_dir.join("hooks");
+    let default_hooks_dir = repo.git_dir().join("hooks");
     if hooks_dir == default_hooks_dir.as_path() {
-        if cwd == repo.git_dir.as_path() {
+        if cwd == repo.git_dir() {
             return PathBuf::from("hooks").join(hook_name);
         }
-        if let Some(work_tree) = repo.work_tree.as_deref() {
+        if let Some(work_tree) = repo.work_tree() {
             // Only relativise to `.git/hooks/<name>` when the git dir is literally
             // `<work_tree>/.git`. When `GIT_DIR` points elsewhere (e.g.
             // `GIT_DIR=clone1/.git` run from the parent dir, which makes the work
@@ -300,7 +300,7 @@ fn hook_argv0(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: &Path) 
             // against the wrong directory. In that case fall through to the
             // absolute hook path, mirroring upstream `hook.c`, which absolutises
             // the hook path whenever it runs the hook in a specific directory.
-            if cwd == work_tree && same_dir(repo.git_dir.as_path(), &work_tree.join(".git")) {
+            if cwd == work_tree && same_dir(repo.git_dir(), &work_tree.join(".git")) {
                 return PathBuf::from(".git").join("hooks").join(hook_name);
             }
         }
@@ -376,9 +376,9 @@ fn resolve_hook_sequence(
         seq.push(ResolvedHook::Configured { command });
     }
     let hooks_dir =
-        resolve_hooks_dir_for_config(repo.environment(), Some(&repo.git_dir), Some(config));
+        resolve_hooks_dir_for_config(repo.environment(), Some(repo.git_dir()), Some(config));
     if let Some(path) = traditional_hook_candidate(repo, &hooks_dir, hook_name) {
-        let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+        let work_dir = repo.work_tree().unwrap_or(repo.git_dir());
         let argv0 = hook_argv0(repo, &hooks_dir, hook_name, work_dir);
         seq.push(ResolvedHook::Traditional { path, argv0 });
     }
@@ -391,7 +391,7 @@ pub fn list_hooks_display_lines(
     hook_name: &str,
     config: &ConfigSet,
 ) -> Result<Vec<String>, String> {
-    let git_dir = repo.map(|r| r.git_dir.as_path());
+    let git_dir = repo.map(|r| r.git_dir());
     let tables = HookConfigTables::from_config(config);
     let mut lines = Vec::new();
     for (friendly, _) in tables.hooks_for_event(hook_name)? {
@@ -579,13 +579,16 @@ pub fn run_hook_opts(
 
     let work_dir: PathBuf = opts.cwd.map_or_else(
         || match repo {
-            Some(r) => r.work_tree.clone().unwrap_or_else(|| r.git_dir.clone()),
+            Some(r) => r
+                .work_tree()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| r.git_dir().to_path_buf()),
             None => PathBuf::from("."),
         },
         Path::to_path_buf,
     );
     let work_dir = work_dir.as_path();
-    let git_dir_for_configured = repo.map(|r| r.git_dir.as_path());
+    let git_dir_for_configured = repo.map(|r| r.git_dir());
     let runner: Arc<dyn CommandRunner> = match repo {
         Some(r) => r.command_runner(),
         None => system_command_runner(),
@@ -626,7 +629,7 @@ pub fn run_hook_opts(
                 let Some(r) = repo else {
                     continue;
                 };
-                let gd = r.git_dir.as_path();
+                let gd = r.git_dir();
                 let effective_argv0 = path
                     .parent()
                     .map(|hooks_dir| hook_argv0(r, hooks_dir, hook_name, work_dir))
@@ -824,7 +827,7 @@ pub fn run_hook_in_git_dir(
             path_to_stdin: None,
             stdin_data,
             env_vars,
-            cwd: Some(repo.git_dir.as_path()),
+            cwd: Some(repo.git_dir()),
             commit_env: None,
         },
         Some(&mut captured),

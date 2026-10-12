@@ -14,7 +14,7 @@ fn walk_tree(
     tree_oid: grit_lib::objects::ObjectId,
     prefix: &str,
 ) -> grit_lib::error::Result<()> {
-    let obj = repo.odb.read(&tree_oid)?;
+    let obj = repo.odb().read(&tree_oid)?;
     let entries = parse_tree(&obj.data)?;
     for e in entries {
         let name = String::from_utf8_lossy(&e.name);
@@ -45,8 +45,8 @@ fn main() -> grit_lib::error::Result<()> {
 
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 
-    let blob_a = repo.odb.write(ObjectKind::Blob, b"a\n")?;
-    let blob_b = repo.odb.write(ObjectKind::Blob, b"b\n")?;
+    let blob_a = repo.odb().write(ObjectKind::Blob, b"a\n")?;
+    let blob_b = repo.odb().write(ObjectKind::Blob, b"b\n")?;
 
     let mut index = Index::new();
     for (rel, oid) in [
@@ -74,7 +74,7 @@ fn main() -> grit_lib::error::Result<()> {
     }
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
 
     let commit = CommitData {
         tree: tree_oid,
@@ -89,12 +89,12 @@ fn main() -> grit_lib::error::Result<()> {
         extra_headers: Vec::new(),
     };
     let commit_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))?;
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &commit_oid)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_oid)?;
 
     let head_commit = resolve_revision(&repo, "HEAD")?;
-    let commit_obj = repo.odb.read(&head_commit)?;
+    let commit_obj = repo.odb().read(&head_commit)?;
     let parsed = grit_lib::objects::parse_commit(&commit_obj.data)?;
     println!("walking tree at {}", parsed.tree);
     walk_tree(&repo, parsed.tree, "")?;

@@ -77,7 +77,7 @@ pub fn smudge_meta_for_reset(
         candidates.push(commit_spec.to_string());
     }
     for name in candidates {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &name) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &name) {
             if oid == *resolved_commit {
                 meta.ref_name = Some(name);
                 break;
@@ -92,14 +92,14 @@ pub fn smudge_meta_for_checkout(repo: &Repository, blob_hex: &str) -> FilterSmud
         blob_hex: Some(blob_hex.to_string()),
         ..Default::default()
     };
-    let Ok(content) = std::fs::read_to_string(repo.git_dir.join("HEAD")) else {
+    let Ok(content) = std::fs::read_to_string(repo.git_dir().join("HEAD")) else {
         return meta;
     };
     let content = content.trim();
     if let Some(sym) = content.strip_prefix("ref: ") {
         let sym = sym.trim();
         meta.ref_name = Some(sym.to_string());
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, sym) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), sym) {
             meta.treeish_hex = Some(oid.to_string());
         }
     } else if content.len() == 40 {

@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
@@ -75,7 +76,7 @@ fn create_commit_ssh_signs_when_gpgsign_true() {
     );
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
@@ -160,7 +161,7 @@ fn amend_unsigned_drops_signed_tip_signature() {
     );
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();
@@ -248,7 +249,7 @@ fn amend_resigns_with_single_fresh_signature() {
     );
 
     std::fs::write(root.join("a"), b"a\n").expect("write");
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
 
     let ident = "T <t@example.com> 1700000000 +0000".to_owned();

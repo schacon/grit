@@ -33,7 +33,7 @@ fn open_with_policy(root: &Path, threads: usize, min_items: Option<usize>) -> Re
     let git_dir = root.join(".git");
     let mut options = RepositoryOptions::empty();
     options.thread_policy = policy(threads, min_items);
-    Repository::open_with(&options, &git_dir, Some(root)).expect("open repo")
+    Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open repo")
 }
 
 fn enable_parallel_checkout_config(root: &Path) {
@@ -54,10 +54,10 @@ fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
     use grit_lib::porcelain::add::{stage, StageOptions};
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let mut index = repo.load_index().expect("index");
-    let tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     repo.write_index(&mut index).expect("write index");
-    let parent = refs::resolve_ref(&repo.git_dir, "HEAD").ok();
+    let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -71,8 +71,11 @@ fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
         extra_headers: Vec::new(),
     };
     let bytes = serialize_commit(&commit_data);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &bytes).expect("commit");
-    refs::write_ref(&repo.git_dir, "HEAD", &commit_oid).expect("head");
+    let commit_oid = repo
+        .odb()
+        .write(ObjectKind::Commit, &bytes)
+        .expect("commit");
+    refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).expect("head");
     tree
 }
 
@@ -235,13 +238,13 @@ fn checkout_diff_with_policy(
 ) -> (BTreeMap<String, WorktreeFile>, Vec<u8>) {
     let repo = open_with_policy(root, threads, min_items);
     if pin_mtimes {
-        if let Some(wt) = repo.work_tree.as_ref() {
+        if let Some(wt) = repo.work_tree() {
             pin_worktree_mtrees(wt);
         }
     }
-    let changes = diff_trees(&repo.odb, from.as_ref(), Some(&to), "").expect("diff");
+    let changes = diff_trees(&repo.odb(), from.as_ref(), Some(&to), "").expect("diff");
     checkout_tree_changes(&repo, &changes).expect("checkout");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let snap = snapshot_worktree(wt);
     let index = fs::read(repo.index_path()).expect("index");
     (snap, index)
@@ -285,7 +288,7 @@ fn parallel_matches_serial_crlf_and_ident() {
     .expect("attrs");
     fs::write(root.join(".git/config"), "[core]\n\tautocrlf = false\n").expect("cfg");
     repo.reload_config().expect("reload");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     fs::write(wt.join("a.txt"), b"hello $Id$\n").expect("a");
     fs::write(wt.join("b.txt"), b"line\n").expect("b");
     let from = commit_tree(&repo, "base");
@@ -302,7 +305,7 @@ fn parallel_matches_serial_gitlink_and_replacements() {
     let root = tmp.path();
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let gitlink: ObjectId = "855827c583bc30645ba427885caa40c5b81764d2"
         .parse()
         .expect("oid");
@@ -313,7 +316,7 @@ fn parallel_matches_serial_gitlink_and_replacements() {
         entry_from_stat(
             &wt.join("file"),
             b"file",
-            repo.odb.write(ObjectKind::Blob, b"v1\n").unwrap(),
+            repo.odb().write(ObjectKind::Blob, b"v1\n").unwrap(),
             MODE_REGULAR,
         )
         .unwrap(),
@@ -336,14 +339,17 @@ fn parallel_matches_serial_gitlink_and_replacements() {
         base_index_pos: 0,
     });
     index.sort();
-    let base_tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let base_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     fs::remove_dir_all(wt.join("sub")).ok();
     fs::remove_file(wt.join("file")).ok();
     fs::create_dir_all(wt.join("file")).expect("dir file");
     fs::write(wt.join("file/inner"), b"x\n").expect("inner");
     fs::write(wt.join("link"), b"target\n").expect("link");
-    let link_oid = repo.odb.write(ObjectKind::Blob, b"target\n").expect("blob");
+    let link_oid = repo
+        .odb()
+        .write(ObjectKind::Blob, b"target\n")
+        .expect("blob");
     index = repo.load_index().expect("reload");
     index.remove(b"sub");
     index.remove(b"file");
@@ -351,14 +357,14 @@ fn parallel_matches_serial_gitlink_and_replacements() {
         entry_from_stat(
             &wt.join("file/inner"),
             b"file/inner",
-            repo.odb.write(ObjectKind::Blob, b"x\n").unwrap(),
+            repo.odb().write(ObjectKind::Blob, b"x\n").unwrap(),
             MODE_REGULAR,
         )
         .unwrap(),
     );
     index.add_or_replace(entry_from_stat(&wt.join("link"), b"link", link_oid, 0o120000).unwrap());
     index.sort();
-    let to_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+    let to_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree2");
     checkout_between_trees(&repo, Some(&base_tree), &to_tree).expect("seed serial");
     let snap_serial = snapshot_worktree(wt);
@@ -394,17 +400,17 @@ fn external_smudge_filter_runs_once_via_recording_runner() {
     let mut options = RepositoryOptions::empty();
     options.command_runner = runner.clone();
     options.thread_policy = policy(4, Some(0));
-    let repo = Repository::open_with(&options, &git_dir, Some(root)).expect("open");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let repo = Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open");
+    let wt = repo.work_tree().expect("wt");
     fs::write(wt.join("filtered"), b"blob\n").expect("write");
-    let blob = repo.odb.write(ObjectKind::Blob, b"blob\n").expect("blob");
+    let blob = repo.odb().write(ObjectKind::Blob, b"blob\n").expect("blob");
     let mut index = repo.load_index().expect("index");
     index.add_or_replace(
         entry_from_stat(&wt.join("filtered"), b"filtered", blob, MODE_REGULAR).expect("e"),
     );
     index.sort();
-    let _tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let _tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     let tree1 = commit_tree(&repo, "c1");
     fs::write(wt.join("filtered"), b"blob2\n").expect("new blob for checkout");
     let tree2 = commit_tree(&repo, "c2");
@@ -451,8 +457,8 @@ fn ignorecase_collision_uses_serial_path_and_matches() {
     )
     .expect("preconfig");
     repo.reload_config().expect("reload");
-    let wt = repo.work_tree.as_ref().expect("wt");
-    let empty = repo.odb.write(ObjectKind::Blob, b"").expect("empty");
+    let wt = repo.work_tree().expect("wt");
+    let empty = repo.odb().write(ObjectKind::Blob, b"").expect("empty");
     let mut index = repo.load_index().expect("index");
     for name in ["FILE_x", "file_x", "other.txt"] {
         let path = wt.join(name);
@@ -462,8 +468,8 @@ fn ignorecase_collision_uses_serial_path_and_matches() {
         );
     }
     index.sort();
-    let from =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
+    let from = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
     fs::write(wt.join("other.txt"), b"changed\n").expect("chg");
     let to = commit_tree(&repo, "tip");
     assert_serial_parallel_match(root, from, to, true, false);
@@ -478,8 +484,8 @@ fn parallel_pool_error_does_not_write_jobs_after_failure() {
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
     enable_parallel_checkout_config(root);
-    let wt = repo.work_tree.as_ref().expect("wt");
-    let good_oid = repo.odb.write(ObjectKind::Blob, b"ok\n").expect("blob");
+    let wt = repo.work_tree().expect("wt");
+    let good_oid = repo.odb().write(ObjectKind::Blob, b"ok\n").expect("blob");
     let missing: ObjectId = "1111111111111111111111111111111111111111"
         .parse()
         .expect("missing");
@@ -555,8 +561,8 @@ fn missing_blob_errors_after_earlier_write() {
     let root = tmp.path();
     let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init");
-    let wt = repo.work_tree.as_ref().expect("wt");
-    let good_oid = repo.odb.write(ObjectKind::Blob, b"ok\n").expect("blob");
+    let wt = repo.work_tree().expect("wt");
+    let good_oid = repo.odb().write(ObjectKind::Blob, b"ok\n").expect("blob");
     let missing: ObjectId = "1111111111111111111111111111111111111111"
         .parse()
         .expect("missing");

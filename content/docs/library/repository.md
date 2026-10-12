@@ -3,15 +3,13 @@ title: Repository
 summary: Open and discover Git repositories with an explicit Environment, read git-dir vs work tree, load config, and handle grit_lib::Error.
 ---
 
-A [`Repository`](rustdoc:grit_lib::repo::Repository) is the main handle for grit-lib. It carries the absolute [`git_dir`](rustdoc:grit_lib::repo::Repository) path, an optional [`work_tree`](rustdoc:grit_lib::repo::Repository) for non-bare repos, an [`Odb`](rustdoc:grit_lib::odb::Odb) for object reads and writes, and the [`Environment`](rustdoc:grit_lib::environment::Environment) used to discover or open it.
+A [`Repository`](rustdoc:grit_lib::repo::Repository) is the main handle for grit-lib. Use [`Repository::git_dir`](rustdoc:grit_lib::repo::Repository), [`Repository::work_tree`](rustdoc:grit_lib::repo::Repository), and [`Repository::odb`](rustdoc:grit_lib::repo::Repository) for paths and the object store; discovery provenance is available through [`DiscoveryInfo`](rustdoc:grit_lib::repo::DiscoveryInfo) via [`Repository::discovery_info`](rustdoc:grit_lib::repo::Repository). The [`Environment`](rustdoc:grit_lib::environment::Environment) used to open the handle is returned by [`Repository::environment`](rustdoc:grit_lib::repo::Repository).
 
 ## Environment
 
 [`Environment`](rustdoc:grit_lib::environment::Environment) holds discovery and config variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_*`, home paths, `cwd`, and related fields) without reading the process environment inside the library. Construct one with `Environment::empty()` (defaults only) or `Environment::from_vars()` (parse an iterator of `(key, value)` pairs plus an explicit working directory). See [`Environment`](rustdoc:grit_lib::environment::Environment).
 
-The `grit` CLI builds an environment from the process in `grit-cli` and passes it into discovery. Embedders should do the same: snapshot the variables you care about once, then call `Repository::discover_with` or `Repository::open_with` with [`RepositoryOptions`](rustdoc:grit_lib::environment::RepositoryOptions).
-
-[`Repository::discover`](rustdoc:grit_lib::repo::Repository) and [`Repository::open`](rustdoc:grit_lib::repo::Repository) remain convenience entry points that use `Environment::empty()` (no overrides beyond `cwd = "."`).
+The `grit` CLI builds an environment from the process in `grit-cli` and passes it into discovery. Embedders should do the same: snapshot the variables you care about once, then call [`Repository::discover`](rustdoc:grit_lib::repo::Repository) or [`Repository::open`](rustdoc:grit_lib::repo::Repository) with [`RepositoryOptions`](rustdoc:grit_lib::environment::RepositoryOptions). Create new repositories with [`Repository::init`](rustdoc:grit_lib::repo::Repository) and [`InitOptions`](rustdoc:grit_lib::repo::InitOptions). Custom ODB backends use [`RepositoryBuilder`](rustdoc:grit_lib::repo::RepositoryBuilder).
 
 [`ConfigSet::load`](rustdoc:grit_lib::config::ConfigSet) takes `&Environment` as its first argument and always parses the cascade from disk (no process-global cache). Repository-scoped memoization lives on each open handle: [`Repository::config`](rustdoc:grit_lib::repo::Repository) returns `Arc<ConfigSet>` backed by [`RepoCaches`](rustdoc:grit_lib::repo_caches::RepoCaches) (config cascade, gitattributes stacks, filter-process drivers, precompose flags, and related state).
 
@@ -21,9 +19,9 @@ Hooks, clean/smudge filters, credential helpers, signing, SSH transport, and sim
 
 ## Discover vs open
 
-Call `Repository::discover_with` when you have a working directory and want Git-style upward search. Call `Repository::open_with` when you already know the git directory and optionally the work tree path. See [`Repository`](rustdoc:grit_lib::repo::Repository).
+Call [`Repository::discover`](rustdoc:grit_lib::repo::Repository) when you have a working directory and want Git-style upward search. Call [`Repository::open`](rustdoc:grit_lib::repo::Repository) when you already know the git directory; set [`RepositoryOptions::work_tree`](rustdoc:grit_lib::environment::RepositoryOptions) for non-bare layouts, [`RepositoryOptions::for_serving`](rustdoc:grit_lib::environment::RepositoryOptions) for smart-HTTP paths, and [`RepositoryOptions::without_format_validation`](rustdoc:grit_lib::environment::RepositoryOptions) when discovery must open before format checks.
 
-Bare repositories have `work_tree: None`. Linked worktrees and gitfile indirection are handled during discovery so `git_dir` always points at the directory that contains `objects/`.
+Bare repositories return `None` from [`Repository::work_tree`](rustdoc:grit_lib::repo::Repository). Linked worktrees and gitfile indirection are handled during discovery so [`Repository::git_dir`](rustdoc:grit_lib::repo::Repository) always points at the directory that contains `objects/`.
 
 ## Config
 

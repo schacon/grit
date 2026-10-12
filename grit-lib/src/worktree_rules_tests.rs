@@ -27,7 +27,7 @@ mod tests {
 
     fn nested_attributes_fixture(root: &Path) -> Repository {
         let repo = init_repo(root);
-        let wt = repo.work_tree.as_ref().expect("work tree");
+        let wt = repo.work_tree().expect("work tree");
         fs::write(wt.join(".gitattributes"), "* text=auto\n").unwrap();
         fs::write(wt.join(".gitignore"), "ignored-root\n").unwrap();
         for d in 0..50 {
@@ -71,16 +71,16 @@ mod tests {
 
         file_load_counters::reset();
         let mut index = repo.load_index().unwrap();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let rules = std::sync::Arc::new(std::sync::Mutex::new(
             crate::worktree_rules::WorktreeRules::from_repository(&repo, &index).unwrap(),
         ));
         diff_index_to_worktree_with_options(
-            &repo.odb,
+            &repo.odb(),
             &mut index,
             wt,
             DiffIndexToWorktreeOptions {
-                repository_git_dir: Some(repo.git_dir.clone()),
+                repository_git_dir: Some(repo.git_dir().to_path_buf()),
                 worktree_rules: Some(rules),
                 ..Default::default()
             },
@@ -94,7 +94,7 @@ mod tests {
 
         let probe_tmp = TempDir::new().unwrap();
         let probe_repo = attr_magic_probe_fixture(probe_tmp.path());
-        let probe_wt = probe_repo.work_tree.as_ref().unwrap();
+        let probe_wt = probe_repo.work_tree().unwrap();
         let root_ga = probe_wt.join(".gitattributes");
         file_load_counters::reset();
         status(
@@ -119,7 +119,7 @@ mod tests {
 
     fn attr_magic_probe_fixture(root: &Path) -> Repository {
         let repo = init_repo(root);
-        let wt = repo.work_tree.as_ref().expect("work tree");
+        let wt = repo.work_tree().expect("work tree");
         fs::write(wt.join(".gitattributes"), "* probe\n").unwrap();
         for i in 0..50 {
             fs::write(wt.join(format!("probe{i:02}.txt")), format!("body-{i}\n")).unwrap();
@@ -132,14 +132,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let repo = init_repo(root);
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         fs::create_dir_all(wt.join("d")).unwrap();
         fs::write(wt.join("d/.gitattributes"), "*.txt text eol=crlf\n").unwrap();
         fs::write(wt.join("d/f.txt"), b"line one\nline two\n").unwrap();
 
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
         let mut index = repo.load_index().unwrap();
-        let tree_oid = write_tree_from_index(&repo.odb, &index, "").expect("tree");
+        let tree_oid = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
 
         for args in [
             &["config", "user.email", "t@example.com"][..],
@@ -163,10 +163,10 @@ mod tests {
 
         let rules = crate::worktree_rules::WorktreeRules::from_repository(&repo, &index).unwrap();
         let entries = diff_tree_to_worktree_with_git_dir_and_rules(
-            &repo.odb,
+            &repo.odb(),
             Some(&tree_oid),
             wt,
-            &repo.git_dir,
+            &repo.git_dir(),
             &index,
             Some(rules.config()),
             Some(&rules),
@@ -197,7 +197,7 @@ mod tests {
         let repo = init_repo(root);
         fs::create_dir_all(root.join("d")).unwrap();
         fs::write(root.join("d/.gitattributes"), "*.txt text eol=lf\n").unwrap();
-        fs::write(repo.git_dir.join("info/attributes"), "d/*.txt -text\n").unwrap();
+        fs::write(repo.git_dir().join("info/attributes"), "d/*.txt -text\n").unwrap();
         fs::write(root.join("d/f.txt"), b"a\r\nb\r\n").unwrap();
 
         stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
@@ -236,7 +236,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let repo = init_repo(root);
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
 
         fs::write(wt.join(".gitattributes"), "* text=auto\n").unwrap();
         for d in 0..5 {

@@ -599,7 +599,7 @@ fn cherry_pick_tree_remap_matches_git() {
         .parse()
         .unwrap();
     let pick_parent = {
-        let obj = grit.odb.read(&pick_oid).unwrap();
+        let obj = grit.odb().read(&pick_oid).unwrap();
         grit_lib::objects::parse_commit(&obj.data).unwrap().parents[0]
     };
     let labels = CommitMergeLabels::from_commits(&main_oid, &pick_oid);

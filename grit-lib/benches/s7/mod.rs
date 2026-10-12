@@ -168,9 +168,9 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
     let repo = init_repository(dir, false, "main", None, grit_lib::RefStorageFormat::Files)
         .expect("init history repo");
     let mut index = Index::new();
-    index.hash_algo = repo.odb.hash_algo();
+    index.hash_algo = repo.odb().hash_algo();
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"history bench seed\n")
         .expect("seed blob");
     index.add_or_replace(index_entry(b"seed.txt", blob, 18, MODE_REGULAR));
@@ -181,7 +181,7 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
         if i > 0 && i % 50 == 0 {
             let body = format!("history churn {i}\n");
             let oid = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Blob, body.as_bytes())
                 .expect("churn blob");
             index.add_or_replace(index_entry(
@@ -192,9 +192,9 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
             ));
         }
         let tree = if i == 0 {
-            write_tree_from_index(&repo.odb, &index, "").expect("initial tree")
+            write_tree_from_index(&repo.odb(), &index, "").expect("initial tree")
         } else {
-            write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::default())
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::default())
                 .expect("update tree")
         };
         let ts = 1_700_000_000i64 + i as i64;
@@ -212,20 +212,20 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
             extra_headers: Vec::new(),
         });
         let oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, &raw)
             .expect("write commit");
         commits.push(oid);
         parent = Some(oid);
     }
     let head = *commits.last().expect("commits");
-    write_ref(&repo.git_dir, "refs/heads/main", &head).expect("write main");
+    write_ref(&repo.git_dir(), "refs/heads/main", &head).expect("write main");
 
     let branch_refs = 200usize.min(commits.len());
     let step = commits.len() / branch_refs.max(1);
     for i in 0..branch_refs {
         let oid = commits[i * step];
-        write_ref(&repo.git_dir, &format!("refs/heads/bench/b{i:05}"), &oid)
+        write_ref(&repo.git_dir(), &format!("refs/heads/bench/b{i:05}"), &oid)
             .expect("write branch ref");
     }
 
@@ -238,13 +238,13 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
         message: "history bench tag\n".to_owned(),
     };
     let tag_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Tag, &serialize_tag(&tag))
         .expect("write tag");
-    write_ref(&repo.git_dir, "refs/tags/bench-tag", &tag_oid).expect("write tag ref");
+    write_ref(&repo.git_dir(), "refs/tags/bench-tag", &tag_oid).expect("write tag ref");
 
     let pack = build_pack(
-        &repo.odb,
+        &repo.odb(),
         &[head],
         &[],
         &PackBuildOptions {
@@ -253,7 +253,7 @@ fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
         },
     )
     .expect("history pack");
-    install_indexed_pack(repo.odb.objects_dir(), "history", &pack);
+    install_indexed_pack(repo.odb().objects_dir(), "history", &pack);
 
     repo
 }
@@ -398,23 +398,25 @@ impl HistoryBenchFixtures {
         let root = tempfile::tempdir().expect("history tempdir");
         let repo = build_history_repo(root.path(), commit_count);
         let head =
-            grit_lib::refs::resolve_ref(&repo.git_dir, "refs/heads/main").expect("read head");
+            grit_lib::refs::resolve_ref(&repo.git_dir(), "refs/heads/main").expect("read head");
 
         if git_commit_graph_write(root.path()).is_err() {
-            write_grit_commit_graph(repo.odb.objects_dir(), &repo.odb).expect("grit commit-graph");
+            write_grit_commit_graph(repo.odb().objects_dir(), &repo.odb())
+                .expect("grit commit-graph");
         }
 
-        let wide_tree = build_flat_tree(&repo.odb, 10_000, "wide");
-        let wide_tree_few_changes = build_flat_tree_changed(&repo.odb, 10_000, "wide-few", 8);
-        let wide_tree_many_changes = build_flat_tree_changed(&repo.odb, 10_000, "wide-many", 2_000);
+        let wide_tree = build_flat_tree(&repo.odb(), 10_000, "wide");
+        let wide_tree_few_changes = build_flat_tree_changed(&repo.odb(), 10_000, "wide-few", 8);
+        let wide_tree_many_changes =
+            build_flat_tree_changed(&repo.odb(), 10_000, "wide-many", 2_000);
 
         const DEEP_TREE_DEPTH: usize = 32;
         const DEEP_TREE_LEAVES: usize = 64;
-        let deep_tree = build_deep_tree(&repo.odb, DEEP_TREE_DEPTH, DEEP_TREE_LEAVES);
+        let deep_tree = build_deep_tree(&repo.odb(), DEEP_TREE_DEPTH, DEEP_TREE_LEAVES);
         let deep_tree_few_changes =
-            build_deep_tree_changed(&repo.odb, DEEP_TREE_DEPTH, DEEP_TREE_LEAVES, 4);
+            build_deep_tree_changed(&repo.odb(), DEEP_TREE_DEPTH, DEEP_TREE_LEAVES, 4);
         let deep_tree_many_changes =
-            build_deep_tree_changed(&repo.odb, DEEP_TREE_DEPTH, DEEP_TREE_LEAVES, 48);
+            build_deep_tree_changed(&repo.odb(), DEEP_TREE_DEPTH, DEEP_TREE_LEAVES, 48);
 
         let blob_small_old = "alpha\nbeta\ngamma\n".to_owned();
         let blob_small_new = "alpha\nbeta delta\ngamma\n".to_owned();
@@ -448,18 +450,18 @@ impl HistoryBenchFixtures {
 
     /// Remove commit-graph file so revwalk runs without on-disk graph acceleration.
     pub fn remove_commit_graph(&self) {
-        let path = self.repo.git_dir.join("objects/info/commit-graph");
+        let path = self.repo.git_dir().join("objects/info/commit-graph");
         let _ = std::fs::remove_file(path);
     }
 
     /// Restore commit-graph (rebuild if missing).
     pub fn ensure_commit_graph(&self) {
-        let path = self.repo.git_dir.join("objects/info/commit-graph");
+        let path = self.repo.git_dir().join("objects/info/commit-graph");
         if path.is_file() {
             return;
         }
         if git_commit_graph_write(self._root.path()).is_err() {
-            write_grit_commit_graph(self.repo.odb.objects_dir(), &self.repo.odb)
+            write_grit_commit_graph(self.repo.odb().objects_dir(), &self.repo.odb())
                 .expect("restore commit-graph");
         }
     }

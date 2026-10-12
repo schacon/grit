@@ -3,7 +3,7 @@ title: Object stores
 summary: Pluggable ObjectStore backends, OdbBuilder, and the odb_conformance test suite.
 ---
 
-By default [`Repository`](rustdoc:grit_lib::repo::Repository) opens a files-backed [`Odb`](rustdoc:grit_lib::odb::Odb) (loose objects, packs, and optional MIDX). Embedders can swap the **primary** store or add read-only layers with [`OdbBuilder`](rustdoc:grit_lib::odb::OdbBuilder) and `Repository::open_with_odb`.
+By default [`Repository`](rustdoc:grit_lib::repo::Repository) opens a files-backed [`Odb`](rustdoc:grit_lib::odb::Odb) (loose objects, packs, and optional MIDX). Embedders can swap the **primary** store or add read-only layers with [`OdbBuilder`](rustdoc:grit_lib::odb::OdbBuilder) and [`RepositoryBuilder`](rustdoc:grit_lib::repo::RepositoryBuilder).
 
 ## Traits
 
@@ -32,20 +32,19 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{HashAlgo, ObjectKind};
 use grit_lib::odb::store::MemoryStore;
 use grit_lib::odb::OdbBuilder;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 
 let dir = tempfile::tempdir()?;
-init_repository(dir.path(), false, "main", None, "files")?;
+Repository::init(dir.path(), &InitOptions::default())?;
 let git_dir = dir.path().join(".git");
 let store = Arc::new(MemoryStore::new(HashAlgo::Sha1));
-let repo = Repository::open_with_odb(
-    &RepositoryOptions::empty(),
-    &git_dir,
-    Some(dir.path()),
-    OdbBuilder::files(git_dir.join("objects"))
-        .primary(store)
-        .alternates(false),
-)?;
+let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+    .odb_builder(
+        OdbBuilder::files(git_dir.join("objects"))
+            .primary(store)
+            .alternates(false),
+    )
+    .open(&git_dir, Some(dir.path()))?;
 let _blob = repo.odb.write(ObjectKind::Blob, b"hello")?;
 # Ok::<(), grit_lib::error::Error>(())
 ```

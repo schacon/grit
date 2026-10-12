@@ -87,8 +87,7 @@ fn resolve_clean_pathspecs(repo: &Repository, selectors: &[String]) -> Result<Ve
         return Ok(Vec::new());
     }
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .context("grit clean needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;
     let prefix = pathdiff(&cwd, work_tree);

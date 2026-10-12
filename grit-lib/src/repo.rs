@@ -68,25 +68,110 @@ fn read_sparse_checkout_patterns(git_dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Provenance flags recorded when a repository is discovered or opened explicitly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryInfo {
+    /// Opened via `GIT_DIR` or an explicit git directory (not upward discovery).
+    pub explicit_git_dir: bool,
+    /// Directory where `.git` / a gitfile was found during upward discovery.
+    pub discovery_root: Option<PathBuf>,
+    /// `GIT_WORK_TREE` was applied after discovery without `GIT_DIR`.
+    pub work_tree_from_env: bool,
+    /// Discovery encountered a `.git` gitfile rather than a directory.
+    pub discovery_via_gitfile: bool,
+}
+
+/// Options for [`Repository::init`].
+#[derive(Debug, Clone)]
+pub struct InitOptions {
+    /// Create a bare repository at `path` instead of `path/.git`.
+    pub bare: bool,
+    /// Initial branch name written into `HEAD`.
+    pub initial_branch: String,
+    /// Optional template directory (empty path skips hook installation).
+    pub template_dir: Option<PathBuf>,
+    /// Ref storage backend for the new repository.
+    pub ref_storage: crate::ref_storage::RefStorageFormat,
+    /// When set, place the git directory here and link from `path` via a gitfile.
+    pub separate_git_dir: Option<PathBuf>,
+    /// Bare git directory with `core.worktree` pointing at `path` (`GIT_WORK_TREE` clone layout).
+    pub bare_with_worktree_at_path: bool,
+}
+
+impl Default for InitOptions {
+    fn default() -> Self {
+        Self {
+            bare: false,
+            initial_branch: "main".to_owned(),
+            template_dir: None,
+            ref_storage: crate::ref_storage::RefStorageFormat::Files,
+            separate_git_dir: None,
+            bare_with_worktree_at_path: false,
+        }
+    }
+}
+
+/// Optional custom ODB (and ref store) wiring for [`RepositoryBuilder::open`].
+#[must_use]
+pub struct RepositoryBuilder {
+    options: RepositoryOptions,
+    odb_builder: Option<crate::odb::OdbBuilder>,
+    ref_store: Option<Arc<dyn crate::refs::store::RefStore>>,
+}
+
+impl RepositoryBuilder {
+    /// Start building a repository open with `options`.
+    pub fn new(options: RepositoryOptions) -> Self {
+        Self {
+            options,
+            odb_builder: None,
+            ref_store: None,
+        }
+    }
+
+    /// Use a preconfigured [`crate::odb::OdbBuilder`] for the object store.
+    pub fn odb_builder(mut self, builder: crate::odb::OdbBuilder) -> Self {
+        self.odb_builder = Some(builder);
+        self
+    }
+
+    /// Inject a ref backend before open (for example [`crate::refs::store::MemoryRefStore`]).
+    pub fn ref_store(mut self, store: Arc<dyn crate::refs::store::RefStore>) -> Self {
+        self.ref_store = Some(store);
+        self
+    }
+
+    /// Open `git_dir` with optional `work_tree`, applying builder overrides.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Repository::open`].
+    pub fn open(self, git_dir: &Path, work_tree: Option<&Path>) -> Result<Repository> {
+        let mut options = self.options;
+        if let Some(wt) = work_tree {
+            options.work_tree = Some(wt.to_path_buf());
+        }
+        let mut repo = if let Some(builder) = self.odb_builder {
+            Repository::open_with_odb_internal(&options, git_dir, builder)?
+        } else {
+            Repository::open_internal(&options, git_dir)?
+        };
+        if let Some(store) = self.ref_store {
+            repo = repo.with_ref_store(store);
+        }
+        Ok(repo)
+    }
+}
+
 /// A handle to an open Git repository.
 pub struct Repository {
-    /// Absolute path to the git directory (`.git/` or bare repo root).
-    pub git_dir: PathBuf,
-    /// Absolute path to the working tree, or `None` for bare repos.
-    pub work_tree: Option<PathBuf>,
-    /// Loose object database.
-    pub odb: Odb,
-    /// Discovery provenance: true when opened via `GIT_DIR` env or explicit API.
-    ///
-    /// This suppresses safe.bareRepository implicit checks.
-    pub explicit_git_dir: bool,
-    /// When the repo was found by walking from a directory containing `.git` / a gitfile,
-    /// that directory (matches Git's setup trace using `.git` for the default git-dir).
-    pub discovery_root: Option<PathBuf>,
-    /// `GIT_WORK_TREE` was set without `GIT_DIR` and applied after discovery (t1510 #1, #5, …).
-    pub work_tree_from_env: bool,
-    /// `.git` was a gitfile (not a directory) when the repo was discovered.
-    pub discovery_via_gitfile: bool,
+    git_dir: PathBuf,
+    work_tree: Option<PathBuf>,
+    odb: Odb,
+    explicit_git_dir: bool,
+    discovery_root: Option<PathBuf>,
+    work_tree_from_env: bool,
+    discovery_via_gitfile: bool,
     /// Lazily loaded repository config snapshot (system / global / local / worktree cascade).
     ///
     /// Hot paths should call [`Repository::config`] once per operation and pass `&ConfigSet`
@@ -120,9 +205,9 @@ const _: () = {
 impl std::fmt::Debug for Repository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Repository")
-            .field("git_dir", &self.git_dir)
-            .field("work_tree", &self.work_tree)
-            .field("explicit_git_dir", &self.explicit_git_dir)
+            .field("git_dir", &self.git_dir())
+            .field("work_tree", &self.work_tree())
+            .field("explicit_git_dir", &self.discovery_info().explicit_git_dir)
             .field("network_trace", &self.network_trace)
             .finish_non_exhaustive()
     }
@@ -508,6 +593,35 @@ impl Repository {
             .pathspec_precompose_enabled(self.environment.as_ref(), &self.git_dir)
     }
 
+    /// Absolute path to the git directory (`.git/` or bare repository root).
+    #[must_use]
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
+    }
+
+    /// Absolute work tree path for non-bare repositories.
+    #[must_use]
+    pub fn work_tree(&self) -> Option<&Path> {
+        self.work_tree.as_deref()
+    }
+
+    /// Object database for this repository.
+    #[must_use]
+    pub fn odb(&self) -> &Odb {
+        &self.odb
+    }
+
+    /// Discovery provenance for safe-directory and setup tracing.
+    #[must_use]
+    pub fn discovery_info(&self) -> DiscoveryInfo {
+        DiscoveryInfo {
+            explicit_git_dir: self.explicit_git_dir,
+            discovery_root: self.discovery_root.clone(),
+            work_tree_from_env: self.work_tree_from_env,
+            discovery_via_gitfile: self.discovery_via_gitfile,
+        }
+    }
+
     fn cached_settings(&self) -> RepoCachedSettings {
         self.ensure_config_arc()
             .map(|cfg| {
@@ -518,53 +632,82 @@ impl Repository {
             })
     }
 
-    /// Open a repository from an explicit git-dir and optional work-tree.
-    ///
-    /// Uses [`RepositoryOptions::empty`] (no discovery overrides beyond `cwd = "."`).
+    /// Initialise a repository at `path` and return an open handle.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NotARepository`] if `git_dir` does not look like a
-    /// valid git directory (missing `objects/`, `HEAD`, etc.).
-    pub fn open(git_dir: &Path, work_tree: Option<&Path>) -> Result<Self> {
-        Self::open_with(&RepositoryOptions::empty(), git_dir, work_tree)
+    /// Propagates filesystem and layout errors from the underlying init helpers.
+    pub fn init(path: &Path, options: &InitOptions) -> Result<Self> {
+        if options.bare_with_worktree_at_path {
+            return init_bare_with_env_worktree(
+                path,
+                path,
+                &options.initial_branch,
+                options.template_dir.as_deref(),
+                options.ref_storage,
+            );
+        }
+        if let Some(separate) = &options.separate_git_dir {
+            return init_repository_separate_git_dir(
+                path,
+                separate,
+                &options.initial_branch,
+                options.template_dir.as_deref(),
+                options.ref_storage,
+            );
+        }
+        init_repository(
+            path,
+            options.bare,
+            &options.initial_branch,
+            options.template_dir.as_deref(),
+            options.ref_storage,
+        )
     }
 
-    /// Open a repository with an explicit [`Environment`].
-    pub fn open_with(
+    /// Open or resolve a repository at `path` using `options`.
+    ///
+    /// When [`RepositoryOptions::open_for_serving`] is set, `path` is resolved like
+    /// smart-HTTP serving (work tree, bare root, or `path.git`). Otherwise `path` is
+    /// the git directory and [`RepositoryOptions::work_tree`] selects the work tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotARepository`] when the layout is invalid.
+    pub fn open(path: &Path, options: &RepositoryOptions) -> Result<Self> {
+        if options.open_for_serving {
+            return Self::open_for_serving_internal(path, options);
+        }
+        Self::open_internal(options, path)
+    }
+
+    fn open_with_work_tree(
         options: &RepositoryOptions,
         git_dir: &Path,
         work_tree: Option<&Path>,
     ) -> Result<Self> {
+        let mut opts = options.clone();
+        opts.work_tree = work_tree.map(|p| p.to_path_buf());
+        Self::open_internal(&opts, git_dir)
+    }
+
+    fn open_internal(options: &RepositoryOptions, git_dir: &Path) -> Result<Self> {
+        let work_tree = options.work_tree.as_deref();
         let git_dir = git_dir
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
 
-        validate_repository_format(&git_dir)?;
+        if options.validate_repository_format {
+            validate_repository_format(&git_dir)?;
+        }
         let repo = Self::from_canonical_git_dir(options, git_dir, work_tree)?;
         let cfg = repo.ensure_config_arc()?;
         repo.install_config_snapshot(cfg);
-        warn_core_bare_worktree_conflict(options, &repo.git_dir);
+        warn_core_bare_worktree_conflict(options, repo.git_dir());
         Ok(repo)
     }
 
-    /// Open exactly the repository at `path` for wire-protocol serving.
-    ///
-    /// Unlike [`Self::discover`], this does not search parent directories: a
-    /// server must only serve the path it was given. The path may name a bare
-    /// repository, a working tree (with `.git` beside it), or the same logical
-    /// repository with a `.git` suffix appended to the path.
-    ///
-    /// # Parameters
-    ///
-    /// - `path`: client-supplied repository path (bare root, work tree, or `*.git`).
-    /// - `options`: environment and injectable runners for config and hooks.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotARepository`] when none of the candidate layouts
-    /// contain a `HEAD` file.
-    pub fn open_for_serving(path: &Path, options: &RepositoryOptions) -> Result<Self> {
+    fn open_for_serving_internal(path: &Path, options: &RepositoryOptions) -> Result<Self> {
         let mut with_git_suffix = path.as_os_str().to_owned();
         with_git_suffix.push(".git");
         let candidates = [
@@ -576,63 +719,20 @@ impl Repository {
             if !git_dir.join("HEAD").is_file() {
                 continue;
             }
-            return Self::open_with(options, &git_dir, work_tree.as_deref());
+            let mut opts = options.clone();
+            opts.work_tree = work_tree;
+            opts.open_for_serving = false;
+            return Self::open_internal(&opts, &git_dir);
         }
         Err(Error::NotARepository(path.display().to_string()))
     }
 
-    /// Like [`Self::open`] but skips repository format validation (`validate_repository_format`).
-    ///
-    /// Used after repository discovery when the format is unsupported so callers still learn
-    /// the git directory (Git `GIT_DIR_INVALID_FORMAT` still records gitdir for `read_early_config`).
-    pub fn open_skipping_format_validation(
-        git_dir: &Path,
-        work_tree: Option<&Path>,
-    ) -> Result<Self> {
-        Self::open_skipping_format_validation_with_options(
-            &RepositoryOptions::empty(),
-            git_dir,
-            work_tree,
-        )
-    }
-
-    /// Like [`Self::open_skipping_format_validation`] with full [`RepositoryOptions`].
-    pub fn open_skipping_format_validation_with_options(
+    fn open_with_odb_internal(
         options: &RepositoryOptions,
         git_dir: &Path,
-        work_tree: Option<&Path>,
-    ) -> Result<Self> {
-        let git_dir = git_dir
-            .canonicalize()
-            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
-        let repo = Self::from_canonical_git_dir(options, git_dir, work_tree)?;
-        warn_core_bare_worktree_conflict(options, &repo.git_dir);
-        Ok(repo)
-    }
-
-    /// Open a repository with explicit options (alias for [`Self::open_with`]).
-    pub fn open_with_options(
-        git_dir: &Path,
-        work_tree: Option<&Path>,
-        options: RepositoryOptions,
-    ) -> Result<Self> {
-        Self::open_with(&options, git_dir, work_tree)
-    }
-
-    /// Open a repository using a pre-built [`crate::odb::Odb`] from [`crate::odb::OdbBuilder`].
-    ///
-    /// The builder's [`crate::odb::OdbBuilder::files`] path must match this repository's
-    /// `objects/` directory (including linked worktrees via `commondir`).
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::open`], when the git directory is invalid.
-    pub fn open_with_odb(
-        options: &RepositoryOptions,
-        git_dir: &Path,
-        work_tree: Option<&Path>,
         builder: crate::odb::OdbBuilder,
     ) -> Result<Self> {
+        let work_tree = options.work_tree.as_deref();
         let git_dir = git_dir
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
@@ -722,24 +822,12 @@ impl Repository {
         };
         let cfg = repo.ensure_config_arc()?;
         repo.install_config_snapshot(cfg);
-        warn_core_bare_worktree_conflict(options, &repo.git_dir);
+        warn_core_bare_worktree_conflict(options, repo.git_dir());
         Ok(repo)
     }
 
-    /// Discover a repository with explicit options (alias for [`Self::discover_with`]).
-    pub fn discover_with_options(start: Option<&Path>, options: RepositoryOptions) -> Result<Self> {
-        Self::discover_with(&options, start)
-    }
-
-    /// Discover the repository starting from `start` (defaults to [`Environment::cwd`] if `None`).
-    ///
-    /// Uses [`RepositoryOptions::empty`].
-    pub fn discover(start: Option<&Path>) -> Result<Self> {
-        Self::discover_with(&RepositoryOptions::empty(), start)
-    }
-
-    /// Discover a repository using an explicit [`Environment`].
-    pub fn discover_with(options: &RepositoryOptions, start: Option<&Path>) -> Result<Self> {
+    /// Discover a repository starting from `start` (defaults to [`Environment::cwd`] when `None`).
+    pub fn discover(start: Option<&Path>, options: &RepositoryOptions) -> Result<Self> {
         let env = &options.environment;
         let cwd = env.discovery_cwd();
 
@@ -769,7 +857,7 @@ impl Repository {
                 }
             }
             if work_tree.is_some() {
-                let mut repo = Self::open_with(options, &git_dir, work_tree.as_deref())?;
+                let mut repo = Self::open_with_work_tree(options, &git_dir, work_tree.as_deref())?;
                 repo.explicit_git_dir = true;
                 repo.discovery_root = None;
                 repo.work_tree_from_env = false;
@@ -791,7 +879,7 @@ impl Repository {
                 // under `$PWD` (e.g. t5402-post-merge-hook).
                 Some(cwd.canonicalize().unwrap_or_else(|_| cwd.clone()))
             };
-            let mut repo = Self::open_with(options, &git_dir, resolved_wt.as_deref())?;
+            let mut repo = Self::open_with_work_tree(options, &git_dir, resolved_wt.as_deref())?;
             repo.explicit_git_dir = true;
             repo.discovery_root = None;
             repo.work_tree_from_env = false;
@@ -861,7 +949,7 @@ impl Repository {
                 // `repositoryformatversion = 0` repo; t0001 #60). Discovery itself opens with
                 // validation skipped so an empty `.git/` is walked past, but a *found* repository
                 // must satisfy the format check.
-                validate_repository_format(&repo.git_dir)?;
+                validate_repository_format(repo.git_dir())?;
                 repo.environment = Arc::new(env.clone());
                 let load_opts = LoadConfigOptions {
                     include_system: true,
@@ -1038,7 +1126,7 @@ impl Repository {
     /// Write the index to the default path after optionally collapsing skip-worktree
     /// subtrees into sparse-directory placeholders (when sparse index is enabled).
     pub fn write_index(&self, index: &mut Index) -> Result<()> {
-        self.write_index_at(&self.index_path(), index)
+        self.write_index_with_post_index_change(index, false, false)
     }
 
     /// Write a pack reachability `.bitmap` sidecar for `pack_idx_path`.
@@ -1175,7 +1263,7 @@ impl Repository {
     /// Returns `Ok(())` after the index is written and the hook has been attempted.
     ///
     /// Errors when the index cannot be finalized or written.
-    pub fn write_index_with_post_index_change(
+    pub(crate) fn write_index_with_post_index_change(
         &self,
         index: &mut Index,
         updated_workdir: bool,
@@ -1191,7 +1279,17 @@ impl Repository {
 
     /// Like [`Repository::write_index`], but writes to an explicit index file path.
     pub fn write_index_at(&self, path: &std::path::Path, index: &mut Index) -> Result<()> {
-        self.write_index_at_split(path, index, WriteSplitIndexRequest::default())
+        self.write_index_at_with_post_index_change(path, index, false, false)
+    }
+
+    /// Like [`Repository::write_index_at`], with explicit split-index emission control.
+    pub fn write_index_at_with_split(
+        &self,
+        path: &std::path::Path,
+        index: &mut Index,
+        split: WriteSplitIndexRequest,
+    ) -> Result<()> {
+        self.write_index_at_split(path, index, split)
     }
 
     /// Whether reading `index` under this repository's config would mark the cache changed solely to
@@ -1229,7 +1327,7 @@ impl Repository {
     /// Returns `Ok(())` after the index is written and the hook has been attempted.
     ///
     /// Errors when the index cannot be finalized or written.
-    pub fn write_index_at_with_post_index_change(
+    pub(crate) fn write_index_at_with_post_index_change(
         &self,
         path: &std::path::Path,
         index: &mut Index,
@@ -1246,7 +1344,7 @@ impl Repository {
     }
 
     /// Write the index to `path`, optionally emitting a split index (shared base + `link` extension).
-    pub fn write_index_at_split(
+    pub(crate) fn write_index_at_split(
         &self,
         path: &std::path::Path,
         index: &mut Index,
@@ -1267,7 +1365,7 @@ impl Repository {
     /// Returns `Ok(())` after the index is written and the hook has been attempted.
     ///
     /// Errors when the index cannot be finalized or written.
-    pub fn write_index_at_split_with_post_index_change(
+    pub(crate) fn write_index_at_split_with_post_index_change(
         &self,
         path: &std::path::Path,
         index: &mut Index,
@@ -1371,7 +1469,7 @@ impl Repository {
     /// Used for `:(top)` / `:/` pathspec Bloom lookups. Returns `None` for bare repositories or
     /// when paths cannot be resolved; callers should treat `None` like an empty prefix.
     #[must_use]
-    pub fn bloom_pathspec_cwd(&self) -> Option<String> {
+    pub(crate) fn bloom_pathspec_cwd(&self) -> Option<String> {
         let wt = self.work_tree.as_ref()?;
         let cwd = self.environment.discovery_cwd();
         let wt = wt.canonicalize().ok()?;
@@ -1428,7 +1526,7 @@ impl Repository {
 ///
 /// Upstream tests grep `^setup: ` from the trace file; they do not use the timestamped
 /// `trace.c:` prefix that full Git tracing adds.
-pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
+pub(crate) fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
     let Some(path) = repo.environment.git_trace_setup.as_deref() else {
         return Ok(());
     };
@@ -2419,8 +2517,10 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
         let content =
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
-        let mut repo =
-            Repository::open_skipping_format_validation_with_options(options, &git_dir, Some(dir))?;
+        let mut opts = options.clone();
+        opts.validate_repository_format = false;
+        opts.work_tree = Some(dir.to_path_buf());
+        let mut repo = Repository::open_internal(&opts, &git_dir)?;
         // Linked worktree: `core.worktree` in the common config may point at another directory
         // (t1501). When the process cwd is not inside that configured tree, Git uses the
         // discovery directory as the work tree (commondir overrides for ops under the real tree).
@@ -2460,11 +2560,10 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
         };
         // Try to open; if the directory is empty or invalid, continue
         // walking up (e.g. an empty .git/ directory should be ignored).
-        match Repository::open_skipping_format_validation_with_options(
-            options,
-            &open_path,
-            Some(dir),
-        ) {
+        let mut skip_opts = options.clone();
+        skip_opts.validate_repository_format = false;
+        skip_opts.work_tree = Some(dir.to_path_buf());
+        match Repository::open_internal(&skip_opts, &open_path) {
             Ok(mut repo) => {
                 // Restore the original path so rev-parse shows .git not the
                 // resolved symlink target.
@@ -2498,7 +2597,7 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
     // and can be opened as repositories even without a local objects/ dir.
     if dir.join("HEAD").is_file() && dir.join("commondir").is_file() {
         maybe_trace_implicit_bare_repository(dir, env);
-        let repo = Repository::open_with(options, dir, None)?;
+        let repo = Repository::open_with_work_tree(options, dir, None)?;
         return Ok(Some(DiscoveredAt {
             repo,
             gitfile: None,
@@ -2520,7 +2619,7 @@ fn try_open_at(options: &RepositoryOptions, dir: &Path) -> Result<Option<Discove
                 }
             }
         }
-        let repo = Repository::open_with(options, dir, None)?;
+        let repo = Repository::open_with_work_tree(options, dir, None)?;
         return Ok(Some(DiscoveredAt {
             repo,
             gitfile: None,
@@ -2719,7 +2818,7 @@ impl Repository {
     ///
     /// Used by operations that explicitly open another repository by path
     /// (e.g. local clone source).
-    pub fn enforce_safe_directory_git_dir(&self) -> Result<()> {
+    pub(crate) fn enforce_safe_directory_git_dir(&self) -> Result<()> {
         let assume_different =
             self.test_assume_different_owner || self.environment.test_assume_different_owner();
         if !assume_different {
@@ -2734,7 +2833,7 @@ impl Repository {
     }
 
     /// Enforce safe.directory checks against an explicit checked path.
-    pub fn enforce_safe_directory_git_dir_with_path(&self, checked: &Path) -> Result<()> {
+    pub(crate) fn enforce_safe_directory_git_dir_with_path(&self, checked: &Path) -> Result<()> {
         let assume_different =
             self.test_assume_different_owner || self.environment.test_assume_different_owner();
         if !assume_different {
@@ -3149,7 +3248,10 @@ pub fn init_repository_separate_git_dir(
     let abs_git_dir = abs_git_dir.to_string_lossy().replace('\\', "/");
     fs::write(gitfile, format!("gitdir: {abs_git_dir}\n"))?;
 
-    Repository::open(git_dir, Some(work_tree))
+    Repository::open(
+        git_dir,
+        &RepositoryOptions::empty().with_work_tree(work_tree),
+    )
 }
 
 /// Initialise a **minimal** bare repository directory layout matching `git clone --template= --bare`.
@@ -3270,8 +3372,14 @@ pub fn init_repository(
         )?;
     }
 
-    let work_tree = if bare { None } else { Some(path) };
-    Repository::open(&git_dir, work_tree)
+    if bare {
+        Repository::open(&git_dir, &RepositoryOptions::empty())
+    } else {
+        Repository::open(
+            &git_dir,
+            &RepositoryOptions::empty().with_work_tree(path.to_path_buf()),
+        )
+    }
 }
 
 /// Initialise a **bare** repository at `git_dir` with `core.worktree` set to `work_tree`.
@@ -3307,7 +3415,10 @@ pub fn init_bare_with_env_worktree(
     };
     config.set("core.worktree", &work_tree_abs.to_string_lossy())?;
     config.write()?;
-    Repository::open(git_dir, Some(work_tree))
+    Repository::open(
+        git_dir,
+        &RepositoryOptions::empty().with_work_tree(work_tree),
+    )
 }
 
 /// Initialise a repository whose git directory is separate from the work tree.
@@ -3372,7 +3483,10 @@ pub fn init_repository_separate(
     let gitfile = work_tree.join(".git");
     fs::write(&gitfile, format!("gitdir: {}\n", git_dir_abs.display()))?;
 
-    Repository::open(git_dir, Some(work_tree))
+    Repository::open(
+        git_dir,
+        &RepositoryOptions::empty().with_work_tree(work_tree),
+    )
 }
 
 /// Recursively copy template files from `src` to `dst`.
@@ -3473,7 +3587,7 @@ mod index_write_fail_inject {
 
 /// Debug-only: fail the next [`Repository::write_index`] call.
 #[cfg(test)]
-pub fn set_test_inject_index_write_fail(enabled: bool) {
+pub(crate) fn set_test_inject_index_write_fail(enabled: bool) {
     index_write_fail_inject::INJECT.with(|c| *c.borrow_mut() = enabled);
 }
 

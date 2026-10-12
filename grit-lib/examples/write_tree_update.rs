@@ -8,6 +8,7 @@
 use std::env;
 use std::path::Path;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 
@@ -18,9 +19,9 @@ fn main() -> grit_lib::error::Result<()> {
     };
     let path = Path::new(&arg);
 
-    let repo = Repository::discover(Some(&path))?;
+    let repo = Repository::discover(Some(path), &RepositoryOptions::empty())?;
     let mut index = repo.load_index()?;
-    let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.write_index(&mut index)?;
     println!("{tree}");
     Ok(())

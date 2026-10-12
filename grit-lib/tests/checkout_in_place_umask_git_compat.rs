@@ -5,6 +5,7 @@ mod unix {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
+    use grit_lib::environment::RepositoryOptions;
     use grit_lib::objects::ObjectId;
     use grit_lib::porcelain::checkout::checkout_between_trees;
     use grit_lib::repo::Repository;
@@ -72,10 +73,14 @@ mod unix {
             git(root, &["reset", "--hard", &main_commit]);
             assert_eq!(mode_bits(&root.join("secret.txt")), 0o600);
 
-            let grit_repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+            let grit_repo = Repository::open(
+                &root.join(".git"),
+                &RepositoryOptions::empty().with_work_tree(root),
+            )
+            .expect("open");
             checkout_between_trees(&grit_repo, Some(&main_tree), &target_tree).expect("checkout");
             grit_lib::refs::write_ref(
-                &grit_repo.git_dir,
+                grit_repo.git_dir(),
                 "HEAD",
                 &ObjectId::from_hex(&target_commit).expect("commit"),
             )
@@ -122,10 +127,14 @@ mod unix {
             let git_mode = mode_bits(&root.join("secret.txt"));
 
             git(root, &["reset", "--hard", &main_commit]);
-            let grit_repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+            let grit_repo = Repository::open(
+                &root.join(".git"),
+                &RepositoryOptions::empty().with_work_tree(root),
+            )
+            .expect("open");
             checkout_between_trees(&grit_repo, Some(&main_tree), &target_tree).expect("checkout");
             grit_lib::refs::write_ref(
-                &grit_repo.git_dir,
+                grit_repo.git_dir(),
                 "HEAD",
                 &ObjectId::from_hex(&target_commit).expect("commit"),
             )

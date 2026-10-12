@@ -60,7 +60,7 @@ fn fsck_clean(repo_dir: &std::path::Path) {
 
 fn entry_for_path(repo: &Repository, path: &str, stage: u8, payload: &[u8]) -> IndexEntry {
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, payload)
         .expect("write blob");
     let mut e = IndexEntry {
@@ -122,7 +122,7 @@ fn grit_index_batch_remove_replace_matches_git_ls_files_and_fsck() {
     remove_paths.dedup();
 
     let replacement_oid: ObjectId = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"replacement\n")
         .expect("replacement blob");
     let replacements: Vec<IndexEntry> = remove_paths

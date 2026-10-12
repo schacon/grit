@@ -13,7 +13,7 @@ Grit is designed to be **linked into other Rust programs**, not only invoked as 
 - [`Environment::from_vars`](rustdoc:grit_lib::environment::Environment) — parse an iterator of `(key, value)` pairs plus an explicit working directory (no reads from `std::env` inside the library).
 - `Environment::capture_process()` — **CLI boundary only**: snapshot the current process into an [`Environment`](rustdoc:grit_lib::environment::Environment).
 
-Pass the same `Environment` into [`Repository`](rustdoc:grit_lib::repo::Repository) (`discover_with` / `open_with`) and into [`ConfigSet`](rustdoc:grit_lib::config::ConfigSet) loading.
+Pass the same `Environment` into [`Repository`](rustdoc:grit_lib::repo::Repository) ([`discover`](rustdoc:grit_lib::repo::Repository) / [`open`](rustdoc:grit_lib::repo::Repository)) and into [`ConfigSet`](rustdoc:grit_lib::config::ConfigSet) loading.
 
 ## RepositoryOptions
 

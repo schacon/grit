@@ -32,7 +32,7 @@ fn large_index_v2_v4_write_read_and_mutations() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo =
         init_repository(tmp.path(), false, "main", None, RefStorageFormat::Files).expect("init");
-    let blob = repo.odb.write(ObjectKind::Blob, b"data").expect("blob");
+    let blob = repo.odb().write(ObjectKind::Blob, b"data").expect("blob");
 
     for version in [2u32, 4] {
         let mut index = Index::new();

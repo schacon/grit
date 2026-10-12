@@ -12,6 +12,7 @@ use grit_lib::attributes::{
     load_gitattributes_stack, normalize_rel_path, path_relative_to_worktree, resolve_tree_oid,
     AttrValue, ParsedGitAttributes,
 };
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 const AUTHOR: &str = "Attributes Harness";
@@ -56,7 +57,11 @@ pub fn hermetic_git_ok(worktree: &Path, args: &[&str]) -> String {
 }
 
 pub fn grit_repo(worktree: &Path) -> Repository {
-    Repository::open(&worktree.join(".git"), Some(worktree)).expect("open grit repo")
+    Repository::open(
+        &worktree.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(worktree),
+    )
+    .expect("open grit repo")
 }
 
 pub fn ignore_case(repo: &Repository) -> bool {

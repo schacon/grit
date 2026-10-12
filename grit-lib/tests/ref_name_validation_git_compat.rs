@@ -132,7 +132,7 @@ fn write_ref_rejects_invalid_branch_names_without_loose_files() {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("init");
-    let git_dir = repo.git_dir.clone();
+    let git_dir = repo.git_dir().to_path_buf();
     let invalid = ["bad name", "x..y", "a~b", "a.lock"];
     for name in invalid {
         let refname = format!("refs/heads/{name}");
@@ -163,7 +163,8 @@ fn write_ref_accepts_refs_heads_head_like_git() {
     )
     .expect("init");
     let tip = seed_empty_commit(worktree);
-    write_ref(&repo.git_dir, "refs/heads/HEAD", &tip).expect("plumbing may write refs/heads/HEAD");
+    write_ref(&repo.git_dir(), "refs/heads/HEAD", &tip)
+        .expect("plumbing may write refs/heads/HEAD");
     assert!(
         git_fsck_strict(worktree),
         "git fsck --strict must pass on refs/heads/HEAD"

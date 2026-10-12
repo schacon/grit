@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::paths::{move_path, remove_paths, RemoveOptions};
 use grit_lib::repo::Repository;
 use grit_lib::write_tree::{cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags};
@@ -63,7 +64,7 @@ fn commit_all(repo: &std::path::Path, msg: &str) {
 }
 
 fn grit_repo(dir: &std::path::Path) -> Repository {
-    Repository::discover(Some(dir)).expect("open repo")
+    Repository::discover(Some(dir), &RepositoryOptions::empty()).expect("open repo")
 }
 
 fn worktree_has_exact_dir_entry(parent: &Path, name: &str) -> bool {
@@ -742,9 +743,12 @@ fn cache_tree_valid_after_mv_commit() {
     move_path(&repo, "one.txt", "three.txt", false).expect("mv");
 
     let mut index = repo.load_index().expect("index");
-    let _tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::default())
+    let _tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::default())
         .expect("write-tree");
-    assert!(cache_tree_fully_valid(&repo.odb, index.cache_tree.as_ref()));
+    assert!(cache_tree_fully_valid(
+        &repo.odb(),
+        index.cache_tree.as_ref()
+    ));
     repo.write_index(&mut index).expect("write index");
 
     git(repo_dir, &["commit", "-q", "-m", "rename"]);

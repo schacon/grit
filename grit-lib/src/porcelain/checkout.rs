@@ -74,8 +74,7 @@ fn checkout_populated_tree(
     progress: &mut dyn ProgressSink,
 ) -> Result<()> {
     let work_tree = repo
-        .work_tree
-        .clone()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
     let mut index = repo.load_index()?;
     if !index.entries.is_empty() {
@@ -94,7 +93,7 @@ fn checkout_populated_tree(
     let mut stack: Vec<(String, ObjectId)> = vec![(String::new(), *tree_oid)];
 
     while let Some((prefix, oid)) = stack.pop() {
-        let tree_obj = repo.odb.read(&oid)?;
+        let tree_obj = repo.odb().read(&oid)?;
         if tree_obj.kind != ObjectKind::Tree {
             return Err(Error::CorruptObject(format!(
                 "expected tree object at {oid}, got {:?}",
@@ -114,7 +113,7 @@ fn checkout_populated_tree(
                 continue;
             }
             if mode == MODE_GITLINK {
-                materialize_gitlink_worktree(&work_tree, &path, &mut dir_cache)?;
+                materialize_gitlink_worktree(work_tree, &path, &mut dir_cache)?;
                 let abs = work_tree.join(&path);
                 let mut entry = entry_from_stat(&abs, path.as_bytes(), entry.oid, MODE_GITLINK)?;
                 entry.size = 0;
@@ -132,7 +131,7 @@ fn checkout_populated_tree(
                 new_oid: entry.oid,
                 score: None,
             };
-            let object = repo.odb.read(&entry.oid)?;
+            let object = repo.odb().read(&entry.oid)?;
             let worktree_bytes = worktree_bytes_from_index_blob(
                 repo,
                 &rules,
@@ -152,7 +151,7 @@ fn checkout_populated_tree(
                 continue;
             };
             let index_entry = write_checkout_entry(
-                &work_tree,
+                work_tree,
                 &path,
                 &worktree_bytes,
                 mode,
@@ -168,7 +167,7 @@ fn checkout_populated_tree(
     finish_delayed_checkouts(
         repo,
         &rules,
-        &work_tree,
+        work_tree,
         &mut delayed,
         &pending_delayed,
         &mut dir_cache,
@@ -188,7 +187,7 @@ fn checkout_between_trees_slow(
     to: Option<&ObjectId>,
     progress: &mut dyn ProgressSink,
 ) -> Result<()> {
-    let changes = diff_trees(&repo.odb, from, to, "")?;
+    let changes = diff_trees(repo.odb(), from, to, "")?;
     checkout_tree_changes_with_progress(repo, &changes, progress)
 }
 
@@ -249,8 +248,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     use crate::porcelain::merge::tree_to_index_entries;
 
     let work_tree = repo
-        .work_tree
-        .clone()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
 
     let target_entries = tree_to_index_entries(repo, target_tree, "")?;
@@ -333,7 +331,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
                     continue;
                 }
             }
-            materialize_gitlink_worktree(&work_tree, &path, &mut dir_cache)?;
+            materialize_gitlink_worktree(work_tree, &path, &mut dir_cache)?;
             let abs = work_tree.join(&path);
             let mut entry = entry_from_stat(&abs, te.path.as_slice(), te.oid, MODE_GITLINK)?;
             entry.size = 0;
@@ -377,7 +375,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             new_oid: te.oid,
             score: None,
         };
-        let object = repo.odb.read(&te.oid)?;
+        let object = repo.odb().read(&te.oid)?;
         let worktree_bytes = worktree_bytes_from_index_blob(
             repo,
             &rules,
@@ -397,7 +395,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             continue;
         };
         let entry = write_checkout_entry(
-            &work_tree,
+            work_tree,
             &path,
             &worktree_bytes,
             mode,
@@ -411,7 +409,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
     finish_delayed_checkouts(
         repo,
         &rules,
-        &work_tree,
+        work_tree,
         &mut delayed,
         &pending_delayed,
         &mut dir_cache,
@@ -419,7 +417,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
         None,
     )?;
 
-    remove_empty_parent_dirs_batch(&work_tree, &deleted_abs_paths);
+    remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
     let mut new_index = Index::new();
     new_index.entries = new_entries;
@@ -442,8 +440,7 @@ fn checkout_tree_changes_with_progress(
     progress: &mut dyn ProgressSink,
 ) -> Result<()> {
     let work_tree = repo
-        .work_tree
-        .clone()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
 
     let mut index = repo.load_index()?;
@@ -508,7 +505,7 @@ fn checkout_tree_changes_with_progress(
                     continue;
                 }
             }
-            materialize_gitlink_worktree(&work_tree, path, &mut dir_cache)?;
+            materialize_gitlink_worktree(work_tree, path, &mut dir_cache)?;
             let abs = work_tree.join(path);
             let mut entry = entry_from_stat(&abs, path.as_bytes(), change.new_oid, MODE_GITLINK)?;
             entry.size = 0;
@@ -518,9 +515,9 @@ fn checkout_tree_changes_with_progress(
         }
         if let Some(existing) = index.get(path.as_bytes(), 0) {
             if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
-                &repo.odb,
-                &repo.git_dir,
-                &work_tree,
+                repo.odb(),
+                repo.git_dir(),
+                work_tree,
                 &index,
                 existing,
                 &change.new_oid,
@@ -567,7 +564,7 @@ fn checkout_tree_changes_with_progress(
         .collect();
 
     for job in &write_jobs {
-        dir_cache.ensure_parents(&work_tree, &job.path)?;
+        dir_cache.ensure_parents(work_tree, &job.path)?;
     }
 
     let write_outcomes = execute_write_jobs(
@@ -575,7 +572,7 @@ fn checkout_tree_changes_with_progress(
         &rules,
         &config,
         &conv,
-        &work_tree,
+        work_tree,
         &mut dir_cache,
         &mut delayed,
         &write_jobs,
@@ -607,7 +604,7 @@ fn checkout_tree_changes_with_progress(
     finish_delayed_checkouts(
         repo,
         &rules,
-        &work_tree,
+        work_tree,
         &mut delayed,
         &pending_delayed,
         &mut dir_cache,
@@ -615,7 +612,7 @@ fn checkout_tree_changes_with_progress(
         None,
     )?;
 
-    remove_empty_parent_dirs_batch(&work_tree, &deleted_abs_paths);
+    remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
     index.remove_paths_and_insert(paths_to_remove.iter().map(|p| p.as_slice()), new_entries);
     repo.write_index(&mut index)?;
@@ -785,7 +782,7 @@ fn smudge_retry_after_delay(
     let oid = ObjectId::from_hex(blob_hex)
         .map_err(|e| format!("invalid blob id for delayed checkout of '{rel_path}': {e}"))?;
     let obj = repo
-        .odb
+        .odb()
         .read(&oid)
         .map_err(|e| format!("reading blob for delayed checkout of '{rel_path}': {e}"))?;
     // Git `CE_RETRY`: run smudge again without allowing delay (filter serves cached output).
@@ -1370,7 +1367,7 @@ mod tests {
     fn commit_all(repo: &Repository, message: &str) -> ObjectId {
         use crate::objects::{serialize_commit, CommitData};
         use crate::refs;
-        let work_tree = repo.work_tree.as_deref().expect("work tree");
+        let work_tree = repo.work_tree().expect("work tree");
         let mut index = repo.load_index().expect("index");
         for entry in std::fs::read_dir(work_tree).expect("read_dir") {
             let entry = entry.expect("entry");
@@ -1380,15 +1377,15 @@ mod tests {
             }
             let rel = path.strip_prefix(work_tree).expect("rel").to_string_lossy();
             let data = fs::read(&path).expect("read");
-            let oid = repo.odb.write(ObjectKind::Blob, &data).expect("blob");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
             let e = entry_from_stat(&path, rel.as_bytes(), oid, MODE_REGULAR).expect("entry");
             index.add_or_replace(e);
         }
         index.sort();
-        let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         repo.write_index(&mut index).expect("write index");
-        let parent = refs::resolve_ref(&repo.git_dir, "HEAD").ok();
+        let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
         let commit_data = CommitData {
             tree,
             parents: parent.into_iter().collect(),
@@ -1402,8 +1399,11 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let bytes = serialize_commit(&commit_data);
-        let commit_oid = repo.odb.write(ObjectKind::Commit, &bytes).expect("commit");
-        refs::write_ref(&repo.git_dir, "HEAD", &commit_oid).expect("head");
+        let commit_oid = repo
+            .odb()
+            .write(ObjectKind::Commit, &bytes)
+            .expect("commit");
+        refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).expect("head");
         tree
     }
 
@@ -1418,19 +1418,20 @@ mod tests {
             .parse()
             .expect("oid");
         fs::write(wt.join("a"), b"a\n").expect("a");
-        let a_oid = repo.odb.write(ObjectKind::Blob, b"a\n").expect("blob");
+        let a_oid = repo.odb().write(ObjectKind::Blob, b"a\n").expect("blob");
         let mut index = repo.load_index().expect("index");
         index.add_or_replace(entry_from_stat(&wt.join("a"), b"a", a_oid, MODE_REGULAR).expect("e"));
         index.add_or_replace(prospective_index_entry("sub", gitlink, MODE_GITLINK));
         index.sort();
-        let with_sub = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
-            .expect("tree with sub");
+        let with_sub =
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                .expect("tree with sub");
         fs::write(wt.join("b"), b"b\n").expect("b");
-        let b_oid = repo.odb.write(ObjectKind::Blob, b"b\n").expect("blob");
+        let b_oid = repo.odb().write(ObjectKind::Blob, b"b\n").expect("blob");
         index.remove(b"sub");
         index.add_or_replace(entry_from_stat(&wt.join("b"), b"b", b_oid, MODE_REGULAR).expect("e"));
         index.sort();
-        let no_sub = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+        let no_sub = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree no sub");
 
         checkout_between_trees(&repo, None, &with_sub).expect("checkout gitlink");
@@ -1453,7 +1454,7 @@ mod tests {
             crate::RefStorageFormat::Files,
         )
         .expect("init");
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         for i in 0..300 {
             fs::write(wt.join(format!("f{i}.txt")), format!("body {i}\n")).expect("write");
         }
@@ -1486,7 +1487,7 @@ mod tests {
             crate::RefStorageFormat::Files,
         )
         .expect("init");
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         for d in 0..3 {
             fs::write(wt.join(format!("a{d}.txt")), format!("v0 {d}\n")).expect("write");
         }
@@ -1495,7 +1496,7 @@ mod tests {
             fs::write(wt.join(format!("a{d}.txt")), format!("v1 {d}\n")).expect("write");
         }
         let to_tree = commit_all(&repo, "updated");
-        let changes = diff_trees(&repo.odb, Some(&head), Some(&to_tree), "").expect("diff");
+        let changes = diff_trees(&repo.odb(), Some(&head), Some(&to_tree), "").expect("diff");
 
         let mut rec = CheckoutProgressRecorder::default();
         checkout_between_trees_with_progress(&repo, Some(&head), &to_tree, &mut rec)
@@ -1520,7 +1521,7 @@ mod tests {
             crate::RefStorageFormat::Files,
         )
         .expect("init");
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         for d in 0..5 {
             let dir = wt.join(format!("dir{d}"));
             fs::create_dir_all(&dir).expect("mkdir");
@@ -1541,14 +1542,15 @@ mod tests {
                 let rel = format!("dir{d}/f{f}.txt");
                 let abs = wt.join(&rel);
                 let data = fs::read(&abs).expect("read");
-                let oid = repo.odb.write(ObjectKind::Blob, &data).expect("blob");
+                let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
                 let entry = entry_from_stat(&abs, rel.as_bytes(), oid, MODE_REGULAR).expect("e");
                 index.add_or_replace(entry);
             }
         }
         index.sort();
-        let to_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
-            .expect("t");
+        let to_tree =
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                .expect("t");
 
         syscall_probe::reset();
         checkout_between_trees(&repo, Some(&head), &to_tree).expect("checkout");

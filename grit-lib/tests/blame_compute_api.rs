@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{compute_blame, BlameDiffAlgorithm};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -54,12 +55,12 @@ fn compute_blame_public_entry_point_attributes_lines() {
     git_run(root, &["commit", "-m", "add second line"]);
 
     let start = head_oid(root);
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let ignore_revs = HashSet::new();
     let grafts = HashMap::new();
 
     let lines = compute_blame(
-        &repo.odb,
+        &repo.odb(),
         start,
         "f.txt",
         &ignore_revs,

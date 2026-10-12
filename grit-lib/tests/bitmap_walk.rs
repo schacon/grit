@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use grit_lib::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::pack_bitmap::BitmapIndex;
 use grit_lib::pack_rev::append_hashfile_checksum;
@@ -29,11 +30,11 @@ fn git_stdout(repo: &RepoFixture, args: &[&str]) -> String {
 }
 
 fn open_repo(path: &std::path::Path) -> Repository {
-    Repository::discover(Some(path)).expect("open repo")
+    Repository::discover(Some(path), &RepositoryOptions::empty()).expect("open repo")
 }
 
 fn all_commits(repo: &Repository) -> Vec<ObjectId> {
-    let wt = repo.work_tree.as_ref().unwrap_or(&repo.git_dir);
+    let wt = repo.work_tree().unwrap_or(&repo.git_dir());
     let out = Command::new("git")
         .current_dir(wt)
         .args(["rev-list", "--all"])
@@ -309,7 +310,7 @@ fn tree_zero_keeps_loose_commits_after_repack() {
     let commit_count = git_set
         .iter()
         .filter(|oid| {
-            repo.odb
+            repo.odb()
                 .read_info(oid)
                 .map(|i| i.kind == grit_lib::objects::ObjectKind::Commit)
                 .unwrap_or(false)
@@ -397,7 +398,7 @@ fn unsupported_filter_and_shallow_fall_back() {
         .expect("open")
         .expect("bitmap on shallow-marked repo");
     use grit_lib::rev_list::shallow_boundary_oids;
-    assert!(!shallow_boundary_oids(&shallow_repo.git_dir).is_empty());
+    assert!(!shallow_boundary_oids(shallow_repo.git_dir()).is_empty());
     assert!(matches!(
         bitmap_query(&shallow_repo, &shallow_index, &[head], &[], None),
         Err(BitmapWalkError::Unsupported(_))
@@ -426,7 +427,7 @@ fn verify_commit_detects_tampered_bitmap() {
     let mut perms = std::fs::metadata(&bitmap_path).unwrap().permissions();
     perms.set_readonly(false);
     std::fs::set_permissions(&bitmap_path, perms).unwrap();
-    let hash_len = repo.odb.hash_algo().len();
+    let hash_len = repo.odb().hash_algo().len();
     let mut bytes = std::fs::read(&bitmap_path).unwrap();
     assert!(bytes.len() > hash_len + 16);
     let idx = bytes.len() / 2;

@@ -283,7 +283,7 @@ pub fn run() -> Result<StatusOutcome> {
     let model = status(&repo, &StatusOptions::default(), &mut NullProgress)
         .context("could not compute status")?;
 
-    let in_progress: Vec<String> = detect_in_progress(&repo.git_dir)
+    let in_progress: Vec<String> = detect_in_progress(&repo.git_dir())
         .into_iter()
         .map(in_progress_label)
         .collect();
@@ -309,9 +309,8 @@ pub fn run() -> Result<StatusOutcome> {
 
     let cwd = std::env::current_dir().context("could not read the current directory")?;
     let path_display = repo
-        .work_tree
-        .as_ref()
-        .and_then(|wt| PathDisplayContext::from_cwd_and_work_tree(cwd, wt.clone()));
+        .work_tree()
+        .and_then(|wt| PathDisplayContext::from_cwd_and_work_tree(cwd, wt.to_path_buf()));
 
     Ok(StatusOutcome {
         branch,

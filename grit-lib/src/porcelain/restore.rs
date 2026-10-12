@@ -71,8 +71,7 @@ pub struct RestoreOutcome {
 /// or I/O / object-store failures while reading trees and blobs.
 pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<RestoreOutcome> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     if opts.pathspecs.is_empty() {
@@ -87,12 +86,12 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
 
     let explicit_source_entries = match opts.source {
         RestoreSource::Index => None,
-        RestoreSource::Tree(oid) => Some(flatten_tree_full(&repo.odb, &oid, "")?),
+        RestoreSource::Tree(oid) => Some(flatten_tree_full(repo.odb(), &oid, "")?),
     };
 
     let head_entries = if needs_head_tree_entries(restore_staged, opts.source) {
         match resolve_head_tree(repo)? {
-            Some(tree) => flatten_tree_full(&repo.odb, &tree, "")?,
+            Some(tree) => flatten_tree_full(repo.odb(), &tree, "")?,
             None => Vec::new(),
         }
     } else {
@@ -185,9 +184,9 @@ fn pathspecs_select_all_tracked(pathspecs: &[String]) -> bool {
 }
 
 fn resolve_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
-    match resolve_head(&repo.git_dir)? {
+    match resolve_head(repo.git_dir())? {
         HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.odb().read(&oid)?;
             let commit = parse_commit(&obj.data)?;
             Ok(Some(commit.tree))
         }
@@ -487,7 +486,7 @@ fn worktree_index_entry_up_to_date(
         return Ok(true);
     }
     let wt_oid = hash_worktree_file(
-        &repo.odb,
+        repo.odb(),
         &abs_path,
         &meta,
         rules.conversion(),
@@ -515,7 +514,7 @@ fn restore_worktree_blob_from_index(
     if mode == MODE_GITLINK {
         return Ok(());
     }
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     let worktree_bytes =
         worktree_bytes_from_index_blob(repo, rules, path, mode, &object.data, &oid, None)?;
     let Some(bytes) = worktree_bytes else {
@@ -550,7 +549,7 @@ fn restore_worktree_entry(
         return Ok(());
     }
     let abs = work_tree.join(path);
-    let object = repo.odb.read(&entry.oid)?;
+    let object = repo.odb().read(&entry.oid)?;
     let worktree_bytes = worktree_bytes_from_index_blob(
         repo,
         rules,
@@ -636,8 +635,8 @@ fn refresh_restored_index_stats(
         return Ok(());
     }
     let _ = refresh_index_stat_content_verified_with_rules(
-        &repo.odb,
-        &repo.git_dir,
+        repo.odb(),
+        repo.git_dir(),
         &mut subset,
         work_tree,
         index_mtime,
@@ -655,6 +654,6 @@ fn blob_index_size(repo: &Repository, entry: &FlatTreeEntry) -> Result<u32> {
     if entry.mode == MODE_GITLINK {
         return Ok(0);
     }
-    let obj = repo.odb.read(&entry.oid)?;
+    let obj = repo.odb().read(&entry.oid)?;
     Ok(obj.data.len() as u32)
 }

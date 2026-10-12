@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::add::stage_for_commit;
@@ -96,7 +97,7 @@ fn init_conflict_merge(root: &Path) -> Repository {
         .expect("git merge");
     assert!(!merge_out.status.success(), "expected merge conflict");
 
-    Repository::discover(Some(root)).expect("open grit repo")
+    Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open grit repo")
 }
 
 #[test]
@@ -111,7 +112,7 @@ fn create_commit_rejects_unmerged_index_like_git() {
         "git merge should leave unmerged index entries"
     );
     assert!(
-        repo.git_dir.join("MERGE_HEAD").exists(),
+        repo.git_dir().join("MERGE_HEAD").exists(),
         "MERGE_HEAD should remain during conflict"
     );
 
@@ -133,7 +134,7 @@ fn create_commit_rejects_unmerged_index_like_git() {
         "refusal must not clear unmerged stages"
     );
     assert!(
-        repo.git_dir.join("MERGE_HEAD").exists(),
+        repo.git_dir().join("MERGE_HEAD").exists(),
         "MERGE_HEAD must remain after refused commit"
     );
 }
@@ -170,7 +171,7 @@ fn stage_for_commit_then_create_commit_concludes_resolved_merge_without_prior_ad
     );
     assert_eq!(parts[1], main_before.to_hex());
     assert_eq!(parts[2], side_tip.to_hex());
-    assert!(!repo.git_dir.join("MERGE_HEAD").exists());
+    assert!(!repo.git_dir().join("MERGE_HEAD").exists());
 }
 
 #[test]
@@ -204,11 +205,11 @@ fn create_commit_concludes_resolved_merge_with_two_parents() {
     assert_eq!(blob, "resolved");
 
     assert!(
-        !repo.git_dir.join("MERGE_HEAD").exists(),
+        !repo.git_dir().join("MERGE_HEAD").exists(),
         "MERGE_HEAD should be cleared after merge commit"
     );
 
-    let commit_obj = repo.odb.read(&outcome.oid).expect("commit");
+    let commit_obj = repo.odb().read(&outcome.oid).expect("commit");
     let parsed = parse_commit(&commit_obj.data).expect("parse");
     assert_eq!(parsed.parents.len(), 2);
 
@@ -260,7 +261,7 @@ fn create_commit_concludes_merge_when_resolved_as_ours() {
     assert_eq!(git_out(root, &["show", "HEAD:f"]), "main");
 
     assert!(
-        !repo.git_dir.join("MERGE_HEAD").exists(),
+        !repo.git_dir().join("MERGE_HEAD").exists(),
         "MERGE_HEAD should be cleared after merge commit"
     );
 }
@@ -304,7 +305,7 @@ fn create_commit_applies_merge_autostash_like_git() {
     git(root, &["checkout", "--ours", "--", "f"]);
     git(root, &["add", "f"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     create_commit(
         &repo,
         &commit_req("merge with autostash"),
@@ -368,7 +369,7 @@ fn create_commit_clears_merge_rerere_state_like_git() {
     git(root, &["checkout", "--ours", "--", "f"]);
     git(root, &["add", "f"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     create_commit(&repo, &commit_req("merge with rerere"), &mut NullProgress)
         .expect("merge commit");
 

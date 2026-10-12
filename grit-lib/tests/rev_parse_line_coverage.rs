@@ -32,7 +32,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn abbrev_and_reflog_helpers() {
     let _ = reflog_walk_refname(&repo, "HEAD@{0}");
     assert!(reflog_date_selector_timestamp("1.day.ago").is_some());
     assert!(reflog_date_selector_timestamp_at("now", 1_700_000_000).is_some());
-    let _ = load_graft_parents(&repo.git_dir);
+    let _ = load_graft_parents(&repo.git_dir());
     let _ = resolve_reflog_walk_log_ref(&repo, "HEAD");
     let _ = resolve_reflog_walk_log_ref(&repo, "main");
     let _ = resolve_reflog_walk_log_ref(&repo, "@{-1}");

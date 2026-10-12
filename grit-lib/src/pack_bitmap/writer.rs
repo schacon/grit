@@ -187,11 +187,11 @@ impl MidxBitmapWriter {
         options: &PackBitmapWriteOptions,
         _now: SystemTime,
     ) -> Result<PathBuf, PackBitmapWriteError> {
-        if !repo.odb.uses_files_primary() {
+        if !repo.odb().uses_files_primary() {
             return Err(PackBitmapWriteError::NotFilesBacked);
         }
         let objects_dir = repo
-            .odb
+            .odb()
             .files_objects_dir()
             .ok_or(PackBitmapWriteError::NotFilesBacked)?;
         let order = BitmapOrder::load_midx(objects_dir)
@@ -219,13 +219,13 @@ impl PackBitmapWriter {
         options: &PackBitmapWriteOptions,
         _now: SystemTime,
     ) -> Result<PathBuf, PackBitmapWriteError> {
-        if !repo.odb.uses_files_primary() {
+        if !repo.odb().uses_files_primary() {
             return Err(PackBitmapWriteError::NotFilesBacked);
         }
         let idx = read_pack_index(pack_idx_path)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         let objects_dir = repo
-            .odb
+            .odb()
             .files_objects_dir()
             .ok_or(PackBitmapWriteError::NotFilesBacked)?;
         ensure_rev_sidecar(&idx)?;
@@ -235,7 +235,7 @@ impl PackBitmapWriter {
             order.pack_index().as_ref().ok_or_else(|| {
                 PackBitmapWriteError::InvalidPackPath("pack index missing".into())
             })?,
-            repo.odb.hash_algo().len(),
+            repo.odb().hash_algo().len(),
         )?;
         let bitmap_path = bitmap_path_for_index(pack_idx_path);
         write_bitmap_for_order(repo, &order, &pack_checksum, &bitmap_path, options)
@@ -250,7 +250,7 @@ fn write_bitmap_for_order(
     bitmap_path: &Path,
     options: &PackBitmapWriteOptions,
 ) -> Result<PathBuf, PackBitmapWriteError> {
-    let roots = collect_referenced_object_roots(&repo.git_dir)
+    let roots = collect_referenced_object_roots(repo.git_dir())
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
     if options.verify_reachability_closure {
         verify_order_closure(repo, order, &roots)?;
@@ -361,7 +361,7 @@ fn build_type_bitmaps_and_commits(
             .oid_at(pos)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         let obj = repo
-            .odb
+            .odb()
             .read(&oid)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         let p = pos as usize;
@@ -422,7 +422,7 @@ fn tip_needs_flags(
         needs.extend(tips.iter().copied());
         return Ok(needs);
     }
-    let git_dir = &repo.git_dir;
+    let git_dir = &repo.git_dir();
     for (name, oid) in refs::list_refs(git_dir, "refs/")
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?
     {
@@ -461,7 +461,7 @@ fn peel_to_commit(
     oid: ObjectId,
 ) -> Result<Option<ObjectId>, PackBitmapWriteError> {
     let obj = repo
-        .odb
+        .odb()
         .read(&oid)
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
     match obj.kind {
@@ -471,7 +471,7 @@ fn peel_to_commit(
                 parse_tag(&obj.data).map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
             Ok(
                 if repo
-                    .odb
+                    .odb()
                     .read(&tag.object)
                     .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?
                     .kind
@@ -521,7 +521,7 @@ fn reachable_from_tips(
     }
     while let Some(oid) = queue.pop_front() {
         let obj = repo
-            .odb
+            .odb()
             .read(&oid)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         match obj.kind {
@@ -646,7 +646,7 @@ fn seed_from_computed_ancestors(
     computed: &HashMap<ObjectId, Bitmap>,
 ) -> Result<Bitmap, PackBitmapWriteError> {
     let obj = repo
-        .odb
+        .odb()
         .read(&commit)
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
     let c = parse_commit(&obj.data).map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
@@ -663,7 +663,7 @@ fn seed_from_computed_ancestors(
                 break;
             }
             let parent_obj = repo
-                .odb
+                .odb()
                 .read(&walk)
                 .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
             let parent_commit = parse_commit(&parent_obj.data)
@@ -697,7 +697,7 @@ fn store_name_hash(order: &BitmapOrder, name_hashes: &mut [u32], oid: &ObjectId,
 }
 
 fn commit_date(repo: &Repository, oid: ObjectId) -> i64 {
-    repo.odb
+    repo.odb()
         .read(&oid)
         .ok()
         .filter(|o| o.kind == ObjectKind::Commit)
@@ -734,7 +734,7 @@ fn fill_commit_bitmap(
         }
         bitmap.set(p);
         let obj = repo
-            .odb
+            .odb()
             .read(&oid)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         match obj.kind {
@@ -784,7 +784,7 @@ fn fill_tree_bitmap(
     bitmap.set(p);
     store_name_hash(order, name_hashes, &tree_oid, &prefix);
     let obj = repo
-        .odb
+        .odb()
         .read(&tree_oid)
         .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
     for entry in parse_tree(&obj.data).map_err(|e| PackBitmapWriteError::Object(e.to_string()))? {
@@ -807,7 +807,7 @@ fn fill_tree_bitmap(
         };
         let cp = child_pos as usize;
         let child = repo
-            .odb
+            .odb()
             .read(&entry.oid)
             .map_err(|e| PackBitmapWriteError::Object(e.to_string()))?;
         match child.kind {

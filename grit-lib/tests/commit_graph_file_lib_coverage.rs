@@ -28,8 +28,8 @@ fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
     )
     .expect("init");
     let mut index = Index::new();
-    index.hash_algo = repo.odb.hash_algo();
-    let blob = repo.odb.write(ObjectKind::Blob, b"x\n").expect("blob");
+    index.hash_algo = repo.odb().hash_algo();
+    let blob = repo.odb().write(ObjectKind::Blob, b"x\n").expect("blob");
     index.add_or_replace(IndexEntry {
         ctime_sec: 0,
         ctime_nsec: 0,
@@ -47,7 +47,7 @@ fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
         path: b"f.txt".to_vec(),
         base_index_pos: 0,
     });
-    let tree = write_tree_from_index(&repo.odb, &index, "").expect("tree");
+    let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
     let raw = serialize_commit(&CommitData {
         tree,
         parents: vec![],
@@ -60,8 +60,8 @@ fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
         raw_message: None,
         extra_headers: Vec::new(),
     });
-    let commit = repo.odb.write(ObjectKind::Commit, &raw).expect("commit");
-    grit_lib::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+    let commit = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
+    grit_lib::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
     (dir, repo, commit)
 }
 
@@ -105,7 +105,7 @@ fn octopus_merge_graph() -> (tempfile::TempDir, Repository, ObjectId, Vec<Object
     )
     .expect("init");
     let mk = |parents: Vec<ObjectId>, t: i64| -> ObjectId {
-        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
         let raw = serialize_commit(&CommitData {
             tree,
             parents,
@@ -118,7 +118,7 @@ fn octopus_merge_graph() -> (tempfile::TempDir, Repository, ObjectId, Vec<Object
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        repo.odb.write(ObjectKind::Commit, &raw).expect("commit")
+        repo.odb().write(ObjectKind::Commit, &raw).expect("commit")
     };
     let p1 = mk(vec![], 1);
     let p2 = mk(vec![], 2);
@@ -136,14 +136,14 @@ fn octopus_graph_commit_decodes_extra_edge_parents() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -154,8 +154,8 @@ fn octopus_graph_commit_decodes_extra_edge_parents() {
         true,
     )
     .expect("write");
-    std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), &bytes).expect("write");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("load");
+    std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), &bytes).expect("write");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("load");
     let (parents, _time) = chain.graph_commit(&merge).expect("octopus parents decoded");
     assert_eq!(parents.len(), 3);
     let mut parents_sorted = parents;
@@ -174,14 +174,14 @@ fn octopus_graph_commit_decodes_extra_edge_parents() {
 #[test]
 fn bloom_precheck_definitely_not_for_missing_path() {
     let (_dir, repo, commit) = one_commit_repo();
-    let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+    let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
     let mut infos = HashMap::new();
     infos.insert(commit, info);
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &[commit],
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &bloom,
         None,
@@ -192,11 +192,11 @@ fn bloom_precheck_definitely_not_for_missing_path() {
         true,
     )
     .expect("write");
-    std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), bytes).expect("write");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+    std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     let pre = chain
         .bloom_precheck_for_paths(
-            &repo.odb,
+            &repo.odb(),
             commit,
             &["no/such/path.txt".to_owned()],
             None,
@@ -232,8 +232,8 @@ fn commit_tree_high_bit_and_parse_graph_dump() {
     )
     .expect("init");
     let mut index = Index::new();
-    index.hash_algo = repo.odb.hash_algo();
-    let blob = repo.odb.write(ObjectKind::Blob, b"x\n").expect("blob");
+    index.hash_algo = repo.odb().hash_algo();
+    let blob = repo.odb().write(ObjectKind::Blob, b"x\n").expect("blob");
     index.add_or_replace(IndexEntry {
         ctime_sec: 0,
         ctime_nsec: 0,
@@ -251,7 +251,7 @@ fn commit_tree_high_bit_and_parse_graph_dump() {
         path: vec![0x80, b'x'],
         base_index_pos: 0,
     });
-    let tree = write_tree_from_index(&repo.odb, &index, "").expect("tree");
+    let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
     let raw = serialize_commit(&CommitData {
         tree,
         parents: vec![],
@@ -264,16 +264,16 @@ fn commit_tree_high_bit_and_parse_graph_dump() {
         raw_message: None,
         extra_headers: Vec::new(),
     });
-    let commit = repo.odb.write(ObjectKind::Commit, &raw).expect("commit");
-    assert!(commit_tree_has_high_bit_paths(&repo.odb, commit));
-    let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+    let commit = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
+    assert!(commit_tree_has_high_bit_paths(&repo.odb(), commit));
+    let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
     let mut infos = HashMap::new();
     infos.insert(commit, info);
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &[commit],
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &bloom,
         None,
@@ -295,14 +295,14 @@ fn commit_tree_high_bit_and_parse_graph_dump() {
 #[test]
 fn try_load_with_caches_and_sub_chain() {
     let (_dir, repo, commit) = one_commit_repo();
-    let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+    let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
     let mut infos = HashMap::new();
     infos.insert(commit, info);
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &[commit],
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &bloom,
         None,
@@ -313,8 +313,8 @@ fn try_load_with_caches_and_sub_chain() {
         true,
     )
     .expect("write");
-    std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), bytes).expect("write");
-    let objects = repo.odb.objects_dir();
+    std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write");
+    let objects = repo.odb().objects_dir();
     let caches = RepoCaches::new(grit_lib::command_runner::system_command_runner());
     let first = CommitGraphChain::try_load_with_caches(objects, Some(&caches))
         .expect("load")
@@ -330,14 +330,14 @@ fn try_load_with_caches_and_sub_chain() {
 #[test]
 fn bloom_filter_slice_warns_on_bad_offsets_in_memory() {
     let (_dir, repo, commit) = one_commit_repo();
-    let info = load_commit_graph_commit_info(&repo.odb, commit).expect("info");
+    let info = load_commit_graph_commit_info(&repo.odb(), commit).expect("info");
     let mut infos = HashMap::new();
     infos.insert(commit, info);
     let bloom = BloomFilterSettings::default();
     let (mut bytes, _) = build_commit_graph_bytes(
         &[commit],
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &bloom,
         None,
@@ -359,18 +359,18 @@ fn bloom_filter_slice_warns_on_bad_offsets_in_memory() {
     }
     let off = bidx_off.expect("bidx chunk");
     bytes[off..off + 4].copy_from_slice(&u32::MAX.to_be_bytes());
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let hash_len = algo.len();
     let body_len = bytes.len() - hash_len;
     let digest = algo.digest(&bytes[..body_len]);
     bytes.truncate(body_len);
     bytes.extend_from_slice(digest.as_bytes());
-    std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), &bytes).expect("write");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("load");
+    std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), &bytes).expect("write");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("load");
     let settings = chain.top_layer_bloom_settings().expect("bloom");
     assert!(chain.existing_filter_bytes(&commit, &settings).is_none());
     let pre = chain
-        .bloom_precheck_for_paths(&repo.odb, commit, &["f.txt".to_owned()], None, -1, true)
+        .bloom_precheck_for_paths(&repo.odb(), commit, &["f.txt".to_owned()], None, -1, true)
         .expect("precheck");
     assert_eq!(pre, BloomPrecheck::FilterNotPresent);
 }
@@ -386,7 +386,7 @@ fn two_parent_graph_commit_matches_object() {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("init");
-    let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+    let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
     let parent = {
         let raw = serialize_commit(&CommitData {
             tree,
@@ -400,7 +400,7 @@ fn two_parent_graph_commit_matches_object() {
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        repo.odb.write(ObjectKind::Commit, &raw).expect("p")
+        repo.odb().write(ObjectKind::Commit, &raw).expect("p")
     };
     let merge = {
         let raw = serialize_commit(&CommitData {
@@ -415,7 +415,7 @@ fn two_parent_graph_commit_matches_object() {
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        repo.odb.write(ObjectKind::Commit, &raw).expect("m")
+        repo.odb().write(ObjectKind::Commit, &raw).expect("m")
     };
     let mut sorted = vec![parent, merge];
     sorted.sort();
@@ -423,14 +423,14 @@ fn two_parent_graph_commit_matches_object() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -441,8 +441,8 @@ fn two_parent_graph_commit_matches_object() {
         true,
     )
     .expect("write");
-    std::fs::write(repo.odb.objects_dir().join("info/commit-graph"), bytes).expect("write");
-    let chain = CommitGraphChain::load(repo.odb.objects_dir()).expect("chain");
+    std::fs::write(repo.odb().objects_dir().join("info/commit-graph"), bytes).expect("write");
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     let (parents, _time) = chain.graph_commit(&merge).expect("graph parents");
     assert_eq!(parents.len(), 2);
 }
@@ -461,7 +461,7 @@ fn two_commit_repo() -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
         grit_lib::RefStorageFormat::Files,
     )
     .expect("init");
-    let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+    let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
     let mut sorted = Vec::new();
     for t in [1i64, 2] {
         let parents = sorted.last().copied().map(|p| vec![p]).unwrap_or_default();
@@ -477,7 +477,7 @@ fn two_commit_repo() -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        sorted.push(repo.odb.write(ObjectKind::Commit, &raw).expect("c"));
+        sorted.push(repo.odb().write(ObjectKind::Commit, &raw).expect("c"));
     }
     sorted.sort();
     (dir, repo, sorted)
@@ -498,14 +498,14 @@ fn split_chain_stops_when_base_chunk_missing_for_stacked_layer() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (base_bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -516,22 +516,22 @@ fn split_chain_stops_when_base_chunk_missing_for_stacked_layer() {
         true,
     )
     .expect("base");
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let base_name = graph_content_hash(&base_bytes, algo);
     std::fs::write(
-        repo.odb.objects_dir().join("info/commit-graph"),
+        repo.odb().objects_dir().join("info/commit-graph"),
         &base_bytes,
     )
     .expect("single");
-    let base_chain = CommitGraphChain::try_load(repo.odb.objects_dir())
+    let base_chain = CommitGraphChain::try_load(repo.odb().objects_dir())
         .expect("load")
         .expect("chain");
-    let _ = std::fs::remove_file(repo.odb.objects_dir().join("info/commit-graph"));
+    let _ = std::fs::remove_file(repo.odb().objects_dir().join("info/commit-graph"));
     let tip_only = sorted[sorted.len() - 1..].to_vec();
     let (tip_bytes, _) = build_commit_graph_bytes(
         &tip_only,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         Some(&base_chain),
@@ -543,7 +543,7 @@ fn split_chain_stops_when_base_chunk_missing_for_stacked_layer() {
     )
     .expect("tip without base chunk");
     let tip_name = graph_content_hash(&tip_bytes, algo);
-    let graphs = repo.odb.objects_dir().join("info/commit-graphs");
+    let graphs = repo.odb().objects_dir().join("info/commit-graphs");
     std::fs::create_dir_all(&graphs).expect("mkdir");
     std::fs::write(graphs.join(format!("graph-{base_name}.graph")), &base_bytes).expect("base");
     std::fs::write(graphs.join(format!("graph-{tip_name}.graph")), &tip_bytes).expect("tip");
@@ -553,7 +553,7 @@ fn split_chain_stops_when_base_chunk_missing_for_stacked_layer() {
     )
     .expect("chain");
     let caches = RepoCaches::new(grit_lib::command_runner::system_command_runner());
-    let chain = CommitGraphChain::try_load_with_caches(repo.odb.objects_dir(), Some(&caches))
+    let chain = CommitGraphChain::try_load_with_caches(repo.odb().objects_dir(), Some(&caches))
         .expect("load")
         .expect("partial chain");
     assert_eq!(chain.num_layers(), 1);
@@ -566,14 +566,14 @@ fn grit_octopus_graph_rejects_invalid_extra_edge_parent() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (mut bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -595,7 +595,7 @@ fn grit_octopus_graph_rejects_invalid_extra_edge_parent() {
     }
     if let Some(off) = edge_off {
         bytes[off..off + 4].copy_from_slice(&99u32.to_be_bytes());
-        reseal_commit_graph(&mut bytes, repo.odb.hash_algo());
+        reseal_commit_graph(&mut bytes, repo.odb().hash_algo());
         let err = CommitGraphLayer::try_parse(std::path::PathBuf::from("g"), bytes).unwrap_err();
         assert!(matches!(err, Error::CorruptObject(_)));
     }
@@ -608,14 +608,14 @@ fn grit_graph_rejects_invalid_parent_index_in_cdat() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (mut bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -636,9 +636,9 @@ fn grit_graph_rejects_invalid_parent_index_in_cdat() {
         }
     }
     let cdat_off = cdat_off.expect("cdat");
-    let hash_len = repo.odb.hash_algo().len();
+    let hash_len = repo.odb().hash_algo().len();
     bytes[cdat_off + hash_len..cdat_off + hash_len + 4].copy_from_slice(&99u32.to_be_bytes());
-    reseal_commit_graph(&mut bytes, repo.odb.hash_algo());
+    reseal_commit_graph(&mut bytes, repo.odb().hash_algo());
     let err = CommitGraphLayer::try_parse(std::path::PathBuf::from("g"), bytes).unwrap_err();
     assert!(matches!(err, Error::CorruptObject(_)));
 }
@@ -650,7 +650,7 @@ fn split_chain_with_different_bloom_versions_disables_base() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let v1 = BloomFilterSettings {
@@ -660,7 +660,7 @@ fn split_chain_with_different_bloom_versions_disables_base() {
     let (base_bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &v1,
         None,
@@ -671,19 +671,19 @@ fn split_chain_with_different_bloom_versions_disables_base() {
         true,
     )
     .expect("base write");
-    let algo = repo.odb.hash_algo();
+    let algo = repo.odb().hash_algo();
     let base_name = graph_content_hash(&base_bytes, algo);
-    let graphs = repo.odb.objects_dir().join("info/commit-graphs");
+    let graphs = repo.odb().objects_dir().join("info/commit-graphs");
     std::fs::create_dir_all(&graphs).expect("mkdir");
     std::fs::write(
-        repo.odb.objects_dir().join("info/commit-graph"),
+        repo.odb().objects_dir().join("info/commit-graph"),
         &base_bytes,
     )
     .expect("single base");
-    let base_chain = CommitGraphChain::try_load(repo.odb.objects_dir())
+    let base_chain = CommitGraphChain::try_load(repo.odb().objects_dir())
         .expect("load")
         .expect("chain");
-    let _ = std::fs::remove_file(repo.odb.objects_dir().join("info/commit-graph"));
+    let _ = std::fs::remove_file(repo.odb().objects_dir().join("info/commit-graph"));
     std::fs::write(graphs.join(format!("graph-{base_name}.graph")), &base_bytes).expect("base");
     let hash_bytes: Vec<u8> = (0..base_name.len() / 2)
         .map(|i| u8::from_str_radix(&base_name[i * 2..i * 2 + 2], 16).expect("hex"))
@@ -696,7 +696,7 @@ fn split_chain_with_different_bloom_versions_disables_base() {
     let (tip_bytes, _) = build_commit_graph_bytes(
         &tip_only,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         true,
         &v2,
         Some(&base_chain),
@@ -715,7 +715,7 @@ fn split_chain_with_different_bloom_versions_disables_base() {
     )
     .expect("chain");
     let caches = RepoCaches::new(grit_lib::command_runner::system_command_runner());
-    let chain = CommitGraphChain::try_load_with_caches(repo.odb.objects_dir(), Some(&caches))
+    let chain = CommitGraphChain::try_load_with_caches(repo.odb().objects_dir(), Some(&caches))
         .expect("load split")
         .expect("chain");
     assert_eq!(chain.num_layers(), 2);
@@ -737,14 +737,14 @@ fn grit_graph_rejects_unsupported_hash_version() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (mut bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb,
+        &repo.odb(),
         false,
         &bloom,
         None,
@@ -756,7 +756,7 @@ fn grit_graph_rejects_unsupported_hash_version() {
     )
     .expect("write");
     bytes[5] = 99;
-    reseal_commit_graph(&mut bytes, repo.odb.hash_algo());
+    reseal_commit_graph(&mut bytes, repo.odb().hash_algo());
     let err = CommitGraphLayer::try_parse(std::path::PathBuf::from("g"), bytes).unwrap_err();
     assert!(matches!(err, Error::CorruptObject(_)));
 }

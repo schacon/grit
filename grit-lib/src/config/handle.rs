@@ -60,7 +60,7 @@ impl<'repo> ConfigHandle<'repo> {
     /// Propagates config parse, validation, and I/O errors.
     #[inline]
     pub fn set_local(&self, key: &str, value: &str) -> Result<()> {
-        let path = crate::repo::local_config_write_path(&self.repo.git_dir);
+        let path = crate::repo::local_config_write_path(self.repo.git_dir());
         let content = fs::read_to_string(&path).unwrap_or_default();
         let mut file = ConfigFile::parse(&path, &content, ConfigScope::Local)?;
         file.set(key, value)?;

@@ -2,6 +2,7 @@
 //!
 //! Source for the library guide "Revwalk" page (included in the docs site).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
@@ -60,7 +61,11 @@ fn open_repo(root: &Path) -> Result<Repository, grit_lib::error::Error> {
     } else {
         None
     };
-    Repository::open(&git_dir, work_tree)
+    let mut opts = RepositoryOptions::empty();
+    if let Some(wt) = work_tree {
+        opts = opts.with_work_tree(wt);
+    }
+    Repository::open(&git_dir, &opts)
 }
 
 fn range_names(range: &str) -> Result<(&str, &str), grit_lib::error::Error> {

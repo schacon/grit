@@ -8,6 +8,7 @@ use std::path::Path;
 
 use filetime::FileTime;
 use grit_lib::diff::diff_index_to_worktree;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 
@@ -40,7 +41,11 @@ fn racy_same_size_change_matches_git_diff() {
     git(repo, &["add", "f.txt"]);
     git(repo, &["commit", "-qm", "c1"]);
 
-    let grit_repo = Repository::open(&repo.join(".git"), Some(repo)).expect("open");
+    let grit_repo = Repository::open(
+        &repo.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo),
+    )
+    .expect("open");
     let index = grit_repo.load_index().expect("load index");
     let index_mtime = index.source_mtime.expect("index source mtime from disk");
     let entry = index
@@ -66,7 +71,7 @@ fn racy_same_size_change_matches_git_diff() {
         Some(index_mtime),
         "source mtime preserved across reload"
     );
-    let diff = diff_index_to_worktree(&grit_repo.odb, &mut grit_index, repo, false, false)
+    let diff = diff_index_to_worktree(grit_repo.odb(), &mut grit_index, repo, false, false)
         .expect("diff_index_to_worktree");
     assert_eq!(diff.len(), 1, "grit must re-hash racy entry");
     assert_eq!(diff[0].path(), "f.txt");
@@ -85,7 +90,11 @@ fn racy_unchanged_content_matches_git_clean_diff() {
     git(repo, &["add", "f.txt"]);
     git(repo, &["commit", "-qm", "c1"]);
 
-    let grit_repo = Repository::open(&repo.join(".git"), Some(repo)).expect("open");
+    let grit_repo = Repository::open(
+        &repo.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo),
+    )
+    .expect("open");
     let index = grit_repo.load_index().expect("load index");
     let entry = index
         .entries()
@@ -103,7 +112,7 @@ fn racy_unchanged_content_matches_git_clean_diff() {
     );
 
     let mut grit_index = grit_repo.load_index().expect("reload index");
-    let diff = diff_index_to_worktree(&grit_repo.odb, &mut grit_index, repo, false, false)
+    let diff = diff_index_to_worktree(grit_repo.odb(), &mut grit_index, repo, false, false)
         .expect("diff_index_to_worktree");
     assert!(
         diff.is_empty(),

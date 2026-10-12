@@ -34,7 +34,7 @@ fn commit_from_tree(
         raw_message: None,
         extra_headers: Vec::new(),
     };
-    repo.odb
+    repo.odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))
 }
 
@@ -42,7 +42,7 @@ fn tree_of_commit(
     repo: &grit_lib::repo::Repository,
     commit_oid: grit_lib::objects::ObjectId,
 ) -> grit_lib::error::Result<grit_lib::objects::ObjectId> {
-    let obj = repo.odb.read(&commit_oid)?;
+    let obj = repo.odb().read(&commit_oid)?;
     Ok(parse_commit(&obj.data)?.tree)
 }
 
@@ -59,7 +59,7 @@ fn main() -> grit_lib::error::Result<()> {
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 
     // Base commit on main: one file.
-    let blob_a = repo.odb.write(ObjectKind::Blob, b"base\n")?;
+    let blob_a = repo.odb().write(ObjectKind::Blob, b"base\n")?;
     let mut index = Index::new();
     index.add_or_replace(IndexEntry {
         ctime_sec: 0,
@@ -80,12 +80,12 @@ fn main() -> grit_lib::error::Result<()> {
     });
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;
-    let tree_a = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_a = write_tree_from_index(&repo.odb(), &index, "")?;
     let commit_a = commit_from_tree(&repo, tree_a, &[], "initial\n")?;
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &commit_a)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_a)?;
 
     // Topic commit: parent A, adds picked.txt (not on main yet).
-    let blob_pick = repo.odb.write(ObjectKind::Blob, b"hello from topic\n")?;
+    let blob_pick = repo.odb().write(ObjectKind::Blob, b"hello from topic\n")?;
     let mut index = Index::new();
     index.add_or_replace(IndexEntry {
         ctime_sec: 0,
@@ -123,14 +123,14 @@ fn main() -> grit_lib::error::Result<()> {
     });
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;
-    let tree_b = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_b = write_tree_from_index(&repo.odb(), &index, "")?;
     let commit_b = commit_from_tree(&repo, tree_b, &[commit_a], "add picked file\n")?;
-    refs::write_ref(&repo.git_dir, "refs/heads/topic", &commit_b)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/topic", &commit_b)?;
 
     // Cherry-pick `topic` onto `main` (still at A).
     let head = resolve_revision(&repo, "main")?;
     let picked = resolve_revision(&repo, "topic")?;
-    let picked_obj = repo.odb.read(&picked)?;
+    let picked_obj = repo.odb().read(&picked)?;
     let picked_data = parse_commit(&picked_obj.data)?;
     let parent = picked_data.parents.first().copied().ok_or_else(|| {
         grit_lib::error::Error::CorruptObject("picked commit has no parent".into())
@@ -166,8 +166,8 @@ fn main() -> grit_lib::error::Result<()> {
         )));
     }
 
-    let new_tree = write_tree_from_index(&repo.odb, &merged.index, "")?;
-    let config = ConfigSet::load_repo_local_only(&repo.git_dir)?;
+    let new_tree = write_tree_from_index(&repo.odb(), &merged.index, "")?;
+    let config = ConfigSet::load_repo_local_only(&repo.git_dir())?;
     let msg = commit_trailers::finalize_cherry_pick_message(
         &picked_data.message,
         true,
@@ -178,11 +178,11 @@ fn main() -> grit_lib::error::Result<()> {
         &picked.to_hex(),
     );
     let new_commit = commit_from_tree(&repo, new_tree, &[head], &msg)?;
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &new_commit)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &new_commit)?;
 
     println!("cherry-picked {} onto {}", picked, head);
     println!("new main: {new_commit}");
-    let out = repo.odb.read(&new_commit)?;
+    let out = repo.odb().read(&new_commit)?;
     println!("message:\n{}", parse_commit(&out.data)?.message);
 
     Ok(())

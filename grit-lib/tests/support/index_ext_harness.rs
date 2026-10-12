@@ -183,7 +183,7 @@ pub fn git_porcelain_untracked(repo_dir: &Path) -> Vec<String> {
 
 pub fn entry_from_worktree_path(repo: &Repository, path: &str, payload: &[u8]) -> IndexEntry {
     let oid = repo
-        .odb
+        .odb()
         .write(grit_lib::objects::ObjectKind::Blob, payload)
         .expect("write blob");
     IndexEntry {

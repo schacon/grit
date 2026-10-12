@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::hot_path_test_metrics::HotPathMetricsScope;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
@@ -41,7 +42,7 @@ fn git_count(repo: &RepoFixture, extra: &[&str]) -> usize {
 }
 
 fn open_repo(path: &std::path::Path) -> Repository {
-    Repository::discover(Some(path)).expect("open repo")
+    Repository::discover(Some(path), &RepositoryOptions::empty()).expect("open repo")
 }
 
 fn build_history(repo: &RepoFixture) {
@@ -349,7 +350,7 @@ fn no_bitmap_count_uses_commit_graph() {
         .any(|e| e.path().extension().is_some_and(|ext| ext == "bitmap"));
     assert!(!has_bitmap, "fixture should have no pack bitmap");
     let repo = open_repo(fixture.path());
-    let metrics = repo.odb.hot_path_metrics_arc();
+    let metrics = repo.odb().hot_path_metrics_arc();
     metrics.reset_commit_parse_calls();
     metrics.set_commit_parse_counting(true);
     let _scope = HotPathMetricsScope::install(metrics);
@@ -362,7 +363,7 @@ fn no_bitmap_count_uses_commit_graph() {
     };
     assert_eq!(grit_count(&repo, opts), git_n);
     assert_eq!(
-        repo.odb.hot_path_metrics().commit_parse_calls(),
+        repo.odb().hot_path_metrics().commit_parse_calls(),
         0,
         "commit-graph count path must not parse commit objects"
     );

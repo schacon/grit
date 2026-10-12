@@ -3,10 +3,12 @@
 //! Usage: `cargo run --example count_reachable -- <repo> <commit>`
 
 use std::env;
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use grit_lib::bitmap_walk::{BitmapWalkError, ReachabilityQuery};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::pack_bitmap::BitmapIndex;
 use grit_lib::repo::Repository;
@@ -24,7 +26,8 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let repo = match Repository::discover(Some(repo_path.as_ref())) {
+    let repo = match Repository::discover(Some(Path::new(&repo_path)), &RepositoryOptions::empty())
+    {
         Ok(r) => r,
         Err(err) => {
             eprintln!("open repository: {err}");

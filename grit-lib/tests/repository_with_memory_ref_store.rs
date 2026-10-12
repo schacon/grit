@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::list_refs_for_repository;
 use grit_lib::refs::store::{
@@ -13,7 +14,7 @@ use time::OffsetDateTime;
 
 #[test]
 fn repository_with_memory_ref_store() {
-    let repo = Repository::discover(None).expect("discover");
+    let repo = Repository::discover(None, &RepositoryOptions::empty()).expect("discover");
 
     let oid: ObjectId = "0100000000000000000000000000000000000000"
         .parse()
@@ -62,7 +63,7 @@ fn repository_with_memory_ref_store() {
 
 #[test]
 fn repository_injected_head_reflog_uses_ref_store() {
-    let repo = Repository::discover(None).expect("discover");
+    let repo = Repository::discover(None, &RepositoryOptions::empty()).expect("discover");
 
     let oid: ObjectId = "0200000000000000000000000000000000000000"
         .parse()

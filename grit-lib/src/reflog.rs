@@ -800,7 +800,7 @@ fn tree_fully_complete(repo: &Repository, oid: ObjectId, depth: usize) -> bool {
     if depth > 65536 {
         return false;
     }
-    let Ok(obj) = repo.odb.read(&oid) else {
+    let Ok(obj) = repo.odb().read(&oid) else {
         return false;
     };
     match obj.kind {
@@ -827,7 +827,7 @@ fn commit_chain_complete(repo: &Repository, oid: ObjectId, depth: usize) -> bool
     if depth > 65536 {
         return false;
     }
-    let Ok(obj) = repo.odb.read(&oid) else {
+    let Ok(obj) = repo.odb().read(&oid) else {
         return false;
     };
     if obj.kind != ObjectKind::Commit {
@@ -903,7 +903,7 @@ fn is_unreachable_oid(
     if kind == UnreachableKind::Always {
         return true;
     }
-    let Ok(obj) = repo.odb.read(&oid) else {
+    let Ok(obj) = repo.odb().read(&oid) else {
         return true;
     };
     obj.kind == ObjectKind::Commit
@@ -1099,7 +1099,7 @@ pub fn mark_stalefix_reachable(repo: &Repository, git_dir: &Path) -> Result<Hash
         if oid.is_zero() || !seen.insert(oid) {
             continue;
         }
-        let Ok(obj) = repo.odb.read(&oid) else {
+        let Ok(obj) = repo.odb().read(&oid) else {
             continue;
         };
         match obj.kind {
@@ -1227,7 +1227,7 @@ mod default_expire_tests {
     #[test]
     fn parse_and_dwim_read_reflog_lines() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let oid = ObjectId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("oid");
         write_ref(git_dir, "refs/heads/dwim", &oid).expect("write ref");
         let line = format!(
@@ -1246,7 +1246,7 @@ mod default_expire_tests {
     #[test]
     fn truncate_delete_and_expire_loose_reflog() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let refname = "refs/heads/main";
         let o1 = ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").expect("o1");
         let o2 = ObjectId::from_hex("cccccccccccccccccccccccccccccccccccccccc").expect("o2");
@@ -1296,7 +1296,7 @@ mod default_expire_tests {
     #[test]
     fn expire_reflog_git_dry_run_and_stash_gc_never() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let now = 1_700_000_000_i64;
         let refname = "refs/stash";
         let oid = ObjectId::from_hex("dddddddddddddddddddddddddddddddddddddddd").expect("oid");
@@ -1359,7 +1359,7 @@ mod default_expire_tests {
     #[test]
     fn mark_stalefix_reachable_walks_reflog_mentions() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let oid = ObjectId::from_hex("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").expect("oid");
         write_ref(git_dir, "refs/heads/main", &oid).expect("write");
         append_reflog(
@@ -1380,7 +1380,7 @@ mod default_expire_tests {
     #[test]
     fn all_reflog_oids_and_list_includes_head() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let oid = ObjectId::from_hex("1212121212121212121212121212121212121212").expect("oid");
         write_ref(git_dir, "refs/heads/main", &oid).expect("write");
         append_reflog(
@@ -1405,7 +1405,7 @@ mod default_expire_tests {
     #[test]
     fn mirror_branch_reflog_to_head_copies_bytes() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let branch = "refs/heads/main";
         let oid = ObjectId::from_hex("1313131313131313131313131313131313131313").expect("oid");
         write_ref(git_dir, branch, &oid).expect("write");
@@ -1429,7 +1429,7 @@ mod default_expire_tests {
     #[test]
     fn read_reflog_skips_blank_lines_and_no_message_tab() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let oid = ObjectId::from_hex("1414141414141414141414141414141414141414").expect("oid");
         let body =
             format!("\n0000000000000000000000000000000000000000 {oid} T <t@e.com> 1000 +0000\n");
@@ -1443,7 +1443,7 @@ mod default_expire_tests {
     #[test]
     fn expire_git_prunes_old_entry_and_reports_action() {
         let (tmp, repo) = seed_repo();
-        let git_dir = &repo.git_dir;
+        let git_dir = &repo.git_dir();
         let refname = "refs/heads/main";
         let oid = ObjectId::from_hex("ffffffffffffffffffffffffffffffffffffffff").expect("oid");
         write_ref(git_dir, refname, &oid).expect("write");

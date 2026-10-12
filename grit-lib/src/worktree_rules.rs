@@ -125,18 +125,23 @@ impl WorktreeRules {
     /// Returns I/O errors from loading exclude/attribute files.
     pub fn from_parts(repo: &Repository, index: &Index, config: Arc<ConfigSet>) -> Result<Self> {
         let work_tree = repo
-            .work_tree
-            .clone()
-            .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
+            .work_tree()
+            .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?
+            .to_path_buf();
         let conversion = ConversionConfig::from_config_with_runner(&config, repo.command_runner());
         let ignore = RefCell::new(IgnoreMatcher::from_repository(repo)?);
         let (stack_prefix, info_rules) = load_attribute_stack_prefix_and_info(
-            repo, &work_tree, &config, index, &repo.odb, false,
+            repo,
+            &work_tree,
+            &config,
+            index,
+            repo.odb(),
+            false,
         )?;
         let attrs = AttributeState {
             work_tree,
-            _git_dir: repo.git_dir.clone(),
-            odb: repo.odb.clone(),
+            _git_dir: repo.git_dir().to_path_buf(),
+            odb: repo.odb().clone(),
             index: index.clone(),
             gitattributes_index_only: false,
             stack_prefix,
@@ -168,9 +173,9 @@ impl WorktreeRules {
         config: Arc<ConfigSet>,
     ) -> Result<Self> {
         let work_tree = repo
-            .work_tree
-            .clone()
-            .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
+            .work_tree()
+            .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?
+            .to_path_buf();
         let conversion = ConversionConfig::from_config_with_runner(&config, repo.command_runner());
         let ignore = RefCell::new(IgnoreMatcher::from_repository(repo)?);
         let (stack_prefix, info_rules) = load_attribute_stack_prefix_and_info(
@@ -178,13 +183,13 @@ impl WorktreeRules {
             &work_tree,
             &config,
             prospective_index,
-            &repo.odb,
+            repo.odb(),
             true,
         )?;
         let attrs = AttributeState {
             work_tree,
-            _git_dir: repo.git_dir.clone(),
-            odb: repo.odb.clone(),
+            _git_dir: repo.git_dir().to_path_buf(),
+            odb: repo.odb().clone(),
             index: prospective_index.clone(),
             gitattributes_index_only: true,
             stack_prefix,
@@ -369,7 +374,7 @@ fn load_attribute_stack_prefix_and_info(
         }
     }
     let mut info_rules = Vec::new();
-    let info = repo.git_dir.join("info/attributes");
+    let info = repo.git_dir().join("info/attributes");
     if let Some(content) = read_worktree_gitattributes(&info) {
         info_rules.extend(crlf::parse_gitattributes_content(&content));
     }

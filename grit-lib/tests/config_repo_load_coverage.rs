@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::{init_repository, Repository};
 use tempfile::tempdir;
 
@@ -27,7 +27,11 @@ fn repository_config_load_and_reload_hits_cache() {
 
     let mut env = Environment::empty();
     env.cwd = dir.path().to_path_buf();
-    let repo = Repository::open(&git_dir, Some(dir.path())).expect("open");
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(dir.path()),
+    )
+    .expect("open");
     let cfg = repo.config().expect("config");
     assert_eq!(cfg.get("repo.k").as_deref(), Some("v1"));
     assert_eq!(cfg.get("extra.k").as_deref(), Some("inc"));

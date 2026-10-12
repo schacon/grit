@@ -183,7 +183,7 @@ fn grit_record_commit(
     message: &str,
 ) -> Result<ObjectId> {
     let mut index = repo.load_index()?;
-    let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.write_index(&mut index)?;
     let commit_data = CommitData {
         tree,
@@ -198,8 +198,8 @@ fn grit_record_commit(
         extra_headers: Vec::new(),
     };
     let bytes = serialize_commit(&commit_data);
-    let oid = repo.odb.write(ObjectKind::Commit, &bytes)?;
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &oid)?;
+    let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
+    refs::write_ref(&repo.git_dir(), "refs/heads/main", &oid)?;
     Ok(oid)
 }
 
@@ -210,10 +210,7 @@ fn grit_commit_file(
     contents: &[u8],
     message: &str,
 ) -> Result<ObjectId> {
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .expect("bench repo must have a work tree");
+    let work_tree = repo.work_tree().expect("bench repo must have a work tree");
     let path = work_tree.join(rel_path);
     if let Some(parent_dir) = path.parent() {
         std::fs::create_dir_all(parent_dir).map_err(grit_lib::error::Error::Io)?;
@@ -283,7 +280,7 @@ fn build_delta_chain_pack(depth: usize) -> (Vec<u8>, ObjectId, u64) {
         );
     }
     let tip = parent.expect("delta chain must have at least one commit");
-    let odb = repo.odb.with_config_git_dir(repo.git_dir.clone());
+    let odb = repo.odb().with_config_git_dir(repo.git_dir().to_path_buf());
     let pack = build_pack(
         &odb,
         &[tip],
@@ -387,7 +384,7 @@ fn build_large_pack_index(objects_dir: &Path, object_count: usize) -> (PackIndex
     }
     let tip = parent.expect("at least one commit");
     git_repack(tmp.path()).expect("git repack");
-    let pack_dir = repo.git_dir.join("objects/pack");
+    let pack_dir = repo.git_dir().join("objects/pack");
     let _keep_repo = (&repo, &tmp);
     let src_idx = std::fs::read_dir(&pack_dir)
         .expect("read pack dir")

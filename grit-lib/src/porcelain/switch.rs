@@ -77,12 +77,12 @@ pub fn resolve_create_branch(
     validate_branch_short_name(branch)
         .map_err(|e| Error::Message(format!("invalid branch name '{branch}': {e}")))?;
     let branch_ref = format!("refs/heads/{branch}");
-    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+    if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
         return Err(Error::Message(format!("branch '{branch}' already exists")));
     }
     let start_oid = match start_point {
         Some(spec) => resolve_revision_spec(repo, spec)?,
-        None => resolve_head(&repo.git_dir)?
+        None => resolve_head(repo.git_dir())?
             .oid()
             .copied()
             .ok_or_else(|| Error::Message("no commits yet to create a branch from".into()))?,
@@ -98,11 +98,11 @@ pub fn resolve_create_branch(
 pub fn resolve_switch_target(repo: &Repository, spec: &str) -> Result<SwitchMode> {
     let spec = normalize_switch_spec(spec);
     if let Ok(Some(branch)) = expand_at_minus_to_branch_name(repo, spec) {
-        let oid = refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{branch}"))?;
+        let oid = refs::resolve_ref(repo.git_dir(), &format!("refs/heads/{branch}"))?;
         return Ok(SwitchMode::Existing { branch, oid });
     }
 
-    if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")) {
+    if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &format!("refs/heads/{spec}")) {
         return Ok(SwitchMode::Existing {
             branch: spec.to_owned(),
             oid,
@@ -113,12 +113,12 @@ pub fn resolve_switch_target(repo: &Repository, spec: &str) -> Result<SwitchMode
         format!("refs/remotes/{spec}"),
         format!("refs/remotes/origin/{spec}"),
     ] {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &candidate) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &candidate) {
             let short = spec.strip_prefix("origin/").unwrap_or(spec).to_owned();
             validate_branch_short_name(&short)
                 .map_err(|e| Error::Message(format!("invalid branch name '{short}': {e}")))?;
             let local = format!("refs/heads/{short}");
-            if let Ok(local_oid) = refs::resolve_ref(&repo.git_dir, &local) {
+            if let Ok(local_oid) = refs::resolve_ref(repo.git_dir(), &local) {
                 return Ok(SwitchMode::Existing {
                     branch: short,
                     oid: local_oid,
@@ -159,7 +159,7 @@ fn resolve_unique_dwim_switch(repo: &Repository, spec: &str) -> Result<Option<Sw
     let mut hits: Vec<(String, ObjectId)> = Vec::new();
     for rule in DWIM_RULES {
         let candidate = rule.replace("{0}", spec);
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &candidate) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &candidate) {
             hits.push((candidate, oid));
         }
     }
@@ -283,7 +283,7 @@ fn switch_to_target(
     pending_create: Option<(String, ObjectId, String)>,
     reflog_to_label: &str,
 ) -> Result<SwitchOutcome> {
-    let head_before = resolve_head(&repo.git_dir)?;
+    let head_before = resolve_head(repo.git_dir())?;
     let head_oid = head_before.oid().copied();
     let head_tree = head_oid.map(|oid| commit_tree(repo, &oid)).transpose()?;
     let target_tree = commit_tree(repo, &target_oid)?;
@@ -318,9 +318,9 @@ fn switch_to_target(
             repo, &refname, oid, &source,
         )?;
         if detached {
-            refs::write_ref(&repo.git_dir, "HEAD", &target_oid)?;
+            refs::write_ref(repo.git_dir(), "HEAD", &target_oid)?;
         } else {
-            refs::write_symbolic_ref(&repo.git_dir, "HEAD", branch_ref)?;
+            refs::write_symbolic_ref(repo.git_dir(), "HEAD", branch_ref)?;
         }
     }
 
@@ -345,7 +345,7 @@ fn prepare_tree_switch_allow_local(
         snapshot.index.source_mtime = crate::index::index_file_mtime(&index_path);
     }
 
-    let tree_changes = crate::diff::diff_trees(&repo.odb, from_tree, Some(to_tree), "")?;
+    let tree_changes = crate::diff::diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
     let preserve_worktree_paths = ensure_local_changes_compatible_with_switch(
         &snapshot.index,
         &staged,
@@ -354,8 +354,7 @@ fn prepare_tree_switch_allow_local(
     )?;
 
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let (untracked, _) = crate::porcelain::status::collect_untracked_and_ignored(
         repo,
@@ -375,7 +374,7 @@ fn prepare_tree_switch_allow_local(
 }
 
 fn commit_tree(repo: &Repository, commit: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit)?;
+    let obj = repo.odb().read(commit)?;
     Ok(parse_commit(&obj.data)?.tree)
 }
 
@@ -469,11 +468,11 @@ mod tests {
         contents: &str,
         parent: Option<ObjectId>,
     ) -> ObjectId {
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join(path), contents).expect("write");
         let mut index = repo.load_index().expect("index");
         let oid = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, contents.as_bytes())
             .expect("blob");
         let entry = crate::index::entry_from_stat(
@@ -485,7 +484,7 @@ mod tests {
         .expect("entry");
         index.add_or_replace(entry);
         index.sort();
-        let tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         repo.write_index(&mut index).expect("write index");
         let commit = CommitData {
@@ -501,12 +500,12 @@ mod tests {
             extra_headers: Vec::new(),
         };
         let co = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, &serialize_commit(&commit))
             .expect("commit");
         let refname = format!("refs/heads/{branch}");
-        refs::write_ref(&repo.git_dir, &refname, &co).expect("branch");
-        refs::write_symbolic_ref(&repo.git_dir, "HEAD", &refname).expect("symhead");
+        refs::write_ref(&repo.git_dir(), &refname, &co).expect("branch");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", &refname).expect("symhead");
         co
     }
 
@@ -515,12 +514,12 @@ mod tests {
         let (_dir, repo) = init_repo();
         let main_tip = commit_on_branch(&repo, "main", "f", "one\n", None);
         commit_on_branch(&repo, "other", "f", "two\n", Some(main_tip));
-        refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("head");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
 
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "two\n").expect("stage dest in index");
         let mut index = repo.load_index().expect("index");
-        let oid = repo.odb.write(ObjectKind::Blob, b"two\n").expect("blob");
+        let oid = repo.odb().write(ObjectKind::Blob, b"two\n").expect("blob");
         index.add_or_replace(
             crate::index::entry_from_stat(&wt.join("f"), b"f", oid, crate::index::MODE_REGULAR)
                 .expect("entry"),
@@ -533,7 +532,7 @@ mod tests {
             &SwitchOptions {
                 mode: SwitchMode::Existing {
                     branch: "other".into(),
-                    oid: refs::resolve_ref(&repo.git_dir, "refs/heads/other").expect("oid"),
+                    oid: refs::resolve_ref(&repo.git_dir(), "refs/heads/other").expect("oid"),
                 },
             },
         )
@@ -549,12 +548,15 @@ mod tests {
         let (_dir, repo) = init_repo();
         let main_tip = commit_on_branch(&repo, "main", "f", "one\n", None);
         commit_on_branch(&repo, "other", "f", "two\n", Some(main_tip));
-        refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("head");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
 
-        let wt = repo.work_tree.as_ref().expect("wt");
+        let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "three\n").expect("wt");
         let mut index = repo.load_index().expect("index");
-        let oid = repo.odb.write(ObjectKind::Blob, b"three\n").expect("blob");
+        let oid = repo
+            .odb()
+            .write(ObjectKind::Blob, b"three\n")
+            .expect("blob");
         index.add_or_replace(
             crate::index::entry_from_stat(&wt.join("f"), b"f", oid, crate::index::MODE_REGULAR)
                 .expect("entry"),
@@ -566,14 +568,14 @@ mod tests {
             &SwitchOptions {
                 mode: SwitchMode::Create {
                     branch: "leaked".into(),
-                    start_oid: refs::resolve_ref(&repo.git_dir, "refs/heads/other").expect("oid"),
+                    start_oid: refs::resolve_ref(repo.git_dir(), "refs/heads/other").expect("oid"),
                     create_source_label: "HEAD".into(),
                 },
             },
         )
         .expect_err("conflict");
         assert!(matches!(err, Error::Message(_)));
-        assert!(refs::resolve_ref(&repo.git_dir, "refs/heads/leaked").is_err());
+        assert!(refs::resolve_ref(&repo.git_dir(), "refs/heads/leaked").is_err());
     }
 
     #[test]
@@ -581,7 +583,7 @@ mod tests {
         let (_dir, repo) = init_repo();
         let local_tip = commit_on_branch(&repo, "main", "f", "local\n", None);
         let remote_tip = commit_on_branch(&repo, "other", "f", "remote\n", Some(local_tip));
-        refs::write_ref(&repo.git_dir, "refs/remotes/origin/main", &remote_tip).expect("remote");
+        refs::write_ref(&repo.git_dir(), "refs/remotes/origin/main", &remote_tip).expect("remote");
 
         let mode = resolve_switch_target(&repo, "origin/main").expect("resolve");
         match mode {
@@ -597,7 +599,7 @@ mod tests {
     fn dwim_tag_is_rejected_for_attached_switch() {
         let (_dir, repo) = init_repo();
         let tip = commit_on_branch(&repo, "main", "f", "x\n", None);
-        refs::write_ref(&repo.git_dir, "refs/tags/rel1", &tip).expect("tag");
+        refs::write_ref(&repo.git_dir(), "refs/tags/rel1", &tip).expect("tag");
 
         let err = resolve_switch_target(&repo, "rel1").expect_err("tag");
         assert!(matches!(err, Error::Message(_)));

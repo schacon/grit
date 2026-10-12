@@ -19,7 +19,7 @@
 //! let odb = Odb::new(Path::new(".git/objects"));
 //! ```
 //!
-//! Custom primary store — see [`OdbBuilder`] and [`crate::repo::Repository::open_with_odb`].
+//! Custom primary store — see [`OdbBuilder`] and [`crate::repo::RepositoryBuilder`].
 
 pub mod builder;
 pub mod store;

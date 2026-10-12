@@ -21,6 +21,7 @@ use crate::diff::{
     diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees,
     worktree_differs_from_index_entry, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
@@ -247,7 +248,7 @@ fn head_commit_oid(head: &HeadState) -> Result<ObjectId> {
 }
 
 fn head_commit_subject(repo: &Repository, head_oid: &ObjectId) -> Result<String> {
-    let obj = repo.odb.read(head_oid)?;
+    let obj = repo.odb().read(head_oid)?;
     let commit = parse_commit(&obj.data)?;
     Ok(commit
         .message
@@ -280,7 +281,7 @@ fn has_stashable_changes(
     include_untracked: bool,
 ) -> Result<bool> {
     let mut index = repo.load_index()?;
-    if !diff_index_to_tree(&repo.odb, &index, Some(head_tree), true)?.is_empty() {
+    if !diff_index_to_tree(repo.odb(), &index, Some(head_tree), true)?.is_empty() {
         return Ok(true);
     }
     let index_mtime = index_file_mtime(&repo.index_path());
@@ -289,13 +290,13 @@ fn has_stashable_changes(
     let diff_opts = DiffIndexToWorktreeOptions {
         index_mtime,
         ignore_submodule_untracked: true,
-        repository_git_dir: Some(repo.git_dir.clone()),
+        repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: repo.config().ok(),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
         ..Default::default()
     };
     let (unstaged, _) =
-        diff_index_to_worktree_with_options(&repo.odb, &mut index, work_tree, diff_opts)?;
+        diff_index_to_worktree_with_options(repo.odb(), &mut index, work_tree, diff_opts)?;
     if !unstaged.is_empty() {
         return Ok(true);
     }
@@ -358,18 +359,18 @@ fn apply_worktree_diff_to_index(
     let diff_opts = DiffIndexToWorktreeOptions {
         index_mtime,
         ignore_submodule_untracked: true,
-        repository_git_dir: Some(repo.git_dir.clone()),
+        repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: repo.config().ok(),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
         ..Default::default()
     };
     let (unstaged, _) =
-        diff_index_to_worktree_with_options(&repo.odb, index, work_tree, diff_opts)?;
+        diff_index_to_worktree_with_options(repo.odb(), index, work_tree, diff_opts)?;
     let mut worktree_rules = rules_arc
         .lock()
         .map_err(|e| Error::Message(format!("worktree rules lock poisoned: {e}")))?;
     let precompose = crate::precompose_config::effective_core_precomposeunicode_with_config(
-        Some(&repo.git_dir),
+        Some(repo.git_dir()),
         Some(&worktree_rules.config_arc()),
     );
     for entry in unstaged {
@@ -430,7 +431,7 @@ fn stage_tracked_path_for_stash(
     };
     let file_attrs = rules.file_attrs(rel_path, false);
     let refresh = classify_worktree_entry_for_add(&WorktreeAddRefreshParams {
-        odb: &repo.odb,
+        odb: repo.odb(),
         ie: &ie,
         meta: &meta,
         abs_path: &abs,
@@ -502,7 +503,7 @@ fn stage_untracked_path_for_stash(
     } else {
         fs::read(&abs)?
     };
-    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+    let oid = repo.odb().write(ObjectKind::Blob, &data)?;
     let entry = entry_from_stat(&abs, index_relpath.as_bytes(), oid, mode)?;
     index.add_or_replace(entry);
     let _ = rules;
@@ -511,9 +512,10 @@ fn stage_untracked_path_for_stash(
 
 fn write_stash_tree_from_index(repo: &Repository, index: &mut Index) -> Result<ObjectId> {
     index.sort();
-    let tree = write_tree_update_index(&repo.odb, index, "", WriteTreeFlags::silent())?;
-    if is_empty_tree_oid(&repo.odb, &tree) {
-        repo.odb.write_local(ObjectKind::Tree, b"")?;
+    let odb = repo.odb();
+    let tree = write_tree_update_index(odb, index, "", WriteTreeFlags::silent())?;
+    if is_empty_tree_oid(odb, &tree) {
+        odb.write_local(ObjectKind::Tree, b"")?;
     }
     Ok(tree)
 }
@@ -528,7 +530,7 @@ fn write_untracked_stash_commit(
     let mut index = Index::new();
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
     let precompose = crate::precompose_config::effective_core_precomposeunicode_with_config(
-        Some(&repo.git_dir),
+        Some(repo.git_dir()),
         Some(&worktree_rules.config_arc()),
     );
     for path in paths {
@@ -585,9 +587,9 @@ fn build_stash_commit(
     work_tree: &Path,
     options: &StashCreateOptions,
 ) -> Result<Option<BuiltStash>> {
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let head_oid = head_commit_oid(&head)?;
-    let head_obj = repo.odb.read(&head_oid)?;
+    let head_obj = repo.odb().read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree = head_commit.tree;
 
@@ -677,8 +679,7 @@ fn build_stash_commit(
 /// or propagates index, diff, and object-database failures.
 pub fn create_stash(repo: &Repository, options: &StashCreateOptions) -> Result<Option<ObjectId>> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot stash in a bare repository".into()))?;
     Ok(build_stash_commit(repo, work_tree, options)?.map(|b| b.w_commit))
 }
@@ -689,10 +690,10 @@ pub fn create_stash(repo: &Repository, options: &StashCreateOptions) -> Result<O
 ///
 /// Propagates ref and reflog update failures.
 pub fn store_stash(repo: &Repository, oid: ObjectId, message: &str, identity: &str) -> Result<()> {
-    let old_oid = refs::resolve_ref(&repo.git_dir, "refs/stash").unwrap_or(ObjectId::zero());
-    refs::write_ref(&repo.git_dir, "refs/stash", &oid)?;
+    let old_oid = refs::resolve_ref(repo.git_dir(), "refs/stash").unwrap_or(ObjectId::zero());
+    refs::write_ref(repo.git_dir(), "refs/stash", &oid)?;
     append_reflog(
-        &repo.git_dir,
+        repo.git_dir(),
         "refs/stash",
         &old_oid,
         &oid,
@@ -712,17 +713,16 @@ pub fn store_stash(repo: &Repository, oid: ObjectId, message: &str, identity: &s
 /// Same as [`create_stash`] and [`store_stash`], plus checkout failures.
 pub fn push_stash(repo: &Repository, options: &StashCreateOptions) -> Result<Option<ObjectId>> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot stash in a bare repository".into()))?;
     let Some(built) = build_stash_commit(repo, work_tree, options)? else {
         return Ok(None);
     };
     store_stash(repo, built.w_commit, &built.message, &options.identity)?;
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let head_oid = head_commit_oid(&head)?;
     let head_tree = {
-        let obj = repo.odb.read(&head_oid)?;
+        let obj = repo.odb().read(&head_oid)?;
         parse_commit(&obj.data)?.tree
     };
     if !built.untracked_paths.is_empty() {
@@ -740,7 +740,7 @@ pub fn push_stash(repo: &Repository, options: &StashCreateOptions) -> Result<Opt
 ///
 /// Propagates reflog read failures.
 pub fn list_stashes(repo: &Repository) -> Result<Vec<StashEntry>> {
-    let entries = read_reflog(&repo.git_dir, "refs/stash")?;
+    let entries = read_reflog(repo.git_dir(), "refs/stash")?;
     Ok(entries
         .into_iter()
         .rev()
@@ -770,17 +770,17 @@ fn stash_oid_at(repo: &Repository, n: usize) -> Result<ObjectId> {
 ///
 /// Returns [`Error::StashNotFound`] when `n` is out of range.
 pub fn drop_stash(repo: &Repository, n: usize, identity: &str) -> Result<()> {
-    let entries = read_reflog(&repo.git_dir, "refs/stash")?;
+    let entries = read_reflog(repo.git_dir(), "refs/stash")?;
     if n >= entries.len() {
         return Err(Error::StashNotFound { n });
     }
     let _ = identity;
-    delete_reflog_entries_rechain(&repo.git_dir, "refs/stash", &[n])?;
-    let remaining = read_reflog(&repo.git_dir, "refs/stash")?;
+    delete_reflog_entries_rechain(repo.git_dir(), "refs/stash", &[n])?;
+    let remaining = read_reflog(repo.git_dir(), "refs/stash")?;
     if let Some(top_entry) = remaining.last() {
-        refs::write_ref(&repo.git_dir, "refs/stash", &top_entry.new_oid)?;
+        refs::write_ref(repo.git_dir(), "refs/stash", &top_entry.new_oid)?;
     } else {
-        refs::delete_ref(&repo.git_dir, "refs/stash")?;
+        refs::delete_ref(repo.git_dir(), "refs/stash")?;
     }
     Ok(())
 }
@@ -814,16 +814,16 @@ pub fn pop_stash(
 /// Returns [`Error::StashNotFound`] or [`Error::CorruptStash`] when the entry is invalid.
 pub fn stash_diff(repo: &Repository, n: usize) -> Result<Vec<DiffEntry>> {
     let oid = stash_oid_at(repo, n)?;
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.odb().read(&oid)?;
     let stash_commit = parse_commit(&obj.data)?;
     let head_parent = stash_commit
         .parents
         .first()
         .ok_or(Error::CorruptStash("expected at least 2 parents"))?;
-    let head_obj = repo.odb.read(head_parent)?;
+    let head_obj = repo.odb().read(head_parent)?;
     let head_commit = parse_commit(&head_obj.data)?;
     diff_trees(
-        &repo.odb,
+        repo.odb(),
         Some(&head_commit.tree),
         Some(&stash_commit.tree),
         "",
@@ -859,7 +859,7 @@ fn materialize_flat_entry_in_worktree(
         fs::create_dir_all(&file_path)?;
         return Ok(());
     }
-    let blob = repo.odb.read(&entry.oid)?;
+    let blob = repo.odb().read(&entry.oid)?;
     if entry.mode == MODE_SYMLINK {
         let target = String::from_utf8(blob.data).map_err(|_| Error::StashSymlinkNotUtf8)?;
         if file_path.exists() || file_path.symlink_metadata().is_ok() {
@@ -892,10 +892,10 @@ pub fn stash_worktree_change_paths(
         .parents
         .first()
         .ok_or(Error::CorruptStash("expected at least 2 parents"))?;
-    let stash_tree_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
-    let head_obj = repo.odb.read(head_at_stash)?;
+    let stash_tree_entries = flatten_tree_full(repo.odb(), &stash_commit.tree, "")?;
+    let head_obj = repo.odb().read(head_at_stash)?;
     let head_commit = parse_commit(&head_obj.data)?;
-    let base_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+    let base_tree_entries = flatten_tree_full(repo.odb(), &head_commit.tree, "")?;
 
     let changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
     Ok(changes.into_iter().map(|(path, _)| path).collect())
@@ -921,8 +921,8 @@ pub fn check_stash_apply_would_overwrite_local_changes(
             continue;
         }
         if worktree_differs_from_index_entry(
-            &repo.odb,
-            &repo.git_dir,
+            repo.odb(),
+            repo.git_dir(),
             work_tree,
             idx_entry,
             true,
@@ -991,9 +991,9 @@ pub(crate) fn check_stash_untracked_restore(
         return Ok(());
     }
     let ut_oid = &stash_commit.parents[2];
-    let ut_obj = repo.odb.read(ut_oid)?;
+    let ut_obj = repo.odb().read(ut_oid)?;
     let ut_commit = parse_commit(&ut_obj.data)?;
-    let ut_entries = flatten_tree_full(&repo.odb, &ut_commit.tree, "")?;
+    let ut_entries = flatten_tree_full(repo.odb(), &ut_commit.tree, "")?;
     if ut_entries.is_empty() {
         return Ok(());
     }
@@ -1067,7 +1067,7 @@ pub fn apply_stash(
     restore_index: bool,
     _identity: &str,
 ) -> Result<bool> {
-    let obj = repo.odb.read(stash_oid)?;
+    let obj = repo.odb().read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
 
     if stash_commit.parents.len() < 2 {
@@ -1088,21 +1088,21 @@ pub fn apply_stash(
     };
 
     // Read stash trees
-    let stash_tree_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let stash_tree_entries = flatten_tree_full(repo.odb(), &stash_commit.tree, "")?;
 
     // Read HEAD-at-stash tree (base)
-    let head_at_stash_obj = repo.odb.read(head_at_stash)?;
+    let head_at_stash_obj = repo.odb().read(head_at_stash)?;
     let head_at_stash_commit = parse_commit(&head_at_stash_obj.data)?;
-    let base_tree_entries = flatten_tree_full(&repo.odb, &head_at_stash_commit.tree, "")?;
+    let base_tree_entries = flatten_tree_full(repo.odb(), &head_at_stash_commit.tree, "")?;
 
     let wt_changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
 
     // Read index commit tree
-    let idx_obj = repo.odb.read(index_commit_oid)?;
+    let idx_obj = repo.odb().read(index_commit_oid)?;
     let idx_commit = parse_commit(&idx_obj.data)?;
-    let idx_tree_entries = flatten_tree_full(&repo.odb, &idx_commit.tree, "")?;
+    let idx_tree_entries = flatten_tree_full(repo.odb(), &idx_commit.tree, "")?;
     // Determine if HEAD has moved since the stash was created
-    let current_head = resolve_head(&repo.git_dir)?;
+    let current_head = resolve_head(repo.git_dir())?;
     let current_head_oid = current_head.oid().copied();
     let head_moved = current_head_oid.as_ref() != Some(head_at_stash);
 
@@ -1112,9 +1112,9 @@ pub fn apply_stash(
         let Some(head_oid) = current_head_oid.as_ref() else {
             return Err(Error::StashMissingHead);
         };
-        let head_obj = repo.odb.read(head_oid)?;
+        let head_obj = repo.odb().read(head_oid)?;
         let head_commit = parse_commit(&head_obj.data)?;
-        current_head_loaded = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+        current_head_loaded = flatten_tree_full(repo.odb(), &head_commit.tree, "")?;
         &current_head_loaded
     } else {
         &base_tree_entries
@@ -1179,7 +1179,7 @@ pub fn apply_stash(
                     continue;
                 }
 
-                let stash_blob = repo.odb.read(&entry.oid)?;
+                let stash_blob = repo.odb().read(&entry.oid)?;
 
                 if entry.mode == MODE_SYMLINK {
                     let target = String::from_utf8(stash_blob.data)
@@ -1196,11 +1196,11 @@ pub fn apply_stash(
                 } else if head_moved {
                     // Three-way merge: base (head_at_stash), ours (current HEAD), theirs (stash)
                     let base_content = flat_tree_lookup(&base_tree_entries, path)
-                        .and_then(|e| repo.odb.read(&e.oid).ok())
+                        .and_then(|e| repo.odb().read(&e.oid).ok())
                         .map(|o| o.data)
                         .unwrap_or_default();
                     let ours_content = flat_tree_lookup(current_head_entries, path)
-                        .and_then(|e| repo.odb.read(&e.oid).ok())
+                        .and_then(|e| repo.odb().read(&e.oid).ok())
                         .map(|o| o.data)
                         .unwrap_or_default();
                     let theirs_content = stash_blob.data;
@@ -1366,7 +1366,7 @@ pub fn apply_stash(
                 let size = if te.mode == MODE_SYMLINK || te.mode == MODE_GITLINK {
                     0u32
                 } else {
-                    repo.odb.read(&te.oid)?.data.len() as u32
+                    repo.odb().read(&te.oid)?.data.len() as u32
                 };
                 let new_entry = IndexEntry {
                     ctime_sec: 0,
@@ -1412,7 +1412,7 @@ pub fn apply_stash(
                         let size = if ie.mode == MODE_SYMLINK || ie.mode == MODE_GITLINK {
                             0u32
                         } else {
-                            repo.odb.read(&ie.oid)?.data.len() as u32
+                            repo.odb().read(&ie.oid)?.data.len() as u32
                         };
                         new_index.stage_file(IndexEntry {
                             ctime_sec: 0,
@@ -1457,8 +1457,8 @@ pub fn apply_stash(
         let rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &new_index).ok();
         let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
         let _ = crate::diff::refresh_index_stat_content_verified_with_rules(
-            &repo.odb,
-            &repo.git_dir,
+            repo.odb(),
+            repo.git_dir(),
             &mut new_index,
             work_tree,
             None,
@@ -1473,9 +1473,9 @@ pub fn apply_stash(
     // Apply untracked files if present (3rd parent)
     if stash_commit.parents.len() >= 3 {
         let ut_oid = &stash_commit.parents[2];
-        let ut_obj = repo.odb.read(ut_oid)?;
+        let ut_obj = repo.odb().read(ut_oid)?;
         let ut_commit = parse_commit(&ut_obj.data)?;
-        let ut_entries = flatten_tree_full(&repo.odb, &ut_commit.tree, "")?;
+        let ut_entries = flatten_tree_full(repo.odb(), &ut_commit.tree, "")?;
         for entry in &ut_entries {
             materialize_flat_entry_in_worktree(repo, work_tree, entry)?;
         }
@@ -1528,7 +1528,7 @@ pub fn drop_stash_commit(git_dir: &Path, stash_oid: &ObjectId) -> Result<bool> {
 ///
 /// Propagates stash apply, index, and I/O failures.
 pub fn apply_merge_autostash(repo: &Repository) -> Result<bool> {
-    let path = repo.git_dir.join("MERGE_AUTOSTASH");
+    let path = repo.git_dir().join("MERGE_AUTOSTASH");
     let Ok(content) = fs::read_to_string(&path) else {
         return Ok(false);
     };
@@ -1538,13 +1538,13 @@ pub fn apply_merge_autostash(repo: &Repository) -> Result<bool> {
         return Ok(false);
     }
     let stash_oid = ObjectId::from_hex(trimmed)?;
-    let work_tree = repo.work_tree.as_deref().ok_or_else(|| {
+    let work_tree = repo.work_tree().ok_or_else(|| {
         Error::Message("cannot apply merge autostash in a bare repository".into())
     })?;
     let conflicts = apply_stash(repo, work_tree, &stash_oid, false, "")?;
     let _ = fs::remove_file(&path);
     if !conflicts {
-        let _ = drop_stash_commit(&repo.git_dir, &stash_oid)?;
+        let _ = drop_stash_commit(repo.git_dir(), &stash_oid)?;
     }
     Ok(conflicts)
 }
@@ -1569,16 +1569,17 @@ mod coverage_tests {
             "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tlogAllRefUpdates = true\n",
         )
         .unwrap();
-        let repo = Repository::open(&git, Some(root)).unwrap();
+        let repo =
+            Repository::open(&git, &RepositoryOptions::empty().with_work_tree(root)).unwrap();
         let wt = root.join("f");
         fs::write(&wt, b"base\n").unwrap();
         let mut index = repo.load_index().unwrap();
-        let oid = repo.odb.write(ObjectKind::Blob, b"base\n").unwrap();
+        let oid = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
         index.add_or_replace(entry_from_stat(&wt, b"f", oid, MODE_REGULAR).unwrap());
         index.sort();
         repo.write_index(&mut index).unwrap();
         let tree = write_stash_tree_from_index(&repo, &mut index).unwrap();
-        let parent = refs::resolve_ref(&repo.git_dir, "HEAD").ok();
+        let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
         let commit = CommitData {
             tree,
             parents: parent.into_iter().collect(),
@@ -1592,8 +1593,8 @@ mod coverage_tests {
             extra_headers: Vec::new(),
         };
         let commit_oid = write_commit_object(&repo, &commit, None).unwrap();
-        refs::write_ref(&repo.git_dir, "HEAD", &commit_oid).unwrap();
-        refs::write_ref(&repo.git_dir, "refs/heads/main", &commit_oid).unwrap();
+        refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).unwrap();
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_oid).unwrap();
         repo
     }
 
@@ -1645,7 +1646,7 @@ mod coverage_tests {
         push_stash(&repo, &opts).expect("push").expect("oid");
         fs::write(tmp.path().join("u.txt"), b"precious\n").unwrap();
         let oid = list_stashes(&repo).expect("list")[0].oid;
-        let obj = repo.odb.read(&oid).unwrap();
+        let obj = repo.odb().read(&oid).unwrap();
         let stash_commit = parse_commit(&obj.data).unwrap();
         let err = super::check_stash_untracked_restore(&repo, tmp.path(), &stash_commit)
             .expect_err("collision");

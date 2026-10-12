@@ -1,10 +1,10 @@
 //! Stateless v0 shallow upload-pack round-trip (two POST bodies).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::pkt_line;
 use grit_lib::repo::Repository;
 use grit_protocol::upload_pack::stateless_rpc;
-use grit_protocol::RepositoryOptions;
 
 fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
     grit_lib::repo::init_bare_clone_minimal(
@@ -13,7 +13,7 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
         grit_lib::ref_storage::RefStorageFormat::Files,
     )
     .expect("init bare");
-    let repo = Repository::open_for_serving(dir, &RepositoryOptions::default()).expect("open");
+    let repo = Repository::open(dir, &RepositoryOptions::default().for_serving()).expect("open");
     let tree = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("empty tree");
     let mut parent: Option<ObjectId> = None;
     let mut tip = tree;
@@ -24,7 +24,7 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
             tree = tree.to_hex(),
         );
         tip = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
             .expect("commit");
         parent = Some(tip);
@@ -43,7 +43,7 @@ fn two_post_shallow_depth_one_returns_pack_on_done() {
         grit_lib::ref_storage::RefStorageFormat::Files,
     )
     .expect("init bare");
-    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
+    let repo = Repository::open(&dir, &RepositoryOptions::default().for_serving()).expect("open");
     let tree = grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
         .expect("empty tree");
     let commit_body = format!(
@@ -51,7 +51,7 @@ fn two_post_shallow_depth_one_returns_pack_on_done() {
         tree.to_hex()
     );
     let main = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
     grit_lib::refs::write_ref(&dir, "refs/heads/main", &main).expect("ref");

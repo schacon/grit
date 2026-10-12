@@ -108,7 +108,7 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
 }
 
 fn materialize_index_worktree(repo: &Repository, index: &Index, content_prefix: &str) {
-    let wt = repo.work_tree.as_ref().unwrap();
+    let wt = repo.work_tree().unwrap();
     for entry in &index.entries {
         let rel = std::str::from_utf8(&entry.path).unwrap();
         let abs = wt.join(rel);
@@ -121,7 +121,7 @@ fn materialize_index_worktree(repo: &Repository, index: &Index, content_prefix: 
 }
 
 fn finalize_index_stat_trust(repo: &Repository) {
-    let wt = repo.work_tree.as_ref().unwrap();
+    let wt = repo.work_tree().unwrap();
     let mut index = repo.load_index().unwrap();
     for entry in &mut index.entries {
         if entry.stage() != 0 {
@@ -233,8 +233,8 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
     ];
     for (i, rel) in paths.iter().enumerate() {
         let data = format!("seed-{i}");
-        let oid = repo.odb.write(ObjectKind::Blob, data.as_bytes()).unwrap();
-        let abs = repo.work_tree.as_ref().unwrap().join(rel);
+        let oid = repo.odb().write(ObjectKind::Blob, data.as_bytes()).unwrap();
+        let abs = repo.work_tree().unwrap().join(rel);
         fs::create_dir_all(abs.parent().unwrap()).unwrap();
         fs::write(&abs, &data).unwrap();
         pin_mtime(&abs, INDEX_MTIME.0, INDEX_MTIME.1);
@@ -259,11 +259,11 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
     )
     .unwrap();
 
-    let changed_path = repo.work_tree.as_ref().unwrap().join("top/mid/changed.txt");
+    let changed_path = repo.work_tree().unwrap().join("top/mid/changed.txt");
     fs::write(&changed_path, b"updated-content").unwrap();
     pin_mtime(&changed_path, INDEX_MTIME.0 + 1, INDEX_MTIME.1);
     let new_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"updated-content")
         .unwrap();
     let mut index = repo.load_index().unwrap();
@@ -272,8 +272,8 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
     index.add_or_replace(entry);
     repo.write_index(&mut index).unwrap();
 
-    let metrics = repo.odb.hot_path_metrics();
-    crate::write_tree::test_reset_tree_write_count(&repo.odb);
+    let metrics = repo.odb().hot_path_metrics();
+    crate::write_tree::test_reset_tree_write_count(&repo.odb());
     metrics.reset_freshen_calls();
     metrics.set_freshen_counting(true);
     let outcome = create_commit(
@@ -292,9 +292,9 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
     metrics.set_freshen_counting(false);
 
     assert!(
-        crate::write_tree::test_tree_write_count(&repo.odb) <= 3,
+        crate::write_tree::test_tree_write_count(&repo.odb()) <= 3,
         "one depth-2 path change should rewrite at most root + top + mid trees, got {}",
-        crate::write_tree::test_tree_write_count(&repo.odb)
+        crate::write_tree::test_tree_write_count(&repo.odb())
     );
     assert!(
         metrics.freshen_calls() <= 3,
@@ -302,10 +302,10 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
         metrics.freshen_calls()
     );
 
-    let wt = repo.work_tree.as_ref().unwrap();
+    let wt = repo.work_tree().unwrap();
     git_in(wt, &["fsck", "--strict"]);
     let git_tree_hex = git_out(wt, &["rev-parse", "HEAD^{tree}"]);
-    let commit_obj = repo.odb.read(&outcome.oid).unwrap();
+    let commit_obj = repo.odb().read(&outcome.oid).unwrap();
     let grit_tree = parse_commit(&commit_obj.data).unwrap().tree;
     assert_eq!(
         git_tree_hex,
@@ -316,7 +316,7 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
     let mut git_dump = String::new();
     git_tree_catfile_dump(wt, &git_tree_hex, &mut git_dump);
     let mut grit_dump = String::new();
-    grit_tree_catfile_dump(&repo.odb, &grit_tree, &mut grit_dump);
+    grit_tree_catfile_dump(&repo.odb(), &grit_tree, &mut grit_dump);
     assert_eq!(
         git_dump, grit_dump,
         "git cat-file tree dump (recursive) must match grit tree bytes"
@@ -339,8 +339,8 @@ fn stage_one_modified_file_hashes_one_blob() {
     for entry in index.entries.iter_mut() {
         let rel = std::str::from_utf8(&entry.path).unwrap();
         let data = format!("v1:{rel}");
-        entry.oid = repo.odb.write(ObjectKind::Blob, data.as_bytes()).unwrap();
-        let abs = repo.work_tree.as_ref().unwrap().join(rel);
+        entry.oid = repo.odb().write(ObjectKind::Blob, data.as_bytes()).unwrap();
+        let abs = repo.work_tree().unwrap().join(rel);
         if let Ok(fresh) = entry_from_stat(&abs, &entry.path, entry.oid, entry.mode) {
             *entry = fresh;
         }
@@ -349,11 +349,11 @@ fn stage_one_modified_file_hashes_one_blob() {
     finalize_index_stat_trust(&repo);
 
     let target = "d0050/f00050.txt";
-    let target_abs = repo.work_tree.as_ref().unwrap().join(target);
+    let target_abs = repo.work_tree().unwrap().join(target);
     fs::write(&target_abs, b"v2:changed").unwrap();
     pin_mtime(&target_abs, INDEX_MTIME.0 + 1, INDEX_MTIME.1);
 
-    let metrics = repo.odb.hot_path_metrics();
+    let metrics = repo.odb().hot_path_metrics();
     metrics.reset_blob_content_reads();
     metrics.set_blob_counting(true);
     let staged = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
@@ -377,15 +377,15 @@ fn pack_signature_not_restatted_per_object() {
         crate::RefStorageFormat::Files,
     )
     .unwrap();
-    let _scope = HotPathMetricsScope::install(Arc::clone(&repo.odb.hot_path_test_metrics));
-    let metrics = repo.odb.hot_path_metrics();
-    let wt = repo.work_tree.as_ref().unwrap();
+    let _scope = HotPathMetricsScope::install(Arc::clone(&repo.odb().hot_path_test_metrics));
+    let metrics = repo.odb().hot_path_metrics();
+    let wt = repo.work_tree().unwrap();
     let mut index = build_flat_index(PACK_REGRESSION_ENTRIES, 2);
     materialize_index_worktree(&repo, &index, "pack:");
     for entry in index.entries.iter_mut() {
         let rel = std::str::from_utf8(&entry.path).unwrap();
         let data = format!("pack:{rel}");
-        entry.oid = repo.odb.write(ObjectKind::Blob, data.as_bytes()).unwrap();
+        entry.oid = repo.odb().write(ObjectKind::Blob, data.as_bytes()).unwrap();
         let abs = wt.join(rel);
         if let Ok(fresh) = entry_from_stat(&abs, &entry.path, entry.oid, entry.mode) {
             *entry = fresh;
@@ -411,12 +411,12 @@ fn pack_signature_not_restatted_per_object() {
 
     git_in(wt, &["repack", "-ad"]);
     git_in(wt, &["multi-pack-index", "write"]);
-    repo.odb.invalidate_packs();
+    repo.odb().invalidate_packs();
 
     let warm_rel = std::str::from_utf8(&index.entries[0].path).unwrap();
     let warm_data = format!("pack:{warm_rel}");
     let _ = repo
-        .odb
+        .odb()
         .write_with_options(ObjectKind::Blob, warm_data.as_bytes(), Default::default())
         .unwrap();
 
@@ -430,7 +430,7 @@ fn pack_signature_not_restatted_per_object() {
         let rel = std::str::from_utf8(&entry.path).unwrap();
         let data = format!("pack:{rel}");
         let _ = repo
-            .odb
+            .odb()
             .write_with_options(ObjectKind::Blob, data.as_bytes(), Default::default())
             .unwrap();
     }
@@ -456,7 +456,7 @@ fn pack_signature_not_restatted_per_object() {
     let target = wt.join(target_rel);
     fs::write(&target, b"pack:changed").unwrap();
     pin_mtime(&target, INDEX_MTIME.0 + 2, INDEX_MTIME.1);
-    let new_oid = repo.odb.write(ObjectKind::Blob, b"pack:changed").unwrap();
+    let new_oid = repo.odb().write(ObjectKind::Blob, b"pack:changed").unwrap();
     let entry = entry_from_stat(&target, target_rel.as_bytes(), new_oid, MODE_REGULAR).unwrap();
     let mut index = repo.load_index().unwrap();
     index.add_or_replace(entry);

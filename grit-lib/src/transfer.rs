@@ -15,6 +15,8 @@
 //! Push *result* reporting reuses [`crate::push_report::PushRefResult`] /
 //! [`crate::push_report::PushRefStatus`] rather than redefining it.
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -506,7 +508,7 @@ pub(crate) fn build_pack_push_fast(
 ) -> Result<Vec<u8>> {
     use crate::merge_base::{walk_commits_reachable_excluding_ancestors_of, ReachableWalkLimit};
 
-    let repo = crate::repo::Repository::open(local_git_dir, None)?;
+    let repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty())?;
     let hide: Vec<ObjectId> = haves.to_vec();
     let mut commit_set: HashSet<ObjectId> = HashSet::new();
     for &want in wants {
@@ -1231,7 +1233,7 @@ pub fn fetch_local_with_progress(
     let local_repo = if opts.dry_run {
         None
     } else {
-        crate::repo::Repository::open(local_git_dir, None).ok()
+        crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok()
     };
 
     let mut updates: Vec<RefUpdate> = Vec::new();
@@ -1438,7 +1440,7 @@ pub fn push_local(
     // Ancestry (fast-forward) checks run against the LOCAL repo, where the source
     // commits live. A remote-current oid that is not reachable from the source is
     // simply "not an ancestor", which is the correct non-fast-forward verdict.
-    let local_repo = crate::repo::Repository::open(local_git_dir, None).ok();
+    let local_repo = crate::repo::Repository::open(local_git_dir, &RepositoryOptions::empty()).ok();
 
     // The remote's existing ref tips become the `haves` for pack building, so the
     // copied object closure excludes everything the remote already has.

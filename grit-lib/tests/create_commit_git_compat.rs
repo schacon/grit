@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
@@ -81,7 +82,7 @@ fn grit_first_commit_subdirs_index_sorted_for_git() {
     std::fs::write(root.join("d/x.txt"), b"2\n").unwrap();
     std::fs::write(root.join("z.txt"), b"3\n").unwrap();
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("base"), &mut NullProgress).expect("commit");
 
@@ -108,7 +109,7 @@ fn grit_create_commit_initial_validated_by_git() {
     git(root, &["config", "core.logAllRefUpdates", "true"]);
 
     std::fs::write(root.join("README.md"), b"# hi\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let outcome =
         create_commit(&repo, &commit_req("initial grit"), &mut NullProgress).expect("commit");
@@ -141,7 +142,7 @@ fn grit_create_commit_second_validated_by_git() {
     git(root, &["commit", "-q", "-m", "seed"]);
 
     std::fs::write(root.join("a.txt"), b"2\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let outcome =
         create_commit(&repo, &commit_req("second grit"), &mut NullProgress).expect("commit");
@@ -163,7 +164,7 @@ fn git_commits_readable_by_grit_create_commit_chain() {
     git(root, &["commit", "-q", "-m", "from git"]);
 
     std::fs::write(root.join("f.txt"), b"v2\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let outcome =
         create_commit(&repo, &commit_req("from grit"), &mut NullProgress).expect("commit");
@@ -172,7 +173,7 @@ fn git_commits_readable_by_grit_create_commit_chain() {
     let git_head = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("oid");
     assert_eq!(git_head, outcome.oid);
 
-    let obj = repo.odb.read(&outcome.oid).expect("read commit");
+    let obj = repo.odb().read(&outcome.oid).expect("read commit");
     let parsed = parse_commit(&obj.data).expect("parse");
     assert!(parsed.message.contains("from grit"));
 }
@@ -201,7 +202,7 @@ fn amend_rewrites_tip() {
     let first = git_out(root, &["rev-parse", "HEAD"]);
 
     std::fs::write(root.join("a.txt"), b"2\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("second"), &mut NullProgress).expect("commit");
     let old_second = git_out(root, &["rev-parse", "HEAD"]);
@@ -225,7 +226,7 @@ fn amend_keeps_author_and_message() {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("keep me"), &mut NullProgress).expect("commit");
     let before_author = author_signature(root);
@@ -266,7 +267,7 @@ fn amend_preserves_message_bytes() {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"a\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("oneline subject"), &mut NullProgress).expect("commit");
     let baseline = commit_message_bytes(root);
@@ -297,7 +298,7 @@ fn amend_with_new_message() {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("old subject"), &mut NullProgress).expect("commit");
     let author_before = author_signature(root);
@@ -317,7 +318,7 @@ fn amend_root_commit() {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     create_commit(&repo, &commit_req("root"), &mut NullProgress).expect("commit");
     let before_author = author_signature(root);
@@ -347,7 +348,7 @@ fn amend_unborn_errors() {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "core.logAllRefUpdates", "true"]);
     std::fs::write(root.join("a.txt"), b"1\n").unwrap();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let err = create_commit(&repo, &amend_req("nope"), &mut NullProgress).unwrap_err();
     assert!(matches!(err, grit_lib::error::Error::AmendUnborn));

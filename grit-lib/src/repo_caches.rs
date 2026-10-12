@@ -227,7 +227,7 @@ impl RepoCaches {
         repo: &Repository,
         work_tree: &Path,
     ) -> Result<ParsedGitAttributes> {
-        let key = (repo.git_dir.clone(), work_tree.to_path_buf());
+        let key = (repo.git_dir().to_path_buf(), work_tree.to_path_buf());
         {
             let cache = self
                 .attr_stack
@@ -262,7 +262,7 @@ impl RepoCaches {
     ///
     /// Propagates attribute load and I/O errors.
     pub fn load_gitattributes_bare(&self, repo: &Repository) -> Result<ParsedGitAttributes> {
-        let key = repo.git_dir.clone();
+        let key = repo.git_dir().to_path_buf();
         {
             let cache = self
                 .attr_bare
@@ -278,7 +278,7 @@ impl RepoCaches {
         if let Some(g) = crate::attributes::global_attributes_path(repo)? {
             file_stamps.push((g.clone(), attr_file_stamp(&g)));
         }
-        let info = repo.git_dir.join("info/attributes");
+        let info = repo.git_dir().join("info/attributes");
         file_stamps.push((info.clone(), attr_file_stamp(&info)));
         let parsed = load_gitattributes_bare_uncached(repo)?;
         let mut cache = self

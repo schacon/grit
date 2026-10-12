@@ -296,7 +296,11 @@ impl T0008Repo {
     }
 
     fn open_grit(&self) -> Repository {
-        Repository::open(&self.root.join(".git"), Some(&self.root)).expect("open grit")
+        Repository::open(
+            &self.root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(&self.root),
+        )
+        .expect("open grit")
     }
 }
 
@@ -401,7 +405,11 @@ fn t0008_symlinked_gitignore_emits_warning_and_is_skipped() {
     fs::write(root.join("ignored"), b"").expect("ignored");
     fs::write(root.join(".gitignore-real"), "ignored\n").expect("real");
 
-    let repo = Repository::open(&root.join(".git"), Some(&root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&root),
+    )
+    .expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
     let (ignored, _) = matcher
         .check_path(&repo, None, "ignored", false)
@@ -491,7 +499,11 @@ fn t3001_exclude_from_and_per_directory_name() {
     fs::write(root.join("custom"), b"").expect("touch");
     fs::write(root.join("sub/custom"), b"").expect("touch");
 
-    let repo = Repository::open(&root.join(".git"), Some(&root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&root),
+    )
+    .expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
     matcher.set_per_directory_name("custom-ignore");
     matcher
@@ -532,7 +544,8 @@ fn default_global_excludes_from_xdg_config_git_ignore() {
     env.home = Some(home.as_os_str().to_os_string());
     env.cwd = root.clone();
     let options = RepositoryOptions::with_environment(env);
-    let repo = Repository::open_with(&options, &root.join(".git"), Some(&root)).expect("open");
+    let repo = Repository::open(&root.join(".git"), &&options.clone().with_work_tree(&root))
+        .expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
 
     for path in ["xdgignored_a", "src/xdgignored_b", "a"] {
@@ -561,10 +574,9 @@ fn default_global_excludes_from_xdg_config_home() {
     env.home = Some(home.as_os_str().to_os_string());
     env.xdg_config_home = Some(xdg.display().to_string());
     env.cwd = root.clone();
-    let repo = Repository::open_with(
-        &RepositoryOptions::with_environment(env),
+    let repo = Repository::open(
         &root.join(".git"),
-        Some(&root),
+        &RepositoryOptions::with_environment(env).with_work_tree(root.clone()),
     )
     .expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
@@ -589,7 +601,11 @@ fn t3003_crlf_gitignore_lines() {
     fs::write(root.join(".gitignore"), b"crlf\r\n").expect("crlf gi");
     fs::write(root.join("crlf"), b"").expect("file");
 
-    let repo = Repository::open(&root.join(".git"), Some(&root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&root),
+    )
+    .expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
     let home = unique_tmp("ignore", "crlf-home");
     let out = git_cmd(&["check-ignore", "-v", "-n", "crlf"])

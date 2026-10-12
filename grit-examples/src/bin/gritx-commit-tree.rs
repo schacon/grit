@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::repo::Repository;
 
@@ -26,7 +27,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let tree = cli.tree.parse()?;
     let parents = cli
         .parents
@@ -47,7 +48,7 @@ fn run() -> Result<()> {
         extra_headers: Vec::new(),
     };
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))?;
     println!("{oid}");
     Ok(())

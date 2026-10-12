@@ -93,16 +93,18 @@ fn grit_init_add_nfd_untracked_stores_nfc_in_index() {
         String::from_utf8_lossy(&commit.stdout)
     );
 
+    use grit_lib::environment::RepositoryOptions;
     use grit_lib::objects::{parse_commit, parse_tree};
     use grit_lib::repo::Repository;
     use grit_lib::state::resolve_head;
 
-    let repo = Repository::discover(Some(dir.path())).expect("discover repo");
-    let head_state = resolve_head(&repo.git_dir).expect("resolve head");
+    let repo =
+        Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("discover repo");
+    let head_state = resolve_head(&repo.git_dir()).expect("resolve head");
     let head = head_state.oid().expect("HEAD after commit").clone();
-    let commit_obj = repo.odb.read(&head).expect("read commit");
+    let commit_obj = repo.odb().read(&head).expect("read commit");
     let commit_data = parse_commit(&commit_obj.data).expect("parse commit");
-    let tree_obj = repo.odb.read(&commit_data.tree).expect("read tree");
+    let tree_obj = repo.odb().read(&commit_data.tree).expect("read tree");
     let tree_entries = parse_tree(&tree_obj.data).expect("parse tree");
     assert_eq!(tree_entries.len(), 1);
     assert_eq!(

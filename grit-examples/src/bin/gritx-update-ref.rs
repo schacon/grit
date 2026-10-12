@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::resolve_name;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 
@@ -20,8 +21,8 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let oid = resolve_name(&repo, &cli.new_value)?;
-    refs::write_ref(&repo.git_dir, &cli.refname, &oid)?;
+    refs::write_ref(&repo.git_dir(), &cli.refname, &oid)?;
     Ok(())
 }

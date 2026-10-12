@@ -280,7 +280,7 @@ pub fn stat_branch_pair(
     mode: AheadBehindMode,
 ) -> Result<TrackingStat> {
     let branch_ref = branch_head_ref(branch_short);
-    let local_oid = match refs::resolve_ref(&repo.git_dir, &branch_ref) {
+    let local_oid = match refs::resolve_ref(repo.git_dir(), &branch_ref) {
         Ok(o) => o,
         Err(_) => {
             return Ok(TrackingStat::Diverged {
@@ -290,7 +290,7 @@ pub fn stat_branch_pair(
             });
         }
     };
-    let upstream_oid = match refs::resolve_ref(&repo.git_dir, base_ref) {
+    let upstream_oid = match refs::resolve_ref(repo.git_dir(), base_ref) {
         Ok(o) => o,
         Err(_) => {
             return Ok(TrackingStat::Gone {
@@ -366,7 +366,7 @@ pub fn format_tracking_info(
     mode: AheadBehindMode,
     show_divergence_advice: bool,
 ) -> Result<String> {
-    let config_path = repo.git_dir.join("config");
+    let config_path = repo.git_dir().join("config");
     let config_raw = fs::read_to_string(&config_path).unwrap_or_default();
     let compare_raw =
         parse_status_compare_branches(&config_raw).unwrap_or_else(|| "@{upstream}".to_string());

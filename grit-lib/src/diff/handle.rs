@@ -41,7 +41,7 @@ impl<'repo> Diff<'repo> {
         old_tree: Option<&ObjectId>,
         new_tree: Option<&ObjectId>,
     ) -> Result<Vec<DiffEntry>> {
-        diff_trees(&self.repo.odb, old_tree, new_tree, "")
+        diff_trees(self.repo.odb(), old_tree, new_tree, "")
     }
 
     /// Diff the index against a tree (typically `HEAD`'s tree).
@@ -56,7 +56,7 @@ impl<'repo> Diff<'repo> {
         tree_oid: Option<&ObjectId>,
         ignore_submodules: bool,
     ) -> Result<Vec<DiffEntry>> {
-        diff_index_to_tree(&self.repo.odb, index, tree_oid, ignore_submodules)
+        diff_index_to_tree(self.repo.odb(), index, tree_oid, ignore_submodules)
     }
 
     /// Diff the working tree against the index.
@@ -73,11 +73,10 @@ impl<'repo> Diff<'repo> {
     ) -> Result<Vec<DiffEntry>> {
         let work_tree = self
             .repo
-            .work_tree
-            .as_deref()
+            .work_tree()
             .ok_or_else(|| crate::error::Error::NotARepository("bare repository".into()))?;
         diff_index_to_worktree(
-            &self.repo.odb,
+            self.repo.odb(),
             index,
             work_tree,
             ignore_submodule_untracked,

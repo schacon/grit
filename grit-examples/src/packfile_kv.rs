@@ -462,7 +462,7 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     use grit_lib::objects::{serialize_tree, TreeEntry};
     use grit_lib::odb::OdbBuilder;
     use grit_lib::refs::write_ref;
-    use grit_lib::repo::{init_repository, Repository};
+    use grit_lib::repo::{init_repository, Repository, RepositoryBuilder};
     use grit_lib::rev_list::{rev_list, RevListOptions};
 
     init_repository(
@@ -477,26 +477,27 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     let pack_path = git_dir.join("packfile-kv.store");
 
     let kv = Arc::new(PackfileKvStore::create(&pack_path, HashAlgo::Sha1)?);
-    let repo = Repository::open_with_odb(
-        &RepositoryOptions::empty(),
-        &git_dir,
-        Some(repo_root),
-        OdbBuilder::files(&objects_dir)
-            .primary(kv.clone())
-            .alternates(false),
-    )?;
+    let repo = RepositoryBuilder::new(RepositoryOptions::empty())
+        .odb_builder(
+            OdbBuilder::files(&objects_dir)
+                .primary(kv.clone())
+                .alternates(false),
+        )
+        .open(&git_dir, Some(repo_root))?;
 
-    let blob = repo.odb.write(ObjectKind::Blob, b"hello packfile kv\n")?;
+    let blob = repo.odb().write(ObjectKind::Blob, b"hello packfile kv\n")?;
     let tree_body = serialize_tree(&[TreeEntry {
         mode: 0o100644,
         name: b"hello.txt".to_vec(),
         oid: blob,
     }]);
-    let tree = repo.odb.write(ObjectKind::Tree, &tree_body)?;
+    let tree = repo.odb().write(ObjectKind::Tree, &tree_body)?;
     let commit_body = format!(
         "tree {tree}\nauthor Demo <demo@example.com> 1 +0000\ncommitter Demo <demo@example.com> 1 +0000\n\npackfile kv demo\n"
     );
-    let commit = repo.odb.write(ObjectKind::Commit, commit_body.as_bytes())?;
+    let commit = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())?;
     write_ref(&git_dir, "refs/heads/main", &commit)?;
 
     let tip = commit.to_hex();

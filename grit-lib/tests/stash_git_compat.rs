@@ -8,6 +8,7 @@ use grit_lib::porcelain::stash::{
 };
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{add_linked_worktree, AddLinkedWorktreeOptions};
@@ -24,7 +25,11 @@ fn init_repo(root: &std::path::Path) {
 }
 
 fn open_grit(root: &std::path::Path) -> Repository {
-    Repository::open(&root.join(".git"), Some(root)).expect("open grit repo")
+    Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open grit repo")
 }
 
 fn stash_options(include_untracked: bool, message: Option<&str>) -> StashCreateOptions {
@@ -697,7 +702,8 @@ fn t3908_stash_in_linked_worktree() {
 
     std::fs::write(linked.join("f"), "linked change\n").expect("modify");
     push_stash(
-        &Repository::discover(Some(&linked)).expect("discover linked"),
+        &Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty())
+            .expect("discover linked"),
         &stash_options(false, Some("from-linked")),
     )
     .expect("stash from linked")

@@ -5,6 +5,7 @@ mod unix {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
+    use grit_lib::environment::RepositoryOptions;
     use grit_lib::objects::ObjectId;
     use grit_lib::porcelain::checkout::checkout_between_trees;
     use grit_lib::repo::Repository;
@@ -78,8 +79,11 @@ mod unix {
                 ])
                 .status()
                 .expect("git clone no-checkout");
-            let grit_repo =
-                Repository::open(&grit_dest.join(".git"), Some(&grit_dest)).expect("open");
+            let grit_repo = Repository::open(
+                &grit_dest.join(".git"),
+                &RepositoryOptions::empty().with_work_tree(&grit_dest),
+            )
+            .expect("open");
             checkout_between_trees(&grit_repo, None, &tree).expect("fresh checkout");
             let grit_mode = mode_bits(&grit_dest.join("run.sh"));
             assert_eq!(

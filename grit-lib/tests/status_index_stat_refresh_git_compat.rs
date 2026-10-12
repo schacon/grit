@@ -10,6 +10,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use grit_lib::diff::stat_matches;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
@@ -41,8 +42,11 @@ fn status_trusts_git_refreshed_index_without_rehashing() {
     git(repo_root, &["commit", "-qm", "initial"]);
     git(repo_root, &["update-index", "--refresh"]);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
     let index_path = grit_repo.index_path();
     let index_mtime_before = fs::metadata(&index_path)
         .expect("index metadata")
@@ -106,8 +110,11 @@ fn status_refreshes_index_stat_after_touch_and_second_run_is_faster() {
     std::thread::sleep(Duration::from_secs(1));
     touch_all_tracked(repo_root);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
     let index_path = grit_repo.index_path();
     let index_mtime_before = fs::metadata(&index_path)
         .expect("index metadata")
@@ -204,7 +211,11 @@ fn status_succeeds_when_index_lock_held_after_touch() {
         "system git status must succeed with index.lock"
     );
 
-    let grit_repo = Repository::open(&git_dir, Some(repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
     let index_path = grit_repo.index_path();
     let index_mtime_before = fs::metadata(&index_path)
         .expect("index metadata")
@@ -264,8 +275,11 @@ fn status_on_racy_git_index_verifies_content_once() {
     }
     filetime::set_file_mtime(&index_path, pinned).expect("pin index mtime");
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
     let index_mtime_before = fs::metadata(&index_path)
         .expect("index metadata")
         .modified()
@@ -345,7 +359,11 @@ fn status_on_git_created_sparse_index_after_touch() {
     }
 
     let git_dir = repo_root.join(".git");
-    let grit_repo = Repository::open(&git_dir, Some(&repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(&repo_root),
+    )
+    .expect("open grit repo");
     let index_before = Index::load(&grit_repo.index_path()).expect("load sparse index");
     let placeholders_before = sparse_directory_placeholder_count(&index_before);
     assert!(
@@ -408,8 +426,11 @@ fn status_deep_linear_tree_second_run_stays_fast_with_autocrlf() {
     git(repo_root, &["add", "-A"]);
     git(repo_root, &["commit", "-qm", "big"]);
 
-    let grit_repo =
-        Repository::open(&repo_root.join(".git"), Some(repo_root)).expect("open grit repo");
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
     let opts = StatusOptions::default();
 
     let first_start = Instant::now();

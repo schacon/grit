@@ -18,6 +18,7 @@
 use similar::{ChangeTag, TextDiff};
 
 use crate::diff::{diff_trees_with_renames, zero_oid, DiffEntry, DiffStatus};
+use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::hash::ObjectHasher;
 use crate::merge_file;
@@ -880,12 +881,15 @@ mod tests {
             }
         }
 
-        let repo =
-            crate::repo::Repository::open(&dir.path().join(".git"), Some(dir.path())).unwrap();
+        let repo = crate::repo::Repository::open(
+            &dir.path().join(".git"),
+            &RepositoryOptions::empty().with_work_tree(dir.path()),
+        )
+        .unwrap();
         let git_stable = git_patch_ids_from_log(dir.path(), "--stable");
         let assert_odb_matches_git = |commit_hex: &str, label: &str| {
             let commit: ObjectId = commit_hex.trim().parse().expect("commit oid");
-            let grit = compute_patch_id(HashAlgo::Sha1, &repo.odb, &commit)
+            let grit = compute_patch_id(HashAlgo::Sha1, &repo.odb(), &commit)
                 .expect("patch")
                 .expect("some");
             let git_patch = git_stable
@@ -914,10 +918,14 @@ mod tests {
             &["rev-list", "--max-count=1", "--skip=2", "HEAD"],
         );
         let add_h: ObjectId = add_h.trim().parse().unwrap();
-        let filtered =
-            compute_patch_id_for_paths(HashAlgo::Sha1, &repo.odb, &add_h, &[String::from("h.txt")])
-                .expect("filtered h.txt")
-                .expect("some h.txt");
+        let filtered = compute_patch_id_for_paths(
+            HashAlgo::Sha1,
+            &repo.odb(),
+            &add_h,
+            &[String::from("h.txt")],
+        )
+        .expect("filtered h.txt")
+        .expect("some h.txt");
         let git_h = git_stable
             .iter()
             .find(|(_, c)| c == &add_h)
@@ -930,7 +938,7 @@ mod tests {
         assert!(
             compute_patch_id_for_paths(
                 HashAlgo::Sha1,
-                &repo.odb,
+                &repo.odb(),
                 &add_h,
                 &[String::from("f.txt")],
             )
@@ -950,7 +958,7 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        assert!(compute_patch_id(HashAlgo::Sha1, &repo.odb, &merge_tip)
+        assert!(compute_patch_id(HashAlgo::Sha1, &repo.odb(), &merge_tip)
             .expect("merge")
             .is_none());
     }

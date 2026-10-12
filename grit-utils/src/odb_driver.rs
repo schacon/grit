@@ -6,6 +6,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{diff_trees, unified_diff_with_prefix, DiffStatus};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{parse_commit, Object, ObjectId, ObjectKind};
 use grit_lib::pack::{read_object_from_pack_at_offset, read_pack_index_cached, PackIndex};
@@ -15,7 +16,7 @@ use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
 
 /// Read hex object ids from stdin and emit `git cat-file --batch` lines.
 pub fn cat_file_batch(repo: &Repository) -> Result<()> {
-    repo.odb.with_pack_read_context(|| {
+    repo.odb().with_pack_read_context(|| {
         let stdin = io::stdin();
         let mut stdout = io::stdout().lock();
         for line in stdin.lock().lines() {
@@ -42,7 +43,7 @@ pub fn cat_file_batch_check(repo: &Repository) -> Result<()> {
             continue;
         }
         let oid = ObjectId::from_hex(hex).with_context(|| format!("parse oid {hex}"))?;
-        match repo.odb.read_info(&oid) {
+        match repo.odb().read_info(&oid) {
             Ok(info) => {
                 writeln!(stdout, "{oid} {} {}", info.kind.as_str(), info.size)?;
             }
@@ -57,8 +58,8 @@ pub fn cat_file_batch_check(repo: &Repository) -> Result<()> {
 
 /// Emit every packed object in pack-file offset order (like `cat-file --batch-all-objects --unordered`).
 pub fn cat_file_batch_all_unordered(repo: &Repository) -> Result<()> {
-    let objects_dir = repo.odb.objects_dir();
-    repo.odb.with_pack_read_context(|| {
+    let objects_dir = repo.odb().objects_dir();
+    repo.odb().with_pack_read_context(|| {
         let pack_dir = objects_dir.join("pack");
         let mut stdout = BufWriter::with_capacity(1 << 20, io::stdout().lock());
         if !pack_dir.is_dir() {
@@ -94,7 +95,10 @@ fn emit_pack_in_offset_order(out: &mut impl Write, idx: &PackIndex) -> Result<()
 }
 
 fn write_batch_object(out: &mut impl Write, repo: &Repository, oid: &ObjectId) -> Result<()> {
-    let object = repo.odb.read(oid).with_context(|| format!("read {oid}"))?;
+    let object = repo
+        .odb()
+        .read(oid)
+        .with_context(|| format!("read {oid}"))?;
     write_batch_object_body(out, oid, &object)
 }
 
@@ -139,7 +143,7 @@ pub fn rev_list_objects(repo: &Repository) -> Result<()> {
         ..Default::default()
     };
     let result = repo
-        .odb
+        .odb()
         .with_pack_read_context(|| rev_list(repo, &[], &[], &opts))
         .context("rev-list --objects --all")?;
     let mut stdout = io::stdout().lock();
@@ -175,7 +179,7 @@ pub fn log_patch(repo: &Repository, limit: usize) -> Result<()> {
 }
 
 fn write_commit_patch(out: &mut impl Write, repo: &Repository, oid: &ObjectId) -> Result<()> {
-    let raw = repo.odb.read(oid).context("read commit")?;
+    let raw = repo.odb().read(oid).context("read commit")?;
     let commit = parse_commit(&raw.data).context("parse commit")?;
     writeln!(out, "commit {oid}")?;
     if commit.parents.len() > 1 {
@@ -200,10 +204,10 @@ fn write_commit_patch(out: &mut impl Write, repo: &Repository, oid: &ObjectId) -
         None
     } else {
         let parent_oid = commit.parents[0];
-        let parent_raw = repo.odb.read(&parent_oid).context("read parent")?;
+        let parent_raw = repo.odb().read(&parent_oid).context("read parent")?;
         Some(parse_commit(&parent_raw.data).context("parse parent")?.tree)
     };
-    let entries = diff_trees(&repo.odb, parent_tree.as_ref(), Some(&commit.tree), "")?;
+    let entries = diff_trees(&repo.odb(), parent_tree.as_ref(), Some(&commit.tree), "")?;
     for entry in entries {
         write_diff_entry(out, repo, &entry)?;
     }
@@ -311,7 +315,7 @@ fn min_abbrev_len(repo: &Repository) -> usize {
 
 fn collect_hex_ids_for_abbrev(repo: &Repository) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    let objects = repo.git_dir.join("objects");
+    let objects = repo.git_dir().join("objects");
     collect_loose_hex_ids(&objects, &mut ids)?;
     let pack_dir = objects.join("pack");
     if pack_dir.is_dir() {
@@ -370,7 +374,7 @@ fn collect_loose_hex_ids(objects: &Path, ids: &mut Vec<String>) -> Result<()> {
 fn abbreviate_oid(repo: &Repository, oid: &ObjectId) -> Result<String> {
     let min_len = min_abbrev_len(repo);
     let target = oid.to_hex();
-    if !repo.odb.exists(oid) {
+    if !repo.odb().exists(oid) {
         return Ok(target[..min_len.min(target.len())].to_owned());
     }
     let all = collect_hex_ids_for_abbrev(repo)?;
@@ -452,7 +456,7 @@ fn read_blob_or_empty(repo: &Repository, oid: ObjectId, missing: bool) -> Result
     if missing {
         return Ok(Vec::new());
     }
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     if object.kind != ObjectKind::Blob {
         return Ok(Vec::new());
     }
@@ -484,7 +488,7 @@ pub fn rev_list_count_objects(repo: &Repository) -> Result<()> {
         ..Default::default()
     };
     let result = repo
-        .odb
+        .odb()
         .with_pack_read_context(|| rev_list(repo, &[], &[], &opts))
         .context("rev-list --count --objects --all")?;
     let n = result.count_with_objects_total();
@@ -510,7 +514,7 @@ impl Write for CountingWriter {
 /// Stateless v0 upload-pack serving every ref; output goes to a sink, bytes on stdout.
 pub fn serve_clone(repo: &Repository) -> Result<()> {
     let req_path = repo
-        .git_dir
+        .git_dir()
         .join(crate::serve_request::SERVE_CLONE_REQUEST_FILE);
     let req = std::fs::read(&req_path)
         .with_context(|| format!("read serve-clone request {}", req_path.display()))?;
@@ -533,7 +537,7 @@ pub fn checkout_branch_force(repo: &Repository, branch: &str) -> Result<()> {
     use grit_lib::objects::parse_commit;
     use grit_lib::porcelain::checkout::checkout_between_trees;
     let oid = if branch.eq_ignore_ascii_case("HEAD") {
-        *grit_lib::state::resolve_head(&repo.git_dir)?
+        *grit_lib::state::resolve_head(&repo.git_dir())?
             .oid()
             .context("HEAD does not resolve to a commit")?
     } else {
@@ -542,7 +546,7 @@ pub fn checkout_branch_force(repo: &Repository, branch: &str) -> Result<()> {
     };
     let commit = parse_commit(
         &repo
-            .odb
+            .odb()
             .read(&oid)
             .with_context(|| format!("read commit {oid}"))?
             .data,
@@ -571,7 +575,7 @@ pub fn index_pack_records(
             .unwrap_or_else(|_| Parallelism::resolve(None)),
     };
     let _records =
-        pack_index_records_with_threads(&pack, &repo.odb, parallelism).context("index-pack")?;
+        pack_index_records_with_threads(&pack, &repo.odb(), parallelism).context("index-pack")?;
     Ok(())
 }
 
@@ -597,7 +601,7 @@ pub fn pack_build_all_stdout(repo: &Repository, delta_threads: usize) -> Result<
         write_threads: Some(workers),
     };
     let mut stdout = io::stdout().lock();
-    PackObjects::new(&repo.odb, opts)
+    PackObjects::new(&repo.odb(), opts)
         .wants(&wants)
         .write_to(&mut stdout)
         .context("pack-objects --all")?;
@@ -616,17 +620,17 @@ pub fn diff_rename_m(
 
     let old_oid = resolve_rev(repo, old_rev)?;
     let new_oid = resolve_rev(repo, new_rev)?;
-    let old_raw = repo.odb.read(&old_oid).context("read old commit")?;
-    let new_raw = repo.odb.read(&new_oid).context("read new commit")?;
+    let old_raw = repo.odb().read(&old_oid).context("read old commit")?;
+    let new_raw = repo.odb().read(&new_oid).context("read new commit")?;
     let old_commit = parse_commit(&old_raw.data).context("parse old commit")?;
     let new_commit = parse_commit(&new_raw.data).context("parse new commit")?;
     let entries = diff_trees(
-        &repo.odb,
+        &repo.odb(),
         Some(&old_commit.tree),
         Some(&new_commit.tree),
         "",
     )?;
-    let entries = detect_renames(&repo.odb, None, entries, threshold);
+    let entries = detect_renames(&repo.odb(), None, entries, threshold);
     let mut out = io::stdout().lock();
     for entry in entries {
         let path = entry
@@ -644,7 +648,7 @@ fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
         return ObjectId::from_hex(rev).context("parse oid");
     }
     let mut cmd = std::process::Command::new("git");
-    let cwd = repo.work_tree.as_deref().unwrap_or(repo.git_dir.as_path());
+    let cwd = repo.work_tree().unwrap_or_else(|| repo.git_dir());
     cmd.args(["rev-parse", rev]).current_dir(cwd);
     let out = cmd.output().context("git rev-parse in driver")?;
     if !out.status.success() {
@@ -659,8 +663,11 @@ fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
 /// Open a bare or normal repo at `path` for driver subcommands.
 pub fn open_repo(path: &Path) -> Result<Repository> {
     if path.join("HEAD").is_file() {
-        Ok(Repository::open(path, None)?)
+        Ok(Repository::open(path, &RepositoryOptions::empty())?)
     } else {
-        Ok(Repository::discover(Some(path))?)
+        Ok(Repository::discover(
+            Some(path),
+            &RepositoryOptions::empty(),
+        )?)
     }
 }

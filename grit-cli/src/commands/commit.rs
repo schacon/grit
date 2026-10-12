@@ -54,7 +54,7 @@ impl MarkdownRender for CommitOutcome {
 pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
     let repo = context::discover()?;
 
-    match resolve_head(&repo.git_dir)? {
+    match resolve_head(&repo.git_dir())? {
         HeadState::Branch { .. } => {}
         HeadState::Detached { .. } => bail!("HEAD is detached; grit commit needs a branch"),
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
@@ -108,7 +108,7 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
     let subject = if let Some(m) = message.as_ref().filter(|m| !m.trim().is_empty()) {
         subject_line(&format!("{}\n", m.trim()))
     } else {
-        let obj = repo.odb.read(&outcome.oid).context("read new commit")?;
+        let obj = repo.odb().read(&outcome.oid).context("read new commit")?;
         subject_line(&parse_commit(&obj.data).context("parse new commit")?.message)
     };
 

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{blame_file, BlameOptions};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -204,7 +205,8 @@ fn build_blame_fixture() -> (tempfile::TempDir, Repository, String) {
     let mid = git_output(&root, &["rev-parse", "HEAD~2"])
         .trim()
         .to_owned();
-    let repo = Repository::discover(Some(&root)).expect("open grit repo");
+    let repo =
+        Repository::discover(Some(&root), &RepositoryOptions::empty()).expect("open grit repo");
     (tmp, repo, mid)
 }
 
@@ -225,8 +227,8 @@ fn blame_matches_git_porcelain_after_adcb_permutation() {
     git_run(root, &["add", file]);
     git_run(root, &["commit", "-m", "move"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, file, None, None);
 }
 
@@ -273,8 +275,8 @@ fn blame_matches_git_for_all_four_line_permutations() {
         git_run(root, &["add", file]);
         git_run(root, &["commit", "-m", "move"]);
 
-        let repo = Repository::discover(Some(root)).expect("open");
-        let dir = repo.work_tree.as_deref().expect("worktree");
+        let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+        let dir = repo.work_tree().expect("worktree");
         assert_blame_matches(&repo, dir, file, None, None);
     }
 }
@@ -296,8 +298,8 @@ fn blame_matches_git_porcelain_after_dacb_style_permutation() {
     git_run(root, &["add", file]);
     git_run(root, &["commit", "-m", "move"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, file, None, None);
 }
 
@@ -318,8 +320,8 @@ fn blame_matches_git_porcelain_after_rotate_line_to_head() {
     git_run(root, &["add", file]);
     git_run(root, &["commit", "-m", "move"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, file, None, None);
 }
 
@@ -351,8 +353,8 @@ fn blame_follows_rename_chain_like_git() {
     git_run(root, &["add", "-A"]);
     git_run(root, &["commit", "-m", "move c into dir + extra"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, "dir/c.txt", None, None);
 }
 
@@ -377,8 +379,8 @@ fn blame_follows_rename_when_diff_renames_false() {
     git_run(root, &["add", "b.txt"]);
     git_run(root, &["commit", "-m", "rename and edit line 5"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, "b.txt", None, None);
 }
 
@@ -403,15 +405,15 @@ fn blame_follows_rename_with_diff_rename_limit_200() {
     git_run(root, &["add", "b.txt"]);
     git_run(root, &["commit", "-m", "rename and edit line 5"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, "b.txt", None, None);
 }
 
 #[test]
 fn blame_matches_git_porcelain_at_head_rev_and_line_range() {
     let (_tmp, repo, mid_rev) = build_blame_fixture();
-    let dir = repo.work_tree.as_deref().expect("worktree");
+    let dir = repo.work_tree().expect("worktree");
     let file = "story.txt";
 
     assert_blame_matches(&repo, dir, file, None, None);

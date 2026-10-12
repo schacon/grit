@@ -8,6 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -72,7 +73,9 @@ fn t0090_cache_tree_matches_git_write_tree() {
     let git_tree_hex = git_out(&repo_dir, &["write-tree"]);
     let git_tree = ObjectId::from_hex(&git_tree_hex).expect("git write-tree oid");
 
-    let grit_repo = Repository::discover(Some(&repo_dir)).expect("open repo");
+    let grit_repo =
+        Repository::discover(Some(repo_dir.as_path()), &RepositoryOptions::empty())
+            .expect("open repo");
     let mut index = grit_repo.load_index().expect("load index");
     assert!(
         index.cache_tree.is_some(),
@@ -81,11 +84,11 @@ fn t0090_cache_tree_matches_git_write_tree() {
 
     index.invalidate_cache_tree_for_path(b"d2");
     let grit_tree =
-        write_tree_update_index(&grit_repo.odb, &mut index, "", WriteTreeFlags::default())
+        write_tree_update_index(grit_repo.odb(), &mut index, "", WriteTreeFlags::default())
             .expect("grit write-tree");
     assert_eq!(grit_tree, git_tree);
     assert!(cache_tree_fully_valid(
-        &grit_repo.odb,
+        grit_repo.odb(),
         index.cache_tree.as_ref()
     ));
 

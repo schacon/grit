@@ -78,7 +78,7 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
     let mut options = RepositoryOptions::with_environment(env.clone());
     options.reference_unix_time = Some(FIXED_EPOCH);
 
-    let repo = Repository::discover_with(&options, Some(root)).expect("discover with environment");
+    let repo = Repository::discover(Some(root), &options).expect("discover with environment");
     fs::write(root.join("f"), b"x\n").expect("worktree file");
     stage(
         &repo,
@@ -111,7 +111,7 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
     .expect("create_commit");
     let grit_oid = outcome.oid;
 
-    let commit_obj = repo.odb.read(&grit_oid).expect("read commit");
+    let commit_obj = repo.odb().read(&grit_oid).expect("read commit");
     assert_eq!(commit_obj.kind, ObjectKind::Commit);
     let parsed = parse_commit(&commit_obj.data).expect("parse");
     let tree_hex = parsed.tree.to_hex();

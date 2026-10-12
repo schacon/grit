@@ -1,5 +1,6 @@
 //! Stash apply/pop with `core.autocrlf=true` and CRLF worktree bytes (issue #958).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::stash::{apply_stash, pop_stash, push_stash, StashCreateOptions};
 use grit_lib::repo::Repository;
 use grit_test_support::git;
@@ -24,7 +25,11 @@ fn stash_options() -> StashCreateOptions {
 }
 
 fn open_grit(root: &std::path::Path) -> Repository {
-    Repository::open(&root.join(".git"), Some(root)).expect("open grit repo")
+    Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open grit repo")
 }
 
 /// After stash reset, simulate Git for Windows: LF blob in the index, CRLF on disk, clean status.
@@ -55,7 +60,7 @@ fn apply_stash_succeeds_on_clean_tree_with_autocrlf() {
 
     ensure_crlf_worktree_lf_index(dir.path());
 
-    let stash_oid = grit_lib::refs::resolve_ref(&repo.git_dir, "refs/stash").expect("stash ref");
+    let stash_oid = grit_lib::refs::resolve_ref(&repo.git_dir(), "refs/stash").expect("stash ref");
 
     let grit_dir = tempfile::tempdir().expect("grit copy");
     std::process::Command::new("cp")

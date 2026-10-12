@@ -672,7 +672,7 @@ pub fn merge_completion_sentinels() -> &'static [&'static str] {
 pub fn finish_merge_state(repo: &Repository) -> Result<bool> {
     let autostash_conflicts = crate::porcelain::stash::apply_merge_autostash(repo)?;
     let _ = crate::rerere::finish_merge_rerere(repo)?;
-    clear_merge_state(&repo.git_dir)?;
+    clear_merge_state(repo.git_dir())?;
     Ok(autostash_conflicts)
 }
 

@@ -2554,7 +2554,7 @@ fn finish_branch_commit_ref_lock_files(
         let mut file = fs::OpenOptions::new().write(true).open(&lock.lock_path)?;
         file.write_all(content.as_bytes())?;
     }
-    fs::rename(&lock.lock_path, &path).inspect_err(|_| {
+    fs::rename(&lock.lock_path, &path).inspect_err(|_err| {
         abort_loose_ref_lock(&lock.lock_path);
     })?;
     Ok(())
@@ -2846,7 +2846,7 @@ pub fn list_refs_for_repository(
     repo: &crate::repo::Repository,
     prefix: &str,
 ) -> Result<Vec<(String, ObjectId)>> {
-    let git_dir = &repo.git_dir;
+    let git_dir = &repo.git_dir();
     let prefix_norm = normalize_list_refs_prefix(git_dir, prefix);
     let mut results = collect_resolved_refs(repo.refs(), prefix_norm.as_str())?;
     if crate::worktree_ref::is_linked_worktree_git_dir(git_dir) {
@@ -3260,7 +3260,7 @@ mod update_branch_for_commit_tests {
             crate::RefStorageFormat::Files,
         )
         .unwrap();
-        let git_dir = repo.git_dir.clone();
+        let git_dir = repo.git_dir().to_path_buf();
         let oid1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
         let oid2 = sample_oid("1111111111111111111111111111111111111111");
         let oid3 = sample_oid("2222222222222222222222222222222222222222");
@@ -3316,7 +3316,7 @@ mod update_branch_for_commit_tests {
             crate::RefStorageFormat::Reftable,
         )
         .unwrap();
-        let git_dir = repo.git_dir.clone();
+        let git_dir = repo.git_dir().to_path_buf();
         let new_oid = sample_oid("3333333333333333333333333333333333333333");
 
         crate::reftable::set_test_inject_reftable_transaction_fail(true);

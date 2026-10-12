@@ -327,7 +327,7 @@ mod update_refs_tests {
                 expected_old: None,
             },
         ];
-        let err = update_refs(&repo.git_dir, &items).expect_err("duplicate");
+        let err = update_refs(&repo.git_dir(), &items).expect_err("duplicate");
         match &err {
             Error::RefStore(RefStoreError::DuplicateUpdate { name }) => {
                 assert_eq!(name, "refs/heads/dup");
@@ -347,7 +347,7 @@ mod update_refs_tests {
             crate::RefStorageFormat::Files,
         )
         .expect("init");
-        let git_dir = repo.git_dir;
+        let git_dir = repo.git_dir();
         let c1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
         let c2 = sample_oid("1111111111111111111111111111111111111111");
         refs::write_ref(&git_dir, "refs/heads/cas", &c2).expect("seed");
@@ -380,7 +380,7 @@ mod update_refs_tests {
             crate::RefStorageFormat::Reftable,
         )
         .expect("init");
-        let git_dir = repo.git_dir;
+        let git_dir = repo.git_dir();
         let c1 = sample_oid("67bf698f3ab735e92fb011a99cff3497c44d30c1");
         let c2 = sample_oid("1111111111111111111111111111111111111111");
         crate::refs::write_ref(&git_dir, "refs/heads/locked-cas", &c1).expect("seed");

@@ -656,7 +656,7 @@ mod tests {
 
     fn empty_commit(repo: &Repository, parents: Vec<ObjectId>, committer: &str) -> ObjectId {
         let raw = serialize_commit(&CommitData {
-            tree: repo.odb.write(ObjectKind::Tree, b"").expect("tree"),
+            tree: repo.odb().write(ObjectKind::Tree, b"").expect("tree"),
             parents,
             author: committer.into(),
             committer: committer.into(),
@@ -667,7 +667,7 @@ mod tests {
             raw_message: None,
             extra_headers: Vec::new(),
         });
-        repo.odb.write(ObjectKind::Commit, &raw).expect("commit")
+        repo.odb().write(ObjectKind::Commit, &raw).expect("commit")
     }
 
     #[test]
@@ -681,8 +681,8 @@ mod tests {
             crate::RefStorageFormat::Files,
         )
         .expect("init");
-        let blob = repo.odb.write(ObjectKind::Blob, b"x").expect("blob");
-        let err = super::load_commit_graph_commit_info(&repo.odb, blob).unwrap_err();
+        let blob = repo.odb().write(ObjectKind::Blob, b"x").expect("blob");
+        let err = super::load_commit_graph_commit_info(&repo.odb(), blob).unwrap_err();
         assert!(matches!(err, crate::error::Error::CorruptObject(_)));
     }
 
@@ -707,14 +707,14 @@ mod tests {
         for oid in &sorted {
             infos.insert(
                 *oid,
-                super::load_commit_graph_commit_info(&repo.odb, *oid).expect("info"),
+                super::load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
             );
         }
         let bloom = BloomFilterSettings::default();
         let (bytes, _) = super::build_commit_graph_bytes(
             &sorted,
             &infos,
-            &repo.odb,
+            &repo.odb(),
             false,
             &bloom,
             None,
@@ -742,8 +742,8 @@ mod tests {
         )
         .expect("init");
         let mut index = Index::new();
-        index.hash_algo = repo.odb.hash_algo();
-        let blob = repo.odb.write(ObjectKind::Blob, b"a\n").expect("blob");
+        index.hash_algo = repo.odb().hash_algo();
+        let blob = repo.odb().write(ObjectKind::Blob, b"a\n").expect("blob");
         index.add_or_replace(IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,
@@ -761,7 +761,7 @@ mod tests {
             path: b"a.txt".to_vec(),
             base_index_pos: 0,
         });
-        let tree = write_tree_from_index(&repo.odb, &index, "").expect("tree");
+        let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
         let mut sorted = Vec::new();
         let mut infos = HashMap::new();
         for t in [1i64, 2, 3] {
@@ -777,10 +777,10 @@ mod tests {
                 raw_message: None,
                 extra_headers: Vec::new(),
             });
-            let c = repo.odb.write(ObjectKind::Commit, &raw).expect("commit");
+            let c = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
             infos.insert(
                 c,
-                super::load_commit_graph_commit_info(&repo.odb, c).expect("info"),
+                super::load_commit_graph_commit_info(&repo.odb(), c).expect("info"),
             );
             sorted.push(c);
         }
@@ -788,7 +788,7 @@ mod tests {
         let (_, stats) = super::build_commit_graph_bytes(
             &sorted,
             &infos,
-            &repo.odb,
+            &repo.odb(),
             true,
             &bloom,
             None,
@@ -820,13 +820,13 @@ mod tests {
             commit
         );
         let tag = repo
-            .odb
+            .odb()
             .write(ObjectKind::Tag, tag_body.as_bytes())
             .expect("tag");
-        crate::refs::write_ref(&repo.git_dir, "refs/tags/v1", &tag).expect("ref");
-        let set = super::collect_reachable_commit_oids(&repo.git_dir, &repo.odb).expect("walk");
+        crate::refs::write_ref(&repo.git_dir(), "refs/tags/v1", &tag).expect("ref");
+        let set = super::collect_reachable_commit_oids(&repo.git_dir(), &repo.odb()).expect("walk");
         assert!(set.contains(&commit));
-        let tips = super::count_referenced_commit_tips(&repo.git_dir, &repo.odb).expect("tips");
+        let tips = super::count_referenced_commit_tips(&repo.git_dir(), &repo.odb()).expect("tips");
         assert_eq!(tips, 1);
     }
 }

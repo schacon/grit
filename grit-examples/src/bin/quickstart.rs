@@ -2,13 +2,14 @@
 //!
 //! Source for the library quick start in the docs; kept in sync via an include directive.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectKind};
 use grit_lib::repo::Repository;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repository::discover(None)?;
-    let head = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD")?;
-    let object = repo.odb.read(&head)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
+    let head = grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD")?;
+    let object = repo.odb().read(&head)?;
     if object.kind != ObjectKind::Commit {
         return Err("HEAD is not a commit".into());
     }

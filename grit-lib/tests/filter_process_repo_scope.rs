@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use grit_lib::diff::hash_worktree_file;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::worktree_rules::WorktreeRules;
 
@@ -59,7 +60,8 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     fs::write(wt.join("a.txt"), b"hello\n").expect("a");
     fs::write(wt.join("b.txt"), b"world\n").expect("b");
 
-    let repo = Repository::open(&git_dir, Some(wt)).expect("open");
+    let repo =
+        Repository::open(&git_dir, &RepositoryOptions::empty().with_work_tree(wt)).expect("open");
     let index = repo.load_index().expect("index");
     let rules = WorktreeRules::from_repository(&repo, &index).expect("rules");
     let filter_fp = Some(rules.filter_process());
@@ -72,7 +74,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
         "expected filter.test.process on file attributes"
     );
     let _ = hash_worktree_file(
-        &repo.odb,
+        &repo.odb(),
         &wt.join("a.txt"),
         &meta_a,
         &conv,
@@ -86,7 +88,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     let meta_b = fs::symlink_metadata(wt.join("b.txt")).expect("meta b");
     let attrs_b = rules.file_attrs("b.txt", false);
     let oid_b = hash_worktree_file(
-        &repo.odb,
+        &repo.odb(),
         &wt.join("b.txt"),
         &meta_b,
         &conv,
@@ -104,7 +106,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     );
 
     let upper = b"WORLD\n";
-    let upper_oid = repo.odb.hash(grit_lib::objects::ObjectKind::Blob, upper);
+    let upper_oid = repo.odb().hash(grit_lib::objects::ObjectKind::Blob, upper);
     assert_eq!(
         oid_b, upper_oid,
         "filter clean should uppercase worktree bytes"
@@ -117,7 +119,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     rules.filter_process().disable_process_filter(proc_cmd);
 
     let oid_b_after = hash_worktree_file(
-        &repo.odb,
+        &repo.odb(),
         &wt.join("b.txt"),
         &meta_b,
         &conv,
@@ -128,7 +130,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     )
     .expect("hash b after disable");
     let raw_oid = repo
-        .odb
+        .odb()
         .hash(grit_lib::objects::ObjectKind::Blob, b"world\n");
     assert_eq!(
         oid_b_after, raw_oid,

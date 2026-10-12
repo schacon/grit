@@ -455,9 +455,9 @@ fn t4023_typechange_matches_git() {
 fn t4054_bogus_tree_typed_error() {
     let dr = DiffRepo::init();
     git_quiet(&dr.worktree, &["commit", "--allow-empty", "-qm", "empty"]);
-    let bogus = write_bogus_tree(&dr.repo.odb);
+    let bogus = write_bogus_tree(&dr.repo.odb());
     let good = rev_parse_tree(&dr.worktree, "HEAD^{tree}");
-    let err = diff_trees(&dr.repo.odb, Some(&good), Some(&bogus), "").unwrap_err();
+    let err = diff_trees(&dr.repo.odb(), Some(&good), Some(&bogus), "").unwrap_err();
     assert!(
         matches!(err, Error::CorruptObject(_)),
         "expected CorruptObject, got {err:?}"
@@ -620,14 +620,14 @@ fn diff_tree_to_worktree_and_show_tree_entries() {
     let config = ConfigSet::new();
     let opts = default_opts();
     let git_lines = git_raw_lines(wt, &["diff", "-r", "--raw", &format!("{}:", tree.to_hex())]);
-    let raw = grit_lib::diff::diff_tree_to_worktree(&dr.repo.odb, Some(&tree), wt, &index)
+    let raw = grit_lib::diff::diff_tree_to_worktree(&dr.repo.odb(), Some(&tree), wt, &index)
         .expect("tree_to_worktree");
     let wctx = grit_lib::diff::DiffPostprocessWorktree {
-        repository_git_dir: &dr.repo.git_dir,
+        repository_git_dir: &dr.repo.git_dir(),
         index: &index,
     };
     let entries = support::postprocess(
-        &dr.repo.odb,
+        &dr.repo.odb(),
         raw,
         Some(&tree),
         Some(wt),
@@ -638,7 +638,7 @@ fn diff_tree_to_worktree_and_show_tree_entries() {
     let grit_lines = grit_raw_lines_abbrev(&entries, 7);
     assert_raw_matches_git(&grit_lines, &git_lines, "tree↔worktree");
 
-    let show = diff_trees_show_tree_entries(&dr.repo.odb, Some(&tree), Some(&tree), "")
+    let show = diff_trees_show_tree_entries(&dr.repo.odb(), Some(&tree), Some(&tree), "")
         .expect("show tree entries");
     assert!(
         show.is_empty(),
@@ -683,9 +683,14 @@ fn diff_commits_rename_raw_matches_git() {
 
     let parent_tree = rev_parse_tree(wt, "HEAD~1^{tree}");
     let commit_tree = rev_parse_tree(wt, "HEAD^{tree}");
-    let with_renames =
-        diff_trees_with_renames(&dr.repo.odb, Some(&parent_tree), Some(&commit_tree), "", 50)
-            .expect("with_renames");
+    let with_renames = diff_trees_with_renames(
+        &dr.repo.odb(),
+        Some(&parent_tree),
+        Some(&commit_tree),
+        "",
+        50,
+    )
+    .expect("with_renames");
     assert!(
         with_renames
             .iter()
@@ -724,8 +729,8 @@ fn t4043_binary_rename_raw_matches_git() {
     assert_raw_matches_git(&grit_lines, &git_lines, "t4043 binary rename");
     let abbrev = grit_raw_lines_abbrev(
         &support::postprocess(
-            &dr.repo.odb,
-            diff_trees(&dr.repo.odb, Some(&parent), Some(&commit), "").expect("trees"),
+            &dr.repo.odb(),
+            diff_trees(&dr.repo.odb(), Some(&parent), Some(&commit), "").expect("trees"),
             Some(&parent),
             None,
             None,

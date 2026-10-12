@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use grit_examples::counting_ref_store::CountingRefStore;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::list_refs_for_repository;
 use grit_lib::refs::store::{
@@ -14,7 +15,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 
 fn main() -> grit_lib::error::Result<()> {
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let oid: ObjectId = "0100000000000000000000000000000000000000".parse()?;
 
     let memory = Arc::new(MemoryRefStore::new());

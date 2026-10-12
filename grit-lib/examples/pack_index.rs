@@ -17,7 +17,7 @@ fn main() -> grit_lib::error::Result<()> {
         grit_lib::RefStorageFormat::Files,
     )?;
 
-    let objects_dir = repo.git_dir.join("objects");
+    let objects_dir = repo.git_dir().join("objects");
     let indexes = pack::read_local_pack_indexes(&objects_dir)?;
     if indexes.is_empty() {
         println!("no pack indexes yet under {}", objects_dir.display());

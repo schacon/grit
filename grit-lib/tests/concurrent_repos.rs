@@ -102,7 +102,7 @@ fn open_with_env(fx: &RepoFixture) -> Repository {
     let mut opts = opts;
     opts.diagnostics = fx.diagnostics.clone();
     opts.reference_unix_time = Some(fx.reference_unix_time);
-    Repository::open_with(&opts, &git_dir, Some(&fx.root)).expect("open")
+    Repository::open(&git_dir, &&opts.clone().with_work_tree(&fx.root)).expect("open")
 }
 
 fn runner_records_marker(runner: &RecordingRunner, marker: &str) -> bool {
@@ -453,7 +453,7 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         let cfg = repo.config().expect("config");
         let email = cfg.get("user.email").unwrap_or_default();
         fetch_local(
-            &repo.git_dir,
+            &repo.git_dir(),
             upstream,
             &FetchOptions {
                 refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
@@ -463,19 +463,19 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         )
         .expect("fetch");
         let main_ref = format!("refs/remotes/origin/{default_branch}");
-        let main_tip = grit_lib::refs::resolve_ref(&repo.git_dir, &main_ref).expect("main tip");
-        let topic_tip = grit_lib::refs::resolve_ref(&repo.git_dir, "refs/remotes/origin/topic")
+        let main_tip = grit_lib::refs::resolve_ref(&repo.git_dir(), &main_ref).expect("main tip");
+        let topic_tip = grit_lib::refs::resolve_ref(&repo.git_dir(), "refs/remotes/origin/topic")
             .expect("topic tip");
-        let main_tree = parse_commit(&repo.odb.read(&main_tip).expect("main obj").data)
+        let main_tree = parse_commit(&repo.odb().read(&main_tip).expect("main obj").data)
             .expect("parse main")
             .tree;
-        let topic_tree = parse_commit(&repo.odb.read(&topic_tip).expect("topic obj").data)
+        let topic_tree = parse_commit(&repo.odb().read(&topic_tip).expect("topic obj").data)
             .expect("parse topic")
             .tree;
         let bases = grit_lib::merge_base::merge_bases_first_vs_rest(&repo, main_tip, &[topic_tip])
             .expect("merge base");
         let merge_base = *bases.first().expect("non-empty merge base");
-        let base_tree = parse_commit(&repo.odb.read(&merge_base).expect("base obj").data)
+        let base_tree = parse_commit(&repo.odb().read(&merge_base).expect("base obj").data)
             .expect("parse base")
             .tree;
         let _merged = merge_trees_three_way(
@@ -490,9 +490,9 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         )
         .expect("merge");
         let path = "shared.txt";
-        let base = blob_oid_at_path(&repo.odb, &base_tree, path).expect("base blob");
-        let ours = blob_oid_at_path(&repo.odb, &main_tree, path).expect("ours blob");
-        let theirs = blob_oid_at_path(&repo.odb, &topic_tree, path).expect("theirs blob");
+        let base = blob_oid_at_path(&repo.odb(), &base_tree, path).expect("base blob");
+        let ours = blob_oid_at_path(&repo.odb(), &main_tree, path).expect("ours blob");
+        let theirs = blob_oid_at_path(&repo.odb(), &topic_tree, path).expect("theirs blob");
         let conflict_body = "<<<<<<< ours\nmain\n=======\ntopic\n>>>>>>> theirs\n";
         fs::write(fx.root.join(path), conflict_body).expect("wt conflict");
         let mut index = Index::new();
@@ -534,10 +534,15 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         )
         .expect("notes");
         let notes_tip =
-            grit_lib::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").expect("notes tip");
-        let notes_commit =
-            parse_commit(&repo.odb.read(&notes_tip).expect("notes commit object").data)
-                .expect("parse notes commit");
+            grit_lib::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").expect("notes tip");
+        let notes_commit = parse_commit(
+            &repo
+                .odb()
+                .read(&notes_tip)
+                .expect("notes commit object")
+                .data,
+        )
+        .expect("parse notes commit");
         ack.send(ThreadReport {
             email: email.clone(),
             wall_epoch: repo.wall_clock_epoch(),

@@ -3,6 +3,7 @@
 use std::process::Command;
 
 use grit_lib::commit_encoding;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -73,7 +74,7 @@ fn grit_write_encoded_commit(
         raw_message: raw_body,
         extra_headers: Vec::new(),
     };
-    repo.odb
+    repo.odb()
         .write(ObjectKind::Commit, &serialize_commit(&data))
         .expect("write commit")
 }
@@ -91,13 +92,14 @@ fn init_repo_with_empty_commit(root: &std::path::Path) -> (Repository, ObjectId,
             "Enc Test <enc@example.com>",
         ],
     );
-    let repo = Repository::discover(Some(root)).expect("open grit repo");
-    let parent = match resolve_head(&repo.git_dir).expect("head") {
+    let repo =
+        Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open grit repo");
+    let parent = match resolve_head(&repo.git_dir()).expect("head") {
         grit_lib::state::HeadState::Branch { oid: Some(oid), .. } => oid,
         grit_lib::state::HeadState::Detached { oid } => oid,
         _ => panic!("expected base commit"),
     };
-    let tree = parse_commit(&repo.odb.read(&parent).expect("read parent").data)
+    let tree = parse_commit(&repo.odb().read(&parent).expect("read parent").data)
         .expect("parse parent")
         .tree;
     (repo, parent, tree)
@@ -162,13 +164,13 @@ fn git_encoded_commit_readable_by_grit() {
         root,
         &["commit", "-m", "caf\u{00e9}", "--author", "T <t@e.com>"],
     );
-    let repo = Repository::discover(Some(root)).expect("open");
-    let head = match resolve_head(&repo.git_dir).expect("head") {
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let head = match resolve_head(&repo.git_dir()).expect("head") {
         grit_lib::state::HeadState::Branch { oid: Some(oid), .. } => oid,
         grit_lib::state::HeadState::Detached { oid } => oid,
         _ => panic!("expected commit at HEAD"),
     };
-    let obj = repo.odb.read(&head).expect("read");
+    let obj = repo.odb().read(&head).expect("read");
     let commit = parse_commit(&obj.data).expect("parse");
     assert!(commit.message.contains('é') || commit.encoding.is_some());
 }

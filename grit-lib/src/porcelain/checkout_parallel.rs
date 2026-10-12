@@ -207,7 +207,7 @@ fn prepare_write_job(
     conv: &ConversionConfig,
     job: &CheckoutWriteJob,
 ) -> Result<Vec<u8>> {
-    let object = repo.odb.read(&job.oid)?;
+    let object = repo.odb().read(&job.oid)?;
     worktree_bytes_for_parallel_job(conv, job, &object.data)
 }
 
@@ -294,7 +294,7 @@ fn materialize_write_job_serial(
     job: &CheckoutWriteJob,
     delayed: &mut DelayedProcessCheckout,
 ) -> Result<WriteJobOutcome> {
-    let object = repo.odb.read(&job.oid)?;
+    let object = repo.odb().read(&job.oid)?;
     let worktree_bytes = worktree_bytes_from_index_blob(
         repo,
         rules,

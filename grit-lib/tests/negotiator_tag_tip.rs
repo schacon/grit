@@ -8,13 +8,14 @@
 //! (observed over smart HTTP, whose negotiation did not pre-peel tips). The
 //! negotiator now peels tag tips to their commit, so this must succeed.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::{init_repository, Repository};
 
 /// Write a raw object of `kind` and return its id.
 fn write(repo: &Repository, kind: ObjectKind, data: &[u8]) -> ObjectId {
-    repo.odb.write(kind, data).expect("write object")
+    repo.odb().write(kind, data).expect("write object")
 }
 
 #[test]
@@ -50,7 +51,7 @@ fn add_tip_accepts_annotated_tag() {
     let tag = write(&repo, ObjectKind::Tag, tag_bytes.as_bytes());
 
     // Re-open the repo so the negotiator reads through a fresh odb.
-    let repo = Repository::open(&repo.git_dir, None).expect("open");
+    let repo = Repository::open(&repo.git_dir(), &RepositoryOptions::empty()).expect("open");
     let mut neg = SkippingNegotiator::new(repo);
 
     // Both entry points previously panicked the fetch on a tag tip.
@@ -65,7 +66,9 @@ fn add_tip_accepts_annotated_tag() {
 
     // A plain commit tip still works, and a ref to a non-commit (a tree) is
     // skipped rather than erroring.
-    let mut neg = SkippingNegotiator::new(Repository::open(&tmp.path(), None).expect("open"));
+    let mut neg = SkippingNegotiator::new(
+        Repository::open(&tmp.path(), &RepositoryOptions::empty()).expect("open"),
+    );
     neg.add_tip(commit).expect("commit tip ok");
     neg.add_tip(tree)
         .expect("tree tip must be skipped, not error");

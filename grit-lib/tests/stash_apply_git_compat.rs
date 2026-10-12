@@ -1,5 +1,6 @@
 //! `apply_stash` parity with system `git stash apply` (porcelain + file bytes).
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::stash::apply_stash;
 use grit_lib::repo::Repository;
@@ -48,8 +49,11 @@ fn apply_stash_without_index_matches_git_when_head_unchanged() {
 
     let grit_dir = tempfile::tempdir().expect("grit copy");
     copy_repo(base.path(), grit_dir.path());
-    let grit_repo =
-        Repository::open(&grit_dir.path().join(".git"), Some(grit_dir.path())).expect("open");
+    let grit_repo = Repository::open(
+        &grit_dir.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_dir.path()),
+    )
+    .expect("open");
     let stash_oid = ObjectId::from_hex(&stash_oid_hex).expect("stash oid");
     apply_stash(
         &grit_repo,
@@ -102,8 +106,11 @@ fn apply_stash_with_index_matches_git_staged_porcelain() {
 
     let grit_dir = tempfile::tempdir().expect("grit copy");
     copy_repo(base.path(), grit_dir.path());
-    let grit_repo =
-        Repository::open(&grit_dir.path().join(".git"), Some(grit_dir.path())).expect("open");
+    let grit_repo = Repository::open(
+        &grit_dir.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_dir.path()),
+    )
+    .expect("open");
     apply_stash(
         &grit_repo,
         grit_dir.path(),

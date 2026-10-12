@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use grit_examples::resolve_name;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 #[derive(Debug, Parser)]
@@ -22,9 +23,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let oid = resolve_name(&repo, &cli.object)?;
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     if object.data.contains(&0) {
         bail!("refusing to print binary object {oid}");
     }

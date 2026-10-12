@@ -46,8 +46,7 @@ pub fn clean_untracked(
     _progress: &mut dyn ProgressSink,
 ) -> Result<CleanOutcome> {
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| Error::Message("clean requires a working tree".into()))?;
 
     let mut index = repo.load_index()?;
@@ -165,8 +164,7 @@ fn empty_untracked_directories(
     already_listed: &[String],
 ) -> Result<Vec<String>> {
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| Error::Message("clean requires a working tree".into()))?;
     let listed: BTreeSet<String> = already_listed
         .iter()
@@ -380,8 +378,7 @@ fn expand_collapsed_dir_paths(
     dir_rel: &str,
 ) -> Result<Vec<String>> {
     let work_tree = repo
-        .work_tree
-        .as_ref()
+        .work_tree()
         .ok_or_else(|| Error::Message("clean requires a working tree".into()))?;
     let mut paths = Vec::new();
     walk_expand_collapsed_dir(

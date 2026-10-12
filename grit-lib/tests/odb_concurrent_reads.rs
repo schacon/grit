@@ -68,7 +68,7 @@ fn odb_concurrent_reads() {
     let root = TempDir::new().expect("tempdir");
     let repo = init_repository(root.path(), false, "main", None, RefStorageFormat::Files)
         .expect("init repo");
-    let primary_objects = repo.git_dir.join("objects");
+    let primary_objects = repo.git_dir().join("objects");
 
     let mut packed_blob_oids = Vec::new();
     for batch in 0..4 {
@@ -76,13 +76,13 @@ fn odb_concurrent_reads() {
         for i in 0..16 {
             let n = batch * 16 + i;
             let oid = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Blob, format!("packed blob {n}\n").as_bytes())
                 .expect("write blob for pack");
             batch_oids.push(oid);
         }
         let pack = build_pack(
-            &repo.odb,
+            &repo.odb(),
             &batch_oids,
             &[],
             &PackBuildOptions {
@@ -98,7 +98,7 @@ fn odb_concurrent_reads() {
     }
 
     let loose_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"loose-only concurrent read\n")
         .expect("loose write");
 
@@ -129,7 +129,7 @@ fn odb_concurrent_reads() {
         .expect("midx must list probe oid");
 
     let odb = Odb::with_work_tree(&primary_objects, root.path())
-        .with_config_git_dir(repo.git_dir.clone());
+        .with_config_git_dir(repo.git_dir().to_path_buf());
 
     let mut oids = packed_blob_oids;
     oids.push(loose_oid);
@@ -215,13 +215,13 @@ fn stale_read_after_invalidation() {
     let root = TempDir::new().expect("tempdir");
     let repo = init_repository(root.path(), false, "main", None, RefStorageFormat::Files)
         .expect("init repo");
-    let objects = repo.git_dir.join("objects");
+    let objects = repo.git_dir().join("objects");
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"only-in-pack\n")
         .expect("write blob");
     let pack = build_pack(
-        &repo.odb,
+        &repo.odb(),
         &[oid],
         &[],
         &PackBuildOptions {

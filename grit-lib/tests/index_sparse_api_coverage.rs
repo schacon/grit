@@ -5,7 +5,7 @@ mod support;
 use std::fs;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -36,16 +36,17 @@ fn sparse_apply_and_clear_skip_worktree_on_disk() {
     git(wt, &["sparse-checkout", "init", "--cone"]);
     git(wt, &["sparse-checkout", "set", "a"]);
 
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let mut index = grit.load_index().expect("load");
-    let warnings = apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    let warnings =
+        apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert!(warnings.is_empty() || warnings.iter().all(|w| !w.is_empty()));
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);
 
     fs::write(wt.join("a/f0.txt"), "touch\n").expect("write");
-    let cfg = ConfigSet::load(&Environment::empty(), Some(&grit.git_dir), true).expect("cfg");
-    clear_skip_worktree_from_present_files(&grit.git_dir, wt, &mut index, Some(&cfg));
+    let cfg = ConfigSet::load(&Environment::empty(), Some(&grit.git_dir()), true).expect("cfg");
+    clear_skip_worktree_from_present_files(&grit.git_dir(), wt, &mut index, Some(&cfg));
 }
 
 #[test]
@@ -87,9 +88,12 @@ fn write_tree_and_cache_tree_after_sparse_apply() {
     let repo = HistoryRepo::init();
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
-    let grit = Repository::discover(Some(wt)).expect("open");
+    let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
     let mut index = grit.load_index().expect("load");
-    let blob = grit.odb.write(ObjectKind::Blob, b"extra\n").expect("blob");
+    let blob = grit
+        .odb()
+        .write(ObjectKind::Blob, b"extra\n")
+        .expect("blob");
     index.add_or_replace(IndexEntry {
         ctime_sec: 1,
         ctime_nsec: 0,
@@ -107,7 +111,7 @@ fn write_tree_and_cache_tree_after_sparse_apply() {
         path: b"extra.txt".to_vec(),
         base_index_pos: 0,
     });
-    let _tree = write_tree_update_index(&grit.odb, &mut index, "", WriteTreeFlags::default())
+    let _tree = write_tree_update_index(&grit.odb(), &mut index, "", WriteTreeFlags::default())
         .expect("write-tree");
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);

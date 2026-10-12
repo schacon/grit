@@ -10,6 +10,7 @@
 
 use std::path::Path;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::push_report::PushRefStatus;
 use grit_lib::repo::Repository;
@@ -762,17 +763,15 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
         ],
     );
 
-    let repo = Repository::discover(Some(&linked)).expect("discover linked worktree");
+    let repo = Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty())
+        .expect("discover linked worktree");
     assert!(
-        repo.work_tree
-            .as_ref()
-            .is_some_and(|wt| wt.ends_with("linked")),
+        repo.work_tree().is_some_and(|wt| wt.ends_with("linked")),
         "expected work_tree at linked checkout, got {:?}",
-        repo.work_tree
+        repo.work_tree()
     );
 
-    let resolved =
-        resolve_local_remote_git_dir("../origin.git", &repo.git_dir, repo.work_tree.as_deref());
+    let resolved = resolve_local_remote_git_dir("../origin.git", &repo.git_dir(), repo.work_tree());
     assert_eq!(
         resolved.canonicalize().expect("origin path"),
         origin.canonicalize().expect("origin canonical")
@@ -780,7 +779,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
 
     let head = rev_parse(&linked, "HEAD");
     let outcome = push_local(
-        &repo.git_dir,
+        &repo.git_dir(),
         &resolved,
         &[PushRefSpec {
             src: Some(head),

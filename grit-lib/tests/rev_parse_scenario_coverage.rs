@@ -27,7 +27,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn upstream_and_push_resolution_smoke() {
     let _ = resolve_upstream_symbolic_name(&repo, "main@{u}");
     let _ = resolve_push_full_ref_for_branch(&repo, "main");
     let tree = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, b"")
         .expect("tree");
     let _ = resolve_revision_for_verify(&repo, &tree.to_hex()[..7]);

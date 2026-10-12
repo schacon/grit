@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used)]
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::merge_base::{walk_commits_reachable_excluding_ancestors_of, ReachableWalkLimit};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
@@ -17,7 +18,7 @@ fn push_fast_hide_window_is_incremental_not_full_history() {
     if !git_dir.is_dir() {
         return;
     }
-    let repo = Repository::open(&git_dir, None).expect("open client");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open client");
     let tip = resolve_ref(&git_dir, "refs/heads/main").expect("main");
     let base = ObjectId::from_hex(FETCH_BASE).expect("base hex");
     let (_, commits) = walk_commits_reachable_excluding_ancestors_of(

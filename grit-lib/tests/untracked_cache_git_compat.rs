@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
@@ -49,10 +50,10 @@ fn t7063_untracked_cache_reused_by_git_status() {
     git(root, &["add", "dir/tracked.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("work tree");
+    let wt = repo.work_tree().expect("work tree");
     let mut uc = UntrackedCache::new_shell(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES,
         untracked_cache_ident(wt),
@@ -121,7 +122,7 @@ fn t7063_git_untracked_cache_read_by_grit_status() {
     git(root, &["commit", "-qm", "c"]);
     git_update_index_untracked_cache(root);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let idx = repo.load_index().expect("load");
     assert!(
         idx.untracked_cache.is_some(),
@@ -154,7 +155,7 @@ fn t7063_invalidation_matches_git() {
     assert!(after_add_git.contains(&"new.txt".to_string()));
     assert_ne!(before_git, after_add_git);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     idx.invalidate_untracked_cache_for_path("new.txt");
     repo.write_index(&mut idx).expect("persist invalidation");
@@ -198,10 +199,10 @@ fn t7063_dir_flags_from_config_modes() {
     git(root, &["add", "t.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = UntrackedCache::new_shell(0, untracked_cache_ident(wt));
     refresh_untracked_cache_for_status(
         &repo,
@@ -231,7 +232,7 @@ fn t7063_ident_mismatch_discards_stale_cache() {
     git(root, &["add", "a.txt"]);
     git(root, &["commit", "-qm", "c"]);
 
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.load_index().expect("load");
     let uc = UntrackedCache::new_shell(6, b"wrong-ident\x00".to_vec());
     idx.untracked_cache = Some(uc);
@@ -279,13 +280,13 @@ fn t7063_collect_untracked_matches_git_deep_tree() {
     git_update_index_untracked_cache(root);
 
     let git_set: BTreeSet<String> = git_porcelain_untracked(root).into_iter().collect();
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let grit_set: BTreeSet<String> = grit_untracked_paths(&repo).into_iter().collect();
     assert_eq!(git_set, grit_set);
 
     let mut idx = repo.load_index().expect("load");
     let cfg = repo.config().expect("config");
-    let wt = repo.work_tree.as_ref().expect("wt");
+    let wt = repo.work_tree().expect("wt");
     let mut uc = idx.untracked_cache.take().expect("untr");
     refresh_untracked_cache_for_status(
         &repo,
@@ -314,7 +315,7 @@ fn index_name_hash_lazy_ignorecase_lookup() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     git(root, &["init", "-q", "-b", "main", "."]);
-    let repo = Repository::discover(Some(root)).expect("open");
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = Index::empty(2);
     idx.add_or_replace(entry_from_worktree_path(&repo, "Mixed/Case.txt", b"x"));
     let threads = test_lazy_init_name_hash(&idx, false).expect("lazy init");

@@ -57,8 +57,11 @@ fn ambiguous_refname_reaches_collecting_sink() {
         network_trace: false,
         ..Default::default()
     };
-    let repo = Repository::open_with_options(&tmp.path().join(".git"), Some(tmp.path()), options)
-        .expect("open");
+    let repo = Repository::open(
+        &tmp.path().join(".git"),
+        &options.with_work_tree(tmp.path().to_path_buf()),
+    )
+    .expect("open");
 
     let _ = resolve_revision(&repo, &prefix).expect("resolve");
     assert!(
@@ -106,7 +109,7 @@ fn core_bare_with_worktree_reaches_each_fresh_sink() {
             network_trace: false,
             ..Default::default()
         };
-        Repository::open_with_options(&bare, None, options).expect("open");
+        Repository::open(&bare, &options).expect("open");
         sink
     };
 

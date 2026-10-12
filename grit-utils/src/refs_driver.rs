@@ -26,12 +26,12 @@ pub fn for_each_ref(repo: &Repository, pattern: Option<&str>) -> Result<()> {
     };
     let mut stdout = io::stdout().lock();
     let mut kind_by_oid: HashMap<ObjectId, &str> = HashMap::new();
-    repo.odb.with_pack_read_context(|| {
+    repo.odb().with_pack_read_context(|| {
         for (name, oid) in entries {
             let kind = match kind_by_oid.get(&oid) {
                 Some(&kind) => kind,
                 None => {
-                    let kind = match repo.odb.read_info(&oid) {
+                    let kind = match repo.odb().read_info(&oid) {
                         Ok(info) => info.kind.as_str(),
                         Err(Error::ObjectNotFound(_)) => "missing",
                         Err(e) => return Err(e.into()),
@@ -48,7 +48,7 @@ pub fn for_each_ref(repo: &Repository, pattern: Option<&str>) -> Result<()> {
 
 /// Read `create` / `update` / `delete` lines from stdin and apply one batch via [`update_refs`].
 pub fn update_ref_stdin(repo: &Repository) -> Result<()> {
-    update_ref_stdin_at(&repo.git_dir)
+    update_ref_stdin_at(&repo.git_dir())
 }
 
 /// Like [`update_ref_stdin`] but takes a git directory path directly (avoids extra work on open).

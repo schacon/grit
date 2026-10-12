@@ -380,7 +380,7 @@ pub fn read_mailmap_blob(repo: &Repository, spec: &str) -> Result<String> {
     let oid = resolve_revision(repo, spec)
         .map_err(|e| Error::PathError(format!("resolving mailmap blob '{spec}': {e}")))?;
     let obj = repo
-        .odb
+        .odb()
         .read(&oid)
         .map_err(|e| Error::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
     if obj.kind != ObjectKind::Blob {
@@ -395,7 +395,7 @@ fn try_read_mailmap_blob(repo: &Repository, spec: &str) -> Result<Option<String>
         Err(_) => return Ok(None),
     };
     let obj = repo
-        .odb
+        .odb()
         .read(&oid)
         .map_err(|e| Error::PathError(format!("reading mailmap blob '{spec}': {e}")))?;
     if obj.kind != ObjectKind::Blob {
@@ -415,18 +415,14 @@ pub fn load_mailmap_table(repo: &Repository) -> Result<MailmapTable> {
 pub fn load_mailmap_into(repo: &Repository, table: &mut MailmapTable) -> Result<()> {
     let config = repo.config()?;
     let mut mailmap_blob = config.get("mailmap.blob");
-    let is_bare = repo.work_tree.is_none();
+    let is_bare = repo.work_tree().is_none();
     if mailmap_blob.is_none() && is_bare {
         mailmap_blob = Some("HEAD:.mailmap".to_string());
     }
 
-    let base_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(repo.git_dir.as_path())
-        .to_path_buf();
+    let base_dir = repo.work_tree().unwrap_or(repo.git_dir()).to_path_buf();
 
-    if let Some(ref wt) = repo.work_tree {
+    if let Some(wt) = repo.work_tree() {
         let in_tree = wt.join(".mailmap");
         let body = read_optional_mailmap_file(&in_tree, true)?;
         read_mailmap_string(table, &body);
@@ -463,20 +459,16 @@ pub fn load_mailmap_into(repo: &Repository, table: &mut MailmapTable) -> Result<
 pub fn load_mailmap_raw(repo: &Repository) -> Result<String> {
     let config = repo.config()?;
     let mut mailmap_blob = config.get("mailmap.blob");
-    let is_bare = repo.work_tree.is_none();
+    let is_bare = repo.work_tree().is_none();
     if mailmap_blob.is_none() && is_bare {
         mailmap_blob = Some("HEAD:.mailmap".to_string());
     }
 
-    let base_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(repo.git_dir.as_path())
-        .to_path_buf();
+    let base_dir = repo.work_tree().unwrap_or(repo.git_dir()).to_path_buf();
 
     let mut out = String::new();
 
-    if let Some(ref wt) = repo.work_tree {
+    if let Some(wt) = repo.work_tree() {
         let body = read_optional_mailmap_file(&wt.join(".mailmap"), true)?;
         if !body.is_empty() {
             out.push_str(&body);

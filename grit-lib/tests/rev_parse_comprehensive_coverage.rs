@@ -35,7 +35,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn exercise_all_resolvers(repo: &Repository, spec: &str) {
@@ -162,7 +162,7 @@ fn discovery_upstream_and_parser_helpers() {
     let _ = resolve_reflog_walk_log_ref(&repo, "HEAD");
     assert!(reflog_date_selector_timestamp("1.day.ago").is_some());
     assert!(reflog_date_selector_timestamp_at("now", 1_700_000_000).is_some());
-    let _ = load_graft_parents(&repo.git_dir);
+    let _ = load_graft_parents(&repo.git_dir());
     assert!(revision_spec_contains_ancestry_navigation("HEAD~3"));
     assert!(spec_has_parent_shorthand_suffix("main^!"));
     let (base, peel) = parse_peel_suffix("v1^{tree}");

@@ -4,6 +4,7 @@
 
 use grit_examples::remote;
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::remote::{list_refs_from_git_dir, ListRefsOptions};
@@ -17,9 +18,9 @@ fn main() -> Result<(), grit_lib::error::Error> {
         grit_lib::error::Error::Message("usage: guide_network <consumer-repo>".to_owned())
     })?;
     let consumer = Path::new(&consumer);
-    let repo = Repository::discover(Some(consumer))?;
-    let git_dir = repo.git_dir.clone();
-    let work_tree = repo.work_tree.clone();
+    let repo = Repository::discover(Some(consumer), &RepositoryOptions::empty())?;
+    let git_dir = repo.git_dir().to_path_buf();
+    let work_tree = repo.work_tree().map(|p| p.to_path_buf());
     let config = ConfigSet::load(
         &grit_lib::environment::Environment::capture_process(),
         Some(&git_dir),
@@ -31,10 +32,10 @@ fn main() -> Result<(), grit_lib::error::Error> {
 
     let remote_git_dir =
         resolve_local_remote_git_dir(&remote_info.url, &git_dir, work_tree.as_deref());
-    let remote_repo = Repository::open(&remote_git_dir, None)?;
+    let remote_repo = Repository::open(&remote_git_dir, &RepositoryOptions::empty())?;
     let refs_on_remote = list_refs_from_git_dir(
         &remote_git_dir,
-        Some(&remote_repo.odb),
+        Some(remote_repo.odb()),
         &ListRefsOptions::default(),
     )
     .map_err(grit_lib::error::Error::from)?;
@@ -55,7 +56,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
     let tracking = refs::resolve_ref(&git_dir, "refs/remotes/origin/main")?;
     refs::write_ref(&git_dir, "refs/heads/main", &tracking)?;
 
-    let parent_obj = repo.odb.read(&tracking)?;
+    let parent_obj = repo.odb().read(&tracking)?;
     let parent = parse_commit(&parent_obj.data)?;
     let commit = CommitData {
         tree: parent.tree,
@@ -70,7 +71,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         extra_headers: Vec::new(),
     };
     let new_oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))?;
     refs::write_ref(&git_dir, "refs/heads/main", &new_oid)?;
 

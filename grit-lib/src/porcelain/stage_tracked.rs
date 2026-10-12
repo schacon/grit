@@ -111,7 +111,7 @@ pub fn stage_tracked_modifications_in_index(
 ) -> Result<StageTrackedSummary> {
     let index_mtime = index_file_mtime(index_path);
     let precompose_unicode = effective_core_precomposeunicode_with_config(
-        Some(&repo.git_dir),
+        Some(repo.git_dir()),
         repo.config().ok().as_deref(),
     );
     let trust_filemode = repo
@@ -448,7 +448,7 @@ fn refresh_present_tracked_path(ctx: PresentRefreshCtx<'_>, meta: &fs::Metadata)
         let conv = rules.conversion();
         let filter_fp = Some(rules.filter_process());
         let staged_oid = materialize_worktree_blob(
-            &repo.odb,
+            repo.odb(),
             abs_path,
             meta,
             conv,
@@ -546,14 +546,14 @@ fn read_worktree_blob_oid(
     if meta.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
         let data = symlink_target_bytes(&target);
-        return repo.odb.write(ObjectKind::Blob, &data);
+        return repo.odb().write(ObjectKind::Blob, &data);
     }
     if let Ok(rel_path) = std::str::from_utf8(raw_path) {
         let file_attrs = rules.file_attrs(rel_path, false);
         #[cfg(test)]
-        repo.odb.hot_path_metrics().record_blob_content_read();
+        repo.odb().hot_path_metrics().record_blob_content_read();
         return materialize_worktree_blob(
-            &repo.odb,
+            repo.odb(),
             abs_path,
             meta,
             rules.conversion(),
@@ -576,10 +576,10 @@ fn read_worktree_blob_oid_raw(
         symlink_target_bytes(&target)
     } else {
         #[cfg(test)]
-        repo.odb.hot_path_metrics().record_blob_content_read();
+        repo.odb().hot_path_metrics().record_blob_content_read();
         fs::read(abs_path)?
     };
-    repo.odb.write(ObjectKind::Blob, &data)
+    repo.odb().write(ObjectKind::Blob, &data)
 }
 
 fn rel_path_has_symlink_parent(work_tree: &Path, rel_path: &str) -> bool {
@@ -678,7 +678,7 @@ mod tests {
         write_and_index(&repo, b"c.txt", b"c\n");
         finalize_index_for_stat_trust(&repo);
 
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         fs::remove_file(worktree_path_from_index_rel(wt, b"a.txt")).unwrap();
 
         let summary = stage_tracked_modifications(&repo, wt).unwrap();
@@ -697,7 +697,7 @@ mod tests {
         use crate::worktree_scan::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
 
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         const FILE_COUNT: usize = 2000;
         for i in 0..FILE_COUNT {
             let rel = format!("d{:04}/f{:05}.txt", i / 100, i);
@@ -722,13 +722,13 @@ mod tests {
     }
 
     fn write_and_index(repo: &Repository, rel: &[u8], content: &[u8]) {
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let abs = worktree_path_from_index_rel(wt, rel);
         if let Some(parent) = abs.parent() {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&abs, content).unwrap();
-        let oid = repo.odb.write(ObjectKind::Blob, content).unwrap();
+        let oid = repo.odb().write(ObjectKind::Blob, content).unwrap();
         let mut index = repo.load_index().unwrap();
         let meta = fs::symlink_metadata(&abs).unwrap();
         let mode = mode_from_metadata(&meta);
@@ -738,7 +738,7 @@ mod tests {
     }
 
     fn finalize_index_for_stat_trust(repo: &Repository) {
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let mut index = repo.load_index().unwrap();
         for entry in &mut index.entries {
             if entry.stage() != 0 {
@@ -768,18 +768,18 @@ mod tests {
         write_and_index(&repo, b"b.txt", b"two");
         finalize_index_for_stat_trust(&repo);
         fs::write(
-            worktree_path_from_index_rel(repo.work_tree.as_ref().unwrap(), b"b.txt"),
+            worktree_path_from_index_rel(repo.work_tree().unwrap(), b"b.txt"),
             b"two-changed",
         )
         .unwrap();
 
-        let summary = stage_tracked_modifications(&repo, repo.work_tree.as_ref().unwrap()).unwrap();
+        let summary = stage_tracked_modifications(&repo, repo.work_tree().unwrap()).unwrap();
         assert_eq!(summary.modified, vec![b"b.txt".to_vec()]);
         assert!(summary.removed.is_empty());
 
         let index = repo.load_index().unwrap();
         let b = index.entries.iter().find(|e| e.path == b"b.txt").unwrap();
-        let expected = repo.odb.write(ObjectKind::Blob, b"two-changed").unwrap();
+        let expected = repo.odb().write(ObjectKind::Blob, b"two-changed").unwrap();
         assert_eq!(b.oid, expected);
     }
 
@@ -788,12 +788,12 @@ mod tests {
         let (_dir, repo) = init_repo();
         write_and_index(&repo, b"gone.txt", b"x");
         fs::remove_file(worktree_path_from_index_rel(
-            repo.work_tree.as_ref().unwrap(),
+            repo.work_tree().unwrap(),
             b"gone.txt",
         ))
         .unwrap();
 
-        let summary = stage_tracked_modifications(&repo, repo.work_tree.as_ref().unwrap()).unwrap();
+        let summary = stage_tracked_modifications(&repo, repo.work_tree().unwrap()).unwrap();
         assert_eq!(summary.removed, vec![b"gone.txt".to_vec()]);
         assert!(repo.load_index().unwrap().entries.is_empty());
     }
@@ -805,7 +805,7 @@ mod tests {
         finalize_index_for_stat_trust(&repo);
 
         let objects_before = count_loose_objects(&repo);
-        let summary = stage_tracked_modifications(&repo, repo.work_tree.as_ref().unwrap()).unwrap();
+        let summary = stage_tracked_modifications(&repo, repo.work_tree().unwrap()).unwrap();
         let objects_after = count_loose_objects(&repo);
 
         assert!(summary.modified.is_empty());
@@ -814,13 +814,13 @@ mod tests {
     }
 
     fn count_loose_objects(repo: &Repository) -> usize {
-        repo.odb.count_loose_objects().unwrap_or(0)
+        repo.odb().count_loose_objects().unwrap_or(0)
     }
 
     #[test]
     fn racy_same_size_modification_is_detected() {
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let content_a = b"12345";
         let content_b = b"54321";
         assert_eq!(content_a.len(), content_b.len());
@@ -831,7 +831,7 @@ mod tests {
         pin_mtime(&file_path, INDEX_MTIME.0, INDEX_MTIME.1);
 
         let meta = fs::symlink_metadata(&file_path).unwrap();
-        let stale_oid = repo.odb.hash(ObjectKind::Blob, content_a);
+        let stale_oid = repo.odb().hash(ObjectKind::Blob, content_a);
         let mut index = repo.load_index().unwrap();
         let entry = entry_from_metadata(&meta, b"racy.txt", stale_oid, MODE_REGULAR);
         assert!(stat_matches(&entry, &meta));
@@ -845,7 +845,7 @@ mod tests {
 
         let summary = stage_tracked_modifications(&repo, wt).unwrap();
         assert_eq!(summary.modified, vec![b"racy.txt".to_vec()]);
-        let expected = repo.odb.write(ObjectKind::Blob, content_b).unwrap();
+        let expected = repo.odb().write(ObjectKind::Blob, content_b).unwrap();
         let loaded = repo.load_index().unwrap();
         let e = loaded
             .entries
@@ -858,7 +858,7 @@ mod tests {
     #[test]
     fn index_write_smudge_then_stage_detects_stale_oid() {
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let content_a = b"aaaaa";
         let content_b = b"bbbbb";
         assert_eq!(content_a.len(), content_b.len());
@@ -867,7 +867,7 @@ mod tests {
         fs::write(&file_path, content_b).unwrap();
         pin_mtime(&file_path, INDEX_MTIME.0, INDEX_MTIME.1);
         let meta = fs::symlink_metadata(&file_path).unwrap();
-        let stale_oid = repo.odb.hash(ObjectKind::Blob, content_a);
+        let stale_oid = repo.odb().hash(ObjectKind::Blob, content_a);
 
         let mut index = Index::new();
         let entry = entry_from_metadata(&meta, b"f.txt", stale_oid, MODE_REGULAR);
@@ -922,12 +922,12 @@ mod tests {
         let (_dir, repo) = init_repo();
         write_and_index(&repo, b"run.sh", b"#!/bin/sh\n");
         finalize_index_for_stat_trust(&repo);
-        let path = worktree_path_from_index_rel(repo.work_tree.as_ref().unwrap(), b"run.sh");
+        let path = worktree_path_from_index_rel(repo.work_tree().unwrap(), b"run.sh");
         let mut perms = fs::metadata(&path).unwrap().permissions();
         perms.set_mode(0o100755);
         fs::set_permissions(&path, perms).unwrap();
 
-        let summary = stage_tracked_modifications(&repo, repo.work_tree.as_ref().unwrap()).unwrap();
+        let summary = stage_tracked_modifications(&repo, repo.work_tree().unwrap()).unwrap();
         assert_eq!(summary.modified, vec![b"run.sh".to_vec()]);
         let index = repo.load_index().unwrap();
         let e = index.entries.iter().find(|e| e.path == b"run.sh").unwrap();
@@ -946,7 +946,7 @@ mod tests {
             crate::RefStorageFormat::Files,
         )
         .unwrap();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         fs::create_dir(wt.join("realdir")).unwrap();
         fs::write(wt.join("realdir/file"), b"data").unwrap();
         std::os::unix::fs::symlink("realdir", wt.join("linkdir")).unwrap();
@@ -970,12 +970,12 @@ mod tests {
         write_and_index(&repo, b"tracked.txt", b"x");
         finalize_index_for_stat_trust(&repo);
         fs::write(
-            worktree_path_from_index_rel(repo.work_tree.as_ref().unwrap(), b"new.txt"),
+            worktree_path_from_index_rel(repo.work_tree().unwrap(), b"new.txt"),
             b"new",
         )
         .unwrap();
 
-        let summary = stage_tracked_modifications(&repo, repo.work_tree.as_ref().unwrap()).unwrap();
+        let summary = stage_tracked_modifications(&repo, repo.work_tree().unwrap()).unwrap();
         assert!(summary.modified.is_empty());
         assert!(summary.removed.is_empty());
     }
@@ -987,7 +987,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let locked = wt.join("locked");
         fs::create_dir(&locked).unwrap();
         fs::write(locked.join("f"), b"secret").unwrap();
@@ -1014,18 +1014,18 @@ mod tests {
         let (_dir, repo) = init_repo();
         fs::OpenOptions::new()
             .append(true)
-            .open(repo.git_dir.join("config"))
+            .open(repo.git_dir().join("config"))
             .unwrap()
             .write_all(b"\n[core]\n\tprecomposeunicode = true\n")
             .unwrap();
         repo.reload_config().unwrap();
 
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let nfd = "cafe\u{0301}.txt";
         let nfc = "caf\u{00e9}.txt";
         let abs = wt.join(nfd);
         fs::write(&abs, b"one").unwrap();
-        let oid = repo.odb.write(ObjectKind::Blob, b"one").unwrap();
+        let oid = repo.odb().write(ObjectKind::Blob, b"one").unwrap();
         let meta = fs::symlink_metadata(&abs).unwrap();
         let mut index = repo.load_index().unwrap();
         index.add_or_replace(
@@ -1041,7 +1041,7 @@ mod tests {
         let changed = stage_tracked_modifications(&repo, wt).unwrap();
         assert_eq!(changed.modified, vec![nfc.as_bytes().to_vec()]);
         assert!(changed.removed.is_empty());
-        let expected = repo.odb.write(ObjectKind::Blob, b"changed").unwrap();
+        let expected = repo.odb().write(ObjectKind::Blob, b"changed").unwrap();
         assert_eq!(repo.load_index().unwrap().entries[0].oid, expected);
     }
 
@@ -1057,14 +1057,14 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            repo.git_dir.join("config"),
+            repo.git_dir().join("config"),
             "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n",
         )
         .unwrap();
         repo.reload_config().unwrap();
         fs::write(dir.path().join("run.sh"), b"x\n").unwrap();
-        let git_dir = repo.git_dir.clone();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let git_dir = repo.git_dir().to_path_buf();
+        let wt = repo.work_tree().unwrap();
         let odb = Odb::new(&git_dir.join("objects"));
         let oid = odb.write(ObjectKind::Blob, b"x\n").unwrap();
         let abs = wt.join("run.sh");
@@ -1093,7 +1093,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let (_dir, repo) = init_repo();
-        let wt = repo.work_tree.as_ref().unwrap();
+        let wt = repo.work_tree().unwrap();
         let rel = b"\xff";
         let abs = wt.join(OsStr::from_bytes(rel));
         fs::write(&abs, b"v1").unwrap();

@@ -34,7 +34,7 @@ fn fetch_updates_refs_in_one_transaction_reftable() {
             RefStorageFormat::Reftable,
         )
         .expect("local init");
-        let local_git = &local.git_dir;
+        let local_git = local.git_dir();
         let (_, count_before) = reftable_tables_snapshot(&local_git);
 
         let opts = FetchOptions {

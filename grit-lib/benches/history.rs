@@ -102,7 +102,8 @@ fn bench_tree_diff(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(name), &(old, new), |b, pair| {
             b.iter(|| {
                 black_box(
-                    diff_trees(&fx.repo.odb, Some(&pair.0), Some(&pair.1), "").expect("tree diff"),
+                    diff_trees(&fx.repo.odb(), Some(&pair.0), Some(&pair.1), "")
+                        .expect("tree diff"),
                 )
             });
         });

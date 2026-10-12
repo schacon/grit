@@ -92,7 +92,7 @@ impl OdbBuilder {
 }
 
 impl Odb {
-    /// Build from [`OdbBuilder`] (used by [`Repository::open_with_odb`](crate::repo::Repository::open_with_odb)).
+    /// Build from [`OdbBuilder`] (used by [`RepositoryBuilder`](crate::repo::RepositoryBuilder)).
     #[must_use]
     pub(crate) fn from_builder(builder: OdbBuilder) -> Self {
         let mut odb = Self::new(&builder.objects_dir);

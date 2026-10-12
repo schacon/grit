@@ -55,7 +55,7 @@ pub fn run(paths: &[String], cached: bool, force: bool) -> Result<RmOutcome> {
 
 fn rm(repo: &Repository, selectors: &[String], cached: bool, force: bool) -> Result<RemoveOutcome> {
     let work_tree = repo
-        .work_tree
+        .work_tree()
         .clone()
         .context("grit rm needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;

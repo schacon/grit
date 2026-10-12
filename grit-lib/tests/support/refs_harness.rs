@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
@@ -229,7 +230,8 @@ fn grit_empty_commit_oid(worktree: &Path) -> ObjectId {
 }
 
 fn grit_empty_commit_with_message(worktree: &Path, message: &str) -> ObjectId {
-    let repo = Repository::discover(Some(worktree)).expect("discover repo");
+    let repo =
+        Repository::discover(Some(worktree), &RepositoryOptions::empty()).expect("discover repo");
     let ident = format!("{AUTHOR_NAME} <{AUTHOR_EMAIL}> {DETERMINISTIC_DATE}");
     let outcome = create_commit(
         &repo,

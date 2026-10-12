@@ -154,7 +154,7 @@ fn http_clone_honors_thread_policy_over_pack_config_for_ingest() {
         "received-pack ingest must honor clone thread policy (1) over pack.threads (2)"
     );
 
-    let pack_dir = outcome.repo.git_dir.join("objects/pack");
+    let pack_dir = outcome.repo.git_dir().join("objects/pack");
     assert!(
         pack_dir
             .read_dir()

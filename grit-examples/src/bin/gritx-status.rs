@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::{commit_tree, head_oid};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 
@@ -25,7 +26,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let _cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let index = repo.load_index()?;
     let index_paths: BTreeSet<String> = index
         .entries()
@@ -57,7 +58,7 @@ fn run() -> Result<()> {
         }
     }
 
-    let Some(work_tree) = repo.work_tree.as_ref() else {
+    let Some(work_tree) = repo.work_tree() else {
         return Ok(());
     };
     for entry in index.entries() {
@@ -68,7 +69,7 @@ fn run() -> Result<()> {
             continue;
         }
         let data = fs::read(&full_path)?;
-        let object_id = repo.odb.write(ObjectKind::Blob, &data)?;
+        let object_id = repo.odb().write(ObjectKind::Blob, &data)?;
         if object_id != entry.oid {
             println!("worktree: modified {path}");
         }

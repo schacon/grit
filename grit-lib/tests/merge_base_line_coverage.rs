@@ -22,7 +22,7 @@ fn open_grit(wt: &std::path::Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn t6010_oids(wt: &std::path::Path) -> (ObjectId, ObjectId, ObjectId) {
@@ -76,7 +76,7 @@ fn resolve_commit_specs_and_ancestor_closure() {
     assert_eq!(resolved, vec![g, h]);
     let g_anc = ancestor_closure(&repo, g).expect("closure");
     assert!(g_anc.contains(&b));
-    assert!(is_ancestor_odb_walk(&repo.odb, b, h).expect("odb walk"));
+    assert!(is_ancestor_odb_walk(&repo.odb(), b, h).expect("odb walk"));
 }
 
 #[test]

@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::status::{status, IgnoredMode, StatusModel, StatusOptions, UntrackedMode};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::{init_repository, Repository};
@@ -56,9 +57,13 @@ fn run_status_pair(
     let serial_index = fs::read(repo.index_path()).expect("serial index");
 
     fs::write(repo.index_path(), baseline_index).expect("restore index");
-    let parallel_repo = Repository::open(&repo.git_dir, repo.work_tree.as_deref())
-        .expect("reopen repo")
-        .with_thread_policy(forced_parallel_policy());
+    let parallel_repo = Repository::open(
+        repo.git_dir(),
+        &RepositoryOptions::empty()
+            .with_work_tree(repo.work_tree().expect("non-bare").to_path_buf()),
+    )
+    .expect("reopen repo")
+    .with_thread_policy(forced_parallel_policy());
     let mut parallel_opts = opts.clone();
     parallel_opts.stat_parallel_threads = Some(4);
     let parallel =
@@ -161,7 +166,11 @@ fn racy_timestamp_refresh_matches_serial_and_git() {
     git(root, &["add", "tracked.txt"]);
     git(root, &["commit", "-qm", "c1"]);
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     filetime::set_file_mtime(root.join("tracked.txt"), filetime::FileTime::now()).expect("touch");
 
     let opts = StatusOptions {
@@ -189,7 +198,11 @@ fn skip_worktree_sparse_entry_status_matches_serial() {
     git(root, &["commit", "-qm", "seed"]);
     git(root, &["update-index", "--skip-worktree", "skipped.txt"]);
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     fs::write(root.join("skipped.txt"), b"changed\n").expect("rewrite skipped");
     fs::write(root.join("present.txt"), b"changed\n").expect("rewrite present");
 
@@ -225,7 +238,11 @@ fn gitlink_submodule_untracked_scan_matches_serial() {
     git(root, &["commit", "-qm", "add sub"]);
     fs::write(root.join("top.txt"), b"top\n").expect("write");
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let opts = StatusOptions {
         ahead_behind: false,
         ..StatusOptions::default()
@@ -248,7 +265,11 @@ fn untracked_cache_enabled_matches_serial() {
     git(root, &["commit", "-qm", "c1"]);
     fs::write(root.join("fresh.txt"), b"f\n").expect("write");
 
-    let repo = Repository::open(&root.join(".git"), Some(root)).expect("open");
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
     let opts = StatusOptions {
         ahead_behind: false,
         ..StatusOptions::default()

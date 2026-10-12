@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -20,9 +21,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let _cli = Cli::parse();
-    let repo = Repository::discover(None)?;
+    let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let index = repo.load_index()?;
-    let oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let oid = write_tree_from_index(&repo.odb(), &index, "")?;
     println!("{oid}");
     Ok(())
 }

@@ -23,7 +23,7 @@ fn open_grit(wt: &std::path::Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn setup_t6010(wt: &std::path::Path) -> (ObjectId, ObjectId, ObjectId) {

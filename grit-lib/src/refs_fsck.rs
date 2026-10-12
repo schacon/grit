@@ -165,7 +165,7 @@ pub fn refs_fsck(
     strict: bool,
 ) -> io::Result<Vec<RefsFsckIssue>> {
     let mut issues = Vec::new();
-    let common = canonical_git_dir(&repo.git_dir);
+    let common = canonical_git_dir(repo.git_dir());
 
     let mut stores: Vec<(PathBuf, Option<String>)> = vec![(common.clone(), None)];
     let worktrees_dir = common.join("worktrees");

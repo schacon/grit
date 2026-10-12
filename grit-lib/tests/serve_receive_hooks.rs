@@ -120,7 +120,7 @@ fn open_bare_with_runner(path: &Path, runner: Arc<dyn CommandRunner>) -> Reposit
     let mut env = Environment::empty();
     env.cwd = path.to_path_buf();
     let opts = RepositoryOptions::with_environment(env).with_command_runner(runner);
-    Repository::open_with(&opts, &git_dir, None).expect("open bare")
+    Repository::open(&git_dir, &opts).expect("open bare")
 }
 
 fn count_pack_files(objects: &Path) -> usize {
@@ -222,7 +222,7 @@ fn pre_receive_reject_leaves_main_object_store_clean() {
     assert!(resolve_ref(&bare, "refs/heads/main").is_err());
     assert_eq!(count_pack_files(&bare.join("objects")), packs_before);
     assert!(
-        !repo.odb.exists(&oid),
+        !repo.odb().exists(&oid),
         "rejected push must not install objects in the main ODB"
     );
 }

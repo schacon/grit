@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
@@ -201,7 +202,7 @@ pub fn resolve_fork_point_reflog_ref(repo: &Repository, spec: &str) -> String {
         return spec.to_string();
     }
 
-    let logs_dir = repo.git_dir.join("logs");
+    let logs_dir = repo.git_dir().join("logs");
     let candidates = [
         spec.to_string(),
         format!("refs/heads/{spec}"),
@@ -270,7 +271,7 @@ pub fn fork_point(
         resolve_fork_point_reflog_ref(repo, upstream_spec)
     };
 
-    let entries = read_reflog(&repo.git_dir, &reflog_ref)
+    let entries = read_reflog(repo.git_dir(), &reflog_ref)
         .map_err(|e| Error::Message(format!("failed to read reflog for '{reflog_ref}': {e}")))?;
 
     let mut candidates = Vec::new();
@@ -571,7 +572,7 @@ fn first_parent_chain(repo: &Repository, start: ObjectId) -> Result<Vec<ObjectId
 }
 
 fn first_parent(repo: &Repository, oid: ObjectId) -> Result<Option<ObjectId>> {
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     if object.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
             "object {oid} is not a commit"
@@ -582,7 +583,7 @@ fn first_parent(repo: &Repository, oid: ObjectId) -> Result<Option<ObjectId>> {
 }
 
 fn ensure_is_commit(repo: &Repository, oid: ObjectId) -> Result<()> {
-    let object = repo.odb.read(&oid)?;
+    let object = repo.odb().read(&oid)?;
     if object.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
             "object {oid} is not a commit"
@@ -643,15 +644,16 @@ impl<'r> CommitGraphCache<'r> {
         // commits, gc works"). Missing parents are already handled by
         // `parents_of` returning no parents on `ObjectNotFound`, so we only need
         // to record the OIDs the partial clone knows are absent.
-        let promisor_stop = if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
-            read_promisor_missing_oids(&repo.git_dir)
+        let promisor_stop = if repo_treats_promisor_packs(repo.git_dir(), &cfg) {
+            read_promisor_missing_oids(repo.git_dir())
                 .into_iter()
                 .collect::<HashSet<ObjectId>>()
         } else {
             HashSet::new()
         };
-        let graph = crate::commit_graph_file::CommitGraphChain::load(&repo.git_dir.join("objects"));
-        let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+        let graph =
+            crate::commit_graph_file::CommitGraphChain::load(&repo.git_dir().join("objects"));
+        let shallow_boundaries = load_shallow_boundaries(repo.git_dir());
         Self {
             repo,
             parents: HashMap::new(),
@@ -698,7 +700,7 @@ impl<'r> CommitGraphCache<'r> {
                     Error::InvalidRef(msg) => Error::CorruptObject(msg),
                     other => other,
                 })?;
-            let object = self.repo.odb.read(&commit_oid)?;
+            let object = self.repo.odb().read(&commit_oid)?;
             if object.kind != ObjectKind::Commit {
                 return Err(Error::CorruptObject(format!(
                     "object {commit_oid} is not a commit"
@@ -733,7 +735,7 @@ impl<'r> CommitGraphCache<'r> {
             Error::InvalidRef(msg) => Error::CorruptObject(msg),
             other => other,
         })?;
-        let object = self.repo.odb.read(&commit_oid)?;
+        let object = self.repo.odb().read(&commit_oid)?;
         if object.kind != ObjectKind::Commit {
             return Err(Error::CorruptObject(format!(
                 "object {commit_oid} is not a commit"
@@ -867,16 +869,16 @@ mod tests {
 
     fn open_test_bare(dir: &tempfile::TempDir) -> Result<Repository> {
         init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
-        Repository::open(dir.path(), None)
+        Repository::open(dir.path(), &RepositoryOptions::empty())
     }
 
     #[test]
     fn commits_reachable_excluding_respects_limit() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;
-        let c1 = write_commit_same_time(&repo.odb, &[], "one", 100)?;
-        let c2 = write_commit_same_time(&repo.odb, &[c1], "two", 200)?;
-        let c3 = write_commit_same_time(&repo.odb, &[c2], "three", 300)?;
+        let c1 = write_commit_same_time(&repo.odb(), &[], "one", 100)?;
+        let c2 = write_commit_same_time(&repo.odb(), &[c1], "two", 200)?;
+        let c3 = write_commit_same_time(&repo.odb(), &[c2], "three", 300)?;
 
         let all = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], None)?;
         assert_eq!(all, vec![c3, c2, c1]);
@@ -901,9 +903,9 @@ mod tests {
         let missing: ObjectId = "0000000000000000000000000000000000000001"
             .parse()
             .expect("oid");
-        let tip = write_commit_same_time(&repo.odb, &[missing], "tip", 100)?;
+        let tip = write_commit_same_time(&repo.odb(), &[missing], "tip", 100)?;
 
-        fs::write(repo.git_dir.join("shallow"), format!("{tip}\n")).map_err(Error::Io)?;
+        fs::write(repo.git_dir().join("shallow"), format!("{tip}\n")).map_err(Error::Io)?;
 
         let out = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None)?;
         assert_eq!(out, vec![tip]);
@@ -915,9 +917,9 @@ mod tests {
     fn count_symmetric_ahead_behind_and_branch_base() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;
-        let c1 = write_commit_same_time(&repo.odb, &[], "one", 100)?;
-        let c2 = write_commit_same_time(&repo.odb, &[c1], "two", 200)?;
-        let c3 = write_commit_same_time(&repo.odb, &[c2], "three", 300)?;
+        let c1 = write_commit_same_time(&repo.odb(), &[], "one", 100)?;
+        let c2 = write_commit_same_time(&repo.odb(), &[c1], "two", 200)?;
+        let c3 = write_commit_same_time(&repo.odb(), &[c2], "three", 300)?;
         let (ahead, behind) = count_symmetric_ahead_behind(&repo, c3, c1)?;
         assert_eq!(ahead, 2);
         assert_eq!(behind, 0);
@@ -930,8 +932,8 @@ mod tests {
     fn merge_base_for_diff_helpers() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;
-        let c1 = write_commit_same_time(&repo.odb, &[], "one", 100)?;
-        let c2 = write_commit_same_time(&repo.odb, &[c1], "two", 200)?;
+        let c1 = write_commit_same_time(&repo.odb(), &[], "one", 100)?;
+        let c2 = write_commit_same_time(&repo.odb(), &[c1], "two", 200)?;
         let mb = merge_base_for_diff_two_commits(&repo, c2, c1).expect("mb");
         assert_eq!(mb, c1);
         let mb_idx = merge_base_for_diff_index(&repo, c2, c1).expect("mb idx");
@@ -946,7 +948,7 @@ mod tests {
         let missing: ObjectId = "0000000000000000000000000000000000000001"
             .parse()
             .expect("oid");
-        let tip = write_commit_same_time(&repo.odb, &[missing], "tip", 100)?;
+        let tip = write_commit_same_time(&repo.odb(), &[missing], "tip", 100)?;
 
         let err = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None).unwrap_err();
         assert!(matches!(err, Error::ObjectNotFound(_)));

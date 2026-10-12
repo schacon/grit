@@ -90,7 +90,7 @@ pub fn run(path: Option<String>, bare: bool, ref_format: RefStorageFormat) -> Re
     Ok(InitOutcome {
         initialized: !reinitialized,
         reinitialized,
-        path: user_display_path(&repo.git_dir),
+        path: user_display_path(&repo.git_dir()),
         bare,
         branch: "main".to_owned(),
         ref_format: ref_format.to_string(),

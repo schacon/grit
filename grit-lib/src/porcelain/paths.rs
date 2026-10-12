@@ -60,8 +60,7 @@ pub struct MoveOutcome {
 /// [`Error::NotRemovingRecursively`], or I/O / object-store failures.
 pub fn remove_paths(repo: &Repository, opts: &RemoveOptions) -> Result<RemoveOutcome> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     if opts.pathspecs.is_empty() {
@@ -126,8 +125,7 @@ pub fn remove_paths(repo: &Repository, opts: &RemoveOptions) -> Result<RemoveOut
 /// [`Error::Message`] for untracked sources or invalid destinations, or I/O failures.
 pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result<MoveOutcome> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
     let mut lock = repo.begin_index_update()?;
@@ -231,9 +229,9 @@ pub fn move_path(repo: &Repository, src: &str, dst: &str, force: bool) -> Result
 }
 
 fn resolve_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
-    match resolve_head(&repo.git_dir)? {
+    match resolve_head(repo.git_dir())? {
         HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.odb().read(&oid)?;
             let commit = parse_commit(&obj.data)?;
             Ok(Some(commit.tree))
         }
@@ -332,15 +330,15 @@ fn paths_with_local_modifications(
     head_tree: Option<&ObjectId>,
     work_tree: &Path,
 ) -> Result<HashSet<String>> {
-    let staged = diff_index_to_tree(&repo.odb, index, head_tree, false)?;
+    let staged = diff_index_to_tree(repo.odb(), index, head_tree, false)?;
     let index_mtime = index_file_mtime(&repo.index_path());
     let diff_opts = DiffIndexToWorktreeOptions {
         index_mtime,
-        repository_git_dir: Some(repo.git_dir.clone()),
+        repository_git_dir: Some(repo.git_dir().to_path_buf()),
         ..Default::default()
     };
     let (unstaged, _) =
-        diff_index_to_worktree_with_options(&repo.odb, index, work_tree, diff_opts)?;
+        diff_index_to_worktree_with_options(repo.odb(), index, work_tree, diff_opts)?;
 
     let mut modified = HashSet::new();
     for entry in staged {

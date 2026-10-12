@@ -1,5 +1,6 @@
 //! Abbreviation lookup via [`Odb::lookup_prefix`] matches `git rev-parse --disambiguate`.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::list_all_abbrev_matches;
@@ -86,8 +87,12 @@ fn lookup_prefix_matches_git_disambiguate_loose_pack_midx_and_alternate() {
     .expect("alternates");
 
     let git_dir = primary.join(".git");
-    let repo = Repository::open(git_dir.as_path(), Some(&primary)).expect("open");
-    let odb = &repo.odb;
+    let repo = Repository::open(
+        git_dir.as_path(),
+        &RepositoryOptions::empty().with_work_tree(&primary),
+    )
+    .expect("open");
+    let odb = &repo.odb();
 
     // Sanity: objects span loose, pack, MIDX, and alternate layers.
     let mut all = Vec::new();

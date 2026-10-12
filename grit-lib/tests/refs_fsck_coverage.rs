@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use grit_lib::config::ConfigSet;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::write_ref;
 use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckIssue};
@@ -25,9 +26,13 @@ fn refs_fsck_reports_bad_symref_and_formats_line() {
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
-    let repo = Repository::open(&git_dir, Some(dir.path())).expect("open");
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::empty().with_work_tree(dir.path()),
+    )
+    .expect("open");
     let config = ConfigSet::load_repo_local_only(&git_dir).expect("config");
-    let odb = repo.odb.clone();
+    let odb = repo.odb().clone();
 
     std::fs::write(
         git_dir.join("refs/heads/bad-sym"),

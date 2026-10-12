@@ -33,6 +33,7 @@ use std::path::Path;
 use crate::commit::{assemble_identity, identity_now_from_epoch};
 use crate::config::ConfigSet;
 use crate::diff::diff_trees;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident_resolve::{
     resolve_email_with, resolve_loose_committer_parts_with, resolve_name_with, IdentRole,
@@ -66,7 +67,7 @@ pub fn tree_to_index_entries(
     oid: &ObjectId,
     prefix: &str,
 ) -> Result<Vec<IndexEntry>> {
-    let obj = repo.odb.read(oid)?;
+    let obj = repo.odb().read(oid)?;
     if obj.kind != ObjectKind::Tree {
         return Err(Error::Message(format!("expected tree, got {}", obj.kind)));
     }
@@ -302,15 +303,16 @@ pub fn integrate_branch(
         prepare_tree_checkout(
             repo,
             Some(&into_tree),
-            &write_tree_from_index(&repo.odb, &merged.index, "")?,
+            &write_tree_from_index(repo.odb(), &merged.index, "")?,
         )?;
         apply_conflict_merge_worktree(repo, &into_tree, &merged)?;
-        record_merge_in_progress(&repo.git_dir, into_oid, other_oid, label)?;
+        record_merge_in_progress(repo.git_dir(), into_oid, other_oid, label)?;
         return Ok(IntegrateBranchOutcome::Conflicts { paths });
     }
 
     let mut index = merged.index;
-    let merged_tree = write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent())?;
+    let merged_tree =
+        write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
     checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
 
@@ -347,27 +349,27 @@ pub fn integrate_branch(
 ///
 /// Returns [`Error::Message`] when no merge is in progress, or propagates checkout and I/O errors.
 pub fn abort_branch_merge(repo: &Repository) -> Result<()> {
-    if read_merge_heads(&repo.git_dir)?.is_empty() {
+    if read_merge_heads(repo.git_dir())?.is_empty() {
         return Err(Error::Message(
             "there is no merge in progress — nothing to abort".into(),
         ));
     }
-    let orig = read_orig_head(&repo.git_dir)?
+    let orig = read_orig_head(repo.git_dir())?
         .ok_or_else(|| Error::Message("merge in progress but ORIG_HEAD is missing".into()))?;
     let head_tree = commit_tree(repo, &orig)?;
 
     let old_index = repo.load_index()?;
-    let from_tree = write_tree_from_index(&repo.odb, &old_index, "")?;
+    let from_tree = write_tree_from_index(repo.odb(), &old_index, "")?;
     let mut clean_index = index_from_tree(repo, &head_tree)?;
     repo.write_index(&mut clean_index)?;
-    let changes = diff_trees(&repo.odb, Some(&from_tree), Some(&head_tree), "")?;
+    let changes = diff_trees(repo.odb(), Some(&from_tree), Some(&head_tree), "")?;
     checkout::checkout_tree_changes(repo, &changes)?;
-    clear_merge_state(&repo.git_dir)?;
+    clear_merge_state(repo.git_dir())?;
     Ok(())
 }
 
 fn commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(commit_oid)?;
+    let obj = repo.odb().read(commit_oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
             "expected commit, got {}",
@@ -427,8 +429,7 @@ fn apply_conflict_merge_worktree(
     merged: &TreeMergeOutput,
 ) -> Result<()> {
     let work_tree = repo
-        .work_tree
-        .as_deref()
+        .work_tree()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
     let conflict_paths = conflict_path_set(merged);
     let mut index = merged.index.clone();
@@ -437,8 +438,8 @@ fn apply_conflict_merge_worktree(
     }
     repo.write_index(&mut index)?;
 
-    let stage0_tree = write_tree_from_index(&repo.odb, &index, "")?;
-    let changes = diff_trees(&repo.odb, Some(head_tree), Some(&stage0_tree), "")?;
+    let stage0_tree = write_tree_from_index(repo.odb(), &index, "")?;
+    let changes = diff_trees(repo.odb(), Some(head_tree), Some(&stage0_tree), "")?;
     let filtered: Vec<_> = changes
         .into_iter()
         .filter(|change| {
@@ -458,7 +459,7 @@ fn apply_conflict_merge_worktree(
             .or_else(|| index.get(path, 3))
             .map(|e| e.mode)
             .unwrap_or(0o100644);
-        let blob = repo.odb.read(oid)?;
+        let blob = repo.odb().read(oid)?;
         let rel = String::from_utf8_lossy(path);
         checkout::write_to_worktree(work_tree, rel.as_ref(), &blob.data, mode)?;
     }
@@ -515,9 +516,9 @@ fn move_branch(
     new: ObjectId,
     reason: &str,
 ) -> Result<()> {
-    refs::write_ref(&repo.git_dir, refname, &new)?;
+    refs::write_ref(repo.git_dir(), refname, &new)?;
     let env = repo.environment();
-    let config = ConfigSet::load(env, Some(&repo.git_dir), true).unwrap_or_default();
+    let config = ConfigSet::load(env, Some(repo.git_dir()), true).unwrap_or_default();
     let now = identity_now_from_epoch(
         env.var("SOURCE_DATE_EPOCH")
             .and_then(|s| s.parse().ok())
@@ -526,8 +527,8 @@ fn move_branch(
     );
     let (name, email) = resolve_loose_committer_parts_with(env, &config);
     let who = assemble_identity(&name, &email, None, now);
-    let _ = refs::append_reflog(&repo.git_dir, refname, &old, &new, &who, reason, false);
-    let _ = refs::append_reflog(&repo.git_dir, "HEAD", &old, &new, &who, reason, false);
+    let _ = refs::append_reflog(repo.git_dir(), refname, &old, &new, &who, reason, false);
+    let _ = refs::append_reflog(repo.git_dir(), "HEAD", &old, &new, &who, reason, false);
     Ok(())
 }
 
@@ -563,7 +564,8 @@ mod integrate_tests {
     fn reduce_octopus_merge_heads_drops_ancestor() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("f.txt"), "a\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "f.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "a"]);
@@ -588,7 +590,8 @@ mod integrate_tests {
     fn compose_fast_forward_index_keeps_staged_additions() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("tracked.txt"), "v1\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "tracked.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "head"]);
@@ -620,7 +623,8 @@ mod integrate_tests {
     fn integrate_branch_fast_forward_and_up_to_date() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("f.txt"), "v1\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "f.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "one"]);
@@ -658,7 +662,8 @@ mod integrate_tests {
     fn tree_to_index_entries_and_map_roundtrip() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("a.txt"), "a\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "a.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "c"]);
@@ -693,7 +698,8 @@ mod integrate_tests {
     fn integrate_branch_merged_without_conflicts() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("shared.txt"), "base\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "shared.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);
@@ -730,7 +736,8 @@ mod integrate_tests {
     fn integrate_branch_conflicts_then_abort() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
-        let repo = Repository::discover(Some(tmp.path())).expect("repo");
+        let repo =
+            Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("f.txt"), "base\n").expect("write");
         grit_test_support::git(tmp.path(), &["add", "f.txt"]);
         grit_test_support::git(tmp.path(), &["commit", "-m", "base"]);

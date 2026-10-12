@@ -1,5 +1,7 @@
 //! Object selection for pack-objects (walk or pack bitmap reachability).
 
+use crate::environment::RepositoryOptions;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
@@ -74,7 +76,7 @@ fn try_bitmap_enumeration(
     let Some(git_dir) = odb.config_git_dir() else {
         return Ok(None);
     };
-    let repo = match Repository::open(git_dir, None) {
+    let repo = match Repository::open(git_dir, &RepositoryOptions::empty()) {
         Ok(r) => r,
         Err(_) => return Ok(None),
     };
@@ -204,7 +206,7 @@ fn rev_list_filtered_objects(
     let Some(git_dir) = odb.config_git_dir() else {
         return Ok((Vec::new(), HashMap::new()));
     };
-    let repo = Repository::open(git_dir, None)?;
+    let repo = Repository::open(git_dir, &RepositoryOptions::empty())?;
     let wants: Vec<String> = wants.iter().map(ObjectId::to_hex).collect();
     let have_args: Vec<String> = haves.iter().map(|h| format!("^{}", h.to_hex())).collect();
     let mut rev_args = wants;
