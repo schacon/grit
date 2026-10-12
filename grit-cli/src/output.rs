@@ -305,12 +305,6 @@ impl From<&DiffStatus> for ChangeStatus {
     }
 }
 
-/// Maps each `--json` command path to the Rust type that defines its success schema.
-#[allow(dead_code)]
-pub fn schema_registry() -> &'static [crate::json_schema::SchemaRegistryEntry] {
-    crate::json_schema::schema_registry()
-}
-
 /// Serialize a [`DiffEntry`] as a [`ChangeJson`].
 pub fn change_json(entry: &DiffEntry) -> ChangeJson {
     ChangeJson {

@@ -7,19 +7,6 @@ use anyhow::Error;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-/// Any `--json` failure object on stdout: a plain message or a structured payload.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(untagged)]
-pub enum JsonErrorEnvelope {
-    /// Usual command failure (`{"error":"…"}` only).
-    Plain {
-        /// Same text a human sees after `error:` on stderr.
-        error: String,
-    },
-    /// Typed failure (conflicts, …).
-    Structured(StructuredJsonError),
-}
-
 /// JSON object emitted on stdout for structured command failures.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct StructuredJsonError {

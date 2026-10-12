@@ -54,6 +54,6 @@
       "type": "object"
     }
   },
-  "description": "Any `--json` failure object on stdout: a plain message or a structured payload.",
+  "description": "Any `--json` failure object on stdout (schema contract only; see `error.v1.json`).",
   "title": "JsonErrorEnvelope"
 }

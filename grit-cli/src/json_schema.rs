@@ -9,7 +9,21 @@ use schemars::schema::RootSchema;
 use schemars::{schema_for, JsonSchema};
 
 use crate::commands;
-use crate::json_error::JsonErrorEnvelope;
+use crate::json_error::StructuredJsonError;
+use serde::Serialize;
+
+/// Any `--json` failure object on stdout (schema contract only; see `error.v1.json`).
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
+enum JsonErrorEnvelope {
+    /// Usual command failure (`{"error":"…"}` only).
+    Plain {
+        /// Same text a human sees after `error:` on stderr.
+        error: String,
+    },
+    /// Typed failure (conflicts, …).
+    Structured(StructuredJsonError),
+}
 
 /// One row in [`schema_registry`]: command path and its success-outcome type.
 pub struct SchemaRegistryEntry {
@@ -212,18 +226,28 @@ pub fn load_committed_schema(command: &str) -> serde_json::Value {
 
 /// Regenerate every schema file under [`schemas_dir`].
 pub fn write_all_schemas(dir: &Path) {
-    fs::create_dir_all(dir).expect("create schemas dir");
+    if let Err(e) = fs::create_dir_all(dir) {
+        panic!("create schemas dir: {e}");
+    }
     for entry in schema_registry() {
         let schema = (entry.schema)();
-        let json = root_schema_to_document(&entry.command, schema);
+        let json = root_schema_to_document(entry.command, schema);
         let path = dir.join(schema_file_name(entry.command));
-        let text = serde_json::to_string_pretty(&json).expect("serialize schema");
-        fs::write(&path, format!("{text}\n")).expect("write schema");
+        let text = match serde_json::to_string_pretty(&json) {
+            Ok(t) => t,
+            Err(e) => panic!("serialize schema: {e}"),
+        };
+        if let Err(e) = fs::write(&path, format!("{text}\n")) {
+            panic!("write schema {}: {e}", path.display());
+        }
     }
 }
 
 fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value {
-    let mut value = serde_json::to_value(&root).expect("schema to json");
+    let mut value = match serde_json::to_value(&root) {
+        Ok(v) => v,
+        Err(e) => panic!("schema to json: {e}"),
+    };
     if let Some(obj) = value.as_object_mut() {
         obj.insert(
             "$schema".into(),
