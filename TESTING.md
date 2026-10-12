@@ -369,7 +369,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t3303-notes-subtrees.sh | read nested notes trees into flat entries | `notes_git_compat.rs` (`t3303_notes_subtrees_read_flat_entries`) | covered |
 | t3305-notes-fanout.sh | read git fanout layouts; grit rewrite passes `git fsck --strict` | `notes_git_compat.rs` (`t3305_fanout_layouts_read_and_written`) | covered |
 | t3306-notes-prune.sh | remove note entries / drop notes ref | `notes_git_compat.rs` (`t3306_notes_prune_via_remove`) | covered |
-| t3308/t3309/t3310/t3311 notes-merge | merge strategies ours/theirs/union/cat_sort_uniq vs `git notes merge -s` | `notes_git_compat.rs` (`t3309_notes_merge_strategies_match_git`); `notes.rs` (`write_notes_commit_with_parents` updates ref) | covered |
+| t3308/t3309/t3310/t3311 notes-merge | merge strategies ours/theirs/union/cat_sort_uniq vs `git notes merge -s`; manual conflicts keep live notes ref | `notes_git_compat.rs` (`t3309_notes_merge_strategies_match_git`, `t3309_manual_notes_merge_keeps_local_ref_on_conflict`); `notes.rs` (`notes_merge_manual_leaves_conflict_commit`) | covered |
 | t2400-worktree-add.sh | linked worktree admin layout; `git worktree list` / `list_worktrees` | `grit-lib/tests/worktree_git_compat.rs` (`t2400_worktree_admin_dir_roundtrip_with_git`, `worktree_linked_git_compat.rs`) | covered |
 | t2402-worktree-list.sh | list linked worktrees vs porcelain | `worktree_git_compat.rs` (`t2402_worktree_list_matches_git_porcelain`) | covered |
 | t2404-worktree-config.sh | `extensions.worktreeConfig` + `config.worktree` via `copy_filtered_worktree_config` | `worktree_git_compat.rs` (`t2404_worktree_config_matches_git`) | covered |

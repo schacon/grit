@@ -847,12 +847,15 @@ fn resolve_notes_commit_optional(repo: &Repository, notes_ref: &str) -> Result<O
     Ok(Some(oid))
 }
 
+/// Write a notes merge commit. When `update_ref` is false the commit is stored in
+/// the ODB only (manual merge conflicts keep the live notes ref at the local tip).
 pub fn write_notes_commit_with_parents(
     repo: &Repository,
     notes_ref: &str,
     entries: &[NotesTreeEntry],
     message: &str,
     parents: &[ObjectId],
+    update_ref: bool,
 ) -> Result<ObjectId> {
     let fanout = notes_fanout(entries);
     let rewritten_entries: Vec<_> = entries
@@ -888,20 +891,22 @@ pub fn write_notes_commit_with_parents(
     };
     let commit_data = serialize_commit(&commit);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
-    let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
-    write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
-    if should_autocreate_reflog(&repo.git_dir, notes_ref) {
-        let msg = message.trim_end_matches('\n');
-        let reflog_msg = format!("notes: {msg}");
-        let _ = append_reflog(
-            &repo.git_dir,
-            notes_ref,
-            &old_oid,
-            &commit_oid,
-            &commit.committer,
-            &reflog_msg,
-            false,
-        );
+    if update_ref {
+        let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
+        write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
+        if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+            let msg = message.trim_end_matches('\n');
+            let reflog_msg = format!("notes: {msg}");
+            let _ = append_reflog(
+                &repo.git_dir,
+                notes_ref,
+                &old_oid,
+                &commit_oid,
+                &commit.committer,
+                &reflog_msg,
+                false,
+            );
+        }
     }
     Ok(commit_oid)
 }
@@ -959,6 +964,7 @@ pub fn notes_merge_inner(
                     &entries,
                     &commit_msg,
                     &merge_parents,
+                    false,
                 )?;
                 return Ok(Err(partial));
             }
@@ -968,6 +974,7 @@ pub fn notes_merge_inner(
                 &entries,
                 &commit_msg,
                 &merge_parents,
+                true,
             )?;
             Ok(Ok(new_oid))
         }
@@ -1205,7 +1212,19 @@ mod tests {
             NotesMergeStrategy::Manual,
         )
         .expect("merge");
-        assert!(result.is_err(), "manual merge must stop with conflicts");
+        let partial = match result {
+            Err(partial) => partial,
+            Ok(_) => panic!("manual merge must stop with conflicts"),
+        };
+        assert_ne!(
+            partial, local,
+            "partial merge commit must differ from the pre-merge tip"
+        );
+        assert_eq!(
+            crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap(),
+            local,
+            "manual merge conflicts must leave the live notes ref at the local tip"
+        );
         assert!(notes_merge_worktree_nonempty(&notes_merge_worktree_path(
             &repo
         )));
@@ -1224,9 +1243,15 @@ mod tests {
     fn notes_merge_empty_remote_adopts_remote() {
         let tmp = TempDir::new().unwrap();
         let repo = open_repo(tmp.path());
-        let local =
-            write_notes_commit_with_parents(&repo, "refs/notes/commits", &[], "local only", &[])
-                .unwrap();
+        let local = write_notes_commit_with_parents(
+            &repo,
+            "refs/notes/commits",
+            &[],
+            "local only",
+            &[],
+            true,
+        )
+        .unwrap();
         let result = notes_merge_inner(
             &repo,
             "refs/notes/commits",

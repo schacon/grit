@@ -932,7 +932,10 @@ mod tests {
         .unwrap();
 
         let linked_repo = Repository::discover(Some(&linked)).unwrap();
-        let linked_admin = linked_repo.git_dir.canonicalize().unwrap_or_else(|_| linked_repo.git_dir.clone());
+        let linked_admin = linked_repo
+            .git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| linked_repo.git_dir.clone());
         assert_eq!(worktree_admin_dir(&linked_repo), linked_admin);
 
         let found = find_worktree_with_branch_checked_out(&repo, "feature", None)

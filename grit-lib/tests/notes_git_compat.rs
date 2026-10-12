@@ -205,6 +205,74 @@ fn t3309_notes_merge_strategies_match_git() {
 }
 
 #[test]
+fn t3309_manual_notes_merge_keeps_local_ref_on_conflict() {
+    let grit_dir = tempfile::tempdir().expect("grit temp");
+    let git_dir = tempfile::tempdir().expect("git temp");
+    for dir in [grit_dir.path(), git_dir.path()] {
+        init_repo(dir);
+        let commit = seed_commit(dir, "x", "x\n", "seed");
+        git_cmd(dir, &["notes", "add", "-m", "base", &commit.to_hex()]);
+        let base = git_cmd(dir, &["rev-parse", "refs/notes/commits"])
+            .trim()
+            .to_owned();
+        git_cmd(
+            dir,
+            &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
+        );
+        let local_tip = git_cmd(dir, &["rev-parse", "refs/notes/commits"])
+            .trim()
+            .to_owned();
+        git_cmd(dir, &["update-ref", "refs/notes/remote", &base]);
+        git_cmd(
+            dir,
+            &[
+                "notes",
+                "--ref=refs/notes/remote",
+                "add",
+                "-f",
+                "-m",
+                "remote",
+                &commit.to_hex(),
+            ],
+        );
+        git_cmd(dir, &["update-ref", "refs/notes/commits", &local_tip]);
+    }
+
+    let _ = grit_test_support::git_cmd(&["notes", "merge", "-s", "manual", "refs/notes/remote"])
+        .in_dir(git_dir.path())
+        .with_status(1);
+    let git_notes_tip = git_cmd(git_dir.path(), &["rev-parse", "refs/notes/commits"])
+        .trim()
+        .to_owned();
+
+    let grit_repo = open_grit(grit_dir.path());
+    let local_tip = git_cmd(grit_dir.path(), &["rev-parse", "refs/notes/commits"])
+        .trim()
+        .to_owned();
+    notes_merge_inner(
+        &grit_repo,
+        "refs/notes/commits",
+        "refs/notes/remote",
+        NotesMergeStrategy::Manual,
+    )
+    .expect("merge")
+    .expect_err("manual merge must report conflicts");
+
+    let grit_notes_tip = git_cmd(grit_dir.path(), &["rev-parse", "refs/notes/commits"])
+        .trim()
+        .to_owned();
+    assert_eq!(
+        grit_notes_tip, local_tip,
+        "grit must keep refs/notes/commits at the local tip during manual conflicts"
+    );
+    assert_eq!(
+        grit_notes_tip, git_notes_tip,
+        "grit notes ref must match git after manual merge conflict"
+    );
+    assert_fsck_strict(grit_dir.path());
+}
+
+#[test]
 fn t3303_notes_subtrees_read_flat_entries() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());
