@@ -756,6 +756,40 @@ fn idx_and_rev_match_git_for_all_pack_shapes_sha256() {
 }
 
 #[test]
+fn pack_index_records_mixed_size_whole_objects_preserve_pack_order() {
+    use grit_test_support::objects::{HashAlgo as FixtureAlgo, ObjectKind as PK, PackBuilder};
+
+    let small = b"small blob payload\n";
+    let large = vec![0xAB_u8; LARGE_WHOLE_OBJECT + 1024];
+    let mut pb = PackBuilder::new(FixtureAlgo::Sha1);
+    pb.add_full(PK::Blob, small);
+    pb.add_full(PK::Blob, &large);
+    pb.add_full(PK::Blob, b"tail\n");
+    let pack = pb.build().bytes;
+    let tmp = tempfile::tempdir().expect("odb");
+    let odb = Odb::new(tmp.path());
+    let one = pack_index_records_with_threads(&pack, &odb, Parallelism::resolve(Some(1)))
+        .expect("threads=1");
+    let four = pack_index_records_with_threads(&pack, &odb, Parallelism::resolve(Some(4)))
+        .expect("threads=4");
+    assert_eq!(one.len(), four.len());
+    for (a, b) in one.iter().zip(&four) {
+        assert_eq!(a.oid, b.oid, "oid at offset {}", a.offset);
+        assert_eq!(a.offset, b.offset);
+        assert_eq!(a.crc32, b.crc32);
+    }
+    let mut offsets: Vec<_> = one.iter().map(|r| r.offset).collect();
+    let mut sorted = offsets.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        offsets, sorted,
+        "records must follow ascending pack offsets"
+    );
+}
+
+const LARGE_WHOLE_OBJECT: usize = 4 * 1024 * 1024;
+
+#[test]
 fn pack_index_records_tiny_pack_many_threads_completes() {
     use grit_test_support::objects::{HashAlgo as FixtureAlgo, ObjectKind as PK, PackBuilder};
 
