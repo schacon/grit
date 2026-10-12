@@ -18,7 +18,8 @@ use grit_lib::untracked_cache::{
 
 use support::{
     append_git_config, entry_from_worktree_path, extension_payload, fsck_strict, git,
-    git_porcelain_untracked, git_update_index_untracked_cache, read_index_bytes,
+    git_porcelain_untracked, git_status_porcelain_normal_with_trace,
+    git_update_index_untracked_cache, read_index_bytes, trace2_read_directory_counter,
 };
 
 fn init_repo(root: &Path) {
@@ -72,21 +73,35 @@ fn t7063_untracked_cache_reused_by_git_status() {
     let before = extension_payload(&read_index_bytes(&repo), b"UNTR").expect("UNTR");
     assert!(!before.is_empty(), "grit must write UNTR extension payload");
 
-    git(
-        root,
-        &[
-            "-c",
-            "core.untrackedCache=true",
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-        ],
+    let trace_warm = tempfile::NamedTempFile::new().expect("trace warm");
+    git_status_porcelain_normal_with_trace(root, trace_warm.path());
+
+    let stable = extension_payload(&read_index_bytes(&repo), b"UNTR").expect("UNTR after warm");
+    assert!(
+        !stable.is_empty(),
+        "git must accept grit-written UNTR in normal untracked mode"
     );
-    let after = extension_payload(&read_index_bytes(&repo), b"UNTR").expect("UNTR after git");
+
+    let trace_reuse = tempfile::NamedTempFile::new().expect("trace reuse");
+    git_status_porcelain_normal_with_trace(root, trace_reuse.path());
+
+    let after_reuse =
+        extension_payload(&read_index_bytes(&repo), b"UNTR").expect("UNTR after second status");
     assert_eq!(
-        before, after,
-        "git status must reuse grit-written UNTR without rebuilding"
+        stable, after_reuse,
+        "second git status must reuse the UNTR payload without rebuilding"
     );
+    assert_eq!(
+        trace2_read_directory_counter(trace_reuse.path(), "node-creation"),
+        Some(0),
+        "reused UNTR must not allocate new directory nodes on the second status"
+    );
+    assert_eq!(
+        trace2_read_directory_counter(trace_warm.path(), "gitignore-invalidation"),
+        Some(0),
+        "warm status should not invalidate gitignore after grit populated UNTR"
+    );
+    assert_eq!(stable.len(), before.len(), "UNTR payload size stable after grit write");
 
     fsck_strict(root);
 }
@@ -286,7 +301,9 @@ fn t7063_collect_untracked_matches_git_deep_tree() {
 #[test]
 fn index_name_hash_lazy_ignorecase_lookup() {
     use grit_lib::index::Index;
-    use grit_lib::index_name_hash_lazy::{memihash, test_lazy_init_name_hash};
+    use grit_lib::index_name_hash_lazy::{
+        dump_lazy_init_name_hash, memihash, test_lazy_init_name_hash,
+    };
 
     assert_eq!(memihash(b"Path/File"), memihash(b"path/file"));
 
@@ -295,8 +312,8 @@ fn index_name_hash_lazy_ignorecase_lookup() {
     git(root, &["init", "-q", "-b", "main", "."]);
     let repo = Repository::discover(Some(root)).expect("open");
     let mut idx = Index::empty(2);
-    idx.add_or_replace(entry_from_worktree_path(&repo, "Foo/Bar.txt", b"x"));
-    idx.add_or_replace(entry_from_worktree_path(&repo, "foo/bar.txt", b"y"));
+    idx.add_or_replace(entry_from_worktree_path(&repo, "Mixed/Case.txt", b"x"));
     let threads = test_lazy_init_name_hash(&idx, false).expect("lazy init");
     assert_eq!(threads, 0, "small index uses single-threaded lazy path");
+    dump_lazy_init_name_hash(&idx, false).expect("dump lazy hashes");
 }

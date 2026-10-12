@@ -1817,6 +1817,28 @@ mod tests {
     }
 
     #[test]
+    fn untracked_extension_deep_tree_round_trip() {
+        let mut uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
+        let mut root = UntrackedCacheDir::new(String::new());
+        root.valid = true;
+        root.recurse = true;
+        let mut level = &mut root;
+        for depth in 0..8 {
+            let mut child = UntrackedCacheDir::new(format!("d{depth}"));
+            child.valid = true;
+            child.recurse = true;
+            child.untracked.push(format!("u{depth}.txt"));
+            level.dirs.push(child);
+            let last = level.dirs.len() - 1;
+            level = &mut level.dirs[last];
+        }
+        uc.root = Some(root);
+        let raw = write_untracked_extension(&uc);
+        let back = parse_untracked_extension(&raw).expect("parse deep tree");
+        assert!(back.root.is_some());
+    }
+
+    #[test]
     fn untracked_extension_round_trip_with_tree() {
         let mut uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
         let mut root = UntrackedCacheDir::new(String::new());
@@ -1860,9 +1882,32 @@ mod tests {
             "[status]\n\tshowUntrackedFiles = all\n",
         )
         .expect("write");
-        let cfg =
-            ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
         assert_eq!(dir_flags_from_config(&cfg), 0);
+    }
+
+    #[test]
+    fn encode_decode_varint_round_trip() {
+        let mut buf = Vec::new();
+        encode_varint(0, &mut buf);
+        encode_varint(127, &mut buf);
+        encode_varint(300, &mut buf);
+        encode_varint(16_384, &mut buf);
+        let (a, n) = decode_varint(&buf).expect("first");
+        assert_eq!(a, 0);
+        let (b, m) = decode_varint(&buf[n..]).expect("second");
+        assert_eq!(b, 127);
+        let (c, _) = decode_varint(&buf[n + m..]).expect("third");
+        assert_eq!(c, 300);
+        assert!(decode_varint(&[0x80]).is_none());
+    }
+
+    #[test]
+    fn untracked_cache_ident_non_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ident = untracked_cache_ident(dir.path());
+        assert!(ident.ends_with(&[0]));
+        assert!(ident.len() > 1);
     }
 
     #[test]

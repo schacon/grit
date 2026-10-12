@@ -250,7 +250,18 @@ fn t1700_shared_index_expire_removes_stale_file() {
 fn t1701_racy_split_index_entries_rechecked() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    init_repo_with_files(root, 4);
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "Test"]);
+
+    const CONTENT_A: &str = "same length!!";
+    const CONTENT_B: &str = "same length??";
+    assert_eq!(CONTENT_A.len(), CONTENT_B.len());
+
+    std::fs::write(root.join("f0001.txt"), CONTENT_A).expect("write indexed content");
+    git(root, &["add", "f0001.txt"]);
+    git(root, &["commit", "-qm", "initial"]);
+
     enable_split_index(&root.join(".git"));
     git_update_index_split(root);
 
@@ -261,31 +272,37 @@ fn t1701_racy_split_index_entries_rechecked() {
         .iter()
         .find(|e| e.path == b"f0001.txt")
         .expect("entry");
+    assert_eq!(entry.size, CONTENT_A.len() as u32);
     let entry_mtime = (entry.mtime_sec, entry.mtime_nsec);
     let index_mtime = index.source_mtime.expect("index mtime");
 
-    const CONTENT_A: &str = "same length!!";
-    const CONTENT_B: &str = "same length??";
-    assert_eq!(CONTENT_A.len(), CONTENT_B.len());
-    std::fs::write(root.join("f0001.txt"), CONTENT_B).expect("rewrite");
+    std::fs::write(root.join("f0001.txt"), CONTENT_B).expect("same-size rewrite");
     filetime::set_file_mtime(
         &root.join("f0001.txt"),
         FileTime::from_unix_time(i64::from(entry_mtime.0), entry_mtime.1),
     )
-    .expect("pin mtime");
+    .expect("pin mtime to indexed stat");
 
     let git_names: Vec<String> = git(root, &["diff", "--name-only"])
         .lines()
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    assert_eq!(git_names, vec!["f0001.txt".to_owned()]);
+    assert_eq!(
+        git_names,
+        vec!["f0001.txt".to_owned()],
+        "system git must detect racy same-size change under split index"
+    );
 
     let mut grit_index = repo.load_index().expect("reload");
     assert_eq!(grit_index.source_mtime, Some(index_mtime));
     let diff =
         diff_index_to_worktree(&repo.odb, &mut grit_index, root, false, false).expect("diff");
-    assert_eq!(diff.len(), 1);
+    assert_eq!(
+        diff.len(),
+        1,
+        "split index must still re-verify racy entries"
+    );
     assert_eq!(diff[0].path(), "f0001.txt");
 }
 

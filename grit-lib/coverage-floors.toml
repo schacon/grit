@@ -74,7 +74,7 @@ files = [
     "untracked_cache.rs",
     "index_name_hash_lazy.rs",
 ]
-minimum = 60.9
+minimum = 84.5
 
 [group.merge]
 files = [

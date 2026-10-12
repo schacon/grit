@@ -986,6 +986,18 @@ mod tests {
     }
 
     #[test]
+    fn write_split_index_request_keeps_existing_split_without_config() {
+        let cfg = ConfigSet::new();
+        let mut idx = Index::empty(2);
+        idx.split_link = Some(SplitIndexLink {
+            base_oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"base"),
+            delete_bitmap: None,
+            replace_bitmap: None,
+        });
+        assert!(WriteSplitIndexRequest { explicit: None }.want_write_split(&cfg, &idx));
+    }
+
+    #[test]
     fn entries_equal_for_split_ignores_path_and_namehash() {
         let mut a = sample_entry("a.txt", 1);
         let mut b = sample_entry("b.txt", 1);
@@ -1047,6 +1059,26 @@ mod tests {
     }
 
     #[test]
+    fn split_index_config_and_shared_repository_perm() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("config"),
+            "[core]\n\tsplitIndex = true\n\tsharedRepository = group\n",
+        )
+        .expect("write");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert!(matches!(
+            split_index_config(&cfg),
+            SplitIndexConfig::Enabled
+        ));
+        assert_eq!(
+            parse_shared_repository_perm(cfg.get("core.sharedRepository").as_deref()),
+            0o660
+        );
+        let _ = max_percent_split_change(&cfg);
+    }
+
+    #[test]
     fn write_split_index_request_explicit_overrides_config() {
         let cfg = ConfigSet::new();
         let idx = Index::empty(2);
@@ -1058,6 +1090,115 @@ mod tests {
             explicit: Some(false),
         }
         .want_write_split(&cfg, &idx));
+    }
+
+    #[test]
+    fn hash_index_body_matches_entry_checksum() {
+        let mut idx = Index::empty(2);
+        idx.add_or_replace(sample_entry("a.txt", 1));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("index");
+        idx.write(&path).expect("write index");
+        let buf = fs::read(&path).expect("read index");
+        let body = &buf[..buf.len().saturating_sub(20)];
+        let oid = hash_index_body(body, HashAlgo::Sha1);
+        assert_ne!(oid, ObjectId::zero());
+    }
+
+    #[test]
+    fn shared_repository_perm_parses_git_variants() {
+        assert_eq!(parse_shared_repository_perm(Some("umask")), 0);
+        assert_eq!(parse_shared_repository_perm(Some("group")), 0o660);
+        assert_eq!(parse_shared_repository_perm(Some("all")), 0o664);
+        assert_eq!(parse_shared_repository_perm(Some("true")), 0o660);
+        assert_eq!(parse_shared_repository_perm(Some("world")), 0o664);
+        assert_eq!(parse_shared_repository_perm(None), 0);
+        assert_eq!(parse_shared_repository_perm(Some("664")), -0o664);
+        assert_eq!(parse_shared_repository_perm(Some("600")), -384);
+    }
+
+    #[test]
+    fn shared_index_expire_never_and_now() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("config"),
+            "[splitIndex]\n\tsharedIndexExpire = never\n",
+        )
+        .expect("write");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert_eq!(shared_index_expire_threshold(&cfg), 0);
+
+        fs::write(
+            dir.path().join("config"),
+            "[splitIndex]\n\tsharedIndexExpire = now\n",
+        )
+        .expect("write");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        assert!(shared_index_expire_threshold(&cfg) > 0);
+    }
+
+    #[test]
+    fn format_dump_split_index_short_index_errors() {
+        let idx = Index::empty(2);
+        let err = format_dump_split_index_file(&[1, 2, 3], &idx).expect_err("too short");
+        assert!(err.to_string().contains("too short"));
+    }
+
+    #[test]
+    fn resolve_split_index_missing_shared_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("mkdir");
+        let mut idx = Index::empty(2);
+        idx.split_link = Some(SplitIndexLink {
+            base_oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"missing"),
+            delete_bitmap: None,
+            replace_bitmap: None,
+        });
+        let index_path = git_dir.join("index");
+        fs::write(&index_path, b"x").expect("write");
+        let err = resolve_split_index_if_needed(&mut idx, &git_dir, &index_path).expect_err("read");
+        assert!(err.to_string().contains("shared index"));
+    }
+
+    #[test]
+    fn clean_stale_shared_index_files_honors_expire() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("mkdir");
+        fs::write(
+            dir.path().join("config"),
+            "[splitIndex]\n\tsharedIndexExpire = now\n",
+        )
+        .expect("write config");
+        let cfg = ConfigSet::load(&Environment::empty(), Some(dir.path()), true).expect("load");
+        let stale = git_dir.join("sharedindex.deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        fs::write(&stale, b"stale").expect("write stale");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let past = filetime::FileTime::from_unix_time(1_000_000, 0);
+            filetime::set_file_mtime(&stale, past).expect("backdate");
+            let _ = stale.metadata().expect("meta").mtime();
+        }
+        clean_stale_shared_index_files(&git_dir, "cccccccccccccccccccccccccccccccccccccccc", &cfg);
+        assert!(!stale.exists(), "expired sharedindex must be removed");
+    }
+
+    #[test]
+    fn merge_split_into_index_delete_only() {
+        let base_entries = vec![sample_entry("a.txt", 1), sample_entry("b.txt", 2)];
+        let mut del = EwahBitmap::new();
+        del.set_bit_extend(0);
+        let link = SplitIndexLink {
+            base_oid: HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"shared"),
+            delete_bitmap: Some(del),
+            replace_bitmap: None,
+        };
+        let mut index = Index::empty(2);
+        merge_split_into_index(&mut index, link, base_entries).expect("merge");
+        assert_eq!(index.entries().len(), 1);
+        assert_eq!(String::from_utf8_lossy(&index.entries()[0].path), "b.txt");
     }
 
     #[test]

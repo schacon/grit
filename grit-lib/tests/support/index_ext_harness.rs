@@ -6,6 +6,48 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Read one `read_directory` trace2 counter (`node-creation`, `opendir`, …).
+pub fn trace2_read_directory_counter(trace_path: &Path, key: &str) -> Option<u64> {
+    let data = fs::read_to_string(trace_path).ok()?;
+    for line in data.lines() {
+        if !line.contains("\"event\":\"data\"") || !line.contains("\"category\":\"read_directory\"")
+        {
+            continue;
+        }
+        if !line.contains(&format!("\"key\":\"{key}\"")) {
+            continue;
+        }
+        let value = line.split("\"value\":\"").nth(1)?.split('"').next()?;
+        return value.parse().ok();
+    }
+    None
+}
+
+/// Run `git status --porcelain` in normal untracked mode with trace2 logging.
+pub fn git_status_porcelain_normal_with_trace(repo_dir: &Path, trace_path: &Path) {
+    let out = Command::new("git")
+        .current_dir(repo_dir)
+        .env("GIT_TRACE2_EVENT", trace_path)
+        .env("GIT_TRACE2_EVENT_NESTING", "10")
+        .env("GIT_CONFIG_GLOBAL", null_config())
+        .env("GIT_CONFIG_SYSTEM", null_config())
+        .args(["-c", "core.untrackedCache=true", "status", "--porcelain"])
+        .output()
+        .expect("git status");
+    assert!(
+        out.status.success(),
+        "git status failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+pub fn git_status_porcelain_normal(repo_dir: &Path) -> String {
+    git(
+        repo_dir,
+        &["-c", "core.untrackedCache=true", "status", "--porcelain"],
+    )
+}
+
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;

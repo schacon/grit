@@ -487,6 +487,16 @@ mod tests {
     }
 
     #[test]
+    fn sequential_lazy_build_hashes_mixed_case_paths() {
+        let mut idx = Index::empty(2);
+        idx.add_or_replace(entry("Mixed/Case.txt", 1));
+        let (table, lazy) = sequential_lazy_build(&idx);
+        assert!(!table.nodes.is_empty());
+        assert_eq!(lazy[0].hash_name, memihash(b"Mixed/Case.txt"));
+        assert_eq!(memihash(b"Mixed/Case.txt"), memihash(b"mixed/case.txt"));
+    }
+
+    #[test]
     fn lazy_init_uses_threads_on_large_index() {
         let mut idx = Index::empty(2);
         for i in 0..5000 {
