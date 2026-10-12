@@ -1676,19 +1676,21 @@ pub(crate) fn finish_initial_remote_fetch_layout(
     if let Some(branch) = default_branch {
         let target = format!("refs/remotes/{remote}/{branch}");
         let head_ref = format!("refs/remotes/{remote}/HEAD");
-        crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)?;
-        if let Some(ref log) = opts.clone_reflog {
-            let zero = ObjectId::zero();
-            let tip = crate::refs::resolve_ref(git_dir, &target).unwrap_or(zero);
-            crate::refs::append_reflog(
-                git_dir,
-                &head_ref,
-                &zero,
-                &tip,
-                &log.identity,
-                &log.message,
-                true,
-            )?;
+        if crate::refs::resolve_ref(git_dir, &target).is_ok() {
+            crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)?;
+            if let Some(ref log) = opts.clone_reflog {
+                let zero = ObjectId::zero();
+                let tip = crate::refs::resolve_ref(git_dir, &target).unwrap_or(zero);
+                crate::refs::append_reflog(
+                    git_dir,
+                    &head_ref,
+                    &zero,
+                    &tip,
+                    &log.identity,
+                    &log.message,
+                    true,
+                )?;
+            }
         }
     }
     Ok(())

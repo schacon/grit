@@ -997,22 +997,30 @@ pub fn list_refs_from_git_dir(
     let mut lazy_odb: Option<Odb> = None;
 
     let mut entries = Vec::new();
-    if list_refs_includes_head(opts) {
-        if let Ok(head_oid) = crate::refs::resolve_ref(git_dir, "HEAD") {
-            let symref_target = if opts.symrefs {
-                crate::refs::read_symbolic_ref(git_dir, "HEAD")
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-            if ref_matches_list_opts("HEAD", opts) {
+    if list_refs_includes_head(opts) && ref_matches_list_opts("HEAD", opts) {
+        let symref_target = if opts.symrefs {
+            crate::refs::read_symbolic_ref(git_dir, "HEAD")
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        match crate::refs::resolve_ref(git_dir, "HEAD") {
+            Ok(head_oid) => {
                 entries.push(RemoteRef {
                     name: "HEAD".to_owned(),
                     oid: head_oid,
                     symref_target,
                 });
             }
+            Err(_) if symref_target.is_some() => {
+                entries.push(RemoteRef {
+                    name: "HEAD".to_owned(),
+                    oid: ObjectId::zero(),
+                    symref_target,
+                });
+            }
+            Err(_) => {}
         }
     }
 

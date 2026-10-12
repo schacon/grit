@@ -185,6 +185,18 @@ fn default_branch_is_main_for_normal_repo() {
     assert_eq!(branch.as_deref(), Some("main"));
 }
 
+#[test]
+fn default_branch_for_empty_bare_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("empty.git");
+    git(
+        tmp.path(),
+        &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()],
+    );
+    let branch = remote_default_branch_local(&bare).expect("default branch empty bare");
+    assert_eq!(branch.as_deref(), Some("main"));
+}
+
 /// CAS semantics + all-or-nothing application in one batch.
 #[test]
 fn update_refs_cas_and_atomicity() {
