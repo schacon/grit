@@ -5,6 +5,7 @@
 //! config (`.git/config`); `--global` reads from or writes to your per-user
 //! config (`~/.gitconfig`).
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
@@ -13,7 +14,7 @@ use serde::Serialize;
 
 use crate::context;
 use crate::markdown;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit config`, tagged by `action`.
 #[derive(Serialize)]
@@ -38,34 +39,36 @@ pub struct ConfigEntry {
 }
 
 impl HumanRender for ConfigOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
             // `get` prints just the value, matching `git config <key>`.
-            ConfigOutcome::Get { value, .. } => println!("{value}"),
+            ConfigOutcome::Get { value, .. } => outln!(w, "{value}"),
             ConfigOutcome::List { entries } => {
                 for entry in entries {
                     match &entry.value {
-                        Some(value) => println!("{}={value}", entry.key),
-                        None => println!("{}", entry.key),
+                        Some(value) => outln!(w, "{}={value}", entry.key),
+                        None => outln!(w, "{}", entry.key),
                     }
                 }
             }
             // `set` / `unset` are silent in human mode (as before).
             ConfigOutcome::Set { .. } | ConfigOutcome::Unset { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl MarkdownRender for ConfigOutcome {
-    fn render_markdown(&self) {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
             ConfigOutcome::Get { key, value } => {
-                println!("`{key}` = {value}");
+                outln!(w, "`{key}` = {value}");
             }
-            ConfigOutcome::List { entries } => markdown::print_config_entries(entries),
-            ConfigOutcome::Set { key, value } => println!("Set `{key}` = {value}."),
-            ConfigOutcome::Unset { key } => println!("Unset `{key}`."),
+            ConfigOutcome::List { entries } => markdown::print_config_entries(w, entries)?,
+            ConfigOutcome::Set { key, value } => outln!(w, "Set `{key}` = {value}."),
+            ConfigOutcome::Unset { key } => outln!(w, "Unset `{key}`."),
         }
+        Ok(())
     }
 }
 

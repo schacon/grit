@@ -1,5 +1,6 @@
 //! `grit init` — create a new, empty repository.
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -8,7 +9,7 @@ use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::init_repository;
 use serde::Serialize;
 
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -31,37 +32,46 @@ pub struct InitOutcome {
 }
 
 impl HumanRender for InitOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let kind = if self.bare {
             "bare repository"
         } else {
             "repository"
         };
         if self.reinitialized {
-            println!(
+            outln!(
+                w,
                 "Reinitialized existing {kind} in {} (ref-format: {})",
-                self.path, self.ref_format
+                self.path,
+                self.ref_format
             );
         } else {
-            println!(
+            outln!(
+                w,
                 "Initialized empty {kind} in {} (ref-format: {})",
-                self.path, self.ref_format
+                self.path,
+                self.ref_format
             );
         }
+        Ok(())
     }
 }
 
 impl MarkdownRender for InitOutcome {
-    fn render_markdown(&self) {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let kind = if self.bare {
             "bare repository"
         } else {
             "repository"
         };
-        println!(
+        outln!(
+            w,
             "Initialized empty {kind} at `{}` (default branch `{}`, ref-format `{}`).",
-            self.path, self.branch, self.ref_format
+            self.path,
+            self.branch,
+            self.ref_format
         );
+        Ok(())
     }
 }
 

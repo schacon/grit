@@ -2,8 +2,10 @@
 
 use anyhow::Result;
 use serde::Serialize;
+use std::io::Write;
 
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{HumanRender, MarkdownRender, RenderContext};
+use crate::stdio;
 
 /// The skill text, with `{version}` replaced by the running grit's version.
 const SKILL: &str = include_str!("skill.md");
@@ -25,17 +27,23 @@ pub struct SkillOutcome {
 }
 
 impl HumanRender for SkillOutcome {
-    fn render_human(&self) {
-        // Exactly the file, so `grit skill > SKILL.md` works.
-        print!("{}", self.content);
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        // Exactly the file bytes, so `grit skill > SKILL.md` works.
+        write_skill_content(w, &self.content)
     }
 }
 
 impl MarkdownRender for SkillOutcome {
-    fn render_markdown(&self) {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         // Same bytes as human mode so agents can save or parse the skill file.
-        print!("{}", self.content);
+        write_skill_content(w, &self.content)
     }
+}
+
+/// Write skill file bytes without adding a trailing newline.
+fn write_skill_content(w: &mut dyn Write, content: &str) -> Result<()> {
+    stdio::io_result(w.write_all(content.as_bytes()))
+        .map_err(|e| anyhow::anyhow!("writing output: {e}"))
 }
 
 pub fn run() -> Result<SkillOutcome> {
@@ -64,6 +72,24 @@ mod tests {
 
     /// Every `grit <command>` the skill mentions must exist, so the skill can't
     /// drift from the CLI when commands are renamed or removed.
+    #[test]
+    fn skill_renders_to_string_in_human_and_markdown_modes() {
+        use crate::output::{render_to_string, OutputMode};
+        use time::OffsetDateTime;
+
+        let outcome = run().unwrap();
+        let ctx = RenderContext {
+            now: OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("valid timestamp"),
+        };
+        let human =
+            render_to_string(&outcome, OutputMode::Human, &ctx).expect("human render_to_string");
+        let markdown = render_to_string(&outcome, OutputMode::Markdown, &ctx)
+            .expect("markdown render_to_string");
+        assert_eq!(human, outcome.content);
+        assert_eq!(markdown, outcome.content);
+        assert!(!human.is_empty());
+    }
+
     #[test]
     fn skill_mentions_only_real_commands() {
         use clap::CommandFactory;

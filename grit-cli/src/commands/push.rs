@@ -11,11 +11,12 @@ use grit_lib::refs;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::transfer::PushRefSpec;
 use serde::Serialize;
+use std::io::Write;
 
 use crate::commands::auth;
 use crate::context;
 use crate::markdown;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use grit_lib::fetch::NoProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, ListRefsOptions, Remote, DEFAULT_REMOTE};
 use grit_lib::transfer::{resolve_push_delete_ref, PushOptions};
@@ -46,12 +47,12 @@ pub struct PushRefResult {
 }
 
 impl HumanRender for PushOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         for result in &self.results {
             let target = format!("{} {}", self.remote, result.ref_name);
             match result.status.as_str() {
-                "ok" => println!("  pushed {} → {target}", self.branch),
-                "up_to_date" => println!("  {target} already up to date"),
+                "ok" => outln!(w, "  pushed {} → {target}", self.branch),
+                "up_to_date" => outln!(w, "  {target} already up to date"),
                 // Rejections are diagnostics → stderr (as before).
                 _ => eprintln!(
                     "  rejected {target}: {}",
@@ -59,12 +60,14 @@ impl HumanRender for PushOutcome {
                 ),
             }
         }
+        Ok(())
     }
 }
 
 impl MarkdownRender for PushOutcome {
-    fn render_markdown(&self) {
-        markdown::print_push_results(&self.remote, &self.branch, &self.results);
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_push_results(w, &self.remote, &self.branch, &self.results)?;
+        Ok(())
     }
 }
 

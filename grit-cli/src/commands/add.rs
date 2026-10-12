@@ -9,9 +9,10 @@ use grit_lib::porcelain::add::{stage as stage_paths, StageMode, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 use serde::Serialize;
+use std::io::Write;
 
 use crate::context;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit add`: how many changes were staged.
 #[derive(Serialize)]
@@ -23,13 +24,14 @@ pub struct AddOutcome {
 }
 
 impl HumanRender for AddOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self.staged {
-            0 if self.no_paths => println!("Nothing to stage — working tree clean."),
+            0 if self.no_paths => outln!(w, "Nothing to stage — working tree clean."),
             0 => {}
-            1 => println!("Staged 1 change."),
-            n => println!("Staged {n} changes."),
+            1 => outln!(w, "Staged 1 change."),
+            n => outln!(w, "Staged {n} changes."),
         }
+        Ok(())
     }
 }
 

@@ -1,7 +1,7 @@
 //! `grit revert` — undo a single commit with a new inverse commit.
 
 use crate::context;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
@@ -9,6 +9,7 @@ use grit_lib::ident_resolve::IdentRole;
 use grit_lib::porcelain::replay::{replay_commit, ReplayDirection, ReplayOutcome, ReplayRequest};
 use grit_lib::rev_parse::resolve_revision;
 use serde::Serialize;
+use std::io::Write;
 
 /// Result of `grit revert`.
 #[derive(Serialize)]
@@ -22,10 +23,11 @@ pub struct RevertOutcome {
 }
 
 impl HumanRender for RevertOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let new_short = self.oid.get(..7).unwrap_or(&self.oid);
         let src_short = self.source.get(..7).unwrap_or(&self.source);
-        println!("Reverted {src_short} → {new_short} {}", self.subject);
+        outln!(w, "Reverted {src_short} → {new_short} {}", self.subject);
+        Ok(())
     }
 }
 

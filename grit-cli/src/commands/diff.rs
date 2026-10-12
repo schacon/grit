@@ -34,11 +34,12 @@ use grit_lib::rev_parse::{
 use grit_lib::state::resolve_head;
 use serde::Serialize;
 use std::io::IsTerminal;
+use std::io::Write;
 use std::path::Path;
 
 use crate::context;
 use crate::markdown;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Lines of unchanged context to show around each change.
 const CONTEXT_LINES: usize = 3;
@@ -663,21 +664,23 @@ fn build_file_diff(fc: FileChange) -> FileDiff {
 // --- Human (delta-style) rendering -----------------------------------------
 
 impl HumanRender for DiffOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         if self.files.is_empty() {
-            println!("No changes.");
-            return;
+            outln!(w, "No changes.");
+            return Ok(());
         }
         let color = use_color();
         for file in &self.files {
-            render_file(file, color);
+            render_file(w, file, color)?;
         }
+        Ok(())
     }
 }
 
 impl MarkdownRender for DiffOutcome {
-    fn render_markdown(&self) {
-        markdown::print_diff_files(&self.files);
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_diff_files(w, &self.files)?;
+        Ok(())
     }
 }
 
@@ -697,28 +700,28 @@ fn paint(color: bool, code: &str, text: &str) -> String {
     }
 }
 
-fn render_file(file: &FileDiff, color: bool) {
-    println!();
+fn render_file(w: &mut dyn Write, file: &FileDiff, color: bool) -> Result<()> {
+    outln!(w);
     let header = match &file.old_path {
         Some(old) => format!("{old} → {}", file.path),
         None => file.path.clone(),
     };
-    println!("{}", paint(color, "1;4", &header)); // bold + underline
+    outln!(w, "{}", paint(color, "1;4", &header)); // bold + underline
 
     if file.old_mode != file.new_mode {
         if let Some(m) = &file.old_mode {
-            println!("old mode {m}");
+            outln!(w, "old mode {m}");
         }
         if let Some(m) = &file.new_mode {
-            println!("new mode {m}");
+            outln!(w, "new mode {m}");
         }
     }
 
     if file.binary {
         if file.content_changed {
-            println!("{}", paint(color, FG_DIM, "Binary file differs"));
+            outln!(w, "{}", paint(color, FG_DIM, "Binary file differs"));
         }
-        return;
+        return Ok(());
     }
 
     // Width of each line-number column = widest number shown.
@@ -733,36 +736,38 @@ fn render_file(file: &FileDiff, color: bool) {
         .max(2);
 
     for hunk in &file.hunks {
-        render_hunk(hunk, width, color);
+        render_hunk(w, hunk, width, color)?;
     }
+    Ok(())
 }
 
-fn render_hunk(hunk: &Hunk, width: usize, color: bool) {
+fn render_hunk(w: &mut dyn Write, hunk: &Hunk, width: usize, color: bool) -> Result<()> {
     let old_rng = format_hunk_range(hunk.old_start, hunk.old_lines);
     let new_rng = format_hunk_range(hunk.new_start, hunk.new_lines);
     let range = format!("@@ -{old_rng} +{new_rng} @@");
     match (&hunk.context, color) {
         (Some(ctx), true) => {
-            println!("{}", paint(color, "33", &format!("┄┄ {range} {ctx}")));
+            outln!(w, "{}", paint(color, "33", &format!("┄┄ {range} {ctx}")));
         }
         (Some(ctx), false) => {
-            println!("{range} {ctx}");
+            outln!(w, "{range} {ctx}");
         }
         (None, false) => {
-            println!("{range}");
+            outln!(w, "{range}");
         }
         (None, true) => {
-            println!("{}", paint(color, "33", &format!("┄┄ {range}")));
+            outln!(w, "{}", paint(color, "33", &format!("┄┄ {range}")));
         }
     }
 
     for line in &hunk.lines {
-        println!("{}", render_line(line, width, color));
+        outln!(w, "{}", render_line(line, width, color));
         if line.no_newline_at_eof {
             let marker = "\\ No newline at end of file";
-            println!("{}", paint(color, FG_DIM, marker));
+            outln!(w, "{}", paint(color, FG_DIM, marker));
         }
     }
+    Ok(())
 }
 
 fn render_line(line: &Line, width: usize, color: bool) -> String {

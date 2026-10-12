@@ -4,13 +4,14 @@ use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::state::{resolve_head, HeadState};
 use serde::Serialize;
+use std::io::Write;
 
 use crate::context::{self, CommitSummary};
 
 /// Maximum commits to load for `grit shortlog` display (full ahead count is still reported).
 const SHORTLOG_LIST_LIMIT: usize = 100;
 use crate::markdown;
-use crate::output::{CommitJson, HumanRender, MarkdownRender};
+use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
 use crate::ui;
 
 /// Result of `grit shortlog`.
@@ -26,42 +27,47 @@ pub struct ShortlogOutcome {
 }
 
 impl HumanRender for ShortlogOutcome {
-    fn render_human(&self) {
-        println!("On {}", self.branch);
+    fn render_human(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        outln!(w, "On {}", self.branch);
         let Some(target) = &self.target else {
-            println!("No target branch found (tried target.branch, origin/master, origin/main, master, main).");
-            return;
+            outln!(w, "No target branch found (tried target.branch, origin/master, origin/main, master, main).");
+            return Ok(());
         };
-        println!(
+        outln!(
+            w,
             "Ahead of {} by {} commit{}",
             target,
             self.ahead,
             if self.ahead == 1 { "" } else { "s" }
         );
-        for row in ui::commit_rows(&self.commit_rows) {
-            println!("{row}");
+        for row in ui::commit_rows(&self.commit_rows, ctx.now.unix_timestamp()) {
+            outln!(w, "{row}");
         }
+        Ok(())
     }
 }
 
 impl MarkdownRender for ShortlogOutcome {
-    fn render_markdown(&self) {
-        println!("# Branch `{}`", self.branch);
+    fn render_markdown(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
+        outln!(w, "# Branch `{}`", self.branch);
         let Some(target) = &self.target else {
-            println!();
-            println!(
+            outln!(w);
+            outln!(
+                w,
                 "No target branch found (tried `target.branch`, `origin/master`, `origin/main`, `master`, `main`)."
             );
-            return;
+            return Ok(());
         };
-        println!();
-        println!(
+        outln!(w);
+        outln!(
+            w,
             "Ahead of `{target}` by **{}** commit{}.",
             self.ahead,
             if self.ahead == 1 { "" } else { "s" }
         );
-        println!();
-        markdown::print_commit_list(&self.commit_rows);
+        outln!(w);
+        markdown::print_commit_list(w, &self.commit_rows, ctx)?;
+        Ok(())
     }
 }
 

@@ -6,9 +6,10 @@ use grit_lib::porcelain::switch::{
     SwitchMode, SwitchOptions,
 };
 use serde::Serialize;
+use std::io::Write;
 
 use crate::context;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit switch`.
 #[derive(Serialize)]
@@ -21,21 +22,22 @@ pub struct SwitchOutcome {
 }
 
 impl HumanRender for SwitchOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         if self.detached {
             let short = self
                 .commit
                 .as_deref()
                 .map(|c| &c[..7.min(c.len())])
                 .unwrap_or("HEAD");
-            println!("HEAD detached at {short}");
-            return;
+            outln!(w, "HEAD detached at {short}");
+            return Ok(());
         }
         if self.created {
-            println!("Created and switched to branch {}", self.branch);
+            outln!(w, "Created and switched to branch {}", self.branch);
         } else {
-            println!("Switched to branch {}", self.branch);
+            outln!(w, "Switched to branch {}", self.branch);
         }
+        Ok(())
     }
 }
 

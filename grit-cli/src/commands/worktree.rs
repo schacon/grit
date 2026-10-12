@@ -7,10 +7,11 @@ use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, remove_linked_worktree, AddLinkedWorktreeOptions,
 };
 use serde::Serialize;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::context;
-use crate::output::{HumanRender, MarkdownRender};
+use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use crate::ref_name_messages::branch_short_name_error_message;
 
 /// Result of `grit worktree`, tagged by `action`.
@@ -43,7 +44,7 @@ pub struct WorktreeRow {
 }
 
 impl HumanRender for WorktreeOutcome {
-    fn render_human(&self) {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
             WorktreeOutcome::List { worktrees } => {
                 for wt in worktrees {
@@ -53,18 +54,19 @@ impl HumanRender for WorktreeOutcome {
                         .map(|b| format!(" [{b}]"))
                         .unwrap_or_default();
                     let lock = if wt.locked { " (locked)" } else { "" };
-                    println!("  {}{branch}{lock}", wt.path);
+                    outln!(w, "  {}{branch}{lock}", wt.path);
                 }
             }
             WorktreeOutcome::Add { path, branch, .. } => {
                 if let Some(b) = branch {
-                    println!("Created worktree at {path} on branch {b}");
+                    outln!(w, "Created worktree at {path} on branch {b}");
                 } else {
-                    println!("Created worktree at {path} (detached)");
+                    outln!(w, "Created worktree at {path} (detached)");
                 }
             }
-            WorktreeOutcome::Remove { path } => println!("Removed worktree {path}"),
+            WorktreeOutcome::Remove { path } => outln!(w, "Removed worktree {path}"),
         }
+        Ok(())
     }
 }
 
