@@ -1705,7 +1705,7 @@ impl Index {
             return dirty;
         }
         #[cfg(test)]
-        crate::index::tests::fsmonitor_rebuild_counter::note_build();
+        tests::fsmonitor_rebuild_counter::note_build();
         for (i, entry) in self.entries.iter().enumerate() {
             if !entry.fsmonitor_valid() {
                 dirty.set_bit_extend(i);

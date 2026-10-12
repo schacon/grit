@@ -155,7 +155,11 @@ where
             }
         }
     }
-    if count == 1 { sole } else { None }
+    if count == 1 {
+        sole
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

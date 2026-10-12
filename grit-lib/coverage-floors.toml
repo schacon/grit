@@ -156,7 +156,7 @@ minimum = 85.0
 
 [group.supporting]
 files = [
-    "objects.rs",
+    "objects/core.rs",
     "zlib_inflate.rs",
     "unpack_objects.rs",
     "index_pack.rs",
@@ -187,7 +187,7 @@ minimum = 85.0
 [file."commit_graph_write.rs"]
 minimum = 88.2
 
-[file."config.rs"]
+[file."config/core.rs"]
 minimum = 82.9
 
 [file."delta_encode.rs"]
@@ -199,7 +199,7 @@ minimum = 86.1
 [file."ignore.rs"]
 minimum = 84.1
 
-[file."index.rs"]
+[file."index/core.rs"]
 minimum = 83.8
 
 [file."sparse_checkout.rs"]
@@ -214,7 +214,7 @@ minimum = 33.7
 [file."midx.rs"]
 minimum = 84.9
 
-[file."objects.rs"]
+[file."objects/core.rs"]
 minimum = 88.1
 
 [file."odb/mod.rs"]
@@ -283,5 +283,5 @@ minimum = 85.0
 [file."diffstat.rs"]
 minimum = 85.0
 
-[file."diff.rs"]
+[file."diff/core.rs"]
 minimum = 60.6

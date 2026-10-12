@@ -15,6 +15,9 @@
 
 pub mod store;
 
+mod domain_reexports;
+pub use domain_reexports::*;
+
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;

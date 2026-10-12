@@ -1,5 +1,6 @@
 //! Porcelain operations — user-facing engines that assemble a structured result
-//! model from [`plumbing`](crate::plumbing) pieces (e.g. `status`, `log`,
+//! model from domain modules (e.g. [`diff`](crate::diff), [`revwalk`](crate::revwalk),
+//! `status`, `log`,
 //! `merge`, `rebase`, `checkout`).
 //!
 //! # The library/CLI contract

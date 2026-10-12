@@ -15,14 +15,31 @@
 //!   one, then reach the object store, index, refs, and config through it.
 //! - [`prelude`] re-exports the handful of types most call sites need.
 //! - [`porcelain`] holds user-facing operations that return structured result
-//!   *models* (the CLI renders them); [`plumbing`] holds the low-level,
-//!   machine-stable building blocks. The flat module list below remains the
+//!   *models* (the CLI renders them). The flat module list below remains the
 //!   low-level escape hatch and keeps every existing path valid.
-//! - Browse the engine by subsystem via the domain views: [`object_store`],
-//!   [`references`], [`worktree_index`], [`revision`], [`diffing`], [`merging`],
-//!   and [`configuration`].
+//! - Browse the engine by domain: [`objects`], [`refs`], [`index`], [`revwalk`],
+//!   [`diff`], [`config`], [`remote`], [`worktree`], [`stash`], [`notes`], and
+//!   [`bundle`]. The mapping table on [grit-scm.com/docs/library/api-layout](https://grit-scm.com/docs/library/api-layout)
+//!   lists every flat path.
 //! - [`progress`] defines how long-running operations report progress and
 //!   observe cancellation without touching the terminal.
+//!
+//! ## API layout (canonical domains)
+//!
+//! | Flat path | Canonical path |
+//! | --- | --- |
+//! | `odb`, `pack`, `midx`, `hash`, `pack_bitmap`, `bitmap_walk`, … | [`objects`] |
+//! | `reflog`, `refspec`, `reftable`, `check_ref_format`, … | [`refs`] |
+//! | `sparse_checkout`, `split_index`, `untracked_cache`, `resolve_undo`, … | [`index`] |
+//! | `rev_list`, `rev_parse`, `merge_base`, `commit_graph_file`, … | [`revwalk`] |
+//! | `bloom`, `patch_ids`, `merge_trees`, `rerere`, … | [`diff`] |
+//! | `dotfile`, `ident`, `init_filesystem`, … | [`config`] |
+//! | `fetch`, `push`, `transport`, `credentials`, … | [`remote`] |
+//! | `ignore`, `attributes`, `pathspec`, … | [`worktree`] |
+//! | porcelain stash types | [`stash`] |
+//! | `bundle_remote` | [`bundle`] |
+//! | `parallel` | [`parallel`] (root) |
+//! | `repo`, `error`, `porcelain`, `progress`, … | root (unchanged) |
 //!
 //! ## Core modules
 //!
@@ -36,7 +53,6 @@
 
 // --- Curated public API (additive; the flat `pub mod` list below is unchanged
 // so every existing `grit_lib::<module>::…` path keeps resolving) ---
-pub mod plumbing;
 pub mod porcelain;
 pub mod progress;
 
@@ -55,60 +71,8 @@ pub mod prelude {
     pub use crate::repo::Repository;
 }
 
-// Domain-grouped views of the engine. Each is a curated table of contents over
-// the flat module list below — pure module re-exports, so `object_store::objects`
-// and the original `objects` path both resolve. A module appears in at most one
-// domain; cross-cutting and operation-level modules stay in the flat list.
-
-/// Object storage: ids/kinds, the object database, packs, multi-pack index, deltas.
-pub mod object_store {
-    pub use crate::{
-        delta_encode, delta_islands, hash, index_pack, midx, objects, odb, pack, pack_name_hash,
-        pack_rev, pack_store, promisor, promisor_remote, prune_packed, unpack_objects,
-    };
-}
-
-/// References: the refs backends, reflog, refspecs, name validation, namespaces.
-pub mod references {
-    pub use crate::{
-        branch_tracking, check_ref_format, hide_refs, ref_exclusions, ref_namespace, ref_storage,
-        reflog, refs, refspec, reftable,
-    };
-}
-
-/// Index and working tree: the index, sparse checkout, attributes, ignore, CRLF.
-pub mod worktree_index {
-    pub use crate::{
-        attributes, crlf, ignore, index, index_name_hash_lazy, resolve_undo, sparse_checkout,
-        split_index, untracked_cache, worktree, worktree_cwd, worktree_ref, write_tree,
-    };
-}
-
-/// Revision machinery: rev-parse, rev-list, commit-graph.
-pub mod revision {
-    pub use crate::{commit_graph_file, commit_graph_write, rev_list, rev_parse};
-}
-
-/// Diffing: tree/content diff, rename detection, diffstat, pickaxe bloom.
-pub mod diffing {
-    pub use crate::{
-        bloom, combined_diff_patch, combined_tree_diff, diff, diff_indent_heuristic, diffstat,
-        patch_ids, userdiff,
-    };
-}
-
-/// Merging: merge-base, tree/file merges, rerere, merge-message formatting.
-pub mod merging {
-    pub use crate::{fmt_merge_msg, merge_base, merge_diff, merge_file, merge_trees, rerere};
-}
-
-/// Configuration and identity: config cascade, .gitmodules, author/committer idents.
-pub mod configuration {
-    pub use crate::{
-        config, dotfile, environment, gitmodules, ident, ident_config, ident_resolve,
-        init_filesystem, precompose_config, url_rewrite,
-    };
-}
+pub mod revwalk;
+pub mod stash;
 
 pub mod apply;
 pub mod attributes;
