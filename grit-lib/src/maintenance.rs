@@ -14,6 +14,7 @@ use crate::environment::Environment;
 use crate::error::{Error, Result};
 use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable, PruneStats};
+use crate::git_date::approx::approxidate_careful_at;
 use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{clear_pack_midx_state, verify_midx};
@@ -23,7 +24,8 @@ use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_objects::{build_pack, PackBuildOptions};
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
-    expire_reflog_git, list_reflog_refs, load_gc_reflog_expire_config, ReflogExpireParams,
+    all_reflog_oids, expire_reflog_git, list_reflog_refs, load_gc_reflog_expire_config,
+    ReflogExpireParams,
 };
 use crate::refs_fsck::{refs_fsck, RefsFsckIssue, RefsFsckSeverity};
 use crate::repo::Repository;
@@ -150,6 +152,29 @@ impl Default for GcOptions {
     }
 }
 
+/// Object ids that must stay reachable during repack, prune, and fsck walks.
+///
+/// Includes ref tips, symbolic `HEAD`, every reflog `old`/`new` oid, and every
+/// blob/tree oid recorded in the index (including unmerged stages).
+///
+/// # Errors
+///
+/// Propagates ref, reflog, or index load failures.
+pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
+    let git_dir = repo.git_dir();
+    let mut roots: HashSet<ObjectId> = collect_referenced_object_roots(git_dir)?
+        .into_iter()
+        .collect();
+    roots.extend(all_reflog_oids(git_dir)?);
+    let index = repo.load_index()?;
+    for entry in index.entries() {
+        if !entry.oid.is_zero() {
+            roots.insert(entry.oid);
+        }
+    }
+    Ok(roots.into_iter().collect())
+}
+
 /// Result of [`gc`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcStats {
@@ -169,10 +194,11 @@ pub struct GcStats {
 pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats> {
     let odb = repo.odb();
     odb.require_files_primary("repack")?;
-    let git_dir = repo.git_dir();
-    let objects_dir = odb.files_objects_dir().ok_or(Error::UnsupportedObjectStore {
-        operation: "repack",
-    })?;
+    let objects_dir = odb
+        .files_objects_dir()
+        .ok_or(Error::UnsupportedObjectStore {
+            operation: "repack",
+        })?;
     let pack_dir = objects_dir.join("pack");
 
     let mut stats = RepackStats {
@@ -181,7 +207,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
         ..RepackStats::default()
     };
 
-    let roots = collect_referenced_object_roots(git_dir)?;
+    let roots = collect_maintenance_object_roots(repo)?;
     if roots.is_empty() && stats.loose_before == 0 && stats.packs_before == 0 {
         return Ok(stats);
     }
@@ -214,11 +240,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     };
     let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
     stats.objects_packed = Some(ingested.object_ids.len());
-    stats.pack_bytes = ingested
-        .pack_path
-        .metadata()
-        .ok()
-        .map(|m| m.len());
+    stats.pack_bytes = ingested.pack_path.metadata().ok().map(|m| m.len());
     stats.pack_path = Some(ingested.pack_path.clone());
     stats.removed_pack_files = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
 
@@ -272,6 +294,7 @@ pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
 
     if opts.check_objects {
         fsck_reachable_objects(repo, &config, opts.strict, &mut issues)?;
+        fsck_index_entries(repo, &config, opts.strict, &mut issues)?;
     }
 
     let ok = !issues.iter().any(|i| i.severity == FsckSeverity::Error);
@@ -283,7 +306,6 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let mut stats = GcStats::default();
     let odb = repo.odb();
     odb.require_files_primary("gc")?;
-    let git_dir = repo.git_dir();
 
     if opts.expire_reflog {
         stats.reflog_entries_pruned =
@@ -296,9 +318,33 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
         return Ok(stats);
     }
 
-    let roots = collect_referenced_object_roots(git_dir)?;
-    stats.prune = prune_loose_unreachable(odb, &roots, None)?;
+    let roots = collect_maintenance_object_roots(repo)?;
+    let cfg = repo.config()?;
+    let now = gc_now_unix(opts.now_unix);
+    let keep_newer_than = gc_prune_expire_cutoff(&cfg, now);
+    stats.prune = prune_loose_unreachable(odb, &roots, keep_newer_than)?;
     Ok(stats)
+}
+
+fn gc_now_unix(now_unix: i64) -> i64 {
+    if now_unix != 0 {
+        return now_unix;
+    }
+    time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+fn gc_prune_expire_cutoff(config: &ConfigSet, now_unix: i64) -> Option<SystemTime> {
+    let spec = config
+        .get("gc.pruneExpire")
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "2.weeks.ago".to_owned());
+    if spec.eq_ignore_ascii_case("never") {
+        return None;
+    }
+    let mut err = 0;
+    let cutoff_sec = approxidate_careful_at(&spec, now_unix, Some(&mut err)) as i64;
+    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(cutoff_sec.max(0) as u64))
 }
 
 fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<usize> {
@@ -348,7 +394,7 @@ fn fsck_reachable_objects(
     issues: &mut Vec<FsckIssue>,
 ) -> Result<()> {
     let odb = repo.odb();
-    let roots = collect_referenced_object_roots(repo.git_dir())?;
+    let roots = collect_maintenance_object_roots(repo)?;
     let fsck_opts = FsckObjectOptions::new(odb.hash_algo());
     let mut dot = DotFsckTracker::default();
 
@@ -415,6 +461,34 @@ fn fsck_reachable_objects(
 
     for pending in dot.finish_pending(odb)? {
         issues.push(dot_issue_to_fsck(pending));
+    }
+    Ok(())
+}
+
+fn fsck_index_entries(
+    repo: &Repository,
+    config: &ConfigSet,
+    strict: bool,
+    issues: &mut Vec<FsckIssue>,
+) -> Result<()> {
+    let index = repo.load_index()?;
+    let odb = repo.odb();
+    for entry in index.entries() {
+        if entry.oid.is_zero() {
+            continue;
+        }
+        let oid_hex = entry.oid.to_hex();
+        if odb.read(&entry.oid).is_err() {
+            let path = String::from_utf8_lossy(&entry.path).into_owned();
+            push_object_issue(
+                issues,
+                config,
+                strict,
+                &oid_hex,
+                "missingObject",
+                format!("index entry '{path}' references missing blob {oid_hex}"),
+            );
+        }
     }
     Ok(())
 }
@@ -594,11 +668,21 @@ pub fn remove_superseded_pack_files(pack_dir: &Path, keep_pack: &Path) -> Result
         }
         let path = entry.path();
         if path.is_file() {
+            if pack_has_keep_marker(pack_dir, &path) {
+                continue;
+            }
             fs::remove_file(&path).map_err(Error::Io)?;
             removed += 1;
         }
     }
     Ok(removed)
+}
+
+fn pack_has_keep_marker(pack_dir: &Path, path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    pack_dir.join(format!("{stem}.keep")).is_file()
 }
 
 #[cfg(test)]
