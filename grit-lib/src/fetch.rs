@@ -61,6 +61,11 @@ use crate::transport::Connection;
 pub trait Progress: ProgressSink {
     /// Receive a chunk of progress bytes from side-band channel 2.
     fn message(&mut self, _bytes: &[u8]) {}
+
+    /// When true, fetch omits `no-progress` so the remote may emit channel-2 progress.
+    fn remote_sideband_progress(&self) -> bool {
+        false
+    }
 }
 
 /// A [`Progress`] / [`ProgressSink`] that discards everything.
@@ -254,8 +259,11 @@ fn negotiate_pack(
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
 
     // Capability set matching `git fetch-pack`'s first `want` line for v0/v1.
-    let caps =
-        " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta agent=grit";
+    let caps = if opts.remote_progress {
+        " multi_ack_detailed side-band-64k thin-pack include-tag ofs-delta agent=grit"
+    } else {
+        " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta agent=grit"
+    };
 
     // Capture the advertised refs before borrowing the writer (avoids aliasing
     // the connection's reader/writer with its accessors). v0/v1 shallow servers
@@ -854,6 +862,8 @@ pub(crate) struct V2DeepenArgs {
     pub(crate) deepen_since: Option<String>,
     /// `deepen-not <ref>` exclusions.
     pub(crate) deepen_not: Vec<String>,
+    /// When true, omit the v2 `no-progress` fetch argument.
+    pub(crate) remote_progress: bool,
 }
 
 impl V2DeepenArgs {
@@ -879,6 +889,7 @@ impl V2DeepenArgs {
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            remote_progress: opts.remote_progress,
         }
     }
 
@@ -922,7 +933,9 @@ pub(crate) fn write_v2_fetch_request(
     pkt_line::write_delim(&mut req)?;
 
     pkt_line::write_line(&mut req, "thin-pack")?;
-    pkt_line::write_line(&mut req, "no-progress")?;
+    if !deepen.remote_progress {
+        pkt_line::write_line(&mut req, "no-progress")?;
+    }
     pkt_line::write_line(&mut req, "ofs-delta")?;
     if sideband_all {
         pkt_line::write_line(&mut req, "sideband-all")?;

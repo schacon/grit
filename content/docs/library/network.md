@@ -30,7 +30,7 @@ HTTP remotes need an [`HttpClient`](rustdoc:grit_lib::transport::http::HttpClien
 
 ## Credentials and progress
 
-[`HelperCredentialProvider`](rustdoc:grit_lib::credentials::HelperCredentialProvider) satisfies HTTP `401` responses from configured `credential.helper` programs and never opens a TTY. Pass [`NoProgress`](rustdoc:grit_lib::fetch::NoProgress) to ignore sideband progress, or implement [`Progress::message`](rustdoc:grit_lib::fetch::Progress) for side-band channel 2.
+[`HelperCredentialProvider`](rustdoc:grit_lib::credentials::HelperCredentialProvider) satisfies HTTP `401` responses from configured `credential.helper` programs and never opens a TTY. Pass [`NoProgress`](rustdoc:grit_lib::fetch::NoProgress) to ignore sideband progress, or implement [`Progress::message`](rustdoc:grit_lib::fetch::Progress) for side-band channel 2. Set [`FetchOptions::remote_progress`](rustdoc:grit_lib::transfer::FetchOptions::remote_progress) to omit `no-progress` on the wire so the remote may emit channel 2; decode chunks with [`SidebandLines`](rustdoc:grit_lib::sideband_lines::SidebandLines) into [`RemoteLine`](rustdoc:grit_lib::sideband_lines::RemoteLine) updates and lines.
 
 ## Example
 

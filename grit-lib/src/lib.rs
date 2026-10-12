@@ -236,6 +236,7 @@ pub mod rev_parse_error;
 pub mod serve;
 pub mod shallow;
 pub mod shared_repo;
+pub mod sideband_lines;
 pub mod signing;
 pub mod sparse_checkout;
 pub mod split_index;

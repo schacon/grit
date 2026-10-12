@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use grit_lib::fetch::Progress;
 use grit_lib::progress::{ProgressPhase, ProgressSink};
+use grit_lib::sideband_lines::{RemoteLine, SidebandLines};
 use terminal_size::{terminal_size, Width};
 
 use crate::output::OutputMode;
@@ -20,6 +21,7 @@ pub struct TerminalProgress {
     phase_started: Instant,
     last_draw: Instant,
     last_count: u64,
+    remote_lines: SidebandLines,
 }
 
 impl TerminalProgress {
@@ -35,11 +37,27 @@ impl TerminalProgress {
             phase_started: now,
             last_draw: now - MIN_REDRAW,
             last_count: 0,
+            remote_lines: SidebandLines::new(),
         }
     }
 }
 
-impl Progress for TerminalProgress {}
+impl Progress for TerminalProgress {
+    fn message(&mut self, bytes: &[u8]) {
+        if !self.active {
+            return;
+        }
+        let mut lines = Vec::new();
+        self.remote_lines.feed(bytes, |line| lines.push(line));
+        for line in lines {
+            self.render_remote(line);
+        }
+    }
+
+    fn remote_sideband_progress(&self) -> bool {
+        self.active
+    }
+}
 
 impl ProgressSink for TerminalProgress {
     fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
@@ -99,6 +117,30 @@ impl ProgressSink for TerminalProgress {
 }
 
 impl TerminalProgress {
+    fn render_remote(&mut self, line: RemoteLine) {
+        let prefix = match &line {
+            RemoteLine::Update(text) | RemoteLine::Line(text) => {
+                if text.is_empty() {
+                    return;
+                }
+                format!("remote: {text}")
+            }
+        };
+        if self.phase.is_some() {
+            clear_progress_line();
+        }
+        match line {
+            RemoteLine::Update(_) => {
+                let _ = write!(io::stderr(), "\r{prefix}");
+                let _ = io::stderr().flush();
+            }
+            RemoteLine::Line(_) => {
+                let width = terminal_width();
+                let _ = write_finish_line(&mut io::stderr(), &prefix, width);
+            }
+        }
+    }
+
     fn maybe_redraw(&mut self, force: bool) {
         let Some(phase) = self.phase else {
             return;

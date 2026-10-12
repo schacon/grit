@@ -138,6 +138,9 @@ pub struct FetchOptions {
     pub pack_spool_only: bool,
     /// Override the HTTP `Git-Protocol` header for this fetch (`None` → client default, usually v2).
     pub http_protocol_version: Option<u8>,
+    /// When true, omit the `no-progress` capability/argument so the remote may
+    /// send side-band channel-2 progress. Default false preserves today's wire bytes.
+    pub remote_progress: bool,
 }
 
 impl Default for FetchOptions {
@@ -162,6 +165,7 @@ impl Default for FetchOptions {
             environment: crate::environment::Environment::empty(),
             pack_spool_only: false,
             http_protocol_version: None,
+            remote_progress: false,
         }
     }
 }
@@ -197,6 +201,7 @@ impl Clone for FetchOptions {
             environment: self.environment.clone(),
             pack_spool_only: self.pack_spool_only,
             http_protocol_version: self.http_protocol_version,
+            remote_progress: self.remote_progress,
         }
     }
 }

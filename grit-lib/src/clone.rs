@@ -207,6 +207,7 @@ pub fn clone(
         clone_reflog: Some(clone_reflog),
         environment: opts.environment.clone(),
         thread_policy: opts.thread_policy,
+        remote_progress: progress.remote_sideband_progress(),
         ..Default::default()
     };
     if let Ok(v) = crate::protocol::try_effective_client_protocol_version_from_config(&config) {
