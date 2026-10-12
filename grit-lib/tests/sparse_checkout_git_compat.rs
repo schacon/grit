@@ -8,8 +8,8 @@ use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 
 use support::{
-    assert_git_fsck_strict, assert_skip_worktree_matches_git, git, git_ls_files_tag_map,
-    git_ls_files_verbose_map, seed_multidir_repo, HistoryRepo,
+    assert_git_fsck_strict, assert_skip_worktree_matches_tag_oracle, clear_all_skip_worktree, git,
+    git_ls_files_tag_map, git_ls_files_verbose_map, seed_multidir_repo, HistoryRepo,
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
@@ -28,25 +28,15 @@ fn t1092_cone_patterns_match_git_skip_worktree() {
     git(wt, &["sparse-checkout", "set", "a", "c"]);
     git(wt, &["read-tree", "-mu", "HEAD"]);
 
+    let oracle = git_ls_files_tag_map(wt);
     let grit = open_grit(wt);
-    let git_tags = git_ls_files_tag_map(wt);
     let mut index = grit.load_index().expect("load");
+    clear_all_skip_worktree(&mut index);
     apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    assert_skip_worktree_matches_tag_oracle(&index, &oracle);
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);
-    assert_skip_worktree_matches_git(wt, &index);
-
-    for (path, tag) in git_tags {
-        if tag == 'S' {
-            assert!(
-                index
-                    .entries()
-                    .iter()
-                    .any(|e| String::from_utf8_lossy(&e.path) == path && e.skip_worktree()),
-                "grit must skip-worktree {path}"
-            );
-        }
-    }
+    assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
 
 #[test]
@@ -66,9 +56,11 @@ fn t1091_non_cone_sparse_list_matches_git() {
     let file = fs::read_to_string(wt.join(".git/info/sparse-checkout")).expect("read");
     assert_eq!(list.trim(), file.trim());
 
+    let oracle = git_ls_files_tag_map(wt);
     let mut index = grit.load_index().expect("load");
+    clear_all_skip_worktree(&mut index);
     apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
-    assert_skip_worktree_matches_git(wt, &index);
+    assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
 
 #[test]
@@ -83,10 +75,13 @@ fn t1011_read_tree_sparse_checkout_applies_skip_worktree() {
     git(wt, &["sparse-checkout", "set", "b"]);
     git(wt, &["read-tree", "-mu", "HEAD"]);
 
+    let oracle = git_ls_files_tag_map(wt);
+    assert!(oracle.values().any(|c| *c == 'S'));
     let grit = open_grit(wt);
-    let v = git_ls_files_verbose_map(wt);
-    assert!(v.values().any(|c| *c == 'S'));
-    assert_skip_worktree_matches_git(wt, &grit.load_index().expect("load"));
+    let mut index = grit.load_index().expect("load");
+    clear_all_skip_worktree(&mut index);
+    apply_sparse_checkout_skip_worktree(&grit.git_dir, Some(wt), &mut index, false);
+    assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
 
 #[test]

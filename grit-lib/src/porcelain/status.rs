@@ -1663,6 +1663,13 @@ pub fn format_porcelain_v2(
         unstaged_by_path.insert(e.path().to_owned(), e);
     }
 
+    let conflict_set: BTreeMap<&str, ()> = model
+        .conflicts
+        .iter()
+        .map(String::as_str)
+        .map(|p| (p, ()))
+        .collect();
+
     let mut paths: BTreeMap<String, ()> = BTreeMap::new();
     for p in staged_by_path.keys().chain(unstaged_by_path.keys()) {
         paths.insert(p.clone(), ());
@@ -1671,6 +1678,9 @@ pub fn format_porcelain_v2(
     let mut out = Vec::new();
 
     for path in paths.keys() {
+        if conflict_set.contains_key(path.as_str()) {
+            continue;
+        }
         let x = staged_by_path
             .get(path.as_str())
             .map(|e| e.status.letter())
@@ -1698,11 +1708,11 @@ pub fn format_porcelain_v2(
             .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
 
         let m_w = porcelain_v2_worktree_mode(
+            x,
             y,
             unstaged_by_path.get(path.as_str()).copied(),
             work_tree,
             path.as_str(),
-            &m_h,
         );
 
         out.push(format!(
@@ -1725,26 +1735,13 @@ pub fn format_porcelain_v2(
         if stages.is_empty() {
             continue;
         }
-        let mut xy = ['.', '.'];
-        if staged_by_path.contains_key(path) {
-            xy[0] = 'U';
-        }
-        if unstaged_by_path.contains_key(path) {
-            xy[1] = 'U';
-        }
-        if xy == ['.', '.'] {
-            xy = ['U', 'U'];
-        }
+        let stagemask = unmerged_stagemask(&stages);
+        let xy = porcelain_v2_unmerged_xy(stagemask);
+        let m_w = porcelain_v2_worktree_mode('.', '.', None, work_tree, path);
         let mut fields = vec![
             "u".to_owned(),
-            format!("{}{}", xy[0], xy[1]),
+            format!("{}{}", xy.0, xy.1),
             "N...".to_owned(),
-            "000000".to_owned(),
-            "000000".to_owned(),
-            "000000".to_owned(),
-            ObjectId::zero().to_hex(),
-            ObjectId::zero().to_hex(),
-            path.clone(),
         ];
         for stage in 1u8..=3 {
             let mode = stages
@@ -1754,6 +1751,7 @@ pub fn format_porcelain_v2(
                 .unwrap_or_else(|| "000000".to_owned());
             fields.push(mode);
         }
+        fields.push(m_w);
         for stage in 1u8..=3 {
             let oid = stages
                 .iter()
@@ -1762,25 +1760,55 @@ pub fn format_porcelain_v2(
                 .unwrap_or_else(|| ObjectId::zero().to_hex());
             fields.push(oid);
         }
+        fields.push(path.clone());
         out.push(fields.join(" "));
-        let _ = work_tree;
     }
 
     out.sort();
     out
 }
 
+fn unmerged_stagemask(stages: &[&crate::index::IndexEntry]) -> u8 {
+    let mut mask = 0u8;
+    for e in stages {
+        let stage = e.stage();
+        if (1..=3).contains(&stage) {
+            mask |= 1 << (stage - 1);
+        }
+    }
+    mask
+}
+
+/// Map Git's unmerged stage bitmask to porcelain short status letters (see upstream `wt-status.c`).
+fn porcelain_v2_unmerged_xy(stagemask: u8) -> (char, char) {
+    let key = match stagemask {
+        1 => "DD",
+        2 => "AU",
+        3 => "UD",
+        4 => "UA",
+        5 => "DU",
+        6 => "AA",
+        7 => "UU",
+        other => {
+            debug_assert!(false, "unexpected unmerged stagemask {other:#x}");
+            "UU"
+        }
+    };
+    let bytes = key.as_bytes();
+    (bytes[0] as char, bytes[1] as char)
+}
+
 fn porcelain_v2_worktree_mode(
+    staged_x: char,
     unstaged_y: char,
     unstaged: Option<&DiffEntry>,
     work_tree: Option<&std::path::Path>,
     path: &str,
-    head_mode: &str,
 ) -> String {
     use crate::diff::{format_mode, mode_from_metadata, DiffStatus};
 
-    if unstaged_y == '.' {
-        return head_mode.to_owned();
+    if unstaged_y == '.' && staged_x == 'D' {
+        return "000000".to_owned();
     }
     if let Some(entry) = unstaged {
         if entry.status == DiffStatus::Deleted {
@@ -1803,7 +1831,7 @@ fn porcelain_v2_worktree_mode(
     if unstaged_y != '.' {
         return "000000".to_owned();
     }
-    head_mode.to_owned()
+    "000000".to_owned()
 }
 
 #[cfg(test)]

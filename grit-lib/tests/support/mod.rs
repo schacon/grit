@@ -25,7 +25,8 @@ pub use history_harness::{
 };
 pub use index_harness::{
     assert_git_fsck_strict, assert_grit_index_matches_git_ls_files,
-    assert_porcelain_v2_matches_git, assert_skip_worktree_matches_git, git_ls_files_tag_map,
+    assert_porcelain_v2_matches_git, assert_skip_worktree_matches_git,
+    assert_skip_worktree_matches_tag_oracle, clear_all_skip_worktree, git_ls_files_tag_map,
     git_ls_files_verbose_map, grit_skip_worktree_map, seed_multidir_repo,
 };
 pub use refs_harness::*;

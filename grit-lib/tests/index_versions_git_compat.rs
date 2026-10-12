@@ -228,7 +228,10 @@ fn t2107_intent_to_add_forces_index_version_three() {
     e.set_intent_to_add(true);
     index.add_or_replace(e);
     assert!(index.entries().iter().any(|e| e.intent_to_add()));
-    index.version = 3;
+    assert_eq!(
+        index.version, 2,
+        "intent-to-add must not bump version until write"
+    );
     grit.write_index(&mut index).expect("write");
     assert_git_fsck_strict(wt);
     let header = fs::read(grit.index_path()).expect("read")[4..8].to_vec();

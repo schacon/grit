@@ -174,6 +174,28 @@ pub fn grit_skip_worktree_map(index: &Index) -> BTreeMap<String, bool> {
         .collect()
 }
 
+/// Clear skip-worktree on every index entry (tests start from the wrong state on purpose).
+pub fn clear_all_skip_worktree(index: &mut Index) {
+    for entry in index.entries_mut() {
+        entry.set_skip_worktree(false);
+    }
+}
+
+/// Compare grit skip-worktree bits to a saved `git ls-files -t` map (`S` = skip-worktree).
+pub fn assert_skip_worktree_matches_tag_oracle(index: &Index, oracle: &BTreeMap<String, char>) {
+    let grit = grit_skip_worktree_map(index);
+    let paths: BTreeSet<_> = oracle.keys().chain(grit.keys()).cloned().collect();
+    for path in paths {
+        let expect = matches!(oracle.get(&path).copied(), Some('S' | 's'));
+        assert_eq!(
+            grit.get(&path).copied().unwrap_or(false),
+            expect,
+            "skip-worktree mismatch on {path} (oracle tag {:?})",
+            oracle.get(&path)
+        );
+    }
+}
+
 pub fn assert_skip_worktree_matches_git(worktree: &Path, index: &Index) {
     let git_v = git_ls_files_verbose_map(worktree);
     let grit = grit_skip_worktree_map(index);
