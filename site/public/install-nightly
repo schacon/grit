@@ -75,13 +75,15 @@ main() {
   chmod +x "$INSTALL_DIR/${BIN}"
   echo "Installed ${BIN} to $INSTALL_DIR/${BIN}"
 
-  if ! command -v grit >/dev/null 2>&1; then
-    echo ""
-    echo "Note: $INSTALL_DIR is not on your PATH."
-    echo "Add it with:  export PATH=\"$INSTALL_DIR:\$PATH\""
-  else
-    echo "$(grit --version)"
-  fi
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ;;
+    *)
+      echo ""
+      echo "Note: $INSTALL_DIR is not on your PATH."
+      echo "Add it with:  export PATH=\"$INSTALL_DIR:\$PATH\""
+      ;;
+  esac
+  echo "$("$INSTALL_DIR/$BIN" --version)"
 }
 
 main "$@"
