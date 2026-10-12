@@ -10032,8 +10032,16 @@ mod line_coverage_tests {
             find_copies_harder: true,
             materialize_break_worktree_new_oid: false,
         };
-        let processed =
-            postprocess_diff_entries(&odb, raw, Some(&old_tree), None, &config, &policy, &opts)?;
+        let processed = postprocess_diff_entries(
+            &odb,
+            raw,
+            Some(&old_tree),
+            None,
+            None,
+            &config,
+            &policy,
+            &opts,
+        )?;
         assert!(!processed.is_empty());
         let _ = status_apply_rename_copy_detection(
             &odb,

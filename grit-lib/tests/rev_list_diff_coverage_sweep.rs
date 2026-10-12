@@ -126,6 +126,7 @@ fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
         raw,
         Some(&old_tree),
         None,
+        None,
         &config,
         &policy,
         &opts,

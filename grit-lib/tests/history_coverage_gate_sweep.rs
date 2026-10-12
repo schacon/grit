@@ -165,6 +165,7 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
         raw,
         Some(&old_tree),
         None,
+        None,
         &config,
         &policy,
         &opts,

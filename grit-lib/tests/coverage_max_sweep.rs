@@ -157,6 +157,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         raw,
         Some(&t1),
         None,
+        None,
         &cfg,
         &policy,
         &opts,
