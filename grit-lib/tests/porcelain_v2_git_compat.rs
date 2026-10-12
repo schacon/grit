@@ -85,6 +85,26 @@ fn t_porcelain_v2_intent_to_add_matches_git() {
 }
 
 #[test]
+fn t_porcelain_v2_intent_to_add_sha256_matches_git() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let wt = dir.path();
+    if !git_ok(
+        wt,
+        &["init", "--object-format=sha256", "--initial-branch=main"],
+    ) {
+        eprintln!("SKIP: git lacks --object-format=sha256");
+        return;
+    }
+    git(wt, &["config", "user.email", "test@example.com"]);
+    git(wt, &["config", "user.name", "Test"]);
+    std::fs::write(wt.join("u.txt"), "payload\n").expect("write");
+    git(wt, &["add", "-N", "u.txt"]);
+
+    let grit = Repository::discover(Some(wt)).expect("open");
+    assert_porcelain_v2_matches_git(wt, &grit);
+}
+
+#[test]
 fn t_porcelain_v2_unmerged_conflict_matches_git() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
