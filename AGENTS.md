@@ -209,6 +209,7 @@ Aligns with **how work is judged** above:
 - [ ] **Library hygiene** — typed errors, no lib printing/globals/shell-out; **`grit-cli`** adds **`--json`** and **`--markdown`** when touched.
 - [ ] **Rust tests** + **coverage tests** for new/changed public API.
 - [ ] **Docs** — follow **Adding docs for a change** above; **`cd site && npm run check`** passes (or **`make docs-check`** for the full CI equivalent); **`make doc`** when rustdoc changed.
+- [ ] **Public API snapshot** — intentional **`grit-lib`** semver-surface changes update **`grit-lib/public-api.txt`** via **`make public-api`** (see **TESTING.md**).
 - [ ] **`make gate`** passes (fmt, clippy **`-D warnings`**, workspace rustdoc **`-D warnings`**, **`cargo test --workspace`** — see **TESTING.md**).
 
 ## Rust style and idioms

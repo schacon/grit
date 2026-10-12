@@ -71,6 +71,26 @@ For day-to-day edits before committing, you can run individual stages or narrowe
 
 **`cargo clippy --workspace -- -D warnings`** must pass locally before you push; CI treats any Clippy warning as a failure (same invocation as **`make gate`**).
 
+## Public API snapshot
+
+The committed file [`grit-lib/public-api.txt`](grit-lib/public-api.txt) is the semver-relevant public surface of **`grit-lib`**, generated with [`cargo-public-api`](https://github.com/cargo-public-api/cargo-public-api) on a pinned nightly toolchain. Pins live in [`scripts/public-api.sh`](scripts/public-api.sh) (`PUBLIC_API_NIGHTLY_DATE`, `CARGO_PUBLIC_API_VERSION`).
+
+**Regenerate after intentional public API changes:**
+
+```bash
+make public-api
+```
+
+Review the diff, then commit `grit-lib/public-api.txt` with the code change.
+
+**Check locally (same as CI):**
+
+```bash
+make public-api-check
+```
+
+The first run may install the pinned nightly toolchain and `cargo-public-api` (OpenSSL development headers are required to build the tool on Linux). The check is **not** part of **`make gate`** because installing nightly is slow; CI runs it in the dedicated **public-api** job.
+
 ## Continuous integration
 
 GitHub Actions workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It runs on push to **`main`**, on **pull requests**, and via **workflow_dispatch**. Superseded PR runs are cancelled via workflow **`concurrency`**.
@@ -87,6 +107,7 @@ GitHub Actions workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | **fmt** | `cargo fmt --all --check` | `cargo fmt --all --check` |
 | **clippy** | `cargo clippy --workspace -- -D warnings` | `CARGO_BUILD_JOBS=$(nproc) cargo clippy --workspace -- -D warnings` |
 | **rustdoc** | Workspace API docs with warnings denied (see below) | `make doc` |
+| **public-api** | `make public-api-check` (`cargo public-api` on pinned nightly; diff vs `grit-lib/public-api.txt`) | `make public-api-check` |
 | **coverage** | `make coverage` (llvm-cov on `grit-lib`, floor ratchet) | `make coverage` |
 | **test** | `cargo test -p grit-lib -p grit-cli`, then builds `grit` + `grit-http-server` and runs the transport tests | See [Running tests](#running-tests) and [Transport tests](#transport-tests-fetch-and-push-over-smart-http) |
 | **test-threaded** | `cargo test --release --workspace` with `GIT_CONFIG_COUNT` pairs forcing parallel config (`index.threads`, `pack.threads`, `checkout.workers`, `checkout.thresholdForParallelism=0`) | Same env vars as the workflow step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
@@ -112,7 +133,7 @@ cargo test --release --workspace
 
 **Latest tracked run (2026-10-12, roadmap item 15 close-out):** [`test-threaded` on `main` run 38217276891](https://github.com/gitbutlerapp/grit/actions/runs/38217276891/job/114704849345) — still **failed** (bundle CLI + other workspace tests on tip `54ef4babb`; not parallelism). **`factory/parallel-bench-1006`** adds fixes for **`config_parse`** / Git **2.55**, ODB alternates, and reftable batch transactions; the local repro below passes those suites once that branch is checked out. **Replace this link with a green `test-threaded` job on `main` after those commits integrate.**
 
-Each job uses **`ubuntu-latest`** (the **scripts** job uses **`timeout-minutes: 5`**; **coverage** uses **30**; the others use **15**), and the jobs run in parallel. The website has its own workflow, **[`site.yml`](.github/workflows/site.yml)** (see below).
+Each job uses **`ubuntu-latest`** (the **scripts** job uses **`timeout-minutes: 5`**; **coverage** and **public-api** use **30**; the others use **15**), and the jobs run in parallel. The website has its own workflow, **[`site.yml`](.github/workflows/site.yml)** (see below).
 
 ## Coverage
 
