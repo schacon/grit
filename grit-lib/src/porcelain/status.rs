@@ -1697,7 +1697,13 @@ pub fn format_porcelain_v2(
             .map(|e| (format_mode(e.mode), e.oid.to_hex()))
             .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
 
-        let m_w = if y != '.' { m_i.clone() } else { m_h.clone() };
+        let m_w = porcelain_v2_worktree_mode(
+            y,
+            unstaged_by_path.get(path.as_str()).copied(),
+            work_tree,
+            path.as_str(),
+            &m_h,
+        );
 
         out.push(format!(
             "1 {}{} N... {m_h} {m_i} {m_w} {h_h} {h_i} {path}",
@@ -1762,6 +1768,42 @@ pub fn format_porcelain_v2(
 
     out.sort();
     out
+}
+
+fn porcelain_v2_worktree_mode(
+    unstaged_y: char,
+    unstaged: Option<&DiffEntry>,
+    work_tree: Option<&std::path::Path>,
+    path: &str,
+    head_mode: &str,
+) -> String {
+    use crate::diff::{format_mode, mode_from_metadata, DiffStatus};
+
+    if unstaged_y == '.' {
+        return head_mode.to_owned();
+    }
+    if let Some(entry) = unstaged {
+        if entry.status == DiffStatus::Deleted {
+            return "000000".to_owned();
+        }
+        if !entry.new_mode.is_empty() {
+            return entry.new_mode.clone();
+        }
+    }
+    if let Some(wt) = work_tree {
+        let file_path = wt.join(path);
+        match std::fs::symlink_metadata(&file_path) {
+            Ok(meta) => return format_mode(mode_from_metadata(&meta)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+                return "000000".to_owned();
+            }
+            Err(_) => {}
+        }
+    }
+    if unstaged_y != '.' {
+        return "000000".to_owned();
+    }
+    head_mode.to_owned()
 }
 
 #[cfg(test)]
