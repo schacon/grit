@@ -13,8 +13,10 @@ use crate::parallel::run_ordered_pool;
 use crate::progress::{ProgressPhase, ProgressSink};
 use crate::unpack_objects::{apply_delta, type_code_to_kind, PackIndexRecord, PackReader};
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 
 /// Poll the coordinating thread every N object slots / resolved deltas.
 const PROGRESS_POLL_EVERY: u64 = 32;

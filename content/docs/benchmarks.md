@@ -88,13 +88,13 @@ Baseline **`bitmaps-before.json`** (factory VM, 2026-10-10): **`rev-list-count-g
 
 ## grit-lib: parallel index-pack (in-memory)
 
-Hyperfine on a **~90 000-object** depth-50 pack (`git fast-import` + `git repack -adf --depth=50`, factory VM 2026-10-07). Grit uses [`pack_index_records_with_threads`](https://docs.rs/grit-lib/latest/grit_lib/unpack_objects/fn.pack_index_records_with_threads.html) via `cargo run --release -p grit-lib --example index_pack_bench` (see `GRIT_INDEX_PACK_BENCH_PACK` / `GRIT_INDEX_PACK_THREADS`).
+Release [`index_pack_bench`](https://github.com/gitbutlerapp/grit/tree/main/grit-lib/examples/index_pack_bench.rs) on a **75 015-object** depth-50 pack (`git repack -adf --depth=50`, factory VM 2026-10-12). Grit uses [`pack_index_records_with_threads`](https://docs.rs/grit-lib/latest/grit_lib/unpack_objects/fn.pack_index_records_with_threads.html) (`GRIT_INDEX_PACK_BENCH_PACK` / `GRIT_INDEX_PACK_THREADS`); timings cover in-memory record building only (no `.idx` write).
 
-| Command | Mean (8 runs) |
-| ------- | ------------- |
-| `git index-pack --threads=8` | 640 ms |
-| grit index-pack, 1 thread | 1.43 s |
-| grit index-pack, 8 threads | 781 ms |
+| Command | Median (3 runs) |
+| ------- | ---------------- |
+| grit index-pack, 1 thread | 2.34 s |
+| grit index-pack, 4 threads | 1.20 s |
+| grit index-pack, 8 threads | 1.17 s |
 
 **Speedup (8 vs 1 thread): ~1.83×** on this fixture (baseline before step 1002). Multi-threaded builds scan object boundaries (zlib skip), then parallel workers inflate and hash whole objects; ready deltas resolve in parallel rounds with per-delta work stealing. Whole objects at or above 4 MiB inflated are hashed serially so worker threads stay memory-bounded. v2 `.idx` writes sort OID rows on multiple threads when the entry count is large.
 
