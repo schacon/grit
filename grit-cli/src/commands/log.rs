@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use grit_lib::rev_list::{rev_list, RevListOptions};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -17,13 +18,14 @@ use crate::ui;
 const PAGE: usize = 10;
 
 /// Result of `grit log`: one page of commits, plus the next page's start (if any).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct LogOutcome {
     pub commits: Vec<CommitJson>,
     /// Full oid to resume from (`grit log --before=<next>`), or `null` when there
     /// is no further history.
     pub next: Option<String>,
     #[serde(skip)]
+    #[schemars(skip)]
     commit_rows: Vec<CommitSummary>,
 }
 

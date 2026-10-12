@@ -13,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::objects::{parse_tag, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::commands::diff::{diff_of_commit, DiffOutcome, LineKind};
@@ -25,7 +26,7 @@ use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderCont
 const BAR_WIDTH: usize = 40;
 
 /// What `grit show` resolved (`--json` contract).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowKind {
     Commit,
@@ -35,17 +36,20 @@ pub enum ShowKind {
 }
 
 /// Result of `grit show`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ShowOutcome {
     /// Non-fatal warnings emitted while resolving the object.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default)]
     pub warnings: Vec<crate::diagnostics::WarningRecord>,
     pub kind: ShowKind,
     /// Branch or tag name, when shown via a ref.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub ref_name: Option<String>,
     /// Annotated-tag metadata, when `kind == "annotated_tag"`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub tag: Option<TagInfo>,
     pub commit: CommitInfo,
     /// A summary (diffstat) of the change the commit introduced — not the full patch.
@@ -53,7 +57,7 @@ pub struct ShowOutcome {
 }
 
 /// A diffstat: per-file insertion/deletion counts plus totals.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct DiffStat {
     pub files: Vec<FileStat>,
     pub files_changed: usize,
@@ -61,10 +65,11 @@ pub struct DiffStat {
     pub deletions: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct FileStat {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub old_path: Option<String>,
     pub status: ChangeStatus,
     pub insertions: usize,
@@ -72,7 +77,7 @@ pub struct FileStat {
     pub binary: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct CommitInfo {
     pub oid: String,
     pub parents: Vec<String>,
@@ -82,16 +87,17 @@ pub struct CommitInfo {
     pub message: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct TagInfo {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub tagger: Option<Person>,
     pub message: String,
 }
 
 /// A parsed identity line (`Name <email> <epoch> <tz>`).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct Person {
     pub name: String,
     pub email: String,

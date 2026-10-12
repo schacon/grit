@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::remote::{DefaultHttpClientFactory, RemoteError, DEFAULT_REMOTE};
 use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -15,7 +16,7 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit fetch`: the refs that changed.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct FetchOutcome {
     pub remote: String,
     pub updates: Vec<FetchUpdate>,
@@ -24,7 +25,7 @@ pub struct FetchOutcome {
 
 /// One updated tracking ref. `old_oid`/`new_oid` are full hex, or `null` for a
 /// newly-created (`old_oid`) or deleted (`new_oid`) ref.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct FetchUpdate {
     #[serde(rename = "ref")]
     pub ref_name: String,

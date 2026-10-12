@@ -2,16 +2,15 @@
 
 use anyhow::{bail, Context, Result};
 use grit_lib::branch_tracking::upstream_tracking_full_ref;
-use grit_lib::check_ref_format::validate_branch_short_name;
 use std::io::Write;
 
-use crate::ref_name_messages::branch_short_name_error_message;
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::porcelain::branch::create_branch;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::worktree;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::context;
@@ -19,7 +18,7 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit branch`, tagged by `action` (`list` / `create` / `delete`).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum BranchOutcome {
     List {
@@ -40,7 +39,7 @@ pub enum BranchOutcome {
 }
 
 /// One branch in a `list` outcome.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BranchEntry {
     pub name: String,
     pub current: bool,

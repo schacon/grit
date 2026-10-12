@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::output::{progress, HumanRender, MarkdownRender, OutputMode, RenderContext};
@@ -26,7 +27,7 @@ const INSTALL_URL: &str = "https://grit-scm.com/install";
 const INSTALL_URL: &str = "https://grit-scm.com/install.ps1";
 
 /// Result of `grit update`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct UpdateOutcome {
     pub updated: bool,
     /// The version of `grit` that ran the update (the new version is whatever the

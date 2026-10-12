@@ -5,6 +5,7 @@ use grit_lib::porcelain::switch::{
     resolve_create_branch, resolve_revision_spec, resolve_switch_target, switch_repository,
     SwitchMode, SwitchOptions,
 };
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -13,12 +14,13 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit switch`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct SwitchOutcome {
     pub branch: String,
     pub created: bool,
     pub detached: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
 }
 

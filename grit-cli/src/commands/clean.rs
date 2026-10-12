@@ -5,6 +5,7 @@ use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::clean::{clean_untracked, CleanOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -12,7 +13,7 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit clean`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct CleanOutcome {
     /// Paths removed, or that would be removed when `-f` was not passed.
     pub removed: Vec<String>,

@@ -8,6 +8,7 @@ use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::add::{stage as stage_paths, StageMode, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -16,11 +17,12 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit add`: how many changes were staged.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct AddOutcome {
     pub staged: usize,
     /// Whether the invocation had no path arguments (stages everything).
     #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) no_paths: bool,
 }
 

@@ -26,12 +26,13 @@ use grit_lib::config::ConfigSet;
 use grit_lib::credentials::{Credential, CredentialProvider, HelperCredentialProvider};
 use grit_lib::remote::http_client::{HttpClient, UreqHttpClient};
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit auth` (sign-in).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct AuthOutcome {
     pub authenticated: bool,
     pub host: String,
@@ -51,7 +52,7 @@ impl HumanRender for AuthOutcome {
 impl MarkdownRender for AuthOutcome {}
 
 /// Result of `grit auth logout`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct LogoutOutcome {
     pub logged_out: bool,
     pub host: String,

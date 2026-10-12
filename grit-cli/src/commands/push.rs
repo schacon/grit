@@ -10,6 +10,7 @@ use grit_lib::push_report::PushRefStatus;
 use grit_lib::refs;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::transfer::PushRefSpec;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -23,7 +24,7 @@ use grit_lib::transfer::{resolve_push_delete_ref, PushOptions};
 use std::collections::HashSet;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct PushOutcome {
     pub remote: String,
     /// Local branch (short name) that was pushed, or `"--tags"` when this
@@ -35,7 +36,7 @@ pub struct PushOutcome {
 }
 
 /// Per-ref push status in JSON (`ok`, `up_to_date`, or `rejected`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PushRefOutcomeStatus {
     Ok,
@@ -54,13 +55,14 @@ impl From<&PushRefStatus> for PushRefOutcomeStatus {
 }
 
 /// One ref's push result.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct PushRefResult {
     #[serde(rename = "ref")]
     pub ref_name: String,
     pub status: PushRefOutcomeStatus,
     /// Rejection detail, present only when `status == "rejected"`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 

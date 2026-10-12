@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::paths::move_path;
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -11,7 +12,7 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// CLI outcome for `grit mv`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct MvOutcome {
     /// Source path before the move.
     pub from: String,

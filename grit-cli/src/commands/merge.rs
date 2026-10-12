@@ -14,11 +14,12 @@ use grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_merge;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
 /// Merge / pull integration result (`--json` contract).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MergeResult {
     UpToDate,
@@ -30,19 +31,22 @@ pub enum MergeResult {
 }
 
 /// Result of `grit merge` (and the merge half of `grit pull`).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct MergeOutcome {
     pub result: MergeResult,
     /// The merge source label (for `set_upstream`, the branch being set).
     pub branch: String,
     /// Resulting commit (fast-forward target, merge commit, or adopted upstream).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub oid: Option<String>,
     /// For `set_upstream` (unborn `grit pull`): the upstream the branch was set to.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub upstream: Option<String>,
     /// Conflicted paths when `result` is `conflicts`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub conflicts: Option<Vec<String>>,
 }
 

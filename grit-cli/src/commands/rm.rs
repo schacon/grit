@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::paths::{remove_paths, RemoveOptions, RemoveOutcome};
 use grit_lib::repo::Repository;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -11,7 +12,7 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// CLI outcome for `grit rm`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct RmOutcome {
     /// Paths removed from the index (and work tree unless `--cached`).
     pub removed: Vec<String>,

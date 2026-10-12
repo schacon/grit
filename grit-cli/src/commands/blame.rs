@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use grit_lib::blame::{blame_file, BlameOptions, BlameResult};
 use grit_lib::objects::ObjectId;
 use grit_lib::rev_parse::resolve_revision;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::context::{self, relative_date_from};
@@ -15,17 +16,18 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit blame`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BlameOutcome {
     pub file: String,
     pub rev: String,
     pub lines: Vec<BlameLineJson>,
     pub commits: BTreeMap<String, BlameCommitJson>,
     #[serde(skip)]
+    #[schemars(skip)]
     display_lines: Vec<BlameDisplayLine>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BlameLineJson {
     pub commit: String,
     pub original_line: usize,
@@ -33,7 +35,7 @@ pub struct BlameLineJson {
     pub content: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BlameCommitJson {
     pub author: String,
     pub author_time: i64,

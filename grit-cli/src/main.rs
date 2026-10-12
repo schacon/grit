@@ -12,6 +12,8 @@ mod dates;
 mod diagnostics;
 mod json_error;
 mod json_filter;
+#[cfg(test)]
+mod json_schema;
 mod markdown;
 mod output;
 mod progress;

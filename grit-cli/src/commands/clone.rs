@@ -11,6 +11,7 @@ use grit_lib::clone::{
 };
 use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
 use grit_lib::remote::DefaultHttpClientFactory;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::context;
@@ -18,7 +19,7 @@ use crate::output::{outln, progress, HumanRender, MarkdownRender, OutputMode, Re
 use crate::progress::{format_bytes, TerminalProgress};
 
 /// Result of `grit clone`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct CloneOutcome {
     pub url: String,
     /// Destination directory.
@@ -36,6 +37,7 @@ pub struct CloneOutcome {
     /// Working-tree files checked out.
     pub files: u64,
     #[serde(skip)]
+    #[schemars(skip)]
     pub elapsed: Duration,
 }
 

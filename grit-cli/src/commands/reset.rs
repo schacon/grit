@@ -5,6 +5,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::ident_resolve::IdentRole;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions, ResetOutcome};
 use grit_lib::rev_parse::resolve_revision;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -12,7 +13,7 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Reset mode in JSON (`soft`, `mixed`, or `hard`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResetCliMode {
     Soft,
@@ -31,7 +32,7 @@ impl From<ResetMode> for ResetCliMode {
 }
 
 /// CLI view of [`ResetOutcome`].
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ResetCliOutcome {
     pub mode: ResetCliMode,
     pub target: String,
