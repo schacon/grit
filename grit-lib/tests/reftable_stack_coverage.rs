@@ -294,7 +294,7 @@ fn geometric_partial_compaction_ref_indices_within_table_headers() {
         reftable_write_ref(
             &git_dir,
             &format!("refs/heads/t05-{i:04}"),
-            &oid((i % 200) as u8),
+            &oid(((i % 199) + 1) as u8),
             Some(IDENTITY),
             Some("geometric stack"),
         )
