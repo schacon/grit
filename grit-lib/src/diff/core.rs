@@ -4189,16 +4189,23 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     if !meta.is_file() || !stat_matches(entry, &meta) {
         return Ok(false);
     }
-    let index_mtime = index_mtime_for_diff(index, None);
-    if !entry_is_racy(entry, index_mtime) {
-        return Ok(true);
-    }
     let config = ConfigSet::load(
         &crate::environment::Environment::empty(),
         Some(git_dir),
         true,
     )
     .unwrap_or_default();
+    let trust_filemode = config
+        .get_bool("core.filemode")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+    if trust_filemode && mode_from_metadata(&meta) != expected_mode {
+        return Ok(false);
+    }
+    let index_mtime = index_mtime_for_diff(index, None);
+    if !entry_is_racy(entry, index_mtime) {
+        return Ok(true);
+    }
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
     let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);

@@ -794,3 +794,99 @@ fn stash_push_u_tracked_file_replaced_by_untracked_dir_pop_refuses() {
     );
     assert_fsck_strict(dir.path());
 }
+
+#[test]
+#[cfg(unix)]
+fn push_stash_clears_unstaged_exec_bit_only_change() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("b.txt"), "1\n").expect("write");
+    git_cmd(dir.path(), &["add", "b.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir.path().join("b.txt"))
+            .expect("stat")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(dir.path().join("b.txt"), perms).expect("chmod");
+    }
+
+    let porcelain_before = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        porcelain_before.contains("b.txt"),
+        "chmod +x must dirty worktree before stash:\n{porcelain_before}"
+    );
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(false, None))
+        .expect("push")
+        .expect("had mode-only change");
+
+    let clean = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        clean.trim().is_empty(),
+        "push_stash must reset exec-bit-only dirt before pop, got:\n{clean}"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir.path().join("b.txt"))
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o644, "worktree must match HEAD non-executable mode");
+    }
+
+    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir.path().join("b.txt"))
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755, "pop must restore executable bit");
+    }
+
+    assert_fsck_strict(dir.path());
+}
+
+#[test]
+#[cfg(unix)]
+fn push_stash_clears_unstaged_exec_bit_in_subdirectory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::create_dir_all(dir.path().join("d")).expect("mkdir");
+    std::fs::write(dir.path().join("d/c.txt"), "x\n").expect("write");
+    git_cmd(dir.path(), &["add", "d/c.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.path().join("d/c.txt");
+        let mut perms = std::fs::metadata(&path).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod");
+    }
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(false, None))
+        .expect("push")
+        .expect("stash");
+
+    let clean = git_cmd(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        clean.trim().is_empty(),
+        "push_stash must leave clean tree for nested path, got:\n{clean}"
+    );
+
+    pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
+}
