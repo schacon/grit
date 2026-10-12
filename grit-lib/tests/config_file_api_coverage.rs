@@ -5,8 +5,8 @@
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
 use tempfile::tempdir;
 

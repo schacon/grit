@@ -2,7 +2,7 @@
 
 mod support;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 use support::{assert_porcelain_v2_matches_git, git, git_ok, HistoryRepo};

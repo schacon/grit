@@ -5,25 +5,25 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_write::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::index::Index;
+use grit_lib::objects::commit_graph::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
 };
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::hash::{verify_trailer, TrailerMismatch};
-use grit_lib::index::Index;
-use grit_lib::index_pack::{install_pack_bytes, IngestPackOptions};
-use grit_lib::midx::{
+use grit_lib::objects::hash::{verify_trailer, TrailerMismatch};
+use grit_lib::objects::index_pack::{install_pack_bytes, IngestPackOptions};
+use grit_lib::objects::midx::{
     verify_midx, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
 };
-use grit_lib::objects::{HashAlgo, ObjectId};
-use grit_lib::pack::read_pack_index;
-use grit_lib::pack_rev::{
+use grit_lib::objects::pack::read_pack_index;
+use grit_lib::objects::pack_rev::{
     build_pack_rev_bytes_from_index_order_offsets_and_checksum, rev_path_for_index,
 };
+use grit_lib::objects::{HashAlgo, ObjectId};
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::transfer::{build_pack, PackBuildOptions};
 use grit_test_support::git;
 use tempfile::TempDir;
 

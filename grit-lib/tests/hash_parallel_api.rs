@@ -1,11 +1,11 @@
-//! Integration coverage for [`grit_lib::hash`] parallel batch helpers.
+//! Integration coverage for [`grit_lib::objects::hash`] parallel batch helpers.
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use grit_lib::hash::hash_object;
-use grit_lib::hash::{
+use grit_lib::objects::hash::hash_object;
+use grit_lib::objects::hash::{
     hash_objects_parallel, par_hash_with, parallel_hash_worthwhile, try_par_hash_with,
     ParallelHashError, Parallelism, PAR_HASH_MIN_ITEMS, PAR_HASH_MIN_TOTAL_BYTES,
 };

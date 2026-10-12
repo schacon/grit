@@ -1,9 +1,9 @@
 //! [`LooseStore`] conformance via the shared [`grit_test_support::odb_conformance`] suite.
 
 use flate2::Compression;
+use grit_lib::objects::odb::store::{LooseStore, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::odb::store::{LooseStore, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
 use grit_test_support::git_supports_sha256;
 use grit_test_support::odb_conformance::broken_store::WrongReadInfo;
 use grit_test_support::odb_conformance::{run_read_suite, run_write_suite};

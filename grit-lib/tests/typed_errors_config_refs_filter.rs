@@ -2,11 +2,13 @@
 
 use grit_lib::config::ConfigSet;
 use grit_lib::config::{ConfigFile, ConfigScope};
-use grit_lib::crlf::{convert_to_git_with_opts, ConversionConfig, ConvertToGitOpts, FileAttrs};
 use grit_lib::error::{
     ApplyError, BadNumericSource, ConfigError, Error, FilterError, FilterPhase, RefLockError,
 };
 use grit_lib::objects::ObjectId;
+use grit_lib::worktree::crlf::{
+    convert_to_git_with_opts, ConversionConfig, ConvertToGitOpts, FileAttrs,
+};
 use grit_test_support::{git, git_cmd};
 use std::fs;
 use tempfile::tempdir;

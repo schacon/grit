@@ -6,16 +6,16 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
-use grit_lib::progress::NullProgress;
-use grit_lib::repo::Repository;
-use grit_lib::untracked_cache::{
+use grit_lib::index::untracked_cache::{
     collect_untracked_from_cache, dir_flags_from_config, parse_untracked_extension,
     refresh_untracked_cache_for_status, untracked_cache_ident, UntrackedCache,
     UntrackedIgnoredMode, DIR_HIDE_EMPTY_DIRECTORIES, DIR_SHOW_OTHER_DIRECTORIES,
 };
+use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
+use grit_lib::progress::NullProgress;
+use grit_lib::repo::Repository;
 
 use support::{
     append_git_config, entry_from_worktree_path, extension_payload, fsck_strict, git,
@@ -187,7 +187,7 @@ fn t7063_dir_flags_from_config_modes() {
     )
     .expect("write cfg");
     let cfg_all = ConfigSet::load(
-        &grit_lib::environment::Environment::empty(),
+        &grit_lib::config::environment::Environment::empty(),
         Some(cfg_dir.path()),
         true,
     )
@@ -267,7 +267,7 @@ fn untracked_extension_corrupt_payload_no_panic() {
 
 fn write_minimal_untr() -> Vec<u8> {
     let uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
-    grit_lib::untracked_cache::write_untracked_extension(&uc)
+    grit_lib::index::untracked_cache::write_untracked_extension(&uc)
 }
 
 #[test]
@@ -311,10 +311,10 @@ fn t7063_collect_untracked_matches_git_deep_tree() {
 
 #[test]
 fn index_name_hash_lazy_ignorecase_lookup() {
-    use grit_lib::index::Index;
-    use grit_lib::index_name_hash_lazy::{
+    use grit_lib::index::index_name_hash_lazy::{
         dump_lazy_init_name_hash, memihash, test_lazy_init_name_hash,
     };
+    use grit_lib::index::Index;
 
     assert_eq!(memihash(b"Path/File"), memihash(b"path/file"));
 

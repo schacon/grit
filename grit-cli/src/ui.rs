@@ -10,7 +10,7 @@ use crate::output::outln;
 
 use grit_lib::diff::{DiffEntry, DiffStatus};
 use grit_lib::git_path::relative_path_for_display;
-use grit_lib::pathspec::pathdiff;
+use grit_lib::worktree::pathspec::pathdiff;
 
 use crate::context::{self, CommitSummary};
 

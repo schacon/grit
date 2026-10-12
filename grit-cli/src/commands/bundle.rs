@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
+use grit_lib::bundle::bundle_remote;
 use grit_lib::bundle::{Bundle, BundleError, BundleVerifyReport};
-use grit_lib::bundle_remote;
 use grit_lib::objects::ObjectId;
 use schemars::JsonSchema;
 use serde::Serialize;

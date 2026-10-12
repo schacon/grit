@@ -8,8 +8,8 @@ use std::path::Path;
 
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::read_reflog;
 use grit_lib::refs::is_valid_storable_ref_name;
+use grit_lib::refs::reflog::read_reflog;
 use grit_lib::refs::{
     append_reflog, delete_ref, list_refs, list_refs_glob, list_refs_physical,
     packed_refs_entry_exists, read_head, read_log_refs_config, read_raw_ref, read_ref_file,

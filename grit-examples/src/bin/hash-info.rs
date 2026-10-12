@@ -1,7 +1,7 @@
 //! Print which SHA hardware backend `grit-lib` selects on this CPU.
 
 use clap::Parser;
-use grit_lib::hash;
+use grit_lib::objects::hash;
 use grit_lib::objects::HashAlgo;
 
 /// Report SHA-1 / SHA-256 hashing backends selected by the linked `sha1` / `sha2` crates.

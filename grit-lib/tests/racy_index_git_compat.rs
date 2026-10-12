@@ -7,8 +7,8 @@
 use std::path::Path;
 
 use filetime::FileTime;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::diff_index_to_worktree;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 

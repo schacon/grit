@@ -1,6 +1,6 @@
 //! Regression for issue #980: missing-but-registered worktree paths must not get a second admin dir.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::git_path::path_for_disk_compare;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;

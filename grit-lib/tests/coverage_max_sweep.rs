@@ -10,23 +10,25 @@ use grit_lib::diff::{
     diff_tree_to_worktree_with_git_dir_and_rules, diff_trees, diff_trees_with_renames,
     postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions,
 };
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::pathspec::{matches_pathspec_list, parse_pathspecs_from_source};
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions};
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_list::{
+    merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions,
+};
+use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_verify,
 };
-use grit_lib::worktree_rules::WorktreeRules;
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::worktree::pathspec::{matches_pathspec_list, parse_pathspecs_from_source};
+use grit_lib::worktree::worktree_rules::WorktreeRules;
 use std::fs;
 use tempfile::tempdir;
 
 fn write_tree(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     entries: &[(&str, ObjectId)],
 ) -> grit_lib::error::Result<ObjectId> {
     let mut body = Vec::new();

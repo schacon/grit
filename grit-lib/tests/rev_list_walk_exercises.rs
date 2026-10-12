@@ -1,12 +1,12 @@
 //! Additional `rev_list` walks on synthetic repos to exercise simplification and object paths.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::ref_exclusions::RefExclusions;
 use grit_lib::refs;
+use grit_lib::refs::ref_exclusions::RefExclusions;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{
+use grit_lib::revwalk::rev_list::{
     commit_tips_from_named_refs, commit_visible_for_dense_pathspecs, merge_bases,
     object_ids_for_cat_file_filtered, reachable_object_ids_for_cat_file, render_commit,
     resolve_object_walk_roots, resolve_revision_commits, rev_list, select_bisect_commits,
@@ -58,7 +58,7 @@ fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
         &InitOptions {
             bare: true,
             initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
             ..InitOptions::default()
         },
     )?;

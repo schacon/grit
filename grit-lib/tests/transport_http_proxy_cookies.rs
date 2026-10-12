@@ -33,12 +33,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use grit_lib::config::ConfigSet;
-use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::http::ureq_client::UreqHttpClient;
-use grit_lib::transport::http::{http_client_arc, http_fetch};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
+use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
+use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

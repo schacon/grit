@@ -9,13 +9,13 @@ use std::path::Path;
 use anyhow::Context as _;
 use anyhow::Result;
 use grit_lib::config::ConfigSet;
-use grit_lib::fetch::NoProgress;
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::FetchOptions;
+use grit_lib::remote::transfer::FetchOutcome;
+use grit_lib::remote::transfer::PushOptions;
+use grit_lib::remote::transfer::PushOutcome;
+use grit_lib::remote::transfer::PushRefSpec;
 use grit_lib::remote::{DefaultHttpClientFactory, Remote, RemoteUrl};
-use grit_lib::transfer::FetchOptions;
-use grit_lib::transfer::FetchOutcome;
-use grit_lib::transfer::PushOptions;
-use grit_lib::transfer::PushOutcome;
-use grit_lib::transfer::PushRefSpec;
 
 /// How a remote URL is reached, and therefore what authentication it implies.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -150,11 +150,15 @@ fn http_credential_helpers(config: &ConfigSet, url: &str) -> Vec<String> {
 
 /// The SSH command an `ssh` remote would use, for display only.
 fn ssh_command() -> String {
-    let env = grit_lib::environment::Environment::capture_process();
-    match grit_lib::transport::resolve_effective_ssh_command(&env, None) {
-        grit_lib::transport::SshCommand::ShellCommand(cmd) => cmd.to_string_lossy().into_owned(),
-        grit_lib::transport::SshCommand::Program(prog) => prog.to_string_lossy().into_owned(),
-        grit_lib::transport::SshCommand::Auto => "ssh".to_owned(),
+    let env = grit_lib::config::environment::Environment::capture_process();
+    match grit_lib::remote::transport::resolve_effective_ssh_command(&env, None) {
+        grit_lib::remote::transport::SshCommand::ShellCommand(cmd) => {
+            cmd.to_string_lossy().into_owned()
+        }
+        grit_lib::remote::transport::SshCommand::Program(prog) => {
+            prog.to_string_lossy().into_owned()
+        }
+        grit_lib::remote::transport::SshCommand::Auto => "ssh".to_owned(),
     }
 }
 

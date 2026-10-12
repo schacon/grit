@@ -3,7 +3,7 @@
 use std::process::Command;
 
 use grit_lib::commit_encoding;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;

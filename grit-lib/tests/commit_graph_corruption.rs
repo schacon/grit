@@ -3,16 +3,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_file::{CommitGraphChain, CommitGraphLayer};
-use grit_lib::commit_graph_write::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::error::Error;
+use grit_lib::objects::commit_graph::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
 };
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::error::Error;
+use grit_lib::objects::commit_graph::{CommitGraphChain, CommitGraphLayer};
 use grit_lib::objects::{HashAlgo, ObjectId};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use std::collections::HashMap;
 
 fn git_cmd(dir: &Path, args: &[&str]) -> String {

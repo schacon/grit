@@ -14,8 +14,8 @@ use crate::commands::merge::{self, MergeOutcome};
 use crate::context;
 use crate::output::OutputMode;
 use crate::progress::TerminalProgress;
+use grit_lib::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
-use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 
 pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
     let repo = context::discover()?;

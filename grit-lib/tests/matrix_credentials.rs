@@ -1,4 +1,4 @@
-//! Comprehensive matrix tests for `grit_lib::credentials`.
+//! Comprehensive matrix tests for `grit_lib::remote::credentials`.
 //!
 //! This file exercises the full Git-compatible credential layer beyond the
 //! happy-path coverage in `tests/credentials.rs`:
@@ -45,7 +45,7 @@ use std::sync::Once;
 use std::time::Duration;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::credentials::{
+use grit_lib::remote::credentials::{
     use_http_path, Credential, CredentialProvider, HelperCredentialProvider,
     NON_INTERACTIVE_MESSAGE,
 };
@@ -98,7 +98,7 @@ fn load_config(dir: &Path) -> ConfigSet {
     isolate_global_config();
     let git_dir = dir.join(".git");
     ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         false,
     )
@@ -731,11 +731,11 @@ mod http_401 {
     use std::time::Instant;
 
     use grit_lib::error::Error;
-    use grit_lib::fetch::NoProgress;
     use grit_lib::refs::resolve_ref;
-    use grit_lib::transfer::{FetchOptions, TagMode};
-    use grit_lib::transport::http::ureq_client::UreqHttpClient;
-    use grit_lib::transport::http::{http_client_arc, http_fetch};
+    use grit_lib::remote::fetch::NoProgress;
+    use grit_lib::remote::transfer::{FetchOptions, TagMode};
+    use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
+    use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
 
     const USER: &str = "alice";
     const PASS: &str = "s3cr3t";

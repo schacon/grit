@@ -8,12 +8,12 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     git_config_parameters_last_value, parse_config_parameters, ConfigFile, ConfigScope, ConfigSet,
     LoadConfigOptions,
 };
 use grit_lib::diagnostics::CollectingDiagnostics;
-use grit_lib::environment::Environment;
 use grit_lib::error::Error;
 use grit_lib::repo::{InitOptions, Repository};
 use support::{default_load_opts, isolated_env};

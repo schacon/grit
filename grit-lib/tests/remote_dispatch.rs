@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
 use grit_lib::remote::{ListRefsOptions, Remote, RemoteRef, RemoteUrl};
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
 
 #[cfg(feature = "http-ureq")]
 use grit_lib::remote::DefaultHttpClientFactory;
@@ -384,7 +384,12 @@ fn remote_push_local_file_url_matches_git() {
     let url = format!("file://{}", bare.display());
     let remote = Remote::from_url(&url).unwrap();
     remote
-        .fetch(&repo, fetch_opts, &mut grit_lib::fetch::NoProgress, None)
+        .fetch(
+            &repo,
+            fetch_opts,
+            &mut grit_lib::remote::fetch::NoProgress,
+            None,
+        )
         .unwrap();
 
     std::fs::write(local.join("push.txt"), "push\n").unwrap();
@@ -405,7 +410,7 @@ fn remote_push_local_file_url_matches_git() {
             &repo,
             &[push_spec],
             PushOptions::default(),
-            &mut grit_lib::fetch::NoProgress,
+            &mut grit_lib::remote::fetch::NoProgress,
             None,
         )
         .unwrap();
@@ -531,7 +536,7 @@ fn remote_fetch_git_daemon_matches_git() {
                 tags: TagMode::Following,
                 ..Default::default()
             },
-            &mut grit_lib::fetch::NoProgress,
+            &mut grit_lib::remote::fetch::NoProgress,
             None,
         )
         .unwrap();

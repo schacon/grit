@@ -5,14 +5,14 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_trees, unified_diff_with_prefix, DiffStatus};
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
+use grit_lib::objects::pack::{read_object_from_pack_at_offset, read_pack_index_cached, PackIndex};
 use grit_lib::objects::{parse_commit, Object, ObjectId, ObjectKind};
-use grit_lib::pack::{read_object_from_pack_at_offset, read_pack_index_cached, PackIndex};
+use grit_lib::remote::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions, RevListResult};
-use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions, RevListResult};
 
 /// Read hex object ids from stdin and emit `git cat-file --batch` lines.
 pub fn cat_file_batch(repo: &Repository) -> Result<()> {
@@ -566,8 +566,8 @@ pub fn index_pack_records(
     repo: &Repository,
     threads: Option<usize>,
 ) -> Result<()> {
-    use grit_lib::hash::Parallelism;
-    use grit_lib::unpack_objects::pack_index_records_with_threads;
+    use grit_lib::objects::hash::Parallelism;
+    use grit_lib::objects::unpack_objects::pack_index_records_with_threads;
 
     let pack =
         std::fs::read(pack_path).with_context(|| format!("read pack {}", pack_path.display()))?;
@@ -585,8 +585,8 @@ pub fn index_pack_records(
 
 /// Write a full `--all` pack to stdout (matches `git pack-objects --all --stdout` workload).
 pub fn pack_build_all_stdout(repo: &Repository, delta_threads: usize) -> Result<()> {
-    use grit_lib::hash::Parallelism;
-    use grit_lib::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
+    use grit_lib::objects::hash::Parallelism;
+    use grit_lib::objects::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
     use grit_lib::refs::list_refs_for_repository;
 
     let refs = list_refs_for_repository(repo, "")?;

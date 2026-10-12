@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::transfer::{fetch_local, FetchOptions, TagMode};
+use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")

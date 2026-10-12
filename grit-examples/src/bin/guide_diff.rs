@@ -2,8 +2,8 @@
 //!
 //! Source for the library guide "Diff" page (included in the docs site).
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_index_to_worktree, diff_trees, unified_diff, DiffEntry, DiffStatus};
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;

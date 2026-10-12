@@ -1,13 +1,13 @@
 //! `grit branch` — list branches, or create / delete one.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::branch_tracking::upstream_tracking_full_ref;
+use grit_lib::refs::branch_tracking::upstream_tracking_full_ref;
 use std::io::Write;
 
-use grit_lib::merge_base::is_ancestor;
 use grit_lib::porcelain::branch::create_branch;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::revwalk::merge_base::is_ancestor;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::worktree;
 use schemars::JsonSchema;

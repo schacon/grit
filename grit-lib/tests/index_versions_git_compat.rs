@@ -5,14 +5,14 @@ mod support;
 use std::fs;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
+use grit_lib::index::resolve_undo::{
+    parse_resolve_undo_payload, write_resolve_undo_payload, ResolveUndoRecord,
+};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
-use grit_lib::resolve_undo::{
-    parse_resolve_undo_payload, write_resolve_undo_payload, ResolveUndoRecord,
-};
 
 use support::{
     assert_git_fsck_strict, assert_grit_index_matches_git_ls_files,

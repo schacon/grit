@@ -2,12 +2,12 @@
 
 use std::process::Command;
 
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs::write_ref;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{rev_list, RevListOptions};
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use tempfile::TempDir;
 
 fn write_linear_commits(repo: &Repository, count: usize) -> grit_lib::objects::ObjectId {

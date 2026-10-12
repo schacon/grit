@@ -134,7 +134,7 @@ fn collect_alternate_ref_oids_honors_prefix_config() {
 
 #[test]
 fn check_ref_format_edge_cases_for_coverage() {
-    use grit_lib::check_ref_format::{
+    use grit_lib::refs::check_ref_format::{
         check_refname_format, collapse_slashes, is_valid_advertised_symref_target,
         is_valid_fetch_advertised_ref, receive_pack_refname_ok, refname_is_safe,
         validate_branch_short_name, validate_tag_short_name, RefNameError, RefNameOptions,

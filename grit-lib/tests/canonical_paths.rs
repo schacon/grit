@@ -52,3 +52,19 @@ fn canonical_layout_script_covers_workspace_imports() {
         .expect("run check_canonical_layout.py");
     assert!(status.success(), "canonical layout map is incomplete");
 }
+
+#[test]
+fn no_noncanonical_grit_lib_imports() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let status = std::process::Command::new("python3")
+        .arg("scripts/check_noncanonical_grit_lib_imports.py")
+        .current_dir(workspace)
+        .status()
+        .expect("run check_noncanonical_grit_lib_imports.py");
+    assert!(
+        status.success(),
+        "workspace must use canonical grit_lib domain paths only"
+    );
+}

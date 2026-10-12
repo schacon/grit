@@ -2,12 +2,12 @@
 
 use std::process::Command;
 
-use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::fetch::NoProgress;
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::checkout::checkout_between_trees;
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
 use grit_lib::repo::Repository;
 
 fn git(dir: &std::path::Path, args: &[&str]) -> bool {

@@ -4,18 +4,18 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_file::{
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::error::Error;
+use grit_lib::index::write_tree::write_tree_from_index;
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::commit_graph::{build_commit_graph_bytes, load_commit_graph_commit_info};
+use grit_lib::objects::commit_graph::{
     commit_tree_has_high_bit_paths, dump_bloom_filters, parse_graph_file, BloomPrecheck,
     BloomWalkStats, CommitGraphChain, CommitGraphLayer,
 };
-use grit_lib::commit_graph_write::{build_commit_graph_bytes, load_commit_graph_commit_info};
-use grit_lib::error::Error;
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind};
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::repo_caches::RepoCaches;
-use grit_lib::write_tree::write_tree_from_index;
 
 fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
     let dir = tempfile::tempdir().expect("tempdir");

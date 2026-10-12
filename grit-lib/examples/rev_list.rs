@@ -2,11 +2,11 @@
 //!
 //! Run: `cargo run -p grit-lib --example rev_list`
 
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{rev_list, OutputMode, RevListOptions};
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::revwalk::rev_list::{rev_list, OutputMode, RevListOptions};
 
 fn make_initial_commit(repo: &Repository) -> grit_lib::error::Result<grit_lib::objects::ObjectId> {
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};

@@ -2,9 +2,9 @@
 //!
 //! Source for the library guide "Refs" page (included in the docs site).
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::read_reflog;
+use grit_lib::refs::reflog::read_reflog;
 use grit_lib::refs::{self, Ref};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;

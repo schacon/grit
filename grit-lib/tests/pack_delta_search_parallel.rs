@@ -3,9 +3,9 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack_objects::{build_pack_with_parallel_threads, PackBuildOptions};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack_objects::{build_pack_with_parallel_threads, PackBuildOptions};
 
 const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),

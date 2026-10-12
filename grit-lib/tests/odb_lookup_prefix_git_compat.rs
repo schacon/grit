@@ -1,9 +1,9 @@
 //! Abbreviation lookup via [`Odb::lookup_prefix`] matches `git rev-parse --disambiguate`.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::list_all_abbrev_matches;
+use grit_lib::revwalk::rev_parse::list_all_abbrev_matches;
 use std::fs;
 use std::path::Path;
 use std::process::Command;

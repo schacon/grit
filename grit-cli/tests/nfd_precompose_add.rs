@@ -93,7 +93,7 @@ fn grit_init_add_nfd_untracked_stores_nfc_in_index() {
         String::from_utf8_lossy(&commit.stdout)
     );
 
-    use grit_lib::environment::RepositoryOptions;
+    use grit_lib::config::environment::RepositoryOptions;
     use grit_lib::objects::{parse_commit, parse_tree};
     use grit_lib::repo::Repository;
     use grit_lib::state::resolve_head;

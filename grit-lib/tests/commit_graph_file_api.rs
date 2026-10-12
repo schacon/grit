@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::commit_graph_file::{parse_graph_file, CommitGraphChain, CommitGraphLayer};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::commit_graph::{parse_graph_file, CommitGraphChain, CommitGraphLayer};
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 

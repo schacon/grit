@@ -12,13 +12,13 @@ use anyhow::Context as _;
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::remote;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
-use grit_lib::push_report::PushRefStatus;
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::PushOptions;
+use grit_lib::remote::transfer::PushRefSpec;
 use grit_lib::repo::Repository;
-use grit_lib::transfer::PushOptions;
-use grit_lib::transfer::PushRefSpec;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -56,7 +56,7 @@ fn run() -> Result<()> {
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let git_dir = repo.git_dir().to_path_buf();
     let config = ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         true,
     )?;

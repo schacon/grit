@@ -1,7 +1,7 @@
 //! Push ref deletion against a local bare remote (Git-compatible receive-pack).
 
 use grit_lib::refs;
-use grit_lib::transfer::{push_local, PushOptions, PushRefSpec};
+use grit_lib::remote::transfer::{push_local, PushOptions, PushRefSpec};
 
 #[test]
 fn push_delete_tag_on_local_remote() {

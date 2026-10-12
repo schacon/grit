@@ -191,7 +191,7 @@ enum Command {
         bare: bool,
         /// Ref storage backend for the new repository.
         #[arg(long, value_name = "FORMAT", default_value = "files")]
-        ref_format: grit_lib::ref_storage::RefStorageFormat,
+        ref_format: grit_lib::refs::ref_storage::RefStorageFormat,
     },
     /// Copy a remote repository into a new directory.
     Clone {
@@ -579,8 +579,8 @@ fn main() {
         {
             commands::bundle::MISSING_PREREQUISITE_EXIT
         } else if err
-            .downcast_ref::<grit_lib::clone::CloneError>()
-            .is_some_and(grit_lib::clone::CloneError::is_remote_read_failure)
+            .downcast_ref::<grit_lib::remote::clone::CloneError>()
+            .is_some_and(grit_lib::remote::clone::CloneError::is_remote_read_failure)
         {
             128
         } else {

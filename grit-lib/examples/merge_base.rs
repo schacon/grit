@@ -2,11 +2,11 @@
 //!
 //! Run: `cargo run -p grit-lib --example merge_base`
 
-use grit_lib::merge_base::merge_bases_first_vs_rest;
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
 
 fn commit_tree(
     repo: &grit_lib::repo::Repository,

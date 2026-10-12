@@ -3,9 +3,9 @@
 
 use std::process::Command;
 
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use tempfile::TempDir;
 
 const GIT_ENV: &[(&str, &str)] = &[

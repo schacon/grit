@@ -3,14 +3,19 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{
+use grit_lib::error::Error;
+use grit_lib::refs::ref_storage::RefStorageFormat;
+use grit_lib::repo::{
+    common_git_dir_for_config, early_config_ignore_repo_reason, resolve_dot_git,
+    validate_repo_config, validate_repo_format, worktree_config_enabled, InitOptions, Repository,
+};
+use grit_lib::worktree::crlf::{
     clean_uses_autocrlf_index_guard, collapse_ident, convert_to_git, crlf_to_lf,
     gather_convert_stats_ascii, has_crlf, has_crlf_in_index_blob, has_lone_lf, is_all_crlf,
     is_all_lf, is_binary, lf_to_crlf, load_gitattributes, parse_gitattributes_content,
     should_convert_to_crlf, ConversionConfig, FileAttrs,
 };
-use grit_lib::error::Error;
-use grit_lib::pathspec::{
+use grit_lib::worktree::pathspec::{
     bloom_lookup_prefix, bloom_lookup_prefix_with_cwd, context_from_mode_octal, has_glob_chars,
     matches_pathspec, matches_pathspec_list, matches_pathspec_list_for_object,
     matches_pathspec_list_with_context, matches_pathspec_set_for_object,
@@ -18,11 +23,6 @@ use grit_lib::pathspec::{
     path_allowed_by_pathspec_list, pathspec_contributes_match, pathspec_exclude_matches,
     pathspec_has_top, pathspec_is_exclude, pathspec_matches, pathspec_wants_descent_into_tree,
     simple_length, validate_attr_pathspecs, validate_global_pathspec_flags, PathspecMatchContext,
-};
-use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{
-    common_git_dir_for_config, early_config_ignore_repo_reason, resolve_dot_git,
-    validate_repo_config, validate_repo_format, worktree_config_enabled, InitOptions, Repository,
 };
 use tempfile::tempdir;
 

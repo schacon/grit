@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::midx::{
+use grit_lib::objects::midx::{
     read_midx_objects, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
 };
+use grit_lib::objects::pack_rev::hashfile_checksum_valid;
 use grit_lib::objects::HashAlgo;
-use grit_lib::pack_rev::hashfile_checksum_valid;
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")

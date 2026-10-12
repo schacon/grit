@@ -11,12 +11,12 @@ use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
 
-use grit_lib::fetch::{fetch_remote, Progress};
 use grit_lib::objects::ObjectId;
 use grit_lib::progress::ProgressSink;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::{ConnectOptions, Connection, Service, SshTransport, Transport};
+use grit_lib::remote::fetch::{fetch_remote, Progress};
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
+use grit_lib::remote::transport::{ConnectOptions, Connection, Service, SshTransport, Transport};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

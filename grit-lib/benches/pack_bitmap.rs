@@ -11,14 +11,14 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use grit_lib::bitmap_walk::ReachabilityQuery;
+use grit_lib::objects::bitmap::ReachabilityQuery;
+use grit_lib::objects::bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::read_local_pack_indexes;
+use grit_lib::objects::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack::read_local_pack_indexes;
-use grit_lib::pack_bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
-use grit_lib::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::MissingAction;
+use grit_lib::revwalk::rev_list::MissingAction;
 
 struct PackBitmapFixture {
     repo: Repository,

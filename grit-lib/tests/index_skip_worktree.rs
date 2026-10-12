@@ -4,11 +4,11 @@ mod support;
 
 use std::fs;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
-use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 
 use support::{
     assert_git_fsck_strict, assert_porcelain_v2_matches_git,

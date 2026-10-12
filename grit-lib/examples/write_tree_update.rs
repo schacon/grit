@@ -8,9 +8,9 @@
 use std::env;
 use std::path::Path;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 fn main() -> grit_lib::error::Result<()> {
     let Some(arg) = env::args().nth(1) else {

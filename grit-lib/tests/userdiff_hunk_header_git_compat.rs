@@ -5,7 +5,7 @@ use std::process::Command;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::unified_diff_with_prefix_and_funcname;
-use grit_lib::userdiff::matcher_for_driver;
+use grit_lib::diff::userdiff::matcher_for_driver;
 
 fn git_diff_hunk_headers(repo: &Path) -> Vec<String> {
     let out = Command::new("git")

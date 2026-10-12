@@ -1,10 +1,10 @@
 //! `Odb::read` resolves REF_DELTA when the base object lives in another pack.
 
-use grit_lib::delta_encode::encode_lcp_delta;
+use grit_lib::objects::delta_encode::encode_lcp_delta;
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_object_from_packs};
 use grit_lib::objects::HashAlgo;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_object_from_packs};
 use std::io::Write;
 use std::path::Path;
 

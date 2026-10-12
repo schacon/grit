@@ -1,6 +1,6 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/patch_ids/fn.compute_patch_ids_from_text.html
+use grit_lib::diff::patch_ids::{compute_patch_ids_from_text, PatchIdMode};
 use grit_lib::objects::HashAlgo;
-use grit_lib::patch_ids::{compute_patch_ids_from_text, PatchIdMode};
 
 fn main() {
     let patch = b"diff --git a/file b/file\n--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n";

@@ -5,8 +5,8 @@ mod support;
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{ConfigScope, ConfigSet, IncludeContext};
-use grit_lib::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
 use grit_lib::repo::{InitOptions, Repository};
 use support::{

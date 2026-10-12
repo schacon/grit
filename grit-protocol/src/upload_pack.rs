@@ -1,11 +1,11 @@
 //! Upload-pack protocol handler (server side of fetch/clone).
 //!
-//! Serves fetch and clone over smart HTTP by calling [`grit_lib::serve::upload_pack`]
+//! Serves fetch and clone over smart HTTP by calling [`grit_lib::remote::serve::upload_pack`]
 //! in-process.
 
 use std::path::Path;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 
 use crate::{run_upload_pack, Result};
 

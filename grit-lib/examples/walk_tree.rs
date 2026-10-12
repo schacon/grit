@@ -2,12 +2,12 @@
 //!
 //! Run: `cargo run -p grit-lib --example walk_tree`
 
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::{parse_tree, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_parse::resolve_revision;
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::revwalk::rev_parse::resolve_revision;
 
 fn walk_tree(
     repo: &grit_lib::repo::Repository,

@@ -4,10 +4,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::Environment;
-use grit_lib::fetch::NoProgress;
+use grit_lib::config::environment::Environment;
 use grit_lib::refs;
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
 
 fn git_in(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")

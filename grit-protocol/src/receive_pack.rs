@@ -1,11 +1,11 @@
 //! Receive-pack protocol handler (server side of push).
 //!
-//! Accepts pushes over smart HTTP by calling [`grit_lib::serve::receive_pack`]
+//! Accepts pushes over smart HTTP by calling [`grit_lib::remote::serve::receive_pack`]
 //! in-process.
 
 use std::path::Path;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 
 use crate::{run_receive_pack, Result};
 

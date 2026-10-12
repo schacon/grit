@@ -1,10 +1,10 @@
 //! `grit reset` — move the branch tip and optionally the index or worktree.
 
 use anyhow::{Context, Result};
+use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::config::ConfigSet;
-use grit_lib::ident_resolve::IdentRole;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions, ResetOutcome};
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::revwalk::rev_parse::resolve_revision;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;

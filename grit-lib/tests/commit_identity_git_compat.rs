@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use grit_lib::commit::assemble_identity;
-use grit_lib::config::ConfigSet;
-use grit_lib::environment::{offset_from_epoch_and_tz, Environment, RepositoryOptions};
-use grit_lib::ident_resolve::{
+use grit_lib::config::environment::{offset_from_epoch_and_tz, Environment, RepositoryOptions};
+use grit_lib::config::ident_resolve::{
     resolve_email_lenient_with, resolve_name_with, IdentRole, IdentityError,
 };
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, ObjectKind};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};

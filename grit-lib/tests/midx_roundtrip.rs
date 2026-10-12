@@ -4,7 +4,7 @@
 
 pub mod midx_support;
 
-use grit_lib::midx::{
+use grit_lib::objects::midx::{
     cached_tip_midx_path, compact_multi_pack_index, evict_midx_read_cache_for_pack_dir,
     load_midx_reuse_tables, midx_lookup_pack_and_offset_opt, midx_oid_listed_in_tip,
     read_midx_objects, read_midx_pack_idx_names, read_midx_preferred_idx_name,
@@ -12,8 +12,8 @@ use grit_lib::midx::{
     try_read_object_via_midx, validate_midx_referenced_packs, verify_midx, write_multi_pack_index,
     CompactError, WriteMultiPackIndexOptions,
 };
+use grit_lib::objects::pack::clear_pack_cache;
 use grit_lib::objects::ObjectId;
-use grit_lib::pack::clear_pack_cache;
 use grit_test_support::objects::HashAlgo;
 use std::collections::HashSet;
 
@@ -72,7 +72,7 @@ fn grit_midx_write_variants_pass_git_verify_sha1() {
     ];
 
     for opts in variants {
-        grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("reset midx");
+        grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("reset midx");
         grit_write_midx(&pack_dir, &opts);
         if opts.version != Some(2) {
             assert_git_midx_verify(&repo);
@@ -186,7 +186,7 @@ fn duplicate_oid_respects_preferred_pack() {
         .expect("lookup")
         .expect("listed");
 
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     let opts_new = WriteMultiPackIndexOptions {
         preferred_pack_idx: Some(1),
         version: Some(1),
@@ -217,7 +217,7 @@ fn reuse_tables_and_preferred_pack_with_ridx() {
         version: Some(1),
         ..Default::default()
     };
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     grit_write_midx(&pack_dir, &opts);
     let tables = load_midx_reuse_tables(&objects)
         .expect("load tables")
@@ -321,7 +321,7 @@ fn clear_midx_state_after_new_pack() {
     repo.git(&["commit", "-q", "-m", "after"]);
     repo.git(&["repack", "-adf"]);
 
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     assert!(resolve_tip_midx_path(&pack_dir).is_none());
 
     grit_write_midx(&pack_dir, &WriteMultiPackIndexOptions::default());
@@ -472,7 +472,7 @@ fn grit_incremental_chain_compact_roundtrip() {
         repo.git(&["add", &format!("grit-incr-{i}.txt")]);
         repo.git(&["commit", "-q", "-m", &format!("grit incr {i}")]);
         assert!(midx_support::pack_objects_layer(repo.path(), 100 + i));
-        grit_lib::midx::write_multi_pack_index_with_options(
+        grit_lib::objects::midx::write_multi_pack_index_with_options(
             &pack_dir,
             &WriteMultiPackIndexOptions {
                 incremental: true,
@@ -565,7 +565,7 @@ fn midx_write_rejects_empty_and_bad_preferred() {
         return;
     };
     let pack_dir = objects.join("pack");
-    let err = grit_lib::midx::write_multi_pack_index_with_options(
+    let err = grit_lib::objects::midx::write_multi_pack_index_with_options(
         &pack_dir,
         &WriteMultiPackIndexOptions {
             preferred_pack_idx: Some(99),
@@ -592,7 +592,7 @@ fn grit_incremental_write_layer() {
         version: Some(1),
         ..Default::default()
     };
-    grit_lib::midx::write_multi_pack_index_with_options(&pack_dir, &opts)
+    grit_lib::objects::midx::write_multi_pack_index_with_options(&pack_dir, &opts)
         .expect("grit incremental");
     if let Some(chain) = read_chain_hashes(&pack_dir) {
         assert!(!chain.is_empty());

@@ -4,20 +4,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_file::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::commit_graph::{
     bloom_filter_for_commit_write, commit_tree_has_high_bit_paths, dump_bloom_filters,
     CommitGraphChain,
 };
-use grit_lib::commit_graph_write::{
+use grit_lib::objects::commit_graph::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
 };
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 fn git_cmd(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -73,7 +73,7 @@ fn sorted_commit_set(repo: &Repository) -> Vec<ObjectId> {
 fn commit_infos(
     repo: &Repository,
     sorted: &[ObjectId],
-) -> HashMap<ObjectId, grit_lib::commit_graph_write::CommitGraphCommitInfo> {
+) -> HashMap<ObjectId, grit_lib::objects::commit_graph::CommitGraphCommitInfo> {
     let mut infos = HashMap::new();
     for oid in sorted {
         infos.insert(
@@ -87,7 +87,7 @@ fn commit_infos(
 fn write_grit_graph_file(
     repo: &Repository,
     sorted: &[ObjectId],
-    infos: &HashMap<ObjectId, grit_lib::commit_graph_write::CommitGraphCommitInfo>,
+    infos: &HashMap<ObjectId, grit_lib::objects::commit_graph::CommitGraphCommitInfo>,
     changed_paths: bool,
     write_generation_data: bool,
 ) -> Vec<u8> {
@@ -539,7 +539,8 @@ fn root_commit_and_grit_only_write_without_generation_chunk() {
         path: b"f.txt".to_vec(),
         base_index_pos: 0,
     });
-    let tree = grit_lib::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
+    let tree =
+        grit_lib::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
     let raw = serialize_commit(&CommitData {
         tree,
         parents: vec![],
@@ -619,6 +620,6 @@ fn bloom_precheck_for_paths_on_git_graph() {
         .expect("precheck");
     assert_ne!(
         pre,
-        grit_lib::commit_graph_file::BloomPrecheck::Inapplicable
+        grit_lib::objects::commit_graph::BloomPrecheck::Inapplicable
     );
 }

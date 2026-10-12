@@ -1,6 +1,6 @@
 //! Stateless v0 shallow upload-pack round-trip (two POST bodies).
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::pkt_line;
 use grit_lib::repo::{InitOptions, Repository};
@@ -12,7 +12,7 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
         &InitOptions {
             bare: true,
             initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
             ..InitOptions::default()
         },
     )
@@ -46,7 +46,7 @@ fn two_post_shallow_depth_one_returns_pack_on_done() {
         &InitOptions {
             bare: true,
             initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
             ..InitOptions::default()
         },
     )

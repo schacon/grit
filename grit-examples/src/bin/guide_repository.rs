@@ -2,8 +2,8 @@
 //!
 //! Source for the library guide "Repository" page (included in the docs site).
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
 

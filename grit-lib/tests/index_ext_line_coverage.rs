@@ -8,20 +8,20 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::index::Index;
-use grit_lib::porcelain::status::{status, IgnoredMode, StatusOptions, UntrackedMode};
-use grit_lib::progress::NullProgress;
-use grit_lib::repo::Repository;
-use grit_lib::split_index::{
+use grit_lib::index::split_index::{
     format_dump_split_index_file, resolve_split_index_if_needed, WriteSplitIndexRequest,
 };
-use grit_lib::untracked_cache::{
+use grit_lib::index::untracked_cache::{
     collect_untracked_from_cache, dir_flags_from_config, invalidate_path,
     refresh_untracked_cache_for_status, untracked_cache_ident, UntrackedCache,
     UntrackedIgnoredMode, DIR_HIDE_EMPTY_DIRECTORIES, DIR_SHOW_OTHER_DIRECTORIES,
 };
+use grit_lib::index::Index;
+use grit_lib::porcelain::status::{status, IgnoredMode, StatusOptions, UntrackedMode};
+use grit_lib::progress::NullProgress;
+use grit_lib::repo::Repository;
 
 use support::{
     append_git_config, entry_from_worktree_path, git, git_update_index_split,

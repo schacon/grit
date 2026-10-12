@@ -71,7 +71,7 @@ fn no_direct_sha_crate_use_outside_hash_module() {
     scan_rs_files(&workspace_root(), &mut violations);
     assert!(
         violations.is_empty(),
-        "direct sha1/sha2 crate use must go through grit_lib::hash:\n{}",
+        "direct sha1/sha2 crate use must go through grit_lib::objects::hash:\n{}",
         violations.join("\n")
     );
 }

@@ -4,12 +4,12 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diagnostics::{CollectingDiagnostics, DiagnosticsHandle, Warning};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::objects::bitmap::BitmapIndex;
 use grit_lib::objects::ObjectId;
-use grit_lib::pack_bitmap::BitmapIndex;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use grit_test_support::{HashAlgo, RepoFixture};
 
 fn git_ok(repo: &RepoFixture, args: &[&str]) {
@@ -403,8 +403,8 @@ fn name_hash_cache_matches_pack_name_hash() {
             }
         }
         if let Some(pathname) = name {
-            let v1 = grit_lib::pack_name_hash::pack_name_hash(&pathname);
-            let v2 = grit_lib::pack_name_hash::pack_name_hash_v2(pathname.as_bytes());
+            let v1 = grit_lib::objects::pack_name_hash::pack_name_hash(&pathname);
+            let v2 = grit_lib::objects::pack_name_hash::pack_name_hash_v2(pathname.as_bytes());
             assert!(
                 cached == v1 || cached == v2,
                 "pos {pos}: cached {cached} v1 {v1} v2 {v2} path {pathname}"

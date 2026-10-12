@@ -2,9 +2,9 @@
 
 mod support;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_checkout_guess,
     resolve_revision_for_range_end, resolve_revision_for_verify,
     resolve_revision_without_index_dwim,

@@ -4,9 +4,9 @@ mod support;
 
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, ambiguous_object_hint_lines,
     commit_parents_for_navigation, discover_optional, expand_at_minus_to_branch_name,
     expand_parent_shorthand_rev_parse_lines, expand_rev_token_circ_bang, is_inside_git_dir,

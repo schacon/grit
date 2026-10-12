@@ -2,9 +2,9 @@
 
 mod support;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     abbreviate_object_id, ambiguous_object_hint_lines, expand_at_minus_to_branch_name,
     expand_parent_shorthand_rev_parse_lines, expand_rev_token_circ_bang, list_all_abbrev_matches,
     list_loose_abbrev_matches, load_graft_parents, parse_index_colon_spec, parse_peel_suffix,

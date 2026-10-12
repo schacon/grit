@@ -15,7 +15,7 @@
 use std::io::Read;
 
 use anyhow::{Context, Result};
-use grit_lib::credentials::Credential;
+use grit_lib::remote::credentials::Credential;
 
 /// Run `grit manager <operation>`, where `operation` is `get`, `store`, or
 /// `erase` (Git's credential-helper protocol). The credential record is read
@@ -41,7 +41,7 @@ pub fn run(operation: &str) -> Result<()> {
 fn get(cred: &Credential) -> Result<()> {
     use std::io::Write;
 
-    if let Some(found) = grit_lib::credentials::windows_store::get(cred)? {
+    if let Some(found) = grit_lib::remote::credentials::windows_store::get(cred)? {
         // Echo back the input identity fields so Git can match the response,
         // then the username/password we found.
         let mut response = found;
@@ -57,13 +57,13 @@ fn get(cred: &Credential) -> Result<()> {
 
 #[cfg(windows)]
 fn store(cred: &Credential) -> Result<()> {
-    grit_lib::credentials::windows_store::store(cred)?;
+    grit_lib::remote::credentials::windows_store::store(cred)?;
     Ok(())
 }
 
 #[cfg(windows)]
 fn erase(cred: &Credential) -> Result<()> {
-    grit_lib::credentials::windows_store::erase(cred)?;
+    grit_lib::remote::credentials::windows_store::erase(cred)?;
     Ok(())
 }
 

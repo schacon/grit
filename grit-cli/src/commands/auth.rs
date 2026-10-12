@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::credentials::{Credential, CredentialProvider, HelperCredentialProvider};
+use grit_lib::remote::credentials::{Credential, CredentialProvider, HelperCredentialProvider};
 use grit_lib::remote::http_client::{HttpClient, UreqHttpClient};
 use grit_lib::repo::Repository;
 use schemars::JsonSchema;
@@ -234,7 +234,7 @@ fn load_config() -> ConfigSet {
     let env = crate::context::environment();
     if let Ok(repo) = Repository::discover(
         None,
-        &grit_lib::environment::RepositoryOptions::with_environment(env.clone()),
+        &grit_lib::config::environment::RepositoryOptions::with_environment(env.clone()),
     ) {
         if let Ok(config) = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true) {
             return config;

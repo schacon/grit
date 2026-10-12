@@ -2,9 +2,11 @@
 
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::pathspec::{matches_pathspec_list, path_allowed_by_pathspec_list, pathspec_matches};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
+use grit_lib::worktree::pathspec::{
+    matches_pathspec_list, path_allowed_by_pathspec_list, pathspec_matches,
+};
 use tempfile::TempDir;
 
 fn git_ls_files(root: &std::path::Path, spec: &str) -> Vec<String> {

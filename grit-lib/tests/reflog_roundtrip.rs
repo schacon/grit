@@ -9,20 +9,20 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::{
+use grit_lib::refs::reflog::{
     all_reflog_oids, all_reflog_oids_ordered, delete_reflog_entries, expire_reflog,
     expire_reflog_git, expire_reflog_unreachable, list_reflog_refs, load_gc_reflog_expire_config,
     mark_stalefix_reachable, mirror_branch_reflog_to_head, read_reflog, read_reflog_dwim,
     reflog_exists, truncate_last_reflog_line, ReflogEntry, ReflogExpireParams,
 };
+use grit_lib::refs::reftable::{reftable_create_reflog, reftable_replace_reflog};
 use grit_lib::refs::{
     append_reflog, append_reflog_with_config, effective_log_refs_config, read_log_refs_config,
     reflog_file_path, write_ref, write_symbolic_ref,
 };
-use grit_lib::reftable::{reftable_create_reflog, reftable_replace_reflog};
 use grit_lib::repo::{InitOptions, Repository};
 
 use support::{
@@ -879,7 +879,7 @@ fn reflog_exists_list_and_path_match_git() {
         assert!(reflog_exists(&git_dir, sibling));
         assert_eq!(
             reflog_file_path(&git_dir, nested),
-            grit_lib::reflog::reflog_path(&git_dir, nested)
+            grit_lib::refs::reflog::reflog_path(&git_dir, nested)
         );
 
         let mut grit_refs = list_reflog_refs(&git_dir).expect("list");

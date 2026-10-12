@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
 pub struct S1Fixture {
     pub repo: Repository,

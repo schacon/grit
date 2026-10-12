@@ -1,6 +1,6 @@
 //! Notes tree read/write/merge round-trips with system `git`.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::notes::{
     notes_merge_inner, read_notes_tree, upsert_note_entry, write_notes_commit, NotesMergeStrategy,
 };

@@ -3,13 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::Environment;
-use grit_lib::fetch::NoProgress;
-use grit_lib::pack::verify_pack_and_collect;
+use grit_lib::config::environment::Environment;
+use grit_lib::objects::pack::verify_pack_and_collect;
 use grit_lib::porcelain::checkout::checkout_between_trees;
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::{fetch_local, CloneReflog, FetchOptions, TagMode};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::transfer::{fetch_local, CloneReflog, FetchOptions, TagMode};
 
 fn git_in(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")

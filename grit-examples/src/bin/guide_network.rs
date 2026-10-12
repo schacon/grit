@@ -3,14 +3,14 @@
 //! Source for the library guide "Network" page (included in the docs site).
 
 use grit_examples::remote;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
+use grit_lib::remote::transport_path::resolve_local_remote_git_dir;
 use grit_lib::remote::{list_refs_from_git_dir, ListRefsOptions};
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
-use grit_lib::transport_path::resolve_local_remote_git_dir;
 use std::path::Path;
 
 fn main() -> Result<(), grit_lib::error::Error> {
@@ -22,7 +22,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
     let git_dir = repo.git_dir().to_path_buf();
     let work_tree = repo.work_tree().map(|p| p.to_path_buf());
     let config = ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         true,
     )?;

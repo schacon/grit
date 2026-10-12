@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use grit_examples::resolve_name;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 #[derive(Debug, Parser)]

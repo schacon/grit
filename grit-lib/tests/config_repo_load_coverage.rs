@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 

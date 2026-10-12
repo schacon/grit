@@ -2,10 +2,10 @@
 
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_tree_to_worktree_with_git_dir, mode_from_metadata};
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{entry_from_stat, Index, MODE_EXECUTABLE, MODE_REGULAR};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectKind;
-use grit_lib::odb::Odb;
-use grit_lib::write_tree::write_tree_from_index;
 use std::fs;
 use tempfile::TempDir;
 
@@ -46,7 +46,7 @@ fn diff_tree_to_worktree_empty_with_autocrlf_and_filemode_false() {
     let root = TempDir::new().expect("tempdir");
     let (odb, index, tree_oid) = repo_with_autocrlf_filemode_false(&root);
     let cfg = ConfigSet::load(
-        &grit_lib::environment::Environment::empty(),
+        &grit_lib::config::environment::Environment::empty(),
         Some(&root.path().join(".git")),
         true,
     )
@@ -78,7 +78,7 @@ fn diff_tree_to_worktree_empty_when_stat_cache_stale() {
         ie.size = 0;
     }
     let cfg = ConfigSet::load(
-        &grit_lib::environment::Environment::empty(),
+        &grit_lib::config::environment::Environment::empty(),
         Some(&root.path().join(".git")),
         true,
     )
@@ -132,7 +132,7 @@ fn explicit_index_chmod_reported_when_filemode_false() {
     index.entries_mut()[0].mode = MODE_EXECUTABLE;
 
     let cfg = ConfigSet::load(
-        &grit_lib::environment::Environment::empty(),
+        &grit_lib::config::environment::Environment::empty(),
         Some(&git_dir),
         true,
     )

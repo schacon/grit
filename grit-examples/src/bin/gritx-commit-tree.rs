@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::repo::Repository;
 

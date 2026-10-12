@@ -4,14 +4,14 @@ mod support;
 
 use std::io::Write;
 
-use grit_lib::combined_diff_patch::{format_combined_diff_body, CombinedDiffWsOptions};
-use grit_lib::combined_tree_diff::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::combined_diff_patch::{format_combined_diff_body, CombinedDiffWsOptions};
+use grit_lib::diff::combined_tree_diff::{
     combined_diff_paths_filtered, format_combined_raw_line, format_combined_raw_line_all_paths,
     CombinedTreeDiffOptions,
 };
-use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::merge_diff::{
+use grit_lib::diff::merge_diff::{
     combined_diff_paths, enrich_combined_path_renames, format_combined_textconv_patch,
     format_worktree_conflict_combined,
 };
@@ -400,7 +400,7 @@ fn t4048_combined_binary_matches_git() {
         false,
     );
     let grit = grit.unwrap_or_else(|| {
-        grit_lib::merge_diff::format_combined_binary(
+        grit_lib::diff::merge_diff::format_combined_binary(
             "bin.dat",
             &side.parents.iter().map(|s| s.oid).collect::<Vec<_>>(),
             &side.merge_oid,

@@ -6,12 +6,12 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::fetch::{fetch_remote, NoProgress};
 use grit_lib::objects::ObjectId;
 use grit_lib::pkt_line;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::{read_advertisement, Connection};
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
+use grit_lib::remote::transport::{read_advertisement, Connection};
 
 const MALICIOUS: &str = "refs/heads/../../../config";
 

@@ -3,7 +3,7 @@
 use std::fs;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::add::{stage, stage_for_commit, StageMode, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};

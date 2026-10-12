@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::objects::ObjectId;
-use grit_lib::rev_list::{
+use grit_lib::revwalk::rev_list::{
     split_revision_token, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 use support::{
@@ -255,7 +255,7 @@ fn t6013_reverse_matches_git() {
         }
         let mut opts = boundary_opts.clone();
         opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(
+        let result = grit_lib::revwalk::rev_list::rev_list(
             &grit,
             &[String::from("main")],
             &[root_hex.clone()],
@@ -324,7 +324,7 @@ fn t6013_max_count_boundary_path_limited_parents_match_git() {
         }
         let mut run_opts = opts.clone();
         run_opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(
+        let result = grit_lib::revwalk::rev_list::rev_list(
             &grit,
             &[String::from("main")],
             &[root_hex.clone()],
@@ -386,9 +386,10 @@ fn t6005_max_count_skip_match_git() {
         count: true,
         ..RevListOptions::default()
     };
-    let grit_count = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
-        .expect("count")
-        .commit_count();
+    let grit_count =
+        grit_lib::revwalk::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
+            .expect("count")
+            .commit_count();
     assert_eq!(grit_count, count_git);
 }
 
@@ -527,8 +528,9 @@ fn t6100_in_order_matches_git() {
         }
         let mut opts = opts.clone();
         opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("HEAD")], &[], &opts)
-            .expect("in-order walk");
+        let result =
+            grit_lib::revwalk::rev_list::rev_list(&grit, &[String::from("HEAD")], &[], &opts)
+                .expect("in-order walk");
         let mut grit_oids = Vec::new();
         for (i, commit) in result.commits.iter().enumerate() {
             grit_oids.push(*commit);
@@ -616,7 +618,7 @@ fn symmetric_diff_left_right_cherry_mark_match_git() {
         "symmetric cherry-mark order",
     );
 
-    let result = grit_lib::rev_list::rev_list(&grit, &pos, &neg, &opts).expect("cherry");
+    let result = grit_lib::revwalk::rev_list::rev_list(&grit, &pos, &neg, &opts).expect("cherry");
     for line in git_lines {
         let stripped = line.trim_start_matches(['<', '>', '=', ' '].as_ref());
         let oid: ObjectId = stripped.split_whitespace().next().unwrap().parse().unwrap();
@@ -675,7 +677,7 @@ fn t6000_misc_ranges_and_boundary_match_git() {
         }
         let mut opts = opts.clone();
         opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(
+        let result = grit_lib::revwalk::rev_list::rev_list(
             &grit,
             &[String::from("main")],
             &[String::from("root")],
@@ -767,8 +769,9 @@ fn t4217_boundary_since_until_match_git() {
         }
         let mut opts = since_opts.clone();
         opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
-            .expect("since boundary rev_list");
+        let result =
+            grit_lib::revwalk::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
+                .expect("since boundary rev_list");
         let mut grit_seq = result.commits;
         grit_seq.extend(result.boundary_commits);
         assert_eq!(
@@ -790,8 +793,9 @@ fn t4217_boundary_since_until_match_git() {
         }
         let mut opts = until_opts.clone();
         opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
-            .expect("until boundary rev_list");
+        let result =
+            grit_lib::revwalk::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
+                .expect("until boundary rev_list");
         let mut grit_seq = result.commits;
         grit_seq.extend(result.boundary_commits);
         assert_eq!(
@@ -831,8 +835,9 @@ fn simplify_by_decoration_boundary_match_git() {
         }
         let mut walk_opts = opts.clone();
         walk_opts.use_commit_graph = use_graph;
-        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &walk_opts)
-            .expect("simplify-by-decoration boundary rev_list");
+        let result =
+            grit_lib::revwalk::rev_list::rev_list(&grit, &[String::from("main")], &[], &walk_opts)
+                .expect("simplify-by-decoration boundary rev_list");
         let mut grit_seq = result.commits;
         grit_seq.extend(result.boundary_commits);
         assert_eq!(
@@ -1038,7 +1043,7 @@ fn rev_list_broad_ordering_and_limit_flags_match_git() {
         .trim()
         .parse()
         .expect("git count");
-    let grit_count = grit_lib::rev_list::rev_list(
+    let grit_count = grit_lib::revwalk::rev_list::rev_list(
         &grit,
         &[String::from("main")],
         &[],
@@ -1190,7 +1195,7 @@ fn rev_list_objects_and_filters_match_git() {
     let grit = open_grit_repo(wt);
 
     let git_objects = support::git_rev_list(wt, &["--objects", "HEAD"]);
-    let grit_objects = grit_lib::rev_list::rev_list(
+    let grit_objects = grit_lib::revwalk::rev_list::rev_list(
         &grit,
         &[String::from("HEAD")],
         &[],
@@ -1209,7 +1214,7 @@ fn rev_list_objects_and_filters_match_git() {
     assert_eq!(grit_set, git_set);
 
     let git_blob_none = support::git_rev_list(wt, &["--objects", "--filter=blob:none", "HEAD"]);
-    let grit_blob_none = grit_lib::rev_list::rev_list(
+    let grit_blob_none = grit_lib::revwalk::rev_list::rev_list(
         &grit,
         &[String::from("HEAD")],
         &[],
@@ -1244,7 +1249,7 @@ fn rev_list_objects_and_filters_match_git() {
         .trim()
         .parse()
         .expect("git object count");
-    let grit_count = grit_lib::rev_list::rev_list(
+    let grit_count = grit_lib::revwalk::rev_list::rev_list(
         &grit,
         &[String::from("HEAD")],
         &[],
@@ -1272,7 +1277,7 @@ fn rev_list_option_smoke_exercises_library_paths() {
             ..RevListOptions::default()
         },
         RevListOptions {
-            output_mode: grit_lib::rev_list::OutputMode::Parents,
+            output_mode: grit_lib::revwalk::rev_list::OutputMode::Parents,
             parent_rewrite: true,
             ..RevListOptions::default()
         },
@@ -1317,9 +1322,10 @@ fn rev_list_option_smoke_exercises_library_paths() {
         },
     ];
     for opts in combos {
-        let _ = grit_lib::rev_list::rev_list(&grit, &specs, &[], &opts).expect("rev_list smoke");
+        let _ = grit_lib::revwalk::rev_list::rev_list(&grit, &specs, &[], &opts)
+            .expect("rev_list smoke");
     }
-    let _ = grit_lib::rev_list::select_bisect_commits(
+    let _ = grit_lib::revwalk::rev_list::select_bisect_commits(
         &grit,
         &grit_rev_list_commits_in_repo(&grit, &specs, &[], &RevListOptions::default())
             .expect("tips"),

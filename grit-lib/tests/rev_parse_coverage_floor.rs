@@ -6,10 +6,10 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     discover_optional, expand_at_minus_to_branch_name, resolve_at_minus_to_oid,
     resolve_push_full_ref_for_branch, resolve_revision, resolve_revision_for_verify,
     resolve_upstream_symbolic_name,

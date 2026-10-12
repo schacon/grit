@@ -7,17 +7,17 @@ use std::path::Path;
 use std::process::Command;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use grit_lib::midx::{midx_lookup_pack_and_offset_opt, try_read_object_via_midx};
+use grit_lib::objects::midx::{midx_lookup_pack_and_offset_opt, try_read_object_via_midx};
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index_cached};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_pack_index_cached};
 use std::sync::Arc;
 
 struct MidxBenchFixture {
     objects: std::path::PathBuf,
     hit: ObjectId,
     miss: ObjectId,
-    pack_indexes: Vec<Arc<grit_lib::pack::PackIndex>>,
+    pack_indexes: Vec<Arc<grit_lib::objects::pack::PackIndex>>,
 }
 
 impl MidxBenchFixture {
@@ -59,13 +59,14 @@ impl MidxBenchFixture {
         let hit = ObjectId::from_hex(std::str::from_utf8(&out.stdout).ok()?.trim()).ok()?;
         let miss = ObjectId::from_hex("00000000000000000000000000000000000000f1").ok()?;
         let pack_dir = objects.join("pack");
-        let mut pack_indexes: Vec<Arc<grit_lib::pack::PackIndex>> = std::fs::read_dir(&pack_dir)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "idx"))
-            .map(|p| read_pack_index_cached(&p).expect("idx"))
-            .collect();
+        let mut pack_indexes: Vec<Arc<grit_lib::objects::pack::PackIndex>> =
+            std::fs::read_dir(&pack_dir)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "idx"))
+                .map(|p| read_pack_index_cached(&p).expect("idx"))
+                .collect();
         pack_indexes.sort_by_key(|idx| idx.idx_path.clone());
         std::mem::forget(tmp);
         Some(Self {
@@ -133,7 +134,7 @@ fn run_git(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {:?}", args);
 }
 
-fn lookup_all_packs(idxs: &[Arc<grit_lib::pack::PackIndex>], oid: &ObjectId) -> bool {
+fn lookup_all_packs(idxs: &[Arc<grit_lib::objects::pack::PackIndex>], oid: &ObjectId) -> bool {
     let mut found = false;
     for idx in idxs {
         if idx.find_offset(oid).is_some() {
@@ -143,7 +144,7 @@ fn lookup_all_packs(idxs: &[Arc<grit_lib::pack::PackIndex>], oid: &ObjectId) -> 
     found
 }
 
-fn lookup_all_packs_miss(idxs: &[Arc<grit_lib::pack::PackIndex>], oid: &ObjectId) -> bool {
+fn lookup_all_packs_miss(idxs: &[Arc<grit_lib::objects::pack::PackIndex>], oid: &ObjectId) -> bool {
     idxs.iter().all(|idx| idx.find_offset(oid).is_none())
 }
 

@@ -1,5 +1,5 @@
 //! Comprehensive matrix tests for the negotiation-driven pack builder
-//! (`grit_lib::transfer::build_pack`) and its delta encoder.
+//! (`grit_lib::remote::transfer::build_pack`) and its delta encoder.
 //!
 //! These exercise correctness and validity of the produced PACK v2 streams across
 //! a matrix of options:
@@ -26,10 +26,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::unpack_objects::{pack_bytes_to_object_map, pack_is_thin};
 use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
-use grit_lib::unpack_objects::{pack_bytes_to_object_map, pack_is_thin};
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 
 // ---------------------------------------------------------------------------
 // System-git fixture helpers (copied/adapted from the sibling transfer_pack.rs
@@ -342,7 +342,7 @@ fn apply_delta(base: &[u8], delta: &[u8]) -> Vec<u8> {
 
 /// Git object id of `content` under `kind` ("blob"/"tree"/...) at the given hash.
 fn git_hash_object(kind: &str, content: &[u8], algo: HashAlgo) -> ObjectId {
-    use grit_lib::hash::hash_object;
+    use grit_lib::objects::hash::hash_object;
     use grit_lib::objects::ObjectKind;
     let kind = match kind {
         "blob" => ObjectKind::Blob,

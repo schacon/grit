@@ -1,5 +1,5 @@
 //! Integration tests for the negotiation-driven pack builder
-//! (`grit_lib::transfer::build_pack`).
+//! (`grit_lib::remote::transfer::build_pack`).
 //!
 //! These build a tiny repo with the system `git`, then assert that
 //! `build_pack(wants, haves)` selects *only* the objects newly introduced by the
@@ -9,10 +9,10 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::unpack_objects::pack_bytes_to_object_map;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
-use grit_lib::unpack_objects::pack_bytes_to_object_map;
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -344,7 +344,7 @@ fn thin_pack_omits_peer_held_base_and_resolves() {
 
     // (a) grit-lib agrees the pack is thin.
     assert!(
-        grit_lib::unpack_objects::pack_is_thin(&thin, grit_lib::objects::HashAlgo::Sha1),
+        grit_lib::objects::unpack_objects::pack_is_thin(&thin, grit_lib::objects::HashAlgo::Sha1),
         "pack should be detected as thin"
     );
 
@@ -933,7 +933,7 @@ fn inflate(b: &[u8]) -> Vec<u8> {
 
 /// Git object id of `content` under `kind` ("blob"/"tree"/...) at the given hash.
 fn git_hash_object(kind: &str, content: &[u8], algo: grit_lib::objects::HashAlgo) -> ObjectId {
-    use grit_lib::hash::hash_object;
+    use grit_lib::objects::hash::hash_object;
     use grit_lib::objects::ObjectKind;
     let kind = match kind {
         "blob" => ObjectKind::Blob,

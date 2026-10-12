@@ -1,11 +1,11 @@
 //! Multi-pack-index read path: Git `cat-file` parity, incremental chain, and hot-path caching.
 
-use grit_lib::midx::{
+use grit_lib::objects::midx::{
     midx_lookup_pack_and_offset, read_midx_pack_idx_names, try_read_object_via_midx,
 };
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index_cached};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_pack_index_cached};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

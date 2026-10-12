@@ -2,11 +2,13 @@
 
 #![allow(clippy::unwrap_used)]
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::merge_base::{walk_commits_reachable_excluding_ancestors_of, ReachableWalkLimit};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::revwalk::merge_base::{
+    walk_commits_reachable_excluding_ancestors_of, ReachableWalkLimit,
+};
 use std::path::Path;
 
 const FIXTURE_CLIENT: &str = "/tmp/grit-bench-network-cache/deep-history-prod.git-client";

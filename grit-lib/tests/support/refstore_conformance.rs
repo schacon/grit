@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread;
 
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::ReflogEntry;
+use grit_lib::refs::reflog::ReflogEntry;
 use grit_lib::refs::store::{
     Expected, RawRef, RefStore, RefStoreError, RefTransaction, RefUpdate, RefUpdateFlags,
     ReflogUpdate,

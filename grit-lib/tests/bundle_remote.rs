@@ -3,13 +3,13 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::fetch::{NoProgress, Progress};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::progress::{ProgressPhase, ProgressSink, ProgressUnit};
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::{NoProgress, Progress};
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::remote::{Remote, RemoteUrl};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::transfer::{FetchOptions, TagMode};
 use std::collections::HashMap;
 
 fn git_in(dir: &Path, args: &[&str]) -> bool {

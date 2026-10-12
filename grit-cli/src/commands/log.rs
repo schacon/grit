@@ -4,7 +4,7 @@
 //! there's more, prints the command to fetch the next page.
 
 use anyhow::{Context, Result};
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;

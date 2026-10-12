@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_file::CommitGraphChain;
-use grit_lib::commit_graph_write::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::objects::commit_graph::CommitGraphChain;
+use grit_lib::objects::commit_graph::{
     build_commit_graph_bytes, collect_reachable_commit_oids, count_referenced_commit_tips,
     load_commit_graph_commit_info,
 };
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 

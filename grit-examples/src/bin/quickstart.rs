@@ -2,7 +2,7 @@
 //!
 //! Source for the library quick start in the docs; kept in sync via an include directive.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, ObjectKind};
 use grit_lib::repo::Repository;
 

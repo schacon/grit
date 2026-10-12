@@ -1,15 +1,17 @@
 //! Exercise supporting-module APIs for line coverage (crlf, gitmodules, submodule, state).
 
-use grit_lib::branch_tracking::shorten_tracking_ref;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::crlf::{convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs};
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::gitmodules::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::gitmodules::{
     check_submodule_name, check_submodule_url, validate_gitmodules_blob_line,
 };
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::refs::branch_tracking::shorten_tracking_ref;
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, repo_state, resolve_head};
 use grit_lib::submodule_gitdir::{submodule_modules_git_dir, validate_submodule_path};
+use grit_lib::worktree::crlf::{
+    convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs,
+};
 use std::path::Path;
 use tempfile::TempDir;
 

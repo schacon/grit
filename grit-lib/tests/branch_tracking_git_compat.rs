@@ -2,8 +2,8 @@
 
 use std::process::Command;
 
-use grit_lib::branch_tracking::{stat_branch_pair, AheadBehindMode, TrackingStat};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::refs::branch_tracking::{stat_branch_pair, AheadBehindMode, TrackingStat};
 use grit_lib::repo::Repository;
 use tempfile::TempDir;
 

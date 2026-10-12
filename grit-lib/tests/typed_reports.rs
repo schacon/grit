@@ -3,16 +3,16 @@
 use std::fs;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
-use grit_lib::reflog::{
+use grit_lib::refs::reflog::{
     expire_reflog_git, load_gc_reflog_expire_config, ReflogExpireActionKind, ReflogExpireParams,
 };
 use grit_lib::refs::{append_reflog, write_ref};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
 use tempfile::TempDir;
 
 fn git_fsck(repo_root: &std::path::Path) {
@@ -87,7 +87,7 @@ fn reflog_expire_reports_actions_dry_run_and_real() {
     let cutoff = 1_500_000_i64;
     let gc = load_gc_reflog_expire_config(
         &grit_lib::config::ConfigSet::load(
-            &grit_lib::environment::Environment::capture_process(),
+            &grit_lib::config::environment::Environment::capture_process(),
             Some(&git_dir),
             true,
         )

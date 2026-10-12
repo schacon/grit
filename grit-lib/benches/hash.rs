@@ -1,11 +1,11 @@
-//! Criterion throughput benchmarks for SHA-1 and SHA-256 (`grit_lib::hash`).
+//! Criterion throughput benchmarks for SHA-1 and SHA-256 (`grit_lib::objects::hash`).
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use grit_lib::hash::ObjectHasher;
+use grit_lib::objects::hash::ObjectHasher;
 use grit_lib::objects::HashAlgo;
 
 const SIZES: &[(usize, &str)] = &[

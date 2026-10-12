@@ -4,10 +4,10 @@
 //! a thin wrapper over the library.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::add::{stage as stage_paths, StageMode, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;

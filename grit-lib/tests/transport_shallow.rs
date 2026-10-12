@@ -22,11 +22,11 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use grit_lib::fetch::{fetch_remote, NoProgress};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::transfer::FetchOptions;
-use grit_lib::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::remote::transfer::FetchOptions;
+use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

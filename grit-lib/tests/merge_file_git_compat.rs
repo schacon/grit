@@ -1,10 +1,10 @@
-//! `git merge-file -p` oracle for [`grit_lib::merge_file`].
+//! `git merge-file -p` oracle for [`grit_lib::diff::merge_file`].
 
 mod support;
 
 use std::process::Command;
 
-use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput, MergeOutput};
+use grit_lib::diff::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput, MergeOutput};
 
 fn git_merge_file(args: &[&str], base: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<u8> {
     let dir = tempfile::tempdir().expect("tempdir");

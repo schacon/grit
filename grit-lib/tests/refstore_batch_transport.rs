@@ -7,10 +7,10 @@ use std::process::{Command, Stdio};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::refs::resolve_ref;
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::transfer::{FetchOptions, TagMode};
 
 use support::{each_backend, git, reftable_tables_snapshot, two_commit_oids, Backend};
 
@@ -45,7 +45,7 @@ fn fetch_updates_refs_in_one_transaction_reftable() {
             remote_name: Some("origin".to_owned()),
             ..Default::default()
         };
-        grit_lib::transfer::fetch_local(&local_git, &remote_git, &opts).expect("fetch");
+        grit_lib::remote::transfer::fetch_local(&local_git, &remote_git, &opts).expect("fetch");
 
         assert!(resolve_ref(&local_git, "refs/remotes/origin/branch-a").is_ok());
         assert!(resolve_ref(&local_git, "refs/remotes/origin/branch-b").is_ok());
@@ -71,8 +71,8 @@ fn push_tracking_remote_refs_one_reftable_transaction() {
             "[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
         );
 
-        use grit_lib::branch_tracking::apply_push_remote_tracking_updates;
-        use grit_lib::push_report::{PushRefResult, PushRefStatus};
+        use grit_lib::refs::branch_tracking::apply_push_remote_tracking_updates;
+        use grit_lib::remote::push_report::{PushRefResult, PushRefStatus};
 
         let results = vec![
             PushRefResult {

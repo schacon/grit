@@ -46,7 +46,8 @@ impl ReftableBenchFixture {
             });
         }
         update_refs(&git_dir, &batch).expect("seed refs");
-        let mut stack = grit_lib::reftable::ReftableStack::open(&git_dir).expect("open stack");
+        let mut stack =
+            grit_lib::refs::reftable::ReftableStack::open(&git_dir).expect("open stack");
         stack.compact().expect("compact to single table");
         Self {
             _dir: dir,

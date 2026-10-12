@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     parse_bool, parse_color, parse_git_config_int_strict, parse_i64, parse_path,
     parse_path_optional, ConfigFile, ConfigScope, ConfigSet, LoadConfigOptions,
 };
-use grit_lib::environment::Environment;
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 

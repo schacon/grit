@@ -8,24 +8,24 @@ use std::sync::Arc;
 use std::thread;
 
 use grit_lib::command_runner::{RecordingRunner, ShellInvocation};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::diagnostics::{CollectingDiagnostics, Warning};
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::hooks::{run_hook_opts, RunHookOptions};
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
-use grit_lib::merge_diff::blob_oid_at_path;
-use grit_lib::merge_file::MergeFavor;
-use grit_lib::merge_trees::{
+use grit_lib::diff::merge_diff::blob_oid_at_path;
+use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
+use grit_lib::diff::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
+use grit_lib::hooks::{run_hook_opts, RunHookOptions};
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::notes::{write_notes_commit, NotesTreeEntry};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
+use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
-use grit_lib::transfer::{fetch_local, FetchOptions, TagMode};
 use tempfile::TempDir;
 
 const ITERS: usize = 8;
@@ -474,8 +474,9 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         let topic_tree = parse_commit(&repo.odb().read(&topic_tip).expect("topic obj").data)
             .expect("parse topic")
             .tree;
-        let bases = grit_lib::merge_base::merge_bases_first_vs_rest(&repo, main_tip, &[topic_tip])
-            .expect("merge base");
+        let bases =
+            grit_lib::revwalk::merge_base::merge_bases_first_vs_rest(&repo, main_tip, &[topic_tip])
+                .expect("merge base");
         let merge_base = *bases.first().expect("non-empty merge base");
         let base_tree = parse_commit(&repo.odb().read(&merge_base).expect("base obj").data)
             .expect("parse base")

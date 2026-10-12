@@ -1,6 +1,6 @@
 //! User-facing messages for ref short-name validation errors.
 
-use grit_lib::check_ref_format::RefNameError;
+use grit_lib::refs::check_ref_format::RefNameError;
 
 /// Format a branch creation failure for stdout/stderr.
 #[must_use]

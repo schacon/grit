@@ -2,8 +2,8 @@
 //!
 //! Run: `cargo run -p grit-lib --example ignore_match`
 
-use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::worktree::ignore::IgnoreMatcher;
 use std::fs;
 
 fn main() -> grit_lib::error::Result<()> {

@@ -1,6 +1,6 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/remote/fn.list_refs_from_git_dir.html
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{parse_commit, parse_tree, tag_object_line_oid, ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::refs::write_ref;
 use grit_lib::remote::{list_refs_from_git_dir, ListRefsOptions};
 use std::collections::HashSet;

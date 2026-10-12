@@ -2,8 +2,10 @@
 
 use std::fs;
 
-use grit_lib::environment::Environment;
-use grit_lib::init_filesystem::{apply_init_filesystem_config, InitFilesystemConfigOptions};
+use grit_lib::config::environment::Environment;
+use grit_lib::config::init_filesystem::{
+    apply_init_filesystem_config, InitFilesystemConfigOptions,
+};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 

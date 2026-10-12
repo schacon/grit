@@ -5,11 +5,11 @@ mod support;
 use std::collections::BTreeMap;
 
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::reftable::ReftableStack;
 use grit_lib::refs::store::ReftableRefStore;
 use grit_lib::refs::store::{
     Expected, RawRef, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReflogUpdate,
 };
-use grit_lib::reftable::ReftableStack;
 
 use support::{
     git, git_for_each_ref, git_fsck_strict, git_init_reftable_repo, git_ok,

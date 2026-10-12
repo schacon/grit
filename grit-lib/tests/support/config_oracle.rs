@@ -5,11 +5,11 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     canonical_key, parse_bool, parse_color, parse_git_config_int_strict, parse_i64, parse_path,
     parse_path_optional, ConfigFile, ConfigScope, ConfigSet, IncludeContext, LoadConfigOptions,
 };
-use grit_lib::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
 
 fn trim_git_config_stdout(bytes: &[u8]) -> String {

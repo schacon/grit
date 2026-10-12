@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use grit_lib::command_runner::RecordingRunner;
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::diagnostics::{CollectingDiagnostics, DiagnosticSink};
-use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::{InitOptions, Repository};
 

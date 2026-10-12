@@ -1,10 +1,10 @@
 //! Init-time filesystem capability config (issue #916 / #910).
 
+use grit_lib::config::init_filesystem::probe_trust_filemode;
 use grit_lib::diff::{diff_index_to_worktree, mode_from_metadata};
 use grit_lib::index::{Index, MODE_EXECUTABLE};
-use grit_lib::init_filesystem::probe_trust_filemode;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectKind;
-use grit_lib::odb::Odb;
 use grit_lib::repo::{InitOptions, Repository};
 use std::fs;
 use tempfile::TempDir;

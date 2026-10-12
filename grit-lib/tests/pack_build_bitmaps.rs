@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack_objects::{
+    build_pack, build_pack_with_shallow_and_filter, PackBuildOptions,
+};
+use grit_lib::objects::unpack_objects::pack_bytes_to_object_map;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack_objects::{build_pack, build_pack_with_shallow_and_filter, PackBuildOptions};
-use grit_lib::rev_list::ObjectFilter;
-use grit_lib::unpack_objects::pack_bytes_to_object_map;
+use grit_lib::revwalk::rev_list::ObjectFilter;
 use grit_test_support::{HashAlgo, RepoFixture};
 
 fn git_ok(repo: &RepoFixture, args: &[&str]) {

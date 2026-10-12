@@ -4,12 +4,12 @@ mod support;
 
 use std::fs;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::merge_base::{
+use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::repo::Repository;
+use grit_lib::revwalk::merge_base::{
     fork_point, independent_commits, is_ancestor, merge_bases_all, merge_bases_first_vs_rest,
     merge_bases_octopus, resolve_fork_point_reflog_ref,
 };
-use grit_lib::repo::Repository;
 
 use support::{
     build_commit_dag, git_merge_base, git_merge_base_is_ancestor, git_rev_parse_verify, HistoryRepo,

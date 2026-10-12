@@ -2,9 +2,9 @@
 
 use std::fs;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
 
 pub fn ambiguous_hex_prefix_among(

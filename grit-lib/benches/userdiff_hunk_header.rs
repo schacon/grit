@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use grit_lib::config::ConfigSet;
-use grit_lib::userdiff::matcher_for_driver;
+use grit_lib::diff::userdiff::matcher_for_driver;
 
 fn bench_rust_funcname_match(c: &mut Criterion) {
     let config = ConfigSet::default();

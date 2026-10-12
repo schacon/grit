@@ -1,7 +1,7 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/write_tree/index.html
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::Index;
-use grit_lib::odb::Odb;
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::objects::odb::Odb;
 use std::path::Path;
 
 fn main() -> grit_lib::error::Result<()> {

@@ -5,8 +5,8 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{convert_to_worktree_eager, ConversionConfig, FileAttrs};
 use grit_lib::error::FilterError;
+use grit_lib::worktree::crlf::{convert_to_worktree_eager, ConversionConfig, FileAttrs};
 
 fn default_conv() -> ConversionConfig {
     ConversionConfig::from_config(&ConfigSet::new())
@@ -58,7 +58,8 @@ fn unknown_working_tree_encoding_is_typed_unsupported_on_clean() {
     let conv = default_conv();
     let mut attrs = FileAttrs::default();
     attrs.working_tree_encoding = Some("not-a-real-encoding".to_owned());
-    let err = grit_lib::crlf::convert_to_git(b"\xff\xfe", "f.txt", &conv, &attrs).unwrap_err();
+    let err =
+        grit_lib::worktree::crlf::convert_to_git(b"\xff\xfe", "f.txt", &conv, &attrs).unwrap_err();
     assert!(matches!(
         err,
         FilterError::NotFilteredProperly { detail, .. }

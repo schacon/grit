@@ -218,15 +218,15 @@ fn warning_kind(w: &Warning) -> String {
     }
 }
 
-/// Build [`grit_lib::environment::RepositoryOptions`] with a fresh CLI diagnostic sink.
+/// Build [`grit_lib::config::environment::RepositoryOptions`] with a fresh CLI diagnostic sink.
 pub fn repository_options(
     network_trace: bool,
 ) -> (
-    grit_lib::environment::RepositoryOptions,
+    grit_lib::config::environment::RepositoryOptions,
     Arc<CliDiagnosticSink>,
 ) {
     let sink = Arc::new(CliDiagnosticSink::new());
-    let mut options = grit_lib::environment::RepositoryOptions {
+    let mut options = grit_lib::config::environment::RepositoryOptions {
         environment: crate::context::environment(),
         thread_policy: crate::context::thread_policy_for_repo(),
         diagnostics: sink.clone(),

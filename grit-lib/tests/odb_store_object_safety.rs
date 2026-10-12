@@ -4,9 +4,9 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use grit_lib::error::Result;
+use grit_lib::objects::odb::store::{ObjectStore, ObjectStream, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
-use grit_lib::odb::store::{ObjectStore, ObjectStream, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
 
 struct ExternalStore {
     algo: HashAlgo,
@@ -38,7 +38,7 @@ impl ObjectStore for ExternalStore {
 
 impl WritableObjectStore for ExternalStore {
     fn write(&self, kind: ObjectKind, data: &[u8], _options: WriteOptions) -> Result<ObjectId> {
-        Ok(grit_lib::hash::hash_object(self.algo, kind, data))
+        Ok(grit_lib::objects::hash::hash_object(self.algo, kind, data))
     }
 
     fn freshen(&self, _oid: &ObjectId) -> Result<bool> {

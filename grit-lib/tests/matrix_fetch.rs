@@ -51,14 +51,16 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::error::Result as GritResult;
-use grit_lib::fetch::{fetch_remote, NoProgress};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, FetchOutcome, TagMode, UpdateMode};
-use grit_lib::transport::http::ureq_client::UreqHttpClient;
-use grit_lib::transport::http::{http_client_arc, http_fetch};
-use grit_lib::transport::{ConnectOptions, GitDaemonTransport, Service, SshTransport, Transport};
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::remote::transfer::{FetchOptions, FetchOutcome, TagMode, UpdateMode};
+use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
+use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
+use grit_lib::remote::transport::{
+    ConnectOptions, GitDaemonTransport, Service, SshTransport, Transport,
+};
 
 // ---------------------------------------------------------------------------
 // git plumbing helpers (copied from the sibling transport_* tests so this file

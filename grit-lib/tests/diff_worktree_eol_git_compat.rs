@@ -1,13 +1,13 @@
 //! Worktree↔index diffs normalize `eol=crlf` worktree bytes before line diffs (issue #990).
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     diff_index_to_worktree_with_options, read_worktree_side_bytes_for_diff,
     DiffIndexToWorktreeOptions, DiffStatus,
 };
-use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::worktree_rules::WorktreeRules;
+use grit_lib::worktree::worktree_rules::WorktreeRules;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;

@@ -1,18 +1,18 @@
 //! Broad `rev_list` / `diff` API sweeps on synthetic repos (coverage-oriented).
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     diff_commits, diff_trees, diff_trees_with_renames, postprocess_diff_entries,
     DiffPostprocessOptions, DiffStatus,
 };
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{
+use grit_lib::revwalk::rev_list::{
     merge_bases, resolve_object_walk_roots, rev_list, OrderingMode, OutputMode, RevListOptions,
 };
 use std::fs;

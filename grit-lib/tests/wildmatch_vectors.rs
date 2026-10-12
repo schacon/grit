@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use grit_lib::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
+use grit_lib::worktree::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 use grit_test_support::{git, git_cmd, unique_tmp};
 
 mod vectors {

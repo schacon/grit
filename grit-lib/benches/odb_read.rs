@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use fixture::{build_deep_repack_read_sample, ObjectBenchFixtures};
 use flate2::read::ZlibDecoder;
-use grit_lib::pack::{clear_pack_cache, read_object_from_pack, read_pack_index};
+use grit_lib::objects::pack::{clear_pack_cache, read_object_from_pack, read_pack_index};
 
 fn bench_idx_lookup(c: &mut Criterion) {
     let fx = ObjectBenchFixtures::global();
@@ -62,7 +62,7 @@ fn bench_delta_apply(c: &mut Criterion) {
     c.bench_function("odb_read/delta_apply", |b| {
         b.iter(|| {
             black_box(
-                grit_lib::unpack_objects::apply_delta(
+                grit_lib::objects::unpack_objects::apply_delta(
                     black_box(&fx.delta_base),
                     black_box(&fx.delta_bytes),
                 )
@@ -101,7 +101,7 @@ fn bench_open_pack_read_one(c: &mut Criterion) {
 fn bench_repack_deep_chain(c: &mut Criterion) {
     static DEEP: OnceLock<(
         tempfile::TempDir,
-        grit_lib::pack::PackIndex,
+        grit_lib::objects::pack::PackIndex,
         grit_lib::objects::ObjectId,
     )> = OnceLock::new();
     let (_keep, idx, sample_oid) = DEEP.get_or_init(build_deep_repack_read_sample);

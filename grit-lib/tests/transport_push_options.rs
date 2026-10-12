@@ -28,15 +28,15 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::error::Error;
-use grit_lib::fetch::NoProgress;
 use grit_lib::objects::ObjectId;
-use grit_lib::push::push_remote;
-use grit_lib::push_report::PushRefStatus;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{PushOptions, PushRefSpec};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::push::push_remote;
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::{PushOptions, PushRefSpec};
 #[cfg(unix)]
-use grit_lib::transport::SshTransport;
-use grit_lib::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
+use grit_lib::remote::transport::SshTransport;
+use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

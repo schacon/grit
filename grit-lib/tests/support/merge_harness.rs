@@ -6,16 +6,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::index::{IndexEntry, MODE_REGULAR};
-use grit_lib::merge_file::MergeFavor;
-use grit_lib::merge_trees::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, TreeMergeOutput,
     WhitespaceMergeOptions,
 };
+use grit_lib::index::write_tree::write_tree_from_index;
+use grit_lib::index::{IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::write_tree_from_index;
 
 use super::history_harness::{git, git_version_at_least, skip_unless_git_at_least, HistoryRepo};
 use super::refs_harness::{git as refs_git, null_device_for_tests};
@@ -352,7 +352,7 @@ impl CommitMergeLabels {
             label_ours: &self.ours,
             label_theirs: TheirsConflictLabel::Fixed(&self.theirs),
             label_base: "merged common ancestors",
-            style: grit_lib::merge_file::ConflictStyle::Merge,
+            style: grit_lib::diff::merge_file::ConflictStyle::Merge,
             checkout_merge: false,
             df_directory_ours_commit: None,
             df_directory_theirs_commit: None,

@@ -1,12 +1,12 @@
 //! Shared repository helpers used across `grit` commands.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
-use grit_lib::ident_resolve::{
+use grit_lib::config::environment::Environment;
+use grit_lib::config::ident_resolve::{
     resolve_email_with, resolve_loose_committer_parts_with, resolve_name_with, IdentRole,
     IdentityError,
 };
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::refs;
@@ -22,7 +22,7 @@ pub fn set_thread_policy(threads: Option<usize>) {
     let _ = THREAD_POLICY.set(ThreadPolicy::with_threads_override(threads));
 }
 
-/// Thread policy for [`grit_lib::environment::RepositoryOptions`] (global `--threads` when set).
+/// Thread policy for [`grit_lib::config::environment::RepositoryOptions`] (global `--threads` when set).
 pub fn thread_policy_for_repo() -> ThreadPolicy {
     THREAD_POLICY.get().copied().unwrap_or_default()
 }
@@ -42,7 +42,7 @@ pub fn wall_clock_now(env: &Environment) -> OffsetDateTime {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    grit_lib::environment::offset_from_epoch_and_tz(epoch, env.tz.as_deref())
+    grit_lib::config::environment::offset_from_epoch_and_tz(epoch, env.tz.as_deref())
 }
 
 /// A resolved "target" branch (the trunk `grit` measures the current branch against).
@@ -160,7 +160,7 @@ pub fn commits_ahead_of(
     summary_limit: usize,
 ) -> Result<AheadOfTarget> {
     let (total, oids) =
-        grit_lib::merge_base::ahead_of_target_commits(repo, head, target, summary_limit)?;
+        grit_lib::revwalk::merge_base::ahead_of_target_commits(repo, head, target, summary_limit)?;
     let mut commits = Vec::with_capacity(oids.len());
     for oid in oids {
         let commit = read_commit(repo, &oid)?;

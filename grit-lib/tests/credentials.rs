@@ -1,4 +1,4 @@
-//! Integration tests for `grit_lib::credentials`.
+//! Integration tests for `grit_lib::remote::credentials`.
 //!
 //! These exercise the Git-compatible [`HelperCredentialProvider`] end-to-end
 //! against real on-disk credential helper scripts (shell scripts that speak
@@ -23,7 +23,7 @@ use std::process::Command;
 use std::sync::Once;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::credentials::{
+use grit_lib::remote::credentials::{
     Credential, CredentialProvider, HelperCredentialProvider, NON_INTERACTIVE_MESSAGE,
 };
 
@@ -74,7 +74,7 @@ fn load_config(dir: &Path) -> ConfigSet {
     isolate_global_config();
     let git_dir = dir.join(".git");
     ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         false,
     )

@@ -3,10 +3,10 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack_objects::{build_pack_with_write_threads, PackBuildOptions};
 use grit_lib::objects::{HashAlgo, ObjectId};
-use grit_lib::odb::Odb;
-use grit_lib::pack_objects::{build_pack_with_write_threads, PackBuildOptions};
-use grit_lib::transfer::build_pack;
+use grit_lib::remote::transfer::build_pack;
 
 const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),

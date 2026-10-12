@@ -6,10 +6,10 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use grit_lib::error::Error;
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::clear_pack_cache;
+use grit_lib::objects::unpack_objects::{apply_delta, apply_delta_into};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::pack::clear_pack_cache;
-use grit_lib::unpack_objects::{apply_delta, apply_delta_into};
 use grit_test_support::objects::{
     flip_byte_at, hash_loose_object, write_loose_object, write_pack_and_index, DeltaOps, HashAlgo,
     IndexPackOptions, ObjectKind as PackObjectKind, PackBuilder, PackBuilt, RepoFixture,

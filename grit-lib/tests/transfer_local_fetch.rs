@@ -1,4 +1,4 @@
-//! Integration tests for `grit_lib::transfer::fetch_local` — the in-process
+//! Integration tests for `grit_lib::remote::transfer::fetch_local` — the in-process
 //! local / `file://` fetch path (no subprocess, no wire protocol).
 //!
 //! A remote repo is built with the system `git`; an empty local repo is
@@ -10,12 +10,12 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{
+use grit_lib::remote::transfer::{
     build_pack, fetch_local, FetchOptions, PackBuildOptions, TagMode, UpdateMode,
 };
 use grit_test_support::{git, git_cmd};

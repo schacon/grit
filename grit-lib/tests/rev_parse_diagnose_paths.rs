@@ -4,13 +4,13 @@ mod support;
 
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::rev_parse_error::RevParseError;
+use grit_lib::revwalk::rev_parse::{
     resolve_at_minus_to_oid, resolve_revision_for_verify, resolve_treeish_blob_at_path,
 };
-use grit_lib::rev_parse_error::RevParseError;
 
 use support::{commit_file, git, HistoryRepo};
 

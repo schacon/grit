@@ -51,18 +51,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use grit_lib::fetch::NoProgress;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::push::{push_http, push_remote};
-use grit_lib::push_report::{PushRefResult, PushRefStatus};
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{PushOptions, PushOutcome, PushRefSpec};
-use grit_lib::transport::http::{http_client_arc, ureq_client::UreqHttpClient};
-use grit_lib::transport::http::{HttpClient, SmartHttpTransport};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::push::{push_http, push_remote};
+use grit_lib::remote::push_report::{PushRefResult, PushRefStatus};
+use grit_lib::remote::transfer::{PushOptions, PushOutcome, PushRefSpec};
+use grit_lib::remote::transport::http::{http_client_arc, ureq_client::UreqHttpClient};
+use grit_lib::remote::transport::http::{HttpClient, SmartHttpTransport};
 #[cfg(unix)]
-use grit_lib::transport::SshTransport;
-use grit_lib::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
+use grit_lib::remote::transport::SshTransport;
+use grit_lib::remote::transport::{ConnectOptions, GitDaemonTransport, Service, Transport};
 
 // ---------------------------------------------------------------------------
 // Shared fixture helpers (copied from the sibling transport_*.rs tests so the

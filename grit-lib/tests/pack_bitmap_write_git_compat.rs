@@ -4,14 +4,14 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::time::SystemTime;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
+use grit_lib::objects::pack::{read_local_pack_indexes, read_pack_index};
+use grit_lib::objects::pack_name_hash::pack_name_hash;
+use grit_lib::objects::pack_rev::{rev_path_for_index, verify_pack_rev_file_contents};
 use grit_lib::objects::ObjectId;
-use grit_lib::pack::{read_local_pack_indexes, read_pack_index};
-use grit_lib::pack_bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
-use grit_lib::pack_name_hash::pack_name_hash;
-use grit_lib::pack_rev::{rev_path_for_index, verify_pack_rev_file_contents};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use grit_test_support::{HashAlgo, RepoFixture};
 
 fn git_ok(repo: &RepoFixture, args: &[&str]) {
@@ -428,7 +428,7 @@ fn not_closed_pack_is_rejected() {
     .expect_err("partial pack");
     assert!(matches!(
         err,
-        grit_lib::pack_bitmap::PackBitmapWriteError::NotClosed { .. }
+        grit_lib::objects::bitmap::PackBitmapWriteError::NotClosed { .. }
     ));
 }
 

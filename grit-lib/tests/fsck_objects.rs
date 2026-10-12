@@ -4,9 +4,11 @@
 use std::collections::HashSet;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::gitmodules::{
+    fsck_dot_special_object, fsck_dot_special_tree_pass, DotFsckTracker,
+};
 use grit_lib::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
-use grit_lib::gitmodules::{fsck_dot_special_object, fsck_dot_special_tree_pass, DotFsckTracker};
 use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
 use grit_test_support::{
     git_fsck, git_hash_object_literally, git_supports_sha256, write_loose_object,
@@ -202,12 +204,12 @@ fn is_msg_id(s: &str) -> bool {
         && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-fn dot_issue_id(issue: &grit_lib::gitmodules::DotFsckIssue) -> &'static str {
+fn dot_issue_id(issue: &grit_lib::config::gitmodules::DotFsckIssue) -> &'static str {
     match issue {
-        grit_lib::gitmodules::DotFsckIssue::TreeSymlink { id, .. }
-        | grit_lib::gitmodules::DotFsckIssue::NonBlobDotFile { id, .. }
-        | grit_lib::gitmodules::DotFsckIssue::BlobGitmodules { id, .. }
-        | grit_lib::gitmodules::DotFsckIssue::BlobGitattributes { id, .. } => id,
+        grit_lib::config::gitmodules::DotFsckIssue::TreeSymlink { id, .. }
+        | grit_lib::config::gitmodules::DotFsckIssue::NonBlobDotFile { id, .. }
+        | grit_lib::config::gitmodules::DotFsckIssue::BlobGitmodules { id, .. }
+        | grit_lib::config::gitmodules::DotFsckIssue::BlobGitattributes { id, .. } => id,
     }
 }
 

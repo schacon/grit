@@ -2,15 +2,15 @@
 
 mod support;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::merge_base::{
+use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::objects::ObjectId;
+use grit_lib::repo::Repository;
+use grit_lib::revwalk::merge_base::{
     ahead_of_target_commits, ancestor_closure, branch_base_for_tip, count_symmetric_ahead_behind,
     is_ancestor_odb_walk, merge_base_for_diff_index, merge_base_for_diff_two_commits,
     merge_bases_octopus, resolve_commit_specs, walk_commits_reachable_excluding_ancestors_of,
     MergeBaseForDiffError, ReachableWalkLimit,
 };
-use grit_lib::objects::ObjectId;
-use grit_lib::repo::Repository;
 
 use support::{build_commit_dag, git_merge_base, HistoryRepo};
 

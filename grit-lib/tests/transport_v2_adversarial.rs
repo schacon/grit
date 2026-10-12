@@ -34,11 +34,13 @@ use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use grit_lib::fetch::{fetch_remote, NoProgress};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, TagMode};
-use grit_lib::transport::{ConnectOptions, Connection, GitDaemonTransport, Service, Transport};
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
+use grit_lib::remote::transport::{
+    ConnectOptions, Connection, GitDaemonTransport, Service, Transport,
+};
 
 /// A [`Connection`] decorator that tees every byte the server sends into a shared
 /// buffer, so a test can inspect the raw server->client stream after the fetch —

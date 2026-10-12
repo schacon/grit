@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use filetime::FileTime;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::progress::NullProgress;

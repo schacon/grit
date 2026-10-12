@@ -3,13 +3,13 @@
 use std::fs;
 use std::process::Command;
 
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 fn git_eol(repo: &std::path::Path, path: &str) -> String {
     let out = Command::new("git")

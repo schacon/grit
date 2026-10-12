@@ -5,13 +5,13 @@
 
 use std::process::Command;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::ignore::{
+use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::index::Index;
+use grit_lib::repo::Repository;
+use grit_lib::worktree::ignore::{
     parse_sparse_patterns_from_blob, path_in_sparse_checkout, path_matches_sparse_pattern_list,
     submodule_containing_path, IgnoreMatch, IgnoreMatcher,
 };
-use grit_lib::index::Index;
-use grit_lib::repo::Repository;
 use grit_test_support::{git_cmd, unique_tmp};
 use std::collections::HashMap;
 use std::fs;
@@ -478,7 +478,8 @@ fn normalize_repo_relative_and_submodule_containing_path() {
     assert_eq!(sub.as_deref(), Some("a/submodule"));
 
     let cwd = fx.root.join("a");
-    let rel = grit_lib::ignore::normalize_repo_relative(&repo, &cwd, "b/four").expect("normalize");
+    let rel = grit_lib::worktree::ignore::normalize_repo_relative(&repo, &cwd, "b/four")
+        .expect("normalize");
     assert_eq!(rel, "a/b/four");
 }
 

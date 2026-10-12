@@ -1,6 +1,6 @@
-//! Unit tests for [`grit_lib::transfer::resolve_push_delete_ref`].
+//! Unit tests for [`grit_lib::remote::transfer::resolve_push_delete_ref`].
 
-use grit_lib::transfer::resolve_push_delete_ref;
+use grit_lib::remote::transfer::resolve_push_delete_ref;
 use std::collections::HashSet;
 
 #[test]

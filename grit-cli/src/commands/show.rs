@@ -113,8 +113,9 @@ pub fn run(object: Option<String>) -> Result<ShowOutcome> {
     // Resolve the name, then peel through any (annotated) tag objects to the
     // underlying commit. `resolve_revision` resolves branches/HEAD/sha and
     // lightweight tags to a commit, but yields the tag *object* for annotated tags.
-    let resolved = grit_lib::rev_parse::resolve_revision_without_index_dwim(&repo, &target)
-        .with_context(|| format!("could not resolve '{target}'"))?;
+    let resolved =
+        grit_lib::revwalk::rev_parse::resolve_revision_without_index_dwim(&repo, &target)
+            .with_context(|| format!("could not resolve '{target}'"))?;
     let commit_oid = peel_to_commit(&repo, resolved)?;
     let data = context::read_commit(&repo, &commit_oid)?;
 

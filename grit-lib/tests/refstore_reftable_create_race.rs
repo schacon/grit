@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use grit_lib::objects::ObjectId;
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::refs::store::{
     Expected, RawRef, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReftableRefStore,
 };

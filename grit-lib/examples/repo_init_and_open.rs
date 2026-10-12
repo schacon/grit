@@ -2,7 +2,7 @@
 //!
 //! Run: `cargo run -p grit-lib --example repo_init_and_open`
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::{InitOptions, Repository};
 use std::fs;
 

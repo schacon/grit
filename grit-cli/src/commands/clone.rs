@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use grit_lib::clone::{
+use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
+use grit_lib::remote::clone::{
     cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty, CloneError,
     CloneOptions,
 };
-use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
 use grit_lib::remote::DefaultHttpClientFactory;
 use schemars::JsonSchema;
 use serde::Serialize;

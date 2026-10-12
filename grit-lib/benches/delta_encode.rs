@@ -1,4 +1,4 @@
-//! Criterion throughput for [`grit_lib::delta_encode::DeltaIndex`].
+//! Criterion throughput for [`grit_lib::objects::delta_encode::DeltaIndex`].
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use grit_lib::delta_encode::DeltaIndex;
+use grit_lib::objects::delta_encode::DeltaIndex;
 
 fn text_blob(len: usize) -> Vec<u8> {
     let line = b"The quick brown fox jumps over the lazy dog.\n";

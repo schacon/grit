@@ -4,7 +4,11 @@
 
 mod support;
 
-use grit_lib::attributes::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::error::Error;
+use grit_lib::index::Index;
+use grit_lib::repo::Repository;
+use grit_lib::worktree::attributes::{
     attribute_matching_ignore_case, builtin_objectmode_index, builtin_objectmode_worktree,
     builtin_warnings_for_rules, collect_attrs_for_path, is_reserved_builtin_name,
     load_gitattributes_bare, load_gitattributes_for_check_attr_cached,
@@ -13,10 +17,6 @@ use grit_lib::attributes::{
     parse_gitattributes_file_content_with_base, quote_path_for_check_attr, resolve_attr_treeish,
     resolve_tree_oid, validate_rules_for_add, AttrValue, MAX_ATTR_FILE_BYTES, MAX_ATTR_LINE_BYTES,
 };
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::error::Error;
-use grit_lib::index::Index;
-use grit_lib::repo::Repository;
 use support::{
     assert_all_attrs_match, assert_attrs_match, grit_attr_value, grit_repo, hermetic_git,
     hermetic_git_ok, init_git_repo, load_cached_parsed, load_source_parsed, load_worktree_parsed,
@@ -570,7 +570,7 @@ fn t0003_resolve_attr_treeish_and_tree_oid_errors() {
     assert_eq!(spec2.as_deref(), Some("HEAD"));
     assert!(ignore2);
 
-    use grit_lib::environment::{Environment, RepositoryOptions};
+    use grit_lib::config::environment::{Environment, RepositoryOptions};
     use std::ffi::OsString;
     let mut env = Environment::from_vars(
         [(
@@ -778,7 +778,9 @@ fn t0003_path_outside_repository_errors() {
     let wt = root.path();
     init_git_repo(wt);
     let repo = grit_repo(wt);
-    assert!(grit_lib::attributes::path_relative_to_worktree(&repo, "/outside/path").is_err());
+    assert!(
+        grit_lib::worktree::attributes::path_relative_to_worktree(&repo, "/outside/path").is_err()
+    );
 }
 
 #[test]

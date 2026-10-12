@@ -7,10 +7,10 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::unpack_objects::pack_bytes_to_object_map;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
-use grit_lib::unpack_objects::pack_bytes_to_object_map;
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 
 fn open_odb(git_dir: &Path) -> Odb {
     Odb::new(&git_dir.join("objects")).with_config_git_dir(git_dir.to_path_buf())
@@ -109,7 +109,7 @@ fn cargo_mirror_for_local_copy_options_resolve() {
     let odb = open_odb(mirror);
     let opts = PackBuildOptions::for_local_copy(
         grit_lib::config::ConfigSet::load(
-            &grit_lib::environment::Environment::empty(),
+            &grit_lib::config::environment::Environment::empty(),
             Some(mirror),
             true,
         )
@@ -134,7 +134,7 @@ fn cargo_mirror_local_copy_pack_matches_git_delta_density() {
     let odb = open_odb(mirror);
     let opts = PackBuildOptions::for_local_copy(
         grit_lib::config::ConfigSet::load(
-            &grit_lib::environment::Environment::empty(),
+            &grit_lib::config::environment::Environment::empty(),
             Some(mirror),
             true,
         )

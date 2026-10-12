@@ -3,11 +3,11 @@
 use std::collections::HashSet;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::hot_path_test_metrics::HotPathMetricsScope;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};
 use grit_test_support::{HashAlgo, RepoFixture};
 
 fn git_ok(repo: &RepoFixture, args: &[&str]) {

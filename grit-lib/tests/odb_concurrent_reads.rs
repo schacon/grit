@@ -6,13 +6,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 
 use grit_lib::error::Error;
-use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
+use grit_lib::objects::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index};
+use grit_lib::objects::pack_store::test_hooks;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_pack_index};
-use grit_lib::pack_store::test_hooks;
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::transfer::{build_pack, PackBuildOptions};
 use grit_lib::RefStorageFormat;
 use tempfile::TempDir;
 
@@ -21,7 +21,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn odb_repository_and_pack_store_are_send_sync() {
     assert_send_sync::<Odb>();
-    assert_send_sync::<grit_lib::pack_store::PackStore>();
+    assert_send_sync::<grit_lib::objects::pack_store::PackStore>();
     assert_send_sync::<grit_lib::repo::Repository>();
 }
 
@@ -131,7 +131,7 @@ fn odb_concurrent_reads() {
     write_multi_pack_index_with_options(&pack_dir, &WriteMultiPackIndexOptions::default())
         .expect("write midx");
     let probe = packed_blob_oids[0];
-    grit_lib::midx::try_read_object_via_midx(&primary_objects, &probe)
+    grit_lib::objects::midx::try_read_object_via_midx(&primary_objects, &probe)
         .expect("midx read probe")
         .expect("midx must list probe oid");
 
@@ -327,7 +327,8 @@ fn pack_thread_local_warm_follows_active_store_on_one_thread() {
     .expect("pack b");
     install_pack(&objects_a, "a", &pack_a);
     install_pack(&objects_b, "b", &pack_b);
-    grit_lib::pack::read_object_from_packs(&objects_a, &oid_a).expect("prime legacy store a");
+    grit_lib::objects::pack::read_object_from_packs(&objects_a, &oid_a)
+        .expect("prime legacy store a");
     let got_b = odb_b.read(&oid_b).expect("read via odb b store");
     assert_eq!(got_b.data, b"store-b\n");
 }

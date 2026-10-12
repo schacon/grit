@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use grit_lib::error::Error;
 use std::str::FromStr;
 
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{validate_repo_format, InitOptions, Repository};
 use tempfile::TempDir;
 

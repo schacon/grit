@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -116,7 +116,7 @@ pub fn parse_v0_request_lines(body: &[u8]) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grit_lib::environment::RepositoryOptions;
+    use grit_lib::config::environment::RepositoryOptions;
     use grit_lib::repo::Repository;
     use tempfile::TempDir;
 

@@ -5,9 +5,9 @@
 use std::path::Path;
 use std::time::Instant;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
 fn git_git_bare() -> std::path::PathBuf {
     std::env::var("GRIT_GIT_GIT_BARE")

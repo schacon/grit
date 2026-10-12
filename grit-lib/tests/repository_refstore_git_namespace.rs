@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::Command;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::list_refs_for_repository;
 use grit_lib::refs::store::{

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{compute_blame, BlameDiffAlgorithm};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 

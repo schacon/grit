@@ -8,12 +8,14 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{
+    cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags,
+};
 use grit_lib::index::Index;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git;
 
 fn git_out(dir: &Path, args: &[&str]) -> String {

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::write_tree_from_index;
 
 #[derive(Debug, Parser)]
 #[command(

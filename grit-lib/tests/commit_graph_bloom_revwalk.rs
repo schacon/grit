@@ -4,10 +4,10 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use grit_lib::commit_graph_file::BloomWalkStats;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::commit_graph::BloomWalkStats;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
 fn git_cmd(dir: &Path, args: &[&str]) {
     let out = Command::new("git")

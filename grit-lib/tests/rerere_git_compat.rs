@@ -2,8 +2,8 @@
 
 use std::process::Command;
 
+use grit_lib::diff::rerere::{repo_rerere, rerere_enabled, RerereAutoupdate};
 use grit_lib::repo::Repository;
-use grit_lib::rerere::{repo_rerere, rerere_enabled, RerereAutoupdate};
 use tempfile::TempDir;
 
 fn git_cmd(root: &std::path::Path, args: &[&str]) -> String {
@@ -55,7 +55,7 @@ fn t4200_rerere_records_readable_by_git() {
 
     let repo = Repository::discover(
         Some(dir.path()),
-        &grit_lib::environment::RepositoryOptions::empty(),
+        &grit_lib::config::environment::RepositoryOptions::empty(),
     )
     .expect("open");
     let cfg = repo.config().expect("cfg");

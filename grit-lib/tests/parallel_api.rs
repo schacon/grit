@@ -62,7 +62,7 @@ fn index_pack_threads_respects_cli_policy_not_config_alone() {
 
 #[test]
 fn fetch_ingest_sees_git_config_count_pack_threads() {
-    use grit_lib::environment::Environment;
+    use grit_lib::config::environment::Environment;
     use std::ffi::OsString;
 
     let dir = tempfile::tempdir().expect("tempdir");

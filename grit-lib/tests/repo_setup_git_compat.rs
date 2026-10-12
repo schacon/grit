@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
 use tempfile::TempDir;
 

@@ -4,11 +4,11 @@
 
 use std::path::Path;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     git_config_parameters_last_value, parse_config_parameters, ConfigFile, ConfigSet,
     LoadConfigOptions,
 };
-use grit_lib::environment::Environment;
 
 #[test]
 fn from_git_config_parameters_covers_old_style_and_pairs() {

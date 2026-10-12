@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::check_ref_format::{validate_branch_short_name, validate_tag_short_name};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::check_ref_format::{validate_branch_short_name, validate_tag_short_name};
 use grit_lib::refs::write_ref;
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;

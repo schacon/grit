@@ -4,9 +4,9 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -102,7 +102,7 @@ fn cargo_mirror_for_local_copy_build_time_when_fixture_present() {
     let odb = open_odb(mirror);
     let opts = PackBuildOptions::for_local_copy(
         grit_lib::config::ConfigSet::load(
-            &grit_lib::environment::Environment::empty(),
+            &grit_lib::config::environment::Environment::empty(),
             Some(mirror),
             true,
         )

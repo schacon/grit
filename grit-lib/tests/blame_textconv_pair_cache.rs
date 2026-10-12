@@ -7,10 +7,10 @@ use std::process::Command;
 use grit_lib::blame::{
     compute_blame, parse_diff_algorithm_name, BlameDiffAlgorithm, BlameTextconvContext,
 };
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::load_graft_parents;
+use grit_lib::revwalk::rev_parse::load_graft_parents;
 
 fn git_env(cmd: &mut Command) {
     cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")

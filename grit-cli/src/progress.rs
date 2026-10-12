@@ -1,10 +1,10 @@
-//! Terminal progress rendering for wire fetch/clone (`grit_lib::fetch::Progress`).
+//! Terminal progress rendering for wire fetch/clone (`grit_lib::remote::fetch::Progress`).
 
 use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant};
 
-use grit_lib::fetch::Progress;
 use grit_lib::progress::{ProgressPhase, ProgressSink};
+use grit_lib::remote::fetch::Progress;
 use grit_lib::sideband_lines::{RemoteLine, SidebandLines};
 use terminal_size::{terminal_size, Width};
 

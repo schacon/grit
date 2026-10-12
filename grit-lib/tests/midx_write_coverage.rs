@@ -4,7 +4,7 @@
 
 pub mod midx_support;
 
-use grit_lib::midx::{
+use grit_lib::objects::midx::{
     compact_multi_pack_index, midx_lookup_pack_and_offset, read_midx_objects,
     read_midx_pack_idx_names, read_midx_preferred_idx_name, resolve_midx_layer_path,
     resolve_tip_midx_path, verify_midx, write_multi_pack_index_with_options, CompactError,
@@ -45,7 +45,7 @@ fn preferred_pack_name_accepts_pack_suffix_and_relative_path() {
     let stem = idx.strip_suffix(".idx").unwrap();
     for name in [format!("./{idx}"), format!("{stem}.pack"), idx.clone()] {
         let _ = &repo;
-        grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+        grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
         grit_write_midx(
             &pack_dir,
             &WriteMultiPackIndexOptions {
@@ -65,7 +65,7 @@ fn unknown_preferred_pack_emits_warning_and_still_writes() {
         return;
     };
     let pack_dir = objects.join("pack");
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     grit_write_midx(
         &pack_dir,
         &WriteMultiPackIndexOptions {
@@ -90,7 +90,7 @@ fn pack_names_subset_skips_unknown_entries() {
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     grit_write_midx(
         &pack_dir,
         &WriteMultiPackIndexOptions {
@@ -296,7 +296,7 @@ fn compact_with_bitmaps_and_rev_sidecars() {
     let from = chain[0].clone();
     let to = chain[chain.len() - 2].clone();
     compact_multi_pack_index(&pack_dir, &from, &to, true, true, Some(2)).expect("compact bitmaps");
-    grit_lib::midx::verify_midx(&objects).expect("verify after compact");
+    grit_lib::objects::midx::verify_midx(&objects).expect("verify after compact");
     if git_available() {
         let v = repo.git(&["multi-pack-index", "verify"]);
         if !v.ok {
@@ -333,7 +333,7 @@ fn compact_missing_to_endpoint() {
     let from = &chain[0];
     assert!(matches!(
         compact_multi_pack_index(&pack_dir, from, "badchecksum", false, false, Some(2)),
-        Err(grit_lib::midx::CompactError::MissingEndpoint(_))
+        Err(grit_lib::objects::midx::CompactError::MissingEndpoint(_))
     ));
     let _ = (repo, objects);
 }
@@ -361,7 +361,7 @@ fn bitmap_sidecars_scrubbed_on_fresh_write() {
         .map(|e| e.path());
     assert!(first_rev.is_some(), "expected .rev sidecar");
 
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     grit_write_midx(
         &pack_dir,
         &WriteMultiPackIndexOptions {
@@ -415,12 +415,12 @@ fn many_lookups_exercise_chain_and_info_paths() {
         .into_iter()
         .collect();
     for oid in packed {
-        let _ = grit_lib::midx::midx_lookup_pack_and_offset_opt(&objects, &oid);
-        let _ = grit_lib::midx::try_read_info_via_midx(&objects, &oid);
-        let _ = grit_lib::midx::try_read_object_via_midx(&objects, &oid);
-        let _ = grit_lib::midx::midx_oid_listed_in_tip(&objects, &oid);
+        let _ = grit_lib::objects::midx::midx_lookup_pack_and_offset_opt(&objects, &oid);
+        let _ = grit_lib::objects::midx::try_read_info_via_midx(&objects, &oid);
+        let _ = grit_lib::objects::midx::try_read_object_via_midx(&objects, &oid);
+        let _ = grit_lib::objects::midx::midx_oid_listed_in_tip(&objects, &oid);
     }
-    grit_lib::midx::validate_midx_referenced_packs(&objects);
+    grit_lib::objects::midx::validate_midx_referenced_packs(&objects);
 }
 
 #[test]
@@ -484,7 +484,7 @@ fn incremental_layer_with_bitmap_and_rev_sidecars_v2() {
     .expect("incremental bitmap layer");
     assert_eq!(
         result.bitmap,
-        grit_lib::midx::MidxBitmapWriteOutcome::SkippedIncrementalLayer
+        grit_lib::objects::midx::MidxBitmapWriteOutcome::SkippedIncrementalLayer
     );
     let midx_d = pack_dir.join("multi-pack-index.d");
     let has_zero_bitmap = fs::read_dir(&midx_d)
@@ -541,14 +541,16 @@ fn write_default_v2_midx_roundtrip() {
         return;
     };
     let pack_dir = objects.join("pack");
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     write_multi_pack_index_with_options(&pack_dir, &WriteMultiPackIndexOptions::default())
         .expect("default v2 write");
     verify_midx(&objects).expect("verify grit v2");
     for oid in &oids {
-        assert!(grit_lib::midx::try_read_object_via_midx(&objects, oid)
-            .expect("read")
-            .is_some());
+        assert!(
+            grit_lib::objects::midx::try_read_object_via_midx(&objects, oid)
+                .expect("read")
+                .is_some()
+        );
     }
     let _ = repo;
 }
@@ -561,18 +563,18 @@ fn format_midx_dump_and_show_objects_layers() {
     };
     let pack_dir = objects.join("pack");
     grit_write_midx(&pack_dir, &WriteMultiPackIndexOptions::default());
-    let dump = grit_lib::midx::format_midx_dump(&objects).expect("dump");
+    let dump = grit_lib::objects::midx::format_midx_dump(&objects).expect("dump");
     assert!(dump.contains("header:"));
     assert!(dump.contains("packs:"));
-    let show = grit_lib::midx::format_midx_show_objects(&objects).expect("show");
+    let show = grit_lib::objects::midx::format_midx_show_objects(&objects).expect("show");
     assert!(show.contains(&oids[0].to_hex()));
     let tip = tip_midx_path(&pack_dir);
     let hex = midx_trailing_hex(&tip);
     let layer_dump =
-        grit_lib::midx::format_midx_dump_layer(&objects, Some(&hex)).expect("layer dump");
+        grit_lib::objects::midx::format_midx_dump_layer(&objects, Some(&hex)).expect("layer dump");
     assert!(layer_dump.contains("num_objects:"));
-    let layer_show =
-        grit_lib::midx::format_midx_show_objects_layer(&objects, Some(&hex)).expect("layer show");
+    let layer_show = grit_lib::objects::midx::format_midx_show_objects_layer(&objects, Some(&hex))
+        .expect("layer show");
     assert!(layer_show.lines().count() >= oids.len());
     let _ = repo;
 }
@@ -590,7 +592,7 @@ fn midx_lookup_errors_when_oid_absent() {
     let missing = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid");
     assert!(midx_lookup_pack_and_offset(&objects, &missing).is_err());
     assert!(
-        grit_lib::midx::midx_lookup_pack_and_offset_opt(&objects, &missing)
+        grit_lib::objects::midx::midx_lookup_pack_and_offset_opt(&objects, &missing)
             .expect("opt lookup")
             .is_none()
     );

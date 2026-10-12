@@ -1,6 +1,6 @@
 //! Annotated tag creation round-trips with system `git`.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{parse_tag, ObjectKind};
 use grit_lib::porcelain::tag::{create_tag, tag_ref_metadata, CreateTagRequest, TagKind};
 use grit_lib::repo::Repository;

@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::stat_matches;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;

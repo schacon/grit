@@ -5,7 +5,8 @@ mod support;
 use std::fs;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::{
     entry_from_metadata, format_index_lock_blocked_detail, index_entries_stat_equivalent,
     munge_index_size, normalize_mode, worktree_path_from_index_rel, Index, IndexEntry,
@@ -13,8 +14,7 @@ use grit_lib::index::{
 };
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse;
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::revwalk::rev_parse;
 
 use support::{git, seed_multidir_repo, HistoryRepo};
 

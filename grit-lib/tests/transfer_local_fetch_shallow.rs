@@ -1,4 +1,4 @@
-//! Shallow-clone fetch/clone via [`grit_lib::transfer::fetch_local`].
+//! Shallow-clone fetch/clone via [`grit_lib::remote::transfer::fetch_local`].
 //!
 //! Reproduces GitHub issue #937: fetch in a `git clone --depth 1` checkout must
 //! not create tag refs to missing commits, and cloning from a shallow source must
@@ -9,7 +9,7 @@ use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{fetch_local, FetchOptions, TagMode};
+use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};
 use grit_test_support::git;
 
 fn rev_parse(dir: &Path, rev: &str) -> ObjectId {

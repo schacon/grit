@@ -1,6 +1,6 @@
 //! Git smart protocol handlers for HTTP transport.
 //!
-//! Runs upload-pack and receive-pack in-process via [`grit_lib::serve`], with
+//! Runs upload-pack and receive-pack in-process via [`grit_lib::remote::serve`], with
 //! no subprocess or external `grit` binary.
 
 pub mod receive_pack;
@@ -8,12 +8,12 @@ pub mod upload_pack;
 
 use std::path::{Path, PathBuf};
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
 
-pub use grit_lib::environment::RepositoryOptions;
+pub use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::remote::serve::{self, ProtocolVersion, ReceivePolicy, ServeOptions};
 use grit_lib::repo::Repository;
-use grit_lib::serve::{self, ProtocolVersion, ReceivePolicy, ServeOptions};
 
 /// Errors from smart-protocol handlers.
 #[derive(Debug, thiserror::Error)]
@@ -83,7 +83,7 @@ pub(crate) fn run_upload_pack(
     let repo = Repository::open(repo_path, &repository_options.clone().for_serving())?;
     let config =
         ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
-    let hidden_refs = grit_lib::hide_refs::hide_ref_patterns_uploadpack(&config);
+    let hidden_refs = grit_lib::refs::hide_refs::hide_ref_patterns_uploadpack(&config);
     let opts = ServeOptions {
         protocol: protocol_version_from_header(protocol_version),
         stateless_rpc,
@@ -106,7 +106,7 @@ pub(crate) fn run_receive_pack(
     let repo = Repository::open(repo_path, &repository_options.clone().for_serving())?;
     let config =
         ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
-    let hidden_refs = grit_lib::hide_refs::hide_ref_patterns_receive(&config);
+    let hidden_refs = grit_lib::refs::hide_refs::hide_ref_patterns_receive(&config);
     let opts = ServeOptions {
         protocol: ProtocolVersion::V0,
         stateless_rpc,
@@ -123,7 +123,7 @@ pub(crate) fn run_receive_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grit_lib::serve::ProtocolVersion;
+    use grit_lib::remote::serve::ProtocolVersion;
 
     #[test]
     fn protocol_header_maps_versions() {

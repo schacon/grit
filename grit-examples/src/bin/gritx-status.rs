@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::{commit_tree, head_oid};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 

@@ -1,9 +1,9 @@
-//! Coverage for [`grit_lib::transfer::resolve_fetch_prune`].
+//! Coverage for [`grit_lib::remote::transfer::resolve_fetch_prune`].
 
 use std::path::Path;
 
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::transfer::resolve_fetch_prune;
+use grit_lib::remote::transfer::resolve_fetch_prune;
 
 fn config_from(text: &str) -> ConfigSet {
     let file = ConfigFile::parse(Path::new("cfg"), text, ConfigScope::Local).expect("parse");

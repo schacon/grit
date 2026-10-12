@@ -4,8 +4,8 @@ use crate::output::OutputMode;
 use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
+use grit_lib::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use grit_lib::remote::{DefaultHttpClientFactory, RemoteError, DEFAULT_REMOTE};
-use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -130,7 +130,7 @@ fn fetch_once(
     prune: bool,
     factory: &DefaultHttpClientFactory,
     mode: OutputMode,
-) -> Result<grit_lib::transfer::FetchOutcome> {
+) -> Result<grit_lib::remote::transfer::FetchOutcome> {
     let remote = crate::commands::remote::resolve_remote_or_url(Some(config), remote_name)?;
     let mut progress = TerminalProgress::new(mode);
     remote

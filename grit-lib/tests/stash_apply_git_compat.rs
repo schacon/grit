@@ -1,6 +1,6 @@
 //! `apply_stash` parity with system `git stash apply` (porcelain + file bytes).
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::stash::apply_stash;
 use grit_lib::repo::Repository;

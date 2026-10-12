@@ -1,6 +1,6 @@
 //! Stash apply/pop with `core.autocrlf=true` and CRLF worktree bytes (issue #958).
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::porcelain::stash::{apply_stash, pop_stash, push_stash, StashCreateOptions};
 use grit_lib::repo::Repository;
 use grit_test_support::git;

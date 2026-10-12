@@ -25,15 +25,15 @@ use grit_lib::diff::{
     submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use grit_lib::index::Index;
-use grit_lib::merge_base::merge_base_for_diff_two_commits;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::merge_base::merge_base_for_diff_two_commits;
+use grit_lib::revwalk::rev_parse::{
     peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
     split_double_dot_range, split_triple_dot_range,
 };
 use grit_lib::state::resolve_head;
-use grit_lib::worktree_rules::WorktreeRules;
+use grit_lib::worktree::worktree_rules::WorktreeRules;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -390,13 +390,13 @@ fn parse_commit_range(
         };
         let base = merge_base_for_diff_two_commits(repo, left_c, right_c).map_err(|e| {
             anyhow::anyhow!(match e {
-                grit_lib::merge_base::MergeBaseForDiffError::None => {
+                grit_lib::revwalk::merge_base::MergeBaseForDiffError::None => {
                     "no merge base for that revision range".to_owned()
                 }
-                grit_lib::merge_base::MergeBaseForDiffError::Multiple => {
+                grit_lib::revwalk::merge_base::MergeBaseForDiffError::Multiple => {
                     "multiple merge bases for that revision range".to_owned()
                 }
-                grit_lib::merge_base::MergeBaseForDiffError::Other(msg) => msg,
+                grit_lib::revwalk::merge_base::MergeBaseForDiffError::Other(msg) => msg,
             })
         })?;
         return Ok(Some((base, right_c)));
@@ -442,7 +442,10 @@ fn worktree_against_tree(
         .zip(index.cache_tree_root.as_ref())
         .map(|(left, right)| left == right)
         .unwrap_or(base_tree.is_none() && index.cache_tree_root.is_none())
-        && grit_lib::write_tree::cache_tree_fully_valid(repo.odb(), index.cache_tree.as_ref());
+        && grit_lib::index::write_tree::cache_tree_fully_valid(
+            repo.odb(),
+            index.cache_tree.as_ref(),
+        );
     let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
     let mut entries = if index_backed {
         let (entries, _) = diff_index_to_worktree_with_options(
@@ -462,8 +465,9 @@ fn worktree_against_tree(
         .context("could not diff the working tree")?;
         entries
     } else {
-        let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
-            .context("could not load worktree rules")?;
+        let worktree_rules =
+            grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(repo, &index)
+                .context("could not load worktree rules")?;
         grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
             repo.odb(),
             base_tree,

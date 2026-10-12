@@ -8,13 +8,13 @@
 
 use grit_lib::commit_trailers;
 use grit_lib::config::ConfigSet;
-use grit_lib::merge_file::MergeFavor;
-use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
+use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::diff::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_parse::resolve_revision;
-use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::revwalk::rev_parse::resolve_revision;
 
 fn commit_from_tree(
     repo: &grit_lib::repo::Repository,
@@ -149,11 +149,11 @@ fn main() -> grit_lib::error::Result<()> {
         MergeFavor::default(),
         WhitespaceMergeOptions::default(),
         None,
-        grit_lib::merge_trees::TreeMergeConflictPresentation {
+        grit_lib::diff::merge_trees::TreeMergeConflictPresentation {
             label_ours: "HEAD",
-            label_theirs: grit_lib::merge_trees::TheirsConflictLabel::Fixed("picked"),
+            label_theirs: grit_lib::diff::merge_trees::TheirsConflictLabel::Fixed("picked"),
             label_base: "parent of picked commit",
-            style: grit_lib::merge_file::ConflictStyle::Merge,
+            style: grit_lib::diff::merge_file::ConflictStyle::Merge,
             checkout_merge: false,
             df_directory_ours_commit: None,
             df_directory_theirs_commit: None,

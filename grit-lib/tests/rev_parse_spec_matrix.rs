@@ -4,9 +4,9 @@ mod support;
 
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     peel_to_commit_for_merge_base, peel_to_tree, resolve_reflog_walk_log_ref,
     resolve_revision_as_commit_without_index_dwim, resolve_revision_for_commit_tree_tree,
     resolve_revision_for_patch_old_blob, resolve_revision_for_verify,

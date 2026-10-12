@@ -28,17 +28,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use grit_lib::credentials::{Credential, CredentialProvider};
 use grit_lib::error::{Error, Result as GritResult};
-use grit_lib::fetch::NoProgress;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::push::push_http;
-use grit_lib::push_report::PushRefStatus;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
-use grit_lib::transport::http::ureq_client::UreqHttpClient;
-use grit_lib::transport::http::{http_client_arc, http_fetch};
+use grit_lib::remote::credentials::{Credential, CredentialProvider};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::push::push_http;
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
+use grit_lib::remote::transport::http::ureq_client::UreqHttpClient;
+use grit_lib::remote::transport::http::{http_client_arc, http_fetch};
 
 const USER: &str = "alice";
 const PASS: &str = "s3cr3t";

@@ -4,8 +4,8 @@ use std::io::IsTerminal;
 use std::io::Write;
 
 use anyhow::{Context, Result};
+use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
-use grit_lib::ident_resolve::IdentRole;
 use grit_lib::porcelain::stash::{
     apply_stash, drop_stash, list_stashes, pop_stash, push_stash, stash_diff, StashCreateOptions,
 };

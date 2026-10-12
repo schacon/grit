@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use grit_lib::error::Result;
-use grit_lib::reflog::ReflogEntry;
+use grit_lib::refs::reflog::ReflogEntry;
 use grit_lib::refs::store::{
     PreparedRefTransaction, RawRef, RefEntry, RefStorageFormat, RefStore, RefStoreError,
     RefTransaction,

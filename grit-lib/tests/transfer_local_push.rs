@@ -1,4 +1,4 @@
-//! Integration tests for `grit_lib::transfer::push_local` — the in-process
+//! Integration tests for `grit_lib::remote::transfer::push_local` — the in-process
 //! local / `file://` push (send-pack) path (no subprocess, no wire protocol).
 //!
 //! A bare remote repo and a normal local repo with commits are built with the
@@ -10,12 +10,12 @@
 
 use std::path::Path;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
-use grit_lib::push_report::PushRefStatus;
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::{push_local, PushOptions, PushRefSpec};
+use grit_lib::remote::transport_path::resolve_local_remote_git_dir;
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{push_local, PushOptions, PushRefSpec};
-use grit_lib::transport_path::resolve_local_remote_git_dir;
 use grit_test_support::{git, git_cmd};
 
 /// `git` that may fail; returns whether it succeeded plus combined output.
@@ -694,7 +694,7 @@ fn push_local_does_not_use_decoy_repo_when_parent_relative_target_missing() {
     let intended = parent.join("wrong.git");
     assert!(!intended.exists());
 
-    let remote_git = grit_lib::transport_path::resolve_local_remote_git_dir(
+    let remote_git = grit_lib::remote::transport_path::resolve_local_remote_git_dir(
         "../wrong.git",
         &local_git,
         Some(&clone_wt),

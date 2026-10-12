@@ -1,7 +1,7 @@
 //! Smoke test: fetch from a bare remote (regression for grit-examples fetch_push).
 
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{fetch_local, FetchOptions};
+use grit_lib::remote::transfer::{fetch_local, FetchOptions};
 
 #[test]
 fn fetch_local_from_bare_remote_with_loose_objects_only() {

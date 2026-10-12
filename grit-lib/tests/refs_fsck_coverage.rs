@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckIssue};
 use grit_lib::refs::write_ref;
-use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckIssue};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
@@ -52,7 +52,7 @@ fn refs_fsck_reports_bad_symref_and_formats_line() {
     );
 
     let sample = RefsFsckIssue {
-        severity: grit_lib::refs_fsck::RefsFsckSeverity::Error,
+        severity: grit_lib::refs::refs_fsck::RefsFsckSeverity::Error,
         path: "refs/heads/sample".into(),
         msg_id: "badRefName".into(),
         detail: "demo".into(),

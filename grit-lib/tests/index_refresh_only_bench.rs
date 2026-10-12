@@ -4,8 +4,8 @@
 
 use std::time::Instant;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::refresh_index_stat_content_verified;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
 
@@ -37,7 +37,7 @@ fn refresh_index_stat_only_timing() {
     let mut index = repo.index_handle().load().expect("index");
     let index_mtime = index.source_mtime;
     let config = grit_lib::config::ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(repo.git_dir()),
         true,
     )

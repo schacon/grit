@@ -2,8 +2,9 @@
 
 use filetime::FileTime;
 use grit_lib::command_runner::{CommandStdin, RecordedResponse, RecordingRunner};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::diff_trees;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR,
 };
@@ -14,7 +15,6 @@ use grit_lib::porcelain::checkout::checkout_tree_changes;
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git_fsck;
 use std::collections::BTreeMap;
 use std::fs;

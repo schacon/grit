@@ -2,11 +2,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
-use grit_lib::combined_tree_diff::{CombinedDiffPath, CombinedParentSide, CombinedParentStatus};
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::zero_oid;
-use grit_lib::merge_diff::{
+use grit_lib::diff::combined_diff_patch::CombinedDiffWsOptions;
+use grit_lib::diff::combined_tree_diff::{
+    CombinedDiffPath, CombinedParentSide, CombinedParentStatus,
+};
+use grit_lib::diff::merge_diff::{
     all_blob_paths_in_tree_order, blob_oid_at_path, blob_text_for_diff,
     blob_text_for_diff_with_oid, combined_diff_paths, combined_merge_parent_blob_paths,
     convert_blob_to_worktree_for_path, diff_attr_external_driver, diff_attr_forces_binary,
@@ -16,8 +17,9 @@ use grit_lib::merge_diff::{
     format_worktree_conflict_combined, is_binary_for_diff, read_blob_at_path, run_textconv,
     run_textconv_raw,
 };
+use grit_lib::diff::zero_oid;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use tempfile::tempdir;
 
 fn write_tree(odb: &Odb, entries: &[(&str, ObjectId)]) -> ObjectId {

@@ -626,18 +626,18 @@ fn cherry_pick_tree_remap_matches_git() {
     git(git_dir.path(), &["cherry-pick", "--no-commit", &pick]);
     let git_tree = git(git_dir.path(), &["write-tree"]).trim().to_owned();
     let grit_tree = {
-        let presentation = grit_lib::merge_trees::TreeMergeConflictPresentation {
+        let presentation = grit_lib::diff::merge_trees::TreeMergeConflictPresentation {
             df_directory_ours_commit: Some(main_oid),
             df_directory_theirs_commit: Some(pick_oid),
             ..labels.presentation()
         };
-        let merged = grit_lib::merge_trees::merge_trees_three_way(
+        let merged = grit_lib::diff::merge_trees::merge_trees_three_way(
             &grit,
             commit_tree(&grit, &pick_parent).unwrap(),
             commit_tree(&grit, &main_oid).unwrap(),
             commit_tree(&grit, &pick_oid).unwrap(),
-            grit_lib::merge_file::MergeFavor::default(),
-            grit_lib::merge_trees::WhitespaceMergeOptions::default(),
+            grit_lib::diff::merge_file::MergeFavor::default(),
+            grit_lib::diff::merge_trees::WhitespaceMergeOptions::default(),
             None,
             presentation,
         )

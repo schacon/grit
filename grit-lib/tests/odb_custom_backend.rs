@@ -1,21 +1,21 @@
-//! Public custom [`Odb`](grit_lib::odb::Odb) backends via [`OdbBuilder`](grit_lib::odb::OdbBuilder).
+//! Public custom [`Odb`](grit_lib::objects::odb::Odb) backends via [`OdbBuilder`](grit_lib::objects::odb::OdbBuilder).
 
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::diff_trees;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::gc::prune_loose_unreachable;
+use grit_lib::objects::odb::store::{MemoryStore, ObjectStore};
+use grit_lib::objects::odb::OdbBuilder;
 use grit_lib::objects::{serialize_tag, TagData};
 use grit_lib::objects::{serialize_tree, ObjectKind, TreeEntry};
-use grit_lib::odb::store::{MemoryStore, ObjectStore};
-use grit_lib::odb::OdbBuilder;
 use grit_lib::refs::write_ref;
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
-use grit_lib::rev_list::{rev_list, RevListOptions};
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::process::Command;
 
 fn canonical_store_bytes(kind: ObjectKind, data: &[u8]) -> Vec<u8> {
@@ -173,8 +173,11 @@ fn memory_primary_write_raw_ignores_seeded_loose_on_disk() {
     let objects = git_dir.join("objects");
     let payload = b"seed-on-disk-only\n";
     let store_bytes = canonical_store_bytes(ObjectKind::Blob, payload);
-    let oid =
-        grit_lib::hash::hash_object(grit_lib::objects::HashAlgo::Sha1, ObjectKind::Blob, payload);
+    let oid = grit_lib::objects::hash::hash_object(
+        grit_lib::objects::HashAlgo::Sha1,
+        ObjectKind::Blob,
+        payload,
+    );
     let loose = objects.join(oid.loose_prefix()).join(oid.loose_suffix());
     fs::create_dir_all(loose.parent().unwrap()).expect("shard");
     fs::write(&loose, b"placeholder").expect("seed loose");
@@ -226,7 +229,7 @@ fn files_primary_gc_prunes_unreachable_loose() {
     write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
 
     let orphan_payload = b"orphan\n";
-    let orphan_oid = grit_lib::hash::hash_object(
+    let orphan_oid = grit_lib::objects::hash::hash_object(
         grit_lib::objects::HashAlgo::Sha1,
         ObjectKind::Blob,
         orphan_payload,

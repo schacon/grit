@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::add_path;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 #[derive(Debug, Parser)]

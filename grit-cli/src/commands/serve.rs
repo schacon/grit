@@ -11,10 +11,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::stdio;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::remote::serve::{self, ProtocolVersion, ReceivePolicy, ServeOptions};
 use grit_lib::repo::Repository;
-use grit_lib::serve::{self, ProtocolVersion, ReceivePolicy, ServeOptions};
 
 /// Which server program to run.
 #[derive(Debug, Clone, Copy)]
@@ -50,8 +50,8 @@ pub fn run(
     let config =
         ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let hidden_refs = match service {
-        Service::UploadPack => grit_lib::hide_refs::hide_ref_patterns_uploadpack(&config),
-        Service::ReceivePack => grit_lib::hide_refs::hide_ref_patterns_receive(&config),
+        Service::UploadPack => grit_lib::refs::hide_refs::hide_ref_patterns_uploadpack(&config),
+        Service::ReceivePack => grit_lib::refs::hide_refs::hide_ref_patterns_receive(&config),
     };
     let protocol = std::env::var("GIT_PROTOCOL")
         .map(|v| ProtocolVersion::from_git_protocol(&v))

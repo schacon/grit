@@ -2,10 +2,10 @@
 
 use flate2::Compression;
 use grit_lib::diagnostics::NullDiagnostics;
+use grit_lib::objects::odb::store::{FilesSource, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
+use grit_lib::objects::pack_store::PackStore;
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::odb::store::{FilesSource, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
-use grit_lib::pack_store::PackStore;
 use grit_test_support::git_supports_sha256;
 use grit_test_support::odb_conformance::{run_read_suite, run_write_suite};
 use std::sync::Arc;
@@ -15,7 +15,8 @@ fn leak_temp_objects(algo: HashAlgo) -> (FilesSource, std::path::PathBuf) {
     let objects_dir = dir.path().join("objects");
     std::fs::create_dir_all(&objects_dir).expect("objects dir");
     let pack = Arc::new(PackStore::new(objects_dir.clone()));
-    let loose = grit_lib::odb::store::LooseStore::new(objects_dir, algo, Compression::default());
+    let loose =
+        grit_lib::objects::odb::store::LooseStore::new(objects_dir, algo, Compression::default());
     let files =
         FilesSource::open(pack, loose, false, false, Arc::new(NullDiagnostics)).expect("open");
     (files, dir.path().to_path_buf())

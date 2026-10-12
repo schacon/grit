@@ -1,8 +1,8 @@
 //! `grit commit` — stage every change and record a new commit.
 
 use anyhow::{bail, Context, Result};
+use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
-use grit_lib::ident_resolve::IdentRole;
 use grit_lib::objects::parse_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;

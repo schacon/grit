@@ -5,15 +5,15 @@ mod support;
 use std::fs;
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::rev_parse_error::RevParseError;
+use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_for_verify, resolve_upstream_symbolic_name,
     split_double_dot_range, split_triple_dot_range,
 };
-use grit_lib::rev_parse_error::RevParseError;
 
 use support::{
     build_commit_dag, commit_file, git, git_ls_files_stage, git_merge_expect_conflict,

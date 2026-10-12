@@ -5,13 +5,13 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use grit_lib::bitmap_walk::{BitmapWalkError, ReachabilityQuery, ReachableSet};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::bitmap::BitmapIndex;
+use grit_lib::objects::bitmap::{BitmapWalkError, ReachabilityQuery, ReachableSet};
+use grit_lib::objects::pack_rev::append_hashfile_checksum;
 use grit_lib::objects::ObjectId;
-use grit_lib::pack_bitmap::BitmapIndex;
-use grit_lib::pack_rev::append_hashfile_checksum;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, MissingAction, ObjectFilter, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, MissingAction, ObjectFilter, RevListOptions};
 use grit_test_support::{HashAlgo, RepoFixture};
 
 fn git_ok(repo: &RepoFixture, args: &[&str]) {
@@ -267,7 +267,7 @@ fn filters_match_non_bitmap_walk() {
         ("blob:limit=1", ObjectFilter::BlobLimit(1)),
         (
             "object:type=commit",
-            ObjectFilter::ObjectType(grit_lib::rev_list::FilterObjectKind::Commit),
+            ObjectFilter::ObjectType(grit_lib::revwalk::rev_list::FilterObjectKind::Commit),
         ),
         ("tree:0", ObjectFilter::TreeDepth(0)),
     ];
@@ -397,7 +397,7 @@ fn unsupported_filter_and_shallow_fall_back() {
     let shallow_index = BitmapIndex::open(&shallow_repo)
         .expect("open")
         .expect("bitmap on shallow-marked repo");
-    use grit_lib::rev_list::shallow_boundary_oids;
+    use grit_lib::revwalk::rev_list::shallow_boundary_oids;
     assert!(!shallow_boundary_oids(shallow_repo.git_dir()).is_empty());
     assert!(matches!(
         bitmap_query(&shallow_repo, &shallow_index, &[head], &[], None),

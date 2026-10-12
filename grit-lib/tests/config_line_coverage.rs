@@ -5,12 +5,12 @@
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     canonical_key, get_urlmatch_all_in_section, get_urlmatch_entries, global_config_paths_pub,
     parse_bool, parse_color, parse_i64, parse_path, parse_path_optional,
     resolve_diff_context_lines, url_matches, ConfigFile, ConfigScope, ConfigSet, LoadConfigOptions,
 };
-use grit_lib::environment::Environment;
 use grit_lib::error::Error;
 use std::fmt::Write as FmtWrite;
 use tempfile::tempdir;

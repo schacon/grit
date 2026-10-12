@@ -23,7 +23,7 @@ Cross-cutting entry points (`repo`, `error`, `porcelain`, `progress`, …) remai
 
 ## Flat → canonical map
 
-The authoritative map lives in [`grit-lib/canonical-modules.toml`](https://github.com/gitbutlerapp/grit/blob/main/grit-lib/canonical-modules.toml). CI checks that every `grit_lib::…` import in `grit-cli`, `grit-protocol`, `grit-examples`, `grit-utils`, `grit-test-support`, and `grit-lib/tests` appears in that file (`scripts/check_canonical_layout.py`, wired from `canonical_paths` integration test).
+The authoritative map lives in [`grit-lib/canonical-modules.toml`](https://github.com/gitbutlerapp/grit/blob/main/grit-lib/canonical-modules.toml). CI checks that every `grit_lib::…` import in `grit-cli`, `grit-protocol`, `grit-examples`, `grit-utils`, `grit-test-support`, and `grit-lib/tests` appears in that file (`scripts/check_canonical_layout.py`, wired from `canonical_paths` integration test). Imports must use the **canonical domain path** (for example `grit_lib::objects::odb`, not `grit_lib::odb`); `scripts/check_noncanonical_grit_lib_imports.py` enforces that (`no_noncanonical_grit_lib_imports` in the same integration test, and `scripts/tests/test_canonical_layout.py` in the docs CI job).
 
 Examples:
 

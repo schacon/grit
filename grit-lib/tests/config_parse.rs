@@ -6,12 +6,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     canonical_key, git_config_parameters_last_value, parse_bool, parse_color,
     parse_config_parameters, parse_git_config_int_strict, parse_i64, parse_path, ConfigFile,
     ConfigScope, ConfigSet, GitConfigIntStrictError,
 };
-use grit_lib::environment::Environment;
 use support::{
     assert_bad_line_error, assert_canonical_key_err, assert_file_get_matches_git,
     assert_typed_bool_matches, assert_typed_int_matches, git_color, git_file_get, git_file_get_all,

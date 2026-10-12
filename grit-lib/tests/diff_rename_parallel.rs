@@ -4,14 +4,14 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::blame::{compute_blame, BlameDiffAlgorithm};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     detect_copies_with_policy, detect_renames_with_policy, diff_trees, zero_oid, DiffEntry,
     DiffStatus,
 };
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::Repository;
 use grit_test_support::forced_parallel_policy;
@@ -74,7 +74,7 @@ fn config_with_rename_limit(limit: i64) -> ConfigSet {
 }
 
 fn assert_serial_parallel_rename_match(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     entries: Vec<DiffEntry>,
     threshold: u32,
     config: &ConfigSet,
@@ -443,10 +443,13 @@ fn parallel_copy_many_to_one_matches_serial() {
     );
 }
 
-fn flatten_tree(odb: &grit_lib::odb::Odb, tree_oid: &ObjectId) -> Vec<(String, String, ObjectId)> {
+fn flatten_tree(
+    odb: &grit_lib::objects::odb::Odb,
+    tree_oid: &ObjectId,
+) -> Vec<(String, String, ObjectId)> {
     use grit_lib::objects::parse_tree;
     fn walk(
-        odb: &grit_lib::odb::Odb,
+        odb: &grit_lib::objects::odb::Odb,
         tree_oid: &ObjectId,
         prefix: &str,
         out: &mut Vec<(String, String, ObjectId)>,

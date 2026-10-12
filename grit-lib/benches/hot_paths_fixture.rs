@@ -5,19 +5,19 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use grit_lib::error::Result;
-use grit_lib::index::{entry_from_stat, Index, IndexEntry, MODE_REGULAR};
-use grit_lib::merge_file::MergeFavor;
-use grit_lib::merge_trees::{
+use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
+use grit_lib::error::Result;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::index::{entry_from_stat, Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::staging::stage_worktree_changes;
 use grit_lib::porcelain::stash::{apply_stash, push_stash, StashCreateOptions};
 use grit_lib::refs;
 use grit_lib::repo::{init_repository, Repository};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use tempfile::TempDir;
 
 const BENCH_IDENT: &str = "Bench <bench@grit-scm.test> 1700000000 +0000";

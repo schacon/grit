@@ -7,13 +7,13 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use grit_lib::bitmap_walk::{BitmapWalkError, ReachabilityQuery};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::bitmap::BitmapIndex;
+use grit_lib::objects::bitmap::{BitmapWalkError, ReachabilityQuery};
 use grit_lib::objects::ObjectId;
-use grit_lib::pack_bitmap::BitmapIndex;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::MissingAction;
-use grit_lib::rev_parse::resolve_revision_for_range_end;
+use grit_lib::revwalk::rev_list::MissingAction;
+use grit_lib::revwalk::rev_parse::resolve_revision_for_range_end;
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);

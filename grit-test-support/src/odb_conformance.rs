@@ -5,8 +5,8 @@
 //!
 //! ```no_run
 //! use grit_lib::objects::{HashAlgo, ObjectKind};
-//! use grit_lib::odb::store::{MemoryStore, ObjectStore, WritableObjectStore};
-//! use grit_lib::odb::WriteOptions;
+//! use grit_lib::objects::odb::store::{MemoryStore, ObjectStore, WritableObjectStore};
+//! use grit_lib::objects::odb::WriteOptions;
 //! use grit_test_support::odb_conformance::{run_read_suite, run_write_suite};
 //!
 //! fn seed(specs: &[(ObjectKind, Vec<u8>)]) -> MemoryStore {
@@ -32,10 +32,10 @@ use std::sync::Arc;
 use std::thread;
 
 use grit_lib::error::Result;
-use grit_lib::hash;
+use grit_lib::objects::hash;
+use grit_lib::objects::odb::store::{ObjectStore, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
-use grit_lib::odb::store::{ObjectStore, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
 
 const LARGE_BLOB_LEN: usize = 8 * 1024 * 1024;
 

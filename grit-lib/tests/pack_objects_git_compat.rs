@@ -1,15 +1,15 @@
-//! Git compatibility for [`grit_lib::pack_objects`] packs: `index-pack --strict`, `fsck`,
+//! Git compatibility for [`grit_lib::objects::pack_objects`] packs: `index-pack --strict`, `fsck`,
 //! thin-pack fix, size parity vs `git pack-objects --revs`, and SHA-256 repos.
 
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
+use grit_lib::objects::unpack_objects::pack_bytes_to_object_map;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack_objects::{PackBuildOptions, PackObjects, PackObjectsOptions};
-use grit_lib::transfer::build_pack;
-use grit_lib::unpack_objects::pack_bytes_to_object_map;
+use grit_lib::remote::transfer::build_pack;
 
 const GIT_ENV: &[(&str, &str)] = &[
     ("GIT_CONFIG_GLOBAL", "/dev/null"),

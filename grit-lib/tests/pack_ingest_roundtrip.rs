@@ -1,8 +1,8 @@
 //! Pack ingest, v2 index + RIDX reverse index, and unpack-objects (upstream t5300/t5325/t5351).
 //!
 //! Asserts byte-identical `.idx` and `.rev` against `git index-pack --rev-index`, exercises
-//! [`grit_lib::index_pack::install_pack_bytes`] / [`grit_lib::index_pack::ingest_received_pack`]
-//! under every [`grit_lib::index_pack::IngestPackOptions`] variant, and cross-checks installed
+//! [`grit_lib::objects::index_pack::install_pack_bytes`] / [`grit_lib::objects::index_pack::ingest_received_pack`]
+//! under every [`grit_lib::objects::index_pack::IngestPackOptions`] variant, and cross-checks installed
 //! packs with `git verify-pack -v` and `git fsck --strict`.
 
 use std::collections::{HashMap, HashSet};
@@ -12,26 +12,26 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use flate2::write::ZlibEncoder;
-use grit_lib::hash::Parallelism;
 use grit_lib::index::MODE_REGULAR;
-use grit_lib::index_pack::{ingest_received_pack, install_pack_bytes, IngestPackOptions};
-use grit_lib::objects::{serialize_tree, HashAlgo, ObjectId, ObjectKind, TreeEntry};
-use grit_lib::odb::Odb;
-use grit_lib::pack::{
+use grit_lib::objects::hash::Parallelism;
+use grit_lib::objects::index_pack::{ingest_received_pack, install_pack_bytes, IngestPackOptions};
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{
     read_pack_bytes_cached, read_pack_index, write_v2_pack_index, write_v2_pack_index_with_trailer,
 };
-use grit_lib::pack_rev::{
+use grit_lib::objects::pack_rev::{
     append_hashfile_checksum, build_pack_rev_bytes, build_pack_rev_bytes_from_index_order_offsets,
     build_pack_rev_bytes_from_index_order_offsets_and_checksum, hashfile_checksum_valid,
     hashfile_checksum_valid_sha1, pack_rev_fsck_messages, rev_path_for_index,
     try_rev_positions_in_pack_order, verify_pack_rev_file, verify_pack_rev_file_contents,
     RIDX_HASH_ID_SHA1, RIDX_HASH_ID_SHA256, RIDX_SIGNATURE, RIDX_VERSION,
 };
-use grit_lib::transfer::{build_pack, PackBuildOptions};
-use grit_lib::unpack_objects::{
+use grit_lib::objects::unpack_objects::{
     pack_index_records_with_threads, pack_is_thin, strict_verify_packed_references, unpack_objects,
     UnpackOptions,
 };
+use grit_lib::objects::{serialize_tree, HashAlgo, ObjectId, ObjectKind, TreeEntry};
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_test_support::git;
 
 const GIT_ENV: &[(&str, &str)] = &[
@@ -857,7 +857,7 @@ fn ingest_received_pack_matches_install_sha1() {
 fn pack_builder_delta_fixture_is_not_thin() {
     let fx = shared_pack(PackShape::PackBuilderDelta, HashAlgo::Sha1).expect("fixture");
     assert!(
-        !grit_lib::unpack_objects::pack_is_thin(&fx.bytes, fx.algo),
+        !grit_lib::objects::unpack_objects::pack_is_thin(&fx.bytes, fx.algo),
         "full pack-builder delta fixture must not be classified as thin"
     );
 }
@@ -1329,7 +1329,7 @@ fn pack_index_build_errors_and_thin_pack_with_odb_base() {
 #[test]
 #[ignore = "manual RSS harness (set GRIT_PACK_IDX)"]
 fn rss_harness_verify_pack_only() {
-    use grit_lib::pack::verify_pack_and_collect;
+    use grit_lib::objects::pack::verify_pack_and_collect;
     use std::path::Path;
     let idx = std::env::var("GRIT_PACK_IDX").expect("GRIT_PACK_IDX");
     verify_pack_and_collect(Path::new(&idx)).expect("verify");
@@ -1339,9 +1339,9 @@ fn rss_harness_verify_pack_only() {
 #[test]
 #[ignore = "manual RSS harness (GRIT_CARGO_PACK + GRIT_PACK_IDX)"]
 fn rss_harness_index_then_verify() {
-    use grit_lib::hash::Parallelism;
-    use grit_lib::pack::verify_pack_and_collect;
-    use grit_lib::unpack_objects::pack_index_records_with_threads;
+    use grit_lib::objects::hash::Parallelism;
+    use grit_lib::objects::pack::verify_pack_and_collect;
+    use grit_lib::objects::unpack_objects::pack_index_records_with_threads;
     use std::path::Path;
     let pack = std::env::var("GRIT_CARGO_PACK").expect("GRIT_CARGO_PACK");
     let idx = std::env::var("GRIT_PACK_IDX").expect("GRIT_PACK_IDX");
@@ -1360,8 +1360,8 @@ fn rss_harness_index_then_verify() {
 #[test]
 #[ignore = "manual RSS harness (set GRIT_CARGO_PACK)"]
 fn rss_harness_build_index_records_only() {
-    use grit_lib::hash::Parallelism;
-    use grit_lib::unpack_objects::pack_index_records_with_threads;
+    use grit_lib::objects::hash::Parallelism;
+    use grit_lib::objects::unpack_objects::pack_index_records_with_threads;
     use std::path::Path;
     let pack = std::env::var("GRIT_CARGO_PACK").expect("GRIT_CARGO_PACK");
     let data = std::fs::read(Path::new(&pack)).expect("read pack");
@@ -1378,7 +1378,7 @@ fn rss_harness_build_index_records_only() {
 #[test]
 #[ignore = "manual RSS harness (set GRIT_CARGO_PACK)"]
 fn rss_harness_install_pack_path() {
-    use grit_lib::index_pack::{install_pack_path, IngestPackOptions};
+    use grit_lib::objects::index_pack::{install_pack_path, IngestPackOptions};
     use std::path::Path;
     let pack = std::env::var("GRIT_CARGO_PACK").expect("GRIT_CARGO_PACK");
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -1451,5 +1451,5 @@ fn read_pack_bytes_cached_serves_installed_delta_pack() {
     let cached = read_pack_bytes_cached(&pack_path).expect("read_pack_bytes_cached");
     assert_eq!(&cached[..], fx.bytes.as_slice());
     assert_pack_contains_deltas(&cached, fx.algo, "cached installed delta pack");
-    grit_lib::pack::clear_pack_cache();
+    grit_lib::objects::pack::clear_pack_cache();
 }

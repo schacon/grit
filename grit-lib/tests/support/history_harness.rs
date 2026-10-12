@@ -9,15 +9,15 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Result;
-use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{
+use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
+use grit_lib::revwalk::rev_list::{
     rev_list, split_revision_token, ObjectFilter, OrderingMode, RevListOptions,
 };
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     peel_to_commit_for_merge_base, resolve_revision_for_range_end, split_triple_dot_range,
 };
 

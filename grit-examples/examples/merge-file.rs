@@ -1,5 +1,5 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/merge_file/index.html
-use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
+use grit_lib::diff::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 
 fn main() -> grit_lib::error::Result<()> {
     let result = merge(&MergeInput {

@@ -8,9 +8,9 @@
 //! (observed over smart HTTP, whose negotiation did not pre-peel tips). The
 //! negotiator now peels tag tips to their commit, so this must succeed.
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::fetch_negotiator::SkippingNegotiator;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::remote::fetch_negotiator::SkippingNegotiator;
 use grit_lib::repo::{InitOptions, Repository};
 
 /// Write a raw object of `kind` and return its id.

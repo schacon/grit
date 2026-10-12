@@ -3,17 +3,17 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::fetch::NoProgress;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::notes::NotesRef;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::refs;
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec};
 use grit_lib::remote::ListRefsOptions;
 use grit_lib::repo::Repository;
 use grit_lib::repo_handles::{
     LockWorktreeOptions, NotesWriteOptions, StashApplyOptions, StashPushOptions,
 };
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec};
 use grit_test_support::git;
 
 fn git_cmd(root: &Path, args: &[&str]) -> String {

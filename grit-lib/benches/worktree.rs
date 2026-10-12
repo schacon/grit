@@ -7,15 +7,15 @@ mod worktree_fixture;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use grit_lib::attributes::collect_attrs_for_path;
+use grit_lib::config::environment::Environment;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::Environment;
-use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexParseContext};
 use grit_lib::objects::HashAlgo;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
+use grit_lib::worktree::attributes::collect_attrs_for_path;
+use grit_lib::worktree::ignore::IgnoreMatcher;
 
 use worktree_fixture::WorktreeBenchFixtures;
 

@@ -2,6 +2,7 @@
 
 use grit_lib::diff::zero_oid;
 use grit_lib::index::entry_from_stat;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::porcelain::branch::create_branch;
 use grit_lib::porcelain::switch::{
@@ -9,11 +10,10 @@ use grit_lib::porcelain::switch::{
     SwitchMode, SwitchOptions,
 };
 use grit_lib::porcelain::tag::{create_tag, CreateTagRequest};
-use grit_lib::reflog::read_reflog;
 use grit_lib::refs;
+use grit_lib::refs::reflog::read_reflog;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::RefStorageFormat;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;

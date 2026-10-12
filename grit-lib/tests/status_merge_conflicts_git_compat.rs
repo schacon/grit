@@ -1,6 +1,6 @@
 //! Issue #940: merge conflicts should appear once in status with merge-in-progress state.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;

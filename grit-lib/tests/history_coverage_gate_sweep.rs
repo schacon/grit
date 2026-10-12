@@ -8,24 +8,24 @@ use grit_lib::diff::{
     diff_tree_to_worktree_with_git_dir, diff_trees, diff_trees_with_renames,
     postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions, DiffStatus,
 };
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{
+use grit_lib::revwalk::rev_list::{
     merge_bases, resolve_object_walk_roots, rev_list, OrderingMode, OutputMode, RevListOptions,
 };
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_range_end,
     resolve_revision_for_verify, try_parse_double_dot_log_range,
 };
-use grit_lib::write_tree::write_tree_from_index;
 use std::fs;
 use tempfile::tempdir;
 
 fn write_tree(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     name: &str,
     blob: ObjectId,
 ) -> grit_lib::error::Result<ObjectId> {
@@ -35,7 +35,7 @@ fn write_tree(
 }
 
 fn write_commit(
-    odb: &grit_lib::odb::Odb,
+    odb: &grit_lib::objects::odb::Odb,
     tree: ObjectId,
     parents: &[ObjectId],
     msg: &str,

@@ -3,13 +3,13 @@
 mod support;
 
 use filetime::FileTime;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::diff_index_to_worktree;
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::index::Index;
-use grit_lib::repo::Repository;
-use grit_lib::split_index::{
+use grit_lib::index::split_index::{
     format_dump_split_index_file, resolve_split_index_if_needed, WriteSplitIndexRequest,
 };
+use grit_lib::index::Index;
+use grit_lib::repo::Repository;
 use std::fs;
 use std::path::Path;
 

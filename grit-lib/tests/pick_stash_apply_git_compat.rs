@@ -2,17 +2,17 @@
 
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::merge_file::MergeFavor;
-use grit_lib::merge_trees::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::stash::apply_stash;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git;
 
 const FILE_COUNT: usize = 3000;

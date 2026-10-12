@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
-use grit_lib::ref_namespace::storage_ref_name;
 use grit_lib::refs::list_refs;
+use grit_lib::refs::ref_namespace::storage_ref_name;
 use grit_lib::repo::{InitOptions, Repository};
 
 pub const AUTHOR_NAME: &str = "Refs Harness Author";
@@ -84,10 +84,10 @@ impl TestRepo {
     }
 }
 
-fn ref_storage_format(backend: Backend) -> grit_lib::ref_storage::RefStorageFormat {
+fn ref_storage_format(backend: Backend) -> grit_lib::refs::ref_storage::RefStorageFormat {
     match backend {
-        Backend::Files => grit_lib::ref_storage::RefStorageFormat::Files,
-        Backend::Reftable => grit_lib::ref_storage::RefStorageFormat::Reftable,
+        Backend::Files => grit_lib::refs::ref_storage::RefStorageFormat::Files,
+        Backend::Reftable => grit_lib::refs::ref_storage::RefStorageFormat::Reftable,
     }
 }
 

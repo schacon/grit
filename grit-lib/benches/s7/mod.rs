@@ -10,22 +10,22 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_write::{
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::error::Result as GritResult;
+use grit_lib::index::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::commit_graph::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
     CommitGraphCommitInfo,
 };
-use grit_lib::error::Result as GritResult;
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index};
 use grit_lib::objects::{
     serialize_commit, serialize_tag, CommitData, ObjectId, ObjectKind, TagData,
 };
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_pack_index};
 use grit_lib::refs::write_ref;
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_lib::repo::{init_repository, Repository};
-use grit_lib::transfer::{build_pack, PackBuildOptions};
-use grit_lib::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
 use tempfile::TempDir;
 
 const GIT_ENV: &[(&str, &str)] = &[

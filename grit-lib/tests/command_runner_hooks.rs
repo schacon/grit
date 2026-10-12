@@ -3,13 +3,13 @@
 use grit_lib::command_runner::{
     CommandEnvironment, CommandStdin, CommandStdio, RecordedResponse, RecordingRunner,
 };
-use grit_lib::crlf::run_filter;
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::FilterError;
 use grit_lib::hooks::{
     run_commit_hook_checked, run_hook_opts, CommitHookEnv, HookError, RunHookOptions,
 };
 use grit_lib::repo::Repository;
+use grit_lib::worktree::crlf::run_filter;
 use std::ffi::OsString;
 use std::process::Command;
 

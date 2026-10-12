@@ -6,13 +6,13 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use grit_lib::clone::{clone, CloneOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::{ConfigFile, ConfigScope};
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::fetch::NoProgress;
+use grit_lib::remote::clone::{clone, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::{FetchOptions, TagMode};
 use grit_lib::remote::Remote;
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{FetchOptions, TagMode};
 
 fn git(dir: Option<&Path>, args: &[&str]) {
     let mut cmd = Command::new("git");

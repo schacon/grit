@@ -4,10 +4,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{
+    cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags,
+};
 use grit_lib::porcelain::paths::{move_path, remove_paths, RemoveOptions};
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{cache_tree_fully_valid, write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git;
 
 fn git_porcelain(repo: &std::path::Path) -> String {

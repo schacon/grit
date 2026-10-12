@@ -1,7 +1,7 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/merge_base/index.html
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::merge_base::resolve_fork_point_reflog_ref;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
+use grit_lib::revwalk::merge_base::resolve_fork_point_reflog_ref;
 use std::path::Path;
 
 fn main() -> grit_lib::error::Result<()> {

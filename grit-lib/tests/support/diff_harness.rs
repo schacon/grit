@@ -6,7 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
+use grit_lib::diff::merge_file;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes_with_algorithm, count_git_lines, diff_commits,
     diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
@@ -16,12 +19,9 @@ use grit_lib::diff::{
     unified_diff_with_prefix_and_funcname_and_algorithm, DiffEntry, DiffPostprocessOptions,
     DiffPostprocessWorktree,
 };
-use grit_lib::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::Index;
-use grit_lib::merge_file;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;

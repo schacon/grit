@@ -1,6 +1,6 @@
 //! Linked worktree add/remove matches Git layout and interoperates with `git worktree list`.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, remove_linked_worktree, AddLinkedWorktreeOptions,

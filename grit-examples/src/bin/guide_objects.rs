@@ -1,8 +1,8 @@
-//! Write a blob, tree, and commit through [`grit_lib::odb::Odb`], then read them back.
+//! Write a blob, tree, and commit through [`grit_lib::objects::odb::Odb`], then read them back.
 //!
 //! Source for the library guide "Objects" page (included in the docs site).
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, CommitData, ObjectKind, TreeEntry,
 };

@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::refs::ref_storage::RefStorageFormat;
+use grit_lib::remote::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use std::io::Cursor;
 
 fn pkt_line(payload: &str) -> Vec<u8> {

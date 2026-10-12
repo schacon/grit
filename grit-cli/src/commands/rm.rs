@@ -1,9 +1,9 @@
 //! `grit rm` — remove paths from the working tree and index.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::paths::{remove_paths, RemoveOptions, RemoveOutcome};
 use grit_lib::repo::Repository;
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;

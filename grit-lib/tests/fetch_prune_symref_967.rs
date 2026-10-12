@@ -9,7 +9,7 @@ use grit_lib::refs::store::{Expected, RefUpdate};
 use grit_lib::refs::{
     commit_ref_store_batch, pack_remote_tracking_refs_for_clone, resolve_ref, write_symbolic_ref,
 };
-use grit_lib::transfer::{fetch_local, FetchOptions, TagMode, UpdateMode};
+use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode, UpdateMode};
 use grit_test_support::git;
 
 fn setup_clone_like_layout(tmp: &Path) -> (PathBuf, PathBuf, ObjectId) {

@@ -4,10 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::hash_worktree_file;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
-use grit_lib::worktree_rules::WorktreeRules;
+use grit_lib::worktree::worktree_rules::WorktreeRules;
 
 fn have_python3() -> bool {
     Command::new("python3")

@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;

@@ -9,7 +9,7 @@ use std::ops::ControlFlow;
 use std::path::Path;
 
 use grit_lib::objects::ObjectId;
-use grit_lib::reftable::{
+use grit_lib::refs::reftable::{
     read_write_options, reftable_delete_ref, reftable_list_refs, reftable_write_ref, RefValue,
     ReftableReader, ReftableStack,
 };
@@ -274,7 +274,7 @@ fn stack_write_ref_deletion_value() {
         .expect("create");
 
     let mut stack = ReftableStack::open(&git_dir).expect("open");
-    let opts = grit_lib::reftable::read_write_options(&git_dir);
+    let opts = grit_lib::refs::reftable::read_write_options(&git_dir);
     stack
         .write_ref("refs/heads/del-me", RefValue::Deletion, None, &opts)
         .expect("delete via stack");

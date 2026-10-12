@@ -7,10 +7,10 @@ mod support;
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{
     parse_config_parameters, ConfigFile, ConfigScope, ConfigSet, IncludeContext,
 };
-use grit_lib::environment::Environment;
 use grit_lib::error::Error;
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;

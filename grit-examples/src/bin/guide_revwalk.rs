@@ -1,12 +1,12 @@
-//! Walk commit history with [`grit_lib::rev_list::rev_list`] and compute a merge base.
+//! Walk commit history with [`grit_lib::revwalk::rev_list::rev_list`] and compute a merge base.
 //!
 //! Source for the library guide "Revwalk" page (included in the docs site).
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::merge_base::merge_bases_first_vs_rest;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
-use grit_lib::rev_parse::{resolve_revision, split_double_dot_range};
+use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_parse::{resolve_revision, split_double_dot_range};
 use std::path::Path;
 
 fn main() -> Result<(), grit_lib::error::Error> {

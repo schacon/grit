@@ -4,15 +4,15 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::patch_ids::compute_patch_id;
+use grit_lib::diff::rerere::rerere_conflict_id;
+use grit_lib::objects::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::objects::HashAlgo;
-use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
-use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rerere::rerere_conflict_id;
 use grit_test_support::git;
 
 fn git_sha256_supported() -> bool {

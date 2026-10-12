@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use grit_lib::clone::{clone as clone_repo, CloneOptions};
-use grit_lib::environment::Environment;
-use grit_lib::fetch::NoProgress;
-use grit_lib::index_pack::{
+use grit_lib::config::environment::Environment;
+use grit_lib::objects::index_pack::{
     last_resolved_ingest_threads_for_tests, set_ingest_thread_recording_for_tests,
 };
 use grit_lib::parallel::ThreadPolicy;
+use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::DefaultHttpClientFactory;
 
 fn git(dir: &Path, args: &[&str]) {

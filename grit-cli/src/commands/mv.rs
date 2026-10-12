@@ -1,9 +1,9 @@
 //! `grit mv` — rename or move tracked paths.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::paths::move_path;
 use grit_lib::repo::Repository;
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;

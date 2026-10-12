@@ -2,17 +2,17 @@
 
 mod support;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::ref_exclusions::RefExclusions;
+use grit_lib::refs::ref_exclusions::RefExclusions;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{
+use grit_lib::rev_list_error::RevListError;
+use grit_lib::revwalk::rev_list::{
     collect_revision_specs_from_stdin_lines, commit_tips_from_named_refs,
     reachable_object_ids_for_cat_file, rev_list, select_bisect_commits, MissingAction,
     ObjectFilter, RevListOptions,
 };
-use grit_lib::rev_list_error::RevListError;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -282,7 +282,7 @@ fn t6112_object_filters_match_git() {
         ("tree:0", ObjectFilter::TreeDepth(0)),
         (
             "object:type=commit",
-            ObjectFilter::ObjectType(grit_lib::rev_list::FilterObjectKind::Commit),
+            ObjectFilter::ObjectType(grit_lib::revwalk::rev_list::FilterObjectKind::Commit),
         ),
     ];
     for (spec, filter) in cases {

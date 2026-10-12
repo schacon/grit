@@ -7,15 +7,15 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::midx::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::bitmap::BitmapIndex;
+use grit_lib::objects::midx::{
     compact_multi_pack_index, midx_checksum_hex, resolve_midx_bitmap_layer,
     write_multi_pack_index_with_options, MidxBitmapWriteOutcome, WriteMultiPackIndexOptions,
 };
 use grit_lib::objects::ObjectId;
-use grit_lib::pack_bitmap::BitmapIndex;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use grit_test_support::{HashAlgo, RepoFixture};
 
 use midx_support::{
@@ -277,7 +277,7 @@ fn grit_reads_git_midx_bitmap_after_grit_write_and_vice_versa() {
     let grit_index = BitmapIndex::open(&repo).expect("open").expect("bitmap");
     verify_all_commit_bitmaps(&repo, &grit_index);
 
-    grit_lib::midx::clear_pack_midx_state(&pack_dir).expect("clear");
+    grit_lib::objects::midx::clear_pack_midx_state(&pack_dir).expect("clear");
     git_ok(
         &fixture,
         &[

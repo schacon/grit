@@ -1,8 +1,8 @@
 //! `Odb::open_stream` error propagation (corrupt local loose, alternates fallback).
 
 use grit_lib::error::Error;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectKind;
-use grit_lib::odb::Odb;
 use std::fs;
 use tempfile::TempDir;
 

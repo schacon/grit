@@ -12,8 +12,8 @@ use std::thread;
 
 use grit_lib::error::Error;
 use grit_lib::objects::{HashAlgo, ObjectId};
-use grit_lib::reflog::ReflogEntry;
-use grit_lib::reftable::{
+use grit_lib::refs::reflog::ReflogEntry;
+use grit_lib::refs::reftable::{
     read_write_options, reftable_append_reflog, reftable_create_reflog, reftable_delete_ref,
     reftable_delete_reflog, reftable_list_reflog_refs, reftable_log_record_for_commit,
     reftable_read_reflog, reftable_reflog_exists, reftable_replace_reflog, reftable_resolve_ref,

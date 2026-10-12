@@ -6,14 +6,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use grit_lib::attributes::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::repo::Repository;
+use grit_lib::worktree::attributes::{
     attribute_matching_ignore_case, collect_attrs_for_path,
     load_gitattributes_for_check_attr_cached, load_gitattributes_for_check_attr_source,
     load_gitattributes_stack, normalize_rel_path, path_relative_to_worktree, resolve_tree_oid,
     AttrValue, ParsedGitAttributes,
 };
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::repo::Repository;
 
 const AUTHOR: &str = "Attributes Harness";
 const EMAIL: &str = "attributes-harness@example.com";

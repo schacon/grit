@@ -2,9 +2,9 @@
 
 mod support;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
 use support::{build_commit_dag, git_rev_list, HistoryRepo};
 

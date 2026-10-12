@@ -2,8 +2,8 @@
 
 use std::process::Command;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_trees, DiffStatus};
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::checkout::checkout_between_trees;

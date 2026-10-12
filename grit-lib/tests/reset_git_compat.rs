@@ -1,9 +1,9 @@
 //! Round-trip `grit reset` with system `git fsck` / `git status`.
 
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::{objects, refs, RefStorageFormat};
 use grit_test_support::git_cmd;
 use tempfile::TempDir;

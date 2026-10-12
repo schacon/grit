@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_commits_with_renames, DiffStatus};
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_test_support::git;

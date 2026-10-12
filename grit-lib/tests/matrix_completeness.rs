@@ -47,16 +47,16 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use grit_lib::error::{Error, Result as GritResult};
-use grit_lib::fetch::{fetch_remote, NoProgress};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
 use grit_lib::pkt_line;
-use grit_lib::push::{push_http, push_remote};
-use grit_lib::push_report::PushRefStatus;
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
-use grit_lib::transport::http::{http_client_arc, HttpClient};
-use grit_lib::transport::{
+use grit_lib::remote::fetch::{fetch_remote, NoProgress};
+use grit_lib::remote::push::{push_http, push_remote};
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
+use grit_lib::remote::transport::http::{http_client_arc, HttpClient};
+use grit_lib::remote::transport::{
     read_advertisement, ConnectOptions, Connection, GitDaemonTransport, Service, SshTransport,
     Transport,
 };
@@ -568,7 +568,7 @@ fn push_http_rejects_v2_receive_pack_advertisement_typed() {
     let local_git = local.join(".git");
     let main_oid = rev_parse(&local, "HEAD");
 
-    let client = grit_lib::transport::http::http_client_arc(FakeHttpClient {
+    let client = grit_lib::remote::transport::http::http_client_arc(FakeHttpClient {
         get_body: v2_receive_pack_advertisement(),
         get_err: None,
         post_err: Some("POST must not be reached for a v2 advertisement".to_owned()),
@@ -611,7 +611,7 @@ fn push_http_propagates_discovery_transport_error_typed() {
 
     // Discovery GET fails (connection refused / DNS failure shape). push_http must
     // surface a typed Error, not panic or hang.
-    let client = grit_lib::transport::http::http_client_arc(FakeHttpClient {
+    let client = grit_lib::remote::transport::http::http_client_arc(FakeHttpClient {
         get_body: Vec::new(),
         get_err: Some("connection refused (os error 61)".to_owned()),
         post_err: None,
@@ -646,7 +646,7 @@ fn push_http_propagates_discovery_transport_error_typed() {
 
 #[test]
 fn ssh_connect_refused_port_is_remote_read_failed_not_hang() {
-    use grit_lib::environment::Environment;
+    use grit_lib::config::environment::Environment;
     use std::ffi::OsString;
     use std::sync::Arc;
 
@@ -882,7 +882,7 @@ fn shallow_depth1_with_all_tags_over_git_daemon() {
     );
 
     // The shallow boundary is recorded on disk and surfaced in the outcome.
-    let on_disk = grit_lib::shallow::load_shallow_oids(&local_git).expect("load shallow");
+    let on_disk = grit_lib::remote::shallow::load_shallow_oids(&local_git).expect("load shallow");
     assert!(
         on_disk.contains(&tip),
         "the shallow file must graft the tip {} (boundary), got {:?}",

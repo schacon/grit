@@ -4,9 +4,9 @@ mod support;
 
 use std::path::Path;
 
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{
+use grit_lib::revwalk::rev_parse::{
     abbreviate_ref_name, ambiguous_object_hint_lines, commit_parents_for_navigation,
     discover_optional, expand_at_minus_to_branch_name, expand_parent_shorthand_rev_parse_lines,
     expand_rev_token_circ_bang, is_inside_git_dir, is_inside_work_tree, list_all_abbrev_matches,
@@ -112,7 +112,8 @@ fn parent_shorthand_and_circ_bang_expansion() {
     assert!(!lines.is_empty());
     let circ = expand_rev_token_circ_bang(&repo, "main").expect("circ");
     assert!(!circ.is_empty());
-    let tip = grit_lib::rev_parse::resolve_revision_for_verify(&repo, "main").expect("main");
+    let tip =
+        grit_lib::revwalk::rev_parse::resolve_revision_for_verify(&repo, "main").expect("main");
     let parents = commit_parents_for_navigation(&repo, tip).expect("parents");
     assert!(!parents.is_empty());
 }
@@ -124,7 +125,8 @@ fn abbrev_and_reflog_helpers() {
     commit_file(wt, "f", "1\n", "one");
     commit_file(wt, "f", "2\n", "two");
     let repo = open_grit(wt);
-    let head = grit_lib::rev_parse::resolve_revision_for_verify(&repo, "HEAD").expect("head");
+    let head =
+        grit_lib::revwalk::rev_parse::resolve_revision_for_verify(&repo, "HEAD").expect("head");
     let prefix = &head.to_hex()[..4];
     let _ = list_all_abbrev_matches(&repo, prefix).expect("all abbrev");
     let _ = list_loose_abbrev_matches(&repo, prefix).expect("loose abbrev");
@@ -151,10 +153,11 @@ fn describe_style_name_and_triple_dot() {
     commit_file(wt, "f.txt", "3\n", "three");
     git(wt, &["checkout", "main"]);
     let repo = open_grit(wt);
-    let head = grit_lib::rev_parse::resolve_revision_for_verify(&repo, "HEAD").expect("head");
+    let head =
+        grit_lib::revwalk::rev_parse::resolve_revision_for_verify(&repo, "HEAD").expect("head");
     let abbrev = &head.to_hex()[..7];
     let describe = format!("v1.0-1-g{abbrev}");
-    let _ = grit_lib::rev_parse::resolve_revision_for_verify(&repo, &describe);
-    let _ = grit_lib::rev_parse::resolve_revision_as_commit(&repo, "main...side");
-    let _ = grit_lib::rev_parse::resolve_revision(&repo, "HEAD^{tree}");
+    let _ = grit_lib::revwalk::rev_parse::resolve_revision_for_verify(&repo, &describe);
+    let _ = grit_lib::revwalk::rev_parse::resolve_revision_as_commit(&repo, "main...side");
+    let _ = grit_lib::revwalk::rev_parse::resolve_revision(&repo, "HEAD^{tree}");
 }

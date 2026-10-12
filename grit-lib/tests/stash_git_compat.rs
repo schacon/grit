@@ -8,8 +8,8 @@ use grit_lib::porcelain::stash::{
 };
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::reflog::read_reflog;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::refs::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{add_linked_worktree, AddLinkedWorktreeOptions};
 use grit_test_support::git;

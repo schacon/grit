@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use grit_lib::hash;
+use grit_lib::objects::hash;
 use grit_lib::objects::{HashAlgo, ObjectKind};
 
 /// Compute the Git blob object id for a file (same as `git hash-object` without `-w`).

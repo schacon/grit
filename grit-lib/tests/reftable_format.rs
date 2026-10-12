@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
-use grit_lib::reftable::{
+use grit_lib::refs::reftable::{
     dump_reftable_blocks, read_write_options, reftable_append_reflog, reftable_create_reflog,
     reftable_delete_ref, reftable_delete_reflog, reftable_list_reflog_refs, reftable_list_refs,
     reftable_read_reflog, reftable_read_symbolic_ref, reftable_reflog_exists,

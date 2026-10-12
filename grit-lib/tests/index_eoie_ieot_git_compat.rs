@@ -4,10 +4,10 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::hash::hash_object;
 use grit_lib::index::{Index, IndexParseContext};
+use grit_lib::objects::hash::hash_object;
 use grit_lib::objects::HashAlgo;
 use grit_lib::objects::ObjectKind;
 use grit_lib::parallel::ThreadPolicy;

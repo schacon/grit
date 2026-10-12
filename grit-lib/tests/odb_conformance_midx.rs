@@ -14,14 +14,14 @@ use std::sync::Arc;
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use grit_lib::hash;
-use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
-use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectKind};
-use grit_lib::odb::store::{
+use grit_lib::objects::hash;
+use grit_lib::objects::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
+use grit_lib::objects::odb::store::{
     MidxObjects, MidxObjectsStatus, ObjectStore, ObjectStream, PackedObjects,
 };
-use grit_lib::pack::{clear_pack_cache, write_v2_pack_index};
-use grit_lib::pack_store::PackStore;
+use grit_lib::objects::pack::{clear_pack_cache, write_v2_pack_index};
+use grit_lib::objects::pack_store::PackStore;
+use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectKind};
 use grit_test_support::git_supports_sha256;
 use grit_test_support::objects::HashAlgo as FixtureHashAlgo;
 use grit_test_support::odb_conformance::run_read_suite;
@@ -440,7 +440,7 @@ fn grit_incremental_corrupt_tip_makes_store_unusable() {
     }
     std::fs::write(&tip, &data).expect("write corrupt tip");
     clear_pack_cache();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
 
     let store = Arc::new(PackStore::new(objects.clone()));
     let midx = MidxObjects::new(Arc::clone(&store), true).expect("open");
@@ -477,7 +477,7 @@ fn checksum_valid_missing_oid_fanout_chunk_midx_unusable() {
         );
     });
     clear_pack_cache();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
 
     let store = Arc::new(PackStore::new(objects.clone()));
     let midx = MidxObjects::new(Arc::clone(&store), true).expect("open");
@@ -511,7 +511,7 @@ fn corrupt_midx_reports_unusable_and_packs_still_read() {
         }
     });
     clear_pack_cache();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
 
     let store = Arc::new(PackStore::new(objects.clone()));
     let midx = MidxObjects::new(Arc::clone(&store), true).expect("open");

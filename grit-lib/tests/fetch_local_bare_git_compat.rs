@@ -1,7 +1,7 @@
 //! `fetch_local` from a `git clone --bare` remote (guide_network layout).
 
 use grit_lib::refs::resolve_ref;
-use grit_lib::transfer::{fetch_local, FetchOptions, TagMode};
+use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};
 use grit_test_support::git;
 
 #[test]

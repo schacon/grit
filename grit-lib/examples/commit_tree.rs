@@ -3,11 +3,11 @@
 //!
 //! Run: `cargo run -p grit-lib --example commit_tree`
 
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::write_tree::write_tree_from_index;
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;

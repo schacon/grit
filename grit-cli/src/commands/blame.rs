@@ -7,7 +7,7 @@ use std::ops::RangeInclusive;
 use anyhow::{Context, Result};
 use grit_lib::blame::{blame_file, BlameOptions, BlameResult};
 use grit_lib::objects::ObjectId;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::revwalk::rev_parse::resolve_revision;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -125,7 +125,7 @@ pub fn run(
         .with_context(|| "could not parse line range")?;
 
     let normalized = if let Some(wt) = repo.work_tree() {
-        grit_lib::pathspec::normalize_worktree_file_path(&file, wt, None)
+        grit_lib::worktree::pathspec::normalize_worktree_file_path(&file, wt, None)
     } else {
         file.clone()
     };

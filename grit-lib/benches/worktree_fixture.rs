@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use filetime::{set_file_mtime, FileTime};
-use grit_lib::attributes::{load_gitattributes_stack, ParsedGitAttributes};
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{ConfigSet, LoadConfigOptions};
-use grit_lib::environment::Environment;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::ObjectId;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::{init_repository, Repository};
+use grit_lib::worktree::attributes::{load_gitattributes_stack, ParsedGitAttributes};
 use tempfile::TempDir;
 
 const BENCH_OID_BYTE: u8 = 0x42;

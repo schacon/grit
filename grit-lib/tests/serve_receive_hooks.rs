@@ -10,11 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use grit_lib::command_runner::{CommandRunner, RecordedResponse, RecordingRunner};
-use grit_lib::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::objects::{HashAlgo, ObjectId};
 use grit_lib::refs::resolve_ref;
+use grit_lib::remote::serve::{
+    receive_pack, ProtocolVersion, ReceiveOutcome, ReceivePolicy, ServeOptions,
+};
 use grit_lib::repo::Repository;
-use grit_lib::serve::{receive_pack, ProtocolVersion, ReceiveOutcome, ReceivePolicy, ServeOptions};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

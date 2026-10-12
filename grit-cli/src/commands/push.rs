@@ -6,10 +6,10 @@
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::push_report::PushRefStatus;
 use grit_lib::refs;
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::PushRefSpec;
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::transfer::PushRefSpec;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -18,9 +18,9 @@ use crate::commands::auth;
 use crate::context;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use grit_lib::fetch::NoProgress;
+use grit_lib::remote::fetch::NoProgress;
+use grit_lib::remote::transfer::{resolve_push_delete_ref, PushOptions};
 use grit_lib::remote::{DefaultHttpClientFactory, ListRefsOptions, Remote, DEFAULT_REMOTE};
-use grit_lib::transfer::{resolve_push_delete_ref, PushOptions};
 use std::collections::HashSet;
 
 /// Result of `grit push`: the per-ref outcomes for the remote.
@@ -270,7 +270,7 @@ fn push_once(
     remote_name: &str,
     specs: &[PushRefSpec],
     factory: &DefaultHttpClientFactory,
-) -> Result<grit_lib::transfer::PushOutcome> {
+) -> Result<grit_lib::remote::transfer::PushOutcome> {
     Remote::from_config(config, remote_name)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
         .push(

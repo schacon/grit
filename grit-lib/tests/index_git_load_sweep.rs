@@ -5,11 +5,11 @@ mod support;
 use std::fs;
 use std::process::Command;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::Index;
-use grit_lib::odb::Odb;
+use grit_lib::objects::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 use support::{git, seed_multidir_repo, HistoryRepo};
 
@@ -34,7 +34,7 @@ fn exercise_index_public_api(repo: &Repository, index: &mut Index) {
     let _ = index.has_stage0_descendant_under("a");
     let _ = write_tree_update_index(repo.odb(), index, "", WriteTreeFlags::default());
     let _ = Index::load_expand_sparse(&repo.index_handle().path(), repo.odb());
-    if let Ok(head) = grit_lib::rev_parse::resolve_revision(repo, "HEAD") {
+    if let Ok(head) = grit_lib::revwalk::rev_parse::resolve_revision(repo, "HEAD") {
         let head_obj = repo.odb().read(&head).ok();
         if let Some(obj) = head_obj {
             if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {

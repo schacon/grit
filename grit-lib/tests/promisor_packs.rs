@@ -1,16 +1,16 @@
 //! Promisor packs and partial-clone object visibility — t5616 / t5330 object-level scenarios.
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
-use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack::clear_pack_cache;
-use grit_lib::promisor::{
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::clear_pack_cache;
+use grit_lib::objects::promisor::{
     promisor_expanded_object_ids, promisor_pack_and_tag_targets, promisor_pack_object_ids,
     promisor_pack_peeled_tag_targets, read_promisor_missing_oids, repo_treats_promisor_packs,
     write_promisor_marker, PROMISOR_MISSING_FILE,
 };
+use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_test_support::git_cmd;
 use std::collections::HashSet;
@@ -111,7 +111,7 @@ fn promisor_partial_clone_pack_markers_and_config() {
     )
     .expect("open");
     let cfg = ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         true,
     )
@@ -201,7 +201,7 @@ fn promisor_remote_dot_promisor_config_enables_treatment() {
     )
     .expect("cfg");
     let cfg = ConfigSet::load(
-        &grit_lib::environment::Environment::capture_process(),
+        &grit_lib::config::environment::Environment::capture_process(),
         Some(&git_dir),
         true,
     )

@@ -4,17 +4,17 @@ mod support;
 
 use std::fs;
 
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::environment::{Environment, RepositoryOptions};
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
-use grit_lib::objects::ObjectKind;
-use grit_lib::repo::Repository;
-use grit_lib::sparse_checkout::{
+use grit_lib::index::sparse_checkout::{
     apply_sparse_checkout_skip_worktree, clear_skip_worktree_from_present_files,
     parse_sparse_checkout_file, path_in_sparse_checkout_patterns, path_matches_sparse_patterns,
     ConePatterns, NonConePatterns,
 };
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::objects::ObjectKind;
+use grit_lib::repo::Repository;
 
 use support::{assert_git_fsck_strict, git, seed_multidir_repo, HistoryRepo};
 

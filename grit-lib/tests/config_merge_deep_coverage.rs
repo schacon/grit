@@ -4,8 +4,8 @@ mod support;
 
 use std::fs;
 
+use grit_lib::config::environment::Environment;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet, LoadConfigOptions};
-use grit_lib::environment::Environment;
 use grit_lib::repo::{InitOptions, Repository};
 use support::{default_load_opts, isolated_env};
 use tempfile::tempdir;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use grit_examples::{checkout_tree, commit_tree, entries_from_tree, resolve_name};
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;

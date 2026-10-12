@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
+use grit_lib::objects::odb::store::{ObjectStore, PackFilter, PackedObjects};
+use grit_lib::objects::pack::clear_pack_cache;
+use grit_lib::objects::pack_store::PackStore;
 use grit_lib::objects::{Object, ObjectId, ObjectKind};
-use grit_lib::odb::store::{ObjectStore, PackFilter, PackedObjects};
-use grit_lib::pack::clear_pack_cache;
-use grit_lib::pack_store::PackStore;
 use tempfile::TempDir;
 
 fn git_in(dir: &Path, args: &[&str]) {

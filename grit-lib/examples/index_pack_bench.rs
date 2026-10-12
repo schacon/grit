@@ -8,10 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use grit_lib::hash::Parallelism;
-use grit_lib::odb::Odb;
-use grit_lib::pack::write_v2_pack_index_with_trailer;
-use grit_lib::unpack_objects::pack_index_records_with_threads;
+use grit_lib::objects::hash::Parallelism;
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::write_v2_pack_index_with_trailer;
+use grit_lib::objects::unpack_objects::pack_index_records_with_threads;
 
 fn main() -> grit_lib::error::Result<()> {
     let pack_path = env::var("GRIT_INDEX_PACK_BENCH_PACK").expect("set GRIT_INDEX_PACK_BENCH_PACK");

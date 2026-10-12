@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::remote::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
 use grit_lib::remote::Remote;
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{FetchOptions, PushOptions, PushRefSpec, TagMode};
 
 fn git(dir: Option<&Path>, args: &[&str]) -> String {
     let mut cmd = Command::new("git");
@@ -169,14 +169,19 @@ fn git_daemon_noop_fetch_and_push_send_flush_not_hangup() {
         .fetch(
             &repo,
             fetch_opts.clone(),
-            &mut grit_lib::fetch::NoProgress,
+            &mut grit_lib::remote::fetch::NoProgress,
             None,
         )
         .unwrap();
     assert_eq!(first.transfer.bytes, 0, "expected noop fetch after clone");
 
     remote
-        .fetch(&repo, fetch_opts, &mut grit_lib::fetch::NoProgress, None)
+        .fetch(
+            &repo,
+            fetch_opts,
+            &mut grit_lib::remote::fetch::NoProgress,
+            None,
+        )
         .unwrap();
 
     let main_tip = grit_lib::refs::resolve_ref(repo.git_dir(), "refs/heads/main").unwrap();
@@ -192,7 +197,7 @@ fn git_daemon_noop_fetch_and_push_send_flush_not_hangup() {
                 expect_absent: false,
             }],
             PushOptions::default(),
-            &mut grit_lib::fetch::NoProgress,
+            &mut grit_lib::remote::fetch::NoProgress,
             None,
         )
         .unwrap();

@@ -6,9 +6,9 @@ use std::ops::ControlFlow;
 use std::process::{Command, Stdio};
 
 use flate2::Compression;
+use grit_lib::objects::odb::store::{LooseStore, ObjectStore, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::odb::store::{LooseStore, ObjectStore, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
 use grit_test_support::git_supports_sha256;
 use grit_test_support::objects::{
     git_cat_file_batch_check, git_fsck, HashAlgo as FixtureAlgo, RepoFixture,

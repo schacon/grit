@@ -6,9 +6,9 @@ pub mod midx_support;
 
 use std::fs;
 
-use grit_lib::midx::{try_read_object_via_midx, verify_midx, WriteMultiPackIndexOptions};
+use grit_lib::objects::midx::{try_read_object_via_midx, verify_midx, WriteMultiPackIndexOptions};
+use grit_lib::objects::pack::clear_pack_cache;
 use grit_lib::objects::ObjectId;
-use grit_lib::pack::clear_pack_cache;
 use grit_test_support::objects::HashAlgo;
 
 use grit_test_support::objects::RepoFixture;
@@ -41,7 +41,7 @@ fn assert_read_fallback_via_odb(repo: &RepoFixture, objects: &std::path::Path, o
     let git_dir = repo.path().join(".git");
     remove_loose_object(objects, oid);
     clear_pack_cache();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&objects.join("pack"));
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&objects.join("pack"));
     let odb = odb_with_midx_config(objects, &git_dir, true);
     let via_midx_on = odb
         .read(oid)
@@ -56,7 +56,7 @@ fn assert_read_fallback_via_odb(repo: &RepoFixture, objects: &std::path::Path, o
 
 fn assert_midx_read_skips_or_none(objects: &std::path::Path, oid: &ObjectId) {
     clear_pack_cache();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&objects.join("pack"));
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&objects.join("pack"));
     match try_read_object_via_midx(objects, oid) {
         Ok(None) => {}
         Ok(Some(_)) => panic!("expected MIDX read to skip corrupt index"),
@@ -153,9 +153,9 @@ fn verify_hash_version_mismatch() {
     });
     assert_verify_reports(&objects, "hash version");
     match try_read_object_via_midx(&objects, &oid) {
-        Err(grit_lib::error::Error::Midx(
-            grit_lib::midx_error::MidxError::HashVersionMismatch { .. },
-        )) => {}
+        Err(grit_lib::error::Error::Midx(grit_lib::error::MidxError::HashVersionMismatch {
+            ..
+        })) => {}
         other => panic!("expected hash-version MIDX error, got {other:?}"),
     }
     assert_read_fallback_via_odb(&repo, &objects, &oid);
@@ -307,7 +307,7 @@ fn verify_v1_pack_names_out_of_order() {
         return;
     };
     let pack_dir = objects.join("pack");
-    grit_lib::midx::write_multi_pack_index_with_options(
+    grit_lib::objects::midx::write_multi_pack_index_with_options(
         &pack_dir,
         &WriteMultiPackIndexOptions {
             version: Some(1),
@@ -315,7 +315,7 @@ fn verify_v1_pack_names_out_of_order() {
         },
     )
     .expect("rewrite v1");
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
     patch_midx_file(&pack_dir, |data| {
         if let Some((pn_off, pn_len)) = find_chunk(data, CHUNK_PACKNAMES) {
             let end = (pn_off + pn_len).min(data.len());
@@ -407,7 +407,7 @@ fn read_with_corrupt_pack_index_still_resolves_other_objects() {
         return;
     };
     let pack_dir = objects.join("pack");
-    let names = grit_lib::midx::read_midx_pack_idx_names(&objects).expect("names");
+    let names = grit_lib::objects::midx::read_midx_pack_idx_names(&objects).expect("names");
     if names.len() < 2 {
         eprintln!("SKIP: need multiple packs");
         return;
@@ -422,8 +422,8 @@ fn read_with_corrupt_pack_index_still_resolves_other_objects() {
         idx_bytes[last] ^= 0x7f;
         fs::write(&victim, &idx_bytes).expect("write corrupt idx");
     }
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
-    grit_lib::pack::clear_pack_cache();
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::pack::clear_pack_cache();
     let _ = try_read_object_via_midx(&objects, &oid);
     assert_read_fallback_via_odb(&repo, &objects, &oid);
 }
@@ -531,12 +531,12 @@ fn verify_failed_to_load_pack_file() {
         return;
     };
     let pack_dir = objects.join("pack");
-    let names = grit_lib::midx::read_midx_pack_idx_names(&objects).expect("names");
+    let names = grit_lib::objects::midx::read_midx_pack_idx_names(&objects).expect("names");
     let victim = names.first().expect("pack name");
     let stem = victim.strip_suffix(".idx").unwrap();
     std::fs::remove_file(pack_dir.join(victim)).ok();
     std::fs::remove_file(pack_dir.join(format!("{stem}.pack"))).ok();
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
     let errs = verify_midx(&objects).expect_err("verify");
     assert!(
         errs.iter().any(|e| e.contains("failed to load pack")),
@@ -553,7 +553,7 @@ fn load_reuse_tables_rejects_bad_ridx_entry() {
         return;
     };
     let pack_dir = objects.join("pack");
-    grit_lib::midx::write_multi_pack_index_with_options(
+    grit_lib::objects::midx::write_multi_pack_index_with_options(
         &pack_dir,
         &WriteMultiPackIndexOptions {
             write_bitmap: true,
@@ -570,8 +570,8 @@ fn load_reuse_tables_rejects_bad_ridx_entry() {
             }
         }
     });
-    grit_lib::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
-    assert!(grit_lib::midx::load_midx_reuse_tables(&objects).is_err());
+    grit_lib::objects::midx::evict_midx_read_cache_for_pack_dir(&pack_dir);
+    assert!(grit_lib::objects::midx::load_midx_reuse_tables(&objects).is_err());
     let _ = repo;
 }
 

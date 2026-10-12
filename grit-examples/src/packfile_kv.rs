@@ -14,10 +14,10 @@ use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::error::{Error, Result};
-use grit_lib::hash;
+use grit_lib::objects::hash;
+use grit_lib::objects::odb::store::{LooseStore, ObjectStore, ObjectStream, WritableObjectStore};
+use grit_lib::objects::odb::WriteOptions;
 use grit_lib::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
-use grit_lib::odb::store::{LooseStore, ObjectStore, ObjectStream, WritableObjectStore};
-use grit_lib::odb::WriteOptions;
 
 const MAGIC: &[u8; 8] = b"GRITPKV1";
 const HEADER_LEN: u64 = 16;
@@ -458,12 +458,12 @@ fn write_u32_be(writer: &mut impl Write, value: u32) -> Result<()> {
 pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     use std::sync::Arc;
 
-    use grit_lib::environment::RepositoryOptions;
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_lib::objects::odb::OdbBuilder;
     use grit_lib::objects::{serialize_tree, TreeEntry};
-    use grit_lib::odb::OdbBuilder;
     use grit_lib::refs::write_ref;
     use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
-    use grit_lib::rev_list::{rev_list, RevListOptions};
+    use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 
     Repository::init(
         repo_root,

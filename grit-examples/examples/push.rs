@@ -1,7 +1,7 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/protocol/index.html
-use grit_lib::protocol::{check_protocol_allowed_with, ProtocolPolicyInputs};
+use grit_lib::remote::protocol::{check_protocol_allowed_with, ProtocolPolicyInputs};
 
-fn main() -> Result<(), grit_lib::protocol::ProtocolError> {
+fn main() -> Result<(), grit_lib::remote::protocol::ProtocolError> {
     check_protocol_allowed_with(
         "https",
         &ProtocolPolicyInputs {

@@ -1,13 +1,13 @@
 //! Linked worktree admin layout and per-worktree refs vs system `git`.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::{init_worktree_config, Repository};
+use grit_lib::worktree::worktree_ref::{parse_worktree_ref, resolve_ref_storage, RefWorktreeType};
 use grit_lib::worktree::{
     add_linked_worktree, copy_filtered_worktree_config, list_worktrees, remove_linked_worktree,
     AddLinkedWorktreeOptions,
 };
-use grit_lib::worktree_ref::{parse_worktree_ref, resolve_ref_storage, RefWorktreeType};
 use grit_test_support::git;
 use std::fs;
 use std::path::Path;

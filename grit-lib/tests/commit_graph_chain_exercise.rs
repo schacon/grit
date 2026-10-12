@@ -3,12 +3,12 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::bloom::BloomFilterSettings;
-use grit_lib::commit_graph_file::{
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::bloom::BloomFilterSettings;
+use grit_lib::objects::commit_graph::load_commit_graph_commit_info;
+use grit_lib::objects::commit_graph::{
     diff_changed_paths_for_bloom, dump_bloom_filters, CommitGraphChain,
 };
-use grit_lib::commit_graph_write::load_commit_graph_commit_info;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
 
@@ -92,7 +92,7 @@ fn chain_accessors_and_bloom_helpers_on_split_graph() {
     let graph_path = dir.path().join(".git/objects/info/commit-graphs");
     for path in chain.layer_paths_oldest_first() {
         let _ = dump_bloom_filters(&path);
-        let _ = grit_lib::commit_graph_file::parse_graph_file(&path);
+        let _ = grit_lib::objects::commit_graph::parse_graph_file(&path);
     }
     for oid in chain.all_oids_in_order() {
         let _ = chain.find_commit(&oid);

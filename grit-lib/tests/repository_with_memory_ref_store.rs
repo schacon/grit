@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::list_refs_for_repository;
 use grit_lib::refs::store::{
     Expected, MemoryRefStore, RawRef, RefStore, RefTransaction, RefUpdate, ReflogUpdate,
 };
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::revwalk::rev_parse::resolve_revision;
 use time::OffsetDateTime;
 
 #[test]

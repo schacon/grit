@@ -7,13 +7,13 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use grit_lib::midx::{
+use grit_lib::objects::midx::{
     midx_lookup_pack_and_offset, read_midx_objects, try_read_info_via_midx,
     try_read_object_via_midx, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
 };
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::{clear_pack_cache, read_idx_object_ids, read_pack_index_cached};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
-use grit_lib::pack::{clear_pack_cache, read_idx_object_ids, read_pack_index_cached};
 use grit_test_support::objects::{
     git_cat_file_batch_check, git_supports_sha256, BatchCheckOutcome, HashAlgo,
 };
@@ -110,9 +110,9 @@ fn append_pack_blob(body: &mut Vec<u8>, data: &[u8]) {
 /// Sparse pack with two blobs (Git requires ≥2 objects for a 64-bit idx extension slot).
 /// The large blob lives at offset `1 << 32`; grit writes a v2 `.idx` Git accepts.
 pub fn install_git_large_offset_pack(repo: &RepoFixture) -> Option<ObjectId> {
+    use grit_lib::objects::odb::Odb;
+    use grit_lib::objects::pack::{skip_one_pack_object, write_v2_pack_index};
     use grit_lib::objects::ObjectKind;
-    use grit_lib::odb::Odb;
-    use grit_lib::pack::{skip_one_pack_object, write_v2_pack_index};
     use std::io::{Read, Seek, SeekFrom, Write};
 
     let objects = repo.objects_dir();
@@ -568,7 +568,7 @@ pub fn patch_midx_file(pack_dir: &Path, patch: impl FnOnce(&mut Vec<u8>)) {
     let path = tip_midx_path(pack_dir);
     let mut data = std::fs::read(&path).expect("read midx");
     patch(&mut data);
-    grit_lib::midx::clear_pack_midx_state(pack_dir).expect("clear cache");
+    grit_lib::objects::midx::clear_pack_midx_state(pack_dir).expect("clear cache");
     std::fs::write(&path, &data).expect("write midx");
     clear_pack_cache();
 }

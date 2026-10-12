@@ -3,13 +3,13 @@
 use std::path::Path;
 use std::process::Command;
 
+use grit_lib::bundle::bundle_remote::write_bundle_from_rev_specs;
 use grit_lib::bundle::{read_header, write_bundle, Bundle, BundleError, BundleSpec, FilterSpec};
-use grit_lib::bundle_remote::write_bundle_from_rev_specs;
-use grit_lib::environment::RepositoryOptions;
-use grit_lib::index_pack::{install_pack_bytes, IngestPackOptions};
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::index_pack::{install_pack_bytes, IngestPackOptions};
 use grit_lib::objects::ObjectId;
+use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
 use grit_lib::repo::Repository;
-use grit_lib::transfer::{build_pack, PackBuildOptions};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -461,7 +461,7 @@ fn grit_write_filtered_bundle_omits_blobs_from_pack() {
     let bytes = std::fs::read(&bundle_path).expect("read");
     let pack = &bytes[bundle.pack_byte_offset() as usize..];
     let scratch = tempfile::tempdir().expect("scratch odb");
-    let odb = grit_lib::odb::Odb::new(scratch.path());
+    let odb = grit_lib::objects::odb::Odb::new(scratch.path());
     let ingested = install_pack_bytes(pack.to_vec(), &odb, &IngestPackOptions::default())
         .expect("index bundle pack");
     let mut saw_commit = false;

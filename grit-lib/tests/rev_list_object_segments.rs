@@ -1,10 +1,10 @@
-//! Public API regression: [`grit_lib::rev_list::RevListResult::object_segments`].
+//! Public API regression: [`grit_lib::revwalk::rev_list::RevListResult::object_segments`].
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectKind;
-use grit_lib::odb::Odb;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -46,7 +46,7 @@ fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
         &InitOptions {
             bare: true,
             initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
             ..InitOptions::default()
         },
     )?;

@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fixture::build_parallel_packed_blob_fixture;
+use grit_lib::objects::odb::Odb;
+use grit_lib::objects::pack::clear_pack_cache;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::pack::clear_pack_cache;
 use tempfile::TempDir;
 
 struct ParallelReadFixture {

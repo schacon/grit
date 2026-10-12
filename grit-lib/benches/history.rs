@@ -9,8 +9,8 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use grit_lib::diff::{count_changes_with_algorithm, diff_trees};
-use grit_lib::rev_list::{rev_list, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
+use grit_lib::revwalk::rev_parse::resolve_revision;
 use similar::Algorithm;
 
 use s7::HistoryBenchFixtures;

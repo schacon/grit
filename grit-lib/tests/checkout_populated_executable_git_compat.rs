@@ -5,7 +5,7 @@ mod unix {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
-    use grit_lib::environment::RepositoryOptions;
+    use grit_lib::config::environment::RepositoryOptions;
     use grit_lib::objects::ObjectId;
     use grit_lib::porcelain::checkout::checkout_between_trees;
     use grit_lib::repo::Repository;

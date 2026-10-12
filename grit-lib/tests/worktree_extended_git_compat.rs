@@ -1,6 +1,6 @@
 //! Additional linked worktree scenarios for admin layout and branch rules.
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
     add_linked_worktree, ensure_branch_not_checked_out_elsewhere,

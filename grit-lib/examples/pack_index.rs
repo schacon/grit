@@ -5,7 +5,7 @@
 //!
 //! Run: `cargo run -p grit-lib --example pack_index`
 
-use grit_lib::pack;
+use grit_lib::objects::pack;
 use grit_lib::repo::{InitOptions, Repository};
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;

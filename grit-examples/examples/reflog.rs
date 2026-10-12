@@ -1,5 +1,5 @@
 // API docs: https://docs.rs/grit-lib/latest/grit_lib/reflog/index.html
-use grit_lib::reflog::{read_reflog, reflog_path};
+use grit_lib::refs::reflog::{read_reflog, reflog_path};
 use std::path::Path;
 
 fn main() -> grit_lib::error::Result<()> {
