@@ -278,6 +278,25 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
+| t4000-diff-format.sh | raw `:mode mode oid oid status\tpath` lines vs `git diff-tree` / `diff-index` / `diff-files` | `grit-lib/tests/diff_tree_renames.rs` (`t4002_tree_index_worktree_raw_matches_git`, `t4006_diff_mode_raw_matches_git`) | partial (core raw format; not every t4000 fixture) |
+| t4001-diff-rename.sh | `-M` rename detection scores and paths | `diff_tree_renames.rs` (`t4001_rename_detection_scores_match_git`) | covered |
+| t4002-diff-basic.sh | tree↔tree, index↔tree, index↔worktree raw matrices | `diff_tree_renames.rs` (`t4002_tree_index_worktree_raw_matches_git`) | partial (representative matrix; not full canned tree corpus) |
+| t4003-diff-rename-1.sh | rename edge cases | `diff_tree_renames.rs` (`t4001_rename_detection_scores_match_git`) | partial |
+| t4005-diff-rename-2.sh | rename limits and scoring | `diff_tree_renames.rs` (`rename_limit_wide_tree_matches_git`) | partial |
+| t4006-diff-mode.sh | mode-only and type bits in raw output | `diff_tree_renames.rs` (`t4006_diff_mode_raw_matches_git`) | partial |
+| t4007-rename-3.sh | `-C` / `--find-copies-harder` vs `git diff-index` | `diff_tree_renames.rs` (`t4007_copy_detection_matches_git`) | covered |
+| t4008-diff-break-rewrite.sh | `-B` / `-B -M` index↔tree raw (`M100`, renames) | `diff_tree_renames.rs` (`t4008_break_rewrite_matches_git`) | partial (primary t4008 scenarios) |
+| t4009-diff-rename-4.sh | rename edge cases | `diff_tree_renames.rs` (`rename_limit_wide_tree_matches_git`) | partial |
+| t4011-diff-symlink.sh | symlink type in tree diff | `diff_tree_renames.rs` (`t4023_typechange_matches_git`) | partial (typechange includes symlink rewrite) |
+| t4022-diff-rename-sameness.sh | sameness and break | `diff_tree_renames.rs` (`t4008_break_rewrite_matches_git`) | partial |
+| t4023-typechange.sh | blob↔symlink typechange raw `T` | `diff_tree_renames.rs` (`t4023_typechange_matches_git`) | covered (unix) |
+| t4038-diff-combined.sh | merge `--cc` / `-c` combined raw | `grit-lib/tests/diff_combined.rs` (`t4038_combined_raw_matches_git`) | partial |
+| t4043-diff-rename-binary.sh | binary rename detection | `diff_tree_renames.rs` (`t4001_rename_detection_scores_match_git`) | partial |
+| t4046-diff-unmerged.sh | unmerged index stages | — | gap (follow-up with index step 3/4) |
+| t4054-diff-bogus-tree.sh | corrupt tree → typed `CorruptObject` | `diff_tree_renames.rs` (`t4054_bogus_tree_typed_error`) | covered |
+| t4057-diff-combined-paths.sh | combined path set vs `git diff -c --name-only` | `diff_combined.rs` (`t4057_combined_paths_octopus_matches_git`) | partial (two-parent merge scenario) |
+| t4058-diff-duplicates.sh | duplicate path entries | — | gap |
+| — | `diff.renameLimit` on wide trees (exact OID pairs) | `diff_tree_renames.rs` (`rename_limit_wide_tree_matches_git`), `diff_rename_parallel.rs` | covered |
 
 #### Revwalk: ordering and limiting
 

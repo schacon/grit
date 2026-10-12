@@ -1427,7 +1427,8 @@ pub struct DiffEntry {
     pub new_mode: String,
     /// Old object ID (zero OID for Added).
     pub old_oid: ObjectId,
-    /// New object ID (zero OID for Deleted).
+    /// New object ID (zero OID for Deleted, or for Modified index↔worktree / tree↔worktree
+    /// entries whose content lives only on disk — raw output uses the null OID on that side).
     pub new_oid: ObjectId,
     /// Similarity score (0–100) for renames/copies.
     pub score: Option<u32>,
@@ -2538,46 +2539,51 @@ fn parallel_process_blob_worktree_jobs(
         par_opts,
         est_bytes,
         |job| {
-        let data = read_regular_worktree_blob_bytes(
-            odb,
-            &job.file_path,
-            conv,
-            &job.file_attrs,
-            &job.rel_path,
-            Some(&job.entry),
-            filter_process,
-        )?;
-        let worktree_oid = if materialize_dirty_blobs {
-            odb.write_with_options(ObjectKind::Blob, &data, crate::odb::BULK_NEW_LOOSE_WRITE)?
-        } else {
-            odb.hash(ObjectKind::Blob, &data)
-        };
-        let mut eff_oid = worktree_oid;
-        if eff_oid != job.entry.oid {
-            let raw_oid = odb.hash(ObjectKind::Blob, &data);
-            if raw_oid == job.entry.oid {
-                eff_oid = job.entry.oid;
+            let data = read_regular_worktree_blob_bytes(
+                odb,
+                &job.file_path,
+                conv,
+                &job.file_attrs,
+                &job.rel_path,
+                Some(&job.entry),
+                filter_process,
+            )?;
+            let worktree_oid = if materialize_dirty_blobs {
+                odb.write_with_options(ObjectKind::Blob, &data, crate::odb::BULK_NEW_LOOSE_WRITE)?
+            } else {
+                odb.hash(ObjectKind::Blob, &data)
+            };
+            let mut eff_oid = worktree_oid;
+            if eff_oid != job.entry.oid {
+                let raw_oid = odb.hash(ObjectKind::Blob, &data);
+                if raw_oid == job.entry.oid {
+                    eff_oid = job.entry.oid;
+                }
             }
-        }
-        let mode_differs = trust_filemode && job.worktree_mode != job.entry.mode;
-        if eff_oid != job.entry.oid || mode_differs {
-            let path_owned = job.rel_path.clone();
-            Ok(Some((
-                job.entry_index,
-                DiffEntry {
-                    status: DiffStatus::Modified,
-                    old_path: Some(path_owned.clone()),
-                    new_path: Some(path_owned),
-                    old_mode: format_mode(job.entry.mode),
-                    new_mode: format_mode(job.worktree_mode),
-                    old_oid: job.entry.oid,
-                    new_oid: eff_oid,
-                    score: None,
-                },
-            )))
-        } else {
-            Ok(None)
-        }
+            let mode_differs = trust_filemode && job.worktree_mode != job.entry.mode;
+            if eff_oid != job.entry.oid || mode_differs {
+                let path_owned = job.rel_path.clone();
+                let new_oid = if eff_oid != job.entry.oid && !materialize_dirty_blobs {
+                    zero_oid()
+                } else {
+                    eff_oid
+                };
+                Ok(Some((
+                    job.entry_index,
+                    DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path_owned.clone()),
+                        new_path: Some(path_owned),
+                        old_mode: format_mode(job.entry.mode),
+                        new_mode: format_mode(job.worktree_mode),
+                        old_oid: job.entry.oid,
+                        new_oid,
+                        score: None,
+                    },
+                )))
+            } else {
+                Ok(None)
+            }
         },
     )
     .map_err(|e| match e {
@@ -2718,6 +2724,13 @@ fn push_index_blob_worktree_diff(
     let mode_differs = trust_filemode && worktree_mode != ie.mode;
     if eff_oid != ie.oid || mode_differs {
         let path_owned = path_str_ref.to_owned();
+        // `git diff-files --raw` uses the null OID for the worktree side when content differs.
+        // Staging (`diff_index_to_worktree_for_staging`) materializes blobs and needs the real OID.
+        let new_oid = if eff_oid != ie.oid && !materialize_dirty_blobs {
+            zero_oid()
+        } else {
+            eff_oid
+        };
         result.push(DiffEntry {
             status: DiffStatus::Modified,
             old_path: Some(path_owned.clone()),
@@ -2725,7 +2738,7 @@ fn push_index_blob_worktree_diff(
             old_mode: format_mode(ie.mode),
             new_mode: format_mode(worktree_mode),
             old_oid: ie.oid,
-            new_oid: eff_oid,
+            new_oid,
             score: None,
         });
     }
@@ -4494,7 +4507,10 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 let options = DiffIndexToWorktreeOptions {
                     repository_git_dir: Some(repository_git_dir.to_path_buf()),
                     refresh_index_stat_in_pass: false,
-                    for_status: true,
+                    // Tree↔worktree (`git diff <rev>:`) must hash worktree blobs (null OID in
+                    // `--raw` when dirty), not the status fast path that marks size-only drift
+                    // with identical OIDs on both sides.
+                    for_status: false,
                     config: config.cloned().map(std::sync::Arc::new),
                     ..DiffIndexToWorktreeOptions::default()
                 };
@@ -4781,7 +4797,9 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                             old_mode: format_mode(te.mode),
                             new_mode: format_mode(wt_mode),
                             old_oid: te.oid,
-                            new_oid: wt_oid,
+                            // Raw `git diff <tree>` uses a null OID on the worktree side (patch
+                            // output resolves content from the working tree).
+                            new_oid: zero_oid(),
                             score: None,
                         });
                     } else if trust_filemode && wt_mode != te.mode {
@@ -4811,6 +4829,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                     filter_fp,
                 )?;
                 if wt_oid != te.oid || (trust_filemode && wt_mode != te.mode) {
+                    let new_oid = if wt_oid != te.oid { zero_oid() } else { te.oid };
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -4818,7 +4837,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         old_mode: format_mode(te.mode),
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
-                        new_oid: wt_oid,
+                        new_oid,
                         score: None,
                     });
                 }
@@ -5193,6 +5212,7 @@ pub fn detect_renames_with_policy(
         }
     }
 
+    result = prune_break_deletions_obviated_by_renames(result);
     result.sort_by(|a, b| a.path().cmp(b.path()));
     result
 }
@@ -5547,6 +5567,259 @@ pub fn detect_copies_with_policy(
     final_result
 }
 
+/// Options for Git-style rename, copy, and break-rewrite post-processing on tree diffs.
+#[derive(Debug, Clone, Copy)]
+pub struct DiffPostprocessOptions {
+    /// When set, `--break-rewrites` threshold on Git's internal 0–[`GIT_DIFF_MAX_SCORE`] scale
+    /// (`None` = off).
+    pub break_score: Option<u64>,
+    /// `-M` similarity threshold (0–100); `100` disables rename detection.
+    pub rename_threshold: u32,
+    /// `-C` copy threshold (0–100); `None` skips copy detection.
+    pub copy_threshold: Option<u32>,
+    /// `-C --find-copies-harder`: treat unmodified source-tree paths as copy sources.
+    pub find_copies_harder: bool,
+    /// When break-rewrite runs on tree↔worktree diffs, fill `new_oid` from worktree bytes for
+    /// `--raw` output (matches `git diff <tree> -B`; leave false for index↔worktree / diff-files).
+    pub materialize_break_worktree_new_oid: bool,
+}
+
+impl Default for DiffPostprocessOptions {
+    fn default() -> Self {
+        Self {
+            break_score: None,
+            rename_threshold: 100,
+            copy_threshold: None,
+            find_copies_harder: false,
+            materialize_break_worktree_new_oid: false,
+        }
+    }
+}
+
+fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
+    Ok(odb.read(oid)?.data)
+}
+
+/// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
+fn read_new_side_bytes(odb: &Odb, entry: &DiffEntry, work_root: Option<&Path>) -> Result<Vec<u8>> {
+    if entry.new_oid != zero_oid() {
+        return blob_bytes(odb, &entry.new_oid);
+    }
+    let path = entry.new_path.as_deref().ok_or_else(|| {
+        Error::ObjectNotFound("modified entry missing new_path for worktree read".into())
+    })?;
+    let root = work_root.ok_or_else(|| {
+        Error::ObjectNotFound(format!(
+            "worktree bytes required for {} but no work_root was provided",
+            path
+        ))
+    })?;
+    std::fs::read(root.join(path)).map_err(Error::Io)
+}
+
+fn split_broken_modifications(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: Vec<DiffEntry>,
+    break_score: u64,
+) -> Result<Vec<DiffEntry>> {
+    let mut out = Vec::with_capacity(entries.len());
+    for e in entries {
+        if e.status != DiffStatus::Modified {
+            out.push(e);
+            continue;
+        }
+        let old = blob_bytes(odb, &e.old_oid)?;
+        let new = read_new_side_bytes(odb, &e, work_root)?;
+        if should_break_rewrite_pair(&old, &new, break_score) {
+            let path = e.path().to_owned();
+            out.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(path.clone()),
+                new_path: None,
+                old_mode: e.old_mode.clone(),
+                new_mode: "000000".to_owned(),
+                old_oid: e.old_oid,
+                new_oid: zero_oid(),
+                score: None,
+            });
+            out.push(DiffEntry {
+                status: DiffStatus::Added,
+                old_path: None,
+                new_path: Some(path),
+                old_mode: "000000".to_owned(),
+                new_mode: e.new_mode.clone(),
+                old_oid: zero_oid(),
+                new_oid: e.new_oid,
+                score: None,
+            });
+        } else {
+            out.push(e);
+        }
+    }
+    Ok(out)
+}
+
+fn annotate_broken_modifications(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: Vec<DiffEntry>,
+    break_score: u64,
+) -> Result<Vec<DiffEntry>> {
+    let mut out = Vec::with_capacity(entries.len());
+    for mut e in entries {
+        if e.status == DiffStatus::Modified {
+            let old = blob_bytes(odb, &e.old_oid)?;
+            let new = read_new_side_bytes(odb, &e, work_root)?;
+            if should_break_rewrite_pair(&old, &new, break_score) {
+                // `git diff-files -B` keeps plain `M` in raw output (no `M###` score suffix).
+                if e.new_oid != zero_oid() {
+                    e.score = rewrite_dissimilarity_index_percent(&old, &new);
+                }
+            }
+        }
+        out.push(e);
+    }
+    Ok(out)
+}
+
+fn materialize_break_worktree_new_oids(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: &mut [DiffEntry],
+) -> Result<()> {
+    for e in entries {
+        if e.new_oid != zero_oid() {
+            continue;
+        }
+        if !matches!(e.status, DiffStatus::Modified | DiffStatus::Added) {
+            continue;
+        }
+        let bytes = read_new_side_bytes(odb, e, work_root)?;
+        e.new_oid = odb.hash(ObjectKind::Blob, &bytes);
+    }
+    Ok(())
+}
+
+/// After break-rewrite splits a modified path into delete+add, rename detection may pair the add
+/// with another deletion (`g` → `f`). Git drops the unused delete at the rename target path.
+fn prune_break_deletions_obviated_by_renames(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    use std::collections::HashSet;
+    let rename_targets: HashSet<String> = entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Renamed)
+        .filter_map(|e| e.new_path.clone())
+        .collect();
+    if rename_targets.is_empty() {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            if e.status != DiffStatus::Deleted {
+                return true;
+            }
+            e.old_path
+                .as_ref()
+                .is_none_or(|p| !rename_targets.contains(p))
+        })
+        .collect()
+}
+
+/// Apply break-rewrite, rename, and copy detection to a flat tree or index diff.
+///
+/// `source_tree_oid` supplies `--find-copies-harder` candidates; `work_root` is used when added
+/// entries carry a zero OID (index↔worktree).
+///
+/// # Errors
+///
+/// Propagates object read failures while evaluating break scores.
+pub fn postprocess_diff_entries(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    source_tree_oid: Option<&ObjectId>,
+    work_root: Option<&Path>,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+    opts: &DiffPostprocessOptions,
+) -> Result<Vec<DiffEntry>> {
+    let mut entries = entries;
+    if let Some(break_score) = opts.break_score {
+        let rename_or_copy = opts.rename_threshold < 100 || opts.copy_threshold.is_some();
+        entries = if rename_or_copy {
+            split_broken_modifications(odb, work_root, entries, break_score)?
+        } else {
+            annotate_broken_modifications(odb, work_root, entries, break_score)?
+        };
+        if opts.materialize_break_worktree_new_oid {
+            materialize_break_worktree_new_oids(odb, work_root, &mut entries)?;
+        }
+    }
+
+    let source_tree_entries = source_tree_oid
+        .map(|t| flatten_tree_entries(odb, t))
+        .transpose()?
+        .unwrap_or_default();
+
+    if opts.copy_threshold.is_some() || opts.find_copies_harder {
+        let threshold = opts.copy_threshold.unwrap_or(opts.rename_threshold.min(99));
+        Ok(detect_copies_with_policy(
+            odb,
+            work_root,
+            entries,
+            threshold,
+            opts.find_copies_harder,
+            &source_tree_entries,
+            config,
+            thread_policy,
+        ))
+    } else if opts.rename_threshold < 100 {
+        Ok(detect_renames_with_policy(
+            odb,
+            work_root,
+            entries,
+            opts.rename_threshold,
+            config,
+            thread_policy,
+        ))
+    } else {
+        Ok(entries)
+    }
+}
+
+/// Depth-first list of `(path, mode, oid)` blob entries in a tree (for copy detection).
+pub fn flatten_tree_entries(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+) -> Result<Vec<(String, String, ObjectId)>> {
+    fn walk(
+        odb: &Odb,
+        tree_oid: &ObjectId,
+        prefix: &str,
+        out: &mut Vec<(String, String, ObjectId)>,
+    ) -> Result<()> {
+        let obj = odb.read(tree_oid)?;
+        let entries = parse_tree(&obj.data)?;
+        for e in entries {
+            let name = String::from_utf8_lossy(&e.name);
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if e.mode == 0o040000 {
+                walk(odb, &e.oid, &path, out)?;
+            } else {
+                out.push((path, format!("{:o}", e.mode), e.oid));
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    walk(odb, tree_oid, "", &mut out)?;
+    Ok(out)
+}
+
 /// Apply Git-style rename and optional copy detection for index↔worktree diffs.
 ///
 /// When `copies` is true (Git `diff.renames` / `status.renames` set to `copy`/`copies`),
@@ -5769,6 +6042,8 @@ pub fn format_raw(entry: &DiffEntry) -> String {
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{:03}", s),
         (DiffStatus::Copied, Some(s)) => format!("C{:03}", s),
+        (DiffStatus::Modified, Some(s)) => format!("M{s:03}"),
+        (DiffStatus::TypeChanged, Some(s)) => format!("T{s:03}"),
         _ => entry.status.letter().to_string(),
     };
 
@@ -5832,6 +6107,8 @@ pub fn format_raw_abbrev(entry: &DiffEntry, abbrev_len: usize) -> String {
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
         (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        (DiffStatus::Modified, Some(s)) => format!("M{s:03}"),
+        (DiffStatus::TypeChanged, Some(s)) => format!("T{s:03}"),
         _ => entry.status.letter().to_string(),
     };
 

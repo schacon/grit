@@ -1,4 +1,4 @@
-//! Hermetic `git diff --no-index` oracle helpers and grit blob patch builders for algorithm tests.
+//! Hermetic git/grit diff test helpers: blob patch oracles and tree/index/worktree raw matrices.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 
@@ -9,15 +9,25 @@ use std::process::Command;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes_with_algorithm, count_git_lines,
+    diff_commits, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
+    diff_trees_show_tree_entries, format_raw, format_raw_abbrev,
     indent_heuristic_from_config, normalize_ignore_space_change,
+    postprocess_diff_entries, tree_oid_of_commit,
     unified_diff_histogram_ignore_with_prefix_and_funcname,
-    unified_diff_with_prefix_and_funcname_and_algorithm,
+    unified_diff_with_prefix_and_funcname_and_algorithm, DiffEntry, DiffPostprocessOptions,
 };
+use grit_lib::index::Index;
+use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
+use grit_lib::parallel::ThreadPolicy;
+use grit_lib::repo::Repository;
+use grit_lib::state::resolve_head;
 use grit_lib::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_file;
 use grit_lib::ws::ws_blank_line;
 use similar::Algorithm;
 
+use super::history_harness::git;
 use super::refs_harness::null_device_for_tests;
 
 /// Line diff algorithm selection matching Git's `--diff-algorithm` / `--histogram` / etc.
@@ -733,4 +743,223 @@ pub fn grit_diffstat_block(path: &str, old: &[u8], new: &[u8], algo: LineDiffAlg
 
 pub fn git_count_lines(data: &[u8]) -> usize {
     count_git_lines(data)
+}
+
+pub fn git_quiet(dir: &Path, args: &[&str]) -> String {
+    git(dir, args)
+}
+
+pub fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", null_device_for_tests())
+        .env("GIT_CONFIG_SYSTEM", null_device_for_tests())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Diff Test")
+        .env("GIT_AUTHOR_EMAIL", "diff@example.com")
+        .env("GIT_COMMITTER_NAME", "Diff Test")
+        .env("GIT_COMMITTER_EMAIL", "diff@example.com")
+        .output()
+        .expect("spawn git")
+}
+
+pub fn rev_parse_tree(dir: &Path, rev: &str) -> ObjectId {
+    git_quiet(dir, &["rev-parse", rev])
+        .trim()
+        .parse()
+        .expect("tree oid")
+}
+
+pub fn config_with_kv(section: &str, key: &str, value: &str) -> ConfigSet {
+    let content = format!("[{section}]\n\t{key} = {value}\n");
+    let file = ConfigFile::parse(
+        std::path::Path::new("test.cfg"),
+        &content,
+        ConfigScope::Local,
+    )
+    .expect("parse config");
+    let mut set = ConfigSet::new();
+    set.merge(&file);
+    set
+}
+
+pub fn grit_raw_lines(entries: &[DiffEntry]) -> Vec<String> {
+    let mut lines: Vec<String> = entries.iter().map(format_raw).collect();
+    lines.sort();
+    lines
+}
+
+pub fn grit_raw_lines_abbrev(entries: &[DiffEntry], abbrev: usize) -> Vec<String> {
+    let mut lines: Vec<String> = entries
+        .iter()
+        .map(|e| format_raw_abbrev(e, abbrev))
+        .collect();
+    lines.sort();
+    lines
+}
+
+pub fn git_raw_lines(dir: &Path, args: &[&str]) -> Vec<String> {
+    let out = git_output(dir, args);
+    assert!(
+        out.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.starts_with(':'))
+        .map(str::to_owned)
+        .collect();
+    lines.sort();
+    lines
+}
+
+pub fn assert_raw_matches_git(grit_lines: &[String], git_lines: &[String], context: &str) {
+    assert_eq!(
+        git_lines,
+        grit_lines,
+        "{context}: grit raw diff must match system git\n\
+         git:\n{}\ngrit:\n{}",
+        git_lines.join("\n"),
+        grit_lines.join("\n")
+    );
+}
+
+pub fn postprocess(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    source_tree: Option<&ObjectId>,
+    work_root: Option<&Path>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<DiffEntry> {
+    postprocess_diff_entries(
+        odb,
+        entries,
+        source_tree,
+        work_root,
+        config,
+        &ThreadPolicy::default(),
+        opts,
+    )
+    .expect("postprocess")
+}
+
+pub struct DiffRepo {
+    _guard: tempfile::TempDir,
+    pub worktree: PathBuf,
+    pub repo: Repository,
+}
+
+impl DiffRepo {
+    pub fn init() -> Self {
+        let root = tempfile::tempdir().expect("tempdir");
+        let worktree = root.path().to_path_buf();
+        git_quiet(&worktree, &["init", "-q", "-b", "main"]);
+        let repo = Repository::discover(Some(&worktree)).expect("open");
+        Self {
+            _guard: root,
+            worktree,
+            repo,
+        }
+    }
+
+    pub fn load_index(&self) -> Index {
+        self.repo.load_index().expect("index")
+    }
+}
+
+pub fn tree_diff_raw(
+    repo: &Repository,
+    old_tree: Option<&ObjectId>,
+    new_tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw = diff_trees(&repo.odb, old_tree, new_tree, "").expect("diff_trees");
+    let entries = postprocess(&repo.odb, raw, old_tree, None, config, opts);
+    grit_raw_lines(&entries)
+}
+
+pub fn index_to_tree_raw(
+    repo: &Repository,
+    index: &Index,
+    tree: &ObjectId,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw = diff_index_to_tree(&repo.odb, index, Some(tree), false).expect("diff_index_to_tree");
+    let entries = postprocess(&repo.odb, raw, Some(tree), None, config, opts);
+    grit_raw_lines(&entries)
+}
+
+pub fn index_to_worktree_raw(
+    repo: &Repository,
+    worktree: &Path,
+    index: &mut Index,
+    head_tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw = diff_index_to_worktree(&repo.odb, index, worktree, false, false)
+        .expect("diff_index_to_worktree");
+    let entries = postprocess(&repo.odb, raw, head_tree, Some(worktree), config, opts);
+    grit_raw_lines(&entries)
+}
+
+pub fn tree_to_worktree_raw(
+    repo: &Repository,
+    worktree: &Path,
+    index: &Index,
+    tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw =
+        diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
+    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    grit_raw_lines(&entries)
+}
+
+/// Like [`tree_to_worktree_raw`], but abbreviates OIDs like `git diff <tree> --raw`.
+pub fn tree_to_worktree_raw_abbrev(
+    repo: &Repository,
+    worktree: &Path,
+    index: &Index,
+    tree: Option<&ObjectId>,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+    abbrev: usize,
+) -> Vec<String> {
+    let raw =
+        diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
+    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    grit_raw_lines_abbrev(&entries, abbrev)
+}
+
+pub fn commits_diff_raw(
+    repo: &Repository,
+    base: &ObjectId,
+    tip: &ObjectId,
+    config: &ConfigSet,
+    opts: &DiffPostprocessOptions,
+) -> Vec<String> {
+    let raw = diff_commits(&repo.odb, base, tip).expect("diff_commits");
+    let base_tree = tree_oid_of_commit(&repo.odb, base).expect("base tree");
+    let entries = postprocess(&repo.odb, raw, Some(&base_tree), None, config, opts);
+    grit_raw_lines(&entries)
+}
+
+pub fn head_tree_oid(repo: &Repository) -> Option<ObjectId> {
+    let head = resolve_head(&repo.git_dir).ok()?;
+    let commit = head.oid()?;
+    tree_oid_of_commit(&repo.odb, commit).ok()
+}
+
+/// Write a malformed tree object into `odb` and return its oid.
+pub fn write_bogus_tree(odb: &Odb) -> ObjectId {
+    odb.write(ObjectKind::Tree, b"not a valid tree encoding")
+        .expect("write bogus tree")
 }
