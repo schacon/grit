@@ -66,7 +66,20 @@ REQUIRED_HISTORY_DIFF_BLOBS: tuple[str, ...] = (
 )
 REQUIRED_HISTORY_DIFF_TREES: tuple[str, ...] = ()
 REQUIRED_HISTORY_REVWALK_ORDER: tuple[str, ...] = ()
-REQUIRED_HISTORY_REVWALK_SIMPLIFY: tuple[str, ...] = ()
+REQUIRED_HISTORY_REVWALK_SIMPLIFY: tuple[str, ...] = (
+    "t6002",
+    "t6004",
+    "t6012",
+    "t6016",
+    "t6018",
+    "t6021",
+    "t6022",
+    "t6102",
+    "t6110",
+    "t6111",
+    "t6112",
+    "t4216",
+)
 REQUIRED_HISTORY_REVPARSE: tuple[str, ...] = ()
 REQUIRED_HISTORY_MERGE: tuple[str, ...] = ()
 REQUIRED_HISTORY_STASH_NOTES: tuple[str, ...] = ()

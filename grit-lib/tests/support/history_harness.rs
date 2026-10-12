@@ -9,7 +9,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use grit_lib::error::Result;
 use grit_lib::objects::ObjectId;
+use grit_lib::repo::Repository;
+use grit_lib::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};
 
 use super::refs_harness::{git as refs_git, null_device_for_tests, AUTHOR_EMAIL, AUTHOR_NAME};
 
@@ -206,9 +209,123 @@ pub fn git_rev_list(dir: &Path, args: &[&str]) -> Vec<ObjectId> {
     let mut full: Vec<&str> = vec!["rev-list"];
     full.extend_from_slice(args);
     let out = refs_git(dir, &full);
+    parse_rev_list_lines(&out)
+}
+
+fn parse_rev_list_lines(out: &str) -> Vec<ObjectId> {
     out.lines()
-        .filter_map(|line| line.trim().parse().ok())
+        .filter_map(|line| {
+            let token = line.split_whitespace().next().unwrap_or(line).trim();
+            parse_rev_list_token(token)
+        })
         .collect()
+}
+
+fn parse_rev_list_token(token: &str) -> Option<ObjectId> {
+    let token = token.strip_prefix('?').unwrap_or(token);
+    let token = token.strip_prefix('-').unwrap_or(token);
+    token.parse().ok()
+}
+
+/// `git rev-list` lines with boundary commits (`-` prefix) preserved.
+pub fn git_rev_list_with_boundary(dir: &Path, args: &[&str]) -> Vec<(bool, ObjectId)> {
+    let mut full: Vec<&str> = vec!["rev-list"];
+    full.extend_from_slice(args);
+    let out = refs_git(dir, &full);
+    out.lines()
+        .filter_map(|line| {
+            let token = line.split_whitespace().next()?.trim();
+            let boundary = token.starts_with('-');
+            parse_rev_list_token(token).map(|oid| (boundary, oid))
+        })
+        .collect()
+}
+
+/// Resolve git tag names (or other revs) to commit OIDs in order.
+pub fn rev_parse_many(dir: &Path, specs: &[&str]) -> Vec<ObjectId> {
+    specs
+        .iter()
+        .map(|spec| git_rev_parse(dir, spec).unwrap_or_else(|| panic!("git rev-parse {spec}")))
+        .collect()
+}
+
+/// Run grit `rev_list` on a discovered repo and return commit OIDs.
+pub fn grit_rev_list_commits(
+    worktree: &Path,
+    positive: &[String],
+    negative: &[String],
+    options: &RevListOptions,
+) -> Result<Vec<ObjectId>> {
+    let repo = Repository::discover(Some(worktree))?;
+    Ok(rev_list(&repo, positive, negative, options)?.commits)
+}
+
+/// Assert grit commit order matches `git rev-list` with the same argv tail (after `rev-list`).
+pub fn assert_grit_commits_match_git(
+    worktree: &Path,
+    git_args: &[&str],
+    grit_positive: &[String],
+    grit_negative: &[String],
+    grit_options: &RevListOptions,
+) {
+    let git_oids = git_rev_list(worktree, git_args);
+    let grit_oids = grit_rev_list_commits(worktree, grit_positive, grit_negative, grit_options)
+        .expect("grit rev-list");
+    assert_eq!(
+        grit_oids,
+        git_oids,
+        "grit rev-list commits differ from git rev-list {}",
+        git_args.join(" ")
+    );
+}
+
+/// Object OIDs from `git rev-list --objects --no-object-names` (optional `--filter=`).
+pub fn git_rev_list_object_set(dir: &Path, args: &[&str]) -> HashSet<ObjectId> {
+    let mut full: Vec<&str> = vec!["rev-list", "--objects", "--no-object-names"];
+    full.extend_from_slice(args);
+    let out = refs_git(dir, &full);
+    parse_rev_list_lines(&out).into_iter().collect()
+}
+
+/// Object OIDs from grit `rev_list` with `--objects`.
+pub fn grit_rev_list_object_set(
+    worktree: &Path,
+    positive: &[String],
+    negative: &[String],
+    filter: Option<ObjectFilter>,
+) -> HashSet<ObjectId> {
+    let repo = Repository::discover(Some(worktree)).expect("discover");
+    let opts = RevListOptions {
+        objects: true,
+        no_object_names: true,
+        quiet: true,
+        filter,
+        ..RevListOptions::default()
+    };
+    let result = rev_list(&repo, positive, negative, &opts).expect("rev-list objects");
+    let mut set = HashSet::new();
+    for oid in result.commits {
+        set.insert(oid);
+    }
+    for (oid, _) in result.objects {
+        set.insert(oid);
+    }
+    set
+}
+
+/// Map common git ordering flags to [`OrderingMode`].
+pub fn ordering_from_git_args(args: &[&str]) -> OrderingMode {
+    let topo = args.iter().any(|a| *a == "--topo-order");
+    let date = args.iter().any(|a| *a == "--date-order");
+    let author = args.iter().any(|a| *a == "--author-date-order");
+    match (topo, date, author) {
+        (true, _, true) => OrderingMode::AuthorDateTopo,
+        (true, _, false) => OrderingMode::Topo,
+        (false, true, true) => OrderingMode::AuthorDateWalk,
+        (false, true, false) => OrderingMode::DateOrderWalk,
+        (false, false, true) => OrderingMode::AuthorDateWalk,
+        _ => OrderingMode::Default,
+    }
 }
 
 /// `git rev-parse` for `spec`, or `None` when git rejects the spec.

@@ -142,7 +142,7 @@ files = [
     "rev_list.rs",
     "rev_list_error.rs",
 ]
-minimum = 33.9
+minimum = 58.1
 
 [group.stash-notes-worktree]
 files = [
