@@ -8,8 +8,6 @@ use grit_lib::rev_list::{rev_list, RevListOptions};
 use serde::Serialize;
 use std::io::Write;
 
-use crate::commands::diff::diff_of_commit;
-use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
 use crate::context::{self, subject_line, CommitSummary};
 use crate::markdown;
 use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
@@ -21,7 +19,7 @@ const PAGE: usize = 10;
 /// Result of `grit log`: one page of commits, plus the next page's start (if any).
 #[derive(Serialize)]
 pub struct LogOutcome {
-    pub commits: Vec<LogCommit>,
+    pub commits: Vec<CommitJson>,
     /// Full oid to resume from (`grit log --before=<next>`), or `null` when there
     /// is no further history.
     pub next: Option<String>,
@@ -36,16 +34,8 @@ impl HumanRender for LogOutcome {
             return Ok(());
         }
         let now = ctx.now.unix_timestamp();
-        let color = use_color();
-        for (row, commit) in ui::commit_rows(&self.commit_rows, now)
-            .iter()
-            .zip(&self.commits)
-        {
+        for row in ui::commit_rows(&self.commit_rows, now) {
             outln!(w, "{row}");
-            if let Some(stat) = &commit.stat {
-                render_stat(w, stat, color)?;
-                outln!(w);
-            }
         }
         if let Some(next) = &self.next {
             outln!(w);
@@ -53,16 +43,6 @@ impl HumanRender for LogOutcome {
         }
         Ok(())
     }
-}
-
-/// One commit in `grit log` JSON output.
-#[derive(Serialize)]
-pub struct LogCommit {
-    #[serde(flatten)]
-    pub commit: CommitJson,
-    /// The files the commit changed, only with `--stat`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stat: Option<DiffStat>,
 }
 
 impl MarkdownRender for LogOutcome {
@@ -89,7 +69,7 @@ fn short_hex(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
 }
 
-pub fn run(before: Option<String>, stat: bool) -> Result<LogOutcome> {
+pub fn run(before: Option<String>) -> Result<LogOutcome> {
     let repo = context::discover()?;
     let start = before.unwrap_or_else(|| "HEAD".to_owned());
 
@@ -124,17 +104,8 @@ pub fn run(before: Option<String>, stat: bool) -> Result<LogOutcome> {
         .collect::<Result<Vec<_>>>()?;
     let commits = commit_rows
         .iter()
-        .map(|row| {
-            Ok(LogCommit {
-                commit: CommitJson::from_summary(row, now),
-                stat: if stat {
-                    Some(diffstat(&diff_of_commit(&repo, &row.oid)?))
-                } else {
-                    None
-                },
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|row| CommitJson::from_summary(row, now))
+        .collect();
 
     let next = result
         .commits

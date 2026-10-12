@@ -28,16 +28,8 @@ use output::{emit, OutputMode, OutputOptions, RenderContext};
 
 /// A small, opinionated Git client built on `grit-lib`.
 #[derive(Debug, Parser)]
-#[command(
-    name = "grit",
-    version,
-    about = "A simple Grit-powered CLI",
-    disable_version_flag = true
-)]
+#[command(name = "grit", version, about = "A simple Grit-powered CLI")]
 pub(crate) struct Cli {
-    /// Print version.
-    #[arg(short = 'v', short_alias = 'V', long, action = clap::ArgAction::Version)]
-    version: (),
     /// Emit machine-readable JSON instead of human-readable text.
     #[arg(long, global = true, conflicts_with = "markdown")]
     json: bool,
@@ -216,9 +208,6 @@ enum Command {
         /// Continue listing from before this commit (for paging).
         #[arg(long)]
         before: Option<String>,
-        /// Show which files each commit changed, with insertion and deletion counts.
-        #[arg(long)]
-        stat: bool,
     },
     /// Show who last modified each line of a file.
     Blame {
@@ -671,7 +660,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 ctx,
             ),
         },
-        Command::Log { before, stat } => emit(&commands::log::run(before, stat)?, opts, ctx),
+        Command::Log { before } => emit(&commands::log::run(before)?, opts, ctx),
         Command::Blame {
             file,
             rev,

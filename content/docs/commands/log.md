@@ -8,7 +8,7 @@ order: 1
 ## Synopsis
 
 ```text
-grit log [--before <commit>] [--stat]
+grit log [--before <commit>]
 ```
 
 ## Description
@@ -17,14 +17,11 @@ Lists the commits reachable from the current commit, newest first, ten at a time
 
 When there's more history, the last line shows the command for the next page.
 
-With `--stat`, each commit is followed by the files it changed and how many lines were added and removed in each, like [`grit show`](../show/). Merge commits show the change against their first parent.
-
 ## Options
 
 | Option | Description |
 | --- | --- |
 | `--before <commit>` | Start listing at this commit instead of the current one. Use the commit from the `→ more` line to see the next page. |
-| `--stat` | Show which files each commit changed, with insertion and deletion counts. |
 
 ## Examples
 
@@ -46,19 +43,6 @@ Show the next page:
 $ grit log --before=a7e3a5e
 ```
 
-See which files each recent commit touched:
-
-```console
-$ grit log --stat
-  b52cca6  ada  2 minutes ago  Handle empty input
-
- src/parse.rs | 12 +++++++++---
- 1 file changed, 9 insertions(+), 3 deletions(-)
-
-  5fbefea  ada  1 hour ago     Add a greeting test
-  ...
-```
-
 Get the subjects of the last ten commits:
 
 ```console
@@ -72,7 +56,6 @@ Pass `--json` for stable, scripting-friendly output:
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `commits` | array | Up to ten commits, newest first. Each entry has `oid`, `subject`, `author` (same display as human log), `author_date` (RFC 3339), and `relative_date` (e.g. `3 days ago`). |
-| `commits[].stat` | object | Only with `--stat`: `files` (each with `path`, `old_path` for renames, `status`, `insertions`, `deletions`, `binary`), `files_changed`, `insertions` and `deletions`. The same shape as `stat` in [`grit show`](../show/). |
 | `next` | string or null | Full commit id to pass to `--before` for the next page, or `null` when there is no more history. |
 
 Example:
