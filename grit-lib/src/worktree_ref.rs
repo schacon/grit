@@ -135,7 +135,7 @@ where
     (count, first)
 }
 
-/// When exactly one [`DWIM_RULES`] entry matches `spec`, return that expanded ref name.
+/// When exactly one DWIM ref rule matches `spec`, return that expanded ref name.
 ///
 /// Rule order matches Git (`refs/tags` before `refs/heads`). Returns `None` when zero or
 /// more than one rule matches.

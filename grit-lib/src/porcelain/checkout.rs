@@ -986,7 +986,7 @@ fn write_fresh_worktree_blob(
 
 /// Adjust an existing file to an executable index mode (in-place checkout only).
 ///
-/// Fresh files are created via [`write_fresh_worktree_blob`] with mode `0777` so umask can mask
+/// Fresh files are created with mode `0777` so umask can mask
 /// execute independently of read; this helper propagates execute from read when the prior mode
 /// is already fixed on disk.
 pub fn apply_index_file_mode(abs_path: &Path, mode: u32) -> Result<()> {
