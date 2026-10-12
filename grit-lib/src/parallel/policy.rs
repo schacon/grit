@@ -156,7 +156,7 @@ impl ThreadPolicy {
         blob_count: usize,
         stat_parallel_threads: Option<usize>,
     ) -> usize {
-        const STAT_CAP: usize = 4;
+        const STAT_CAP: usize = 8;
         if !core_preload_index(config) || blob_count < PARALLEL_STAT_MIN_ENTRIES {
             return 1;
         }
@@ -488,7 +488,7 @@ mod tests {
     fn stat_preload_respects_cap_and_override() {
         let cfg = ConfigSet::new();
         let policy = ThreadPolicy::with_threads_override(Some(8));
-        assert_eq!(policy.index_stat_preload_threads(&cfg, 5000, None), 4);
+        assert_eq!(policy.index_stat_preload_threads(&cfg, 5000, None), 8);
     }
 
     #[test]

@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Minimum blob entries sharing a parent before `read_dir` amortizes separate stats.
+/// Deep trees often have one tracked file per leaf directory; `read_dir` still beats a
+/// separate stat per file when grouping parallel preload by directory.
 const READ_DIR_AMORTIZE_MIN: usize = 2;
 
 /// Test hook: incremented once per worktree metadata syscall used by directory scans.
@@ -52,7 +54,7 @@ pub(crate) fn worktree_read_dir_probe_count() -> usize {
 pub const PARALLEL_STAT_MIN_ENTRIES: usize = 1000;
 
 /// Upper bound on worker threads for parallel stat preload (see Git's small preload pool).
-const STAT_PARALLEL_THREAD_CAP: usize = 4;
+const STAT_PARALLEL_THREAD_CAP: usize = 8;
 
 /// Parallelism controls for directory-grouped blob scans (honors `core.preloadIndex`).
 #[derive(Debug, Clone, Copy, Default)]
@@ -170,6 +172,64 @@ fn partial_dirs_for_keys(
         }
     }
     partial
+}
+
+fn preload_blob_lookups_direct_parallel(
+    ordered: &[BlobInDir],
+    threads: usize,
+    symlink_missing: &HashSet<String>,
+    file_abs: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
+) -> Result<HashMap<usize, BlobDiskLookup>> {
+    if ordered.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let chunk_size = ordered.len().div_ceil(threads);
+    let mut merged = HashMap::new();
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in ordered.chunks(chunk_size) {
+            let chunk: Vec<BlobInDir> = chunk.to_vec();
+            let symlink_missing = symlink_missing.clone();
+            let file_abs = Arc::clone(&file_abs);
+            handles.push(
+                scope.spawn(move || -> Result<HashMap<usize, BlobDiskLookup>> {
+                    let mut local = HashMap::with_capacity(chunk.len());
+                    for blob in chunk {
+                        if symlink_missing.contains(&blob.rel_path) {
+                            local.insert(blob.entry_index, BlobDiskLookup::Missing);
+                            continue;
+                        }
+                        let target = file_abs(&blob.rel_path);
+                        let lookup = match symlink_metadata_path(&target) {
+                            Ok(meta) => BlobDiskLookup::Present(meta),
+                            Err(e)
+                                if e.kind() == io::ErrorKind::NotFound
+                                    || e.raw_os_error() == Some(20) =>
+                            {
+                                BlobDiskLookup::Missing
+                            }
+                            Err(e) => BlobDiskLookup::Io(e),
+                        };
+                        local.insert(blob.entry_index, lookup);
+                    }
+                    Ok(local)
+                }),
+            );
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(local)) => merged.extend(local),
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(Error::Message(
+                        "parallel direct blob stat worker thread panicked".to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(merged)
 }
 
 fn preload_blob_lookups_parallel(
@@ -303,6 +363,7 @@ pub(crate) fn for_each_blob_by_directory_parallel<F>(
     scan_options: WorktreeBlobScanOptions,
     thread_policy: &crate::parallel::ThreadPolicy,
     config: &crate::config::ConfigSet,
+    scan_symlink_ancestors: bool,
     dir_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     mut has_symlink_ancestor: impl FnMut(&str) -> bool,
@@ -313,9 +374,17 @@ where
 {
     let ordered = index_ordered_blobs(by_dir);
     let mut symlink_missing = HashSet::new();
-    for blob in &ordered {
-        if has_symlink_ancestor(&blob.rel_path) {
-            symlink_missing.insert(blob.rel_path.clone());
+    if scan_symlink_ancestors {
+        // One ancestor probe per distinct parent directory (not per indexed file).
+        for blobs in by_dir.values() {
+            let Some(sample) = blobs.first() else {
+                continue;
+            };
+            if has_symlink_ancestor(&sample.rel_path) {
+                for blob in blobs {
+                    symlink_missing.insert(blob.rel_path.clone());
+                }
+            }
         }
     }
 
@@ -324,13 +393,22 @@ where
     let dir_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(dir_abs);
     let file_abs_arc: Arc<dyn Fn(&str) -> PathBuf + Send + Sync> = Arc::new(file_abs);
     let mut preloaded = if threads > 1 {
-        preload_blob_lookups_parallel(
-            by_dir,
-            threads,
-            &symlink_missing,
-            Arc::clone(&dir_abs_arc),
-            Arc::clone(&file_abs_arc),
-        )?
+        if blob_count >= PARALLEL_STAT_MIN_ENTRIES {
+            preload_blob_lookups_direct_parallel(
+                &ordered,
+                threads,
+                &symlink_missing,
+                Arc::clone(&file_abs_arc),
+            )?
+        } else {
+            preload_blob_lookups_parallel(
+                by_dir,
+                threads,
+                &symlink_missing,
+                Arc::clone(&dir_abs_arc),
+                Arc::clone(&file_abs_arc),
+            )?
+        }
     } else {
         HashMap::new()
     };
@@ -590,6 +668,48 @@ mod tests {
             PARALLEL_STAT_MIN_ENTRIES,
         );
         assert_eq!(threads, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_parallel_scan_detects_directory_replaced_by_symlink() {
+        use crate::diff::{
+            diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions, DiffStatus,
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        const FILES: usize = 1005;
+        let mut index = Index::new();
+        for i in 0..FILES {
+            let rel = format!("dir/f{i:04}.txt");
+            let oid = write_blob_file(wt, &rel, b"x\n");
+            index.add_or_replace(
+                entry_from_stat(&wt.join(&rel), rel.as_bytes(), oid, 0o100644).unwrap(),
+            );
+        }
+        fs::remove_dir_all(wt.join("dir")).unwrap();
+        let external = wt.join("external");
+        fs::create_dir_all(&external).unwrap();
+        for i in 0..FILES {
+            fs::write(external.join(format!("f{i:04}.txt")), b"y\n").unwrap();
+        }
+        std::os::unix::fs::symlink(&external, wt.join("dir")).unwrap();
+
+        let odb = Odb::new(&wt.join(".git/objects"));
+        let (diffs, _) = diff_index_to_worktree_with_options(
+            &odb,
+            &mut index,
+            wt,
+            DiffIndexToWorktreeOptions {
+                for_status: true,
+                ..DiffIndexToWorktreeOptions::default()
+            },
+        )
+        .expect("diff");
+        assert_eq!(diffs.len(), FILES);
+        assert!(diffs.iter().all(|d| d.status == DiffStatus::Deleted));
     }
 
     #[cfg(unix)]

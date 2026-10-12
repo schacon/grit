@@ -317,7 +317,7 @@ fn has_stashable_changes(
     let worktree_rules = rules_arc
         .lock()
         .map_err(|e| Error::Message(format!("worktree rules lock poisoned: {e}")))?;
-    let (untracked, _) = collect_untracked_and_ignored_inner(
+    let (untracked, _, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,
@@ -336,7 +336,7 @@ fn has_stashable_changes(
 fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<String>> {
     let mut index = repo.load_index()?;
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
-    let (untracked, _) = collect_untracked_and_ignored_inner(
+    let (untracked, _, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,

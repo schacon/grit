@@ -1027,6 +1027,7 @@ impl Repository {
         let prev_index_mtime = crate::index::index_file_mtime(&path);
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
+            crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
             crate::diff::smudge_racily_clean_entries(
                 &self.odb,
                 &self.git_dir,
@@ -1212,6 +1213,7 @@ impl Repository {
         let prev_index_mtime = crate::index::index_file_mtime(path);
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
+            crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
             crate::diff::smudge_racily_clean_entries(
                 &self.odb,
                 &self.git_dir,

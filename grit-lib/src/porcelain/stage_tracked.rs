@@ -199,6 +199,7 @@ pub fn stage_tracked_modifications_in_index(
         blob_scan_opts,
         &thread_policy,
         &rules_config,
+        true,
         dir_abs,
         file_abs,
         |rel_path| {

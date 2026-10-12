@@ -3114,6 +3114,7 @@ fn diff_index_to_worktree_inner(
         blob_scan,
         &thread_policy,
         &config,
+        true,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -3965,6 +3966,7 @@ pub fn refresh_index_stat_content_verified_with_rules(
         blob_scan,
         &thread_policy,
         &config,
+        true,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -4478,6 +4480,32 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
 ) -> Result<Vec<DiffEntry>> {
     use crate::config::ConfigSet;
     use crate::crlf;
+
+    if worktree_rules.is_none() {
+        if let Some(tree_oid) = tree_oid {
+            if index.cache_tree_root.as_ref() == Some(tree_oid)
+                && crate::write_tree::cache_tree_fully_valid(odb, index.cache_tree.as_ref())
+            {
+                let mut idx = index.clone();
+                let options = DiffIndexToWorktreeOptions {
+                    repository_git_dir: Some(repository_git_dir.to_path_buf()),
+                    refresh_index_stat_in_pass: false,
+                    for_status: true,
+                    config: config.cloned().map(std::sync::Arc::new),
+                    ..DiffIndexToWorktreeOptions::default()
+                };
+                let (entries, _, _) = diff_index_to_worktree_inner(
+                    odb,
+                    &mut idx,
+                    work_tree,
+                    repository_git_dir,
+                    options,
+                    false,
+                )?;
+                return Ok(entries);
+            }
+        }
+    }
 
     let config = worktree_rules
         .map(|r| r.config().clone())

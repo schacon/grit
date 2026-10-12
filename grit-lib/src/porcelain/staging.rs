@@ -88,7 +88,7 @@ pub fn stage_worktree_changes(repo: &Repository, pathspecs: &[String]) -> Result
         }
     }
 
-    let (untracked, _) = collect_untracked_and_ignored_inner(
+    let (untracked, _, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,

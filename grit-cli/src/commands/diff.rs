@@ -13,17 +13,15 @@
 //! intra-line word highlights — no `+`/`-` patch markers. Color is emitted only
 //! on a TTY (honoring `NO_COLOR`); piped output is plain text with `+`/`-`.
 
-use std::io::IsTerminal;
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_commits, diff_index_to_tree, diff_trees_with_renames, read_submodule_head_oid,
+    diff_commits, diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees_with_renames,
+    read_submodule_head_oid,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
     },
-    submodule_porcelain_flags, DiffEntry, DiffStatus,
+    submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use grit_lib::merge_base::merge_base_for_diff_two_commits;
 use grit_lib::objects::ObjectId;
@@ -34,6 +32,8 @@ use grit_lib::rev_parse::{
 };
 use grit_lib::state::resolve_head;
 use serde::Serialize;
+use std::io::IsTerminal;
+use std::path::Path;
 
 use crate::context;
 use crate::markdown;
@@ -360,21 +360,46 @@ fn worktree_against_tree(
         .work_tree
         .as_deref()
         .context("grit diff needs a working tree")?;
-    let index = repo.load_index().context("could not load the index")?;
+    let mut index = repo.load_index().context("could not load the index")?;
     let config = repo.config().context("could not load config")?;
 
-    let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
-        .context("could not load worktree rules")?;
-    let mut entries = grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
-        &repo.odb,
-        base_tree,
-        work_tree,
-        &repo.git_dir,
-        &index,
-        Some(config.as_ref()),
-        Some(&worktree_rules),
-    )
-    .context("could not diff the working tree")?;
+    let index_backed = base_tree
+        .zip(index.cache_tree_root.as_ref())
+        .map(|(left, right)| left == right)
+        .unwrap_or(base_tree.is_none() && index.cache_tree_root.is_none())
+        && grit_lib::write_tree::cache_tree_fully_valid(&repo.odb, index.cache_tree.as_ref());
+    let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
+    let mut entries = if index_backed {
+        let (entries, _) = diff_index_to_worktree_with_options(
+            &repo.odb,
+            &mut index,
+            work_tree,
+            DiffIndexToWorktreeOptions {
+                repository_git_dir: Some(repo.git_dir.clone()),
+                config: Some(config.clone()),
+                index_mtime: diff_index_mtime,
+                thread_policy: Some(repo.thread_policy()),
+                refresh_index_stat_in_pass: false,
+                for_status: true,
+                ..DiffIndexToWorktreeOptions::default()
+            },
+        )
+        .context("could not diff the working tree")?;
+        entries
+    } else {
+        let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
+            .context("could not load worktree rules")?;
+        grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
+            &repo.odb,
+            base_tree,
+            work_tree,
+            &repo.git_dir,
+            &index,
+            Some(config.as_ref()),
+            Some(&worktree_rules),
+        )
+        .context("could not diff the working tree")?
+    };
     sort_entries(&mut entries);
 
     entries

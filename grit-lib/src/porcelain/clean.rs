@@ -67,7 +67,7 @@ pub fn clean_untracked(
         use_untracked_cache: false,
     };
 
-    let (untracked, ignored) = collect_untracked_and_ignored_inner(
+    let (untracked, ignored, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,

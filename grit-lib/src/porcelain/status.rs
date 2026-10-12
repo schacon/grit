@@ -212,6 +212,7 @@ pub fn collect_untracked_and_ignored_with_cache(
         },
         &rules,
     )
+    .map(|(untracked, ignored, _)| (untracked, ignored))
 }
 
 /// Like [`collect_untracked_and_ignored`], reusing an existing
@@ -225,7 +226,7 @@ pub fn collect_untracked_and_ignored_with_rules(
     show_all: bool,
     pathspecs: &[String],
     rules: &crate::worktree_rules::WorktreeRules,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
     collect_untracked_and_ignored_inner(
         repo,
         index,
@@ -254,6 +255,13 @@ pub(crate) struct UntrackedScan {
     pub use_untracked_cache: bool,
 }
 
+/// Side effects from an untracked/ignored walk beyond the path lists.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UntrackedCollectMeta {
+    /// The index UNTR extension was rebuilt and should be written to disk.
+    pub untracked_cache_refreshed: bool,
+}
+
 /// Shared implementation of the untracked/ignored walk.
 pub(crate) fn collect_untracked_and_ignored_inner(
     repo: &Repository,
@@ -262,7 +270,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
     pathspecs: &[String],
     scan: UntrackedScan,
     rules: &crate::worktree_rules::WorktreeRules,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Vec<String>, UntrackedCollectMeta)> {
     let UntrackedScan {
         ignored_mode,
         show_all,
@@ -276,17 +284,25 @@ pub(crate) fn collect_untracked_and_ignored_inner(
 
     if use_untracked_cache && effective_pathspecs.is_empty() && ignored_mode == IgnoredMode::No {
         let config = rules.config_arc();
-        let cache_config = config
-            .get_bool("core.untrackedCache")
-            .and_then(|r| r.ok())
-            .unwrap_or(false);
         let cache_on_index = index.untracked_cache.is_some();
-        if cache_config && cache_on_index {
+        if cache_on_index
+            && crate::untracked_cache::untracked_cache_enabled_for_status(config.as_ref(), index)
+        {
             let ident = crate::untracked_cache::untracked_cache_ident(work_tree);
             let mut uc = index.untracked_cache.take().unwrap_or_else(|| {
                 crate::untracked_cache::UntrackedCache::new_shell(0, ident.clone())
             });
             if uc.ident == ident {
+                if let Some(untracked) = crate::untracked_cache::try_untracked_from_valid_cache(
+                    repo,
+                    work_tree,
+                    config.as_ref(),
+                    &mut uc,
+                    show_all,
+                )? {
+                    index.untracked_cache = Some(uc);
+                    return Ok((untracked, Vec::new(), UntrackedCollectMeta::default()));
+                }
                 crate::untracked_cache::refresh_untracked_cache_for_status(
                     repo,
                     index,
@@ -298,7 +314,13 @@ pub(crate) fn collect_untracked_and_ignored_inner(
                 )?;
                 let untracked = crate::untracked_cache::collect_untracked_from_cache(&uc);
                 index.untracked_cache = Some(uc);
-                return Ok((untracked, Vec::new()));
+                return Ok((
+                    untracked,
+                    Vec::new(),
+                    UntrackedCollectMeta {
+                        untracked_cache_refreshed: true,
+                    },
+                ));
             }
             index.untracked_cache = Some(uc);
         }
@@ -338,7 +360,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         if sort_paths {
             untracked.sort_unstable();
         }
-        return Ok((untracked, ignored));
+        return Ok((untracked, ignored, UntrackedCollectMeta::default()));
     }
 
     visit_untracked_node(
@@ -365,7 +387,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         untracked.sort();
         ignored.sort();
     }
-    Ok((untracked, ignored))
+    Ok((untracked, ignored, UntrackedCollectMeta::default()))
 }
 
 /// Expand collapsed untracked directory markers (`dir/`) into concrete file paths for staging.
@@ -414,7 +436,7 @@ pub fn expand_untracked_for_staging_with_rules(
         } else {
             pathspecs.to_vec()
         };
-        let (files, _) = collect_untracked_and_ignored_with_rules(
+        let (files, _, _) = collect_untracked_and_ignored_with_rules(
             repo,
             index,
             work_tree,
@@ -1481,9 +1503,7 @@ pub fn status(
                 ..Default::default()
             },
         )?;
-    if index_stat_refresh_changed && repo.try_write_index(&mut index)? {
-        index.source_mtime = crate::index::index_file_mtime(&index_path);
-    }
+    let mut persist_index = index_stat_refresh_changed;
     let mut unstaged: Vec<DiffEntry> = unstaged_raw
         .into_iter()
         .filter(|e| status_path_matches(e.path(), &opts.pathspecs))
@@ -1519,7 +1539,7 @@ pub fn status(
         let rules_guard = worktree_rules.lock().map_err(|e| {
             crate::error::Error::Message(format!("worktree rules lock poisoned: {e}"))
         })?;
-        collect_untracked_and_ignored_with_rules(
+        let (untracked, ignored, collect_meta) = collect_untracked_and_ignored_with_rules(
             repo,
             &mut index,
             work_tree,
@@ -1527,8 +1547,14 @@ pub fn status(
             opts.untracked == UntrackedMode::All,
             &opts.pathspecs,
             &rules_guard,
-        )?
+        )?;
+        persist_index |= collect_meta.untracked_cache_refreshed;
+        (untracked, ignored)
     };
+
+    if persist_index && repo.try_write_index(&mut index)? {
+        index.source_mtime = crate::index::index_file_mtime(&index_path);
+    }
 
     let stash_count = crate::reflog::read_reflog(&repo.git_dir, "refs/stash")
         .map(|e| e.len())

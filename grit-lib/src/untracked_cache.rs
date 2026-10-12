@@ -20,6 +20,39 @@ use crate::repo::Repository;
 pub const DIR_SHOW_OTHER_DIRECTORIES: u32 = 1 << 1;
 pub const DIR_HIDE_EMPTY_DIRECTORIES: u32 = 1 << 2;
 
+/// Stage-0 entry count at or above which an untracked-cache shell is persisted on index write
+/// even when `core.untrackedCache` is unset (large-repo steady-state status).
+pub const AUTO_UNTRACKED_CACHE_MIN_ENTRIES: usize = 4096;
+
+/// Whether status may refresh and read the index UNTR extension for this repository.
+#[must_use]
+pub fn untracked_cache_enabled_for_status(config: &ConfigSet, index: &Index) -> bool {
+    if index.untracked_cache.is_none() {
+        return false;
+    }
+    match config.get_bool("core.untrackedCache").and_then(|r| r.ok()) {
+        Some(false) => false,
+        Some(true) => true,
+        None => index.entries.len() >= AUTO_UNTRACKED_CACHE_MIN_ENTRIES,
+    }
+}
+
+/// Ensure a UNTR shell exists on large indices so the next status can populate it.
+pub fn ensure_untracked_cache_shell(index: &mut Index, work_tree: &Path, config: &ConfigSet) {
+    if index.untracked_cache.is_some() {
+        return;
+    }
+    if config.get_bool("core.untrackedCache").and_then(|r| r.ok()) == Some(false) {
+        return;
+    }
+    if index.entries.len() < AUTO_UNTRACKED_CACHE_MIN_ENTRIES {
+        return;
+    }
+    let ident = untracked_cache_ident(work_tree);
+    let flags = dir_flags_from_config(config);
+    index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+}
+
 /// Git `struct stat_data` on disk (36 bytes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StatDataDisk {
@@ -825,7 +858,7 @@ fn lookup_or_create_child<'a>(
     &mut parent.dirs[n]
 }
 
-fn valid_cached_dir(ucd: &UntrackedCacheDir, abs: &Path, check_only: bool) -> bool {
+pub(crate) fn valid_cached_dir(ucd: &UntrackedCacheDir, abs: &Path, check_only: bool) -> bool {
     if !ucd.valid {
         return false;
     }
@@ -844,6 +877,37 @@ enum DirSource {
         child_dirs: Vec<UntrackedCacheDir>,
         child_files: Vec<String>,
     },
+}
+
+/// When the UNTR root still matches the work tree, return cached untracked paths without rescanning.
+pub fn try_untracked_from_valid_cache(
+    repo: &Repository,
+    work_tree: &Path,
+    config: &ConfigSet,
+    uc: &mut UntrackedCache,
+    show_all_untracked: bool,
+) -> Result<Option<Vec<String>>> {
+    let requested_flags = if show_all_untracked {
+        0u32
+    } else {
+        DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES
+    };
+    if uc.dir_flags != requested_flags && uc.dir_flags != dir_flags_from_config(config) {
+        return Ok(None);
+    }
+    let Some(root) = uc.root.as_ref() else {
+        return Ok(None);
+    };
+    if !valid_cached_dir(root, work_tree, false) {
+        return Ok(None);
+    }
+    let gitignore_gen = uc.gitignore_invalidated;
+    let dir_gen = uc.dir_invalidated;
+    fill_exclude_oids(repo, work_tree, config, uc)?;
+    if uc.gitignore_invalidated != gitignore_gen || uc.dir_invalidated != dir_gen {
+        return Ok(None);
+    }
+    Ok(Some(collect_untracked_from_cache(uc)))
 }
 
 /// Refresh untracked cache tree and counters (for `git status`).

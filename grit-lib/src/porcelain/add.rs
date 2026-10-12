@@ -210,7 +210,7 @@ fn stage_inner(
                 sort_paths: false,
                 use_untracked_cache: false,
             };
-            let (untracked, _) = collect_untracked_and_ignored_inner(
+            let (untracked, _, _) = collect_untracked_and_ignored_inner(
                 repo,
                 &mut index,
                 work_tree,
@@ -224,9 +224,9 @@ fn stage_inner(
                 ignored_mode: IgnoredMode::No,
                 show_all: false,
                 sort_paths: true,
-                use_untracked_cache: false,
+                use_untracked_cache: true,
             };
-            let (untracked, _) = collect_untracked_and_ignored_inner(
+            let (untracked, _, _) = collect_untracked_and_ignored_inner(
                 repo,
                 &mut index,
                 work_tree,
@@ -894,6 +894,38 @@ mod tests {
         assert!(index.get(b"fresh.txt", 0).is_some());
         assert!(index.get(b"modify.txt", 0).is_some());
         assert!(index.get(b"remove.txt", 0).is_none());
+    }
+
+    #[test]
+    fn stage_adds_untracked_when_index_nonempty() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        stage_file_in_index(&repo, &mut index, "tracked.txt", b"tracked\n");
+        write_index(&repo, &mut index);
+        fs::write(root.join("new.txt"), b"fresh\n").unwrap();
+
+        let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress).unwrap();
+        assert_eq!(outcome.added, 1);
+        let index = repo.load_index().unwrap();
+        assert!(index.get(b"new.txt", 0).is_some());
+    }
+
+    #[test]
+    fn stage_for_commit_adds_untracked_when_index_nonempty() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let mut index = Index::new();
+        stage_file_in_index(&repo, &mut index, "tracked.txt", b"tracked\n");
+        write_index(&repo, &mut index);
+        fs::write(root.join("new.txt"), b"fresh\n").unwrap();
+
+        let outcome = stage_for_commit(&repo, &mut NullProgress).unwrap();
+        assert_eq!(outcome.added, 1);
+        let index = repo.load_index().unwrap();
+        assert!(index.get(b"new.txt", 0).is_some());
     }
 
     #[test]
