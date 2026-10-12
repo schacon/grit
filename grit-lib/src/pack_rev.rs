@@ -332,7 +332,7 @@ mod coverage_tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let idx_path = tmp.path().join("x.idx");
         let oid = ObjectId::from_hex("0102030405060708090a0b0c0d0e0f1011121314").expect("oid");
-        write_v2_pack_index_with_trailer(&idx_path, &[(oid, 12, 0)], &[0u8; 20], 20)
+        write_v2_pack_index_with_trailer(&idx_path, &[(oid, 12, 0)], &[0u8; 20], 20, None)
             .expect("write idx");
         let index = read_pack_index(&idx_path).expect("load idx");
         let rev_path = rev_path_for_index(&idx_path);

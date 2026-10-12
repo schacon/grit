@@ -786,6 +786,7 @@ mod tests {
             &[(oid, 100, 0), (oid, 200, 0)],
             &[0u8; 20],
             20,
+            None,
         )
         .expect("write dup rows");
         let mut idx =
@@ -850,7 +851,7 @@ mod tests {
         }
         let tmp = tempfile::tempdir().expect("tempdir");
         let idx_path = tmp.path().join("big-v2.idx");
-        write_v2_pack_index_with_trailer(&idx_path, &rows, &[0u8; 32], 32).expect("write v2");
+        write_v2_pack_index_with_trailer(&idx_path, &rows, &[0u8; 32], 32, None).expect("write v2");
         let bytes = std::fs::read(&idx_path).expect("read idx");
         let idx = parse_pack_index_bytes(&idx_path, bytes, false).expect("parse v2 idx");
         assert_eq!(idx.len(), 64);

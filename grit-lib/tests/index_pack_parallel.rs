@@ -236,7 +236,8 @@ fn grit_index_bytes(pack: &[u8], odb: &Odb, threads: usize) -> Vec<u8> {
         .collect();
     let dir = tempfile::tempdir().expect("idx scratch");
     let idx_path = dir.path().join("grit.idx");
-    write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb).expect("write idx");
+    write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb, Some(threads))
+        .expect("write idx");
     std::fs::read(&idx_path).expect("read grit idx")
 }
 
@@ -312,6 +313,77 @@ fn parallel_index_pack_matches_git_sha256_threads_1_and_8() {
     };
     assert_idx_matches_git(&fx.pack, fx.hash_algo, 1);
     assert_idx_matches_git(&fx.pack, fx.hash_algo, 8);
+}
+
+/// Deep OFS + REF delta chain: `.idx` / `.rev` must match across thread counts.
+#[test]
+fn idx_rev_identical_threads_1_2_4_8_deep_delta_chain() {
+    use grit_lib::delta_encode::encode_lcp_delta;
+    use grit_lib::objects::ObjectKind;
+    use grit_lib::pack_rev::build_pack_rev_bytes_from_index_order_offsets_and_checksum;
+    use grit_test_support::objects::{HashAlgo as FixtureAlgo, ObjectKind as PK, PackBuilder};
+
+    let mut pb = PackBuilder::new(FixtureAlgo::Sha1);
+    let mut content = b"chain-root\n".to_vec();
+    let mut base_idx = pb.add_full(PK::Blob, &content);
+    for _ in 0..40 {
+        let mut next = content.clone();
+        next.push(b'!');
+        let delta = encode_lcp_delta(&content, &next).expect("delta");
+        base_idx = pb.add_ofs_delta(base_idx, &delta, delta.len());
+        content = next;
+    }
+    let ref_base = b"ref-base-for-delta\n";
+    let _ref_base_idx = pb.add_full(PK::Blob, ref_base);
+    let scratch_odb = Odb::new(tempfile::tempdir().expect("odb").path());
+    let ref_oid = scratch_odb.hash(ObjectKind::Blob, ref_base);
+    let mut ref_target = ref_base.to_vec();
+    ref_target.extend_from_slice(b"++");
+    let ref_delta = encode_lcp_delta(ref_base, &ref_target).expect("ref delta");
+    pb.add_ref_delta(ref_oid.as_bytes(), &ref_delta, ref_delta.len());
+    let pack = pb.build().bytes;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let git_dir = tmp.path().join(".git");
+    write_repo_format(&git_dir, false);
+    let odb = Odb::new(git_dir.join("objects").as_path()).with_config_git_dir(git_dir);
+
+    let (git_idx, pack_on_disk) = git_index_pack_idx(&pack, HashAlgo::Sha1, 8);
+
+    let mut reference_idx = None;
+    let mut reference_rev = None;
+    for threads in [1_usize, 2, 4, 8] {
+        let grit_idx = grit_index_bytes(&pack_on_disk, &odb, threads);
+        if reference_idx.is_none() {
+            reference_idx = Some(grit_idx.clone());
+        }
+        assert_eq!(
+            &grit_idx,
+            reference_idx.as_ref().expect("reference"),
+            "grit idx must be stable across threads={threads}"
+        );
+        assert_eq!(
+            grit_idx, git_idx,
+            "grit idx must match git index-pack at threads={threads}"
+        );
+        let hb = odb.hash_algo().len();
+        let trailer = &pack_on_disk[pack_on_disk.len() - hb..];
+        let scratch = tempfile::tempdir().expect("idx");
+        let idx_path = scratch.path().join("t.idx");
+        std::fs::write(&idx_path, &grit_idx).expect("write idx");
+        let index = grit_lib::pack::read_pack_index(&idx_path).expect("parse");
+        let offsets: Vec<u64> = index.iter().map(|e| e.offset()).collect();
+        let grit_rev =
+            build_pack_rev_bytes_from_index_order_offsets_and_checksum(&offsets, trailer);
+        if reference_rev.is_none() {
+            reference_rev = Some(grit_rev.clone());
+        }
+        assert_eq!(
+            &grit_rev,
+            reference_rev.as_ref().expect("rev reference"),
+            "grit rev must be stable across threads={threads}"
+        );
+    }
 }
 
 #[test]

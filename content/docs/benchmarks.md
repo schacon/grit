@@ -96,9 +96,9 @@ Hyperfine on a **~90 000-object** depth-50 pack (`git fast-import` + `git repa
 | grit index-pack, 1 thread | 1.43 s |
 | grit index-pack, 8 threads | 781 ms |
 
-**Speedup (8 vs 1 thread): ~1.83×** on this fixture. Multi-threaded builds discover object boundaries with a discard decompress pass, then parallel workers inflate and hash whole objects; delta chains inflate, apply, and hash in parallel rounds. Grit does not yet beat `git index-pack --threads=8` on this pack (Git also writes the on-disk `.idx`).
+**Speedup (8 vs 1 thread): ~1.83×** on this fixture (baseline before step 1002). Multi-threaded builds scan object boundaries (zlib skip), then parallel workers inflate and hash whole objects; ready deltas resolve in parallel rounds with per-delta work stealing. Whole objects at or above 4 MiB inflated are hashed serially so worker threads stay memory-bounded. v2 `.idx` writes sort OID rows on multiple threads when the entry count is large.
 
-Integration coverage uses a **≥ 50 000** object fixture built with `git fast-import` and shared across tests via `OnceLock` (`grit-lib/tests/index_pack_parallel.rs`); the default release suite completes in about **41 s** on the factory VM.
+Integration coverage uses a **≥ 50 000** object fixture built with `git fast-import` and shared across tests via `OnceLock` (`grit-lib/tests/index_pack_parallel.rs`), plus a deep OFS/REF delta chain checked for byte-identical `.idx` / `.rev` at thread counts **1, 2, 4, and 8**; the default release suite completes in about **41 s** on the factory VM.
 
 ## Hashing
 

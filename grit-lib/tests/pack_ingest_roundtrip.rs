@@ -572,7 +572,8 @@ fn grit_idx_rev_bytes(
     if use_write_v2_pack_index {
         write_v2_pack_index(&idx_path, &pack_path, &entries, hb).expect("write_v2_pack_index");
     } else {
-        write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb).expect("write idx");
+        write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb, Some(threads))
+            .expect("write idx");
     }
     let idx_bytes = std::fs::read(&idx_path).expect("read idx");
     let index = read_pack_index(&idx_path).expect("parse idx");

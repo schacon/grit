@@ -1477,11 +1477,16 @@ pub fn collect_local_pack_info(objects_dir: &Path) -> Result<LocalPackInfo> {
 ///
 /// Returns [`Error::CorruptObject`] when the pack is too small or an entry
 /// offset cannot be walked, or [`Error::Io`] on filesystem failure.
+/// Write a v2 pack index file.
+///
+/// `sort_threads` controls OID-table sorting: `None` or `Some(1)` uses a single thread;
+/// `Some(n)` with `n > 1` may sort chunks on up to `n` workers (for large entry counts).
 pub fn write_v2_pack_index_with_trailer(
     idx_path: &Path,
     entries: &[(ObjectId, u64, u32)],
     pack_trailer: &[u8],
     hash_bytes: usize,
+    sort_threads: Option<usize>,
 ) -> Result<()> {
     if pack_trailer.len() != hash_bytes {
         return Err(Error::CorruptObject(format!(
@@ -1489,7 +1494,7 @@ pub fn write_v2_pack_index_with_trailer(
             pack_trailer.len()
         )));
     }
-    write_v2_pack_index_body(idx_path, entries, pack_trailer, hash_bytes)
+    write_v2_pack_index_body(idx_path, entries, pack_trailer, hash_bytes, sort_threads)
 }
 
 pub fn write_v2_pack_index(
@@ -1505,7 +1510,61 @@ pub fn write_v2_pack_index(
         ));
     }
     let trailer = &pack_bytes[pack_bytes.len() - hash_bytes..];
-    write_v2_pack_index_with_trailer(idx_path, entries, trailer, hash_bytes)
+    write_v2_pack_index_with_trailer(idx_path, entries, trailer, hash_bytes, None)
+}
+
+const PARALLEL_INDEX_SORT_MIN: usize = 8_192;
+
+fn sort_index_entries(entries: &mut [(ObjectId, u64, u32)], sort_threads: Option<usize>) {
+    if entries.len() < PARALLEL_INDEX_SORT_MIN {
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        return;
+    }
+    let threads = sort_threads.unwrap_or(1).max(1);
+    if threads <= 1 {
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        return;
+    }
+    let chunk = entries.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for part in entries.chunks_mut(chunk) {
+            scope.spawn(|| part.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes())));
+        }
+    });
+    merge_sorted_index_entry_chunks(entries, chunk);
+}
+
+fn merge_sorted_index_entry_chunks(entries: &mut [(ObjectId, u64, u32)], chunk: usize) {
+    let mut merged: Vec<(ObjectId, u64, u32)> = Vec::with_capacity(entries.len());
+    let n_chunks = entries.len().div_ceil(chunk);
+    let mut cursors = vec![0usize; n_chunks];
+    while merged.len() < entries.len() {
+        let mut best: Option<(usize, usize)> = None;
+        for (ci, cursor) in cursors.iter().enumerate() {
+            let start = ci * chunk;
+            let chunk_len = entries.len().saturating_sub(start).min(chunk);
+            if *cursor >= chunk_len {
+                continue;
+            }
+            let idx = start + *cursor;
+            let Some(entry) = entries.get(idx) else {
+                continue;
+            };
+            let replace = match best {
+                None => true,
+                Some((best_idx, _)) => entry.0.as_bytes() < entries[best_idx].0.as_bytes(),
+            };
+            if replace {
+                best = Some((idx, ci));
+            }
+        }
+        let Some((idx, ci)) = best else {
+            break;
+        };
+        cursors[ci] += 1;
+        merged.push(entries[idx].clone());
+    }
+    entries.copy_from_slice(&merged);
 }
 
 fn write_v2_pack_index_body(
@@ -1513,9 +1572,10 @@ fn write_v2_pack_index_body(
     entries: &[(ObjectId, u64, u32)],
     pack_trailer: &[u8],
     hash_bytes: usize,
+    sort_threads: Option<usize>,
 ) -> Result<()> {
     let mut sorted: Vec<(ObjectId, u64, u32)> = entries.to_vec();
-    sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    sort_index_entries(&mut sorted, sort_threads);
     let oid_slices: Vec<&[u8]> = sorted.iter().map(|(oid, _, _)| oid.as_bytes()).collect();
     let fanout = compute_fanout_from_oid_slices(&oid_slices);
     let mut buf = Vec::new();
@@ -3997,7 +4057,7 @@ mod tests {
             .iter()
             .map(|(oid, offset)| (*oid, *offset, 0))
             .collect();
-        write_v2_pack_index_with_trailer(&idx_path, &rows, trailer, 20).expect("write idx");
+        write_v2_pack_index_with_trailer(&idx_path, &rows, trailer, 20, None).expect("write idx");
         read_pack_index(&idx_path).expect("read idx")
     }
 
@@ -4076,7 +4136,7 @@ mod tests {
 
         let idx_path = pack_path.with_extension("idx");
         let trailer = &pack[pack.len() - 32..];
-        write_v2_pack_index_with_trailer(&idx_path, &[(wrong_oid, off, 0)], trailer, 32)
+        write_v2_pack_index_with_trailer(&idx_path, &[(wrong_oid, off, 0)], trailer, 32, None)
             .expect("write idx");
         let idx = read_pack_index(&idx_path).expect("read idx");
 
@@ -4773,6 +4833,7 @@ mod tests {
             &[(oid, object_offset, 0)],
             trailer.as_bytes(),
             20,
+            None,
         )
         .expect("idx");
 

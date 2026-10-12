@@ -45,9 +45,10 @@
 
 #![cfg(feature = "http-ureq")]
 
+use std::io;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use grit_lib::fetch::NoProgress;
@@ -68,20 +69,34 @@ use grit_lib::transport::{ConnectOptions, GitDaemonTransport, Service, Transport
 // daemon/ssh/http bring-up is identical and not reinvented).
 // ---------------------------------------------------------------------------
 
+fn git_output(dir: &Path, args: &[&str]) -> Output {
+    const MAX_TRIES: usize = 8;
+    for attempt in 0..MAX_TRIES {
+        match Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "T")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
+            .env("GIT_COMMITTER_NAME", "T")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+        {
+            Ok(out) => return out,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted && attempt + 1 < MAX_TRIES => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => panic!("run git: {e}"),
+        }
+    }
+    panic!("run git: interrupted too many times");
+}
+
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_DATE", "2005-04-07T22:13:13 +0200")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("run git");
+    let out = git_output(dir, args);
     assert!(
         out.status.success(),
         "git {args:?} failed: {}",
@@ -264,10 +279,11 @@ fn wait_ready(port: u16, secs: u64) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-            return true;
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
+            Ok(_) => return true,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
-        std::thread::sleep(Duration::from_millis(50));
     }
     false
 }
@@ -276,7 +292,13 @@ struct ChildGuard(Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
-        let _ = self.0.wait();
+        loop {
+            match self.0.wait() {
+                Ok(_) => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
     }
 }
 
