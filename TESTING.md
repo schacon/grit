@@ -335,6 +335,22 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
+| t3903-stash.sh | grit stash create/list/show/pop; git reads grit stashes; git stash apply via grit | `grit-lib/tests/stash_git_compat.rs` (`t3903_grit_stash_read_by_git_and_reverse`, `grit_stash_create_matches_git_list_show_pop_and_fsck`) | covered |
+| t3905-stash-include-untracked.sh | include-untracked stash shape vs `git stash show -p` | `stash_git_compat.rs` (`t3905_include_untracked_stash_shape_matches_git`, `grit_stash_with_untracked_matches_git`) | covered |
+| t3908-stash-in-worktree.sh | stash push from linked worktree; main repo `git stash list` | `stash_git_compat.rs` (`t3908_stash_in_linked_worktree`) | covered |
+| t3301-notes.sh | notes add/overwrite; grit ↔ `git notes show` / `git notes list` | `grit-lib/tests/notes_git_compat.rs` (`t3301_notes_roundtrip_with_git`) | covered |
+| t3303-notes-subtrees.sh | read nested notes trees into flat entries | `notes_git_compat.rs` (`t3303_notes_subtrees_read_flat_entries`) | covered |
+| t3305-notes-fanout.sh | read git fanout layouts; grit rewrite passes `git fsck --strict` | `notes_git_compat.rs` (`t3305_fanout_layouts_read_and_written`) | covered |
+| t3306-notes-prune.sh | remove note entries / drop notes ref | `notes_git_compat.rs` (`t3306_notes_prune_via_remove`) | covered |
+| t3308/t3309/t3310/t3311 notes-merge | merge strategies ours/theirs/union/cat_sort_uniq vs `git notes merge -s` | `notes_git_compat.rs` (`t3309_notes_merge_strategies_match_git`); `notes.rs` (`write_notes_commit_with_parents` updates ref) | covered |
+| t2400-worktree-add.sh | linked worktree admin layout; `git worktree list` / `list_worktrees` | `grit-lib/tests/worktree_git_compat.rs` (`t2400_worktree_admin_dir_roundtrip_with_git`, `worktree_linked_git_compat.rs`) | covered |
+| t2402-worktree-list.sh | list linked worktrees vs porcelain | `worktree_git_compat.rs` (`t2402_worktree_list_matches_git_porcelain`) | covered |
+| t2404-worktree-config.sh | `extensions.worktreeConfig` + `config.worktree` via `copy_filtered_worktree_config` | `worktree_git_compat.rs` (`t2404_worktree_config_matches_git`) | covered |
+| t2401 worktree remove | linked worktree removal vs git | `grit-lib/tests/worktree_git_compat.rs` (`t2401_remove_linked_worktree_matches_git`) | covered (library `remove_linked_worktree`; no grit `worktree remove` CLI yet) |
+| t2403/t2406/t2407 worktree | move/repair/prune/exclusive heads | — | gap (no grit `worktree move/repair/prune` yet; branch exclusivity covered in `worktree_extended_git_compat.rs`) |
+| t4204-patch-id.sh | `PatchIdMode` stable/unstable/verbatim vs `git patch-id`; ODB `compute_patch_id` | `grit-lib/src/patch_ids.rs` (`t4204_patch_id_modes_match_git`, `stable_patch_ids_match_git_patch_id_on_log_p`) | covered |
+| — | per-worktree refs `main-worktree/` / `worktrees/<id>/` storage | `worktree_git_compat.rs` (`per_worktree_refs_resolve_like_git`); `worktree_ref.rs` unit tests | covered |
+| — | stash apply/pop conflicts keep entry | `stash_git_compat.rs` (`pop_keeps_entry_on_conflict`); `stash_apply_git_compat.rs` | covered |
 
 #### Supporting
 

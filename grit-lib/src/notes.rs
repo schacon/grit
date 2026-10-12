@@ -849,7 +849,7 @@ fn resolve_notes_commit_optional(repo: &Repository, notes_ref: &str) -> Result<O
 
 pub fn write_notes_commit_with_parents(
     repo: &Repository,
-    _notes_ref: &str,
+    notes_ref: &str,
     entries: &[NotesTreeEntry],
     message: &str,
     parents: &[ObjectId],
@@ -887,7 +887,23 @@ pub fn write_notes_commit_with_parents(
         extra_headers: Vec::new(),
     };
     let commit_data = serialize_commit(&commit);
-    repo.odb.write(ObjectKind::Commit, &commit_data)
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
+    let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
+    write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
+    if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+        let msg = message.trim_end_matches('\n');
+        let reflog_msg = format!("notes: {msg}");
+        let _ = append_reflog(
+            &repo.git_dir,
+            notes_ref,
+            &old_oid,
+            &commit_oid,
+            &commit.committer,
+            &reflog_msg,
+            false,
+        );
+    }
+    Ok(commit_oid)
 }
 
 pub fn notes_merge_inner(
@@ -955,5 +971,269 @@ pub fn notes_merge_inner(
             )?;
             Ok(Ok(new_oid))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::ObjectKind;
+    use crate::repo::Repository;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn open_repo(dir: &std::path::Path) -> Repository {
+        git(dir, &["init", "-q", "-b", "main", "."]);
+        std::fs::write(dir.join("f"), b"x\n").unwrap();
+        git(dir, &["add", "f"]);
+        git(dir, &["commit", "-qm", "init"]);
+        Repository::open(&dir.join(".git"), Some(dir)).expect("open")
+    }
+
+    #[test]
+    fn note_object_name_and_display_path() {
+        let full = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(note_object_name(full.as_bytes()), Some(full.to_owned()));
+        assert!(note_object_name(b"not-a-note").is_none());
+        let entry = NotesTreeEntry {
+            mode: 0o100644,
+            path: full.as_bytes().to_vec(),
+            oid: zero_oid(),
+        };
+        assert_eq!(display_note_path(&entry), full);
+    }
+
+    #[test]
+    fn expand_notes_ref_and_merge_strategy_parse() {
+        assert_eq!(expand_notes_ref("commits"), "refs/notes/commits");
+        assert_eq!(expand_notes_ref("notes/foo"), "refs/notes/foo");
+        assert_eq!(expand_notes_ref("refs/notes/bar"), "refs/notes/bar");
+        assert_eq!(
+            parse_notes_merge_strategy_value("cat_sort_uniq"),
+            Some(NotesMergeStrategy::CatSortUniq)
+        );
+        assert!(parse_notes_merge_strategy_value("invalid").is_none());
+    }
+
+    #[test]
+    fn notes_merge_worktree_nonempty_detects_files() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path().join("wt");
+        assert!(!notes_merge_worktree_nonempty(&wt));
+        std::fs::create_dir_all(&wt).unwrap();
+        assert!(!notes_merge_worktree_nonempty(&wt));
+        std::fs::write(wt.join("x"), b"").unwrap();
+        assert!(notes_merge_worktree_nonempty(&wt));
+    }
+
+    #[test]
+    fn combine_notes_helpers_and_upsert() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        let a = repo.odb.write(ObjectKind::Blob, b"line1\n").unwrap();
+        let b = repo.odb.write(ObjectKind::Blob, b"line2\n").unwrap();
+        let cat = combine_notes_concatenate(&repo, Some(&a), Some(&b)).unwrap();
+        let merged = repo.odb.read(&cat).unwrap();
+        assert!(String::from_utf8_lossy(&merged.data).contains("line1"));
+        let _uniq = combine_notes_cat_sort_uniq(&repo, Some(&a), Some(&b)).unwrap();
+
+        let hex = "0123456789abcdef0123456789abcdef01234567";
+        let mut entries = Vec::new();
+        upsert_note_entry(&mut entries, hex, a);
+        upsert_note_entry(&mut entries, hex, b);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].oid, b);
+    }
+
+    #[test]
+    fn read_and_write_notes_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        let head = Command::new("git")
+            .current_dir(tmp.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let commit = ObjectId::from_hex(std::str::from_utf8(&head.stdout).unwrap().trim()).unwrap();
+        let blob = repo.odb.write(ObjectKind::Blob, b"hello\n").unwrap();
+        upsert_note_entry(&mut vec![], &commit.to_hex(), blob);
+        let entries = vec![NotesTreeEntry {
+            mode: 0o100644,
+            path: commit.to_hex().into_bytes(),
+            oid: blob,
+        }];
+        write_notes_commit(&repo, "refs/notes/commits", &entries, "note").unwrap();
+        let read_back = read_notes_tree(&repo, "refs/notes/commits").unwrap();
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].oid, blob);
+    }
+
+    #[test]
+    fn notes_merge_ours_keeps_local_note() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        let commit = ObjectId::from_hex(
+            std::str::from_utf8(
+                &Command::new("git")
+                    .current_dir(tmp.path())
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .unwrap()
+            .trim(),
+        )
+        .unwrap();
+        git(
+            tmp.path(),
+            &["notes", "add", "-m", "base", &commit.to_hex()],
+        );
+        let base = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        git(
+            tmp.path(),
+            &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
+        );
+        let local = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        git(
+            tmp.path(),
+            &["update-ref", "refs/notes/remote", &base.to_hex()],
+        );
+        git(
+            tmp.path(),
+            &[
+                "notes",
+                "--ref=refs/notes/remote",
+                "add",
+                "-f",
+                "-m",
+                "remote",
+                &commit.to_hex(),
+            ],
+        );
+        git(
+            tmp.path(),
+            &["update-ref", "refs/notes/commits", &local.to_hex()],
+        );
+        notes_merge_inner(
+            &repo,
+            "refs/notes/commits",
+            "refs/notes/remote",
+            NotesMergeStrategy::Ours,
+        )
+        .expect("merge")
+        .expect("ok");
+        let show = Command::new("git")
+            .current_dir(tmp.path())
+            .args(["notes", "show", &commit.to_hex()])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&show.stdout).trim(), "local");
+    }
+
+    #[test]
+    fn notes_merge_manual_leaves_conflict_commit() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        let commit = ObjectId::from_hex(
+            std::str::from_utf8(
+                &Command::new("git")
+                    .current_dir(tmp.path())
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .unwrap()
+                    .stdout,
+            )
+            .unwrap()
+            .trim(),
+        )
+        .unwrap();
+        git(
+            tmp.path(),
+            &["notes", "add", "-m", "base", &commit.to_hex()],
+        );
+        let base = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        git(
+            tmp.path(),
+            &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
+        );
+        let local = crate::refs::resolve_ref(&repo.git_dir, "refs/notes/commits").unwrap();
+        git(
+            tmp.path(),
+            &["update-ref", "refs/notes/remote", &base.to_hex()],
+        );
+        git(
+            tmp.path(),
+            &[
+                "notes",
+                "--ref=refs/notes/remote",
+                "add",
+                "-f",
+                "-m",
+                "remote",
+                &commit.to_hex(),
+            ],
+        );
+        git(
+            tmp.path(),
+            &["update-ref", "refs/notes/commits", &local.to_hex()],
+        );
+        let result = notes_merge_inner(
+            &repo,
+            "refs/notes/commits",
+            "refs/notes/remote",
+            NotesMergeStrategy::Manual,
+        )
+        .expect("merge");
+        assert!(result.is_err(), "manual merge must stop with conflicts");
+        assert!(notes_merge_worktree_nonempty(&notes_merge_worktree_path(
+            &repo
+        )));
+    }
+
+    #[test]
+    fn read_notes_tree_missing_ref_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        assert!(read_notes_tree(&repo, "refs/notes/commits")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn notes_merge_empty_remote_adopts_remote() {
+        let tmp = TempDir::new().unwrap();
+        let repo = open_repo(tmp.path());
+        let local =
+            write_notes_commit_with_parents(&repo, "refs/notes/commits", &[], "local only", &[])
+                .unwrap();
+        let result = notes_merge_inner(
+            &repo,
+            "refs/notes/commits",
+            "refs/notes/missing",
+            NotesMergeStrategy::Theirs,
+        )
+        .expect("merge");
+        assert_eq!(result.expect("ok"), local);
     }
 }

@@ -157,3 +157,62 @@ where
     }
     if count == 1 { sole } else { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::ObjectId;
+    use std::borrow::Cow;
+
+    #[test]
+    fn parse_worktree_ref_prefixes() {
+        let (kind, bare, id) = parse_worktree_ref("main-worktree/HEAD");
+        assert_eq!(kind, RefWorktreeType::Main);
+        assert_eq!(bare, "HEAD");
+        assert!(id.is_none());
+
+        let (kind, bare, id) = parse_worktree_ref("worktrees/wt1/HEAD");
+        assert_eq!(kind, RefWorktreeType::Other);
+        assert_eq!(bare, "HEAD");
+        assert_eq!(id, Some(Cow::Borrowed("wt1")));
+
+        let (kind, bare, _) = parse_worktree_ref("refs/heads/main");
+        assert_eq!(kind, RefWorktreeType::Shared);
+        assert_eq!(bare, "refs/heads/main");
+    }
+
+    #[test]
+    fn is_per_worktree_ref_matches_git_prefixes() {
+        assert!(is_per_worktree_ref("refs/worktree/foo"));
+        assert!(is_per_worktree_ref("refs/bisect/foo"));
+        assert!(!is_per_worktree_ref("refs/heads/main"));
+    }
+
+    #[test]
+    fn resolve_ref_dwim_finds_head_alias() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        let resolve = |name: &str| {
+            if name == "refs/heads/main" {
+                Some(oid)
+            } else {
+                None
+            }
+        };
+        let (count, first) = resolve_ref_dwim(resolve, "main");
+        assert!(count >= 1);
+        assert_eq!(first, Some(oid));
+    }
+
+    #[test]
+    fn ref_visible_from_worktree_per_worktree_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(git_dir.join("refs/worktree")).unwrap();
+        std::fs::write(git_dir.join("refs/worktree/x"), b"ref: refs/heads/main\n").unwrap();
+        assert!(ref_visible_from_worktree(&git_dir, "refs/worktree/x"));
+        assert!(!ref_visible_from_worktree(
+            &git_dir,
+            "refs/worktree/missing"
+        ));
+    }
+}

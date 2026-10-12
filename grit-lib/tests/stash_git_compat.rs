@@ -1,6 +1,7 @@
 //! Round-trip stash create/list/pop/drop with system `git`.
 
 use grit_lib::error::Error;
+use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::stash::{
     apply_stash, create_stash, drop_stash, list_stashes, pop_stash, push_stash, stash_diff,
     StashCreateOptions,
@@ -9,6 +10,7 @@ use std::process::Command;
 
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
+use grit_lib::worktree::{add_linked_worktree, AddLinkedWorktreeOptions};
 use grit_test_support::git;
 
 fn git_cmd(repo: &std::path::Path, args: &[&str]) -> String {
@@ -31,6 +33,14 @@ fn stash_options(include_untracked: bool, message: Option<&str>) -> StashCreateO
         include_untracked,
         identity: "Test <t@example.com> 1000000000 +0000".to_owned(),
     }
+}
+
+fn assert_fsck_strict(root: &std::path::Path) {
+    let fsck = git_cmd(root, &["fsck", "--strict"]);
+    assert!(
+        !fsck.to_lowercase().contains("error"),
+        "fsck --strict must be clean:\n{fsck}"
+    );
 }
 
 #[test]
@@ -575,4 +585,127 @@ fn stash_diff_matches_git_show_stat_paths() {
         diffs.iter().any(|d| d.path().contains("d")),
         "stash diff should include changed path"
     );
+}
+
+#[test]
+fn t3903_grit_stash_read_by_git_and_reverse() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), "v0\n").expect("write");
+    git_cmd(dir.path(), &["add", "a.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+
+    std::fs::write(dir.path().join("a.txt"), "grit-stash\n").expect("modify");
+    std::fs::write(dir.path().join("new.txt"), "added\n").expect("new");
+    git_cmd(dir.path(), &["add", "new.txt"]);
+
+    let repo = open_grit(dir.path());
+    let oid = push_stash(&repo, &stash_options(false, Some("grit msg")))
+        .expect("push")
+        .expect("changes");
+    assert_fsck_strict(dir.path());
+
+    let grit_show = git_cmd(
+        dir.path(),
+        &["stash", "show", "-p", &format!("{}", oid.to_hex())],
+    );
+    let git_show = git_cmd(dir.path(), &["stash", "show", "-p", "stash@{0}"]);
+    assert_eq!(grit_show.trim(), git_show.trim());
+
+    let grit_dir = tempfile::tempdir().expect("grit copy");
+    let git_dir = tempfile::tempdir().expect("git copy");
+    copy_repo(dir.path(), grit_dir.path());
+    copy_repo(dir.path(), git_dir.path());
+
+    std::fs::write(git_dir.path().join("a.txt"), "v0\n").expect("reset wt");
+    git_cmd(git_dir.path(), &["reset", "--hard", "HEAD"]);
+
+    let stash_hex = git_cmd(git_dir.path(), &["rev-parse", "refs/stash"])
+        .trim()
+        .to_owned();
+    let stash_oid = ObjectId::from_hex(&stash_hex).expect("stash oid");
+    apply_stash(
+        &open_grit(grit_dir.path()),
+        grit_dir.path(),
+        &stash_oid,
+        true,
+        "Test <t@example.com> 0 +0000",
+    )
+    .expect("grit apply git stash");
+    git_cmd(git_dir.path(), &["stash", "apply", "--index", "stash@{0}"]);
+
+    let grit_p = git_cmd(grit_dir.path(), &["status", "--porcelain"]);
+    let git_p = git_cmd(git_dir.path(), &["status", "--porcelain"]);
+    assert_eq!(grit_p, git_p, "git-created stash apply must match git");
+    assert_fsck_strict(grit_dir.path());
+}
+
+#[test]
+fn t3905_include_untracked_stash_shape_matches_git() {
+    let grit_root = tempfile::tempdir().expect("tempdir");
+    let git_root = tempfile::tempdir().expect("tempdir");
+    for root in [grit_root.path(), git_root.path()] {
+        init_repo(root);
+        std::fs::write(root.join("tracked"), "t\n").expect("write");
+        git_cmd(root, &["add", "tracked"]);
+        git_cmd(root, &["commit", "-qm", "init"]);
+        std::fs::write(root.join("tracked"), "changed\n").expect("modify");
+        std::fs::write(root.join("untracked.txt"), "u\n").expect("untracked");
+    }
+
+    push_stash(
+        &open_grit(grit_root.path()),
+        &stash_options(true, Some("with-u")),
+    )
+    .expect("grit push")
+    .expect("had changes");
+    git_cmd(git_root.path(), &["stash", "push", "-u", "-m", "with-u"]);
+
+    let grit_show = git_cmd(grit_root.path(), &["stash", "show", "-p", "stash@{0}"]);
+    let git_show = git_cmd(git_root.path(), &["stash", "show", "-p", "stash@{0}"]);
+    assert_eq!(
+        grit_show.trim(),
+        git_show.trim(),
+        "include-untracked stash shape must match git"
+    );
+    assert_fsck_strict(grit_root.path());
+}
+
+#[test]
+fn t3908_stash_in_linked_worktree() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let main = tmp.path().join("main");
+    std::fs::create_dir_all(&main).expect("mkdir");
+    init_repo(&main);
+    std::fs::write(main.join("f"), "base\n").expect("write");
+    git_cmd(&main, &["add", "f"]);
+    git_cmd(&main, &["commit", "-qm", "init"]);
+
+    let linked = tmp.path().join("linked");
+    add_linked_worktree(
+        &open_grit(&main),
+        &AddLinkedWorktreeOptions {
+            path: linked.clone(),
+            branch: Some("linked".into()),
+            new_branch: true,
+            detach: false,
+            start_point: Some("HEAD".into()),
+        },
+    )
+    .expect("add worktree");
+
+    std::fs::write(linked.join("f"), "linked change\n").expect("modify");
+    push_stash(
+        &Repository::discover(Some(&linked)).expect("discover linked"),
+        &stash_options(false, Some("from-linked")),
+    )
+    .expect("stash from linked")
+    .expect("changes");
+
+    let list = git_cmd(&main, &["stash", "list"]);
+    assert!(
+        list.contains("from-linked") || list.contains("linked"),
+        "main repo must see linked worktree stash:\n{list}"
+    );
+    assert_fsck_strict(&main);
 }
