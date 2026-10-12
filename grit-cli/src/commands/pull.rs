@@ -12,11 +12,12 @@ use grit_lib::state::{resolve_head, HeadState};
 
 use crate::commands::merge::{self, MergeOutcome};
 use crate::context;
-use grit_lib::fetch::NoProgress;
+use crate::output::OutputMode;
+use crate::progress::TerminalProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
 use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 
-pub fn run() -> Result<MergeOutcome> {
+pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
     let repo = context::discover()?;
 
     let model = status(&repo, &StatusOptions::default(), &mut NullProgress)
@@ -46,6 +47,7 @@ pub fn run() -> Result<MergeOutcome> {
         .context("could not resolve fetch prune settings")?;
 
     let factory = DefaultHttpClientFactory;
+    let mut progress = TerminalProgress::new(mode);
     Remote::from_config(&config, &remote)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
         .fetch(
@@ -57,7 +59,7 @@ pub fn run() -> Result<MergeOutcome> {
                 prune,
                 ..Default::default()
             },
-            &mut NoProgress,
+            &mut progress,
             Some(&factory),
         )
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;

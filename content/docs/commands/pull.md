@@ -19,6 +19,8 @@ The remote is the one in `branch.<name>.remote`, or `origin`. The remote branch 
 
 Like `grit merge`, `grit pull` won't run with uncommitted changes or a detached HEAD, and stops without changing anything if there are conflicts.
 
+The fetch step uses the same terminal progress as [`grit fetch`](../fetch/) and [`grit clone`](../clone/): live stderr progress on a TTY in human mode, silent when stderr is piped or when you pass `--json` or `--markdown`.
+
 ## Options
 
 `grit pull` takes no options beyond the [global ones](../global-options/).
@@ -27,6 +29,7 @@ Like `grit merge`, `grit pull` won't run with uncommitted changes or a detached 
 
 ```console
 $ grit pull
+Receiving objects: 2.00 KiB, 4.00 KiB/s, done.
 Fast-forwarded origin/main → b52cca6
 
 $ grit pull
