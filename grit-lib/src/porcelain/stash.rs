@@ -489,23 +489,32 @@ fn stage_untracked_path_for_stash(
         return Ok(());
     }
     let mode = mode_from_metadata(&meta);
-    let data = if mode == MODE_SYMLINK {
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            fs::read_link(&abs)?.as_os_str().as_bytes().to_vec()
-        }
-        #[cfg(not(unix))]
-        {
-            fs::read_link(&abs)?.to_string_lossy().as_bytes().to_vec()
-        }
+    if mode == MODE_TREE {
+        return Ok(());
+    }
+
+    let file_attrs = rules.file_attrs(&index_relpath, false);
+    let conv = rules.conversion();
+    let filter_fp = Some(rules.filter_process());
+    let oid = if meta.file_type().is_symlink() {
+        let target = fs::read_link(&abs).map_err(Error::Io)?;
+        let data = crate::diff::symlink_target_bytes(&target);
+        repo.odb().write(ObjectKind::Blob, &data)?
     } else {
-        fs::read(&abs)?
+        crate::diff::materialize_worktree_blob(
+            repo.odb(),
+            &abs,
+            &meta,
+            conv,
+            &file_attrs,
+            &index_relpath,
+            None,
+            filter_fp,
+        )
+        .map_err(|e| Error::Message(format!("could not store {index_relpath}: {e}")))?
     };
-    let oid = repo.odb().write(ObjectKind::Blob, &data)?;
     let entry = entry_from_stat(&abs, index_relpath.as_bytes(), oid, mode)?;
     index.add_or_replace(entry);
-    let _ = rules;
     Ok(())
 }
 

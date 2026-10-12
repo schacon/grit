@@ -897,3 +897,63 @@ fn push_stash_clears_unstaged_exec_bit_in_subdirectory() {
 
     pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000").expect("pop");
 }
+
+#[test]
+fn push_stash_normalizes_crlf_worktree_under_gitattributes_eol_crlf() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join(".gitattributes"), "*.txt text eol=crlf\n").expect("attrs");
+    std::fs::write(dir.path().join("f.txt"), b"a\r\nb\r\n").expect("write");
+    git_cmd(dir.path(), &["add", "."]);
+    git_cmd(dir.path(), &["commit", "-qm", "base"]);
+
+    std::fs::write(dir.path().join("f.txt"), b"a\r\nb\r\nc\r\n").expect("modify");
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(false, None))
+        .expect("push")
+        .expect("had changes");
+
+    let stash_blob = git_cmd(dir.path(), &["cat-file", "-p", "stash@{0}:f.txt"]);
+    let head_blob = git_cmd(dir.path(), &["cat-file", "-p", "HEAD:f.txt"]);
+    assert_eq!(
+        stash_blob, "a\nb\nc\n",
+        "stash worktree tree must store LF-normalized blob like git stash"
+    );
+    assert_eq!(head_blob, "a\nb\n", "HEAD stays LF from commit");
+
+    let diff_stat = git_cmd(dir.path(), &["diff", "--stat", "HEAD", "stash@{0}"]);
+    assert!(
+        diff_stat.contains("1 insertion"),
+        "git diff --stat should show one line added, got:\n{diff_stat}"
+    );
+    assert!(
+        !diff_stat.contains("2 deletion"),
+        "whole-file rewrite must not appear:\n{diff_stat}"
+    );
+
+    assert_fsck_strict(dir.path());
+}
+
+#[test]
+fn push_stash_untracked_normalizes_crlf_under_gitattributes_eol_crlf() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join(".gitattributes"), "*.txt text eol=crlf\n").expect("attrs");
+    std::fs::write(dir.path().join("tracked.txt"), b"x\r\n").expect("write");
+    git_cmd(dir.path(), &["add", "."]);
+    git_cmd(dir.path(), &["commit", "-qm", "base"]);
+    std::fs::write(dir.path().join("new.txt"), b"n\r\n").expect("untracked");
+
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("had changes");
+
+    let stash_blob = git_cmd(dir.path(), &["cat-file", "-p", "stash^3:new.txt"]);
+    assert_eq!(
+        stash_blob, "n\n",
+        "untracked stash parent must LF-normalize under eol=crlf"
+    );
+    assert_fsck_strict(dir.path());
+}
