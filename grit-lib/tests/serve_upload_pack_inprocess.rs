@@ -1,0 +1,148 @@
+//! In-process `upload_pack` coverage (HTTP compat tests spawn a separate binary).
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use grit_lib::objects::{ObjectKind, ObjectId};
+use grit_lib::ref_storage::RefStorageFormat;
+use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
+use std::io::Cursor;
+
+fn pkt_line(payload: &str) -> Vec<u8> {
+    let bytes = payload.as_bytes();
+    format!("{:04x}{}", bytes.len() + 4, payload).into_bytes()
+}
+
+fn seed_bare_main(repo: &Repository) -> ObjectId {
+    let blob = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Blob, b"payload\n")
+        .expect("blob");
+    let tree_body = format!("100644 file.txt\0").into_bytes();
+    let mut tree_bytes = tree_body;
+    tree_bytes.extend_from_slice(blob.as_bytes());
+    let tree = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Tree, &tree_bytes)
+        .expect("tree");
+    let commit_body = format!(
+        "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nseed\n"
+    );
+    let tip = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
+        .expect("commit");
+    std::fs::write(
+        repo.git_dir.join("refs/heads/main"),
+        format!("{tip}\n"),
+    )
+    .expect("ref");
+    tip
+}
+
+fn v0_stateless_fetch_body(want: ObjectId) -> Vec<u8> {
+    let caps = "multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta";
+    let mut body = pkt_line(&format!("want {} {caps}\n", want.to_hex()));
+    body.extend_from_slice(b"0000");
+    body.extend_from_slice(&pkt_line("done"));
+    body.extend_from_slice(b"0000");
+    body
+}
+
+#[test]
+fn upload_pack_v0_advertise_and_stateless_fetch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
+    let repo = Repository::open(dir.path(), None).expect("open");
+    let tip = seed_bare_main(&repo);
+
+    let mut ad_out = Vec::new();
+    upload_pack(
+        &repo,
+        &mut Cursor::new([] as [u8; 0]),
+        &mut ad_out,
+        &ServeOptions {
+            protocol: ProtocolVersion::V0,
+            advertise_refs: true,
+            stateless_rpc: false,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("advertise");
+    assert!(ad_out.len() > 20);
+
+    let mut pack_out = Vec::new();
+    upload_pack(
+        &repo,
+        &mut Cursor::new(v0_stateless_fetch_body(tip)),
+        &mut pack_out,
+        &ServeOptions {
+            protocol: ProtocolVersion::V0,
+            advertise_refs: false,
+            stateless_rpc: true,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("fetch");
+    assert!(pack_out.len() > 50);
+}
+
+#[test]
+fn upload_pack_v1_and_v2_entry_points() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
+    let repo = Repository::open(dir.path(), None).expect("open");
+    let tip = seed_bare_main(&repo);
+
+    let mut v1_out = Vec::new();
+    upload_pack(
+        &repo,
+        &mut Cursor::new([] as [u8; 0]),
+        &mut v1_out,
+        &ServeOptions {
+            protocol: ProtocolVersion::V1,
+            advertise_refs: true,
+            stateless_rpc: false,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("v1 ad");
+    assert!(v1_out.windows(9).any(|w| w == b"version 1"));
+
+    let v2_ls = pkt_line("command=ls-refs\n");
+    let mut v2_out = Vec::new();
+    upload_pack(
+        &repo,
+        &mut Cursor::new(v2_ls),
+        &mut v2_out,
+        &ServeOptions {
+            protocol: ProtocolVersion::V2,
+            advertise_refs: false,
+            stateless_rpc: true,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("v2 ls-refs");
+    assert!(!v2_out.is_empty());
+
+    let mut v2_ad = Vec::new();
+    upload_pack(
+        &repo,
+        &mut Cursor::new([] as [u8; 0]),
+        &mut v2_ad,
+        &ServeOptions {
+            protocol: ProtocolVersion::V2,
+            advertise_refs: true,
+            stateless_rpc: false,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("v2 capability ad");
+    assert!(v2_ad.windows(9).any(|w| w == b"version 2"));
+    let _ = tip;
+}

@@ -9014,6 +9014,34 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn mega_ordering_matrix_on_long_history() -> Result<()> {
+        let (_dir, repo, _) = seed_repo(320, true);
+        for ordering in [
+            OrderingMode::Default,
+            OrderingMode::Topo,
+            OrderingMode::DateOrderWalk,
+            OrderingMode::AuthorDateWalk,
+            OrderingMode::AuthorDateTopo,
+        ] {
+            for fp in [false, true] {
+                let opts = RevListOptions {
+                    ordering,
+                    first_parent: fp,
+                    simplify_merges: !fp,
+                    paths: vec!["tracked.txt".into()],
+                    boundary: true,
+                    reverse: fp,
+                    count: fp,
+                    quiet: false,
+                    ..RevListOptions::default()
+                };
+                let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn deep_history_format_and_parent_rewrite() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(160, true);
         let formats = [
