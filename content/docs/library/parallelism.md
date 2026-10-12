@@ -14,6 +14,8 @@ Grit centralizes worker counts and batch thresholds in [`grit_lib::parallel`](ht
 
 Call [`ThreadPolicy::resolve`](https://docs.rs/grit-lib/latest/grit_lib/parallel/struct.ThreadPolicy.html#method.resolve) with a [`ParallelOp`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) and a merged [`ConfigSet`](https://docs.rs/grit-lib/latest/grit_lib/config/struct.ConfigSet.html) to obtain [`ParallelOptions`](https://docs.rs/grit-lib/latest/grit_lib/parallel/struct.ParallelOptions.html) (threads + batch thresholds).
 
+Index stat preload during status and index refresh uses Git’s preload-index math: about **500** tracked blob entries per worker, capped at **20** workers, then limited by `index.threads`, CPU count, and optional per-call `stat_parallel_threads` overrides. Dirty-candidate re-hashing after stat collection runs through the same ordered [`try_par_map`](https://docs.rs/grit-lib/latest/grit_lib/parallel/fn.try_par_map.html) pool.
+
 | `ParallelOp` | Config keys |
 | --- | --- |
 | `IndexRefresh` | `core.preloadIndex`, `index.threads` |
