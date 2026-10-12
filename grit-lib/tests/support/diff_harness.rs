@@ -15,6 +15,7 @@ use grit_lib::diff::{
     postprocess_diff_entries, tree_oid_of_commit,
     unified_diff_histogram_ignore_with_prefix_and_funcname,
     unified_diff_with_prefix_and_funcname_and_algorithm, DiffEntry, DiffPostprocessOptions,
+    DiffPostprocessWorktree,
 };
 use grit_lib::index::Index;
 use grit_lib::objects::{ObjectId, ObjectKind};
@@ -832,6 +833,7 @@ pub fn postprocess(
     entries: Vec<DiffEntry>,
     source_tree: Option<&ObjectId>,
     work_root: Option<&Path>,
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
     config: &ConfigSet,
     opts: &DiffPostprocessOptions,
 ) -> Vec<DiffEntry> {
@@ -840,6 +842,7 @@ pub fn postprocess(
         entries,
         source_tree,
         work_root,
+        worktree,
         config,
         &ThreadPolicy::default(),
         opts,
@@ -879,7 +882,7 @@ pub fn tree_diff_raw(
     opts: &DiffPostprocessOptions,
 ) -> Vec<String> {
     let raw = diff_trees(&repo.odb, old_tree, new_tree, "").expect("diff_trees");
-    let entries = postprocess(&repo.odb, raw, old_tree, None, config, opts);
+    let entries = postprocess(&repo.odb, raw, old_tree, None, None, config, opts);
     grit_raw_lines(&entries)
 }
 
@@ -891,7 +894,7 @@ pub fn index_to_tree_raw(
     opts: &DiffPostprocessOptions,
 ) -> Vec<String> {
     let raw = diff_index_to_tree(&repo.odb, index, Some(tree), false).expect("diff_index_to_tree");
-    let entries = postprocess(&repo.odb, raw, Some(tree), None, config, opts);
+    let entries = postprocess(&repo.odb, raw, Some(tree), None, None, config, opts);
     grit_raw_lines(&entries)
 }
 
@@ -905,8 +908,23 @@ pub fn index_to_worktree_raw(
 ) -> Vec<String> {
     let raw = diff_index_to_worktree(&repo.odb, index, worktree, false, false)
         .expect("diff_index_to_worktree");
-    let entries = postprocess(&repo.odb, raw, head_tree, Some(worktree), config, opts);
+    let entries = postprocess(
+        &repo.odb,
+        raw,
+        head_tree,
+        Some(worktree),
+        None,
+        config,
+        opts,
+    );
     grit_raw_lines(&entries)
+}
+
+fn tree_worktree_side<'a>(repo: &'a Repository, index: &'a Index) -> DiffPostprocessWorktree<'a> {
+    DiffPostprocessWorktree {
+        repository_git_dir: &repo.git_dir,
+        index,
+    }
 }
 
 pub fn tree_to_worktree_raw(
@@ -919,7 +937,16 @@ pub fn tree_to_worktree_raw(
 ) -> Vec<String> {
     let raw =
         diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
-    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    let wctx = tree_worktree_side(repo, index);
+    let entries = postprocess(
+        &repo.odb,
+        raw,
+        tree,
+        Some(worktree),
+        Some(&wctx),
+        config,
+        opts,
+    );
     grit_raw_lines(&entries)
 }
 
@@ -935,7 +962,16 @@ pub fn tree_to_worktree_raw_abbrev(
 ) -> Vec<String> {
     let raw =
         diff_tree_to_worktree(&repo.odb, tree, worktree, index).expect("diff_tree_to_worktree");
-    let entries = postprocess(&repo.odb, raw, tree, Some(worktree), config, opts);
+    let wctx = tree_worktree_side(repo, index);
+    let entries = postprocess(
+        &repo.odb,
+        raw,
+        tree,
+        Some(worktree),
+        Some(&wctx),
+        config,
+        opts,
+    );
     grit_raw_lines_abbrev(&entries, abbrev)
 }
 
@@ -948,7 +984,7 @@ pub fn commits_diff_raw(
 ) -> Vec<String> {
     let raw = diff_commits(&repo.odb, base, tip).expect("diff_commits");
     let base_tree = tree_oid_of_commit(&repo.odb, base).expect("base tree");
-    let entries = postprocess(&repo.odb, raw, Some(&base_tree), None, config, opts);
+    let entries = postprocess(&repo.odb, raw, Some(&base_tree), None, None, config, opts);
     grit_raw_lines(&entries)
 }
 

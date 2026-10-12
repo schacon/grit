@@ -103,43 +103,81 @@ fn t4038_combined_raw_matches_git() {
 fn t4057_combined_paths_octopus_matches_git() {
     let dr = DiffRepo::init();
     let wt = &dr.worktree;
-    for i in 1..=9 {
-        std::fs::write(wt.join(format!("{i}.txt")), format!("{i}\n")).unwrap();
-    }
-    git_quiet(wt, &["add", "."]);
-    git_quiet(wt, &["commit", "-qm", "init"]);
-
-    git_quiet(wt, &["checkout", "-q", "-b", "side"]);
-    for i in 2..=9 {
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(wt.join(format!("{i}.txt")))
-            .unwrap()
-            .write_all(format!("{i}/2\n").as_bytes())
-            .unwrap();
-    }
-    git_quiet(wt, &["commit", "-am", "side"]);
-
-    git_quiet(wt, &["checkout", "-q", "main"]);
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(wt.join("1.txt"))
-        .unwrap()
-        .write_all(b"1/2\n")
+    std::fs::write(wt.join("shared.txt"), "base\n").unwrap();
+    git_quiet(wt, &["add", "shared.txt"]);
+    git_quiet(wt, &["commit", "-qm", "root"]);
+    let init: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
         .unwrap();
-    git_quiet(wt, &["commit", "-am", "main"]);
-
-    git_quiet(wt, &["merge", "side", "-m", "merge"]);
-    let merge: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+    git_quiet(wt, &["checkout", "-q", "-b", "p1"]);
+    std::fs::write(wt.join("shared.txt"), "one\n").unwrap();
+    git_quiet(wt, &["add", "shared.txt"]);
+    git_quiet(wt, &["commit", "-qm", "p1"]);
+    let p1: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
         .trim()
         .parse()
         .unwrap();
 
+    git_quiet(wt, &["checkout", "-q", "-b", "p2", &init.to_hex()]);
+    std::fs::write(wt.join("shared.txt"), "two\n").unwrap();
+    git_quiet(wt, &["add", "shared.txt"]);
+    git_quiet(wt, &["commit", "-qm", "p2"]);
+    let p2: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    git_quiet(wt, &["checkout", "-q", "-b", "p3", &init.to_hex()]);
+    std::fs::write(wt.join("shared.txt"), "three\n").unwrap();
+    git_quiet(wt, &["add", "shared.txt"]);
+    git_quiet(wt, &["commit", "-qm", "p3"]);
+    let p3: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    std::fs::write(wt.join("shared.txt"), "merged\n").unwrap();
+    git_quiet(wt, &["add", "shared.txt"]);
+    let merge_tree: ObjectId = git_quiet(wt, &["write-tree"]).trim().parse().unwrap();
+    let merge: ObjectId = git_quiet(
+        wt,
+        &[
+            "commit-tree",
+            &merge_tree.to_hex(),
+            "-p",
+            &p1.to_hex(),
+            "-p",
+            &p2.to_hex(),
+            "-p",
+            &p3.to_hex(),
+            "-m",
+            "octopus",
+        ],
+    )
+    .trim()
+    .parse()
+    .unwrap();
+
+    let (tree, parents) = read_merge(wt, &merge);
+    assert_eq!(
+        parents.len(),
+        3,
+        "fixture must be a three-parent octopus merge"
+    );
+
     let git_names = {
-        let out = support::git_output(
-            wt,
-            &["diff", "-c", "--name-only", "HEAD", "HEAD^", "HEAD^2"],
-        );
+        let mut args = vec![
+            "diff".to_string(),
+            "-c".to_string(),
+            "--name-only".to_string(),
+            merge.to_hex(),
+        ];
+        for p in &parents {
+            args.push(p.to_hex());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = git_output(wt, &arg_refs);
         assert!(out.status.success());
         let mut names: Vec<String> = String::from_utf8_lossy(&out.stdout)
             .lines()
@@ -150,13 +188,26 @@ fn t4057_combined_paths_octopus_matches_git() {
         names
     };
 
-    let (tree, parents) = read_merge(wt, &merge);
     let mut grit_sorted = combined_diff_paths(&dr.repo.odb, &tree, &parents);
     grit_sorted.sort();
 
     assert_eq!(
         git_names, grit_sorted,
-        "combined path list must match git diff -c --name-only"
+        "combined path list must match git diff -c --name-only on octopus merge"
+    );
+
+    let git_raw = git_raw_lines(wt, &["diff-tree", "--cc", "-r", "--raw", &merge.to_hex()]);
+    let walk = CombinedTreeDiffOptions::default();
+    let paths = combined_diff_paths_filtered(&dr.repo.odb, &tree, &parents, &walk, None)
+        .expect("combined paths");
+    let mut grit_raw: Vec<String> = paths
+        .iter()
+        .map(|p| format_combined_raw_line(p, None))
+        .collect();
+    grit_raw.sort();
+    assert_eq!(
+        git_raw, grit_raw,
+        "combined raw lines must match git diff-tree --cc --raw on octopus merge"
     );
 }
 

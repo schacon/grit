@@ -303,6 +303,51 @@ fn t4008_break_rewrite_tree_worktree_raw_matches_git() {
 }
 
 #[test]
+fn t4008_break_rewrite_tree_worktree_eol_lf_crlf_raw_matches_git() {
+    let dr = DiffRepo::init();
+    let wt = &dr.worktree;
+    fs::write(wt.join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
+    let original = large_dissimilar_payload("crlf tree-worktree break seed");
+    fs::write(wt.join("f.txt"), &original).unwrap();
+    git_quiet(wt, &["add", "."]);
+    git_quiet(wt, &["commit", "-qm", "base"]);
+    let tree = rev_parse_tree(wt, "HEAD^{tree}");
+
+    let mut rewritten = original.clone();
+    rewritten.replace_range(100..500, &"Z".repeat(400));
+    // Dissimilar rewrite with CRLF on disk; Git clean-smudges to LF for break scoring and OID.
+    let mut crlf: Vec<u8> = rewritten.into_bytes();
+    for b in crlf.iter_mut() {
+        if *b == b'\n' {
+            *b = b'\r';
+        }
+    }
+    crlf.extend_from_slice(b"\r\n");
+    fs::write(wt.join("f.txt"), &crlf).unwrap();
+
+    let config = ConfigSet::new();
+    let opts = DiffPostprocessOptions {
+        break_score: Some(GIT_DIFF_DEFAULT_BREAK_SCORE),
+        rename_threshold: 100,
+        materialize_break_worktree_new_oid: true,
+        ..Default::default()
+    };
+
+    let git_lines = git_raw_lines(
+        wt,
+        &["diff", "-r", "-B", "--raw", &format!("{}:", tree.to_hex())],
+    );
+    let index = dr.load_index();
+    let grit_lines =
+        tree_to_worktree_raw_abbrev(&dr.repo, wt, &index, Some(&tree), &config, &opts, 7);
+    assert_raw_matches_git(
+        &grit_lines,
+        &git_lines,
+        "t4008 break tree↔worktree with eol=lf and CRLF worktree file",
+    );
+}
+
+#[test]
 fn t4008_break_rewrite_matches_git() {
     let dr = DiffRepo::init();
     let wt = &dr.worktree;
@@ -577,7 +622,19 @@ fn diff_tree_to_worktree_and_show_tree_entries() {
     let git_lines = git_raw_lines(wt, &["diff", "-r", "--raw", &format!("{}:", tree.to_hex())]);
     let raw = grit_lib::diff::diff_tree_to_worktree(&dr.repo.odb, Some(&tree), wt, &index)
         .expect("tree_to_worktree");
-    let entries = support::postprocess(&dr.repo.odb, raw, Some(&tree), Some(wt), &config, &opts);
+    let wctx = grit_lib::diff::DiffPostprocessWorktree {
+        repository_git_dir: &dr.repo.git_dir,
+        index: &index,
+    };
+    let entries = support::postprocess(
+        &dr.repo.odb,
+        raw,
+        Some(&tree),
+        Some(wt),
+        Some(&wctx),
+        &config,
+        &opts,
+    );
     let grit_lines = grit_raw_lines_abbrev(&entries, 7);
     assert_raw_matches_git(&grit_lines, &git_lines, "tree↔worktree");
 
@@ -670,6 +727,7 @@ fn t4043_binary_rename_raw_matches_git() {
             &dr.repo.odb,
             diff_trees(&dr.repo.odb, Some(&parent), Some(&commit), "").expect("trees"),
             Some(&parent),
+            None,
             None,
             &config,
             &opts,

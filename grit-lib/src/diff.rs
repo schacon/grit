@@ -5596,12 +5596,38 @@ impl Default for DiffPostprocessOptions {
     }
 }
 
+/// Index and git directory used to read canonical (clean) worktree bytes during break-rewrite
+/// post-processing on tree↔worktree diffs.
+#[derive(Debug, Clone, Copy)]
+pub struct DiffPostprocessWorktree<'a> {
+    /// Git directory for config and attributes (linked worktrees / gitfiles).
+    pub repository_git_dir: &'a Path,
+    /// Current index; stage-0 entries supply autocrlf index-guard blobs when needed.
+    pub index: &'a Index,
+}
+
 fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
     Ok(odb.read(oid)?.data)
 }
 
+fn index_stage0_entry<'a>(index: &'a Index, rel_path: &str) -> Option<&'a IndexEntry> {
+    index
+        .entries
+        .iter()
+        .find(|e| e.stage() == 0 && e.path.as_slice() == rel_path.as_bytes())
+}
+
 /// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
-fn read_new_side_bytes(odb: &Odb, entry: &DiffEntry, work_root: Option<&Path>) -> Result<Vec<u8>> {
+///
+/// When `worktree` is set, worktree paths are normalized with the same attribute/filter rules as
+/// [`diff_tree_to_worktree`]; otherwise raw filesystem bytes are read.
+fn read_new_side_bytes(
+    odb: &Odb,
+    entry: &DiffEntry,
+    work_root: Option<&Path>,
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
+    config: &ConfigSet,
+) -> Result<Vec<u8>> {
     if entry.new_oid != zero_oid() {
         return blob_bytes(odb, &entry.new_oid);
     }
@@ -5614,7 +5640,41 @@ fn read_new_side_bytes(odb: &Odb, entry: &DiffEntry, work_root: Option<&Path>) -
             path
         ))
     })?;
-    std::fs::read(root.join(path)).map_err(Error::Io)
+    if let Some(wctx) = worktree {
+        let file_path = root.join(path);
+        let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
+        let conv = crate::crlf::ConversionConfig::from_config(config);
+        let attrs = crate::crlf::load_gitattributes(root);
+        let file_attrs = crate::crlf::get_file_attrs(&attrs, path, false, config);
+        let index_entry = index_stage0_entry(wctx.index, path);
+        return worktree_blob_bytes(
+            odb,
+            &file_path,
+            &meta,
+            &conv,
+            &file_attrs,
+            path,
+            index_entry,
+            None,
+        );
+    }
+    fs::read(root.join(path)).map_err(Error::Io)
+}
+
+/// True when clean-smudged worktree bytes differ from the raw on-disk file (e.g. `eol=lf` + CRLF).
+fn worktree_side_differs_after_normalize(
+    odb: &Odb,
+    entry: &DiffEntry,
+    work_root: &Path,
+    worktree: &DiffPostprocessWorktree<'_>,
+    config: &ConfigSet,
+) -> Result<bool> {
+    let path = entry.new_path.as_deref().ok_or_else(|| {
+        Error::ObjectNotFound("modified entry missing new_path for worktree read".into())
+    })?;
+    let raw = fs::read(work_root.join(path)).map_err(Error::Io)?;
+    let canonical = read_new_side_bytes(odb, entry, Some(work_root), Some(worktree), config)?;
+    Ok(raw != canonical)
 }
 
 fn split_broken_modifications(
@@ -5622,6 +5682,8 @@ fn split_broken_modifications(
     work_root: Option<&Path>,
     entries: Vec<DiffEntry>,
     break_score: u64,
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
+    config: &ConfigSet,
 ) -> Result<Vec<DiffEntry>> {
     let mut out = Vec::with_capacity(entries.len());
     for e in entries {
@@ -5630,7 +5692,7 @@ fn split_broken_modifications(
             continue;
         }
         let old = blob_bytes(odb, &e.old_oid)?;
-        let new = read_new_side_bytes(odb, &e, work_root)?;
+        let new = read_new_side_bytes(odb, &e, work_root, worktree, config)?;
         if should_break_rewrite_pair(&old, &new, break_score) {
             let path = e.path().to_owned();
             out.push(DiffEntry {
@@ -5665,15 +5727,32 @@ fn annotate_broken_modifications(
     work_root: Option<&Path>,
     entries: Vec<DiffEntry>,
     break_score: u64,
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
+    config: &ConfigSet,
+    materialize_worktree_oid: bool,
 ) -> Result<Vec<DiffEntry>> {
     let mut out = Vec::with_capacity(entries.len());
     for mut e in entries {
         if e.status == DiffStatus::Modified {
             let old = blob_bytes(odb, &e.old_oid)?;
-            let new = read_new_side_bytes(odb, &e, work_root)?;
+            let new = read_new_side_bytes(odb, &e, work_root, worktree, config)?;
             if should_break_rewrite_pair(&old, &new, break_score) {
-                // `git diff-files -B` keeps plain `M` in raw output (no `M###` score suffix).
-                if e.new_oid != zero_oid() {
+                // `git diff-files -B` keeps plain `M` when the worktree side is still null.
+                // `git diff <tree> -B` materializes the clean OID; `M###` appears only when
+                // attributes/filters changed the bytes used for break scoring (e.g. `eol=lf`).
+                let show_score = if e.new_oid != zero_oid() {
+                    true
+                } else if materialize_worktree_oid {
+                    match (work_root, worktree) {
+                        (Some(root), Some(wctx)) => {
+                            worktree_side_differs_after_normalize(odb, &e, root, wctx, config)?
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                if show_score {
                     e.score = rewrite_dissimilarity_index_percent(&old, &new);
                 }
             }
@@ -5687,6 +5766,8 @@ fn materialize_break_worktree_new_oids(
     odb: &Odb,
     work_root: Option<&Path>,
     entries: &mut [DiffEntry],
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
+    config: &ConfigSet,
 ) -> Result<()> {
     for e in entries {
         if e.new_oid != zero_oid() {
@@ -5695,7 +5776,7 @@ fn materialize_break_worktree_new_oids(
         if !matches!(e.status, DiffStatus::Modified | DiffStatus::Added) {
             continue;
         }
-        let bytes = read_new_side_bytes(odb, e, work_root)?;
+        let bytes = read_new_side_bytes(odb, e, work_root, worktree, config)?;
         e.new_oid = odb.hash(ObjectKind::Blob, &bytes);
     }
     Ok(())
@@ -5729,7 +5810,8 @@ fn prune_break_deletions_obviated_by_renames(entries: Vec<DiffEntry>) -> Vec<Dif
 /// Apply break-rewrite, rename, and copy detection to a flat tree or index diff.
 ///
 /// `source_tree_oid` supplies `--find-copies-harder` candidates; `work_root` is used when added
-/// entries carry a zero OID (index↔worktree).
+/// entries carry a zero OID (index↔worktree). Pass `worktree` when break-rewrite runs on a
+/// tree↔worktree diff so worktree-side bytes honor attributes and filters.
 ///
 /// # Errors
 ///
@@ -5739,6 +5821,7 @@ pub fn postprocess_diff_entries(
     entries: Vec<DiffEntry>,
     source_tree_oid: Option<&ObjectId>,
     work_root: Option<&Path>,
+    worktree: Option<&DiffPostprocessWorktree<'_>>,
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
     opts: &DiffPostprocessOptions,
@@ -5747,12 +5830,20 @@ pub fn postprocess_diff_entries(
     if let Some(break_score) = opts.break_score {
         let rename_or_copy = opts.rename_threshold < 100 || opts.copy_threshold.is_some();
         entries = if rename_or_copy {
-            split_broken_modifications(odb, work_root, entries, break_score)?
+            split_broken_modifications(odb, work_root, entries, break_score, worktree, config)?
         } else {
-            annotate_broken_modifications(odb, work_root, entries, break_score)?
+            annotate_broken_modifications(
+                odb,
+                work_root,
+                entries,
+                break_score,
+                worktree,
+                config,
+                opts.materialize_break_worktree_new_oid,
+            )?
         };
         if opts.materialize_break_worktree_new_oid {
-            materialize_break_worktree_new_oids(odb, work_root, &mut entries)?;
+            materialize_break_worktree_new_oids(odb, work_root, &mut entries, worktree, config)?;
         }
     }
 
