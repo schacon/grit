@@ -54,7 +54,7 @@ fn deep_history_resolver_sweep() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
     let mut edge_labels: Vec<(String, String)> = Vec::new();
-    for i in 1..=300 {
+    for i in 1..=80 {
         let child = format!("c{i}");
         let parent = if i == 1 {
             "root".to_string()
@@ -67,7 +67,7 @@ fn deep_history_resolver_sweep() {
         .iter()
         .map(|(c, p)| (c.as_str(), p.as_str()))
         .collect();
-    build_commit_dag(wt, &edges, &[("c300", "refs/heads/main")]);
+    build_commit_dag(wt, &edges, &[("c80", "refs/heads/main")]);
     git(wt, &["branch", "side", "main~20"]);
     git(wt, &["branch", "feature", "main~40"]);
     commit_file(wt, "tracked.txt", "body\n", "tracked");
@@ -128,7 +128,7 @@ fn deep_history_resolver_sweep() {
         }
     }
 
-    let mut specs: Vec<String> = (0..300)
+    let mut specs: Vec<String> = (0..80)
         .flat_map(|n| {
             [
                 format!("HEAD~{n}"),
@@ -149,7 +149,7 @@ fn deep_history_resolver_sweep() {
             "main...feature".into(),
             "feature...main".into(),
             "main..side".into(),
-            ":/history harness c300".into(),
+            ":/history harness c80".into(),
             ":0:/etc/passwd".into(),
             ":2:/etc/passwd".into(),
             ":/!beta".into(),

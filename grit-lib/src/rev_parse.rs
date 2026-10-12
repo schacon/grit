@@ -4598,8 +4598,58 @@ mod line_coverage_tests {
                         false,
                         false,
                     );
+                    let _ = resolve_revision_as_commit(&repo, &prefix);
                 }
             }
+        }
+
+        let mut pair: Option<(ObjectId, ObjectId)> = None;
+        for _ in 0..5000 {
+            let body = format!(
+                "tree {tree}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nx\n",
+                10_000 + oids.len(),
+                10_000 + oids.len()
+            );
+            let oid = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+            let hex = oid.to_hex();
+            for prev in &oids {
+                for len in 7..=12 {
+                    if hex[..len] == prev.to_hex()[..len] {
+                        pair = Some((*prev, oid));
+                        break;
+                    }
+                }
+                if pair.is_some() {
+                    break;
+                }
+            }
+            oids.push(oid);
+            if pair.is_some() {
+                break;
+            }
+        }
+        if let Some((a, b)) = pair {
+            let a_hex = a.to_hex();
+            let b_hex = b.to_hex();
+            let mut prefix_len = 7;
+            while prefix_len < a_hex.len() && a_hex[..prefix_len] == b_hex[..prefix_len] {
+                prefix_len += 1;
+            }
+            let prefix = a_hex[..prefix_len.saturating_sub(1).max(7)].to_string();
+            let _ = disambiguate_hex_by_peel(&repo, &prefix, &[a, b], "commit");
+            let _ = resolve_base(
+                &repo,
+                &prefix,
+                false,
+                true,
+                true,
+                Some("commit"),
+                false,
+                false,
+                false,
+            );
         }
         Ok(())
     }
