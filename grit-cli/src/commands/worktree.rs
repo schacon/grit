@@ -117,8 +117,7 @@ pub fn run_add(
     }
     let repo = context::discover()?;
     let relative_to = std::env::current_dir().context("could not read working directory")?;
-    let path =
-        resolve_linked_worktree_add_path(&path, &relative_to).map_err(|e| anyhow::Error::new(e))?;
+    let path = resolve_linked_worktree_add_path(&path, &relative_to).map_err(anyhow::Error::new)?;
     let entry = add_linked_worktree(
         &repo,
         &AddLinkedWorktreeOptions {
@@ -130,7 +129,7 @@ pub fn run_add(
             force,
         },
     )
-    .map_err(|e| anyhow::Error::new(e))?;
+    .map_err(anyhow::Error::new)?;
     let (branch_name, head_hex) = head_summary(&entry.head);
     Ok(WorktreeOutcome::Add {
         path: entry.path.display().to_string(),
@@ -142,7 +141,7 @@ pub fn run_add(
 pub fn run_remove(path: PathBuf, force: bool) -> Result<WorktreeOutcome> {
     let repo = context::discover()?;
     let canonical = path_for_disk_compare(&path);
-    remove_linked_worktree(&repo, &canonical, force).map_err(|e| anyhow::Error::new(e))?;
+    remove_linked_worktree(&repo, &canonical, force).map_err(anyhow::Error::new)?;
     Ok(WorktreeOutcome::Remove {
         path: canonical.display().to_string(),
     })
@@ -150,7 +149,7 @@ pub fn run_remove(path: PathBuf, force: bool) -> Result<WorktreeOutcome> {
 
 pub fn run_prune() -> Result<WorktreeOutcome> {
     let repo = context::discover()?;
-    let pruned = prune_linked_worktrees(&repo).map_err(|e| anyhow::Error::new(e))?;
+    let pruned = prune_linked_worktrees(&repo).map_err(anyhow::Error::new)?;
     Ok(WorktreeOutcome::Prune {
         pruned: pruned
             .into_iter()

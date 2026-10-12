@@ -441,7 +441,10 @@ fn status_deep_linear_tree_second_run_stays_fast_with_autocrlf() {
         second_elapsed <= first_elapsed + Duration::from_millis(5),
         "second status should not regress (first {first_elapsed:?}, second {second_elapsed:?})"
     );
-    if first_elapsed > Duration::from_millis(40) {
+    // Coverage instrumentation (cargo-llvm-cov sets CARGO_LLVM_COV) adds per-call overhead that
+    // swamps the warm-path saving, so the speedup ratio is only meaningful in plain builds.
+    let instrumented = std::env::var_os("CARGO_LLVM_COV").is_some();
+    if !instrumented && first_elapsed > Duration::from_millis(40) {
         assert!(
             second_elapsed * 2 + Duration::from_millis(5) < first_elapsed,
             "warm deep-tree status should be faster than the first pass (first {first_elapsed:?}, second {second_elapsed:?})"

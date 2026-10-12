@@ -75,6 +75,7 @@ impl<'repo> RepositoryWorktrees<'repo> {
     ///     new_branch: true,
     ///     detach: false,
     ///     start_point: None,
+    ///     force: false,
     /// };
     /// let _ = repo.worktrees().add(&opts);
     /// # Ok(())
