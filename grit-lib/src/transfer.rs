@@ -481,6 +481,26 @@ fn pack_build_options_for_send(
     fast
 }
 
+fn ingest_pack_options_for_fetch(
+    local_git_dir: &Path,
+    fetch_opts: &FetchOptions,
+) -> Result<crate::index_pack::IngestPackOptions> {
+    let pack_config =
+        crate::config::ConfigSet::load(&fetch_opts.environment, Some(local_git_dir), true)?;
+    let index_threads = crate::parallel::index_pack_threads_for_ingest(
+        fetch_opts.thread_policy,
+        &pack_config,
+        fetch_opts.index_pack_threads,
+    )?;
+    Ok(crate::index_pack::IngestPackOptions {
+        fix_thin: true,
+        skip_post_index_verify: true,
+        threads: index_threads,
+        merged_config: Some(pack_config),
+        environment: fetch_opts.environment.clone(),
+    })
+}
+
 /// Copy objects for a local fetch: link remote packfiles when possible, then pack any remainder.
 #[allow(clippy::too_many_arguments)]
 fn copy_objects_for_local_fetch(
@@ -493,7 +513,8 @@ fn copy_objects_for_local_fetch(
     source_shallow: &HashSet<ObjectId>,
     have_shallow: &HashSet<ObjectId>,
     try_pack_link: bool,
-    opts: &PackBuildOptions,
+    pack_build: &PackBuildOptions,
+    fetch_opts: &FetchOptions,
     progress: &mut dyn ProgressSink,
 ) -> Result<HashSet<ObjectId>> {
     use crate::local_object_copy::{
@@ -503,8 +524,8 @@ fn copy_objects_for_local_fetch(
 
     let remote_objects = remote_git_dir.join("objects");
     let local_objects = local_git_dir.join("objects");
-    // Initial clone: link packfiles before walking the object graph (50k+ commits).
-    if !opts.thin && try_pack_link && haves.is_empty() && !wants.is_empty() {
+    // Initial fetch into an empty repo: link packfiles before walking the object graph.
+    if !pack_build.thin && try_pack_link && haves.is_empty() && !wants.is_empty() {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)? {
             progress.set(wants.len() as u64);
@@ -524,7 +545,7 @@ fn copy_objects_for_local_fetch(
         source_shallow,
     )?;
 
-    if !opts.thin && try_pack_link {
+    if !pack_build.thin && try_pack_link {
         progress.start(ProgressPhase::CopyingObjects, Some(send.len() as u64));
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, &send, false)? {
             progress.set(send.len() as u64);
@@ -560,7 +581,7 @@ fn copy_objects_for_local_fetch(
         }
     }
 
-    let pack_opts = pack_build_options_for_send(remote_odb, &still_missing, opts);
+    let pack_opts = pack_build_options_for_send(remote_odb, &still_missing, pack_build);
     progress.start(
         ProgressPhase::CopyingObjects,
         Some(still_missing.len() as u64),
@@ -574,14 +595,8 @@ fn copy_objects_for_local_fetch(
         have_shallow,
         &pack_opts,
     )?;
-    let ingested = crate::index_pack::ingest_received_pack(
-        pack,
-        local_odb,
-        &crate::index_pack::IngestPackOptions {
-            fix_thin: true,
-            ..Default::default()
-        },
-    )?;
+    let ingest_opts = ingest_pack_options_for_fetch(local_git_dir, fetch_opts)?;
+    let ingested = crate::index_pack::ingest_received_pack(pack, local_odb, &ingest_opts)?;
     progress.inc(ingested.object_ids.len() as u64);
     progress.finish();
     refresh_local_odb_after_link(local_odb);
@@ -1177,8 +1192,9 @@ pub fn fetch_local_with_progress(
             &haves,
             &remote_shallow,
             &local_shallow,
-            opts.initial_remote_fetch,
+            true,
             &pack_opts,
+            opts,
             progress,
         )?;
     }

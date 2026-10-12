@@ -76,8 +76,9 @@ fn checkout_populated_tree(
     }
     let mut file_progress = CheckoutFileProgress::begin_populated(progress);
     let config = repo.config()?;
-    let changes = diff_trees(&repo.odb, None, Some(tree_oid), "")?;
-    let prospective_index = prospective_index_for_checkout(&index, &changes);
+    let mut prospective_index = index.clone();
+    prospective_index.entries = crate::porcelain::merge::tree_to_index_entries(repo, tree_oid, "")?;
+    prospective_index.sort();
     let rules = WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config)?;
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();

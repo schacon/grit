@@ -143,7 +143,13 @@ pub(crate) fn try_satisfy_via_object_link(
         return Ok(false);
     }
     refresh_local_odb_after_link(local_odb);
-    Ok(needed.iter().all(|oid| local_odb.exists(oid)))
+    if needed.iter().all(|oid| local_odb.exists(oid)) {
+        return Ok(true);
+    }
+    if linked_packs > 0 {
+        return local_odb.all_on_disk_in_packs(needed);
+    }
+    Ok(false)
 }
 
 /// Hard-link or copy loose object files for `oids` from `source_objects` into `dest_objects`.

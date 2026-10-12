@@ -301,3 +301,47 @@ fn fetch_local_from_delta_packed_remote_produces_compact_pack() {
     let fsck = git_cmd(&["fsck", "--strict"]).in_dir(&local_git).exec();
     assert!(fsck.ok(), "fsck after fetch: {}", fsck.stderr);
 }
+
+/// First fetch into an empty repo must hard-link the remote's pack, not rebuild it in memory.
+#[test]
+fn fetch_local_into_empty_repo_links_remote_pack() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let remote = tmp.path().join("remote");
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&local).unwrap();
+
+    git(&remote, &["init", "-q", "-b", "main", "."]);
+    for i in 0..40 {
+        std::fs::write(remote.join(format!("f{i}.txt")), format!("payload {i}\n")).unwrap();
+        git(&remote, &["add", "."]);
+        git(&remote, &["commit", "-q", "-m", &format!("c{i}")]);
+    }
+    git(&remote, &["repack", "-a", "-d", "-f"]);
+
+    let remote_git = remote.join(".git");
+    let remote_packs = pack_files(&remote_git);
+    assert_eq!(remote_packs.len(), 1, "fixture must have one pack");
+    let remote_pack_name = remote_packs[0].file_name().expect("pack name").to_owned();
+
+    git(&local, &["init", "-q", "-b", "main", "."]);
+    let local_git = local.join(".git");
+
+    let opts = FetchOptions {
+        refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
+        tags: TagMode::All,
+        ..Default::default()
+    };
+    fetch_local(&local_git, &remote_git, &opts).expect("fetch_local");
+
+    let local_packs = pack_files(&local_git);
+    assert_eq!(local_packs.len(), 1, "expected one linked pack");
+    assert_eq!(
+        local_packs[0].file_name().expect("local pack name"),
+        remote_pack_name.as_os_str(),
+        "initial fetch must link remote packfiles instead of rebuilding"
+    );
+
+    let fsck = git_cmd(&["fsck", "--strict"]).in_dir(&local_git).exec();
+    assert!(fsck.ok(), "fsck after linked fetch: {}", fsck.stderr);
+}
