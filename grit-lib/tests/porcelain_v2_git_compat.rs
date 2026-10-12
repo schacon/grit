@@ -74,6 +74,17 @@ fn t_porcelain_v2_staged_chmod_matches_git() {
 }
 
 #[test]
+fn t_porcelain_v2_intent_to_add_matches_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    std::fs::write(wt.join("u.txt"), "payload\n").expect("write");
+    git(wt, &["add", "-N", "u.txt"]);
+
+    let grit = Repository::discover(Some(wt)).expect("open");
+    assert_porcelain_v2_matches_git(wt, &grit);
+}
+
+#[test]
 fn t_porcelain_v2_unmerged_conflict_matches_git() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();

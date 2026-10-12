@@ -1704,7 +1704,13 @@ pub fn format_porcelain_v2(
             .iter()
             .find(|e| e.stage() == 0 && String::from_utf8_lossy(&e.path) == *path);
         let (m_i, h_i) = idx_e
-            .map(|e| (format_mode(e.mode), e.oid.to_hex()))
+            .map(|e| {
+                if e.intent_to_add() {
+                    ("000000".to_owned(), ObjectId::zero().to_hex())
+                } else {
+                    (format_mode(e.mode), e.oid.to_hex())
+                }
+            })
             .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
 
         let m_w = porcelain_v2_worktree_mode(
