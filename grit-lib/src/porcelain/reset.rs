@@ -4,7 +4,7 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::objects::{parse_commit, ObjectId};
-use crate::porcelain::checkout::checkout_hard_to_tree;
+use crate::porcelain::checkout::checkout_hard_to_tree_from_head_tree;
 use crate::porcelain::merge::tree_to_index_entries;
 use crate::refs::{self, append_reflog};
 use crate::repo::Repository;
@@ -89,7 +89,8 @@ pub fn reset_to_commit(repo: &Repository, opts: &ResetOptions) -> Result<ResetOu
             repo.write_index(&mut index)?;
         }
         ResetMode::Hard => {
-            checkout_hard_to_tree(repo, &target_tree)?;
+            let head_tree = commit_tree_oid(repo, &previous)?;
+            checkout_hard_to_tree_from_head_tree(repo, &head_tree, &target_tree)?;
         }
     }
 
