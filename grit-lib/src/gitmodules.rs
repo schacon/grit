@@ -272,25 +272,42 @@ pub fn fsck_dot_special_tree_pass(
 /// Problems reported while walking trees / blobs for `.gitmodules` / `.gitattributes` fsck.
 #[derive(Debug, Clone)]
 pub enum DotFsckIssue {
+    /// Returned when tree symlink.
     TreeSymlink {
+        /// Tree oid for this error or warning.
         tree_oid: ObjectId,
+        /// Id for this error or warning.
         id: &'static str,
+        /// Additional human-readable detail for the failure.
         detail: &'static str,
     },
+    /// Returned when non blob dot file.
     NonBlobDotFile {
+        /// Object id (hex) related to the error.
         oid: ObjectId,
+        /// Object type name when known (`commit`, `tree`, etc.).
         kind: ObjectKind,
+        /// Id for this error or warning.
         id: &'static str,
+        /// Additional human-readable detail for the failure.
         detail: &'static str,
     },
+    /// Returned when blob gitmodules.
     BlobGitmodules {
+        /// Blob oid for this error or warning.
         blob_oid: ObjectId,
+        /// Id for this error or warning.
         id: &'static str,
+        /// Additional human-readable detail for the failure.
         detail: String,
     },
+    /// Returned when blob gitattributes.
     BlobGitattributes {
+        /// Blob oid for this error or warning.
         blob_oid: ObjectId,
+        /// Id for this error or warning.
         id: &'static str,
+        /// Additional human-readable detail for the failure.
         detail: &'static str,
     },
 }
@@ -473,9 +490,13 @@ pub fn fsck_dot_special_object(
 /// Tracks `.gitmodules` / `.gitattributes` blob OIDs discovered in trees (Git `fsck_options` oidsets).
 #[derive(Debug, Default)]
 pub struct DotFsckTracker {
+    /// Gitmodules found for this item.
     pub gitmodules_found: HashSet<ObjectId>,
+    /// Gitmodules done for this item.
     pub gitmodules_done: HashSet<ObjectId>,
+    /// Gitattributes found for this item.
     pub gitattributes_found: HashSet<ObjectId>,
+    /// Gitattributes done for this item.
     pub gitattributes_done: HashSet<ObjectId>,
 }
 

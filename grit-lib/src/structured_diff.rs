@@ -49,24 +49,33 @@ impl Default for StructuredDiffOptions {
 /// One run of text within a line, with optional intra-line emphasis.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredSegment {
+    /// Text for this item.
     pub text: String,
+    /// Emphasis for this item.
     pub emphasis: bool,
 }
 
 /// Kind of line in a structured hunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StructuredLineKind {
+    /// Returned when context.
     Context,
+    /// Returned when add.
     Add,
+    /// Returned when del.
     Del,
 }
 
 /// One rendered line in a structured hunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredLine {
+    /// Object type name when known (`commit`, `tree`, etc.).
     pub kind: StructuredLineKind,
+    /// Old for this item.
     pub old: Option<usize>,
+    /// New for this item.
     pub new: Option<usize>,
+    /// Segments for this item.
     pub segments: Vec<StructuredSegment>,
     /// Git `\ No newline at end of file` on this side.
     pub no_newline_at_eof: bool,
@@ -75,27 +84,39 @@ pub struct StructuredLine {
 /// A contiguous run of changes plus surrounding context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredHunk {
+    /// Old start for this item.
     pub old_start: usize,
+    /// New start for this item.
     pub new_start: usize,
+    /// Old lines for this item.
     pub old_lines: usize,
+    /// New lines for this item.
     pub new_lines: usize,
+    /// Context for this item.
     pub context: Option<String>,
+    /// Lines for this item.
     pub lines: Vec<StructuredLine>,
 }
 
 /// Line-level diff of two text sides (no file metadata).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredTextDiff {
+    /// Hunks for this item.
     pub hunks: Vec<StructuredHunk>,
 }
 
 /// File metadata plus a structured line diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredFileDiff {
+    /// Old mode for this item.
     pub old_mode: Option<String>,
+    /// New mode for this item.
     pub new_mode: Option<String>,
+    /// Old encoding lossy for this item.
     pub old_encoding_lossy: bool,
+    /// New encoding lossy for this item.
     pub new_encoding_lossy: bool,
+    /// Hunks for this item.
     pub hunks: Vec<StructuredHunk>,
 }
 

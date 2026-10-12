@@ -38,72 +38,99 @@ pub fn fatal_line(body: &str) -> String {
 pub enum Warning {
     /// A ref name could mean both a branch/tag ref and an object id prefix.
     AmbiguousRefname {
+        /// User-supplied revision or pathspec fragment.
         spec: String,
     },
     /// A symbolic ref pointed at a missing or invalid target (except bare `HEAD`).
     DanglingSymref {
+        /// Pack file name or config identifier.
         name: String,
     },
     /// A commit-graph chunk was smaller than required.
     CommitGraphChunkTooSmall {
+        /// Commit-graph layer identifier in the warning.
         layer: String,
+        /// Commit-graph chunk name that failed validation.
         chunk: String,
     },
     /// Bloom filters were disabled for a commit-graph layer due to incompatible settings.
     CommitGraphBloomDisabled {
+        /// Commit-graph layer identifier in the warning.
         layer: String,
     },
     /// Changed-path Bloom index chunk does not cover all commits in the layer.
     CommitGraphChangedPathIndexTooSmall,
     /// Changed-path Bloom data chunk header is too small.
     CommitGraphChangedPathChunkTooSmall {
+        /// Observed size or offset in bytes.
         actual: usize,
+        /// Minimum required size in bytes.
         minimum: usize,
     },
     /// Changed-path Bloom index entry points past the chunk.
     CommitGraphChangedPathOffsetOutOfRange {
+        /// Byte offset into a commit-graph chunk.
         offset: usize,
+        /// Index of the commit-graph entry being validated.
         position: usize,
+        /// Path or label of the commit-graph file.
         graph: String,
+        /// Total size of the commit-graph chunk in bytes.
         chunk_size: usize,
     },
     /// Changed-path Bloom index offsets decrease between adjacent entries.
     CommitGraphChangedPathOffsetsDecreasing {
+        /// Starting offset for an adjacent pair of entries.
         start: usize,
+        /// Ending offset for an adjacent pair of entries.
         end: usize,
+        /// Commit index for the start offset.
         position_start: usize,
+        /// Commit index for the end offset.
         position_end: usize,
+        /// Path or label of the commit-graph file.
         graph: String,
     },
     /// Repository config was skipped because the git directory uses an unsupported format.
     IgnoredGitDir {
+        /// Repository-relative or filesystem path related to the failure.
         path: PathBuf,
+        /// Why the value or operation was rejected.
         reason: String,
     },
     /// `core.bare=true` while `core.worktree` is also set.
     CoreBareWithWorktree,
     /// A config value looked boolean but could not be parsed.
     BadBooleanConfig {
+        /// Config key name that failed validation.
         key: String,
+        /// Raw config value that could not be parsed.
         value: String,
     },
     /// Submodule name failed validation.
     SuspiciousSubmoduleName {
+        /// Pack file name or config identifier.
         name: String,
     },
     /// Submodule config value looked like a command-line flag.
     SubmoduleConfigLooksLikeOption {
+        /// Config key name that failed validation.
         key: String,
+        /// Raw config value that could not be parsed.
         value: String,
     },
     /// Duplicate submodule keys in `.gitmodules` for one commit tree.
     SubmoduleMultipleConfigs {
+        /// Commit object id or label tied to the warning.
         commit: String,
+        /// Pack file name or config identifier.
         name: String,
+        /// Config option or submodule key name.
         option: String,
     },
     /// `.gitmodules` could not be parsed at a given line.
     GitmodulesBadConfig {
+        /// Free-form diagnostic message body.
         message: String,
     },
     /// Split index was requested while `core.splitIndex` disables it.
@@ -112,36 +139,52 @@ pub enum Warning {
     SplitIndexEnabledWhileConfigDisabled,
     /// `GIT_INDEX_VERSION` was set but invalid.
     IndexVersionEnvInvalid {
+        /// Index version used after the invalid setting was ignored.
         fallback: u32,
     },
     /// `index.version` in config was invalid.
     IndexVersionConfigInvalid {
+        /// Index version used after the invalid setting was ignored.
         fallback: u32,
     },
     /// Mailmap blob/object could not be read as a blob.
     MailmapUnreadable {
+        /// Additional human-readable detail for the failure.
         detail: String,
     },
     /// A traditional hook script exists but is not executable.
     NonExecutableHookIgnored {
+        /// Hook script basename that was skipped.
         hook_name: String,
     },
+    /// Returned when midx checksum mismatch.
     MidxChecksumMismatch,
+    /// Returned when midx ignoring existing checksum mismatch.
     MidxIgnoringExistingChecksumMismatch,
+    /// Returned when midx chunk table error.
     MidxChunkTableError {
+        /// Additional human-readable detail for the failure.
         detail: String,
     },
+    /// Returned when midx rev index wrong size.
     MidxRevIndexWrongSize,
+    /// Returned when midx bitmap missing reverse index.
     MidxBitmapMissingReverseIndex,
+    /// Returned when midx pack index unavailable.
     MidxPackIndexUnavailable {
+        /// Pack file basename (`.pack` suffix).
         pack: String,
     },
+    /// Returned when midx unknown preferred pack.
     MidxUnknownPreferredPack {
+        /// Pack file name or config identifier.
         name: String,
     },
     /// A `.bitmap` sidecar was present but could not be loaded; reachability falls back without it.
     PackBitmapIgnored {
+        /// Repository-relative or filesystem path related to the failure.
         path: PathBuf,
+        /// Why the value or operation was rejected.
         reason: String,
     },
 }
@@ -150,7 +193,11 @@ pub enum Warning {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trace {
-    Network { message: String },
+    /// Returned when network.
+    Network {
+        /// Human-readable message body.
+        message: String,
+    },
 }
 
 /// Receives warnings and optional trace lines from `grit-lib`.

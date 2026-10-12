@@ -67,6 +67,7 @@ fn warn_path_for_graph_file(path: &Path) -> String {
 /// One layer from `.git/objects/info/commit-graph` or `commit-graphs/<hash>.graph`.
 #[derive(Debug, Clone)]
 pub struct CommitGraphLayer {
+    /// Repository-relative or filesystem path related to the failure.
     pub path: PathBuf,
     body: Vec<u8>,
     num_commits: u32,
@@ -824,13 +825,18 @@ pub enum BloomPrecheck {
 /// Counters for `GIT_TRACE2_PERF` Bloom statistics (`revision.c` `trace2_bloom_filter_statistics_atexit`).
 #[derive(Debug, Default, Clone)]
 pub struct BloomWalkStats {
+    /// Filter not present for this item.
     pub filter_not_present: u32,
+    /// Maybe for this item.
     pub maybe: u32,
+    /// Definitely not for this item.
     pub definitely_not: u32,
+    /// False positive for this item.
     pub false_positive: u32,
 }
 
 impl BloomWalkStats {
+    /// Record precheck.
     pub fn record_precheck(&mut self, pre: BloomPrecheck) {
         match pre {
             BloomPrecheck::Inapplicable | BloomPrecheck::NotInGraph => {}
@@ -840,6 +846,7 @@ impl BloomWalkStats {
         }
     }
 
+    /// Record false positive.
     pub fn record_false_positive(&mut self) {
         self.false_positive += 1;
     }
@@ -1057,6 +1064,11 @@ impl CommitGraphChain {
         Self::try_load_across_with_caches(objects_dir, alt_dirs, None)
     }
 
+    /// Like [`Self::try_load_across`] but reuses parsed commit-graph caches when provided.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a referenced layer file is missing, unreadable, or fails to parse.
     pub fn try_load_across_with_caches(
         objects_dir: &Path,
         alt_dirs: &[PathBuf],
@@ -1585,14 +1597,23 @@ pub fn parse_graph_file(path: &Path) -> Option<ParsedGraphDump> {
     })
 }
 
+/// Parsed commit-graph header fields for debugging and `--dump` style output.
 pub struct ParsedGraphDump {
+    /// Commit-graph file signature word (`0x43475048`).
     pub header_word: u32,
+    /// Commit-graph format version byte.
     pub version: u8,
+    /// Object hash version used in the graph (`1` = SHA-1, `2` = SHA-256).
     pub hash_ver: u8,
+    /// Number of chunk types present in the file.
     pub num_chunks: u8,
+    /// Reserved header byte (must be zero in current formats).
     pub reserved: u8,
+    /// Number of commits encoded in the graph.
     pub num_commits: u32,
+    /// Space-separated chunk id names in file order.
     pub chunks: String,
+    /// Human-readable graph option flags from the header.
     pub options: String,
 }
 
