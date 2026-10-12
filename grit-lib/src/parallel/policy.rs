@@ -495,7 +495,10 @@ mod tests {
             policy.index_stat_preload_threads(&cfg, 5000, None),
             10_usize.min(20).min(override_cap)
         );
-        assert_eq!(policy.index_stat_preload_threads(&cfg, 5000, Some(4)), 4);
+        assert_eq!(
+            policy.index_stat_preload_threads(&cfg, 5000, Some(4)),
+            4_usize.min(override_cap)
+        );
     }
 
     #[test]
