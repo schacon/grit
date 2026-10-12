@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::objects::{HashAlgo, Object, ObjectId, ObjectInfo};
 
 use super::{ObjectStore, ObjectStream};
@@ -42,8 +42,11 @@ impl ObjectStore for CompositeStore {
 
     fn read(&self, oid: &ObjectId) -> Result<Option<Object>> {
         for store in &self.stores {
-            if let Some(obj) = store.read(oid)? {
-                return Ok(Some(obj));
+            match store.read(oid) {
+                Ok(Some(obj)) => return Ok(Some(obj)),
+                Ok(None) => {}
+                Err(Error::Zlib(_) | Error::CorruptObject(_)) => {}
+                Err(err) => return Err(err),
             }
         }
         Ok(None)
@@ -51,8 +54,11 @@ impl ObjectStore for CompositeStore {
 
     fn read_info(&self, oid: &ObjectId) -> Result<Option<ObjectInfo>> {
         for store in &self.stores {
-            if let Some(info) = store.read_info(oid)? {
-                return Ok(Some(info));
+            match store.read_info(oid) {
+                Ok(Some(info)) => return Ok(Some(info)),
+                Ok(None) => {}
+                Err(Error::Zlib(_) | Error::CorruptObject(_)) => {}
+                Err(err) => return Err(err),
             }
         }
         Ok(None)
@@ -69,8 +75,11 @@ impl ObjectStore for CompositeStore {
 
     fn open_stream(&self, oid: &ObjectId) -> Result<Option<ObjectStream<'_>>> {
         for store in &self.stores {
-            if let Some(stream) = store.open_stream(oid)? {
-                return Ok(Some(stream));
+            match store.open_stream(oid) {
+                Ok(Some(stream)) => return Ok(Some(stream)),
+                Ok(None) => {}
+                Err(Error::Zlib(_) | Error::CorruptObject(_)) => {}
+                Err(err) => return Err(err),
             }
         }
         Ok(None)

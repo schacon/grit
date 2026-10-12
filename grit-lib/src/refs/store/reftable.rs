@@ -626,10 +626,6 @@ impl PreparedRefTransaction for ReftablePrepared<'_> {
                         &stack_batch.opts,
                     )
                     .map_err(map_reftable_err)?;
-                stack_batch
-                    .stack
-                    .maybe_auto_compact(&stack_batch.opts)
-                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
             }
         }
         for update in &batch.logical_updates {

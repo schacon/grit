@@ -1,6 +1,5 @@
 //! Alternate ordering when an earlier store holds corrupt bytes for an OID (system git oracle).
 
-use grit_lib::error::Error;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use std::fs;
@@ -25,14 +24,6 @@ fn git_in(dir: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-fn assert_corruption_err<T>(result: Result<T, Error>) {
-    match result {
-        Err(Error::Zlib(_)) | Err(Error::CorruptObject(_)) => {}
-        Err(other) => panic!("expected zlib/corrupt error, got {other:?}"),
-        Ok(_) => panic!("expected zlib/corrupt error, got Ok"),
-    }
 }
 
 #[test]
@@ -71,9 +62,17 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
     .expect("alternates");
 
     let odb = Odb::new(&primary_objects);
-    assert_corruption_err(odb.read(&oid).map(|_| ()));
-    assert_corruption_err(odb.read_info(&oid).map(|_| ()));
-    assert_corruption_err(odb.open_stream(&oid).map(|_| ()));
+    let obj = odb.read(&oid).expect("read via good alternate");
+    assert_eq!(obj.data, payload);
+    let info = odb.read_info(&oid).expect("read_info via good alternate");
+    assert_eq!(info.size, payload.len() as u64);
+    let mut stream = odb
+        .open_stream(&oid)
+        .expect("open_stream")
+        .expect("stream via good alternate");
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(&mut stream.reader, &mut buf).expect("read stream");
+    assert_eq!(buf, payload);
 
     let git_dir = layout.path().join("primary.git");
     let cat = Command::new("git")
@@ -85,13 +84,9 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
         .output()
         .expect("git cat-file");
     assert!(
-        !cat.status.success(),
-        "git must fail on corrupt-first alternate, stdout={}",
-        String::from_utf8_lossy(&cat.stdout)
+        cat.status.success(),
+        "git must read via later alternate when earlier is corrupt, stderr={}",
+        String::from_utf8_lossy(&cat.stderr)
     );
-    let stderr = String::from_utf8_lossy(&cat.stderr).to_lowercase();
-    assert!(
-        stderr.contains("inflate") || stderr.contains("corrupt") || stderr.contains("bad"),
-        "git stderr should mention corruption: {stderr}"
-    );
+    assert_eq!(cat.stdout, payload);
 }

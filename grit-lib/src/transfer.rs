@@ -1405,6 +1405,29 @@ pub fn fetch_local_with_progress(
         });
     }
 
+    let remote = opts
+        .remote_name
+        .as_deref()
+        .unwrap_or(crate::remote::DEFAULT_REMOTE);
+    if !opts.dry_run {
+        if let Some(branch) = default_branch.as_deref() {
+            let head_ref = format!("refs/remotes/{remote}/HEAD");
+            if crate::refs::resolve_ref(local_git_dir, &head_ref).is_err() {
+                let target = format!("refs/remotes/{remote}/{branch}");
+                let target_will_exist = store_batch.iter().any(|u| u.name == target)
+                    || crate::refs::resolve_ref(local_git_dir, &target).is_ok();
+                if target_will_exist {
+                    store_batch.push(crate::refs::store::RefUpdate {
+                        name: head_ref,
+                        new_value: Some(crate::refs::store::RawRef::Symbolic(target)),
+                        expected: crate::refs::store::Expected::Any,
+                        reflog: None,
+                        flags: Default::default(),
+                    });
+                }
+            }
+        }
+    }
     if !opts.dry_run && !store_batch.is_empty() {
         crate::refs::commit_ref_store_batch(local_git_dir, &store_batch)?;
     }
@@ -1414,10 +1437,6 @@ pub fn fetch_local_with_progress(
         opts,
         default_branch.as_deref(),
     )?;
-    let remote = opts
-        .remote_name
-        .as_deref()
-        .unwrap_or(crate::remote::DEFAULT_REMOTE);
     crate::fetch::ensure_remote_tracking_head_symref(
         local_git_dir,
         remote,

@@ -40,7 +40,7 @@ fn fetch_updates_refs_in_one_transaction_reftable() {
         let opts = FetchOptions {
             refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
             tags: TagMode::None,
-            initial_remote_fetch: true,
+            initial_remote_fetch: false,
             remote_name: Some("origin".to_owned()),
             ..Default::default()
         };
@@ -65,11 +65,10 @@ fn push_tracking_remote_refs_one_reftable_transaction() {
         }
         let git_dir = repo.git_dir();
         let (c1, c2) = two_commit_oids(&repo);
-        std::fs::write(
-            git_dir.join("config"),
+        support::append_repo_config(
+            repo.worktree(),
             "[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
-        )
-        .expect("config");
+        );
 
         use grit_lib::branch_tracking::apply_push_remote_tracking_updates;
         use grit_lib::push_report::{PushRefResult, PushRefStatus};

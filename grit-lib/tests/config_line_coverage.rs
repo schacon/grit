@@ -210,7 +210,7 @@ fn scope_display_debug_canonical_errors_and_escape_roundtrip() {
     )
     .expect("escape parse");
     assert!(escapes.get("e.k").is_some());
-    assert_eq!(escapes.get("e.tabs").as_deref(), Some("hello world"));
+    assert_eq!(escapes.get("e.tabs").as_deref(), Some("hello\tworld"));
 
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("config");

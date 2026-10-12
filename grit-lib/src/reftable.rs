@@ -2225,6 +2225,11 @@ impl ReftableStack {
         if !opts.autocompaction_enabled {
             return Ok(());
         }
+        self.reload_table_names();
+        // Git keeps short stacks at two tables; geometric compaction starts once a third table exists.
+        if self.table_names.len() <= 2 {
+            return Ok(());
+        }
         let sizes = self.table_payload_sizes()?;
         let (start, end) = suggest_compaction_segment(&sizes);
         if end <= start + 1 {
@@ -2694,7 +2699,6 @@ impl ReftableStack {
         if updates.is_empty() {
             return Ok(());
         }
-
         test_inject_reftable_transaction_fail()?;
 
         self.reload_table_names();

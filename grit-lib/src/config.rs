@@ -619,7 +619,7 @@ fn parse_config_value(s: &str) -> String {
     }
 }
 
-/// Unquoted config values: backslash escapes plus literal tab → space (Git t1300).
+/// Unquoted config values: backslash escapes; literal tabs are preserved (Git t1300 / `git config --get`).
 fn unescape_unquoted_value(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -638,8 +638,6 @@ fn unescape_unquoted_value(s: &str) -> String {
                 }
                 None => result.push('\\'),
             }
-        } else if ch == '\t' {
-            result.push(' ');
         } else {
             result.push(ch);
         }

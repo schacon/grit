@@ -66,7 +66,7 @@ fn apply_ref_change(trial: &mut BTreeMap<String, RawRef>, update: &RefUpdate) ->
     }
     match &update.new_value {
         None => {
-            if should_deref_symref(trial, update) {
+            if update.name == "HEAD" && should_deref_symref(trial, update) {
                 let target = symref_peel_write_target(trial, &update.name)?;
                 trial.remove(&target);
             } else {
@@ -228,7 +228,7 @@ pub(crate) fn reftable_write_target(
     }
     let value = match &update.new_value {
         None => {
-            if should_deref_symref(refs, update) {
+            if update.name == "HEAD" && should_deref_symref(refs, update) {
                 let target = symref_peel_write_target(refs, &update.name)?;
                 let (_s, storage) = crate::reftable::reftable_storage_location(git_dir, &target);
                 return Ok(ReftableWriteTarget {

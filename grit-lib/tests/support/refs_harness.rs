@@ -249,7 +249,9 @@ fn grit_empty_commit_with_message(worktree: &Path, message: &str) -> ObjectId {
 
 /// Seed commit for refs tests: system git when interop is available, otherwise grit.
 pub fn empty_commit_oid(repo: &TestRepo) -> ObjectId {
-    if git_interop_available(repo.backend()) {
+    if repo.backend == Backend::Reftable {
+        grit_empty_commit_oid(repo.worktree())
+    } else if git_interop_available(repo.backend()) {
         git_empty_commit_oid(repo.worktree())
     } else {
         grit_empty_commit_oid(repo.worktree())
@@ -258,7 +260,11 @@ pub fn empty_commit_oid(repo: &TestRepo) -> ObjectId {
 
 /// Two distinct empty commits for transaction tests (git or grit, per backend interop).
 pub fn two_commit_oids(repo: &TestRepo) -> (ObjectId, ObjectId) {
-    if git_interop_available(repo.backend()) {
+    if repo.backend == Backend::Reftable {
+        let c = grit_empty_commit_with_message(repo.worktree(), "refs-tx initial");
+        let d = grit_empty_commit_with_message(repo.worktree(), "refs-tx second");
+        (c, d)
+    } else if git_interop_available(repo.backend()) {
         git(
             repo.worktree(),
             &["commit", "--allow-empty", "-q", "-m", "refs-tx initial"],
