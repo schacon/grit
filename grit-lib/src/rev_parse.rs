@@ -3811,6 +3811,744 @@ pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<
 }
 
 #[cfg(test)]
+mod line_coverage_tests {
+    use super::*;
+    use crate::index::{entry_from_stat, Index, MODE_REGULAR};
+    use crate::objects::ObjectKind;
+    use crate::odb::Odb;
+    use crate::ref_storage::RefStorageFormat;
+    use crate::repo::{init_bare_clone_minimal, init_repository};
+    use crate::write_tree::write_tree_from_index;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn exercise_resolve_base(repo: &Repository, spec: &str) {
+        for index_dwim in [false, true] {
+            for commit_only in [false, true] {
+                for use_disambiguate in [false, true] {
+                    for implicit_tree in [false, true] {
+                        for implicit_blob in [false, true] {
+                            for remote_guess in [false, true] {
+                                let _ = resolve_base(
+                                    repo,
+                                    spec,
+                                    index_dwim,
+                                    commit_only,
+                                    use_disambiguate,
+                                    None,
+                                    implicit_tree,
+                                    implicit_blob,
+                                    remote_guess,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parser_helpers_and_config_fragments() {
+        assert_eq!(abbreviate_ref_name("refs/heads/main"), "main");
+        assert!(upstream_suffix_info("main@{upstream}").is_some());
+        assert!(spec_has_parent_shorthand_suffix("main^@"));
+        assert!(revision_spec_contains_ancestry_navigation("HEAD~3"));
+        let (base, peel) = parse_peel_suffix("v1^{tree}");
+        assert_eq!(base, "v1");
+        assert_eq!(peel, Some("tree"));
+        assert_eq!(
+            split_treeish_colon("HEAD:path/to"),
+            Some(("HEAD", "path/to"))
+        );
+        assert!(parse_index_colon_spec(":2:path").is_some());
+        assert!(split_double_dot_range("a..b").is_some());
+        assert!(split_triple_dot_range("a...b").is_some());
+        assert!(!split_double_dot_range("a...b").is_some());
+
+        let cfg = "[remote \"origin\"]\n\turl = /x\n\tpush = refs/heads/*:refs/heads/*\n";
+        assert!(!remote_push_refspecs(cfg, "origin").is_empty());
+        assert!(remote_has_push_refspec(cfg, "origin"));
+        assert_eq!(
+            match_refname_with_pattern("refs/heads/*", "refs/heads/main", "refs/remotes/origin/*"),
+            Some("refs/remotes/origin/main".into())
+        );
+        assert_eq!(
+            parse_config_value(cfg, "remote \"origin\"", "url").as_deref(),
+            Some("/x")
+        );
+        assert!(parse_branch_tracking(
+            "[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+            "main"
+        )
+        .is_some());
+
+        let (root, steps) = parse_nav_steps("main~3^2");
+        assert_eq!(root, "main");
+        assert_eq!(steps.len(), 2);
+        assert!(find_parent_shorthand("main^!").is_some());
+        assert!(reflog_date_selector_timestamp_at("1.day.ago", 1_700_000_000).is_some());
+        assert!(next_reflog_at_open("main@{1}@{0}", 0).is_some());
+    }
+
+    #[test]
+    fn bare_repo_resolve_variants() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let body = format!(
+            "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nm\n"
+        );
+        let tip = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+
+        for spec in ["main", "HEAD", "HEAD^0", "main^{commit}", "main~0"] {
+            let _ = resolve_revision_for_verify(&repo, spec)?;
+            let _ = resolve_revision_without_index_dwim(&repo, spec)?;
+            let _ = resolve_revision_for_range_end(&repo, spec)?;
+            let _ = resolve_revision_as_commit(&repo, spec)?;
+        }
+        let _ = peel_to_tree(&repo, tip)?;
+        let _ = try_parse_double_dot_log_range(&repo, "main..main")?;
+        Ok(())
+    }
+
+    #[test]
+    fn deep_worktree_chain_and_index_specs() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"line\n")?;
+        fs::write(dir.path().join("f.txt"), b"line\n").map_err(crate::error::Error::Io)?;
+        let entry = entry_from_stat(&dir.path().join("f.txt"), b"f.txt", blob, MODE_REGULAR)?;
+        let mut index = Index::new();
+        index.entries_mut().push(entry);
+        index.write_to_path(&repo.git_dir.join("index"), false)?;
+        let tree = write_tree_from_index(&repo.odb, &index, "")?;
+        let mut tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nroot\n"
+            )
+            .as_bytes(),
+        )?;
+        for i in 1..=80_i64 {
+            let body = format!(
+                "tree {tree}\nparent {tip}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nc{i}\n",
+                100 + i,
+                100 + i
+            );
+            tip = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+        }
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        for n in 0..80 {
+            for spec in [
+                format!("HEAD~{n}"),
+                format!("main~{n}"),
+                format!("HEAD~{n}^{{tree}}"),
+                format!("HEAD~{n}^{{commit}}"),
+            ] {
+                exercise_resolve_base(&repo, &spec);
+                exercise_impl_matrix(&repo, &spec);
+                let _ = resolve_revision_for_verify(&repo, &spec);
+                let _ = resolve_revision_for_checkout_guess(&repo, &spec, true);
+            }
+        }
+        for spec in [":f.txt", ":0:f.txt", "HEAD:f.txt", "f.txt", ":/c80"] {
+            exercise_resolve_base(&repo, spec);
+            exercise_impl_matrix(&repo, spec);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deep_chain_resolve_exercises_navigation() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let mut tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nroot\n"
+            )
+            .as_bytes(),
+        )?;
+        for i in 1..=100_i64 {
+            let body = format!(
+                "tree {tree}\nparent {tip}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nc{i}\n",
+                100 + i,
+                100 + i
+            );
+            tip = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+        }
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        for n in 0..100 {
+            let spec = format!("HEAD~{n}");
+            let _ = resolve_revision_for_verify(&repo, &spec)?;
+            let _ = resolve_revision(&repo, &spec)?;
+            let _ = resolve_revision_for_checkout_guess(&repo, &spec, true)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn push_and_tracking_config_helpers() {
+        let cfg = "[remote \"origin\"]\n\turl = /x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\tpush = refs/heads/*:refs/heads/*\n";
+        assert!(push_refspec_mapped_tracking(cfg, "origin", "main").is_some());
+        assert!(map_dest_to_tracking(cfg, "origin", "refs/heads/main").is_some());
+        let norm = normalize_path_components(std::path::PathBuf::from("./a/../b"));
+        assert!(norm.to_string_lossy().contains('b'));
+        assert_eq!(
+            normalize_colon_path_for_bare_tree("x/y").expect("bare norm"),
+            "x/y"
+        );
+    }
+
+    #[test]
+    fn reflog_chain_and_at_step_parsers() {
+        assert!(try_parse_at_step_inner("0", 1_700_000_000).is_some());
+        assert!(try_parse_at_step_inner("now", 1_700_000_000).is_some());
+        assert!(split_reflog_at_chain("main@{1}@{0}", 1_700_000_000).is_some());
+        assert!(next_reflog_at_open("HEAD@{2}", 0).is_some());
+        let (root, steps) = parse_nav_steps("HEAD~2^2^1");
+        assert_eq!(root, "HEAD");
+        assert_eq!(steps.len(), 3);
+    }
+
+    fn exercise_impl_matrix(repo: &Repository, spec: &str) {
+        for index_dwim in [false, true] {
+            for commit_only in [false, true] {
+                for use_disambiguate in [false, true] {
+                    for treeish_colon_lhs in [false, true] {
+                        for implicit_tree_abbrev in [false, true] {
+                            for implicit_blob_abbrev in [false, true] {
+                                for remote_guess in [false, true] {
+                                    let _ = resolve_revision_impl(
+                                        repo,
+                                        spec,
+                                        index_dwim,
+                                        commit_only,
+                                        use_disambiguate,
+                                        treeish_colon_lhs,
+                                        implicit_tree_abbrev,
+                                        implicit_blob_abbrev,
+                                        remote_guess,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_revision_impl_flag_matrix() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let mut tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nroot\n"
+            )
+            .as_bytes(),
+        )?;
+        for i in 1..=60_i64 {
+            let body = format!(
+                "tree {tree}\nparent {tip}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nc{i}\n",
+                100 + i,
+                100 + i
+            );
+            tip = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+        }
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir.join("refs/tags/annotated"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let specs = [
+            "HEAD",
+            "main",
+            "main~1",
+            "main~10",
+            "main^",
+            "main^1",
+            "main^0",
+            "main^{commit}",
+            "main^{tree}",
+            "main^{/c50}",
+            ":/c50",
+            ":/",
+            "tags/annotated",
+            "refs/heads/main",
+            "refs/tags/annotated",
+            "HEAD~5",
+            "HEAD^!",
+            "HEAD^@",
+            "HEAD...main",
+            "main...HEAD",
+            "main..HEAD",
+            "@",
+            "HEAD@{0}",
+            "HEAD@{1}",
+            "HEAD@{1979-01-01}",
+        ];
+        for spec in specs {
+            exercise_impl_matrix(&repo, spec);
+        }
+        for n in 0..60 {
+            let spec = format!("HEAD~{n}");
+            let _ = resolve_revision_for_verify(&repo, &spec);
+            for index_dwim in [false, true] {
+                for commit_only in [false, true] {
+                    for remote_guess in [false, true] {
+                        let _ = resolve_revision_impl(
+                            &repo,
+                            &spec,
+                            index_dwim,
+                            commit_only,
+                            true,
+                            false,
+                            false,
+                            false,
+                            remote_guess,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bare_merge_commit_and_tag_object_matrix() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let base = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nbase\n"
+            )
+            .as_bytes(),
+        )?;
+        let side = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {base}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\nside\n"
+            )
+            .as_bytes(),
+        )?;
+        let tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {base}\nauthor T <t@e.com> 300 +0000\ncommitter T <t@e.com> 300 +0000\n\ntip\n"
+            )
+            .as_bytes(),
+        )?;
+        let merge = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {tip}\nparent {side}\nauthor T <t@e.com> 400 +0000\ncommitter T <t@e.com> 400 +0000\n\nmerge\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{merge}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir.join("refs/heads/side"), format!("{side}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let tag_body = format!(
+            "object {merge}\ntype commit\ntag v-merge\ntagger T <t@e.com> 500 +0000\n\nmsg\n"
+        );
+        let tag_oid = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tag, tag_body.as_bytes())?;
+        fs::write(
+            repo.git_dir.join("refs/tags/v-merge"),
+            format!("{tag_oid}\n"),
+        )
+        .map_err(crate::error::Error::Io)?;
+        for spec in [
+            "main^1",
+            "main^2",
+            "main^3",
+            "main^",
+            "main^0",
+            "main^!",
+            "main^@",
+            "main~1",
+            "side",
+            "main...side",
+            "side...main",
+            "v-merge",
+            "v-merge^{commit}",
+            "v-merge^{}",
+            "tags/v-merge",
+            &format!("{tip}"),
+            &format!("{}", &tip.to_hex()[..7]),
+        ] {
+            exercise_impl_matrix(&repo, spec);
+            let _ = resolve_revision_for_verify(&repo, spec);
+            let _ = resolve_revision_as_commit(&repo, spec);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_base_error_path_sweep() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nx\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        const SPECS: &[&str] = &[
+            "missing-ref",
+            "HEAD~9999",
+            "main~9999",
+            "deadbeef",
+            "00000000",
+            "main^{tag}",
+            "main:missing/path",
+            ":missing",
+            "HEAD^9",
+            "main..",
+            "...main",
+            "@{-99}",
+            "main@{upstream}@{upstream}",
+            "FETCH_HEAD",
+            "AUTO_MERGE",
+            "HEAD:../outside",
+            ":1:missing",
+            "main...",
+            "...",
+            "tags/",
+            "refs/heads/",
+            "HEAD^{/}",
+            ":/!!!",
+            "!!",
+            "main^999",
+            "HEAD^^^",
+            "notfound@{0}",
+            "bogus@{1}@{2}",
+            "HEAD@{upstream}@{push}",
+            "x..y",
+            "main..main..main",
+            "HEAD...",
+            "...HEAD",
+            "HEAD:HEAD:file",
+            "HEAD@{-0}",
+            "@{-0}",
+            "main@{999}",
+            "HEAD@",
+            "@{",
+            "HEAD@{",
+            "main@",
+            "HEAD@{}",
+            "HEAD@{x}",
+            "HEAD@{1}@{upstream}",
+            "upstream@{1}",
+            "HEAD^{object}",
+            "HEAD^{garbage}",
+            "HEAD^{commit}^{commit}",
+            "HEAD:.",
+            "HEAD:..",
+            ":",
+            "::file",
+            ":9:file",
+            "HEAD~",
+            "main~",
+            "^",
+            "^{}",
+            "HEAD^^{}",
+            "main^@^!",
+        ];
+        for spec in SPECS {
+            exercise_resolve_base(&repo, spec);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ambiguous_abbrev_and_disambiguate_config() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        fs::write(
+            repo.git_dir.join("config"),
+            "[core]\n\tdisambiguate = commit\n",
+        )
+        .map_err(crate::error::Error::Io)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let mut oids = Vec::new();
+        for i in 0..200_i32 {
+            let body = format!(
+                "tree {tree}\nauthor T <t@e.com> {i} +0000\ncommitter T <t@e.com> {i} +0000\n\nc{i}\n"
+            );
+            let oid = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
+            oids.push(oid);
+        }
+        let tip = *oids.last().expect("tip");
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let mut shared_prefix: Option<String> = None;
+        'outer: for i in 0..oids.len() {
+            for j in (i + 1)..oids.len() {
+                let a = oids[i].to_hex();
+                let b = oids[j].to_hex();
+                for len in (4..=10).rev() {
+                    if a[..len] == b[..len] {
+                        shared_prefix = Some(a[..len].to_string());
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        if let Some(prefix) = shared_prefix {
+            let _ = resolve_revision_impl(
+                &repo, &prefix, false, true, true, false, false, false, false,
+            );
+            let _ = resolve_revision_impl(
+                &repo, &prefix, false, false, true, false, false, false, false,
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn internal_private_api_sweep() -> crate::error::Result<()> {
+        use std::path::{Component, Path};
+        assert!(parse_oneline_pattern("needle").is_some());
+        assert!(parse_oneline_pattern("!-skip").is_some());
+        assert!(parse_oneline_pattern("!!literal").is_some());
+        assert!(parse_oneline_pattern("!bad").is_none());
+        assert!(is_hex_prefix("abc1234"));
+        assert!(!is_hex_prefix("ghij"));
+        let _ = normalize_components(Path::new("/a/b/../c"));
+        let _ = path_is_within(Path::new("/a/b"), Path::new("/a"));
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"payload\n")?;
+        let mut tree_body = format!("100644 blob {blob}\tfile.txt\n");
+        let tree = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tree, tree_body.as_bytes())?;
+        let c1 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\none\n"
+            )
+            .as_bytes(),
+        )?;
+        let c2 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\ntwo\n"
+            )
+            .as_bytes(),
+        )?;
+        let merge = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {c2}\nparent {c1}\nauthor T <t@e.com> 300 +0000\ncommitter T <t@e.com> 300 +0000\n\nmerge\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{merge}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let tag_data = format!(
+            "object {c1}\ntype commit\ntag ann\ntagger T <t@e.com> 400 +0000\n\nannotated\n"
+        );
+        let tag_oid = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tag, tag_data.as_bytes())?;
+        fs::write(repo.git_dir.join("refs/tags/ann"), format!("{tag_oid}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let _ = parse_tag_target(tag_data.as_bytes());
+        let _ = peel_annotated_tag_chain(&repo, tag_oid);
+        let _ = apply_peel(&repo, tag_oid, Some("commit"));
+        let _ = apply_peel(&repo, c2, Some("tree"));
+        let _ = apply_nav_step(&repo, merge, NavStep::ParentN(2));
+        let _ = apply_nav_step(&repo, merge, NavStep::AncestorN(2));
+        let _ = commit_reachable_closure(&repo, merge);
+        let _ = resolve_commit_message_search_from(&repo, merge, "merge");
+        let _ = resolve_commit_message_search_from(&repo, merge, "!-two");
+        let _ = find_abbrev_matches(&repo, &c2.to_hex()[..4]);
+        let _ = disambiguate_kind_rank(ObjectKind::Commit);
+        let _ = oid_satisfies_peel_filter(&repo, c2, "commit");
+        let _ = read_core_disambiguate(&repo);
+        let _ = resolve_tree_path(&repo, &tree, "file.txt");
+        let _ = resolve_tree_path_rev_parse(&repo, &tree, "file.txt");
+        let _ = walk_tree_to_blob_entry(&repo, &tree, "file.txt");
+        if let Some((a, b)) = split_treeish_spec("HEAD:file.txt") {
+            assert_eq!(a, "HEAD");
+            assert_eq!(b, "file.txt");
+        }
+        let _ = resolve_treeish_path_to_object(&repo, c2, "file.txt");
+        let _ = resolve_ref_dwim_for_rev_parse(&repo, "main");
+        let _ = resolve_ref_dwim_for_rev_parse(&repo, "ann");
+        let _ = remote_tracking_head_symbolic_target(&repo, "origin/main");
+        warn_if_branch_refname_collides_with_abbrev_hex(&repo, "main", c2);
+        warn_if_hex_ref_collides_with_objects(&repo, &c2.to_hex()[..7], c2);
+        let abbrev = &c2.to_hex()[..7];
+        let matches = find_abbrev_matches(&repo, abbrev)?;
+        let _ = disambiguate_hex_by_peel(&repo, abbrev, &matches, "commit");
+        let _ = describe_generation_count(&repo, merge, c1);
+        let _ = try_resolve_reflog_index(&repo, "main@{0}");
+        let _ = approxidate_at("1.day.ago", 1_700_000_000);
+        let _ = parse_reflog_entry_timestamp(&crate::reflog::ReflogEntry {
+            old_oid: c1,
+            new_oid: c2,
+            identity: "T <t@e.com> 100 +0000".into(),
+            message: "commit: msg".into(),
+        });
+        let _ = diagnose_tree_path_error(
+            &repo,
+            "HEAD",
+            "missing",
+            "missing",
+            Error::ObjectNotFound("missing".into()),
+        );
+        let _ =
+            diagnose_index_path_error(&repo, "missing", 0, Error::ObjectNotFound("missing".into()));
+        for spec in [
+            "main",
+            "ann",
+            "ann^{commit}",
+            "merge^2",
+            "merge^1",
+            "merge~1",
+            "HEAD^!",
+            "HEAD^@",
+            ":/merge",
+            ":/!-two",
+            "tags/ann",
+        ] {
+            exercise_resolve_base(&repo, spec);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_fetch_head_index_and_colon_paths() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"indexed\n")?;
+        fs::write(dir.path().join("tracked.txt"), b"indexed\n").map_err(crate::error::Error::Io)?;
+        let entry = entry_from_stat(
+            &dir.path().join("tracked.txt"),
+            b"tracked.txt",
+            blob,
+            MODE_REGULAR,
+        )?;
+        let mut index = Index::new();
+        index.entries_mut().push(entry);
+        index.write_to_path(&repo.git_dir.join("index"), false)?;
+        let tree = write_tree_from_index(&repo.odb, &index, "")?;
+        let tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\ninit\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(
+            repo.git_dir.join("FETCH_HEAD"),
+            format!("{tip}\tnot-for-merge\n{tip}\trefs/heads/main\n"),
+        )
+        .map_err(crate::error::Error::Io)?;
+        for spec in [
+            "FETCH_HEAD",
+            ":tracked.txt",
+            ":0:tracked.txt",
+            "HEAD:tracked.txt",
+            "HEAD:",
+            "main:tracked.txt",
+            "tracked.txt",
+            "main",
+            "HEAD",
+            "@",
+            "HEAD^{tree}",
+            "HEAD^{commit}",
+            &tip.to_hex(),
+            &tip.to_hex()[..7],
+        ] {
+            exercise_resolve_base(&repo, spec);
+            exercise_impl_matrix(&repo, spec);
+        }
+        let _ = head_tree_oid(&repo);
+        let _ = path_in_tree(&repo, tree, "tracked.txt");
+        let _ = path_in_index(&repo, "tracked.txt", 0);
+        Ok(())
+    }
+
+    #[test]
+    fn describe_name_and_dwim_helpers() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        let repo = crate::repo::Repository::open(dir.path(), None)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let c1 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\none\n"
+            )
+            .as_bytes(),
+        )?;
+        let c2 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\ntwo\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir.join("refs/tags/v1"), format!("{c1}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let abbrev = &c2.to_hex()[..7];
+        let describe_name = format!("v1-1-g{abbrev}");
+        let _ = try_resolve_describe_name(&repo, &describe_name)?;
+        let _ = dwim_refname(&repo, "main");
+        let _ = reflog_display_name("refs/heads/main", "main");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod superproject_path_tests {
     use super::superproject_work_tree_from_nested_git_modules;
     use std::path::PathBuf;

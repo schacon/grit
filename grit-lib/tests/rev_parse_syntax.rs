@@ -17,7 +17,7 @@ use grit_lib::rev_parse_error::RevParseError;
 
 use support::{
     build_commit_dag, commit_file, git, git_rev_parse_verify, oracle_abbrev,
-    oracle_double_dot_range, oracle_one, oracle_table,
+    oracle_double_dot_range, oracle_expect_rev_parse_error, oracle_one, oracle_table,
     oracle_triple_dot_range, HistoryRepo, ResolveMode,
 };
 
@@ -70,6 +70,41 @@ fn setup_annotated_tags() -> (HistoryRepo, ObjectId) {
     commit_file(wt, "a-blob", "modified\n", "Modified");
     git(wt, &["branch", "modref"]);
     (repo, tip)
+}
+
+fn setup_t1505_branch_stack() -> HistoryRepo {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "1", "1\n", "1");
+    git(wt, &["branch", "side"]);
+    commit_file(wt, "2", "2\n", "2");
+    commit_file(wt, "3", "3\n", "3");
+    git(wt, &["checkout", "side"]);
+    commit_file(wt, "4", "4\n", "4");
+    git(wt, &["merge", "main", "--no-edit"]);
+    git(wt, &["checkout", "main"]);
+    repo
+}
+
+fn setup_t1508_at_combinations() -> HistoryRepo {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "main-one.txt", "1\n", "main-one");
+    commit_file(wt, "main-two.txt", "2\n", "main-two");
+    git(wt, &["checkout", "-b", "upstream-branch"]);
+    commit_file(wt, "upstream-one.txt", "u1\n", "upstream-one");
+    commit_file(wt, "upstream-two.txt", "u2\n", "upstream-two");
+    git(wt, &["checkout", "-b", "@@/at-test"]);
+    git(wt, &["checkout", "-b", "@at-test"]);
+    git(wt, &["checkout", "-b", "old-branch"]);
+    commit_file(wt, "old-one.txt", "o1\n", "old-one");
+    commit_file(wt, "old-two.txt", "o2\n", "old-two");
+    git(wt, &["checkout", "-b", "new-branch"]);
+    commit_file(wt, "new-one.txt", "n1\n", "new-one");
+    commit_file(wt, "new-two.txt", "n2\n", "new-two");
+    git(wt, &["branch", "-u", "main", "old-branch"]);
+    git(wt, &["branch", "-u", "upstream-branch", "new-branch"]);
+    repo
 }
 
 fn setup_upstream_remote() -> HistoryRepo {
@@ -127,12 +162,14 @@ fn t1503_verify_rejects_missing_ref() {
 
 #[test]
 fn t1505_rev_parse_last_at_minus_n_matches_git() {
-    let hist = setup_linear_main();
+    let hist = setup_t1505_branch_stack();
     let wt = hist.worktree();
     let repo = open_grit(wt);
-    for spec in ["@{-1}", "@{-0}"] {
-        oracle_one(&repo, wt, spec, ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+    for spec in ["@{-1}", "@{-1}~2", "@{-1}^2", "@{-1}@{1}", "@{-2}"] {
+        oracle_one(&repo, wt, spec, ResolveMode::Verify).unwrap_or_else(|e| panic!("{spec}: {e}"));
     }
+    assert!(git_rev_parse_verify(wt, "@{-3}").is_none());
+    assert!(resolve_revision_for_verify(&repo, "@{-3}").is_err());
 }
 
 #[test]
@@ -188,11 +225,62 @@ fn t1507_upstream_and_push_shorthand_match_git() {
 
 #[test]
 fn t1508_at_combinations_match_git() {
-    let hist = setup_linear_main();
+    let hist = setup_t1508_at_combinations();
     let wt = hist.worktree();
     let repo = open_grit(wt);
-    let specs = ["@{0}", "main@{0}", "HEAD@{0}"];
-    oracle_table(&repo, wt, ResolveMode::Verify, &specs);
+    let ok_specs = [
+        "HEAD",
+        "@{1}",
+        "HEAD@{1}",
+        "@{now}",
+        "HEAD@{now}",
+        "@{-1}",
+        "@{-1}@{0}",
+        "@{-1}@{1}",
+        "@{u}",
+        "HEAD@{u}",
+        "@{u}@{1}",
+        "@{-1}@{u}",
+        "@{-1}@{u}@{1}",
+        "@",
+        "@@{u}",
+        "@@/at-test",
+        "@at-test",
+    ];
+    oracle_table(&repo, wt, ResolveMode::Verify, &ok_specs);
+    for spec in [
+        "@{u}@{-1}",
+        "@{0}@{0}",
+        "@{1}@{u}",
+        "HEAD@{-1}",
+        "@{-1}@{-1}",
+    ] {
+        oracle_expect_rev_parse_error(&repo, wt, spec, ResolveMode::Verify, |_| true)
+            .unwrap_or_else(|e| panic!("{spec}: {e}"));
+    }
+    git(wt, &["checkout", "old-branch"]);
+    let repo = open_grit(wt);
+    oracle_one(&repo, wt, "HEAD@{1}", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+    oracle_one(&repo, wt, "@{1}", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+    fs::write(wt.join("normal"), "content\n").expect("write");
+    fs::write(wt.join("fun@ny"), "content\n").expect("write");
+    git(wt, &["add", "normal", "fun@ny"]);
+    git(wt, &["commit", "-m", "funny path"]);
+    let repo = open_grit(wt);
+    oracle_one(&repo, wt, "@:normal", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+    oracle_one(&repo, wt, "@:fun@ny", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+}
+
+fn setup_merge_on_head() -> HistoryRepo {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    build_commit_dag(
+        wt,
+        &[("b", "a"), ("c", "b"), ("m", "b"), ("m", "c")],
+        &[("m", "refs/heads/main")],
+    );
+    git(wt, &["checkout", "main"]);
+    repo
 }
 
 #[test]
@@ -208,12 +296,17 @@ fn t1511_caret_peel_forms_match_git() {
         "tree-tag^{tree}",
         "HEAD^{tree}",
         "HEAD^{/Initial}",
-        "HEAD^!",
-        "HEAD^@",
         "HEAD^-1",
     ];
     for spec in specs {
         oracle_one(&repo, wt, spec, ResolveMode::Verify).unwrap_or_else(|e| panic!("{spec}: {e}"));
+    }
+    let merge_hist = setup_merge_on_head();
+    let mwt = merge_hist.worktree();
+    let mrepo = open_grit(mwt);
+    for spec in ["HEAD^!", "HEAD^@"] {
+        oracle_one(&mrepo, mwt, spec, ResolveMode::Verify)
+            .unwrap_or_else(|e| panic!("{spec}: {e}"));
     }
 }
 
@@ -238,24 +331,64 @@ fn git_hash_stdin(wt: &Path, bytes: &[u8]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn setup_t1512_ambiguous_blobs() -> (tempfile::TempDir, std::path::PathBuf) {
+    let root = tempfile::tempdir().expect("tempdir");
+    let bare = root.path().join("blob.prefix");
+    git(
+        &root.path(),
+        &["init", "--bare", "-q", bare.to_str().expect("utf8")],
+    );
+    git_hash_stdin(&bare, b"brocdnra\n");
+    git_hash_stdin(&bare, b"brigddsv\n");
+    git_hash_stdin(&bare, b"1agllotbh\n");
+    git_hash_stdin(&bare, b"1bbfctrkc\n");
+    (root, bare)
+}
+
 #[test]
 fn t1512_disambiguation_matches_git() {
+    let (_root, bare) = setup_t1512_ambiguous_blobs();
+    let mut env = Environment::empty();
+    env.cwd = bare.clone();
+    env.pwd = Some(bare.to_string_lossy().into_owned());
+    let options = RepositoryOptions {
+        environment: env,
+        ..RepositoryOptions::empty()
+    };
+    let bare_repo = Repository::discover_with(&options, Some(&bare)).expect("bare repo");
+    for prefix in ["dead", "beef"] {
+        assert!(
+            git_rev_parse_verify(&bare, prefix).is_none(),
+            "git should reject ambiguous short oid {prefix}"
+        );
+        assert!(resolve_revision_for_verify(&bare_repo, prefix).is_err());
+    }
+
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
-    let _blob1 = git_hash_stdin(wt, b"aaa\n");
-    let _blob2 = git_hash_stdin(wt, b"bbb\n");
-    commit_file(wt, "f", "x\n", "c");
+    fs::write(
+        wt.join("a0blgqsjc"),
+        "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n\nb1rwzyc3\n",
+    )
+    .expect("write");
+    git(wt, &["add", "a0blgqsjc"]);
+    git(wt, &["write-tree"]);
+    git(wt, &["commit", "-m", "a2onsxbvj"]);
     let repo = open_grit(wt);
+    for spec in [
+        "0000000000cdc:a0blgqsjc",
+        "000000000:a0blgqsjc",
+        "0000000000e4f^{commit}",
+        "000000000^{commit}",
+        "000000000^0",
+    ] {
+        oracle_one(&repo, wt, spec, ResolveMode::Verify).unwrap_or_else(|e| panic!("{spec}: {e}"));
+    }
     let full = git_rev_parse_verify(wt, "HEAD").expect("HEAD");
-    let prefix: String = full.to_hex().chars().take(7).collect();
-    if git_rev_parse_verify(wt, &prefix).is_some() {
-        oracle_one(&repo, wt, &prefix, ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
-        oracle_abbrev(&repo, wt, full, 7);
-    }
+    oracle_abbrev(&repo, wt, full, 7);
     git(wt, &["config", "core.disambiguate", "commit"]);
-    if git_rev_parse_verify(wt, &prefix).is_some() {
-        oracle_one(&repo, wt, &prefix, ResolveMode::AsCommit).unwrap_or_else(|e| panic!("{e}"));
-    }
+    oracle_one(&repo, wt, "000000000^{commit}", ResolveMode::AsCommit)
+        .unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]
@@ -294,6 +427,18 @@ fn colon_message_search_matches_git() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+fn setup_index_conflict_stages() -> HistoryRepo {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "file.txt", "base\n", "base");
+    git(wt, &["checkout", "-b", "side"]);
+    commit_file(wt, "file.txt", "side\n", "side");
+    git(wt, &["checkout", "main"]);
+    commit_file(wt, "other.txt", "other\n", "other");
+    git(wt, &["merge", "side", "--no-commit", "--no-ff"]);
+    repo
+}
+
 #[test]
 fn colon_path_and_index_stage_match_git() {
     let hist = setup_t1506_worktree();
@@ -301,6 +446,16 @@ fn colon_path_and_index_stage_match_git() {
     let repo = open_grit(wt);
     oracle_one(&repo, wt, ":file.txt", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
     oracle_one(&repo, wt, ":0:file.txt", ResolveMode::Verify).unwrap_or_else(|e| panic!("{e}"));
+    let conflict = setup_index_conflict_stages();
+    let cwt = conflict.worktree();
+    let crepo = open_grit(cwt);
+    for spec in [":1:file.txt", ":2:file.txt", ":3:file.txt"] {
+        assert!(
+            git_rev_parse_verify(cwt, spec).is_none(),
+            "git should reject unmerged stage spec {spec}"
+        );
+        assert!(resolve_revision_for_verify(&crepo, spec).is_err());
+    }
 }
 
 #[test]
@@ -317,7 +472,7 @@ fn reflog_at_n_and_date_match_git() {
     let hist = setup_linear_main();
     let wt = hist.worktree();
     let repo = open_grit(wt);
-    for spec in ["main@{0}", "main@{1}"] {
+    for spec in ["main@{0}", "main@{1}", "HEAD@{1979-01-01}"] {
         oracle_one(&repo, wt, spec, ResolveMode::Verify).unwrap_or_else(|e| panic!("{spec}: {e}"));
     }
 }

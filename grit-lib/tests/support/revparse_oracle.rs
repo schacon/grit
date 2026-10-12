@@ -16,16 +16,6 @@ use grit_lib::rev_parse_error::RevParseError;
 
 use super::history_harness::git_rev_parse_verify;
 
-fn with_worktree_cwd<R>(worktree: &Path, f: impl FnOnce() -> R) -> R {
-    let prev = std::env::current_dir().ok();
-    std::env::set_current_dir(worktree).expect("chdir to worktree");
-    let out = f();
-    if let Some(p) = prev {
-        let _ = std::env::set_current_dir(p);
-    }
-    out
-}
-
 /// How grit should resolve a spec for oracle comparison.
 #[derive(Debug, Clone, Copy)]
 pub enum ResolveMode {
@@ -109,7 +99,7 @@ pub fn oracle_one(
     mode: ResolveMode,
 ) -> Result<(), OracleMismatch> {
     let git = git_rev_parse_verify(worktree, spec);
-    let grit = with_worktree_cwd(worktree, || grit_resolve(repo, spec, mode));
+    let grit = grit_resolve(repo, spec, mode);
     match (git, grit) {
         (Some(g), Ok(r)) if g == r => Ok(()),
         (Some(g), Ok(r)) => Err(OracleMismatch::DifferentOid {
@@ -139,14 +129,13 @@ pub fn oracle_expect_rev_parse_error(
     pred: fn(&RevParseError) -> bool,
 ) -> Result<(), OracleMismatch> {
     if git_rev_parse_verify(worktree, spec).is_some() {
-        let grit = with_worktree_cwd(worktree, || grit_resolve(repo, spec, mode))
-            .expect("git failed but grit succeeded");
+        let grit = grit_resolve(repo, spec, mode).expect("git failed but grit succeeded");
         return Err(OracleMismatch::GitErrGritOk {
             spec: spec.to_owned(),
             grit,
         });
     }
-    match with_worktree_cwd(worktree, || grit_resolve(repo, spec, mode)) {
+    match grit_resolve(repo, spec, mode) {
         Err(Error::RevParse(e)) if pred(&e) => Ok(()),
         Ok(oid) => Err(OracleMismatch::GitErrGritOk {
             spec: spec.to_owned(),
@@ -169,9 +158,7 @@ pub fn oracle_table(repo: &Repository, worktree: &Path, mode: ResolveMode, specs
 
 /// `git rev-parse --short` vs [`abbreviate_object_id`] for a full oid.
 pub fn oracle_abbrev(repo: &Repository, worktree: &Path, oid: ObjectId, min_len: usize) {
-    let grit = with_worktree_cwd(worktree, || {
-        abbreviate_object_id(repo, oid, min_len).expect("grit abbrev")
-    });
+    let grit = abbreviate_object_id(repo, oid, min_len).expect("grit abbrev");
     let git = super::history_harness::git(worktree, &["rev-parse", "--short", &oid.to_hex()]);
     let git = git.trim().to_string();
     assert_eq!(

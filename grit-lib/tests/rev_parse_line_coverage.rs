@@ -15,8 +15,8 @@ use grit_lib::rev_parse::{
     resolve_at_minus_to_oid, resolve_index_path_entry, resolve_revision_for_checkout_guess,
     resolve_revision_for_commit_tree_tree, resolve_revision_for_patch_old_blob,
     resolve_revision_for_range_end, resolve_revision_for_range_end_without_index_dwim,
-    resolve_revision_without_index_dwim, revision_spec_contains_ancestry_navigation,
-    show_prefix, spec_has_parent_shorthand_suffix, split_treeish_colon,
+    resolve_revision_without_index_dwim, revision_spec_contains_ancestry_navigation, show_prefix,
+    spec_has_parent_shorthand_suffix, split_treeish_colon,
     superproject_work_tree_from_nested_git_modules, symbolic_full_name, to_relative_path,
     try_parse_double_dot_log_range, upstream_suffix_info,
 };
@@ -66,11 +66,9 @@ fn range_and_peel_parsers() {
     let wt = hist.worktree();
     build_commit_dag(wt, &[("b", "a")], &[("b", "refs/heads/main")]);
     let repo = open_grit(wt);
-    assert!(
-        try_parse_double_dot_log_range(&repo, "main..main")
-            .expect("range")
-            .is_some()
-    );
+    assert!(try_parse_double_dot_log_range(&repo, "main..main")
+        .expect("range")
+        .is_some());
     assert!(revision_spec_contains_ancestry_navigation("HEAD~3"));
     assert!(spec_has_parent_shorthand_suffix("main^!"));
     let (base, peel) = parse_peel_suffix("v1^{tree}");

@@ -6,7 +6,7 @@ use std::fs;
 
 use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::merge_base::{
-    independent_commits, is_ancestor, merge_bases_all, merge_bases_first_vs_rest,
+    fork_point, independent_commits, is_ancestor, merge_bases_all, merge_bases_first_vs_rest,
     merge_bases_octopus, resolve_fork_point_reflog_ref,
 };
 use grit_lib::repo::Repository;
@@ -160,43 +160,56 @@ fn t6099_side_exhaustion_merge_base_matches_git() {
 }
 
 #[test]
-fn fork_point_reflog_ref_tracks_git() {
+fn fork_point_reflog_matches_git_t6010_fixture() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
-    build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
-    let bare = tempfile::tempdir().expect("bare");
-    support::git(bare.path(), &["init", "--bare", "-q"]);
-    git(
-        wt,
-        &[
-            "remote",
-            "add",
-            "origin",
-            bare.path().to_str().expect("utf8"),
-        ],
-    );
-    git(wt, &["push", "-u", "origin", "main"]);
-    git(wt, &["branch", "topic", "main~1"]);
-    git(wt, &["checkout", "topic"]);
-    support::commit_file(wt, "t", "1\n", "topic commit");
-    git(wt, &["fetch", "origin"]);
-    let repo = open_grit(wt);
-    let grit_name = resolve_fork_point_reflog_ref(&repo, "main");
-    let git_out = std::process::Command::new("git")
-        .current_dir(wt)
-        .args(["merge-base", "--fork-point", "main", "topic"])
-        .output()
-        .expect("fork-point git");
-    if !git_out.status.success() {
-        eprintln!("SKIP fork_point: git merge-base --fork-point unavailable");
-        return;
+    git(wt, &["commit", "--allow-empty", "-m", "E"]);
+    let e = git_rev_parse_verify(wt, "HEAD").expect("E");
+    git(wt, &["tag", "E"]);
+    git(wt, &["checkout", "-b", "base", &e.to_hex()]);
+    let mut expect: Vec<ObjectId> = Vec::new();
+    let mut derived: Vec<ObjectId> = Vec::new();
+    for count in 1..=3 {
+        git(
+            wt,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                &format!("Base commit #{count}"),
+            ],
+        );
+        expect.push(git_rev_parse_verify(wt, "HEAD").expect("base tip"));
+        git(wt, &["checkout", "-B", "derived"]);
+        git(
+            wt,
+            &[
+                "commit",
+                "--allow-empty",
+                "-m",
+                &format!("Derived #{count}"),
+            ],
+        );
+        derived.push(git_rev_parse_verify(wt, "HEAD").expect("derived tip"));
+        git(wt, &["checkout", "-B", "base", &e.to_hex()]);
     }
-    let git_fp = String::from_utf8_lossy(&git_out.stdout)
-        .lines()
-        .next()
-        .expect("fork-point oid")
-        .trim()
-        .to_string();
-    let git_name = support::git(wt, &["name-rev", "--name-only", &git_fp]);
-    assert_eq!(grit_name.trim(), git_name.trim());
+    let repo = open_grit(wt);
+    for (idx, derived_tip) in derived.iter().enumerate() {
+        let git_fp = git_merge_base(wt, &["--fork-point", "base", &derived_tip.to_hex()]);
+        assert_eq!(git_fp, vec![expect[idx]]);
+        let upstream = git_rev_parse_verify(wt, "base").expect("base");
+        let grit_fp = fork_point(&repo, "base", upstream, *derived_tip).expect("grit fork-point");
+        assert_eq!(grit_fp, expect[idx]);
+    }
+    git(wt, &["checkout", "derived"]);
+    let git_default = git_merge_base(wt, &["--fork-point", "base"]);
+    assert_eq!(git_default, vec![expect[2]]);
+    let upstream = git_rev_parse_verify(wt, "base").expect("base");
+    let head = git_rev_parse_verify(wt, "HEAD").expect("derived");
+    let grit_default = fork_point(&repo, "base", upstream, head).expect("grit default");
+    assert_eq!(grit_default, expect[2]);
+    assert_eq!(
+        resolve_fork_point_reflog_ref(&repo, "base"),
+        "refs/heads/base"
+    );
 }

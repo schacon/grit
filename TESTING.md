@@ -344,7 +344,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t1507-rev-parse-upstream.sh | `@{upstream}`, `@{u}`, `@{push}`, branch tracking | `rev_parse_syntax.rs` (`t1507_upstream_and_push_shorthand_match_git`) | covered |
 | t1508-at-combinations.sh | `@{0}`, `ref@{0}` reflog tip | `rev_parse_syntax.rs` (`t1508_at_combinations_match_git`, `reflog_at_n_and_date_match_git`) | covered |
 | t1511-rev-parse-caret.sh | `^{}`, `^{commit}`, `^{tree}`, `^{/msg}`, `^!`, `^@`, `^-N` | `rev_parse_syntax.rs` (`t1511_caret_peel_forms_match_git`) | covered |
-| t1512-rev-parse-disambiguation.sh | short oid / `core.disambiguate` / `--short` | `rev_parse_syntax.rs` (`t1512_disambiguation_matches_git`) | partial (unique-prefix cases only) |
+| t1512-rev-parse-disambiguation.sh | short oid / `core.disambiguate` / `--short` | `rev_parse_syntax.rs` (`t1512_disambiguation_matches_git`) | covered |
 | t1514-rev-parse-push.sh | `push.default` and `@{push}` | `rev_parse_syntax.rs` (`t1514_rev_parse_push_default_matches_git`) | covered |
 | t6101-rev-parse-parents.sh | parent selectors `^N`, merge parents | `rev_parse_syntax.rs` (`t6101_rev_parse_parents_match_git`) | covered |
 | — | `:/message`, range split `..` / `...` | `rev_parse_syntax.rs` (`colon_message_search_matches_git`, `split_range_helpers_match_git_endpoints`) | covered |
@@ -354,7 +354,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
 | t6010-merge-base.sh | merge-base, `--all`, `--octopus`, `--independent`, `--is-ancestor` | `merge_base_git_compat.rs` (`t6010_merge_base_variants_match_git`) | covered |
-| t6010-merge-base.sh | `--fork-point` reflog ref name | `merge_base_git_compat.rs` (`fork_point_reflog_ref_tracks_git`) | partial (skip when git rejects fork-point) |
+| t6010-merge-base.sh | `--fork-point` reflog ref name | `merge_base_git_compat.rs` (`fork_point_reflog_matches_git_t6010_fixture`) | covered |
 | t6010-merge-base.sh | commit-graph vs walk | `merge_base_git_compat.rs` (`merge_base_identical_with_and_without_commit_graph`) | covered |
 | t6099-merge-base-side-exhaustion.sh | `--all` drops ancestor among candidates; with/without commit-graph | `merge_base_git_compat.rs` (`t6099_side_exhaustion_merge_base_matches_git`) | covered |
 

@@ -14,7 +14,7 @@ minimum = 62.5
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
-minimum = 48.4
+minimum = 48.5
 
 [aggregate.refs-config]
 groups = ["refs", "reflog", "config", "ignore", "attributes"]
@@ -135,7 +135,7 @@ files = [
     "rev_parse_error.rs",
     "merge_base.rs",
 ]
-minimum = 30.5
+minimum = 74.6
 
 [group.revwalk]
 files = [

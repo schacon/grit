@@ -912,6 +912,34 @@ mod tests {
     }
 
     #[test]
+    fn count_symmetric_ahead_behind_and_branch_base() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let c1 = write_commit_same_time(&repo.odb, &[], "one", 100)?;
+        let c2 = write_commit_same_time(&repo.odb, &[c1], "two", 200)?;
+        let c3 = write_commit_same_time(&repo.odb, &[c2], "three", 300)?;
+        let (ahead, behind) = count_symmetric_ahead_behind(&repo, c3, c1)?;
+        assert_eq!(ahead, 2);
+        assert_eq!(behind, 0);
+        let idx = branch_base_for_tip(&repo, c3, &[c1, c2])?;
+        assert!(idx.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn merge_base_for_diff_helpers() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let c1 = write_commit_same_time(&repo.odb, &[], "one", 100)?;
+        let c2 = write_commit_same_time(&repo.odb, &[c1], "two", 200)?;
+        let mb = merge_base_for_diff_two_commits(&repo, c2, c1).expect("mb");
+        assert_eq!(mb, c1);
+        let mb_idx = merge_base_for_diff_index(&repo, c2, c1).expect("mb idx");
+        assert_eq!(mb_idx, c1);
+        Ok(())
+    }
+
+    #[test]
     fn commits_reachable_errors_on_missing_parent_without_shallow() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;
