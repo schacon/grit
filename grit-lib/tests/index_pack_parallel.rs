@@ -236,7 +236,8 @@ fn grit_index_bytes(pack: &[u8], odb: &Odb, threads: usize) -> Vec<u8> {
         .collect();
     let dir = tempfile::tempdir().expect("idx scratch");
     let idx_path = dir.path().join("grit.idx");
-    write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb).expect("write idx");
+    write_v2_pack_index_with_trailer(&idx_path, &entries, trailer, hb, Some(threads))
+        .expect("write idx");
     std::fs::read(&idx_path).expect("read grit idx")
 }
 

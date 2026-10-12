@@ -275,6 +275,9 @@ pub fn install_pack_path_with_progress(
             let _ = std::fs::remove_file(&owned);
         }
         let indexed = PackData::open(&stage_pack)?;
+        let parallelism = opts.index_parallelism(odb)?;
+        record_resolved_ingest_threads(parallelism.threads().get());
+        let sort_threads = parallelism.threads().get();
         let (records, trailer) = {
             let pack_bytes: &[u8] = indexed.deref();
             verify_trailer(odb.hash_algo(), pack_bytes).map_err(|e| {
@@ -282,8 +285,6 @@ pub fn install_pack_path_with_progress(
                     "received pack checksum mismatch (download may be incomplete): {e}"
                 ))
             })?;
-            let parallelism = opts.index_parallelism(odb)?;
-            record_resolved_ingest_threads(parallelism.threads().get());
             let records = crate::pack_index_build::build_pack_index_records_with_progress(
                 pack_bytes,
                 odb,
@@ -300,7 +301,7 @@ pub fn install_pack_path_with_progress(
             .into_iter()
             .map(|PackIndexRecord { oid, offset, crc32 }| (oid, offset, crc32))
             .collect();
-        write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb)?;
+        write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb, Some(sort_threads))?;
         if !opts.skip_post_index_verify {
             verify_pack_and_collect(&stage_idx)?;
         }
@@ -618,6 +619,7 @@ mod tests {
             &[(fake_oid, huge_off, 0x1234_5678)],
             &pack[pack.len() - 20..],
             20,
+            None,
         )
         .expect("write idx");
         let idx = read_pack_index(&idx_path).expect("read idx");
