@@ -229,16 +229,23 @@ pub fn checkout_between_trees_with_progress(
     checkout_between_trees_slow(repo, from, Some(to), progress)
 }
 
-/// Replace the index and tracked worktree so they match `tree_oid` exactly.
+/// Replace the index and tracked worktree so they match `target_tree` exactly.
 ///
-/// Used by hard reset: every path in the tree is written to the worktree (even when
-/// the path is unchanged between commits), and tracked paths absent from the tree are
-/// removed.
+/// Used by hard reset. When `head_tree` differs from `target_tree`, only paths that
+/// changed between the two trees are written first (same as branch checkout); paths
+/// that stayed the same are left on disk when already up to date. When both trees
+/// are equal (reset to the current commit), only dirty or mismatched paths are
+/// rewritten. Tracked paths absent from `target_tree` are removed and the index is
+/// rebuilt without unmerged stages.
 ///
 /// # Errors
 ///
 /// Returns an error when the repository has no work tree or checkout I/O fails.
-pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()> {
+pub fn checkout_hard_to_tree_from_head_tree(
+    repo: &Repository,
+    head_tree: &ObjectId,
+    target_tree: &ObjectId,
+) -> Result<()> {
     use crate::porcelain::merge::tree_to_index_entries;
 
     let work_tree = repo
@@ -246,7 +253,7 @@ pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<(
         .clone()
         .ok_or_else(|| Error::PathError("cannot update a bare repository's working tree".into()))?;
 
-    let target_entries = tree_to_index_entries(repo, tree_oid, "")?;
+    let target_entries = tree_to_index_entries(repo, target_tree, "")?;
     let target_paths: BTreeSet<Vec<u8>> = target_entries.iter().map(|e| e.path.clone()).collect();
 
     let index = repo.load_index()?;
@@ -274,8 +281,28 @@ pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<(
         }
     }
 
+    let trees_differ = head_tree != target_tree;
+    let changes = if trees_differ {
+        diff_trees(&repo.odb, Some(head_tree), Some(target_tree), "")?
+    } else {
+        Vec::new()
+    };
+    let mut written_by_tree_diff: BTreeSet<Vec<u8>> = BTreeSet::new();
+    if !changes.is_empty() {
+        checkout_tree_changes(repo, &changes)?;
+        for change in &changes {
+            if change.status == DiffStatus::Deleted {
+                continue;
+            }
+            if let Some(path) = &change.new_path {
+                written_by_tree_diff.insert(path.as_bytes().to_vec());
+            }
+        }
+    }
+
+    let index = repo.load_index()?;
     let config = repo.config()?;
-    let rules = WorktreeRules::from_parts(repo, &index, config)?;
+    let rules = WorktreeRules::from_parts(repo, &index, config.clone())?;
     let mut delayed = DelayedProcessCheckout::default();
     let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
     let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(target_entries.len());
@@ -285,13 +312,61 @@ pub fn checkout_hard_to_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<(
         let path = String::from_utf8_lossy(&te.path).into_owned();
         let mode = te.mode;
         if mode == MODE_GITLINK {
+            if trees_differ && written_by_tree_diff.contains(&te.path) {
+                let abs = work_tree.join(&path);
+                let mut entry = entry_from_stat(&abs, te.path.as_slice(), te.oid, MODE_GITLINK)?;
+                entry.size = 0;
+                new_entries.push(entry);
+                continue;
+            }
+            if let Some(existing) = index.get(te.path.as_slice(), 0) {
+                if existing.oid == te.oid
+                    && existing.mode == MODE_GITLINK
+                    && gitlink_worktree_matches_index(&work_tree.join(&path))
+                {
+                    let abs = work_tree.join(&path);
+                    let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+                    let mut entry =
+                        entry_from_metadata(&meta, te.path.as_slice(), te.oid, MODE_GITLINK);
+                    entry.size = 0;
+                    new_entries.push(entry);
+                    continue;
+                }
+            }
             materialize_gitlink_worktree(&work_tree, &path, &mut dir_cache)?;
             let abs = work_tree.join(&path);
-            let mut entry = entry_from_stat(&abs, path.as_bytes(), te.oid, MODE_GITLINK)?;
+            let mut entry = entry_from_stat(&abs, te.path.as_slice(), te.oid, MODE_GITLINK)?;
             entry.size = 0;
             new_entries.push(entry);
             continue;
         }
+
+        if trees_differ && written_by_tree_diff.contains(&te.path) {
+            let abs = work_tree.join(&path);
+            let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+            new_entries.push(entry_from_metadata(&meta, te.path.as_slice(), te.oid, mode));
+            continue;
+        }
+
+        if let Some(existing) = index.get(te.path.as_slice(), 0) {
+            if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
+                &repo.odb,
+                &repo.git_dir,
+                &work_tree,
+                &index,
+                existing,
+                &te.oid,
+                mode,
+                &path,
+                Some(rules.filter_process()),
+            )? {
+                let abs = work_tree.join(&path);
+                let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
+                new_entries.push(entry_from_metadata(&meta, te.path.as_slice(), te.oid, mode));
+                continue;
+            }
+        }
+
         let change = DiffEntry {
             status: DiffStatus::Modified,
             old_path: Some(path.clone()),
