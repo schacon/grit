@@ -170,6 +170,42 @@ fn truncate_path_for_name_area(path: &str, area_width: usize) -> (String, usize)
     (s.clone(), s.width())
 }
 
+/// Format a single per-file `--stat` line at a fixed total width (Git `show_stats`).
+pub fn format_single_stat_line(
+    path: &str,
+    insertions: usize,
+    deletions: usize,
+    total_width: usize,
+) -> IoResult<String> {
+    let mut buf = Vec::new();
+    let files = [FileStatInput {
+        path_display: path.to_string(),
+        insertions,
+        deletions,
+        is_binary: false,
+        is_unmerged: false,
+    }];
+    let opts = DiffstatOptions {
+        terminal_width: total_width,
+        total_width,
+        stat_name_width: None,
+        stat_graph_width: None,
+        stat_count: Some(1),
+        line_prefix: "",
+        width_prefix: "",
+        subtract_prefix_from_terminal: false,
+        graph_prefix_budget_slack: 0,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+    };
+    write_diffstat_block(&mut buf, &files, &opts)?;
+    let text = String::from_utf8(buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    Ok(text.lines().next().unwrap_or("").trim_end().to_string())
+}
+
 /// Write diffstat lines and summary, matching Git's layout.
 pub fn write_diffstat_block(
     out: &mut impl Write,

@@ -665,18 +665,39 @@ pub fn grit_stat_line(path: &str, ins: usize, del: usize, width: usize) -> Strin
 }
 
 pub fn git_stat_width_line(old: &[u8], new: &[u8], path: &str, width: usize) -> String {
-    let out = git_diff_no_index_patch(
-        old,
-        new,
-        path,
-        LineDiffAlgo::Myers,
-        WhitespaceMode::None,
-        &["--stat=width", &format!("{width}")],
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join(path);
+    if let Some(parent) = file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).expect("mkdir");
+        }
+    }
+    fs::write(&file, old).expect("write old");
+    let init = hermetic_git_diff(dir.path(), &["init"]);
+    assert!(init.status.success(), "git init failed");
+    let config = |k: &str, v: &str| {
+        let out = hermetic_git_diff(dir.path(), &["config", k, v]);
+        assert!(out.status.success(), "git config {k} failed");
+    };
+    config("user.email", "grit-test@example.com");
+    config("user.name", "grit-test");
+    let add = hermetic_git_diff(dir.path(), &["add", "-A"]);
+    assert!(add.status.success(), "git add failed");
+    let commit = hermetic_git_diff(dir.path(), &["commit", "-m", "base"]);
+    assert!(commit.status.success(), "git commit failed");
+    fs::write(&file, new).expect("write new");
+    let stat_arg = format!("--stat-width={width}");
+    let diff = hermetic_git_diff(dir.path(), &["diff", "--no-color", &stat_arg]);
+    assert!(
+        diff.status.success() || diff.status.code() == Some(0),
+        "git diff --stat failed: {}",
+        String::from_utf8_lossy(&diff.stderr)
     );
-    out.lines()
+    String::from_utf8_lossy(&diff.stdout)
+        .lines()
         .find(|l| l.contains(" | "))
-        .unwrap_or("")
-        .to_string()
+        .map(|l| l.to_string())
+        .unwrap_or_default()
 }
 
 pub fn grit_diffstat_block(path: &str, old: &[u8], new: &[u8], algo: LineDiffAlgo) -> String {

@@ -200,8 +200,8 @@ fn t4012_binary_patch_applies_with_git() {
         .expect("grit binary patch parses");
     assert!(parsed[0].binary_patch.is_some());
     let payload = parsed[0].binary_patch.as_ref().expect("payload");
-    let inflated = grit_lib::apply::inflate_binary_payload(&payload.forward_compressed)
-        .expect("inflate grit forward");
+    let inflated = grit_lib::apply::materialize_binary_patch_forward(&payload, bin.old)
+        .expect("materialize grit forward");
     assert_eq!(inflated, bin.new, "forward literal must be new blob");
     let grit_patch = wrap_apply_patch("b", &grit_bin);
     assert!(
@@ -209,10 +209,14 @@ fn t4012_binary_patch_applies_with_git() {
         "git apply --check must accept grit binary patch"
     );
     git_apply_and_compare(bin.old, bin.new, &grit_patch, "b");
-    let parsed_git = grit_lib::apply::parse_patch(&git_bin, 1, "b", false, None);
-    assert!(
-        parsed_git.is_ok(),
-        "git binary patch parses: {parsed_git:?}"
+    let parsed_git = grit_lib::apply::parse_patch(&git_bin, 1, "b", false, None)
+        .expect("git binary patch parses");
+    let git_payload = parsed_git[0].binary_patch.as_ref().expect("git payload");
+    let from_git = grit_lib::apply::materialize_binary_patch_forward(git_payload, bin.old)
+        .expect("materialize git forward section");
+    assert_eq!(
+        from_git, bin.new,
+        "git forward section must expand to new blob"
     );
 }
 
@@ -240,17 +244,18 @@ fn t4052_numstat_and_stat_width_match_git() {
         .expect("mixed-layout");
     let long_name = "a".repeat(120);
     let (gi, gd) = grit_numstat("x\n", "x\ny\n", LineDiffAlgo::Myers);
-    let grit_line = grit_stat_line(&long_name, gi, gd, 80);
-    assert!(grit_line.contains('|'), "grit stat line layout");
-    let git_stat = git_diff_no_index_patch(
-        b"x\n",
-        b"x\ny\n",
-        &long_name,
-        LineDiffAlgo::Myers,
-        WhitespaceMode::None,
-        &["--stat"],
+    let width = 80;
+    let grit_line = grit_stat_line(&long_name, gi, gd, width);
+    let git_line = git_stat_width_line(b"x\n", b"x\ny\n", &long_name, width);
+    assert_eq!(
+        grit_line, git_line,
+        "stat line must match git --stat-width={width}"
     );
-    assert!(git_stat.contains('|'), "git --stat output");
+    assert_eq!(
+        grit_line.len(),
+        79,
+        "git uses 79 display columns for this fixture"
+    );
     let _block = grit_diffstat_block("file.c", pair.old, pair.new, LineDiffAlgo::Myers);
 }
 

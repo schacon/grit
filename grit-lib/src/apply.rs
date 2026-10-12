@@ -90,13 +90,30 @@ pub struct FilePatch {
     pub is_toplevel_relative: bool,
 }
 
+/// Whether a `GIT binary patch` section holds a full literal or a delta against the other side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryPatchSectionKind {
+    /// Zlib-compressed full file contents (`literal N`).
+    Literal,
+    /// Zlib-compressed Git binary delta (`delta N`) applied to the preimage blob.
+    Delta,
+}
+
+/// One forward or reverse chunk in a `GIT binary patch`.
+#[derive(Debug, Clone)]
+pub struct BinaryPatchSection {
+    pub kind: BinaryPatchSectionKind,
+    pub compressed: Vec<u8>,
+    /// Declared uncompressed size from the section header (`literal N` / `delta N`).
+    pub declared_size: usize,
+}
+
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
 #[derive(Debug, Clone)]
 pub struct BinaryPatchPayload {
-    pub forward_compressed: Vec<u8>,
-    pub forward_declared_size: usize,
-    pub reverse_compressed: Vec<u8>,
-    pub reverse_declared_size: usize,
+    pub forward: BinaryPatchSection,
+    /// Reverse section when present (second `literal`/`delta` block).
+    pub reverse: Option<BinaryPatchSection>,
 }
 
 impl FilePatch {
@@ -1143,29 +1160,26 @@ pub fn parse_patch(
 
 /// Parse a `GIT binary patch` payload.
 fn parse_binary_patch(lines: &[&str], mut i: usize) -> Result<(BinaryPatchPayload, usize)> {
-    let (forward_compressed, forward_declared_size) = parse_binary_literal(lines, &mut i)?;
-    let (reverse_compressed, reverse_declared_size) =
-        if i < lines.len() && lines[i].starts_with("literal ") {
-            parse_binary_literal(lines, &mut i)?
-        } else {
-            (Vec::new(), 0)
-        };
+    let forward = parse_binary_section(lines, &mut i)?;
+    let reverse = if i < lines.len()
+        && (lines[i].starts_with("literal ") || lines[i].starts_with("delta "))
+    {
+        Some(parse_binary_section(lines, &mut i)?)
+    } else {
+        None
+    };
 
-    Ok((
-        BinaryPatchPayload {
-            forward_compressed,
-            forward_declared_size,
-            reverse_compressed,
-            reverse_declared_size,
-        },
-        i,
-    ))
+    Ok((BinaryPatchPayload { forward, reverse }, i))
 }
 
-/// Parse one `literal <size>` block from a binary patch.
-fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize)> {
+/// Parse one `literal <size>` or `delta <size>` block from a binary patch.
+fn parse_binary_section(lines: &[&str], i: &mut usize) -> Result<BinaryPatchSection> {
     let header = lines.get(*i).copied().unwrap_or_default();
-    let Some(size_str) = header.strip_prefix("literal ") else {
+    let (kind, size_str) = if let Some(s) = header.strip_prefix("literal ") {
+        (BinaryPatchSectionKind::Literal, s)
+    } else if let Some(s) = header.strip_prefix("delta ") {
+        (BinaryPatchSectionKind::Delta, s)
+    } else {
         return Err(Error::Message(format!(
             "unsupported binary patch section: '{header}'"
         )));
@@ -1174,7 +1188,7 @@ fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize
         .trim()
         .parse()
         .map_err(|e: std::num::ParseIntError| {
-            Error::Message(format!("invalid binary patch literal size: {e}"))
+            Error::Message(format!("invalid binary patch section size: {e}"))
         })?;
     *i += 1;
 
@@ -1189,7 +1203,11 @@ fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize
         *i += 1;
     }
 
-    Ok((compressed, declared_size))
+    Ok(BinaryPatchSection {
+        kind,
+        compressed,
+        declared_size,
+    })
 }
 
 /// Decode one binary patch payload line into compressed bytes.
@@ -1296,6 +1314,54 @@ pub fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
         .read_to_end(&mut out)
         .map_err(|e| Error::Message(format!("failed to inflate binary patch payload: {e}")))?;
     Ok(out)
+}
+
+/// Expand one binary patch section to uncompressed bytes.
+///
+/// Delta sections require `base` (the preimage blob Git applies the delta against).
+pub fn materialize_binary_patch_section(
+    section: &BinaryPatchSection,
+    base: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let inflated = inflate_binary_payload(&section.compressed)?;
+    match section.kind {
+        BinaryPatchSectionKind::Literal => {
+            if inflated.len() != section.declared_size {
+                return Err(Error::Message(format!(
+                    "binary patch literal size {} != declared {}",
+                    inflated.len(),
+                    section.declared_size
+                )));
+            }
+            Ok(inflated)
+        }
+        BinaryPatchSectionKind::Delta => {
+            let base = base.ok_or_else(|| {
+                Error::Message("binary patch delta requires a base blob".to_string())
+            })?;
+            crate::unpack_objects::apply_delta(base, &inflated)
+        }
+    }
+}
+
+/// Reconstruct the post-image blob from the forward section and the old file contents.
+pub fn materialize_binary_patch_forward(
+    payload: &BinaryPatchPayload,
+    old: &[u8],
+) -> Result<Vec<u8>> {
+    materialize_binary_patch_section(&payload.forward, Some(old))
+}
+
+/// Reconstruct the pre-image blob from the reverse section and the new file contents.
+pub fn materialize_binary_patch_reverse(
+    payload: &BinaryPatchPayload,
+    new: &[u8],
+) -> Result<Vec<u8>> {
+    let reverse = payload
+        .reverse
+        .as_ref()
+        .ok_or_else(|| Error::Message("binary patch has no reverse section".to_string()))?;
+    materialize_binary_patch_section(reverse, Some(new))
 }
 
 /// Split the two path tokens from the remainder of a `diff --git` line (after `diff --git `).
@@ -1609,9 +1675,51 @@ mod tests {
         let patches = parse_patch(&patch, 1, "p", false, None).expect("parse");
         assert_eq!(patches.len(), 1);
         let payload = patches[0].binary_patch.as_ref().expect("binary payload");
-        let forward = inflate_binary_payload(&payload.forward_compressed).expect("inflate new");
-        let reverse = inflate_binary_payload(&payload.reverse_compressed).expect("inflate old");
+        let forward = materialize_binary_patch_forward(payload, old).expect("materialize new");
+        let reverse = materialize_binary_patch_reverse(payload, new).expect("materialize old");
         assert_eq!(forward, new);
         assert_eq!(reverse, old);
+    }
+
+    #[test]
+    fn git_produced_delta_binary_patch_parses_and_materializes() {
+        use std::process::Command;
+
+        let mut old = Vec::from(&b"\0BIN"[..]);
+        old.extend((0u8..=255).cycle().take(996));
+        assert_eq!(old.len(), 1000);
+        let mut new = old.clone();
+        new[500..510].copy_from_slice(b"CHANGED!!!");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old_path = dir.path().join("old.bin");
+        let new_path = dir.path().join("new.bin");
+        std::fs::write(&old_path, &old).expect("write old");
+        std::fs::write(&new_path, &new).expect("write new");
+        let out = Command::new("git")
+            .args([
+                "diff",
+                "--no-index",
+                "--binary",
+                old_path.to_str().expect("utf8"),
+                new_path.to_str().expect("utf8"),
+            ])
+            .output()
+            .expect("git diff");
+        assert!(
+            out.status.code() == Some(1) || out.status.success(),
+            "git diff failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let patch = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            patch.contains("delta "),
+            "expected git to emit delta sections: {patch}"
+        );
+        let patches = parse_patch(&patch, 1, "p", false, None).expect("parse git binary patch");
+        let payload = patches[0].binary_patch.as_ref().expect("binary payload");
+        assert_eq!(payload.forward.kind, BinaryPatchSectionKind::Delta);
+        let got = materialize_binary_patch_forward(payload, &old).expect("apply forward delta");
+        assert_eq!(got, new);
     }
 }

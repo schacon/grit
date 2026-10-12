@@ -7242,33 +7242,21 @@ pub fn format_stat_line_width(
     max_path_len: usize,
     count_width: usize,
 ) -> String {
-    let total = insertions + deletions;
-    let plus = "+".repeat(insertions.min(50));
-    let minus = "-".repeat(deletions.min(50));
-    let cw = if count_width > 0 {
-        count_width
-    } else {
-        format!("{}", total).len()
-    };
-    let bar = format!("{}{}", plus, minus);
-    if bar.is_empty() {
-        format!(
-            " {:<width$} | {:>cw$}",
-            path,
-            total,
-            width = max_path_len,
-            cw = cw
-        )
-    } else {
-        format!(
-            " {:<width$} | {:>cw$} {}",
-            path,
-            total,
-            bar,
-            width = max_path_len,
-            cw = cw
-        )
+    let mut line =
+        crate::diffstat::format_single_stat_line(path, insertions, deletions, max_path_len)
+            .unwrap_or_else(|_| String::new());
+    if count_width > 0 && line.contains(" | ") {
+        let total = insertions + deletions;
+        let cw = count_width;
+        if let Some((left, rest)) = line.split_once(" | ") {
+            if let Some((_, bar)) = rest.split_once(' ') {
+                line = format!(" {left} | {total:>cw$} {bar}", cw = cw);
+            } else {
+                line = format!(" {left} | {total:>cw$}", cw = cw);
+            }
+        }
     }
+    line
 }
 
 fn last_line_index_without_trailing_newline(text: &str) -> Option<usize> {
