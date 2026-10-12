@@ -45,7 +45,7 @@
       "type": "array"
     },
     "next": {
-      "description": "Full oid to resume from (`grit log --before=<next>`), or `null` when there is no further history.",
+      "description": "Opaque continuation cursor for `--before`, or `null` when there is no further history.",
       "type": [
         "string",
         "null"

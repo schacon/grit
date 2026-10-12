@@ -4,7 +4,7 @@
 //! there's more, prints the command to fetch the next page.
 
 use anyhow::{Context, Result};
-use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
+use grit_lib::revwalk::log_walk::LogWalkCursor;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -21,8 +21,7 @@ const PAGE: usize = 10;
 #[derive(Serialize, JsonSchema)]
 pub struct LogOutcome {
     pub commits: Vec<CommitJson>,
-    /// Full oid to resume from (`grit log --before=<next>`), or `null` when there
-    /// is no further history.
+    /// Opaque continuation cursor for `--before`, or `null` when there is no further history.
     pub next: Option<String>,
     #[serde(skip)]
     #[schemars(skip)]
@@ -41,7 +40,7 @@ impl HumanRender for LogOutcome {
         }
         if let Some(next) = &self.next {
             outln!(w);
-            outln!(w, "→ more: grit log --before={}", short_hex(next));
+            outln!(w, "→ more: grit log --before={next}");
         }
         Ok(())
     }
@@ -56,40 +55,29 @@ impl MarkdownRender for LogOutcome {
         markdown::print_commit_list(w, &self.commit_rows, ctx)?;
         if let Some(next) = &self.next {
             outln!(w);
-            outln!(
-                w,
-                "More history: run `grit log --before={}`",
-                short_hex(next)
-            );
+            outln!(w, "More history: run `grit log --before={next}`");
         }
         Ok(())
     }
 }
 
-/// Abbreviate a full hex oid to the 7-char short form used in human output.
-fn short_hex(oid: &str) -> &str {
-    oid.get(..7).unwrap_or(oid)
-}
-
 pub fn run(before: Option<String>) -> Result<LogOutcome> {
     let repo = context::discover()?;
-    let start = before.unwrap_or_else(|| "HEAD".to_owned());
+    let cursor = before
+        .as_deref()
+        .map(LogWalkCursor::decode)
+        .transpose()
+        .context("invalid log continuation cursor")?;
 
-    let opts = RevListOptions {
-        // One extra so we know whether there's a next page.
-        max_count: Some(PAGE + 1),
-        ..Default::default()
-    };
-    let result = rev_list(&repo, std::slice::from_ref(&start), &[], &opts)
-        .with_context(|| format!("could not list commits from {start}"))?;
+    let page =
+        LogWalkCursor::step(&repo, cursor.as_ref(), PAGE).context("could not list commits")?;
 
     let env = repo.environment();
     let now = context::wall_clock_now(env).unix_timestamp();
 
-    let commit_rows = result
+    let commit_rows = page
         .commits
         .iter()
-        .take(PAGE)
         .map(|oid| {
             let commit = context::read_commit(&repo, oid)?;
             let (author, timestamp) = context::author_and_time(&commit.author);
@@ -109,10 +97,7 @@ pub fn run(before: Option<String>) -> Result<LogOutcome> {
         .map(|row| CommitJson::from_summary(row, now))
         .collect();
 
-    let next = result
-        .commits
-        .get(PAGE)
-        .map(grit_lib::objects::ObjectId::to_hex);
+    let next = page.next.map(|c| c.encode()).transpose()?;
 
     Ok(LogOutcome {
         commits,

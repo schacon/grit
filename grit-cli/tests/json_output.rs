@@ -357,8 +357,70 @@ fn log_json_pages_with_next_cursor() -> TestResult {
 
     // Last page: follow `next`, expect no further cursor.
     let next = v["next"].as_str().unwrap().to_owned();
+    assert!(
+        next.starts_with("lw1."),
+        "next must be an opaque walk cursor, got {next}"
+    );
     let v2 = gs_json(&repo, &["log", &format!("--before={next}")]);
     assert_eq!(v2["next"], Value::Null);
+    Ok(())
+}
+
+#[test]
+fn log_json_paging_through_merge_matches_git_order() -> TestResult {
+    let scratch = Scratch::new("log-merge-page")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("a.txt"), "base\n");
+    gs_ok(&repo, &["add", "a.txt"]);
+    gs_ok(&repo, &["commit", "base"]);
+
+    gs_ok(&repo, &["branch", "side"]);
+    write_file(&repo.join("a.txt"), "side\n");
+    gs_ok(&repo, &["add", "a.txt"]);
+    gs_ok(&repo, &["commit", "side"]);
+
+    gs_ok(&repo, &["switch", "main"]);
+    write_file(&repo.join("a.txt"), "main\n");
+    gs_ok(&repo, &["add", "a.txt"]);
+    gs_ok(&repo, &["commit", "main"]);
+
+    gs_ok(&repo, &["merge", "side"]);
+
+    let git_log = Command::new("git")
+        .args(["-C"])
+        .arg(&repo)
+        .args(["log", "--format=%H"])
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("git log");
+    assert!(git_log.status.success());
+    let git_oids: Vec<String> = String::from_utf8_lossy(&git_log.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    let mut paged: Vec<String> = Vec::new();
+    let mut next: Option<String> = None;
+    for _ in 0..20 {
+        let v = if let Some(ref cursor) = next {
+            gs_json(&repo, &["log", &format!("--before={cursor}")])
+        } else {
+            gs_json(&repo, &["log"])
+        };
+        for c in v["commits"].as_array().expect("commits") {
+            paged.push(c["oid"].as_str().expect("oid").to_owned());
+        }
+        next = v["next"].as_str().map(str::to_owned);
+        if next.is_none() {
+            break;
+        }
+    }
+    assert_eq!(paged, git_oids);
     Ok(())
 }
 

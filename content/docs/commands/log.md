@@ -21,7 +21,7 @@ When there's more history, the last line shows the command for the next page.
 
 | Option | Description |
 | --- | --- |
-| `--before <commit>` | Start listing at this commit instead of the current one. Use the commit from the `→ more` line to see the next page. |
+| `--before <cursor>` | Continue a paged walk using the opaque `next` cursor from a previous `--json` page (or the `→ more` line). This is not a commit oid: it encodes the walk queue so merges and side branches are not skipped. |
 
 ## Examples
 
@@ -58,7 +58,7 @@ Pass `--json` for stable, scripting-friendly output:
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `commits` | array | Up to ten commits, newest first. Each entry has `oid`, `subject`, `author` (same display as human log), `author_date` (RFC 3339), and `relative_date` (e.g. `3 days ago`). |
-| `next` | string or null | Full commit id to pass to `--before` for the next page, or `null` when there is no more history. |
+| `next` | string or null | Opaque continuation cursor (prefix `lw1.`) to pass to `--before` for the next page, or `null` when there is no more history. |
 
 Example:
 

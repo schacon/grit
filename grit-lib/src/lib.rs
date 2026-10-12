@@ -199,6 +199,7 @@ pub mod index_pack;
 pub mod init_filesystem;
 pub mod interpret_trailers;
 pub(crate) mod local_object_copy;
+pub mod log_walk;
 pub mod mailmap;
 pub mod maintenance;
 pub mod merge_base;
