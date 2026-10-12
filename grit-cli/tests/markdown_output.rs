@@ -52,6 +52,95 @@ fn log_markdown_uses_commit_bullets_not_json_blob() {
     );
 }
 
+fn eleven_commit_repo(dir: &std::path::Path) {
+    init_repo(dir);
+    for i in 0..11 {
+        std::fs::write(dir.join("a.txt"), format!("v{i}\n")).unwrap();
+        assert!(Command::new(GRIT)
+            .args(["add", "a.txt"])
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new(GRIT)
+            .args(["commit", &format!("commit {i}")])
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success());
+    }
+}
+
+#[test]
+fn log_human_continuation_emits_full_opaque_cursor() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    eleven_commit_repo(dir.path());
+    let out = Command::new(GRIT)
+        .args(["log"])
+        .current_dir(dir.path())
+        .output()
+        .expect("log");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.contains("→ more: grit log --before="))
+        .expect("continuation line");
+    let cursor = line.split("--before=").nth(1).expect("cursor suffix");
+    assert!(
+        cursor.starts_with("lw1."),
+        "expected opaque cursor, got: {cursor}"
+    );
+    assert!(cursor.len() > 20, "cursor must not be truncated: {cursor}");
+    let next_page = Command::new(GRIT)
+        .args(["log", &format!("--before={cursor}")])
+        .current_dir(dir.path())
+        .output()
+        .expect("log page 2");
+    assert!(
+        next_page.status.success(),
+        "second page failed: {}",
+        String::from_utf8_lossy(&next_page.stderr)
+    );
+}
+
+#[test]
+fn log_markdown_continuation_emits_full_opaque_cursor() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    eleven_commit_repo(dir.path());
+    let out = Command::new(GRIT)
+        .args(["log", "--markdown"])
+        .current_dir(dir.path())
+        .output()
+        .expect("log");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let prefix = "More history: run `grit log --before=";
+    let start = stdout.find(prefix).expect("markdown continuation");
+    let rest = &stdout[start + prefix.len()..];
+    let cursor = rest.split('`').next().expect("closing backtick");
+    assert!(cursor.starts_with("lw1."), "got: {cursor}");
+    assert!(cursor.len() > 20, "cursor must not be truncated: {cursor}");
+    let next_page = Command::new(GRIT)
+        .args(["log", &format!("--before={cursor}")])
+        .current_dir(dir.path())
+        .output()
+        .expect("log page 2");
+    assert!(
+        next_page.status.success(),
+        "second page failed: {}",
+        String::from_utf8_lossy(&next_page.stderr)
+    );
+}
+
 #[test]
 fn diff_markdown_uses_fenced_diff_blocks() {
     let dir = tempfile::tempdir().expect("tempdir");

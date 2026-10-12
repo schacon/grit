@@ -34,13 +34,15 @@ $ grit log
   ...
   2efcc2d  Ada Lovelace  3 days ago     Start the project
 
-→ more: grit log --before=a7e3a5e
+→ more: grit log --before=lw1.R0x…
 ```
+
+(`lw1.` cursors are opaque; copy the full token from `--json` `next` when scripting.)
 
 Show the next page:
 
 ```console
-$ grit log --before=a7e3a5e
+$ grit log --before=lw1.R0x…
 ```
 
 Get the subjects of the last ten commits:
@@ -92,7 +94,7 @@ Pass [`--markdown`](../global-options/) for a bullet list of commits (short oid,
 - `b52cca6` Handle empty input (Ada Lovelace, 2 minutes ago)
 - `5fbefea` Add a greeting test (Ada Lovelace, 1 hour ago)
 
-More history: run `grit log --before=a7e3a5e`
+More history: run `grit log --before=lw1.R0x…`
 ```
 
 ## See also
