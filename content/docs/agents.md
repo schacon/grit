@@ -57,7 +57,7 @@ CI runs `json_schemas_are_current` (drift check) and `json_snapshots_match_schem
 
 ## Error object shape
 
-On failure with `--json`, stdout is a single object with an **`error`** string (the same message a human sees after `error:` on stderr):
+On failure with `--json`, stdout is a single object with an **`error`** string (the same message a human sees after `error:` on stderr). Some failures add a **`kind`** and optional fields (for example merge/pick **conflicts**); see `error.v1.json` for the plain vs structured union.
 
 ```console
 $ grit commit --json

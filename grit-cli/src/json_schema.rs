@@ -9,7 +9,7 @@ use schemars::schema::RootSchema;
 use schemars::{schema_for, JsonSchema};
 
 use crate::commands;
-use crate::json_error::StructuredJsonError;
+use crate::json_error::JsonErrorEnvelope;
 
 /// One row in [`schema_registry`]: command path and its success-outcome type.
 pub struct SchemaRegistryEntry {
@@ -123,7 +123,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<UpdateOutcome>("update"),
         entry::<SkillOutcome>("skill"),
         entry::<ConfigOutcome>("config"),
-        entry::<StructuredJsonError>("error"),
+        entry::<JsonErrorEnvelope>("error"),
     ]
 }
 
@@ -301,8 +301,69 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
     }
 }
 
+/// Insta snapshot file prefix under `grit-cli/tests/snapshots/`.
+pub const SNAPSHOT_FILE_PREFIX: &str = "grit_test_support__cli_fixture__";
+
 /// Snapshot names whose JSON stdout is not a command outcome (filters, etc.).
 pub const SNAPSHOT_JSON_SKIP: &[&str] = &["log_json_filter_commits_oid"];
+
+/// Snapshot stems (insta name) for every `*.snap` in `dir`.
+pub fn discover_snapshot_stems(dir: &Path) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+
+    let mut stems = BTreeSet::new();
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("read snapshot dir {}: {e}", dir.display()))
+    {
+        let entry = entry.unwrap_or_else(|e| panic!("snapshot dir entry: {e}"));
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(stem) = name
+            .strip_prefix(SNAPSHOT_FILE_PREFIX)
+            .and_then(|s| s.strip_suffix(".snap"))
+        else {
+            continue;
+        };
+        stems.insert(stem.to_owned());
+    }
+    stems
+}
+
+/// Assert [`snapshot_command_args`] lists exactly every on-disk snapshot stem, except [`SNAPSHOT_JSON_SKIP`].
+pub fn assert_snapshot_args_cover_disk(dir: &Path) {
+    use std::collections::BTreeSet;
+
+    let on_disk = discover_snapshot_stems(dir);
+    let table: BTreeSet<_> = snapshot_command_args()
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    let skip: BTreeSet<_> = SNAPSHOT_JSON_SKIP.iter().map(|s| (*s).to_owned()).collect();
+
+    for stem in &on_disk {
+        if skip.contains(stem) {
+            continue;
+        }
+        assert!(
+            table.contains(stem),
+            "snapshot `{stem}` exists on disk but is missing from snapshot_command_args(); add a row or SNAPSHOT_JSON_SKIP if intentional"
+        );
+    }
+    for stem in &table {
+        assert!(
+            on_disk.contains(stem),
+            "snapshot_command_args() lists `{stem}` but no {SNAPSHOT_FILE_PREFIX}{stem}.snap file exists"
+        );
+    }
+}
+
+fn snapshot_args_lookup(name: &str) -> Option<&'static [&'static str]> {
+    snapshot_command_args()
+        .iter()
+        .find_map(|(stem, args)| (*stem == name).then_some(*args))
+}
 
 /// Map snapshot stem to grit argv used to produce it (for schema validation).
 pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static str])] {
@@ -312,6 +373,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("diff", &["diff"]),
         ("diff_staged", &["diff", "--staged"]),
         ("show_head", &["show", "HEAD"]),
+        ("show_unknown_revision", &["show", "not-a-ref"]),
         ("commit", &["commit", "-m", "third"]),
         (
             "commit_amend",
@@ -442,14 +504,40 @@ mod tests {
         );
     }
 
+    fn validate_json_against_schema(name: &str, schema_key: &str, instance: &Value) {
+        let schema_value = load_committed_schema(schema_key);
+        let compiled = jsonschema::validator_for(&schema_value)
+            .unwrap_or_else(|e| panic!("compile schema for {schema_key}: {e}"));
+        if !compiled.is_valid(instance) {
+            let msgs: Vec<_> = compiled
+                .iter_errors(instance)
+                .map(|e| e.to_string())
+                .collect();
+            panic!(
+                "snapshot {name} JSON does not match {schema_key} schema:\n{}",
+                msgs.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_command_args_covers_all_snapshot_files() {
+        let snapshot_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+        assert_snapshot_args_cover_disk(&snapshot_dir);
+    }
+
     #[test]
     fn json_snapshots_match_schemas() {
         let snapshot_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
-        for (name, args) in snapshot_command_args() {
-            if SNAPSHOT_JSON_SKIP.contains(name) {
+        assert_snapshot_args_cover_disk(&snapshot_dir);
+
+        for name in discover_snapshot_stems(&snapshot_dir) {
+            if SNAPSHOT_JSON_SKIP.contains(&name.as_str()) {
                 continue;
             }
-            let path = snapshot_dir.join(format!("grit_test_support__cli_fixture__{name}.snap"));
+            let args = snapshot_args_lookup(&name)
+                .unwrap_or_else(|| panic!("snapshot {name} missing from snapshot_command_args()"));
+            let path = snapshot_dir.join(format!("{SNAPSHOT_FILE_PREFIX}{name}.snap"));
             let text = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read snapshot {}: {e}", path.display()));
             let json_body = text
@@ -465,30 +553,14 @@ mod tests {
             let instance: Value = serde_json::from_str(stdout.trim())
                 .unwrap_or_else(|e| panic!("parse json stdout in {name}: {e}"));
 
-            if instance.get("error").is_some() && instance.as_object().is_some_and(|m| m.len() == 1)
-            {
-                assert!(
-                    instance["error"].is_string(),
-                    "snapshot {name} error value must be a string"
-                );
+            if instance.get("error").is_some() {
+                validate_json_against_schema(&name, "error", &instance);
                 continue;
             }
 
             let command = schema_command_key(args)
                 .unwrap_or_else(|| panic!("no schema key for snapshot {name} args {args:?}"));
-            let schema_value = load_committed_schema(&command);
-            let compiled = jsonschema::validator_for(&schema_value)
-                .unwrap_or_else(|e| panic!("compile schema for {command}: {e}"));
-            if !compiled.is_valid(&instance) {
-                let msgs: Vec<_> = compiled
-                    .iter_errors(&instance)
-                    .map(|e| e.to_string())
-                    .collect();
-                panic!(
-                    "snapshot {name} JSON does not match {command} schema:\n{}",
-                    msgs.join("\n")
-                );
-            }
+            validate_json_against_schema(&name, &command, &instance);
         }
     }
 }
