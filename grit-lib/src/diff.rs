@@ -5209,6 +5209,7 @@ pub fn detect_renames_with_policy(
         }
     }
 
+    result = prune_break_deletions_obviated_by_renames(result);
     result.sort_by(|a, b| a.path().cmp(b.path()));
     result
 }
@@ -5685,13 +5686,41 @@ fn materialize_break_worktree_new_oids(
     entries: &mut [DiffEntry],
 ) -> Result<()> {
     for e in entries {
-        if e.status != DiffStatus::Modified || e.new_oid != zero_oid() {
+        if e.new_oid != zero_oid() {
+            continue;
+        }
+        if !matches!(e.status, DiffStatus::Modified | DiffStatus::Added) {
             continue;
         }
         let bytes = read_new_side_bytes(odb, e, work_root)?;
         e.new_oid = odb.hash(ObjectKind::Blob, &bytes);
     }
     Ok(())
+}
+
+/// After break-rewrite splits a modified path into delete+add, rename detection may pair the add
+/// with another deletion (`g` → `f`). Git drops the unused delete at the rename target path.
+fn prune_break_deletions_obviated_by_renames(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    use std::collections::HashSet;
+    let rename_targets: HashSet<String> = entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Renamed)
+        .filter_map(|e| e.new_path.clone())
+        .collect();
+    if rename_targets.is_empty() {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            if e.status != DiffStatus::Deleted {
+                return true;
+            }
+            e.old_path
+                .as_ref()
+                .is_none_or(|p| !rename_targets.contains(p))
+        })
+        .collect()
 }
 
 /// Apply break-rewrite, rename, and copy detection to a flat tree or index diff.

@@ -215,6 +215,62 @@ fn t4008_break_rewrite_index_worktree_raw_matches_git() {
 }
 
 #[test]
+fn t4008_break_rewrite_tree_worktree_rename_raw_matches_git() {
+    let dr = DiffRepo::init();
+    let wt = &dr.worktree;
+    let f_body = format!(
+        "dissimilar contents in f\n{}",
+        "f padding line\n".repeat(40)
+    );
+    let g_body = format!(
+        "totally different body in g\n{}",
+        "g padding line\n".repeat(40)
+    );
+    fs::write(wt.join("f"), &f_body).unwrap();
+    fs::write(wt.join("g"), &g_body).unwrap();
+    git_quiet(wt, &["add", "f", "g"]);
+    git_quiet(wt, &["commit", "-qm", "two files"]);
+    let tree = rev_parse_tree(wt, "HEAD^{tree}");
+
+    let g_blob = fs::read_to_string(wt.join("g")).unwrap();
+    fs::write(wt.join("f"), &g_blob).unwrap();
+    fs::remove_file(wt.join("g")).unwrap();
+
+    let config = ConfigSet::new();
+    let opts = DiffPostprocessOptions {
+        break_score: Some(GIT_DIFF_DEFAULT_BREAK_SCORE),
+        rename_threshold: 50,
+        materialize_break_worktree_new_oid: true,
+        ..Default::default()
+    };
+
+    let git_lines = git_raw_lines(
+        wt,
+        &[
+            "diff",
+            "-r",
+            "-B",
+            "-M50",
+            "--raw",
+            &format!("{}:", tree.to_hex()),
+        ],
+    );
+    let index = dr.load_index();
+    let grit_lines =
+        tree_to_worktree_raw_abbrev(&dr.repo, wt, &index, Some(&tree), &config, &opts, 7);
+    assert_raw_matches_git(
+        &grit_lines,
+        &git_lines,
+        "t4008 break+rename tree↔worktree (g→f)",
+    );
+    assert_eq!(
+        grit_lines.len(),
+        1,
+        "git collapses break-split delete with rename into one R100 line"
+    );
+}
+
+#[test]
 fn t4008_break_rewrite_tree_worktree_raw_matches_git() {
     let dr = DiffRepo::init();
     let wt = &dr.worktree;
