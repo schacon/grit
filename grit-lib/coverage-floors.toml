@@ -66,7 +66,7 @@ files = [
     "resolve_undo.rs",
     "sparse_checkout.rs",
 ]
-minimum = 58.7
+minimum = 68.8
 
 [group.index-ext]
 files = [
@@ -74,7 +74,7 @@ files = [
     "untracked_cache.rs",
     "index_name_hash_lazy.rs",
 ]
-minimum = 14.0
+minimum = 14.1
 
 [group.merge]
 files = [

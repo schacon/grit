@@ -42,9 +42,23 @@ REQUIRED_UPSTREAM_IDS = (
     "t5616",
 )
 
-REQUIRED_HISTORY_INDEX: tuple[str, ...] = ()
-REQUIRED_HISTORY_INDEX_EXT: tuple[str, ...] = ()
-REQUIRED_HISTORY_SPARSE: tuple[str, ...] = ()
+REQUIRED_HISTORY_INDEX: tuple[str, ...] = (
+    "t1600",
+    "t1601",
+    "t0090",
+    "t2030",
+    "t2104",
+    "t2107",
+    "t7011",
+    "t7012",
+    "t1015",
+)
+REQUIRED_HISTORY_INDEX_EXT: tuple[str, ...] = ("t1600",)
+REQUIRED_HISTORY_SPARSE: tuple[str, ...] = (
+    "t1091",
+    "t1092",
+    "t1011",
+)
 REQUIRED_HISTORY_DIFF_BLOBS: tuple[str, ...] = (
     "t4033",
     "t4050",

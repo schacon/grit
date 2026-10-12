@@ -237,16 +237,30 @@ History-area upstream `t/` scripts are mapped in the subsections below as Rust c
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
+| t1600-index.sh | index versions 2/3/4 round-trip; grit ↔ git `ls-files -s`; `git fsck --strict` | `grit-lib/tests/index_versions_git_compat.rs` (`t1600_index_versions_roundtrip_with_git`) | covered |
+| t1601-index-bogus.sh | corrupt index / REUC payload → [`Error::IndexError`] without panic | `index_versions_git_compat.rs` (`t1601_bogus_index_typed_errors`) | covered |
+| t0090-cache-tree.sh | cache-tree / `write_tree` vs `git write-tree` | `grit-lib/tests/cache_tree_git_compat.rs` (`t0090_cache_tree_matches_git_write_tree`) | covered |
+| t2030-unresolve-info.sh | REUC resolve-undo extension round-trip | `index_versions_git_compat.rs` (`t2030_resolve_undo_roundtrip`) | covered |
+| t2104-update-index.sh | skip-worktree excluded from status like git | `grit-lib/tests/index_skip_worktree.rs` (`t2104_skip_worktree_excluded_from_status_like_git`) | covered |
+| t2107-update-index-basic.sh | intent-to-add forces index v3 | `index_versions_git_compat.rs` (`t2107_intent_to_add_forces_index_version_three`) | partial (extended-flag subset) |
+| t7011-ls-files-verbose.sh | assume-unchanged via `git ls-files -v` | `index_skip_worktree.rs` (`t7011_assume_unchanged_seen_by_git_ls_files_v`) | covered |
+| t7012-ls-files-verbose.sh | skip-worktree bits vs `git ls-files -v` | `index_skip_worktree.rs` (`t7012_skip_worktree_bits_match_git_ls_files_v`) | covered |
+| t1015-read-index-unmerged.sh | unmerged stages 1–3 round-trip | `index_versions_git_compat.rs` (`t1015_read_index_unmerged_stages_roundtrip`) | covered |
 
 #### Index extensions
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
+| t1600-index.sh | EOIE/IEOT parallel load (existing step) | `grit-lib/tests/index_eoie_ieot_git_compat.rs` | covered (see ODB mapping) |
 
 #### Sparse
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
+| t1091-sparse-checkout-builtin.sh | non-cone list matches `git sparse-checkout list` | `grit-lib/tests/sparse_checkout_git_compat.rs` (`t1091_non_cone_sparse_list_matches_git`) | partial (core pattern/set; UX skipped) |
+| t1092-sparse-checkout-compatibility.sh | cone patterns vs `git ls-files -t` / skip-worktree | `sparse_checkout_git_compat.rs` (`t1092_cone_patterns_match_git_skip_worktree`) | covered |
+| t1011-read-tree-sparse-checkout.sh | `read-tree -mu` applies skip-worktree | `sparse_checkout_git_compat.rs` (`t1011_read_tree_sparse_checkout_applies_skip_worktree`) | covered |
+| t1092-sparse-checkout-compatibility.sh | git-written sparse index (`sdir`) read or typed error | `sparse_checkout_git_compat.rs` (`git_written_sparse_index_sdir_load_or_typed_error`) | partial (full sparse-index write is a gap) |
 
 #### Diff: blobs and algorithms
 
