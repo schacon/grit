@@ -385,6 +385,9 @@ fn map_stash_error(err: Error) -> anyhow::Error {
         Error::StashWouldOverwriteLocalChanges { paths } => {
             anyhow::anyhow!("local changes would be overwritten by stash:\n{paths}")
         }
+        Error::StashCouldNotRestoreUntracked { path } => {
+            anyhow::anyhow!("stash untracked restore blocked: '{path}' already exists on disk")
+        }
         Error::PathError(msg) if msg.contains("bare") => anyhow::anyhow!("{msg}"),
         other => anyhow::Error::new(other),
     }

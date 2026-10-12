@@ -169,6 +169,43 @@ fn stash_pop_conflict_keeps_entry() {
 }
 
 #[test]
+fn stash_pop_untracked_collision_keeps_stash_and_file() {
+    let dir = scratch("untracked-collision");
+    init_repo(&dir);
+    fs::write(dir.join("a"), "a\n").expect("write");
+    git(&dir, &["add", "a"]);
+    git(&dir, &["commit", "-qm", "init"]);
+    fs::write(dir.join("u.txt"), "stashed-untracked\n").expect("untracked");
+    let (code, _, stderr) = grit(&dir, &["stash", "-u", "-m", "m"]);
+    assert_eq!(code, 0, "stash push failed: {stderr}");
+    fs::write(dir.join("u.txt"), "PRECIOUS new work\n").expect("replace");
+
+    let (code, stdout, stderr) = grit(&dir, &["stash", "pop"]);
+    assert_ne!(code, 0, "pop must fail when untracked path exists");
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("stash untracked restore blocked") && combined.contains("u.txt"),
+        "stderr should explain failure: {combined}"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("u.txt")).expect("read"),
+        "PRECIOUS new work\n"
+    );
+    let list = git(&dir, &["stash", "list"]);
+    assert!(
+        !list.trim().is_empty(),
+        "stash entry must remain after failed pop"
+    );
+
+    let (code, _, stderr) = grit(&dir, &["stash", "apply"]);
+    assert_ne!(code, 0, "apply must fail: {stderr}");
+    assert_eq!(
+        fs::read_to_string(dir.join("u.txt")).expect("read"),
+        "PRECIOUS new work\n"
+    );
+}
+
+#[test]
 fn stash_interop_with_git() {
     let dir = scratch("interop");
     init_repo(&dir);

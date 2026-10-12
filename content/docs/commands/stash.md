@@ -25,6 +25,8 @@ Stash indices follow Git: `0` is the newest entry. You can pass an integer or `s
 
 `grit stash pop` applies the entry and removes it when there are no conflicts. When applying would leave merge conflicts, the stash entry is kept and the command exits non-zero; conflicting paths are listed.
 
+When a stash was created with `-u` / `--include-untracked`, `apply` and `pop` refuse to write stashed untracked files onto a path that already exists on disk (visible untracked, ignored, or tracked content you added after stashing). The command exits non-zero, the stash entry is kept, and your existing file bytes are unchanged.
+
 ## Options
 
 | Option | Description |
@@ -78,6 +80,13 @@ $ grit stash pop
 Stash pop left conflicts in:
   f.txt
 The stash entry was kept.
+```
+
+When pop would overwrite an existing path from a `-u` stash:
+
+```console
+$ grit stash pop
+stash untracked restore blocked: 'notes.txt' already exists on disk
 ```
 
 ## JSON output

@@ -1,8 +1,12 @@
 //! Round-trip stash create/list/pop/drop with system `git`.
 
+use grit_lib::error::Error;
 use grit_lib::porcelain::stash::{
-    create_stash, drop_stash, list_stashes, pop_stash, push_stash, stash_diff, StashCreateOptions,
+    apply_stash, create_stash, drop_stash, list_stashes, pop_stash, push_stash, stash_diff,
+    StashCreateOptions,
 };
+use std::process::Command;
+
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_test_support::git;
@@ -374,6 +378,181 @@ fn pop_stash_restores_untracked_symlink_like_git() {
         grit_list.trim(),
         git_list.trim(),
         "stash entry dropped after pop"
+    );
+}
+
+#[test]
+fn stash_pop_with_untracked_does_not_overwrite_existing_untracked() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a"), "a\n").expect("write");
+    git_cmd(dir.path(), &["add", "a"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, Some("m")))
+        .expect("push")
+        .expect("stash");
+    std::fs::write(dir.path().join("u.txt"), "PRECIOUS new work\n").expect("replace");
+
+    let err = pop_stash(&repo, dir.path(), 0, false, "Test <t@example.com> 0 +0000")
+        .expect_err("pop must fail");
+    assert!(
+        matches!(
+            err,
+            Error::StashCouldNotRestoreUntracked { ref path } if path == "u.txt"
+        ),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "PRECIOUS new work\n"
+    );
+    assert_eq!(list_stashes(&repo).expect("list").len(), 1);
+
+    let err = apply_stash(
+        &repo,
+        dir.path(),
+        &list_stashes(&repo).expect("list")[0].oid,
+        false,
+        "Test <t@example.com> 0 +0000",
+    )
+    .expect_err("apply must fail");
+    assert!(
+        matches!(err, Error::StashCouldNotRestoreUntracked { .. }),
+        "apply error: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "PRECIOUS new work\n"
+    );
+
+    let git_pop_fail = Command::new("git")
+        .args(["stash", "pop"])
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git stash pop");
+    assert!(
+        !git_pop_fail.status.success(),
+        "git must refuse when untracked path exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "PRECIOUS new work\n"
+    );
+
+    std::fs::remove_file(dir.path().join("u.txt")).expect("remove");
+    git_cmd(dir.path(), &["stash", "pop"]);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read after git"),
+        "stashed-untracked\n"
+    );
+}
+
+#[test]
+fn stash_apply_with_untracked_does_not_overwrite_ignored_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a"), "a\n").expect("write");
+    git_cmd(dir.path(), &["add", "a"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("stash");
+    std::fs::write(dir.path().join(".gitignore"), "u.txt\n").expect("ignore");
+    std::fs::write(dir.path().join("u.txt"), "precious\n").expect("ignored precious");
+
+    let err = apply_stash(
+        &repo,
+        dir.path(),
+        &list_stashes(&repo).expect("list")[0].oid,
+        false,
+        "Test <t@example.com> 0 +0000",
+    )
+    .expect_err("apply must fail on ignored collision");
+    assert!(
+        matches!(
+            err,
+            Error::StashCouldNotRestoreUntracked { ref path } if path == "u.txt"
+        ),
+        "unexpected: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "precious\n"
+    );
+
+    let git_apply = Command::new("git")
+        .args(["stash", "apply"])
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git stash apply");
+    assert!(
+        !git_apply.status.success(),
+        "git must refuse when ignored path exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "precious\n"
+    );
+}
+
+#[test]
+fn stash_apply_with_untracked_does_not_overwrite_newly_tracked_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a"), "a\n").expect("write");
+    git_cmd(dir.path(), &["add", "a"]);
+    git_cmd(dir.path(), &["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("u.txt"), "stashed-untracked\n").expect("untracked");
+    let repo = open_grit(dir.path());
+    push_stash(&repo, &stash_options(true, None))
+        .expect("push")
+        .expect("stash");
+    std::fs::write(dir.path().join("u.txt"), "precious\n").expect("precious");
+    git_cmd(dir.path(), &["add", "u.txt"]);
+    git_cmd(dir.path(), &["commit", "-qm", "track u"]);
+
+    let err = apply_stash(
+        &repo,
+        dir.path(),
+        &list_stashes(&repo).expect("list")[0].oid,
+        false,
+        "Test <t@example.com> 0 +0000",
+    )
+    .expect_err("apply must fail on tracked collision");
+    assert!(
+        matches!(
+            err,
+            Error::StashCouldNotRestoreUntracked { ref path } if path == "u.txt"
+        ),
+        "unexpected: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "precious\n"
+    );
+
+    let git_apply = Command::new("git")
+        .args(["stash", "apply"])
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git stash apply");
+    assert!(
+        !git_apply.status.success(),
+        "git must refuse when tracked path exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("u.txt")).expect("read"),
+        "precious\n"
     );
 }
 

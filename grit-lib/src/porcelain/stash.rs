@@ -12,7 +12,7 @@
 //! building blocks for apply and for embedders that manipulate stash trees.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -35,6 +35,7 @@ use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedScan,
 };
+use crate::porcelain::worktree_guard::untracked_would_be_overwritten_by_tree_changes;
 use crate::reflog::{delete_reflog_entries_rechain, read_reflog, truncate_last_reflog_line};
 use crate::refs::{self, append_reflog, delete_ref, write_ref};
 use crate::repo::Repository;
@@ -928,6 +929,89 @@ pub fn check_stash_apply_would_overwrite_local_changes(
     Ok(())
 }
 
+/// Worktree paths that would block materializing the stash untracked-files parent.
+fn collect_worktree_paths_blocking_stash_untracked_restore(
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<Vec<String>> {
+    let mut paths = HashSet::new();
+    let mut index = repo.load_index()?;
+    for entry in index.entries() {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path).into_owned();
+        let wt = work_tree.join(&path);
+        if wt.exists() || wt.symlink_metadata().is_ok() {
+            paths.insert(path);
+        }
+    }
+    let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
+    let (untracked, ignored) = collect_untracked_and_ignored_inner(
+        repo,
+        &mut index,
+        work_tree,
+        &[],
+        UntrackedScan {
+            ignored_mode: IgnoredMode::Traditional,
+            show_all: true,
+            sort_paths: true,
+            use_untracked_cache: false,
+        },
+        &worktree_rules,
+    )?;
+    paths.extend(untracked);
+    paths.extend(ignored);
+    let mut sorted: Vec<String> = paths.into_iter().collect();
+    sorted.sort();
+    Ok(sorted)
+}
+
+/// Refuse when restoring the stash untracked-files parent would clobber an existing worktree path.
+///
+/// Must run before any worktree or index mutations in [`apply_stash`].
+///
+/// # Errors
+///
+/// Returns [`Error::StashCouldNotRestoreUntracked`] when a path from the untracked parent
+/// collides with tracked, untracked, or ignored content already on disk.
+pub(crate) fn check_stash_untracked_restore(
+    repo: &Repository,
+    work_tree: &Path,
+    stash_commit: &CommitData,
+) -> Result<()> {
+    if stash_commit.parents.len() < 3 {
+        return Ok(());
+    }
+    let ut_oid = &stash_commit.parents[2];
+    let ut_obj = repo.odb.read(ut_oid)?;
+    let ut_commit = parse_commit(&ut_obj.data)?;
+    let ut_entries = flatten_tree_full(&repo.odb, &ut_commit.tree, "")?;
+    if ut_entries.is_empty() {
+        return Ok(());
+    }
+    let existing_paths = collect_worktree_paths_blocking_stash_untracked_restore(repo, work_tree)?;
+    let tree_changes: Vec<DiffEntry> = ut_entries
+        .iter()
+        .map(|entry| DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(entry.path.clone()),
+            old_mode: String::new(),
+            new_mode: format!("{:o}", entry.mode),
+            old_oid: ObjectId::zero(),
+            new_oid: entry.oid,
+            score: None,
+        })
+        .collect();
+    if let Some(path) =
+        untracked_would_be_overwritten_by_tree_changes(&existing_paths, &tree_changes).first()
+    {
+        return Err(Error::StashCouldNotRestoreUntracked { path: path.clone() });
+    }
+    Ok(())
+}
+
 /// Apply a stash commit onto the current worktree and index.
 ///
 /// Returns `true` if there were conflicts. Mirrors `git stash apply`:
@@ -951,6 +1035,7 @@ pub fn apply_stash(
     }
 
     check_stash_apply_would_overwrite_local_changes(repo, work_tree, &stash_commit)?;
+    check_stash_untracked_restore(repo, work_tree, &stash_commit)?;
 
     let head_at_stash = &stash_commit.parents[0];
     let index_commit_oid = &stash_commit.parents[1];
@@ -1522,5 +1607,29 @@ mod coverage_tests {
             identity: "T <t@t> 1 +0000".into(),
         };
         assert!(push_stash(&repo, &opts).expect("push").is_none());
+    }
+
+    #[test]
+    fn check_stash_untracked_restore_rejects_collision() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_repo(tmp.path());
+        let ident = "T <t@t> 1 +0000";
+        fs::write(tmp.path().join("u.txt"), b"stashed\n").unwrap();
+        let opts = StashCreateOptions {
+            message: Some("m".into()),
+            include_untracked: true,
+            identity: ident.into(),
+        };
+        push_stash(&repo, &opts).expect("push").expect("oid");
+        fs::write(tmp.path().join("u.txt"), b"precious\n").unwrap();
+        let oid = list_stashes(&repo).expect("list")[0].oid;
+        let obj = repo.odb.read(&oid).unwrap();
+        let stash_commit = parse_commit(&obj.data).unwrap();
+        let err = super::check_stash_untracked_restore(&repo, tmp.path(), &stash_commit)
+            .expect_err("collision");
+        assert!(matches!(
+            err,
+            Error::StashCouldNotRestoreUntracked { ref path } if path == "u.txt"
+        ));
     }
 }
