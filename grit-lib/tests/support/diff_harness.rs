@@ -260,9 +260,11 @@ fn text_or_lossy(bytes: &[u8]) -> String {
 /// Build a unified diff patch for two blobs using grit-lib diff APIs.
 pub fn grit_blob_patch(old: &[u8], new: &[u8], path: &str, opts: &GritBlobPatchOpts) -> String {
     if merge_file::is_binary(old) || merge_file::is_binary(new) {
-        let old_disp = format!("a/{path}");
-        let new_disp = format!("b/{path}");
-        return format!("Binary files {old_disp} and {new_disp} differ\n");
+        let old_path = format!("a/{path}");
+        let new_path = format!("b/{path}");
+        let body = grit_lib::apply::write_git_binary_patch(old, new, &old_path, &new_path)
+            .expect("binary patch");
+        return format!("--- {old_path}\n+++ {new_path}\n{body}");
     }
 
     let old_t = text_or_lossy(old);
@@ -464,7 +466,7 @@ pub fn indent_from_config(config: &ConfigSet) -> bool {
 /// Ported blob pairs from upstream `t4033`, `t4050`, `t4071`, `t4065`, `t4061`, `t4015`, etc.
 pub fn blob_pairs() -> Vec<BlobPair> {
     let mut v = Vec::new();
-    v.extend(frobnitz_pair());
+    v.extend(mixed_layout_pair());
     v.extend(unique_pairs());
     v.extend(patience_eol_pair());
     v.extend(minimal_pair());
@@ -479,9 +481,9 @@ pub fn blob_pairs() -> Vec<BlobPair> {
     v
 }
 
-fn frobnitz_pair() -> Vec<BlobPair> {
+fn mixed_layout_pair() -> Vec<BlobPair> {
     vec![BlobPair {
-        name: "t4033/t4050-frobnitz",
+        name: "t4033/t4050-mixed-layout",
         old: include_bytes!("data/diff_frobnitz_old.c"),
         new: include_bytes!("data/diff_frobnitz_new.c"),
     }]

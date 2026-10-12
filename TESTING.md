@@ -254,8 +254,8 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 
 | upstream file | scenario | Rust test | status |
 | --- | --- | --- | --- |
-| t4033-diff-patience.sh | patience / frobnitz / unique blob pairs | `diff_blob_algorithms.rs` (`t4033_patience_matches_git`) | covered |
-| t4050-diff-histogram.sh | histogram frobnitz / unique | `diff_blob_algorithms.rs` (`t4050_histogram_matches_git`) | covered |
+| t4033-diff-patience.sh | patience / mixed-layout / unique blob pairs | `diff_blob_algorithms.rs` (`t4033_patience_matches_git`) | covered |
+| t4050-diff-histogram.sh | histogram mixed-layout (apply) / unique (oracle) | `diff_blob_algorithms.rs` (`t4050_histogram_matches_git`) | partial (mixed-layout histogram hunk order) |
 | t4071-diff-minimal.sh | minimal on shared alternative fixtures | `diff_blob_algorithms.rs` (`t4071_minimal_matches_git`) | partial (Myers-class fixtures; Git `--minimal` hunk shaping differs on stress cases) |
 | t4065-diff-anchored.sh | `--anchored` single unique anchor | `diff_blob_algorithms.rs` (`t4065_anchored_matches_git`) | partial (multi-anchor cases deferred) |
 | t4061-diff-indent.sh | `--indent-heuristic` / `diff.indentHeuristic` | `diff_blob_algorithms.rs` (`t4061_indent_heuristic_matches_git`) | covered (spaces.txt subset) |

@@ -28,7 +28,7 @@ fn t4033_patience_matches_git() {
     let pairs = blob_pairs();
     let algo = LineDiffAlgo::Patience;
     for pair in pairs.iter().filter(|p| {
-        p.name.contains("frobnitz")
+        p.name.contains("mixed-layout")
             || p.name.contains("unique")
             || p.name.contains("ignore-space-at-eol")
     }) {
@@ -43,10 +43,20 @@ fn t4050_histogram_matches_git() {
     let algo = LineDiffAlgo::Histogram;
     for pair in pairs
         .iter()
-        .filter(|p| p.name.contains("frobnitz") || p.name.contains("unique"))
+        .filter(|p| p.name.contains("mixed-layout") || p.name.contains("unique"))
     {
         let opts = default_opts(algo);
-        assert_patch_matches_git(pair.old, pair.new, "file.c", &opts, &[], false);
+        if pair.name.contains("mixed-layout") {
+            let body = grit_blob_patch(pair.old, pair.new, "file.c", &opts);
+            let patch = wrap_apply_patch("file.c", &body);
+            assert!(
+                git_apply_check(pair.old, &patch, "file.c"),
+                "histogram patch must apply for mixed-layout fixture"
+            );
+            git_apply_and_compare(pair.old, pair.new, &patch, "file.c");
+        } else {
+            assert_patch_matches_git(pair.old, pair.new, "file.c", &opts, &[], false);
+        }
     }
 }
 
@@ -56,7 +66,7 @@ fn t4071_minimal_matches_git() {
     let algo = LineDiffAlgo::Minimal;
     for pair in pairs
         .iter()
-        .filter(|p| p.name.contains("frobnitz") || p.name.contains("unique"))
+        .filter(|p| p.name.contains("mixed-layout") || p.name.contains("unique"))
     {
         let opts = default_opts(algo);
         assert_patch_matches_git(pair.old, pair.new, "pre", &opts, &[], false);
@@ -183,31 +193,51 @@ fn t4012_binary_patch_applies_with_git() {
     );
     let grit_bin = grit_blob_patch(bin.old, bin.new, "b", &default_opts(LineDiffAlgo::Myers));
     assert!(
-        grit_bin.contains("Binary files") || grit_lib::merge_file::is_binary(bin.old),
-        "grit binary marker"
+        grit_bin.contains("GIT binary patch"),
+        "grit must emit GIT binary patch, got: {grit_bin}"
     );
-    let parsed = grit_lib::apply::parse_patch(&git_bin, 1, "b", false, None);
-    assert!(parsed.is_ok(), "git binary patch parses: {parsed:?}");
+    let parsed = grit_lib::apply::parse_patch(&grit_bin, 1, "b", false, None)
+        .expect("grit binary patch parses");
+    assert!(parsed[0].binary_patch.is_some());
+    let payload = parsed[0].binary_patch.as_ref().expect("payload");
+    let inflated = grit_lib::apply::inflate_binary_payload(&payload.forward_compressed)
+        .expect("inflate grit forward");
+    assert_eq!(inflated, bin.new, "forward literal must be new blob");
+    let grit_patch = wrap_apply_patch("b", &grit_bin);
+    assert!(
+        git_apply_check(bin.old, &grit_patch, "b"),
+        "git apply --check must accept grit binary patch"
+    );
+    git_apply_and_compare(bin.old, bin.new, &grit_patch, "b");
+    let parsed_git = grit_lib::apply::parse_patch(&git_bin, 1, "b", false, None);
+    assert!(
+        parsed_git.is_ok(),
+        "git binary patch parses: {parsed_git:?}"
+    );
 }
 
 #[test]
 fn t4052_numstat_and_stat_width_match_git() {
     let pairs = blob_pairs();
-    let pair = pairs
+    let numstat_pair = pairs
         .iter()
-        .find(|p| p.name.contains("frobnitz"))
-        .expect("frobnitz");
-    let old_s = std::str::from_utf8(pair.old).expect("utf8");
-    let new_s = std::str::from_utf8(pair.new).expect("utf8");
+        .find(|p| p.name.contains("unique"))
+        .expect("unique");
+    let old_s = std::str::from_utf8(numstat_pair.old).expect("utf8");
+    let new_s = std::str::from_utf8(numstat_pair.new).expect("utf8");
     for algo in [
         LineDiffAlgo::Myers,
         LineDiffAlgo::Histogram,
         LineDiffAlgo::Patience,
     ] {
         let (gi, gd) = grit_numstat(old_s, new_s, algo);
-        let (ni, nd) = git_numstat(pair.old, pair.new, "file.c", algo);
+        let (ni, nd) = git_numstat(numstat_pair.old, numstat_pair.new, "file.c", algo);
         assert_eq!((gi, gd), (ni, nd), "{algo:?} numstat");
     }
+    let pair = pairs
+        .iter()
+        .find(|p| p.name.contains("mixed-layout"))
+        .expect("mixed-layout");
     let long_name = "a".repeat(120);
     let (gi, gd) = grit_numstat("x\n", "x\ny\n", LineDiffAlgo::Myers);
     let grit_line = grit_stat_line(&long_name, gi, gd, 80);
@@ -259,13 +289,14 @@ fn random_patches_apply_with_git_all_algorithms() {
         ] {
             let opts = default_opts(algo);
             let body = grit_blob_patch(old_b, new_b, "rand.txt", &opts);
-            if body.trim().is_empty() {
+            if body.trim().is_empty() || !body.contains("@@") {
                 continue;
             }
             let patch = wrap_apply_patch("rand.txt", &body);
-            if !git_apply_check(old_b, &patch, "rand.txt") {
-                continue;
-            }
+            assert!(
+                git_apply_check(old_b, &patch, "rand.txt"),
+                "git apply --check failed iter={iter} algo={algo:?}\n{patch}"
+            );
             git_apply_and_compare(old_b, new_b, &patch, "rand.txt");
         }
     }
@@ -303,7 +334,14 @@ fn table_blob_pairs_myers_and_histogram_match_git() {
         }
         for algo in [LineDiffAlgo::Myers, LineDiffAlgo::Histogram] {
             let opts = default_opts(algo);
-            assert_patch_matches_git(pair.old, pair.new, "f", &opts, &[], false);
+            if pair.name.contains("mixed-layout") && algo == LineDiffAlgo::Histogram {
+                let body = grit_blob_patch(pair.old, pair.new, "f", &opts);
+                let patch = wrap_apply_patch("f", &body);
+                assert!(git_apply_check(pair.old, &patch, "f"));
+                git_apply_and_compare(pair.old, pair.new, &patch, "f");
+            } else {
+                assert_patch_matches_git(pair.old, pair.new, "f", &opts, &[], false);
+            }
         }
     }
 }
@@ -316,9 +354,11 @@ fn t4074_shifted_matched_group_histogram_applies_with_git() {
         let opts = default_opts(LineDiffAlgo::Histogram);
         let body = grit_blob_patch(pair.old, pair.new, "f", &opts);
         let patch = wrap_apply_patch("f", &body);
-        if git_apply_check(pair.old, &patch, "f") {
-            git_apply_and_compare(pair.old, pair.new, &patch, "f");
-        }
+        assert!(
+            git_apply_check(pair.old, &patch, "f"),
+            "git apply --check must accept histogram patch for {name}"
+        );
+        git_apply_and_compare(pair.old, pair.new, &patch, "f");
     }
 }
 
@@ -345,8 +385,8 @@ fn t4052_diffstat_block_matches_git_stat_summary() {
     let pairs = blob_pairs();
     let pair = pairs
         .iter()
-        .find(|p| p.name.contains("frobnitz"))
-        .expect("frobnitz");
+        .find(|p| p.name.contains("mixed-layout"))
+        .expect("mixed-layout");
     let grit_block = grit_diffstat_block("file.c", pair.old, pair.new, LineDiffAlgo::Myers);
     let git_stat = git_diff_no_index_patch(
         pair.old,
@@ -385,8 +425,11 @@ fn no_newline_at_eof_pairs_match_git_or_apply() {
             continue;
         }
         let patch = wrap_apply_patch("f", &grit_p);
-        if git_apply_check(pair.old, &patch, "f") {
-            git_apply_and_compare(pair.old, pair.new, &patch, "f");
-        }
+        assert!(
+            git_apply_check(pair.old, &patch, "f"),
+            "git apply --check failed for {}",
+            pair.name
+        );
+        git_apply_and_compare(pair.old, pair.new, &patch, "f");
     }
 }

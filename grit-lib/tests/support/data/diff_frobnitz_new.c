@@ -1,25 +1,24 @@
+/* Grit diff fixture: patience/histogram stress (independent of upstream Git tests). */
 #include <stdio.h>
 
-int fib(int n)
+static int walk(int n)
 {
-    if(n > 2)
-    {
-        return fib(n-1) + fib(n-2);
+    if (n > 2) {
+        return walk(n - 1) + walk(n - 2);
     }
     return 1;
 }
 
-// Frobs foo heartily
-int frobnitz(int foo)
+static int scale(int n)
 {
-    int i;
-    for(i = 0; i < 10; i++)
-    {
-        printf("%d\n", foo);
+    for (int i = 0; i < 10; i++) {
+        printf("%d\n", n);
     }
+    return 0;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
-    frobnitz(fib(10));
+    scale(walk(10));
+    return 0;
 }

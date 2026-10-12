@@ -7307,7 +7307,8 @@ pub fn annotate_unified_diff_no_newline_at_eof(patch: &str, old: &str, new: &str
     let mut out = String::with_capacity(patch.len() + 64);
     let mut old_line = 1usize;
     let mut new_line = 1usize;
-    for line in patch.lines() {
+    let mut lines = patch.lines().peekable();
+    while let Some(line) = lines.next() {
         if let Some((o, n)) = line
             .strip_prefix("@@ ")
             .and_then(|_| parse_unified_hunk_starts(line))
@@ -7318,7 +7319,12 @@ pub fn annotate_unified_diff_no_newline_at_eof(patch: &str, old: &str, new: &str
             out.push('\n');
             continue;
         }
-        if line.starts_with("---") || line.starts_with("+++") || line.starts_with("diff ") {
+        if line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || line.starts_with("diff --git ")
+            || line.starts_with("diff --cc ")
+            || line.starts_with("diff --combined ")
+        {
             out.push_str(line);
             out.push('\n');
             continue;
@@ -7326,7 +7332,10 @@ pub fn annotate_unified_diff_no_newline_at_eof(patch: &str, old: &str, new: &str
         if line.starts_with('-') {
             out.push_str(line);
             out.push('\n');
-            if old_last == Some(old_line.saturating_sub(1)) {
+            let already_marked = lines
+                .peek()
+                .is_some_and(|next| *next == "\\ No newline at end of file");
+            if !already_marked && old_last == Some(old_line.saturating_sub(1)) {
                 out.push_str("\\ No newline at end of file\n");
             }
             old_line += 1;
@@ -7335,7 +7344,10 @@ pub fn annotate_unified_diff_no_newline_at_eof(patch: &str, old: &str, new: &str
         if line.starts_with('+') {
             out.push_str(line);
             out.push('\n');
-            if new_last == Some(new_line.saturating_sub(1)) {
+            let already_marked = lines
+                .peek()
+                .is_some_and(|next| *next == "\\ No newline at end of file");
+            if !already_marked && new_last == Some(new_line.saturating_sub(1)) {
                 out.push_str("\\ No newline at end of file\n");
             }
             new_line += 1;
@@ -9424,6 +9436,36 @@ mod read_worktree_bytes_for_mode_tests {
         fs::write(&path, b"hello\n").expect("write");
         let bytes = read_worktree_bytes_for_mode(&path, crate::index::MODE_REGULAR).expect("read");
         assert_eq!(bytes, b"hello\n");
+    }
+
+    #[test]
+    fn annotate_does_not_treat_removed_dash_lines_as_file_headers() {
+        use super::unified_diff_with_prefix_and_funcname_and_algorithm;
+        use similar::Algorithm;
+
+        let old = "--old";
+        let new = "--new";
+        let raw = unified_diff_with_prefix_and_funcname_and_algorithm(
+            old,
+            new,
+            "a/x",
+            "b/x",
+            3,
+            0,
+            "",
+            "",
+            None,
+            Algorithm::Myers,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(
+            raw.matches("\\ No newline at end of file").count(),
+            2,
+            "expected two markers like git, got:\n{raw}"
+        );
     }
 }
 

@@ -1,26 +1,25 @@
+/* Grit diff fixture: multi-hunk C-like layout (independent of upstream Git tests). */
 #include <stdio.h>
 
-// Frobs foo heartily
-int frobnitz(int foo)
+static int scale(int n)
 {
-    int i;
-    for(i = 0; i < 10; i++)
-    {
-        printf("Your answer is: ");
-        printf("%d\n", foo);
+    int acc = 0;
+    for (int i = 0; i < 10; i++) {
+        acc += n;
     }
+    return acc;
 }
 
-int fact(int n)
+static int product_upto(int n)
 {
-    if(n > 1)
-    {
-        return fact(n-1) * n;
+    if (n > 1) {
+        return product_upto(n - 1) * n;
     }
     return 1;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
-    frobnitz(fact(10));
+    scale(product_upto(10));
+    return 0;
 }

@@ -1062,6 +1062,30 @@ pub fn parse_patch(
                 }
             }
 
+            while i < lines.len() && lines[i].starts_with("index ") {
+                let line = lines[i];
+                let val = line["index ".len()..].trim_end();
+                if let Some((old, new)) = val
+                    .split_whitespace()
+                    .next()
+                    .and_then(|h| h.split_once(".."))
+                {
+                    fp.old_oid = Some(old.to_string());
+                    fp.new_oid = Some(new.to_string());
+                }
+                i += 1;
+            }
+
+            if i < lines.len() && lines[i] == "GIT binary patch" {
+                let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
+                fp.binary_patch = Some(binary_patch);
+                fp.is_binary = true;
+                i = next_i;
+                sanitize_file_patch_headers(&mut fp);
+                patches.push(fp);
+                continue;
+            }
+
             // Parse hunks
             while i < lines.len() && lines[i].starts_with("@@ ") {
                 let (hunk, next_i) = parse_hunk(&lines, i, input_name, recount)?;
@@ -1085,6 +1109,20 @@ pub fn parse_patch(
                 setup_prefix_for_guess,
             )?;
             i += 2;
+
+            while i < lines.len() && lines[i].starts_with("index ") {
+                i += 1;
+            }
+
+            if i < lines.len() && lines[i] == "GIT binary patch" {
+                let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
+                fp.binary_patch = Some(binary_patch);
+                fp.is_binary = true;
+                i = next_i;
+                sanitize_file_patch_headers(&mut fp);
+                patches.push(fp);
+                continue;
+            }
 
             // Parse hunks
             while i < lines.len() && lines[i].starts_with("@@ ") {
@@ -1180,6 +1218,71 @@ fn decode_binary_line_len(ch: char) -> Result<usize> {
     Err(Error::Message(format!(
         "invalid binary patch line length marker: '{ch}'"
     )))
+}
+
+fn encode_binary_line_len(raw_len: usize) -> Result<char> {
+    if raw_len == 0 || raw_len > 52 {
+        return Err(Error::Message(format!(
+            "binary patch line length out of range: {raw_len}"
+        )));
+    }
+    let ch = if raw_len <= 26 {
+        char::from(b'A' + (raw_len as u8) - 1)
+    } else {
+        char::from(b'a' + (raw_len as u8) - 27)
+    };
+    Ok(ch)
+}
+
+fn zlib_compress_binary_payload(data: &[u8]) -> Result<Vec<u8>> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(data)
+        .map_err(|e| Error::Message(format!("zlib compress failed: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| Error::Message(format!("zlib compress finish failed: {e}")))
+}
+
+fn append_binary_literal_section(out: &mut String, uncompressed: &[u8]) -> Result<()> {
+    let compressed = zlib_compress_binary_payload(uncompressed)?;
+    out.push_str(&format!("literal {}\n", uncompressed.len()));
+    for chunk in compressed.chunks(52) {
+        let len_ch = encode_binary_line_len(chunk.len())?;
+        let body = crate::git_binary_base85::encode(chunk);
+        out.push_str(&format!("{len_ch}{body}\n"));
+    }
+    out.push('\n');
+    Ok(())
+}
+
+/// Emit a unified diff whose body is a `GIT binary patch` with zlib+base85 literals.
+///
+/// Forward literal is `new`; reverse literal is `old`, matching Git's `git diff --binary`.
+pub fn write_git_binary_patch(
+    old: &[u8],
+    new: &[u8],
+    _old_path: &str,
+    _new_path: &str,
+) -> Result<String> {
+    use crate::objects::{HashAlgo, ObjectKind};
+
+    let old_oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, old);
+    let new_oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, new);
+    let mut out = String::with_capacity(old.len() + new.len() + 128);
+    out.push_str(&format!(
+        "index {}..{} 100644\n",
+        old_oid.to_hex(),
+        new_oid.to_hex()
+    ));
+    out.push_str("GIT binary patch\n");
+    append_binary_literal_section(&mut out, new)?;
+    append_binary_literal_section(&mut out, old)?;
+    Ok(out)
 }
 
 /// Inflate zlib-compressed binary payload.
@@ -1461,5 +1564,54 @@ mod tests {
         let err = parse_hunk_header("@@ -x +1 @@").unwrap_err();
         // The numeric parse failure must surface its own message.
         assert_eq!(err.to_string(), "invalid digit found in string");
+    }
+
+    #[test]
+    fn write_git_binary_patch_applies_with_system_git() {
+        use std::fs;
+        use std::process::Command;
+
+        let old = b"\0BIN\0";
+        let new = b"\0BIN2\0";
+        let body = write_git_binary_patch(old, new, "a/b", "b/b").expect("write");
+        let patch = format!("diff --git a/b b/b\n{body}");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let b = dir.path().join("b");
+        fs::write(&b, old).expect("write base");
+        let patch_path = dir.path().join("p.diff");
+        fs::write(&patch_path, &patch).expect("write patch");
+        let check = Command::new("git")
+            .current_dir(dir.path())
+            .args(["apply", "--check", patch_path.to_str().expect("utf8")])
+            .output()
+            .expect("git apply --check");
+        assert!(
+            check.status.success(),
+            "git apply --check rejected grit binary patch: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+        let apply = Command::new("git")
+            .current_dir(dir.path())
+            .args(["apply", patch_path.to_str().expect("utf8")])
+            .output()
+            .expect("git apply");
+        assert!(apply.status.success(), "git apply failed");
+        assert_eq!(fs::read(&b).expect("read"), new);
+    }
+
+    #[test]
+    fn write_git_binary_patch_roundtrips_through_parse_and_inflate() {
+        let old = b"\0BIN\0";
+        let new = b"\0BIN2\0";
+        let body = write_git_binary_patch(old, new, "a/b", "b/b").expect("write");
+        let patch = format!("diff --git a/b b/b\n{body}");
+        assert!(patch.contains("GIT binary patch"));
+        let patches = parse_patch(&patch, 1, "p", false, None).expect("parse");
+        assert_eq!(patches.len(), 1);
+        let payload = patches[0].binary_patch.as_ref().expect("binary payload");
+        let forward = inflate_binary_payload(&payload.forward_compressed).expect("inflate new");
+        let reverse = inflate_binary_payload(&payload.reverse_compressed).expect("inflate old");
+        assert_eq!(forward, new);
+        assert_eq!(reverse, old);
     }
 }

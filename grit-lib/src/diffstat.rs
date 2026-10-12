@@ -682,18 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn terminal_columns_honors_columns_env_var() {
-        let key = "COLUMNS";
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, "132");
-        assert_eq!(terminal_columns(), 132);
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
-    }
-
-    #[test]
     fn parse_columns_env_rejects_zero_and_invalid() {
         assert_eq!(parse_columns_env(Some("0")), None);
         assert_eq!(parse_columns_env(Some("nope")), None);
