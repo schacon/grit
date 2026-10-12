@@ -237,7 +237,7 @@ pub fn switch_repository(repo: &Repository, opts: &SwitchOptions) -> Result<Swit
     }
 
     if !detached && is_already_on_branch(repo, &branch_ref, target_oid)? {
-        let head_before = resolve_head(&repo.git_dir)?;
+        let head_before = resolve_head(repo.git_dir())?;
         if let Some(from_label) = checkout_reflog_from_label(&head_before) {
             let old_oid = head_before
                 .oid()
@@ -484,7 +484,7 @@ mod tests {
         .expect("entry");
         index.add_or_replace(entry);
         index.sort();
-        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(repo.odb()(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         repo.write_index(&mut index).expect("write index");
         let commit = CommitData {
@@ -504,8 +504,8 @@ mod tests {
             .write(ObjectKind::Commit, &serialize_commit(&commit))
             .expect("commit");
         let refname = format!("refs/heads/{branch}");
-        refs::write_ref(&repo.git_dir(), &refname, &co).expect("branch");
-        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", &refname).expect("symhead");
+        refs::write_ref(repo.git_dir()(), &refname, &co).expect("branch");
+        refs::write_symbolic_ref(repo.git_dir()(), "HEAD", &refname).expect("symhead");
         co
     }
 
@@ -514,7 +514,7 @@ mod tests {
         let (_dir, repo) = init_repo();
         let main_tip = commit_on_branch(&repo, "main", "f", "one\n", None);
         commit_on_branch(&repo, "other", "f", "two\n", Some(main_tip));
-        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+        refs::write_symbolic_ref(repo.git_dir()(), "HEAD", "refs/heads/main").expect("head");
 
         let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "two\n").expect("stage dest in index");
@@ -532,7 +532,7 @@ mod tests {
             &SwitchOptions {
                 mode: SwitchMode::Existing {
                     branch: "other".into(),
-                    oid: refs::resolve_ref(&repo.git_dir(), "refs/heads/other").expect("oid"),
+                    oid: refs::resolve_ref(repo.git_dir()(), "refs/heads/other").expect("oid"),
                 },
             },
         )
@@ -548,7 +548,7 @@ mod tests {
         let (_dir, repo) = init_repo();
         let main_tip = commit_on_branch(&repo, "main", "f", "one\n", None);
         commit_on_branch(&repo, "other", "f", "two\n", Some(main_tip));
-        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+        refs::write_symbolic_ref(repo.git_dir()(), "HEAD", "refs/heads/main").expect("head");
 
         let wt = repo.work_tree().expect("wt");
         std::fs::write(wt.join("f"), "three\n").expect("wt");
@@ -575,7 +575,7 @@ mod tests {
         )
         .expect_err("conflict");
         assert!(matches!(err, Error::Message(_)));
-        assert!(refs::resolve_ref(&repo.git_dir(), "refs/heads/leaked").is_err());
+        assert!(refs::resolve_ref(repo.git_dir()(), "refs/heads/leaked").is_err());
     }
 
     #[test]
@@ -583,7 +583,7 @@ mod tests {
         let (_dir, repo) = init_repo();
         let local_tip = commit_on_branch(&repo, "main", "f", "local\n", None);
         let remote_tip = commit_on_branch(&repo, "other", "f", "remote\n", Some(local_tip));
-        refs::write_ref(&repo.git_dir(), "refs/remotes/origin/main", &remote_tip).expect("remote");
+        refs::write_ref(repo.git_dir()(), "refs/remotes/origin/main", &remote_tip).expect("remote");
 
         let mode = resolve_switch_target(&repo, "origin/main").expect("resolve");
         match mode {
@@ -599,7 +599,7 @@ mod tests {
     fn dwim_tag_is_rejected_for_attached_switch() {
         let (_dir, repo) = init_repo();
         let tip = commit_on_branch(&repo, "main", "f", "x\n", None);
-        refs::write_ref(&repo.git_dir(), "refs/tags/rel1", &tip).expect("tag");
+        refs::write_ref(repo.git_dir()(), "refs/tags/rel1", &tip).expect("tag");
 
         let err = resolve_switch_target(&repo, "rel1").expect_err("tag");
         assert!(matches!(err, Error::Message(_)));

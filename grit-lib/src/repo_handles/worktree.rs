@@ -130,7 +130,7 @@ pub fn lock_linked_worktree(repo: &Repository, path: &Path, reason: Option<&str>
     use crate::worktree::common_git_dir;
     use std::fs;
 
-    let common = common_git_dir(&repo.git_dir);
+    let common = common_git_dir(repo.git_dir());
     let target = path_for_disk_compare(path);
     let entry = list_worktrees(repo)?
         .into_iter()

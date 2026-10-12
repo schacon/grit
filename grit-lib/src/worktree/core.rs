@@ -549,8 +549,7 @@ pub fn add_linked_worktree(
 
         copy_filtered_worktree_config(&common, &admin)?;
 
-        let linked =
-            Repository::discover(Some(wt_path.as_path()), &RepositoryOptions::empty())?;
+        let linked = Repository::discover(Some(wt_path.as_path()), &RepositoryOptions::empty())?;
         checkout_between_trees(&linked, None, &tree_oid)?;
 
         linked_worktree_entry(&admin, &common)
@@ -575,7 +574,7 @@ pub fn add_linked_worktree(
 ///
 /// Propagates I/O failures while reading or removing admin directories.
 pub fn prune_linked_worktrees(repo: &Repository) -> Result<Vec<PathBuf>> {
-    let common = common_git_dir(&repo.git_dir);
+    let common = common_git_dir(repo.git_dir());
     let worktrees_dir = common.join("worktrees");
     if !worktrees_dir.is_dir() {
         return Ok(Vec::new());
@@ -1318,7 +1317,7 @@ mod tests {
             },
         )
         .unwrap();
-        let common = common_git_dir(&repo.git_dir());
+        let common = common_git_dir(repo.git_dir()());
         let admin = fs::read_dir(common.join("worktrees"))
             .unwrap()
             .find_map(|e| e.ok())

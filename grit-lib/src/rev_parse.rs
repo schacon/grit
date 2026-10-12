@@ -4411,11 +4411,8 @@ mod line_coverage_tests {
         let mut oids = Vec::new();
         let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let tip = *oids.last().expect("tip");
-        fs::write(
-            repo.git_dir().join("refs/heads/main"),
-            format!("{tip}\n"),
-        )
-        .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
         for commit_only in [false, true] {
             for use_disambiguate in [false, true] {
                 let _ = resolve_revision_impl(
@@ -4452,11 +4449,8 @@ mod line_coverage_tests {
             )
             .as_bytes(),
         )?;
-        fs::write(
-            repo.git_dir().join("refs/heads/main"),
-            format!("{tip}\n"),
-        )
-        .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
         fs::create_dir_all(repo.git_dir().join("refs/remotes/origin"))
             .map_err(crate::error::Error::Io)?;
         fs::write(
@@ -4503,11 +4497,8 @@ mod line_coverage_tests {
         }
 
         let graft_line = format!("{tip} {tip}\n");
-        fs::write(
-            repo.git_dir().join("info/grafts"),
-            graft_line,
-        )
-        .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir().join("info/grafts"), graft_line)
+            .map_err(crate::error::Error::Io)?;
         let _ = load_graft_parents(&repo.git_dir());
 
         let prefix = &tip.to_hex()[..7];
@@ -4929,9 +4920,7 @@ mod line_coverage_tests {
         let _ = resolve_upstream_symbolic_name(&repo, "main@{upstream}").ok();
         let _ = resolve_push_full_ref_for_branch(&repo, "main").ok();
         let _ = load_graft_parents(&repo.git_dir);
-        let blob = repo
-            .odb
-            .write_loose_materialize(ObjectKind::Blob, b"x\n")?;
+        let blob = repo.odb.write_loose_materialize(ObjectKind::Blob, b"x\n")?;
         let tree_body = format!("100644 f.txt\0").into_bytes();
         let mut tree_bytes = tree_body;
         tree_bytes.extend_from_slice(blob.as_bytes());

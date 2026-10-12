@@ -17,15 +17,16 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{init_repository, Repository};
 use grit_lib::rerere::{
-    rerere_clear, rerere_conflict_id, rerere_diff_for_path, rerere_enabled, rerere_gc,
-    rerere_post_commit, rerere_remaining_lines, rerere_status_lines, repo_rerere, RerereAutoupdate,
+    repo_rerere, rerere_clear, rerere_conflict_id, rerere_diff_for_path, rerere_enabled, rerere_gc,
+    rerere_post_commit, rerere_remaining_lines, rerere_status_lines, RerereAutoupdate,
 };
 use std::fs;
 use tempfile::tempdir;
 
 fn linear_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::objects::ObjectId) {
     let dir = tempdir().expect("tempdir");
-    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+    let repo =
+        init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
     let mut parent: Option<grit_lib::objects::ObjectId> = None;
     let mut tip = repo.odb.write(ObjectKind::Blob, b"v0\n").expect("blob");
     for i in 0..depth {
@@ -47,14 +48,13 @@ fn linear_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::object
             100 + i as i64,
             100 + i as i64
         ));
-        tip = repo.odb.write(ObjectKind::Commit, body.as_bytes()).expect("commit");
+        tip = repo
+            .odb
+            .write(ObjectKind::Commit, body.as_bytes())
+            .expect("commit");
         parent = Some(tip);
     }
-    fs::write(
-        repo.git_dir.join("refs/heads/main"),
-        format!("{tip}\n"),
-    )
-    .expect("ref");
+    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("ref");
     (dir, repo, tip)
 }
 

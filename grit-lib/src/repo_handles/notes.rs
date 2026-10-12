@@ -92,7 +92,7 @@ impl<'repo> RepositoryNotes<'repo> {
         else {
             return Ok(None);
         };
-        let blob = self.repo.odb.read(&entry.oid)?;
+        let blob = self.repo.odb().read(&entry.oid)?;
         Ok(Some(blob.data))
     }
 
@@ -129,7 +129,7 @@ impl<'repo> RepositoryNotes<'repo> {
         content: &[u8],
         options: &NotesWriteOptions,
     ) -> Result<()> {
-        let blob = self.repo.odb.write(ObjectKind::Blob, content)?;
+        let blob = self.repo.odb().write(ObjectKind::Blob, content)?;
         let mut entries = read_notes_tree(self.repo, notes_ref.as_str())?;
         upsert_note_entry(&mut entries, &object.to_hex(), blob);
         write_notes_commit_idents(

@@ -2,16 +2,16 @@
 
 mod support;
 
-use support::{
-    blob_pairs, grit_blob_patch, grit_diffstat_block, grit_numstat, grit_stat_line,
-    GritBlobPatchOpts, LineDiffAlgo,
-};
 use grit_lib::diff::{
     anchored_unified_diff, annotate_unified_diff_no_newline_at_eof, count_changes_with_algorithm,
     normalize_ignore_space_change, unified_diff_histogram_hunks_only,
     unified_diff_with_prefix_and_funcname_and_algorithm,
 };
 use similar::Algorithm;
+use support::{
+    blob_pairs, grit_blob_patch, grit_diffstat_block, grit_numstat, grit_stat_line,
+    GritBlobPatchOpts, LineDiffAlgo,
+};
 
 #[test]
 fn all_blob_pairs_exercise_diff_printers() {
@@ -40,24 +40,22 @@ fn all_blob_pairs_exercise_diff_printers() {
         let _ = unified_diff_histogram_hunks_only(old_s, new_s, 3, 0);
         for algo in [Algorithm::Myers, Algorithm::Patience, Algorithm::Histogram] {
             let _ = unified_diff_with_prefix_and_funcname_and_algorithm(
-                old_s,
-                new_s,
-                "a/x",
-                "b/x",
-                3,
-                0,
-                "a/",
-                "b/",
-                None,
-                algo,
-                true,
-                false,
-                true,
-                false,
+                old_s, new_s, "a/x", "b/x", 3, 0, "a/", "b/", None, algo, true, false, true, false,
             );
             let _ = count_changes_with_algorithm(old_s, new_s, algo, algo == Algorithm::Myers);
         }
         let anchors = vec!["A".to_string(), "x".to_string()];
-        let _ = anchored_unified_diff(old_s, new_s, "a/x", "b/x", 3, &anchors, Algorithm::Myers, false, true, false);
+        let _ = anchored_unified_diff(
+            old_s,
+            new_s,
+            "a/x",
+            "b/x",
+            3,
+            &anchors,
+            Algorithm::Myers,
+            false,
+            true,
+            false,
+        );
     }
 }

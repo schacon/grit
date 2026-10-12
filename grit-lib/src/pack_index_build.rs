@@ -1096,9 +1096,8 @@ mod line_coverage_tests {
         for (i, base_idx) in bases.into_iter().enumerate() {
             let base = format!("delta-base-{i}\n");
             let target = format!("delta-base-{i}-extended\n");
-            let delta =
-                crate::delta_encode::encode_lcp_delta(base.as_bytes(), target.as_bytes())
-                    .expect("delta");
+            let delta = crate::delta_encode::encode_lcp_delta(base.as_bytes(), target.as_bytes())
+                .expect("delta");
             pb.add_ofs_delta(base_idx, &delta, delta.len());
         }
         (pb.build().bytes, odb)
@@ -1133,9 +1132,8 @@ mod line_coverage_tests {
         let (pack, odb) = delta_pack_with_ofs_chain();
         let with = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), true)
             .expect("verify");
-        let without =
-            build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), false)
-                .expect("no verify");
+        let without = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), false)
+            .expect("no verify");
         assert_eq!(with.len(), without.len());
     }
 
@@ -1162,13 +1160,9 @@ mod line_coverage_tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let odb = Odb::new(tmp.path());
         for threads in [2_usize, 4] {
-            let records = build_pack_index_records(
-                &pack,
-                &odb,
-                Parallelism::resolve(Some(threads)),
-                true,
-            )
-            .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
+            let records =
+                build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(threads)), true)
+                    .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
             assert_eq!(records.len(), 32, "threads={threads}");
         }
     }
@@ -1176,10 +1170,9 @@ mod line_coverage_tests {
     #[test]
     fn unresolved_delta_chain_errors() {
         let mut pb = PackBuilder::new(HashAlgo::Sha1);
-        let missing_base = crate::objects::ObjectId::from_hex(
-            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-        )
-        .expect("oid");
+        let missing_base =
+            crate::objects::ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                .expect("oid");
         let delta = b"invalid delta bytes";
         pb.add_ref_delta(missing_base.as_bytes(), delta, delta.len());
         let pack = pb.build().bytes;
@@ -1195,29 +1188,17 @@ mod line_coverage_tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let odb = Odb::new(tmp.path());
         let base_bytes = b"ref-delta base payload\n";
-        let base_oid = odb
-            .write(ObjectKind::Blob, base_bytes)
-            .expect("write base");
+        let base_oid = odb.write(ObjectKind::Blob, base_bytes).expect("write base");
         let target = b"ref-delta base PAYLOAD\n";
         let delta = crate::delta_encode::encode_lcp_delta(base_bytes, target).expect("delta");
         let mut pb = PackBuilder::new(HashAlgo::Sha1);
         pb.add_ref_delta(base_oid.as_bytes(), &delta, delta.len());
         let pack = pb.build().bytes;
-        let records = build_pack_index_records(
-            &pack,
-            &odb,
-            Parallelism::resolve(Some(1)),
-            true,
-        )
-        .expect("ref delta build");
+        let records = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), true)
+            .expect("ref delta build");
         assert_eq!(records.len(), 1);
-        let no_verify = build_pack_index_records(
-            &pack,
-            &odb,
-            Parallelism::resolve(Some(8)),
-            false,
-        )
-        .expect("parallel no verify");
+        let no_verify = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(8)), false)
+            .expect("parallel no verify");
         assert_eq!(no_verify.len(), 1);
     }
 }

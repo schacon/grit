@@ -8938,11 +8938,7 @@ mod line_coverage_tests {
         assert!(!pos.is_empty());
         let _ = neg;
         for oid in &default_out.commits {
-            let _ = commit_visible_for_dense_pathspecs(
-                &repo,
-                *oid,
-                &["tracked.txt".to_owned()],
-            )?;
+            let _ = commit_visible_for_dense_pathspecs(&repo, *oid, &["tracked.txt".to_owned()])?;
         }
         let filter = ObjectFilter::BlobLimit(512);
         let _ = reachable_object_ids_for_cat_file(&repo, Some(&filter), true)?;

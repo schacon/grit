@@ -1110,7 +1110,8 @@ mod line_coverage_tests {
             body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\n");
             body.push_str(msg);
             body.push('\n');
-            odb.write(ObjectKind::Commit, body.as_bytes()).expect("commit")
+            odb.write(ObjectKind::Commit, body.as_bytes())
+                .expect("commit")
         };
         let base = commit(base_tree, &[], "base");
         let p1 = commit(p1_tree, &[base], "p1");
@@ -1188,15 +1189,7 @@ mod line_coverage_tests {
         );
         let z = crate::diff::zero_oid();
         let _ = format_worktree_conflict_combined(
-            &git_dir,
-            &cfg,
-            &odb,
-            "f.txt",
-            &z,
-            &p1_oid,
-            &merge_oid,
-            b"plain\n",
-            12,
+            &git_dir, &cfg, &odb, "f.txt", &z, &p1_oid, &merge_oid, b"plain\n", 12,
         );
     }
 }

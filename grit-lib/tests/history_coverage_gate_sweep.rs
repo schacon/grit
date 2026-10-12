@@ -9,7 +9,7 @@ use grit_lib::diff::{
     postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions, DiffStatus,
 };
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
-use grit_lib::objects::{ObjectKind, ObjectId};
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{init_repository, Repository};
@@ -24,7 +24,11 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::fs;
 use tempfile::tempdir;
 
-fn write_tree(odb: &grit_lib::odb::Odb, name: &str, blob: ObjectId) -> grit_lib::error::Result<ObjectId> {
+fn write_tree(
+    odb: &grit_lib::odb::Odb,
+    name: &str,
+    blob: ObjectId,
+) -> grit_lib::error::Result<ObjectId> {
     let mut body = format!("100644 {name}\0").into_bytes();
     body.extend_from_slice(blob.as_bytes());
     odb.write_loose_materialize(ObjectKind::Tree, &body)
@@ -70,7 +74,9 @@ fn index_entry(path: &str, oid: ObjectId) -> IndexEntry {
 fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
     let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-    let mut tip = repo.odb.write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
+    let mut tip = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     let mut parent: Option<ObjectId> = None;
     for i in 0..40 {
         let blob = repo
@@ -90,11 +96,8 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
             .odb
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
         parent = Some(tip);
-        fs::write(
-            dir.path().join("tracked.txt"),
-            format!("v{i}\n").as_bytes(),
-        )
-        .map_err(grit_lib::error::Error::Io)?;
+        fs::write(dir.path().join("tracked.txt"), format!("v{i}\n").as_bytes())
+            .map_err(grit_lib::error::Error::Io)?;
     }
     fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
         .map_err(grit_lib::error::Error::Io)?;

@@ -41,7 +41,11 @@ fn snapshot_log_json_filter_commits_oid() {
         "log_json_filter_commits_oid",
         &["log", "--filter", ".commits[].oid"],
         snapshot_dir(),
-        SnapshotExitCodes { human: 1, json: 0, markdown: 1 },
+        SnapshotExitCodes {
+            human: 1,
+            json: 0,
+            markdown: 1,
+        },
     );
 }
 
@@ -150,7 +154,6 @@ fn snapshot_revert() {
             .expect_success("commit third");
     });
 }
-
 
 fn snapshot_workspace(name: &str, args: &[&str]) {
     let fixture = CliFixture::workspace();

@@ -293,7 +293,13 @@ impl CliFixture {
         );
 
         Self::assert_all_modes_snapshot(
-            snapshot_name, args, snapshot_dir, self, human, json, markdown,
+            snapshot_name,
+            args,
+            snapshot_dir,
+            self,
+            human,
+            json,
+            markdown,
         );
     }
 
@@ -321,7 +327,6 @@ impl CliFixture {
         self.capture_mode(args, kind)
     }
 
-
     pub fn snapshot_fresh_all_modes(
         snapshot_name: &str,
         args: &[&str],
@@ -334,7 +339,15 @@ impl CliFixture {
         let json = json_fixture.capture_mode(args, ModeKind::Json);
         let markdown_fixture = fresh();
         let markdown = markdown_fixture.capture_mode(args, ModeKind::Markdown);
-        Self::assert_all_modes_snapshot(snapshot_name, args, snapshot_dir, &human_fixture, human, json, markdown);
+        Self::assert_all_modes_snapshot(
+            snapshot_name,
+            args,
+            snapshot_dir,
+            &human_fixture,
+            human,
+            json,
+            markdown,
+        );
     }
 
     fn assert_all_modes_snapshot(
@@ -350,11 +363,17 @@ impl CliFixture {
         assert_no_progress_in_json_stdout(&json.stdout);
         assert_progress_not_on_stdout(&human);
 
-        let payload = AllModesSnapshot { human: &human, json: &json, markdown: &markdown };
+        let payload = AllModesSnapshot {
+            human: &human,
+            json: &json,
+            markdown: &markdown,
+        };
         let mut settings = insta::Settings::clone_current();
         register_cli_snapshot_filters(&mut settings, filter_fixture);
         settings.set_snapshot_path(snapshot_dir);
-        settings.bind(|| { insta::assert_json_snapshot!(snapshot_name, payload); });
+        settings.bind(|| {
+            insta::assert_json_snapshot!(snapshot_name, payload);
+        });
     }
 
     fn capture_mode(&self, args: &[&str], kind: ModeKind) -> ModeCapture {

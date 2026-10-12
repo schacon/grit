@@ -322,7 +322,7 @@ pub fn write_notes_commit_idents(
         .collect();
     let tree_oid = write_notes_subtree(repo, &rewritten_entries)?;
 
-    let parent = resolve_ref(&repo.git_dir, notes_ref).ok();
+    let parent = resolve_ref(repo.git_dir(), notes_ref).ok();
 
     let commit = CommitData {
         tree: tree_oid,
@@ -342,15 +342,15 @@ pub fn write_notes_commit_idents(
     };
 
     let commit_data = serialize_commit(&commit);
-    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
+    let commit_oid = repo.odb().write(ObjectKind::Commit, &commit_data)?;
 
-    let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
-    write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
-    if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+    let old_oid = resolve_ref(repo.git_dir(), notes_ref).unwrap_or_else(|_| zero_oid());
+    write_ref(repo.git_dir(), notes_ref, &commit_oid)?;
+    if should_autocreate_reflog(repo.git_dir(), notes_ref) {
         let msg = message.trim_end_matches('\n');
         let reflog_msg = format!("notes: {msg}");
         let _ = append_reflog(
-            &repo.git_dir,
+            repo.git_dir(),
             notes_ref,
             &old_oid,
             &commit_oid,
@@ -1254,12 +1254,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1317,12 +1317,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1359,7 +1359,7 @@ mod tests {
             "partial merge commit must differ from the pre-merge tip"
         );
         assert_eq!(
-            crate::refs::resolve_ref(&repo.git_dir(), "refs/notes/commits").unwrap(),
+            crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap(),
             local,
             "manual merge conflicts must leave the live notes ref at the local tip"
         );

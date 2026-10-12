@@ -2,14 +2,19 @@
 
 #![allow(clippy::unwrap_used)]
 
+use grit_lib::config::ConfigSet;
+use grit_lib::git_path::{
+    cleanup_path, git_path_relative_component, is_common_git_path, normalize_path_copy,
+};
 use grit_lib::gitmodules::{
     check_submodule_name, check_submodule_url, looks_like_command_line_option,
     tree_entry_is_gitattributes_blob, tree_entry_is_gitmodules_blob, validate_gitmodules_blob_line,
     write_gitmodules_cli_option_warnings,
 };
-use grit_lib::git_path::{cleanup_path, git_path_relative_component, is_common_git_path, normalize_path_copy};
-use grit_lib::config::ConfigSet;
-use grit_lib::mailmap::{load_mailmap, map_contact_table, parse_contact, parse_mailmap, render_contact, table_from_entries};
+use grit_lib::mailmap::{
+    load_mailmap, map_contact_table, parse_contact, parse_mailmap, render_contact,
+    table_from_entries,
+};
 use grit_lib::objects::ObjectKind;
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::init_repository;
@@ -21,7 +26,10 @@ use tempfile::tempdir;
 fn gitmodules_mailmap_path_and_signing_helpers() -> grit_lib::error::Result<()> {
     assert!(looks_like_command_line_option("--help"));
     assert!(tree_entry_is_gitmodules_blob(0o100644, b".gitmodules"));
-    assert!(tree_entry_is_gitattributes_blob(0o100644, b".gitattributes"));
+    assert!(tree_entry_is_gitattributes_blob(
+        0o100644,
+        b".gitattributes"
+    ));
     assert!(check_submodule_name("valid-name"));
     assert!(!check_submodule_name(""));
     assert!(check_submodule_url("https://example.com/repo.git"));
@@ -46,9 +54,8 @@ fn gitmodules_mailmap_path_and_signing_helpers() -> grit_lib::error::Result<()> 
     let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
     let _ = load_mailmap(&repo).ok();
     let tree = repo.odb.write(ObjectKind::Tree, b"")?;
-    let commit = format!(
-        "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n"
-    );
+    let commit =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
     let cfg = ConfigSet::new();
     let gpg = GpgConfig::from_config(&cfg)?;
     let _ = verify_commit(&gpg, commit.as_bytes())?;

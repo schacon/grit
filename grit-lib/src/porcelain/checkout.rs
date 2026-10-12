@@ -281,7 +281,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
 
     let trees_differ = head_tree != target_tree;
     let changes = if trees_differ {
-        diff_trees(&repo.odb, Some(head_tree), Some(target_tree), "")?
+        diff_trees(repo.odb(), Some(head_tree), Some(target_tree), "")?
     } else {
         Vec::new()
     };
@@ -348,8 +348,8 @@ pub fn checkout_hard_to_tree_from_head_tree(
 
         if let Some(existing) = index.get(te.path.as_slice(), 0) {
             if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
-                &repo.odb,
-                &repo.git_dir,
+                repo.odb(),
+                repo.git_dir(),
                 &work_tree,
                 &index,
                 existing,
@@ -1382,10 +1382,10 @@ mod tests {
             index.add_or_replace(e);
         }
         index.sort();
-        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        let tree = write_tree_update_index(repo.odb()(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree");
         repo.write_index(&mut index).expect("write index");
-        let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
+        let parent = refs::resolve_ref(repo.git_dir()(), "HEAD").ok();
         let commit_data = CommitData {
             tree,
             parents: parent.into_iter().collect(),
@@ -1403,7 +1403,7 @@ mod tests {
             .odb()
             .write(ObjectKind::Commit, &bytes)
             .expect("commit");
-        refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).expect("head");
+        refs::write_ref(repo.git_dir()(), "HEAD", &commit_oid).expect("head");
         tree
     }
 
@@ -1424,14 +1424,14 @@ mod tests {
         index.add_or_replace(prospective_index_entry("sub", gitlink, MODE_GITLINK));
         index.sort();
         let with_sub =
-            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            write_tree_update_index(repo.odb()(), &mut index, "", WriteTreeFlags::silent())
                 .expect("tree with sub");
         fs::write(wt.join("b"), b"b\n").expect("b");
         let b_oid = repo.odb().write(ObjectKind::Blob, b"b\n").expect("blob");
         index.remove(b"sub");
         index.add_or_replace(entry_from_stat(&wt.join("b"), b"b", b_oid, MODE_REGULAR).expect("e"));
         index.sort();
-        let no_sub = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        let no_sub = write_tree_update_index(repo.odb()(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree no sub");
 
         checkout_between_trees(&repo, None, &with_sub).expect("checkout gitlink");
@@ -1496,7 +1496,7 @@ mod tests {
             fs::write(wt.join(format!("a{d}.txt")), format!("v1 {d}\n")).expect("write");
         }
         let to_tree = commit_all(&repo, "updated");
-        let changes = diff_trees(&repo.odb(), Some(&head), Some(&to_tree), "").expect("diff");
+        let changes = diff_trees(repo.odb()(), Some(&head), Some(&to_tree), "").expect("diff");
 
         let mut rec = CheckoutProgressRecorder::default();
         checkout_between_trees_with_progress(&repo, Some(&head), &to_tree, &mut rec)
@@ -1549,7 +1549,7 @@ mod tests {
         }
         index.sort();
         let to_tree =
-            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            write_tree_update_index(repo.odb()(), &mut index, "", WriteTreeFlags::silent())
                 .expect("t");
 
         syscall_probe::reset();

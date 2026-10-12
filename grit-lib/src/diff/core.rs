@@ -10200,43 +10200,20 @@ mod line_coverage_tests {
         assert!(entries.len() >= 2);
         let rotated = apply_rotate_skip_entries(entries.clone(), Some("b.txt"), None)?;
         assert!(!rotated.is_empty());
-        let _ = apply_rotate_skip_log_entries(
-            &odb,
-            &new_tree,
-            entries.clone(),
-            Some("a.txt"),
-            None,
-        );
-        let _ = apply_rotate_skip_log_entries(
-            &odb,
-            &new_tree,
-            entries.clone(),
-            None,
-            Some("a.txt"),
-        );
+        let _ =
+            apply_rotate_skip_log_entries(&odb, &new_tree, entries.clone(), Some("a.txt"), None);
+        let _ =
+            apply_rotate_skip_log_entries(&odb, &new_tree, entries.clone(), None, Some("a.txt"));
         let order_path = wt.join("order");
         std::fs::write(&order_path, b"c.txt\na.txt\n").expect("order");
-        let _ = apply_orderfile_entries(
-            entries.clone(),
-            order_path.to_str().expect("utf8"),
-            wt,
-        );
+        let _ = apply_orderfile_entries(entries.clone(), order_path.to_str().expect("utf8"), wt);
         let _ = read_orderfile_patterns(order_path.to_str().expect("utf8"), wt)?;
 
         let cfg = ConfigSet::new();
         assert!(indent_heuristic_from_config(&cfg));
         let _ = unified_diff_histogram_hunks_only("a\nb\n", "a\nB\n", 3, 0);
         let _ = unified_diff_histogram_with_prefix_and_funcname(
-            "x\n",
-            "y\n",
-            "a/f",
-            "b/f",
-            3,
-            0,
-            "",
-            "",
-            None,
-            false,
+            "x\n", "y\n", "a/f", "b/f", 3, 0, "", "", None, false,
         );
         let _ = count_changes_with_algorithm("a\n", "b\n", Algorithm::Myers, false);
         let _ = should_break_rewrite_pair(b"short", b"totally different body", 50);
@@ -10292,15 +10269,7 @@ mod line_coverage_tests {
         )?;
         let _ = read_worktree_bytes_for_mode(&abs, MODE_REGULAR);
         let _ = mode_from_metadata(&meta);
-        let _ = smudge_racily_clean_entries(
-            &odb,
-            &git_dir,
-            &mut index,
-            wt,
-            None,
-            Some(&cfg),
-            None,
-        );
+        let _ = smudge_racily_clean_entries(&odb, &git_dir, &mut index, wt, None, Some(&cfg), None);
         let _ = refresh_index_stat_content_verified(
             &odb,
             &git_dir,

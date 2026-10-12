@@ -1000,10 +1000,10 @@ pub(crate) fn check_stash_untracked_restore(
         .parents
         .first()
         .ok_or(Error::CorruptStash("expected at least 2 parents"))?;
-    let head_obj = repo.odb.read(head_at_stash)?;
+    let head_obj = repo.odb().read(head_at_stash)?;
     let head_commit = parse_commit(&head_obj.data)?;
-    let base_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
-    let stash_tree_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let base_tree_entries = flatten_tree_full(repo.odb(), &head_commit.tree, "")?;
+    let stash_tree_entries = flatten_tree_full(repo.odb(), &stash_commit.tree, "")?;
     let wt_changes = collect_flat_tree_worktree_changes(&base_tree_entries, &stash_tree_entries);
     let wt_deletions: HashSet<String> = wt_changes
         .iter()
@@ -1579,7 +1579,7 @@ mod coverage_tests {
         index.sort();
         repo.write_index(&mut index).unwrap();
         let tree = write_stash_tree_from_index(&repo, &mut index).unwrap();
-        let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
+        let parent = refs::resolve_ref(repo.git_dir()(), "HEAD").ok();
         let commit = CommitData {
             tree,
             parents: parent.into_iter().collect(),
@@ -1593,8 +1593,8 @@ mod coverage_tests {
             extra_headers: Vec::new(),
         };
         let commit_oid = write_commit_object(&repo, &commit, None).unwrap();
-        refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).unwrap();
-        refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_oid).unwrap();
+        refs::write_ref(repo.git_dir()(), "HEAD", &commit_oid).unwrap();
+        refs::write_ref(repo.git_dir()(), "refs/heads/main", &commit_oid).unwrap();
         repo
     }
 

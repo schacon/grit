@@ -2,21 +2,21 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
 use grit_lib::combined_tree_diff::{CombinedDiffPath, CombinedParentSide, CombinedParentStatus};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
-use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
 use grit_lib::merge_diff::{
-    all_blob_paths_in_tree_order, blob_oid_at_path, blob_text_for_diff, blob_text_for_diff_with_oid,
-    combined_diff_paths, combined_merge_parent_blob_paths, convert_blob_to_worktree_for_path,
-    diff_attr_external_driver, diff_attr_forces_binary, diff_attr_forces_text,
-    diff_cachetextconv_enabled, diff_forced_binary_by_driver, diff_textconv_active,
-    diff_textconv_cmd_line, enrich_combined_path_renames, format_combined_binary,
-    format_combined_binary_header, format_combined_textconv_patch,
+    all_blob_paths_in_tree_order, blob_oid_at_path, blob_text_for_diff,
+    blob_text_for_diff_with_oid, combined_diff_paths, combined_merge_parent_blob_paths,
+    convert_blob_to_worktree_for_path, diff_attr_external_driver, diff_attr_forces_binary,
+    diff_attr_forces_text, diff_cachetextconv_enabled, diff_forced_binary_by_driver,
+    diff_textconv_active, diff_textconv_cmd_line, enrich_combined_path_renames,
+    format_combined_binary, format_combined_binary_header, format_combined_textconv_patch,
     format_worktree_conflict_combined, is_binary_for_diff, read_blob_at_path, run_textconv,
     run_textconv_raw,
 };
-use grit_lib::objects::{ObjectKind, ObjectId};
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use tempfile::tempdir;
 
@@ -37,7 +37,8 @@ fn write_commit(odb: &Odb, tree: ObjectId, parents: &[ObjectId], msg: &str) -> O
     body.push_str("author T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\n");
     body.push_str(msg);
     body.push('\n');
-    odb.write(ObjectKind::Commit, body.as_bytes()).expect("commit")
+    odb.write(ObjectKind::Commit, body.as_bytes())
+        .expect("commit")
 }
 
 fn merge_repo() -> (tempfile::TempDir, Odb, ObjectId, Vec<ObjectId>) {
@@ -67,7 +68,9 @@ fn combined_paths_and_formatters() {
     let _ = combined_merge_parent_blob_paths(&odb, "file.txt", &parents, &merge_tree, 50);
     let p1_tree = {
         let obj = odb.read(&parents[0]).expect("p1 commit");
-        grit_lib::objects::parse_commit(&obj.data).expect("parse").tree
+        grit_lib::objects::parse_commit(&obj.data)
+            .expect("parse")
+            .tree
     };
     let p1_oid = blob_oid_at_path(&odb, &p1_tree, "file.txt").expect("p1 blob");
     let mut path = CombinedDiffPath {
@@ -95,9 +98,7 @@ fn combined_paths_and_formatters() {
     let git_dir = dir.path().join(".git");
     std::fs::create_dir_all(&git_dir).expect("git dir");
     let _ = blob_text_for_diff(&git_dir, &cfg, "file.txt", &blob, false);
-    let _ = blob_text_for_diff_with_oid(
-        &odb, &git_dir, &cfg, "file.txt", &blob, &p1_oid, false,
-    );
+    let _ = blob_text_for_diff_with_oid(&odb, &git_dir, &cfg, "file.txt", &blob, &p1_oid, false);
     let _ = is_binary_for_diff(&git_dir, "file.txt", &blob);
     let _ = diff_attr_forces_binary(&git_dir, "file.txt");
     let _ = diff_attr_forces_text(&git_dir, "file.txt");

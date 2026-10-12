@@ -451,10 +451,7 @@ fn unborn_symbolic_head_switch_writes_zero_to_tip_checkout_reflog() {
     assert_eq!(head_log.len(), 1);
     assert!(head_log[0].old_oid.is_zero() || head_log[0].old_oid == zero_oid());
     assert_eq!(head_log[0].new_oid, tip);
-    assert_eq!(
-        head_log[0].message,
-        "checkout: moving from main to feature"
-    );
+    assert_eq!(head_log[0].message, "checkout: moving from main to feature");
 
     let git_show = Command::new("git")
         .args(["reflog", "-1", "--format=%gs"])

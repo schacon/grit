@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use grit_lib::objects::{ObjectKind, ObjectId};
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{init_bare_clone_minimal, Repository};
 use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
@@ -32,11 +32,7 @@ fn seed_bare_main(repo: &Repository) -> ObjectId {
         .odb
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    std::fs::write(
-        repo.git_dir.join("refs/heads/main"),
-        format!("{tip}\n"),
-    )
-    .expect("ref");
+    std::fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("ref");
     tip
 }
 

@@ -10,24 +10,25 @@ use grit_lib::diff::{
     diff_tree_to_worktree_with_git_dir_and_rules, diff_trees, diff_trees_with_renames,
     postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions,
 };
-use grit_lib::worktree_rules::WorktreeRules;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
-use grit_lib::objects::{ObjectKind, ObjectId};
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::pathspec::{matches_pathspec_list, parse_pathspecs_from_source};
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{init_repository, Repository};
-use grit_lib::rev_list::{
-    merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions,
-};
+use grit_lib::rev_list::{merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions};
 use grit_lib::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_verify,
 };
+use grit_lib::worktree_rules::WorktreeRules;
 use grit_lib::write_tree::write_tree_from_index;
 use std::fs;
 use tempfile::tempdir;
 
-fn write_tree(odb: &grit_lib::odb::Odb, entries: &[(&str, ObjectId)]) -> grit_lib::error::Result<ObjectId> {
+fn write_tree(
+    odb: &grit_lib::odb::Odb,
+    entries: &[(&str, ObjectId)],
+) -> grit_lib::error::Result<ObjectId> {
     let mut body = Vec::new();
     for (name, oid) in entries {
         body.extend_from_slice(format!("100644 {name}\0").as_bytes());
@@ -42,7 +43,9 @@ fn seed_long_history(
     depth: usize,
 ) -> grit_lib::error::Result<ObjectId> {
     let mut parent: Option<ObjectId> = None;
-    let mut tip = repo.odb.write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
+    let mut tip = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     for i in 0..depth {
         let blob = repo
             .odb
@@ -63,11 +66,8 @@ fn seed_long_history(
         parent = Some(tip);
         fs::write(work_tree.join("a.txt"), format!("v{i}\n").as_bytes()).ok();
     }
-    fs::write(
-        repo.git_dir.join("refs/heads/main"),
-        format!("{tip}\n"),
-    )
-    .map_err(grit_lib::error::Error::Io)?;
+    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+        .map_err(grit_lib::error::Error::Io)?;
     Ok(tip)
 }
 
@@ -120,14 +120,17 @@ fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
 fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
     let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-    let b1 = repo.odb.write_loose_materialize(ObjectKind::Blob, b"one\n")?;
-    let b2 = repo.odb.write_loose_materialize(ObjectKind::Blob, b"two\n")?;
+    let b1 = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Blob, b"one\n")?;
+    let b2 = repo
+        .odb
+        .write_loose_materialize(ObjectKind::Blob, b"two\n")?;
     let t1 = write_tree(&repo.odb, &[("f.txt", b1)])?;
     let t2 = write_tree(&repo.odb, &[("f.txt", b2), ("g.txt", b1)])?;
     let base = {
-        let body = format!(
-            "tree {t1}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nb\n"
-        );
+        let body =
+            format!("tree {t1}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nb\n");
         repo.odb
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?
     };
@@ -152,16 +155,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         find_copies_harder: true,
         ..DiffPostprocessOptions::default()
     };
-    let _ = postprocess_diff_entries(
-        &repo.odb,
-        raw,
-        Some(&t1),
-        None,
-        None,
-        &cfg,
-        &policy,
-        &opts,
-    )?;
+    let _ = postprocess_diff_entries(&repo.odb, raw, Some(&t1), None, None, &cfg, &policy, &opts)?;
     let mut index = Index::new();
     index.entries_mut().push(IndexEntry {
         ctime_sec: 0,

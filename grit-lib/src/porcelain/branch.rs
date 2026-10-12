@@ -29,11 +29,11 @@ pub fn create_branch(repo: &Repository, name: &str) -> Result<CreateBranchOutcom
     validate_branch_short_name(name)
         .map_err(|e| Error::Message(format!("invalid branch name '{name}': {e}")))?;
     let branch_ref = format!("refs/heads/{name}");
-    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+    if refs::resolve_ref(repo.git_dir(), &branch_ref).is_ok() {
         return Err(Error::Message(format!("branch '{name}' already exists")));
     }
 
-    let head = resolve_head(&repo.git_dir)?;
+    let head = resolve_head(repo.git_dir())?;
     let base = match head {
         HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
         HeadState::Branch { .. } => {

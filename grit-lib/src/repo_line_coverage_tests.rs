@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used)]
 
+use crate::environment::RepositoryOptions;
 use crate::index::{IndexEntry, MODE_REGULAR};
 use crate::objects::ObjectKind;
 use crate::parallel::ThreadPolicy;
 use crate::ref_storage::RefStorageFormat;
-use crate::environment::RepositoryOptions;
 use crate::repo::{
     init_bare_clone_minimal, init_bare_with_env_worktree, init_repository,
     init_repository_separate, init_repository_separate_git_dir, init_worktree_config,
@@ -46,9 +46,8 @@ fn repository_open_discover_and_index_roundtrip() -> crate::error::Result<()> {
     let mut tree_bytes = tree_body;
     tree_bytes.extend_from_slice(blob.as_bytes());
     let tree = repo.odb.write(ObjectKind::Tree, &tree_bytes)?;
-    let commit_body = format!(
-        "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\ninit\n"
-    );
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\ninit\n");
     let tip = repo.odb.write(ObjectKind::Commit, commit_body.as_bytes())?;
     std::fs::write(git_dir.join("refs/heads/main"), format!("{tip}\n"))
         .map_err(crate::error::Error::Io)?;
@@ -73,13 +72,10 @@ fn repository_open_discover_and_index_roundtrip() -> crate::error::Result<()> {
     let _ = repo.effective_pathspec_cwd();
     let _ = repo.bloom_pathspec_cwd();
     let _ = repo.pathspec_precompose_enabled();
-    let discovered =
-        Repository::discover_with(&RepositoryOptions::empty(), Some(dir.path()))?;
+    let discovered = Repository::discover_with(&RepositoryOptions::empty(), Some(dir.path()))?;
     let _ = discovered.resolve_ref_name("HEAD")?;
     let mut index = discovered.load_index()?;
-    let blob = discovered
-        .odb
-        .write(ObjectKind::Blob, b"indexed\n")?;
+    let blob = discovered.odb.write(ObjectKind::Blob, b"indexed\n")?;
     index.entries_mut().push(index_entry("indexed.txt", blob));
     let _ = write_tree_from_index(&discovered.odb, &index, "")?;
     discovered.write_index(&mut index)?;
@@ -95,13 +91,7 @@ fn repository_open_discover_and_index_roundtrip() -> crate::error::Result<()> {
 fn separate_git_dir_and_bare_init_paths() -> crate::error::Result<()> {
     let wt = tempdir().map_err(crate::error::Error::Io)?;
     let separate = wt.path().join("repo.git");
-    init_repository_separate_git_dir(
-        wt.path(),
-        &separate,
-        "main",
-        None,
-        RefStorageFormat::Files,
-    )?;
+    init_repository_separate_git_dir(wt.path(), &separate, "main", None, RefStorageFormat::Files)?;
     let repo = Repository::open(&separate, Some(wt.path()))?;
     let _ = repo.load_index()?;
 
@@ -111,13 +101,7 @@ fn separate_git_dir_and_bare_init_paths() -> crate::error::Result<()> {
 
     let bare_wt = tempdir().map_err(crate::error::Error::Io)?;
     let git = bare_wt.path().join(".git");
-    init_bare_with_env_worktree(
-        &git,
-        bare_wt.path(),
-        "main",
-        None,
-        RefStorageFormat::Files,
-    )?;
+    init_bare_with_env_worktree(&git, bare_wt.path(), "main", None, RefStorageFormat::Files)?;
 
     let nested = tempdir().map_err(crate::error::Error::Io)?;
     let nested_git = nested.path().join("nested.git");
