@@ -3,9 +3,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use grit_lib::crlf::{
-    crlf_to_lf, gather_convert_stats_ascii, has_crlf, is_binary, lf_to_crlf,
-    parse_gitattributes_content,
+    clean_uses_autocrlf_index_guard, collapse_ident, convert_to_git, crlf_to_lf,
+    gather_convert_stats_ascii, has_crlf, has_crlf_in_index_blob, has_lone_lf, is_all_crlf,
+    is_all_lf, is_binary, lf_to_crlf, load_gitattributes, parse_gitattributes_content,
+    should_convert_to_crlf, ConversionConfig, FileAttrs,
 };
+use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
 use grit_lib::pathspec::{
     bloom_lookup_prefix, bloom_lookup_prefix_with_cwd, context_from_mode_octal, has_glob_chars,
@@ -86,9 +89,21 @@ fn repo_init_and_crlf_helpers() -> grit_lib::error::Result<()> {
     for data in [b"plain\n".as_slice(), b"a\r\nb\r\n", b"\0bin\x01"] {
         let _ = is_binary(data);
         let _ = has_crlf(data);
+        let _ = has_lone_lf(data);
+        let _ = is_all_crlf(data);
+        let _ = is_all_lf(data);
+        let _ = has_crlf_in_index_blob(data);
         let _ = gather_convert_stats_ascii(data);
         let _ = crlf_to_lf(data);
         let _ = lf_to_crlf(data);
+        let _ = collapse_ident(data);
     }
+    let cfg = ConfigSet::new();
+    let conv = ConversionConfig::from_config(&cfg);
+    let attrs = FileAttrs::default();
+    let _ = should_convert_to_crlf(&conv, &attrs, b"line\n");
+    let _ = clean_uses_autocrlf_index_guard(&attrs, &conv);
+    let _ = convert_to_git(b"line\r\n", "f.txt", &conv, &attrs);
+    let _ = load_gitattributes(dir.path());
     Ok(())
 }
