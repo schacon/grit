@@ -1052,3 +1052,142 @@ fn resolve_one_delta(
         base_oid: delta.base_oid,
     })
 }
+
+#[cfg(test)]
+mod line_coverage_tests {
+    use super::*;
+    use crate::hash::Parallelism;
+    use crate::progress::{ProgressPhase, ProgressSink};
+    use grit_test_support::objects::{HashAlgo, ObjectKind as PK, PackBuilder};
+
+    #[derive(Default)]
+    struct PhaseCapture {
+        phases: Vec<(ProgressPhase, Option<u64>)>,
+        max_by_phase: std::collections::HashMap<ProgressPhase, u64>,
+    }
+
+    impl ProgressSink for PhaseCapture {
+        fn start(&mut self, phase: ProgressPhase, total: Option<u64>) {
+            self.phases.push((phase, total));
+        }
+
+        fn set(&mut self, current: u64) {
+            if let Some((phase, _)) = self.phases.last() {
+                let e = self.max_by_phase.entry(*phase).or_insert(0);
+                *e = (*e).max(current);
+            }
+        }
+
+        fn finish(&mut self) {}
+    }
+
+    fn delta_pack_with_ofs_chain() -> (Vec<u8>, Odb) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        for i in 0..8 {
+            pb.add_full(PK::Blob, format!("standalone-{i}\n").as_bytes());
+        }
+        let mut bases = Vec::new();
+        for i in 0..6 {
+            let data = format!("delta-base-{i}\n");
+            bases.push(pb.add_full(PK::Blob, data.as_bytes()));
+        }
+        for (i, base_idx) in bases.into_iter().enumerate() {
+            let base = format!("delta-base-{i}\n");
+            let target = format!("delta-base-{i}-extended\n");
+            let delta =
+                crate::delta_encode::encode_lcp_delta(base.as_bytes(), target.as_bytes())
+                    .expect("delta");
+            pb.add_ofs_delta(base_idx, &delta, delta.len());
+        }
+        (pb.build().bytes, odb)
+    }
+
+    #[test]
+    fn build_records_serial_parallel_and_progress() {
+        let (pack, odb) = delta_pack_with_ofs_chain();
+        for threads in [1_usize, 2, 4] {
+            let records =
+                build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(threads)), true)
+                    .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
+            assert!(!records.is_empty(), "threads={threads}");
+        }
+        let mut cap = PhaseCapture::default();
+        let records = build_pack_index_records_with_progress(
+            &pack,
+            &odb,
+            Parallelism::resolve(Some(4)),
+            true,
+            Some(&mut cap),
+        )
+        .expect("with progress");
+        assert!(!records.is_empty());
+        assert!(cap
+            .max_by_phase
+            .contains_key(&ProgressPhase::IndexingObjects));
+    }
+
+    #[test]
+    fn build_skips_trailer_verify_when_requested() {
+        let (pack, odb) = delta_pack_with_ofs_chain();
+        let with = build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), true)
+            .expect("verify");
+        let without =
+            build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(1)), false)
+                .expect("no verify");
+        assert_eq!(with.len(), without.len());
+    }
+
+    #[test]
+    fn read_pack_header_rejects_garbage() {
+        assert!(read_pack_header(b"NOTPACK").is_err());
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        pb.add_full(PK::Blob, b"x");
+        let mut pack = pb.build().bytes;
+        pack[4] = 99;
+        pack[5] = 99;
+        pack[6] = 99;
+        pack[7] = 99;
+        assert!(read_pack_header(&pack).is_err());
+    }
+
+    #[test]
+    #[test]
+    fn large_pack_many_threads_exercises_parallel_scan() {
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        for i in 0..32 {
+            pb.add_full(PK::Blob, format!("blob-{i}\n").as_bytes());
+        }
+        let pack = pb.build().bytes;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        for threads in [2_usize, 8, 16] {
+            let records = build_pack_index_records(
+                &pack,
+                &odb,
+                Parallelism::resolve(Some(threads)),
+                true,
+            )
+            .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
+            assert_eq!(records.len(), 32, "threads={threads}");
+        }
+    }
+
+    #[test]
+    fn unresolved_delta_chain_errors() {
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        let missing_base = crate::objects::ObjectId::from_hex(
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        .expect("oid");
+        let delta = b"invalid delta bytes";
+        pb.add_ref_delta(missing_base.as_bytes(), delta, delta.len());
+        let pack = pb.build().bytes;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let odb = Odb::new(tmp.path());
+        assert!(
+            build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(2)), true).is_err()
+        );
+    }
+}
