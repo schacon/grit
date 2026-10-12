@@ -1508,6 +1508,63 @@ pub fn write_v2_pack_index(
     write_v2_pack_index_with_trailer(idx_path, entries, trailer, hash_bytes)
 }
 
+const PARALLEL_INDEX_SORT_MIN: usize = 8_192;
+
+fn sort_index_entries(entries: &mut [(ObjectId, u64, u32)]) {
+    if entries.len() < PARALLEL_INDEX_SORT_MIN {
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        return;
+    }
+    let threads = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(8)
+        .max(1);
+    if threads <= 1 {
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        return;
+    }
+    let chunk = entries.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for part in entries.chunks_mut(chunk) {
+            scope.spawn(|| part.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes())));
+        }
+    });
+    merge_sorted_index_entry_chunks(entries, chunk);
+}
+
+fn merge_sorted_index_entry_chunks(entries: &mut [(ObjectId, u64, u32)], chunk: usize) {
+    let mut merged: Vec<(ObjectId, u64, u32)> = Vec::with_capacity(entries.len());
+    let n_chunks = entries.len().div_ceil(chunk);
+    let mut cursors = vec![0usize; n_chunks];
+    while merged.len() < entries.len() {
+        let mut best_chunk = None;
+        for (ci, cursor) in cursors.iter_mut().enumerate() {
+            let start = ci * chunk;
+            if *cursor >= entries.len().saturating_sub(start).min(chunk) {
+                continue;
+            }
+            let idx = start + *cursor;
+            let Some(entry) = entries.get(idx) else {
+                continue;
+            };
+            match best_chunk {
+                None => best_chunk = Some((ci, entry.clone())),
+                Some((_, best)) if entry.0.as_bytes() < best.0.as_bytes() => {
+                    best_chunk = Some((ci, entry.clone()));
+                }
+                _ => {}
+            }
+        }
+        let Some((ci, entry)) = best_chunk else {
+            break;
+        };
+        cursors[ci] += 1;
+        merged.push(entry);
+    }
+    entries.copy_from_slice(&merged);
+}
+
 fn write_v2_pack_index_body(
     idx_path: &Path,
     entries: &[(ObjectId, u64, u32)],
@@ -1515,7 +1572,7 @@ fn write_v2_pack_index_body(
     hash_bytes: usize,
 ) -> Result<()> {
     let mut sorted: Vec<(ObjectId, u64, u32)> = entries.to_vec();
-    sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    sort_index_entries(&mut sorted);
     let oid_slices: Vec<&[u8]> = sorted.iter().map(|(oid, _, _)| oid.as_bytes()).collect();
     let fanout = compute_fanout_from_oid_slices(&oid_slices);
     let mut buf = Vec::new();
