@@ -16,9 +16,9 @@ use grit_lib::rev_parse::{
 use grit_lib::rev_parse_error::RevParseError;
 
 use support::{
-    build_commit_dag, commit_file, git, git_rev_parse_verify, oracle_abbrev,
-    oracle_double_dot_range, oracle_expect_rev_parse_error, oracle_one, oracle_table,
-    oracle_triple_dot_range, HistoryRepo, ResolveMode,
+    build_commit_dag, commit_file, git, git_ls_files_stage, git_merge_expect_conflict,
+    git_rev_parse_verify, oracle_abbrev, oracle_double_dot_range, oracle_expect_rev_parse_error,
+    oracle_one, oracle_table, oracle_triple_dot_range, HistoryRepo, ResolveMode,
 };
 
 fn open_grit(wt: &Path) -> Repository {
@@ -434,8 +434,8 @@ fn setup_index_conflict_stages() -> HistoryRepo {
     git(wt, &["checkout", "-b", "side"]);
     commit_file(wt, "file.txt", "side\n", "side");
     git(wt, &["checkout", "main"]);
-    commit_file(wt, "other.txt", "other\n", "other");
-    git(wt, &["merge", "side", "--no-commit", "--no-ff"]);
+    commit_file(wt, "file.txt", "main\n", "main");
+    git_merge_expect_conflict(wt, "side");
     repo
 }
 
@@ -449,12 +449,29 @@ fn colon_path_and_index_stage_match_git() {
     let conflict = setup_index_conflict_stages();
     let cwt = conflict.worktree();
     let crepo = open_grit(cwt);
-    for spec in [":1:file.txt", ":2:file.txt", ":3:file.txt"] {
+    let stages: std::collections::BTreeMap<u32, ObjectId> = git_ls_files_stage(cwt)
+        .into_iter()
+        .filter(|(path, _, _, _)| path == "file.txt")
+        .map(|(_, stage, _, oid)| (stage, oid))
+        .collect();
+    for stage in [1_u32, 2, 3] {
         assert!(
-            git_rev_parse_verify(cwt, spec).is_none(),
-            "git should reject unmerged stage spec {spec}"
+            stages.contains_key(&stage),
+            "git index should have unmerged stage {stage} for file.txt: {stages:?}"
         );
-        assert!(resolve_revision_for_verify(&crepo, spec).is_err());
+    }
+    assert!(
+        !stages.contains_key(&0),
+        "unmerged path should not have stage 0: {stages:?}"
+    );
+    assert!(
+        git_rev_parse_verify(cwt, ":0:file.txt").is_none(),
+        "git should reject stage 0 while path is unmerged"
+    );
+    assert!(resolve_revision_for_verify(&crepo, ":0:file.txt").is_err());
+    for spec in [":1:file.txt", ":2:file.txt", ":3:file.txt"] {
+        oracle_one(&crepo, cwt, spec, ResolveMode::Verify)
+            .unwrap_or_else(|e| panic!("{spec}: {e}"));
     }
 }
 
