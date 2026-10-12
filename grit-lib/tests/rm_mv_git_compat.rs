@@ -76,7 +76,7 @@ fn worktree_has_exact_dir_entry(parent: &Path, name: &str) -> bool {
 }
 
 fn hold_index_lock(repo: &Repository) -> std::fs::File {
-    let lock_path = repo.index_path().with_extension("lock");
+    let lock_path = repo.index_handle().path().with_extension("lock");
     std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -365,7 +365,7 @@ fn mv_rejects_destination_outside_work_tree() {
     let err = move_path(&repo, "tracked", "../escaped", false).expect_err("mv outside repo");
     assert!(matches!(err, grit_lib::error::Error::InvalidPath(_)));
     assert!(repo_dir.join("tracked").is_file());
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     assert!(index.get("tracked".as_bytes(), 0).is_some());
 }
 
@@ -385,7 +385,7 @@ fn mv_refused_when_index_lock_held_externally() {
         .expect("pre-create index.lock");
 
     let repo = grit_repo(repo_dir);
-    let index_before = repo.load_index().expect("index before");
+    let index_before = repo.index_handle().load().expect("index before");
     let err = move_path(&repo, "tracked", "moved", false).expect_err("mv with held lock");
     assert!(matches!(err, grit_lib::error::Error::Io(_)));
     assert!(repo_dir.join("tracked").is_file());
@@ -393,7 +393,7 @@ fn mv_refused_when_index_lock_held_externally() {
     assert!(git_porcelain(repo_dir).is_empty());
     assert_eq!(
         index_before.entries(),
-        repo.load_index().expect("index after").entries()
+        repo.index_handle().load().expect("index after").entries()
     );
 }
 
@@ -407,14 +407,14 @@ fn mv_worktree_failure_leaves_index_unchanged() {
     commit_all(repo_dir, "init");
 
     let repo = grit_repo(repo_dir);
-    let index_before = repo.load_index().expect("index before");
+    let index_before = repo.index_handle().load().expect("index before");
     let err = move_path(&repo, "tracked", "blocked/child", false).expect_err("mv into file");
     assert!(matches!(err, grit_lib::error::Error::PathError(_)));
     assert!(repo_dir.join("tracked").is_file());
     assert!(repo_dir.join("blocked").is_file());
     assert_eq!(
         index_before.entries(),
-        repo.load_index().expect("index after").entries()
+        repo.index_handle().load().expect("index after").entries()
     );
 }
 
@@ -435,7 +435,7 @@ fn mv_force_refused_when_index_lock_held_externally() {
         .expect("pre-create index.lock");
 
     let repo = grit_repo(repo_dir);
-    let index_before = repo.load_index().expect("index before");
+    let index_before = repo.index_handle().load().expect("index before");
     let err = move_path(&repo, "source", "destination", true).expect_err("force mv with lock");
     assert!(
         matches!(err, grit_lib::error::Error::Io(_)),
@@ -448,7 +448,7 @@ fn mv_force_refused_when_index_lock_held_externally() {
         status.is_empty(),
         "force mv must not delete destination when lock is held:\n{status}"
     );
-    let index_after = repo.load_index().expect("index after");
+    let index_after = repo.index_handle().load().expect("index after");
     assert_eq!(index_before.entries(), index_after.entries());
     assert!(index_after.get("source".as_bytes(), 0).is_some());
     assert!(index_after.get("destination".as_bytes(), 0).is_some());
@@ -633,7 +633,7 @@ fn mv_case_only_does_not_clobber_predictable_temp_pattern_file() {
         repo_dir.join(&decoy).is_file(),
         "unrelated file matching the old temp pattern must survive case-only mv"
     );
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     assert!(
         index.get(decoy.as_bytes(), 0).is_some(),
         "index entry for decoy must remain"
@@ -658,7 +658,7 @@ fn mv_case_only_directory_with_ignorecase() {
     assert!(!worktree_has_exact_dir_entry(repo_dir, "Docs"));
     assert!(repo_dir.join("docs/a.txt").is_file());
 
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     let entry = index
         .get(b"docs/a.txt", 0)
         .expect("index tracks renamed tree path");
@@ -692,7 +692,7 @@ fn mv_case_only_rename_with_ignorecase() {
     assert!(worktree_has_exact_dir_entry(repo_dir, "readme.md"));
     assert!(!worktree_has_exact_dir_entry(repo_dir, "README.md"));
 
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     let entry = index
         .get(b"readme.md", 0)
         .expect("index tracks destination spelling");
@@ -742,14 +742,14 @@ fn cache_tree_valid_after_mv_commit() {
     let repo = grit_repo(repo_dir);
     move_path(&repo, "one.txt", "three.txt", false).expect("mv");
 
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     let _tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::default())
         .expect("write-tree");
     assert!(cache_tree_fully_valid(
         &repo.odb(),
         index.cache_tree.as_ref()
     ));
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
 
     git(repo_dir, &["commit", "-q", "-m", "rename"]);
     fsck_strict(repo_dir);

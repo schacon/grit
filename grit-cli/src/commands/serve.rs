@@ -48,7 +48,7 @@ pub fn run(
     let repo = Repository::open(Path::new(directory), &options.clone().for_serving())
         .with_context(|| format!("opening repository '{directory}'"))?;
     let config =
-        ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true).unwrap_or_default();
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let hidden_refs = match service {
         Service::UploadPack => grit_lib::hide_refs::hide_ref_patterns_uploadpack(&config),
         Service::ReceivePack => grit_lib::hide_refs::hide_ref_patterns_receive(&config),

@@ -14,14 +14,14 @@ pub mod sqlite_odb;
 
 /// Resolve a revision-like string as a ref first, then as a raw object id.
 pub fn resolve_name(repo: &Repository, name: &str) -> Result<ObjectId> {
-    grit_lib::refs::resolve_ref(&repo.git_dir(), name)
+    grit_lib::refs::resolve_ref(repo.git_dir(), name)
         .or_else(|_| name.parse::<ObjectId>().map_err(anyhow::Error::from))
         .with_context(|| format!("could not resolve {name}"))
 }
 
 /// Return the current HEAD object id.
 pub fn head_oid(repo: &Repository) -> Result<ObjectId> {
-    grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD").context("could not resolve HEAD")
+    grit_lib::refs::resolve_ref(repo.git_dir(), "HEAD").context("could not resolve HEAD")
 }
 
 /// Return the object id of a commit's tree.

@@ -7,7 +7,7 @@ use std::fs;
 use grit_lib::config::{ConfigScope, ConfigSet, IncludeContext};
 use grit_lib::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use support::{grit_file_from_content, isolated_env};
 use tempfile::tempdir;
 
@@ -24,12 +24,13 @@ fn ctx(git_dir: &std::path::Path, env: &Environment) -> IncludeContext {
 #[test]
 fn includeif_onbranch_matches_current_branch() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "feature/x",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "feature/x".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -51,12 +52,13 @@ fn includeif_onbranch_matches_current_branch() {
 #[test]
 fn includeif_hasconfig_remote_url() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -144,12 +146,13 @@ fn includeif_gitdir_icase_matches() {
     let home = dir.path().join("home");
     fs::create_dir_all(&home).expect("home");
     let repo = home.join("Repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");

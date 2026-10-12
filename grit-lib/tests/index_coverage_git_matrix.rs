@@ -69,7 +69,7 @@ fn dump_cache_tree_and_format_dump() {
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
     let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
-    let index = grit.load_index().expect("load");
+    let index = grit.index_handle().load().expect("load");
     assert!(index.cache_tree.is_some());
     let _ = index.format_cache_tree_dump();
     let dump = index.dump_cache_tree(&grit.odb()).expect("dump");
@@ -83,7 +83,7 @@ fn overlay_tree_on_index_from_head() {
     let wt = repo.worktree();
     fs::write(wt.join("a/f0.txt"), "dirty\n").expect("modify");
     let grit = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("open");
-    let mut index = grit.load_index().expect("load");
+    let mut index = grit.index_handle().load().expect("load");
     index
         .overlay_tree_on_index(&grit, "HEAD", b"")
         .expect("overlay");
@@ -108,12 +108,13 @@ fn load_expand_sparse_optional_and_collapse_roundtrip() {
         .tree;
     let patterns = vec!["/*".to_string(), "!/*/".to_string(), "/a/".to_string()];
     let mut index =
-        Index::load_expand_sparse_optional(&grit.index_path(), &grit.odb()).expect("load");
+        Index::load_expand_sparse_optional(&grit.index_handle().path(), &grit.odb()).expect("load");
     index
         .try_collapse_sparse_directories(&grit.odb(), &head, &patterns, true, true)
         .expect("collapse");
     if index.has_sparse_directory_placeholders() {
-        let expanded = Index::load_expand_sparse(&grit.index_path(), &grit.odb()).expect("expand");
+        let expanded =
+            Index::load_expand_sparse(&grit.index_handle().path(), &grit.odb()).expect("expand");
         assert!(!expanded.has_sparse_directory_placeholders());
     }
 }

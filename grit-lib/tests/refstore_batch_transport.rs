@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::refs::resolve_ref;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::transfer::{FetchOptions, TagMode};
 
 use support::{each_backend, git, reftable_tables_snapshot, two_commit_oids, Backend};
@@ -26,12 +26,13 @@ fn fetch_updates_refs_in_one_transaction_reftable() {
         grit_lib::refs::write_ref(&remote_git, "refs/heads/branch-b", &c2).expect("remote b");
 
         let local_root = tempfile::tempdir().expect("local tempdir");
-        let local = init_repository(
+        let local = Repository::init(
             local_root.path(),
-            false,
-            "main",
-            None,
-            RefStorageFormat::Reftable,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: RefStorageFormat::Reftable,
+                ..InitOptions::default()
+            },
         )
         .expect("local init");
         let local_git = local.git_dir();
@@ -139,7 +140,15 @@ fn atomic_push_over_grit_http(ref_format: RefStorageFormat) {
     let bare_name = "atomic.git";
     let bare = root.join(bare_name);
     std::fs::create_dir_all(&bare).expect("bare dir");
-    init_repository(&bare, true, "main", None, ref_format).expect("bare init");
+    Repository::init(
+        &bare,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ..InitOptions::default()
+        },
+    )
+    .expect("bare init");
     run_git(&bare, &["config", "receive.denyNonFastForwards", "true"]);
 
     let source = tmp.path().join("src");

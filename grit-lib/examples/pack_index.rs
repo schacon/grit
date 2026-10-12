@@ -6,15 +6,16 @@
 //! Run: `cargo run -p grit-lib --example pack_index`
 
 use grit_lib::pack;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     let objects_dir = repo.git_dir().join("objects");

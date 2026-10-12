@@ -11,7 +11,7 @@
 use grit_lib::environment::RepositoryOptions;
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 
 /// Write a raw object of `kind` and return its id.
 fn write(repo: &Repository, kind: ObjectKind, data: &[u8]) -> ObjectId {
@@ -21,12 +21,14 @@ fn write(repo: &Repository, kind: ObjectKind, data: &[u8]) -> ObjectId {
 #[test]
 fn add_tip_accepts_annotated_tag() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        true,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
 

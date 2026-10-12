@@ -27,7 +27,7 @@ fn main() {
 fn run() -> Result<()> {
     let _cli = Cli::parse();
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
-    let index = repo.load_index()?;
+    let index = repo.index_handle().load()?;
     let index_paths: BTreeSet<String> = index
         .entries()
         .iter()

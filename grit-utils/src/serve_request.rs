@@ -55,7 +55,7 @@ fn serve_clone_capability_string(repo: &Repository) -> String {
 
 /// Collect ref tips in the same order Git uses for a full-clone want list.
 fn ref_want_oids(repo: &Repository) -> Result<Vec<ObjectId>> {
-    let mut refs = grit_lib::refs::list_refs(&repo.git_dir(), "refs/")?;
+    let mut refs = grit_lib::refs::list_refs(repo.git_dir(), "refs/")?;
     refs.sort_by(|a, b| a.0.cmp(&b.0));
     let mut out = Vec::new();
     let mut seen = HashSet::new();

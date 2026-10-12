@@ -6,7 +6,7 @@ use std::process::Command;
 use grit_lib::check_ref_format::{validate_branch_short_name, validate_tag_short_name};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::write_ref;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn git_check_ref_format_branch(name: &str) -> bool {
@@ -124,12 +124,13 @@ fn tag_short_names_match_git_check_ref_format() {
 #[test]
 fn write_ref_rejects_invalid_branch_names_without_loose_files() {
     let dir = tempdir().unwrap();
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.git_dir().to_path_buf();
@@ -154,12 +155,13 @@ fn write_ref_rejects_invalid_branch_names_without_loose_files() {
 fn write_ref_accepts_refs_heads_head_like_git() {
     let dir = tempdir().unwrap();
     let worktree = dir.path();
-    let repo = init_repository(
+    let repo = Repository::init(
         worktree,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let tip = seed_empty_commit(worktree);

@@ -33,7 +33,6 @@ use std::path::Path;
 use crate::commit::{assemble_identity, identity_now_from_epoch};
 use crate::config::ConfigSet;
 use crate::diff::diff_trees;
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident_resolve::{
     resolve_email_with, resolve_loose_committer_parts_with, resolve_name_with, IdentRole,
@@ -535,6 +534,7 @@ fn move_branch(
 #[cfg(test)]
 mod integrate_tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::index::{Index, IndexEntry, MODE_REGULAR};
     use std::collections::BTreeMap;
 

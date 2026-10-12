@@ -8,7 +8,7 @@ use grit_lib::command_runner::RecordingRunner;
 use grit_lib::diagnostics::{CollectingDiagnostics, DiagnosticSink};
 use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 
 fn main() -> Result<(), Error> {
     let base = tempfile::tempdir().map_err(Error::Io)?;
@@ -16,12 +16,13 @@ fn main() -> Result<(), Error> {
     let open_named =
         |name: &str, email: &str| -> Result<(Repository, Arc<CollectingDiagnostics>), Error> {
             let root = base.path().join(name);
-            init_repository(
+            Repository::init(
                 &root,
-                false,
-                "main",
-                None,
-                grit_lib::RefStorageFormat::Files,
+                &InitOptions {
+                    initial_branch: "main".to_owned(),
+                    ref_storage: grit_lib::RefStorageFormat::Files,
+                    ..InitOptions::default()
+                },
             )?;
 
             let home = base.path().join(format!("home-{name}"));
@@ -47,7 +48,7 @@ fn main() -> Result<(), Error> {
             options.diagnostics = sink;
 
             let git_dir = root.join(".git");
-            let repo = Repository::open(&git_dir, &&options.clone().with_work_tree(&root))?;
+            let repo = Repository::open(&git_dir, &options.clone().with_work_tree(&root))?;
             Ok((repo, diagnostics))
         };
 

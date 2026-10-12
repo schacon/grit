@@ -13,9 +13,9 @@ use grit_lib::attributes::{
     parse_gitattributes_file_content_with_base, quote_path_for_check_attr, resolve_attr_treeish,
     resolve_tree_oid, validate_rules_for_add, AttrValue, MAX_ATTR_FILE_BYTES, MAX_ATTR_LINE_BYTES,
 };
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
-use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use support::{
     assert_all_attrs_match, assert_attrs_match, grit_attr_value, grit_repo, hermetic_git,
@@ -583,7 +583,7 @@ fn t0003_resolve_attr_treeish_and_tree_oid_errors() {
     env.git_config_global = Some(null_dev().to_string());
     let options = RepositoryOptions::with_environment(env);
     let repo2 =
-        Repository::open(&wt.join(".git"), &&options.clone().with_work_tree(wt)).expect("open2");
+        Repository::open(&wt.join(".git"), &options.clone().with_work_tree(wt)).expect("open2");
     let err = load_gitattributes_for_diff(&repo2).unwrap_err();
     assert!(matches!(err, Error::InvalidRef(_)));
 }

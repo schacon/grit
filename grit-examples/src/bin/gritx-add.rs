@@ -24,10 +24,10 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
-    let mut index = repo.load_index()?;
+    let mut index = repo.index_handle().load()?;
     for file in cli.files {
         add_path(&repo, &mut index, &file)?;
     }
-    repo.write_index(&mut index)?;
+    repo.index_handle().write(&mut index)?;
     Ok(())
 }

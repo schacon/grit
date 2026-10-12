@@ -23,7 +23,7 @@ use grit_lib::refs::{
     reflog_file_path, write_ref, write_symbolic_ref,
 };
 use grit_lib::reftable::{reftable_create_reflog, reftable_replace_reflog};
-use grit_lib::repo::Repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 use support::{
     append_repo_config, assert_reflog_tree_matches, copy_worktree, each_backend, empty_commit_oid,
@@ -698,12 +698,13 @@ fn log_all_ref_updates_modes_match_git() {
 fn t0600_expire_on_symref_not_referent() {
     let root = tempfile::tempdir().expect("tempdir");
     let worktree = root.path();
-    grit_lib::repo::init_repository(
+    grit_lib::repo::Repository::init(
         worktree,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = worktree.join(".git");

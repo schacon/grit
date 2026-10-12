@@ -121,7 +121,7 @@ fn sha256_stat_refresh_staging_patch_id_and_prune_packed() {
     let git_oid = git(repo_root, &["hash-object", "-w", "tracked.txt"])
         .trim()
         .to_string();
-    let index = grit_repo.load_index().expect("index");
+    let index = grit_repo.index_handle().load().expect("index");
     let entry = index
         .entries()
         .iter()

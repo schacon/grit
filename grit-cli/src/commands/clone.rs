@@ -123,7 +123,11 @@ fn clone_into(
     let mut progress = crate::terminal_progress::TerminalProgress::new(progress_enabled);
     checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut progress)
         .context("could not check out files")?;
-    let index = outcome.repo.load_index().context("could not read index")?;
+    let index = outcome
+        .repo
+        .index_handle()
+        .load()
+        .context("could not read index")?;
     let files = u64::try_from(index.entries().len()).unwrap_or(u64::MAX);
 
     Ok(CloneOutcome {

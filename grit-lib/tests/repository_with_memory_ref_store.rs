@@ -105,7 +105,13 @@ fn repository_injected_head_reflog_uses_ref_store() {
         .expect("commit");
 
     let repo = repo.with_ref_store(store);
-    assert_eq!(repo.resolve_ref_name("HEAD").expect("HEAD"), oid);
+    use grit_lib::refs::store::RefName;
+    assert_eq!(
+        repo.references()
+            .resolve(&RefName::try_from("HEAD").expect("ref name"))
+            .expect("HEAD"),
+        oid
+    );
     let head_at_zero = resolve_revision(&repo, "HEAD@{0}").expect("HEAD reflog");
     assert_eq!(head_at_zero, oid);
 }

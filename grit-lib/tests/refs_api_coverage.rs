@@ -14,7 +14,7 @@ use grit_lib::refs::{
     should_autocreate_reflog, write_ref, write_ref_cached, write_ref_cas, write_symbolic_ref,
     PackedRefs, RawRefLookup,
 };
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn oid(byte: u8) -> ObjectId {
@@ -32,12 +32,13 @@ fn ref_name_validation_and_dwim_helpers() {
 #[test]
 fn packed_refs_load_and_namespace_conflict() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -66,12 +67,13 @@ fn packed_refs_load_and_namespace_conflict() {
 #[test]
 fn write_ref_cas_and_delete_cas_error_paths() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -94,12 +96,13 @@ fn write_ref_cas_and_delete_cas_error_paths() {
 #[test]
 fn reflog_policy_and_append() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -124,12 +127,13 @@ fn reflog_policy_and_append() {
 #[test]
 fn list_refs_resolve_dwim_and_symbolic() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -154,12 +158,13 @@ fn list_refs_resolve_dwim_and_symbolic() {
 #[test]
 fn pack_remote_tracking_refs_for_clone_smoke() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

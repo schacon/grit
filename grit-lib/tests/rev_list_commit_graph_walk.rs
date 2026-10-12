@@ -5,7 +5,7 @@ use std::process::Command;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs::write_ref;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::write_tree::write_tree_from_index;
 use tempfile::TempDir;
@@ -75,12 +75,13 @@ fn git_commit_graph_write(repo_root: &tempfile::TempDir) {
 #[test]
 fn rev_list_commit_graph_walk_matches_object_walk() {
     let dir = TempDir::new().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     write_linear_commits(&repo, 80);

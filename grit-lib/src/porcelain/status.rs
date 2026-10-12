@@ -28,7 +28,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
 use crate::diff::DiffEntry;
-use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
@@ -1850,6 +1849,7 @@ fn porcelain_v2_worktree_mode(
 #[cfg(test)]
 mod status_op_tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::progress::NullProgress;
     use std::fs;
     use tempfile::TempDir;

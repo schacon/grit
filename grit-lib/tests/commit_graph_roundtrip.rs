@@ -16,7 +16,7 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{rev_list, RevListOptions};
 fn git_cmd(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -510,12 +510,13 @@ fn generation_overflow_and_wide_commit_times() {
 #[test]
 fn root_commit_and_grit_only_write_without_generation_chunk() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let mut index = Index::new();

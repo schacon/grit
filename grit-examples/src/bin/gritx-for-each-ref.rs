@@ -25,7 +25,7 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
-    for (name, oid) in refs::list_refs(&repo.git_dir(), &cli.prefix)? {
+    for (name, oid) in refs::list_refs(repo.git_dir(), &cli.prefix)? {
         println!("{oid} {name}");
     }
     Ok(())

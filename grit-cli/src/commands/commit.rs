@@ -54,7 +54,7 @@ impl MarkdownRender for CommitOutcome {
 pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
     let repo = context::discover()?;
 
-    match resolve_head(&repo.git_dir())? {
+    match resolve_head(repo.git_dir())? {
         HeadState::Branch { .. } => {}
         HeadState::Detached { .. } => bail!("HEAD is detached; grit commit needs a branch"),
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
@@ -62,7 +62,7 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
 
     stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    if repo.load_index()?.has_unmerged_entries() {
+    if repo.index_handle().load()?.has_unmerged_entries() {
         return Err(map_commit_error(Error::IndexUnmerged));
     }
 

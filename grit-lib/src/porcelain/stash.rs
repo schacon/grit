@@ -21,7 +21,6 @@ use crate::diff::{
     diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees,
     worktree_differs_from_index_entry, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 // `MODE_EXECUTABLE` only drives the Unix executable-bit application below.
@@ -1554,6 +1553,7 @@ mod coverage_tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::index::{entry_from_stat, MODE_REGULAR};
     use std::fs;
     use std::path::Path;

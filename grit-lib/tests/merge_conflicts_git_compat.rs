@@ -100,7 +100,7 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
     assert!(repo.git_dir().join("ORIG_HEAD").exists());
     assert!(repo.git_dir().join("MERGE_MSG").exists());
 
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     assert!(index.has_unmerged_entries());
 
     let a_body = fs::read_to_string(root.join("a.txt")).expect("a.txt");

@@ -235,7 +235,7 @@ fn load_config() -> ConfigSet {
         None,
         &grit_lib::environment::RepositoryOptions::with_environment(env.clone()),
     ) {
-        if let Ok(config) = ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true) {
+        if let Ok(config) = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true) {
             return config;
         }
     }

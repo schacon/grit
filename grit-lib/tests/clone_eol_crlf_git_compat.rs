@@ -128,7 +128,7 @@ fn empty_index_checkout_populated_tree_applies_eol_crlf() {
         Repository::discover(Some(dest.path()), &RepositoryOptions::empty()).expect("open clone");
 
     let mut index = Index::new();
-    repo.write_index(&mut index).expect("clear index");
+    repo.index_handle().write(&mut index).expect("clear index");
     std::fs::remove_file(dest.path().join("f.txt")).expect("remove f.txt");
     std::fs::remove_file(dest.path().join(".gitattributes")).expect("remove attrs");
 
@@ -148,7 +148,7 @@ fn checkout_populated_tree_smudge_when_gitattributes_sorts_before_target() {
         Repository::discover(Some(dest.path()), &RepositoryOptions::empty()).expect("open clone");
 
     let mut index = Index::new();
-    repo.write_index(&mut index).expect("clear index");
+    repo.index_handle().write(&mut index).expect("clear index");
     std::fs::remove_file(dest.path().join("f.txt")).expect("remove f.txt");
     std::fs::remove_file(dest.path().join(".gitattributes")).expect("remove attrs");
 

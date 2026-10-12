@@ -4,16 +4,17 @@
 
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::ObjectKind;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     let blob_oid = repo.odb().write(ObjectKind::Blob, b"staged content\n")?;
@@ -39,9 +40,9 @@ fn main() -> grit_lib::error::Result<()> {
 
     let mut index = Index::new();
     index.add_or_replace(entry);
-    repo.write_index(&mut index)?;
+    repo.index_handle().write(&mut index)?;
 
-    let round_trip = repo.load_index()?;
+    let round_trip = repo.index_handle().load()?;
     println!("index entries: {}", round_trip.entries().len());
     let first = &round_trip.entries()[0];
     println!(

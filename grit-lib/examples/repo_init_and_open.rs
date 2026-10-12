@@ -3,24 +3,28 @@
 //! Run: `cargo run -p grit-lib --example repo_init_and_open`
 
 use grit_lib::environment::RepositoryOptions;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use std::fs;
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
     let path = root.path();
 
-    let repo = init_repository(path, false, "main", None, grit_lib::RefStorageFormat::Files)?;
+    let repo = Repository::init(
+        path,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
     println!("opened after init: git_dir = {}", repo.git_dir().display());
     println!("work tree: {}", repo.work_tree().unwrap().display());
 
     let again = Repository::open(
         repo.git_dir(),
-        &RepositoryOptions::empty().with_work_tree(
-            repo.work_tree()
-                .expect("non-bare")
-                .to_path_buf(),
-        ),
+        &RepositoryOptions::empty()
+            .with_work_tree(repo.work_tree().expect("non-bare").to_path_buf()),
     )?;
     println!("re-open by path: bare = {}", again.is_bare());
 

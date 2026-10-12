@@ -7,7 +7,7 @@ use std::path::Path;
 
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet, LoadConfigOptions};
 use grit_lib::environment::Environment;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 mod support;
@@ -63,12 +63,13 @@ fn load_cascade_hits_local_and_global_layers() {
     )
     .expect("global");
     let repo = dir.path().join("repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");
@@ -111,12 +112,13 @@ fn config_write_lock_conflict() {
 #[test]
 fn effective_log_refs_config_and_i64_errors() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

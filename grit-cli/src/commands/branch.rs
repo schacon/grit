@@ -96,12 +96,12 @@ pub fn run(name: Option<String>, delete: bool, force_delete: bool) -> Result<Bra
 }
 
 fn list(repo: &Repository) -> Result<BranchOutcome> {
-    let current = match resolve_head(&repo.git_dir())? {
+    let current = match resolve_head(repo.git_dir())? {
         HeadState::Branch { short_name, .. } => Some(short_name),
         _ => None,
     };
 
-    let mut names: Vec<String> = refs::list_refs(&repo.git_dir(), "refs/heads/")
+    let mut names: Vec<String> = refs::list_refs(repo.git_dir(), "refs/heads/")
         .context("could not list branches")?
         .into_iter()
         .map(|(refname, _)| {
@@ -137,7 +137,7 @@ fn branch_delete_base_oid(
     head: &HeadState,
 ) -> Option<grit_lib::objects::ObjectId> {
     if let Some(upstream_ref) = upstream_tracking_full_ref(repo, branch_name) {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir(), &upstream_ref) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &upstream_ref) {
             return Some(oid);
         }
     }
@@ -145,7 +145,7 @@ fn branch_delete_base_oid(
 }
 
 fn delete_branch(repo: &Repository, name: &str, force_delete: bool) -> Result<BranchOutcome> {
-    if let HeadState::Branch { short_name, .. } = resolve_head(&repo.git_dir())? {
+    if let HeadState::Branch { short_name, .. } = resolve_head(repo.git_dir())? {
         if short_name == name {
             bail!("cannot delete '{name}' — it is the current branch");
         }
@@ -155,10 +155,10 @@ fn delete_branch(repo: &Repository, name: &str, force_delete: bool) -> Result<Br
         .map_err(anyhow::Error::new)?;
 
     let branch_ref = format!("refs/heads/{name}");
-    let branch_oid = refs::resolve_ref(&repo.git_dir(), &branch_ref)
+    let branch_oid = refs::resolve_ref(repo.git_dir(), &branch_ref)
         .map_err(|_| anyhow::anyhow!("no branch named '{name}'"))?;
 
-    let head = resolve_head(&repo.git_dir())?;
+    let head = resolve_head(repo.git_dir())?;
     if !force_delete {
         let merged = branch_delete_base_oid(repo, name, &head)
             .map(|base_oid| is_ancestor(repo, branch_oid, base_oid).unwrap_or(false))
@@ -170,7 +170,7 @@ fn delete_branch(repo: &Repository, name: &str, force_delete: bool) -> Result<Br
         }
     }
 
-    refs::delete_ref(&repo.git_dir(), &branch_ref).context("could not delete branch")?;
+    refs::delete_ref(repo.git_dir(), &branch_ref).context("could not delete branch")?;
 
     let hex = branch_oid.to_hex();
     let short_len = 7.min(hex.len());

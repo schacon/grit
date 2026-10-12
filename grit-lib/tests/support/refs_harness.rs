@@ -15,7 +15,7 @@ use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
 use grit_lib::ref_namespace::storage_ref_name;
 use grit_lib::refs::list_refs;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 
 pub const AUTHOR_NAME: &str = "Refs Harness Author";
 pub const AUTHOR_EMAIL: &str = "refs-harness@example.com";
@@ -171,8 +171,15 @@ pub fn each_backend(f: impl Fn(Backend, &TestRepo)) {
         }
         let root = tempfile::tempdir().expect("tempdir");
         let worktree = root.path().to_path_buf();
-        init_repository(&worktree, false, "main", None, ref_storage_format(backend))
-            .expect("init_repository");
+        Repository::init(
+            &worktree,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: ref_storage_format(backend),
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = TestRepo {
             _root: root,
             worktree,
@@ -329,12 +336,13 @@ pub fn git_check_ref_format(refname: &str) -> bool {
 pub fn files_repo() -> TestRepo {
     let root = tempfile::tempdir().expect("tempdir");
     let worktree = root.path().to_path_buf();
-    init_repository(
+    Repository::init(
         &worktree,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init_repository");
     TestRepo {

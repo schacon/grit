@@ -8,7 +8,7 @@ use grit_lib::repo::Repository;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
-    let head = grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD")?;
+    let head = grit_lib::refs::resolve_ref(repo.git_dir(), "HEAD")?;
     let object = repo.odb().read(&head)?;
     if object.kind != ObjectKind::Commit {
         return Err("HEAD is not a commit".into());

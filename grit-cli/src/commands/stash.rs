@@ -360,7 +360,7 @@ fn stash_oid_at(repo: &Repository, n: usize) -> Result<grit_lib::objects::Object
 }
 
 fn unmerged_paths(repo: &Repository) -> Result<Vec<String>> {
-    let index = repo.load_index().context("could not load index")?;
+    let index = repo.index_handle().load().context("could not load index")?;
     let mut paths: Vec<String> = index
         .entries()
         .iter()

@@ -88,4 +88,25 @@ fn open_discover_and_init_roundtrip_fsck() {
     let discovered = Repository::discover(Some(&normal), &RepositoryOptions::empty())
         .expect("discover from work tree");
     assert_eq!(discovered.git_dir(), repo.git_dir());
+
+    let info = discovered.discovery_info();
+    assert!(info.discovery_root.is_some());
+    assert!(!info.explicit_git_dir);
+
+    let serving = Repository::open(
+        bare_repo.git_dir(),
+        &RepositoryOptions::empty().for_serving(),
+    )
+    .expect("open for serving");
+    assert_eq!(serving.git_dir(), bare_repo.git_dir());
+
+    let skip_fmt = Repository::open(
+        repo.git_dir(),
+        &RepositoryOptions {
+            validate_repository_format: false,
+            ..RepositoryOptions::empty().with_work_tree(normal.clone())
+        },
+    )
+    .expect("open skipping format validation");
+    assert_eq!(skip_fmt.git_dir(), repo.git_dir());
 }

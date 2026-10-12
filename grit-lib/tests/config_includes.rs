@@ -8,7 +8,7 @@ use std::path::Path;
 use grit_lib::config::{ConfigScope, ConfigSet, IncludeContext};
 use grit_lib::environment::Environment;
 use grit_lib::error::{ConfigError, Error};
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use support::{
     git_file_get, git_file_get_includes, git_file_list, git_local_list_with_git_dir,
     grit_file_from_content, grit_list_lines, isolated_env, normalize_config_corpus, GitConfigLine,
@@ -29,8 +29,15 @@ fn include_ctx(git_dir: &Path, env: &Environment) -> IncludeContext {
 fn t1305_include_and_includeif_match_git_show_origin() {
     let dir = tempdir().expect("tempdir");
     let root = dir.path();
-    init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("initialize repository");
+    Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("initialize repository");
     let gd = root.join(".git");
     let main = gd.join("config");
     fs::write(
@@ -214,12 +221,13 @@ fn includeif_gitdir_trailing_slash_and_wildcard() {
     let home = dir.path().join("home");
     fs::create_dir_all(&home).expect("home");
     let repo = home.join("nested").join("repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");
@@ -254,12 +262,13 @@ fn includeif_gitdir_trailing_slash_and_wildcard() {
 #[test]
 fn extensions_worktree_config_layering() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

@@ -37,10 +37,9 @@ impl<'repo> ConfigHandle<'repo> {
     ///
     /// ```
     /// # fn main() -> grit_lib::error::Result<()> {
-    /// use grit_lib::repo::init_repository;
-    /// use grit_lib::RefStorageFormat;
+    /// use grit_lib::repo::{InitOptions, Repository};
     /// let dir = std::env::temp_dir().join("grit-config-get-doc");
-    /// let repo = init_repository(&dir, false, "main", None, RefStorageFormat::Files)?;
+    /// let repo = Repository::init(&dir, &InitOptions::default())?;
     /// let _ = repo.config_handle().get("core.repositoryformatversion");
     /// # Ok(())
     /// # }

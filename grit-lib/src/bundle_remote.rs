@@ -1,13 +1,12 @@
 //! Fetch and remote helpers for on-disk bundle files (clone / `grit fetch` from a `.bundle`).
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use crate::bundle::{Bundle, BundleError, BundleSpec};
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::{NoProgress, Progress};
 use crate::objects::ObjectId;

@@ -62,7 +62,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
 
     let repo =
         Repository::open(&git_dir, &RepositoryOptions::empty().with_work_tree(wt)).expect("open");
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     let rules = WorktreeRules::from_repository(&repo, &index).expect("rules");
     let filter_fp = Some(rules.filter_process());
     let conv = rules.conversion().clone();

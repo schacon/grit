@@ -8,7 +8,7 @@ use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 fn git_eol(repo: &std::path::Path, path: &str) -> String {
@@ -26,8 +26,15 @@ fn git_eol(repo: &std::path::Path, path: &str) -> String {
 }
 
 fn init_autocrlf_repo(root: &std::path::Path) -> Repository {
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     fs::write(
         root.join(".git/config"),
         "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tautocrlf = true\n",
@@ -39,10 +46,10 @@ fn init_autocrlf_repo(root: &std::path::Path) -> Repository {
 
 fn commit_all(repo: &Repository, message: &str) -> grit_lib::objects::ObjectId {
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
     let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,

@@ -4,13 +4,12 @@
 //! `gitdir`, `commondir`, `HEAD`, and optional `locked` / `prunable` files.
 //! This module reads that layout and implements linked worktree add/remove.
 
-use crate::environment::RepositoryOptions;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::check_ref_format::validate_branch_short_name;
 use crate::config::ConfigSet;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::git_path::{absolute_path_for_gitfile_stored_path, path_for_disk_compare};
 use crate::objects::{parse_commit, ObjectKind};

@@ -16,7 +16,6 @@ use crate::bitmap_walk::{bitmap_filter_supported, BitmapWalkError, PeeledTips};
 use crate::commit_graph_file::{BloomPrecheck, BloomWalkStatsHandle, CommitGraphChain};
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_in_sparse_checkout};
@@ -8082,9 +8081,10 @@ pub fn merge_bases(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::objects::ObjectKind;
     use crate::odb::Odb;
-    use crate::repo::{init_bare_clone_minimal, Repository};
+    use crate::repo::{InitOptions, Repository};
     use std::path::PathBuf;
     use tempfile::{tempdir, TempDir};
 
@@ -8271,7 +8271,16 @@ mod tests {
     #[test]
     fn reachable_object_ids_respects_blob_none_filter() {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo
             .odb()
@@ -8358,7 +8367,16 @@ mod tests {
     #[test]
     fn object_ids_for_cat_file_filtered_includes_provided() {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo.odb().write(ObjectKind::Blob, b"x").expect("blob");
         let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
@@ -8377,7 +8395,16 @@ mod tests {
 
     fn unit_test_repo_with_merge() -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo.odb().write(ObjectKind::Blob, b"file\n").expect("blob");
         let mut tree_body = format!("100644 blob {blob}\0f.txt");
@@ -8491,7 +8518,16 @@ mod tests {
     #[test]
     fn select_bisect_commits_ranks_linear_history() {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let ident = "T <t@e.com> 1 +0000";
         let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
@@ -8582,7 +8618,16 @@ mod tests {
     #[test]
     fn cat_file_filtered_with_blob_limit_and_combine() {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
         let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
         let blob = repo
             .odb()

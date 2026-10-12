@@ -54,7 +54,7 @@ fn status_and_add_see_interior_untracked_on_indexed_chain() {
     .expect("add all");
     assert!(outcome.total() >= 1, "add must stage untracked sibling");
 
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     assert!(
         index.get(b"a/b/untracked.txt", 0).is_some(),
         "index must contain staged untracked sibling"
@@ -97,7 +97,8 @@ fn full_tree_add_and_commit_store_lf_with_autocrlf() {
     .expect("grit add all");
 
     let grit_staged_oid = repo
-        .load_index()
+        .index_handle()
+        .load()
         .expect("idx")
         .get(b"f.txt", 0)
         .expect("f.txt staged")

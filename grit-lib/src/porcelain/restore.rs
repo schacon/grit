@@ -608,7 +608,6 @@ fn index_entry_from_flat(path: &str, src: &FlatTreeEntry, size: u32) -> IndexEnt
         base_index_pos: 0,
     }
 }
-
 fn refresh_restored_index_stats(
     repo: &Repository,
     work_tree: &Path,

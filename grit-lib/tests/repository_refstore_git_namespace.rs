@@ -108,8 +108,19 @@ fn repository_namespaced_refstore_resolves_global_head() {
     let opts = RepositoryOptions::with_environment(env);
     let repo = Repository::open(&git_dir, &opts).expect("open");
 
-    assert_eq!(repo.resolve_ref_name("refs/heads/main").expect("main"), oid);
-    assert_eq!(repo.resolve_ref_name("HEAD").expect("HEAD"), oid);
+    use grit_lib::refs::store::RefName;
+    assert_eq!(
+        repo.references()
+            .resolve(&RefName::try_from("refs/heads/main").expect("ref name"))
+            .expect("main"),
+        oid
+    );
+    assert_eq!(
+        repo.references()
+            .resolve(&RefName::try_from("HEAD").expect("ref name"))
+            .expect("HEAD"),
+        oid
+    );
 }
 
 #[test]

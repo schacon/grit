@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use grit_lib::git_path::user_display_path;
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use serde::Serialize;
 
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
@@ -84,13 +84,21 @@ pub fn run(path: Option<String>, bare: bool, ref_format: RefStorageFormat) -> Re
     };
     let reinitialized = git_dir.join("config").is_file();
 
-    let repo = init_repository(&path, bare, "main", None, ref_format)
-        .with_context(|| format!("could not initialize a repository at {}", path.display()))?;
+    let repo = Repository::init(
+        &path,
+        &InitOptions {
+            bare,
+            initial_branch: "main".to_owned(),
+            ref_storage: ref_format,
+            ..InitOptions::default()
+        },
+    )
+    .with_context(|| format!("could not initialize a repository at {}", path.display()))?;
 
     Ok(InitOutcome {
         initialized: !reinitialized,
         reinitialized,
-        path: user_display_path(&repo.git_dir()),
+        path: user_display_path(repo.git_dir()),
         bare,
         branch: "main".to_owned(),
         ref_format: ref_format.to_string(),

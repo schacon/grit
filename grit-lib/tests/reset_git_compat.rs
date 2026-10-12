@@ -2,7 +2,7 @@
 
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::{objects, refs, RefStorageFormat};
 use grit_test_support::git_cmd;
@@ -15,7 +15,7 @@ fn identity() -> String {
 fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<ObjectId>) {
     let wt = repo.work_tree().expect("wt");
     std::fs::write(wt.join(path), contents).expect("write");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     let oid = repo
         .odb()
         .write(objects::ObjectKind::Blob, contents.as_bytes())
@@ -31,7 +31,7 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
     index.sort();
     let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
     let commit = objects::CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -58,8 +58,15 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
 #[test]
 fn mixed_reset_readable_by_git() {
     let dir = TempDir::new().expect("tempdir");
-    let repo =
-        init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+    let repo = Repository::init(
+        dir.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let c1 = {
         commit_file(&repo, "f", "1\n", None);
         refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head")

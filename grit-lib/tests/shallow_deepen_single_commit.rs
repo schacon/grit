@@ -5,14 +5,18 @@ use std::process::Command;
 
 use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::repo::Repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::shallow_grafts_for_upload_pack_deepen;
 
 fn init_single_commit_bare(dir: &Path) -> (Repository, ObjectId) {
-    grit_lib::repo::init_bare_clone_minimal(
+    Repository::init(
         dir,
-        "main",
-        grit_lib::ref_storage::RefStorageFormat::Files,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let repo = Repository::open(dir, &RepositoryOptions::empty()).expect("open");

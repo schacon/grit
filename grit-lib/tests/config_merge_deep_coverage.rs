@@ -6,7 +6,7 @@ use std::fs;
 
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet, LoadConfigOptions};
 use grit_lib::environment::Environment;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use support::{default_load_opts, isolated_env};
 use tempfile::tempdir;
 
@@ -19,12 +19,13 @@ fn nested_includes_three_levels() {
     fs::write(root.join("c.conf"), "[leaf]\n\tk = deep\n").expect("c");
 
     let repo = root.join("repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");
@@ -72,12 +73,13 @@ fn load_with_env_pairs_and_global_override() {
     fs::create_dir_all(&home).expect("home");
     fs::write(home.join(".gitconfig"), "[fromglobal]\n\tk = g\n").expect("g");
     let repo = dir.path().join("repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");

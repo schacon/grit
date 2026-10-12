@@ -207,7 +207,7 @@ fn write_commit_patch(out: &mut impl Write, repo: &Repository, oid: &ObjectId) -
         let parent_raw = repo.odb().read(&parent_oid).context("read parent")?;
         Some(parse_commit(&parent_raw.data).context("parse parent")?.tree)
     };
-    let entries = diff_trees(&repo.odb(), parent_tree.as_ref(), Some(&commit.tree), "")?;
+    let entries = diff_trees(repo.odb(), parent_tree.as_ref(), Some(&commit.tree), "")?;
     for entry in entries {
         write_diff_entry(out, repo, &entry)?;
     }
@@ -537,11 +537,15 @@ pub fn checkout_branch_force(repo: &Repository, branch: &str) -> Result<()> {
     use grit_lib::objects::parse_commit;
     use grit_lib::porcelain::checkout::checkout_between_trees;
     let oid = if branch.eq_ignore_ascii_case("HEAD") {
-        *grit_lib::state::resolve_head(&repo.git_dir())?
+        *grit_lib::state::resolve_head(repo.git_dir())?
             .oid()
             .context("HEAD does not resolve to a commit")?
     } else {
-        repo.resolve_ref_name(branch)
+        repo.references()
+            .resolve(
+                &grit_lib::refs::store::RefName::try_from(branch)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?,
+            )
             .with_context(|| format!("resolve branch {branch}"))?
     };
     let commit = parse_commit(
@@ -575,7 +579,7 @@ pub fn index_pack_records(
             .unwrap_or_else(|_| Parallelism::resolve(None)),
     };
     let _records =
-        pack_index_records_with_threads(&pack, &repo.odb(), parallelism).context("index-pack")?;
+        pack_index_records_with_threads(&pack, repo.odb(), parallelism).context("index-pack")?;
     Ok(())
 }
 
@@ -601,7 +605,7 @@ pub fn pack_build_all_stdout(repo: &Repository, delta_threads: usize) -> Result<
         write_threads: Some(workers),
     };
     let mut stdout = io::stdout().lock();
-    PackObjects::new(&repo.odb(), opts)
+    PackObjects::new(repo.odb(), opts)
         .wants(&wants)
         .write_to(&mut stdout)
         .context("pack-objects --all")?;
@@ -625,12 +629,12 @@ pub fn diff_rename_m(
     let old_commit = parse_commit(&old_raw.data).context("parse old commit")?;
     let new_commit = parse_commit(&new_raw.data).context("parse new commit")?;
     let entries = diff_trees(
-        &repo.odb(),
+        repo.odb(),
         Some(&old_commit.tree),
         Some(&new_commit.tree),
         "",
     )?;
-    let entries = detect_renames(&repo.odb(), None, entries, threshold);
+    let entries = detect_renames(repo.odb(), None, entries, threshold);
     let mut out = io::stdout().lock();
     for entry in entries {
         let path = entry

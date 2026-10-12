@@ -19,7 +19,6 @@ use std::fs;
 use crate::commit::{assemble_identity, identity_now_from_epoch};
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::ident_resolve::IdentityEnv;
 use crate::merge_base::merge_bases_first_vs_rest;
@@ -1118,6 +1117,7 @@ pub fn notes_merge_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::objects::ObjectKind;
     use crate::repo::Repository;
     use std::process::Command;

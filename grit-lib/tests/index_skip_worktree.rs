@@ -39,7 +39,7 @@ fn t7012_skip_worktree_bits_match_git_ls_files_v() {
     );
 
     let grit = open_grit(wt);
-    let mut index = grit.load_index().expect("load");
+    let mut index = grit.index_handle().load().expect("load");
     clear_all_skip_worktree(&mut index);
     assert!(
         index.entries().iter().all(|e| !e.skip_worktree()),
@@ -47,7 +47,7 @@ fn t7012_skip_worktree_bits_match_git_ls_files_v() {
     );
     apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
-    grit.write_index(&mut index).expect("write");
+    grit.index_handle().write(&mut index).expect("write");
     assert_git_fsck_strict(wt);
     assert_skip_worktree_matches_tag_oracle(&index, &oracle);
 }
@@ -58,7 +58,7 @@ fn t7011_assume_unchanged_seen_by_git_ls_files_v() {
     seed_multidir_repo(&repo);
     let wt = repo.worktree();
     let grit = open_grit(wt);
-    let mut index = grit.load_index().expect("load");
+    let mut index = grit.index_handle().load().expect("load");
     for entry in index.entries_mut() {
         entry.set_assume_unchanged(false);
     }
@@ -68,7 +68,7 @@ fn t7011_assume_unchanged_seen_by_git_ls_files_v() {
         .find(|e| e.path.ends_with(b"a/f0.txt"))
         .expect("entry");
     entry.set_assume_unchanged(true);
-    grit.write_index(&mut index).expect("write");
+    grit.index_handle().write(&mut index).expect("write");
     assert_git_fsck_strict(wt);
 
     let tags = git_ls_files_verbose_map(wt);
@@ -88,7 +88,7 @@ fn t2104_skip_worktree_excluded_from_status_like_git() {
     git(wt, &["read-tree", "-mu", "HEAD"]);
 
     let grit = open_grit(wt);
-    let mut index = grit.load_index().expect("load");
+    let mut index = grit.index_handle().load().expect("load");
     clear_all_skip_worktree(&mut index);
     apply_sparse_checkout_skip_worktree(&grit.git_dir(), Some(wt), &mut index, false);
 
@@ -106,6 +106,6 @@ fn t2104_skip_worktree_excluded_from_status_like_git() {
     );
     excluded.oid = blob;
 
-    grit.write_index(&mut index).expect("write");
+    grit.index_handle().write(&mut index).expect("write");
     assert_porcelain_v2_matches_git(wt, &grit);
 }

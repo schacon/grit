@@ -18,7 +18,6 @@
 use similar::{ChangeTag, TextDiff};
 
 use crate::diff::{diff_trees_with_renames, zero_oid, DiffEntry, DiffStatus};
-use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::hash::ObjectHasher;
 use crate::merge_file;
@@ -711,6 +710,7 @@ fn read_blob(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use std::process::Command;
 
     use tempfile::TempDir;

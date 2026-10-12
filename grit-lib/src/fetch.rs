@@ -28,12 +28,11 @@
 //! `read_v2_fetch_pack_response`, `v2_ls_refs_for_fetch`). Smart-HTTP stays on
 //! v0/v1 (its stateless multi-POST v2 flow is out of scope for this pass).
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch_negotiator::SkippingNegotiator;
 use crate::objects::ObjectId;

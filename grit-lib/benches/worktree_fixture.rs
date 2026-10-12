@@ -134,20 +134,22 @@ fn build_status_nested_l_fixtures(base: &Path) -> (Repository, Repository) {
 
     let nested_root = base.join("status-nested-L");
     let plain_root = base.join("status-plain-L");
-    let nested_repo = init_repository(
+    let nested_repo = Repository::init(
         &nested_root,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("nested status repo");
-    let plain_repo = init_repository(
+    let plain_repo = Repository::init(
         &plain_root,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("plain status repo");
     populate(nested_repo.work_tree().expect("wt"), true);
@@ -296,12 +298,13 @@ impl WorktreeBenchFixtures {
         };
 
         let ignore_root = base.join("ignore-repo");
-        let ignore_repo = init_repository(
+        let ignore_repo = Repository::init(
             &ignore_root,
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )
         .expect("ignore repo init");
         let wt = ignore_repo.work_tree().expect("work tree");
@@ -319,12 +322,13 @@ impl WorktreeBenchFixtures {
         let ignore_paths = generate_probe_paths(100_000);
 
         let attr_root = base.join("attr-repo");
-        let attr_repo = init_repository(
+        let attr_repo = Repository::init(
             &attr_root,
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )
         .expect("attr repo init");
         let attr_wt = attr_repo.work_tree().expect("work tree");
@@ -341,12 +345,13 @@ impl WorktreeBenchFixtures {
         let index_write_scratch = index_dir.join("write-scratch");
 
         let scan_root = base.join("scan-10k");
-        let scan_repo = init_repository(
+        let scan_repo = Repository::init(
             &scan_root,
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )
         .expect("scan repo init");
         let scan_wt = scan_repo.work_tree().expect("work tree");
@@ -370,7 +375,7 @@ impl WorktreeBenchFixtures {
             scan_index.add_or_replace(entry);
         }
         scan_index
-            .write(&scan_repo.index_path())
+            .write(&scan_repo.index_handle().path())
             .expect("write scan index");
 
         let (status_nested_attr_repo, status_plain_l_repo) = build_status_nested_l_fixtures(base);

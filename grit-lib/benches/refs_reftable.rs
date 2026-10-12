@@ -26,7 +26,15 @@ struct ReftableBenchFixture {
 impl ReftableBenchFixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        init_repository(dir.path(), true, "main", None, "reftable").expect("init reftable");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ..InitOptions::default()
+            },
+        )
+        .expect("init reftable");
         let git_dir = dir.path().to_path_buf();
         let base_commit = ObjectId::from_hex(EMPTY_TREE).expect("tree oid");
         let mut batch = Vec::with_capacity(REF_COUNT);
@@ -76,7 +84,15 @@ fn bench_transaction_create_10k(c: &mut Criterion) {
             || {
                 let work = tempfile::tempdir().expect("workdir");
                 std::fs::create_dir_all(work.path()).expect("mkdir");
-                init_repository(work.path(), true, "main", None, "reftable").expect("init");
+                Repository::init(
+                    work.path(),
+                    &InitOptions {
+                        bare: true,
+                        initial_branch: "main".to_owned(),
+                        ..InitOptions::default()
+                    },
+                )
+                .expect("init");
                 work
             },
             |work| {

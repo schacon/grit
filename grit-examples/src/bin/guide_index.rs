@@ -5,7 +5,7 @@
 use grit_lib::environment::RepositoryOptions;
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::progress::NullProgress;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::write_tree::write_tree_from_index;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,12 +34,13 @@ fn main() -> Result<(), grit_lib::error::Error> {
         open_repo(&root)?
     } else {
         let temp = tempfile::tempdir().map_err(grit_lib::error::Error::Io)?;
-        init_repository(
+        Repository::init(
             temp.path(),
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )?;
         let path = temp.path().join("hello.txt");
         fs::write(&path, b"staged from the library guide\n").map_err(grit_lib::error::Error::Io)?;
@@ -49,7 +50,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
     };
     let _keep = temp_guard;
 
-    let index = repo.load_index()?;
+    let index = repo.index_handle().load()?;
     println!("index_entries={}", index.entries().len());
 
     let outcome = stage(&repo, &StageOptions::default(), &mut NullProgress)?;
@@ -58,8 +59,8 @@ fn main() -> Result<(), grit_lib::error::Error> {
         outcome.added, outcome.modified, outcome.removed
     );
 
-    let index = repo.load_index()?;
-    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
+    let index = repo.index_handle().load()?;
+    let tree_oid = write_tree_from_index(repo.odb(), &index, "")?;
     println!("tree_oid={}", tree_oid.to_hex());
 
     Ok(())

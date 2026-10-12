@@ -9,7 +9,7 @@ use grit_lib::refs::{
     delete_ref, delete_ref_cas, lock_path_for_ref, read_raw_ref,
     verify_refname_available_for_create, write_ref, RawRefLookup,
 };
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use std::collections::{BTreeSet, HashSet};
 use tempfile::tempdir;
 
@@ -20,12 +20,13 @@ fn oid(byte: u8) -> ObjectId {
 #[test]
 fn read_raw_ref_reports_directory_at_ref_path() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -43,12 +44,13 @@ fn read_raw_ref_reports_directory_at_ref_path() {
 #[test]
 fn write_ref_fails_when_lock_file_exists() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -62,12 +64,13 @@ fn write_ref_fails_when_lock_file_exists() {
 #[test]
 fn write_ref_rejects_broken_existing_ref_file() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -78,12 +81,13 @@ fn write_ref_rejects_broken_existing_ref_file() {
 #[test]
 fn delete_ref_cas_and_directory_in_the_way() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

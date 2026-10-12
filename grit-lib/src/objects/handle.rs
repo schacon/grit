@@ -31,10 +31,9 @@ impl<'repo> Objects<'repo> {
     /// ```
     /// # fn main() -> grit_lib::error::Result<()> {
     /// use grit_lib::objects::ObjectKind;
-    /// use grit_lib::repo::init_repository;
-    /// use grit_lib::RefStorageFormat;
+    /// use grit_lib::repo::{InitOptions, Repository};
     /// let dir = std::env::temp_dir().join("grit-objects-handle-doc");
-    /// let repo = init_repository(&dir, false, "main", None, RefStorageFormat::Files)?;
+    /// let repo = Repository::init(&dir, &InitOptions::default())?;
     /// let oid = repo.objects().write(ObjectKind::Blob, b"hello")?;
     /// assert!(repo.objects().contains(&oid));
     /// # Ok(())
@@ -56,10 +55,9 @@ impl<'repo> Objects<'repo> {
     /// ```
     /// # fn main() -> grit_lib::error::Result<()> {
     /// use grit_lib::objects::ObjectKind;
-    /// use grit_lib::repo::init_repository;
-    /// use grit_lib::RefStorageFormat;
+    /// use grit_lib::repo::{InitOptions, Repository};
     /// let dir = std::env::temp_dir().join("grit-objects-read-doc");
-    /// let repo = init_repository(&dir, false, "main", None, RefStorageFormat::Files)?;
+    /// let repo = Repository::init(&dir, &InitOptions::default())?;
     /// let oid = repo.objects().write(ObjectKind::Blob, b"payload")?;
     /// let obj = repo.objects().read(&oid)?;
     /// assert_eq!(obj.data, b"payload");

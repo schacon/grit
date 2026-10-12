@@ -6,7 +6,7 @@ use std::process::Command;
 
 use grit_lib::porcelain::status::{status, StatusOptions, UntrackedMode};
 use grit_lib::progress::NullProgress;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::PARALLEL_STAT_MIN_ENTRIES;
 
 fn assert_git_diff_files_clean(repo_root: &Path) {
@@ -51,8 +51,15 @@ fn append_repo_config(repo: &Repository, section: &str, key: &str, value: &str) 
 }
 
 fn seed_repo(root: &Path, preload_index: bool) -> Repository {
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     if !preload_index {
         append_repo_config(&repo, "core", "preloadIndex", "false");
     }
@@ -94,7 +101,7 @@ fn run_status(
     opts.ahead_behind = false;
     opts.stat_parallel_threads = Some(threads);
     let model = status(repo, &opts, &mut NullProgress).expect("status");
-    let index_bytes = fs::read(repo.index_path()).expect("index bytes");
+    let index_bytes = fs::read(repo.index_handle().path()).expect("index bytes");
     (model, index_bytes)
 }
 
@@ -103,14 +110,14 @@ fn parallel_refresh_matches_serial() {
     assert!(PARALLEL_STAT_MIN_ENTRIES <= 5000);
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = seed_repo(tmp.path(), true);
-    let baseline_index = fs::read(repo.index_path()).expect("baseline index");
+    let baseline_index = fs::read(repo.index_handle().path()).expect("baseline index");
 
     let (serial_model, serial_index) = {
-        fs::write(repo.index_path(), &baseline_index).expect("restore index");
+        fs::write(repo.index_handle().path(), &baseline_index).expect("restore index");
         run_status(&repo, 1)
     };
     let (parallel_model, parallel_index) = {
-        fs::write(repo.index_path(), &baseline_index).expect("restore index");
+        fs::write(repo.index_handle().path(), &baseline_index).expect("restore index");
         run_status(&repo, 4)
     };
 

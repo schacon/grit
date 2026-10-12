@@ -348,7 +348,7 @@ fn t0008_check_path_matches_git_check_ignore_verbose() {
     let fx = T0008Repo::setup();
     let repo = fx.open_grit();
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
-    let index = repo.load_index().ok();
+    let index = repo.index_handle().load().ok();
 
     let paths: Vec<String> = t0008_corpus()
         .iter()
@@ -473,7 +473,7 @@ fn sparse_helpers_match_git_sparse_checkout_non_cone() {
 fn normalize_repo_relative_and_submodule_containing_path() {
     let fx = T0008Repo::setup();
     let repo = fx.open_grit();
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     let sub = submodule_containing_path("a/submodule/x", &index);
     assert_eq!(sub.as_deref(), Some("a/submodule"));
 
@@ -544,8 +544,8 @@ fn default_global_excludes_from_xdg_config_git_ignore() {
     env.home = Some(home.as_os_str().to_os_string());
     env.cwd = root.clone();
     let options = RepositoryOptions::with_environment(env);
-    let repo = Repository::open(&root.join(".git"), &&options.clone().with_work_tree(&root))
-        .expect("open");
+    let repo =
+        Repository::open(&root.join(".git"), &options.clone().with_work_tree(&root)).expect("open");
     let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
 
     for path in ["xdgignored_a", "src/xdgignored_b", "a"] {

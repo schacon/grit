@@ -213,8 +213,8 @@ pub fn outcome_from_tree_entries(
     let changes = entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, None)?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -243,7 +243,10 @@ struct FileChange {
 /// Unstaged changes: worktree vs index (what changed on disk since `git add`).
 fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
-    let mut index = repo.load_index().context("could not load the index")?;
+    let mut index = repo
+        .index_handle()
+        .load()
+        .context("could not load the index")?;
     let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
         .context("could not load worktree rules")?;
     let config_arc = worktree_rules.config_arc();
@@ -255,14 +258,14 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         ..DiffIndexToWorktreeOptions::default()
     };
     let (mut entries, _) =
-        diff_index_to_worktree_with_options(&repo.odb(), &mut index, work_tree, diff_opts)
+        diff_index_to_worktree_with_options(repo.odb(), &mut index, work_tree, diff_opts)
             .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
     entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, Some(work_tree))?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(work_tree))?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -270,20 +273,23 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
 
 /// Staged changes: index vs HEAD's tree.
 fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
-    let head = resolve_head(&repo.git_dir()).context("could not resolve HEAD")?;
+    let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
         None => None,
     };
-    let index = repo.load_index().context("could not load the index")?;
-    let mut entries = diff_index_to_tree(&repo.odb(), &index, head_tree.as_ref(), false)
+    let index = repo
+        .index_handle()
+        .load()
+        .context("could not load the index")?;
+    let mut entries = diff_index_to_tree(repo.odb(), &index, head_tree.as_ref(), false)
         .context("could not diff the index against HEAD")?;
     sort_entries(&mut entries);
     entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, None)?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -326,13 +332,13 @@ fn tree_commit_changes(
     tip: &ObjectId,
 ) -> Result<Vec<FileChange>> {
     let mut entries =
-        diff_commits_with_renames(&repo.odb(), base, tip, 50).context("could not diff commits")?;
+        diff_commits_with_renames(repo.odb(), base, tip, 50).context("could not diff commits")?;
     sort_entries(&mut entries);
     entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, None)?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -385,7 +391,7 @@ fn parse_commit_range(
 
 /// All uncommitted changes: HEAD's tree vs the worktree.
 fn worktree_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
-    let head = resolve_head(&repo.git_dir()).context("could not resolve HEAD")?;
+    let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
     let head_tree = match head.oid() {
         Some(oid) => Some(context::commit_tree(repo, oid)?),
         None => None,
@@ -398,18 +404,21 @@ fn worktree_against_tree(
     base_tree: Option<&ObjectId>,
 ) -> Result<Vec<FileChange>> {
     let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
-    let mut index = repo.load_index().context("could not load the index")?;
+    let mut index = repo
+        .index_handle()
+        .load()
+        .context("could not load the index")?;
     let config = repo.config().context("could not load config")?;
 
     let index_backed = base_tree
         .zip(index.cache_tree_root.as_ref())
         .map(|(left, right)| left == right)
         .unwrap_or(base_tree.is_none() && index.cache_tree_root.is_none())
-        && grit_lib::write_tree::cache_tree_fully_valid(&repo.odb(), index.cache_tree.as_ref());
+        && grit_lib::write_tree::cache_tree_fully_valid(repo.odb(), index.cache_tree.as_ref());
     let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
     let mut entries = if index_backed {
         let (entries, _) = diff_index_to_worktree_with_options(
-            &repo.odb(),
+            repo.odb(),
             &mut index,
             work_tree,
             DiffIndexToWorktreeOptions {
@@ -428,10 +437,10 @@ fn worktree_against_tree(
         let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
             .context("could not load worktree rules")?;
         grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
-            &repo.odb(),
+            repo.odb(),
             base_tree,
             work_tree,
-            &repo.git_dir(),
+            repo.git_dir(),
             &index,
             Some(config.as_ref()),
             Some(&worktree_rules),
@@ -443,8 +452,8 @@ fn worktree_against_tree(
     entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, Some(work_tree))?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(work_tree))?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -460,15 +469,15 @@ fn commit_changes(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Result<V
     };
 
     let mut entries =
-        diff_trees_with_renames(&repo.odb(), old_tree.as_ref(), Some(&new_tree), "", 50)
+        diff_trees_with_renames(repo.odb(), old_tree.as_ref(), Some(&new_tree), "", 50)
             .context("could not diff the commit")?;
     sort_entries(&mut entries);
 
     entries
         .into_iter()
         .map(|e| {
-            let (old_bytes, old_bin) = old_side_bytes(&repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(&repo.odb(), &e, None)?;
+            let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, None)?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()

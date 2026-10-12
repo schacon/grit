@@ -36,12 +36,11 @@ impl<'repo> RevWalk<'repo> {
     ///
     /// ```
     /// # fn main() -> grit_lib::error::Result<()> {
-    /// use grit_lib::repo::init_repository;
-    /// use grit_lib::RefStorageFormat;
+    /// use grit_lib::repo::{InitOptions, Repository};
     /// use grit_lib::porcelain::commit::{create_commit, CommitRequest};
     /// use grit_lib::progress::NullProgress;
     /// let dir = std::env::temp_dir().join("grit-revwalk-parse-doc");
-    /// let repo = init_repository(&dir, false, "main", None, RefStorageFormat::Files)?;
+    /// let repo = Repository::init(&dir, &InitOptions::default())?;
     /// let req = CommitRequest {
     ///     message: "doc".into(),
     ///     author: "Doc <doc@example.com>".into(),

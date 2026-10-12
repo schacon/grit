@@ -6,7 +6,6 @@
 
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
@@ -830,9 +829,10 @@ impl<'r> CommitGraphCache<'r> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::objects::ObjectKind;
     use crate::odb::Odb;
-    use crate::repo::init_bare_clone_minimal;
+    use crate::repo::{InitOptions, Repository};
     use std::fs;
     use tempfile::tempdir;
 
@@ -868,7 +868,15 @@ mod tests {
     }
 
     fn open_test_bare(dir: &tempfile::TempDir) -> Result<Repository> {
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         Repository::open(dir.path(), &RepositoryOptions::empty())
     }
 

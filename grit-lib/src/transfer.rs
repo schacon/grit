@@ -2208,6 +2208,7 @@ pub(crate) fn prune_tracking_refs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use crate::progress::ProgressPhase;
     use crate::ref_storage::RefStorageFormat;
     use crate::repo::init_repository;

@@ -27,7 +27,7 @@ fn init_grit_repo(root: &Path, sha256: bool, threads: Option<usize>) -> Reposito
     if let Some(n) = threads {
         options.thread_policy = ThreadPolicy::with_threads_override(Some(n));
     }
-    Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open grit repo")
+    Repository::open(&git_dir, &options.clone().with_work_tree(root)).expect("open grit repo")
 }
 
 fn write_wide_tree(root: &Path, count: usize) {
@@ -67,7 +67,7 @@ fn reset_staging_area(repo: &Repository) {
 
 fn stage_all(repo: &Repository) -> Vec<u8> {
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    fs::read(repo.index_path()).expect("read index")
+    fs::read(repo.index_handle().path()).expect("read index")
 }
 
 fn git_fsck_ok(repo: &Path) -> bool {

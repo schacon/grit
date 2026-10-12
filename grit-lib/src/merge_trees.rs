@@ -7,7 +7,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::diff::{detect_renames, diff_trees, DiffStatus};
-use crate::environment::RepositoryOptions;
 use crate::index::{Index, IndexEntry};
 use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
@@ -957,6 +956,7 @@ pub fn index_tree_oid_matches_head(
 mod tests {
     use super::*;
     use crate::diff::zero_oid;
+    use crate::environment::RepositoryOptions;
     use crate::index::{IndexEntry, MODE_REGULAR};
     use crate::objects::{parse_commit, ObjectId};
     use crate::repo::Repository;

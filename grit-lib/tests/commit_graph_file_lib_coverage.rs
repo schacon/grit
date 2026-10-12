@@ -13,18 +13,19 @@ use grit_lib::commit_graph_write::{build_commit_graph_bytes, load_commit_graph_c
 use grit_lib::error::Error;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::repo_caches::RepoCaches;
 use grit_lib::write_tree::write_tree_from_index;
 
 fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let mut index = Index::new();
@@ -96,12 +97,13 @@ fn git_cmd(dir: &Path, args: &[&str]) {
 
 fn octopus_merge_graph() -> (tempfile::TempDir, Repository, ObjectId, Vec<ObjectId>) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let mk = |parents: Vec<ObjectId>, t: i64| -> ObjectId {
@@ -223,12 +225,13 @@ fn bloom_walk_stats_counters() {
 #[test]
 fn commit_tree_high_bit_and_parse_graph_dump() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let mut index = Index::new();
@@ -378,12 +381,13 @@ fn bloom_filter_slice_warns_on_bad_offsets_in_memory() {
 #[test]
 fn two_parent_graph_commit_matches_object() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
@@ -453,12 +457,13 @@ fn graph_content_hash(bytes: &[u8], algo: HashAlgo) -> String {
 
 fn two_commit_repo() -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");

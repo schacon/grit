@@ -13,7 +13,7 @@ use grit_lib::refs::{
     verify_ref_transaction_batch, verify_refname_available_for_create, RefBatchItem,
     RefnameUnavailable,
 };
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn oid(byte: u8) -> ObjectId {
@@ -23,12 +23,13 @@ fn oid(byte: u8) -> ObjectId {
 #[test]
 fn verify_batch_rejects_prefix_pair_in_same_transaction() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -49,12 +50,13 @@ fn verify_batch_rejects_prefix_pair_in_same_transaction() {
 #[test]
 fn verify_refname_blocks_loose_directory_and_packed_descendant() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -81,12 +83,13 @@ fn verify_refname_blocks_loose_directory_and_packed_descendant() {
 #[test]
 fn verify_refname_blocks_packed_descendant_without_loose_children() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -111,12 +114,13 @@ fn verify_refname_blocks_packed_descendant_without_loose_children() {
 #[test]
 fn update_refs_create_batch_rejects_later_conflict_without_partial_write() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -151,12 +155,13 @@ fn update_refs_create_batch_rejects_later_conflict_without_partial_write() {
 #[test]
 fn update_refs_create_batch_rejects_remotes_conflict_without_partial_write() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -191,12 +196,13 @@ fn update_refs_create_batch_rejects_remotes_conflict_without_partial_write() {
 #[test]
 fn update_refs_cas_sees_loose_tag_while_heads_tree_empty() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

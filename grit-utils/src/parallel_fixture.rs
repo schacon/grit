@@ -373,6 +373,7 @@ pub fn worktree_non_git_path_count(repo: &Path) -> Result<usize> {
     Ok(count)
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn count_worktree_paths(dir: &Path, count: &mut usize) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;

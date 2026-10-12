@@ -10,7 +10,6 @@ use crate::diff::{
     classify_worktree_entry_for_add, mode_from_metadata, DiffIndexToWorktreeOptions, DiffStatus,
     WorktreeAddRefresh, WorktreeAddRefreshParams,
 };
-use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::index::{index_file_mtime, Index, MODE_TREE};
 use crate::objects::ObjectKind;
@@ -256,6 +255,7 @@ fn stage_new_worktree_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::RepositoryOptions;
     use std::process::Command;
 
     fn have_git() -> bool {

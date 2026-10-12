@@ -23,6 +23,6 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     let repo = Repository::discover(None, &RepositoryOptions::empty())?;
     let oid = resolve_name(&repo, &cli.new_value)?;
-    refs::write_ref(&repo.git_dir(), &cli.refname, &oid)?;
+    refs::write_ref(repo.git_dir(), &cli.refname, &oid)?;
     Ok(())
 }

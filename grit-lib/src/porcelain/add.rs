@@ -12,7 +12,6 @@ use crate::diff::{
     materialize_worktree_blob, mode_from_metadata, read_submodule_head_oid, DiffEntry,
     DiffIndexToWorktreeOptions, DiffStatus,
 };
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::hash::{try_par_hash_with, ParallelHashError, Parallelism};
 use crate::index::{
@@ -792,6 +791,8 @@ fn mark_fsmonitor_staged(index: &mut Index, rel_path: &str) {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use crate::environment::RepositoryOptions;
 
     use super::*;
     use crate::index::{entry_from_stat, IndexEntry, MODE_GITLINK, MODE_REGULAR};

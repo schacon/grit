@@ -3,17 +3,18 @@
 //! Run: `cargo run -p grit-lib --example ignore_match`
 
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use std::fs;
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     let wt = repo.work_tree().expect("non-bare");

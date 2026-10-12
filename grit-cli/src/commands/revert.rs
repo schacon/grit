@@ -46,7 +46,7 @@ pub fn run(commit: &str) -> Result<RevertOutcome> {
         .with_context(|| format!("could not resolve commit '{commit}'"))?;
     let env = repo.environment();
     let config =
-        ConfigSet::load(env, Some(&repo.git_dir()), true).context("could not load config")?;
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
     let committer = context::identity(
         env,
         &config,

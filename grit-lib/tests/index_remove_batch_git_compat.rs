@@ -4,7 +4,7 @@ use std::process::Command;
 
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::git;
 
 fn ls_files_stage_lines(repo_dir: &std::path::Path) -> Vec<String> {
@@ -87,12 +87,13 @@ fn entry_for_path(repo: &Repository, path: &str, stage: u8, payload: &[u8]) -> I
 #[test]
 fn grit_index_batch_remove_replace_matches_git_ls_files_and_fsck() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let payload = b"index-compat-payload\n";
@@ -140,7 +141,7 @@ fn grit_index_batch_remove_replace_matches_git_ls_files_and_fsck() {
         .collect();
     index.remove_paths_and_insert(remove_paths.iter().map(|p| p.as_slice()), replacements);
 
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
 
     let git_lines = ls_files_stage_lines(tmp.path());
     let expected = expected_ls_files_lines(index.entries());

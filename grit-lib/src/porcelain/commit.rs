@@ -6,7 +6,6 @@
 
 use crate::config::ConfigSet;
 use crate::diff::{diff_trees, zero_oid};
-use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::hooks::{run_commit_hook_checked, CommitHookEnv};
 use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -331,6 +330,8 @@ fn commit_editmsg_hook_argument(repo: &Repository, editmsg_path: &Path) -> Strin
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use crate::environment::RepositoryOptions;
 
     use super::*;
     use crate::index::{entry_from_stat, Index, MODE_REGULAR};

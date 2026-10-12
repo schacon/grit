@@ -37,7 +37,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| grit_lib::error::Error::Message("missing repository path".into()))?;
     let repo = open_repo(&root)?;
-    let git_dir = &repo.git_dir();
+    let git_dir = repo.git_dir();
 
     let head = resolve_head(git_dir)?;
     match &head {

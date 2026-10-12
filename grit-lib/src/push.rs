@@ -24,13 +24,12 @@
 //! zero/null OID, the empty-pack trailer, and the advertisement parsing are all
 //! hash-width aware.
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
 
 use crate::branch_tracking;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::Progress;
 use crate::objects::{parse_tag, HashAlgo, ObjectId, ObjectKind};

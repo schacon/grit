@@ -7,7 +7,7 @@ use grit_lib::refs::{
     delete_ref, list_refs_physical, read_raw_ref, resolve_ref, write_ref, write_ref_cas,
     RawRefLookup,
 };
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn oid(byte: u8) -> ObjectId {
@@ -17,12 +17,13 @@ fn oid(byte: u8) -> ObjectId {
 #[test]
 fn write_ref_cas_and_delete_loose_ref() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -40,12 +41,13 @@ fn write_ref_cas_and_delete_loose_ref() {
 #[test]
 fn list_refs_physical_includes_loose_file() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

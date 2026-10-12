@@ -7,10 +7,14 @@ use grit_lib::repo::Repository;
 use grit_protocol::upload_pack::stateless_rpc;
 
 fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
-    grit_lib::repo::init_bare_clone_minimal(
+    Repository::init(
         dir,
-        "main",
-        grit_lib::ref_storage::RefStorageFormat::Files,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init bare");
     let repo = Repository::open(dir, &RepositoryOptions::default().for_serving()).expect("open");
@@ -37,10 +41,14 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
 fn two_post_shallow_depth_one_returns_pack_on_done() {
     let dir = std::env::temp_dir().join(format!("grit-shallow-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    grit_lib::repo::init_bare_clone_minimal(
+    Repository::init(
         &dir,
-        "main",
-        grit_lib::ref_storage::RefStorageFormat::Files,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init bare");
     let repo = Repository::open(&dir, &RepositoryOptions::default().for_serving()).expect("open");

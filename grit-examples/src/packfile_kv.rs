@@ -462,15 +462,16 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
     use grit_lib::objects::{serialize_tree, TreeEntry};
     use grit_lib::odb::OdbBuilder;
     use grit_lib::refs::write_ref;
-    use grit_lib::repo::{init_repository, Repository, RepositoryBuilder};
+    use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
     use grit_lib::rev_list::{rev_list, RevListOptions};
 
-    init_repository(
+    Repository::init(
         repo_root,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
     let git_dir = repo_root.join(".git");
     let objects_dir = git_dir.join("objects");

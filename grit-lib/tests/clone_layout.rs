@@ -8,7 +8,7 @@ use grit_lib::environment::Environment;
 use grit_lib::fetch::NoProgress;
 use grit_lib::pack::verify_pack_and_collect;
 use grit_lib::porcelain::checkout::checkout_between_trees;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::transfer::{fetch_local, CloneReflog, FetchOptions, TagMode};
 
 fn git_in(dir: &Path, args: &[&str]) -> bool {
@@ -152,12 +152,13 @@ fn clone_fetch_keeps_pack_and_matches_git_layout() {
     ));
 
     let clone = tempfile::tempdir().expect("clone");
-    init_repository(
+    Repository::init(
         clone.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let clone_git = clone.path().join(".git");

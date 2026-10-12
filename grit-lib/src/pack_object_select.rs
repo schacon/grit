@@ -1,11 +1,10 @@
 //! Object selection for pack-objects (walk or pack bitmap reachability).
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::bitmap_walk::{BitmapWalkError, ReachabilityQuery};
+use crate::environment::RepositoryOptions;
 use crate::error::Result;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;

@@ -11,7 +11,7 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::{clear_pack_cache, read_pack_index};
 use grit_lib::pack_store::test_hooks;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::transfer::{build_pack, PackBuildOptions};
 use grit_lib::RefStorageFormat;
 use tempfile::TempDir;
@@ -66,8 +66,15 @@ fn odb_concurrent_reads() {
     test_hooks::reset();
 
     let root = TempDir::new().expect("tempdir");
-    let repo = init_repository(root.path(), false, "main", None, RefStorageFormat::Files)
-        .expect("init repo");
+    let repo = Repository::init(
+        root.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init repo");
     let primary_objects = repo.git_dir().join("objects");
 
     let mut packed_blob_oids = Vec::new();
@@ -213,8 +220,15 @@ fn stale_read_after_invalidation() {
     test_hooks::reset();
 
     let root = TempDir::new().expect("tempdir");
-    let repo = init_repository(root.path(), false, "main", None, RefStorageFormat::Files)
-        .expect("init repo");
+    let repo = Repository::init(
+        root.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init repo");
     let objects = repo.git_dir().join("objects");
     let oid = repo
         .odb()

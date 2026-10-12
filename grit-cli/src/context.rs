@@ -114,7 +114,7 @@ fn target_branch_candidates(repo: &Repository) -> Result<Vec<String>> {
 
 fn resolve_branch_candidate(repo: &Repository, candidate: &str) -> Option<ObjectId> {
     for refname in candidate_refnames(candidate) {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir(), &refname) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &refname) {
             return Some(oid);
         }
     }

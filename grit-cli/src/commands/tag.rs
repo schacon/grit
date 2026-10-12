@@ -143,7 +143,7 @@ pub fn run(
 
 fn list(repo: &Repository) -> Result<TagOutcome> {
     let mut entries =
-        refs::list_refs(&repo.git_dir(), "refs/tags/").context("could not list tags")?;
+        refs::list_refs(repo.git_dir(), "refs/tags/").context("could not list tags")?;
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let tags = entries
@@ -179,7 +179,7 @@ fn create(
     let target = if let Some(rev) = object {
         resolve_revision(repo, &rev).context("could not resolve tag target")?
     } else {
-        match resolve_head(&repo.git_dir())? {
+        match resolve_head(repo.git_dir())? {
             HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
             HeadState::Branch { .. } => bail!("no commits yet to tag"),
             HeadState::Invalid => bail!("HEAD is in an unknown state"),
@@ -224,11 +224,11 @@ fn create(
 
 fn delete_tag(repo: &Repository, name: &str) -> Result<TagOutcome> {
     let tag_ref = format!("refs/tags/{name}");
-    if refs::resolve_ref(&repo.git_dir(), &tag_ref).is_err() {
+    if refs::resolve_ref(repo.git_dir(), &tag_ref).is_err() {
         bail!("no tag named '{name}'");
     }
 
-    refs::delete_ref(&repo.git_dir(), &tag_ref).context("could not delete tag")?;
+    refs::delete_ref(repo.git_dir(), &tag_ref).context("could not delete tag")?;
     Ok(TagOutcome::Delete {
         name: name.to_owned(),
     })

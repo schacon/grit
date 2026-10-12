@@ -9,14 +9,13 @@
 //! `pack/multi-pack-index.d/multi-pack-index-<sha1>.midx` with ordering in
 //! `multi-pack-index-chain` (oldest hash first, newest last).
 
-use crate::environment::RepositoryOptions;
-
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::environment::RepositoryOptions;
 use crate::hash::verify_trailer;
 
 use crate::diagnostics::{DiagnosticSink, NullDiagnostics, Warning};

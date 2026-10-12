@@ -5,19 +5,20 @@ use grit_lib::index::{Index, MODE_EXECUTABLE};
 use grit_lib::init_filesystem::probe_trust_filemode;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
 fn init_writes_probed_filemode() {
     let root = TempDir::new().expect("tempdir");
-    init_repository(
+    Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = root.path().join(".git");
@@ -94,12 +95,13 @@ fn init_local_filemode_follows_probe_not_global() {
         "GIT_CONFIG_SYSTEM",
         if cfg!(windows) { "NUL" } else { "/dev/null" },
     );
-    init_repository(
+    Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     std::env::remove_var("GIT_CONFIG_GLOBAL");
@@ -122,16 +124,18 @@ fn init_local_filemode_follows_probe_not_global() {
 #[test]
 fn separate_git_dir_honors_filemode_false_in_external_config() {
     use grit_lib::diff::{diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions};
-    use grit_lib::repo::init_repository_separate_git_dir;
+    use grit_lib::repo::{InitOptions, Repository};
 
     let work = TempDir::new().expect("worktree");
     let git_dir = TempDir::new().expect("git dir");
-    init_repository_separate_git_dir(
+    Repository::init(
         work.path(),
-        git_dir.path(),
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            separate_git_dir: Some(git_dir.path().to_path_buf()),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
 

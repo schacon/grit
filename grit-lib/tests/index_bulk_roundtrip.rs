@@ -2,7 +2,7 @@
 
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::RefStorageFormat;
 
 fn make_entry(path: &str, oid: ObjectId, stage: u8) -> IndexEntry {
@@ -30,8 +30,15 @@ fn make_entry(path: &str, oid: ObjectId, stage: u8) -> IndexEntry {
 #[test]
 fn large_index_v2_v4_write_read_and_mutations() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let repo =
-        init_repository(tmp.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+    let repo = Repository::init(
+        tmp.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let blob = repo.odb().write(ObjectKind::Blob, b"data").expect("blob");
 
     for version in [2u32, 4] {
@@ -44,8 +51,8 @@ fn large_index_v2_v4_write_read_and_mutations() {
         if version == 4 {
             index.add_or_replace(make_entry("z/skip.txt", blob, 0));
         }
-        repo.write_index(&mut index).expect("write");
-        let loaded = Index::load(&repo.index_path()).expect("load");
+        repo.index_handle().write(&mut index).expect("write");
+        let loaded = Index::load(&repo.index_handle().path()).expect("load");
         assert_eq!(loaded.version, version);
         assert_eq!(loaded.entries().len(), index.entries().len());
 
@@ -55,6 +62,6 @@ fn large_index_v2_v4_write_read_and_mutations() {
             vec![make_entry("d0/f0000.txt", blob, 0)],
         );
         sorted.invalidate_cache_tree_for_path(b"d0");
-        repo.write_index(&mut sorted).expect("rewrite");
+        repo.index_handle().write(&mut sorted).expect("rewrite");
     }
 }

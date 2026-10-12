@@ -5,7 +5,7 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::ref_exclusions::RefExclusions;
 use grit_lib::refs;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{
     commit_tips_from_named_refs, commit_visible_for_dense_pathspecs, merge_bases,
     object_ids_for_cat_file_filtered, reachable_object_ids_for_cat_file, render_commit,
@@ -53,7 +53,15 @@ fn write_tag(odb: &Odb, target: ObjectId, name: &str) -> grit_lib::error::Result
 }
 
 fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
-    init_bare_clone_minimal(dir, "main", grit_lib::ref_storage::RefStorageFormat::Files)?;
+    Repository::init(
+        dir,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
     Repository::open(dir, &RepositoryOptions::empty())
 }
 

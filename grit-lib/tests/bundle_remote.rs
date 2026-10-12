@@ -8,7 +8,7 @@ use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::fetch::{NoProgress, Progress};
 use grit_lib::progress::{ProgressPhase, ProgressSink, ProgressUnit};
 use grit_lib::remote::{Remote, RemoteUrl};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::transfer::{FetchOptions, TagMode};
 use std::collections::HashMap;
 
@@ -48,12 +48,13 @@ fn fetch_from_git_bundle_matches_git_fetch() {
     ));
 
     let dest = tempfile::tempdir().expect("dest");
-    init_repository(
+    Repository::init(
         dest.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     assert!(git_in(

@@ -12,19 +12,20 @@ use grit_lib::config::{
 };
 use grit_lib::environment::Environment;
 use grit_lib::error::Error;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 #[test]
 fn relative_gitdir_include_from_disk_file() {
     let dir = tempdir().expect("tempdir");
     let repo = dir.path().join("repo");
-    init_repository(
+    Repository::init(
         &repo,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.join(".git");

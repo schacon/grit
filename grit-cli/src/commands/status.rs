@@ -283,7 +283,7 @@ pub fn run() -> Result<StatusOutcome> {
     let model = status(&repo, &StatusOptions::default(), &mut NullProgress)
         .context("could not compute status")?;
 
-    let in_progress: Vec<String> = detect_in_progress(&repo.git_dir())
+    let in_progress: Vec<String> = detect_in_progress(repo.git_dir())
         .into_iter()
         .map(in_progress_label)
         .collect();

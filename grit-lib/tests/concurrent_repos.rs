@@ -23,7 +23,7 @@ use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
 use grit_lib::transfer::{fetch_local, FetchOptions, TagMode};
 use tempfile::TempDir;
@@ -53,12 +53,13 @@ fn prepare_repo(
 ) -> RepoFixture {
     let root = base.join(name);
     fs::create_dir_all(&root).expect("repo root");
-    init_repository(
+    Repository::init(
         &root,
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
 
@@ -337,12 +338,13 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
      -> RepoFixture {
         let root = base.path().join(format!("{name}-{iter}"));
         fs::create_dir_all(&root).expect("root");
-        init_repository(
+        Repository::init(
             &root,
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )
         .expect("init");
         let home = base.path().join(format!("home-{name}-{iter}"));
@@ -499,7 +501,9 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         index.add_or_replace(index_conflict_entry(path, 1, base));
         index.add_or_replace(index_conflict_entry(path, 2, ours));
         index.add_or_replace(index_conflict_entry(path, 3, theirs));
-        repo.write_index(&mut index).expect("write conflict index");
+        repo.index_handle()
+            .write(&mut index)
+            .expect("write conflict index");
         let rerere_events = repo_rerere(&repo, RerereAutoupdate::No).expect("rerere");
         let rerere_preimage = rerere_events
             .iter()

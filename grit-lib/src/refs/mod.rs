@@ -1437,6 +1437,33 @@ impl PackedRefs {
         Ok(Self { map })
     }
 
+    /// Validate the full `packed-refs` file but retain only entries listed in `names`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::load`].
+    #[allow(dead_code)]
+    pub(crate) fn load_for_ref_names(git_dir: &Path, names: &HashSet<String>) -> Result<Self> {
+        if names.is_empty() {
+            return Ok(Self {
+                map: HashMap::new(),
+            });
+        }
+        let store = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+        let packed_path = store::paths::packed_refs_path(&store);
+        let data = match fs::read(&packed_path) {
+            Ok(d) => d,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    map: HashMap::new(),
+                })
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+        let map = parse_packed_refs_to_map_with_names(&packed_path, &data, names)?;
+        Ok(Self { map })
+    }
+
     /// The packed value recorded for `refname`, if any.
     #[must_use]
     pub fn get(&self, refname: &str) -> Option<ObjectId> {

@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
 #[test]
@@ -12,12 +12,14 @@ fn init_preserves_template_file_at_probe_nfc_name() {
     fs::write(tmpl.path().join(NFC), b"template-payload").expect("write template");
 
     let root = TempDir::new().expect("worktree");
-    init_repository(
+    Repository::init(
         root.path(),
-        false,
-        "main",
-        Some(tmpl.path()),
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            template_dir: Some(tmpl.path().to_path_buf()),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
 

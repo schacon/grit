@@ -82,7 +82,7 @@ pub(crate) fn run_upload_pack(
 ) -> Result<Vec<u8>> {
     let repo = Repository::open(repo_path, &repository_options.clone().for_serving())?;
     let config =
-        ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true).unwrap_or_default();
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let hidden_refs = grit_lib::hide_refs::hide_ref_patterns_uploadpack(&config);
     let opts = ServeOptions {
         protocol: protocol_version_from_header(protocol_version),
@@ -105,7 +105,7 @@ pub(crate) fn run_receive_pack(
 ) -> Result<Vec<u8>> {
     let repo = Repository::open(repo_path, &repository_options.clone().for_serving())?;
     let config =
-        ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true).unwrap_or_default();
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let hidden_refs = grit_lib::hide_refs::hide_ref_patterns_receive(&config);
     let opts = ServeOptions {
         protocol: ProtocolVersion::V0,

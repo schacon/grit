@@ -9,7 +9,7 @@ use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::refs::store::{
     Expected, RawRef, RefStore, RefTransaction, RefUpdate, RefUpdateFlags, ReftableRefStore,
 };
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 fn oid(byte: u8) -> ObjectId {
     let mut bytes = [0u8; 20];
@@ -19,7 +19,15 @@ fn oid(byte: u8) -> ObjectId {
 
 fn empty_reftable_git_dir() -> (tempfile::TempDir, std::path::PathBuf) {
     let root = tempfile::tempdir().expect("tempdir");
-    init_repository(root.path(), false, "main", None, RefStorageFormat::Reftable).expect("init");
+    Repository::init(
+        root.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Reftable,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let git_dir = root.path().join(".git");
     let store = ReftableRefStore::open(git_dir.clone()).expect("open");
     let txn = RefTransaction::new()

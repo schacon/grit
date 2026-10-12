@@ -38,13 +38,13 @@ fn run() -> Result<()> {
     for entry in grit_examples::entries_from_tree(&repo, target_tree)? {
         index.add_or_replace(entry);
     }
-    repo.write_index(&mut index)?;
+    repo.index_handle().write(&mut index)?;
     checkout_tree(&repo, target_tree)?;
 
-    if let Some(target_ref) = refs::read_symbolic_ref(&repo.git_dir(), "HEAD")? {
-        refs::write_ref(&repo.git_dir(), &target_ref, &target)?;
+    if let Some(target_ref) = refs::read_symbolic_ref(repo.git_dir(), "HEAD")? {
+        refs::write_ref(repo.git_dir(), &target_ref, &target)?;
     } else {
-        refs::write_ref(&repo.git_dir(), "HEAD", &target)?;
+        refs::write_ref(repo.git_dir(), "HEAD", &target)?;
     }
     println!("Fast-forwarded to {target}");
     Ok(())

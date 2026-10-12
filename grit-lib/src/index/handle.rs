@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::error::Result;
 use crate::index::Index;
 use crate::repo::Repository;
+use crate::split_index::WriteSplitIndexRequest;
 
 /// Load and persist the Git index for one repository.
 #[derive(Debug, Copy, Clone)]
@@ -26,25 +27,28 @@ impl<'repo> IndexHandle<'repo> {
         self.repo
     }
 
+    /// Path to the index file this repository uses by default.
+    #[inline]
+    #[must_use]
+    pub fn path(&self) -> std::path::PathBuf {
+        self.repo.index_path()
+    }
+
+    /// Resolve the index path honoring `GIT_INDEX_FILE` when set.
+    ///
+    /// # Errors
+    ///
+    /// Propagates configuration errors.
+    #[inline]
+    pub fn path_for_env(&self) -> Result<std::path::PathBuf> {
+        self.repo.index_path_for_env()
+    }
+
     /// Load the index from the path selected by `GIT_INDEX_FILE` / the default `.git/index`.
     ///
     /// # Errors
     ///
     /// Propagates index parse, sparse, and split-index errors.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # fn main() -> grit_lib::error::Result<()> {
-    /// use grit_lib::repo::init_repository;
-    /// use grit_lib::RefStorageFormat;
-    /// let dir = std::env::temp_dir().join("grit-index-load-doc");
-    /// let repo = init_repository(&dir, false, "main", None, RefStorageFormat::Files)?;
-    /// let index = repo.index_handle().load()?;
-    /// assert!(index.entries().is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn load(&self) -> Result<Index> {
         self.repo.load_index()
@@ -70,5 +74,66 @@ impl<'repo> IndexHandle<'repo> {
     #[inline]
     pub fn write_at(&self, path: &Path, index: &mut Index) -> Result<()> {
         self.repo.write_index_at(path, index)
+    }
+
+    /// Write `index` to `path` with explicit split-index emission control.
+    #[inline]
+    pub fn write_at_with_split(
+        &self,
+        path: &Path,
+        index: &mut Index,
+        split: WriteSplitIndexRequest,
+    ) -> Result<()> {
+        self.repo.write_index_at_with_split(path, index, split)
+    }
+
+    /// Returns whether loading `index` would force a split-index rewrite on the next write.
+    #[must_use]
+    #[inline]
+    pub fn split_would_force_write(&self, index: &Index) -> bool {
+        self.repo.split_index_would_force_write(index)
+    }
+
+    /// Acquire `.git/index.lock` before mutating the working tree for index+worktree commands.
+    #[inline]
+    pub fn begin_update(&self) -> Result<crate::index::IndexLock> {
+        self.repo.begin_index_update()
+    }
+
+    /// Write `index` using a lock from [`Self::begin_update`].
+    #[inline]
+    pub fn commit_update(
+        &self,
+        lock: &mut crate::index::IndexLock,
+        index: &mut Index,
+        updated_workdir: bool,
+    ) -> Result<()> {
+        self.repo.commit_index_update(lock, index, updated_workdir)
+    }
+
+    /// Serialize `index` into a held lock without replacing the on-disk index.
+    #[inline]
+    pub fn flush_update(
+        &self,
+        lock: &mut crate::index::IndexLock,
+        index: &mut Index,
+    ) -> Result<()> {
+        self.repo.flush_index_update(lock, index)
+    }
+
+    /// Commit a staged index lock after a successful working-tree update.
+    #[inline]
+    pub fn finish_update(
+        &self,
+        lock: &mut crate::index::IndexLock,
+        updated_workdir: bool,
+    ) -> Result<()> {
+        self.repo.finish_index_update(lock, updated_workdir)
+    }
+
+    /// Persist the index when the lock can be acquired (Git `repo_update_index_if_able`).
+    #[inline]
+    pub fn try_write(&self, index: &mut Index) -> Result<bool> {
+        self.repo.try_write_index(index)
     }
 }

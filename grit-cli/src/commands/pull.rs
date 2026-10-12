@@ -26,7 +26,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
         bail!("you have uncommitted changes — commit them before pulling");
     }
 
-    let (refname, short_name, head_oid) = match resolve_head(&repo.git_dir())? {
+    let (refname, short_name, head_oid) = match resolve_head(repo.git_dir())? {
         HeadState::Branch {
             refname,
             short_name,
@@ -36,7 +36,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
     };
 
-    let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir()), true)
+    let config = ConfigSet::load(&crate::context::environment(), Some(repo.git_dir()), true)
         .context("could not load config")?;
     let remote = config
         .get(&format!("branch.{short_name}.remote"))
@@ -74,7 +74,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
         })
         .unwrap_or_else(|| short_name.clone());
     let upstream_ref = format!("refs/remotes/{remote}/{upstream_branch}");
-    let upstream_oid = refs::resolve_ref(&repo.git_dir(), &upstream_ref)
+    let upstream_oid = refs::resolve_ref(repo.git_dir(), &upstream_ref)
         .with_context(|| format!("no upstream tracking ref {upstream_ref} after fetch"))?;
 
     match head_oid {
@@ -93,7 +93,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
                 .context("could not verify working tree")?;
             checkout_between_trees(&repo, None, &upstream_tree)
                 .context("could not populate the working tree")?;
-            refs::write_ref(&repo.git_dir(), &refname, &upstream_oid)
+            refs::write_ref(repo.git_dir(), &refname, &upstream_oid)
                 .context("could not set branch")?;
             Ok(MergeOutcome::set_upstream(
                 &short_name,

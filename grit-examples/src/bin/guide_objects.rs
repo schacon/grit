@@ -6,7 +6,7 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, CommitData, ObjectKind, TreeEntry,
 };
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use std::path::{Path, PathBuf};
 
 fn write_demo_objects(
@@ -81,12 +81,13 @@ fn main() -> Result<(), grit_lib::error::Error> {
         open_repo(&root)?
     } else {
         let temp = tempfile::tempdir().map_err(grit_lib::error::Error::Io)?;
-        init_repository(
+        Repository::init(
             temp.path(),
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )?;
         open_repo(temp.path())?
     };

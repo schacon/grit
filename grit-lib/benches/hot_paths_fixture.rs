@@ -47,12 +47,13 @@ pub struct HotPathsFixture {
 impl HotPathsFixture {
     fn build(file_count: usize, dir_count: usize) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let repo = init_repository(
+        let repo = Repository::init(
             dir.path(),
-            false,
-            "main",
-            None,
-            grit_lib::RefStorageFormat::Files,
+            &InitOptions {
+                initial_branch: "main".to_owned(),
+                ref_storage: grit_lib::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
         )
         .expect("init hot-path bench repo");
         populate_worktree(dir.path(), file_count, dir_count);
@@ -83,7 +84,7 @@ impl HotPathsFixture {
         let n = ((self.file_paths.len() as f64) * fraction).round() as usize;
         let n = n.max(1);
         let work_tree = self.repo.work_tree().expect("work tree");
-        let mut index = self.repo.load_index().expect("load index");
+        let mut index = self.repo.index_handle().load().expect("load index");
         for path in self.file_paths.iter().take(n) {
             let abs = work_tree.join(path);
             std::fs::write(&abs, format!("changed-{path}\n")).expect("write");
@@ -172,7 +173,7 @@ impl HotPathsFixture {
     fn tree_with_path_count_changed(&self, path_count: usize) -> ObjectId {
         let n = path_count.min(self.file_paths.len()).max(1);
         let work_tree = self.repo.work_tree().expect("work tree");
-        let mut index = self.repo.load_index().expect("load index");
+        let mut index = self.repo.index_handle().load().expect("load index");
         for path in self.file_paths.iter().take(n) {
             let abs = work_tree.join(path);
             std::fs::write(&abs, format!("pick-{path}\n")).expect("write");
@@ -193,7 +194,10 @@ impl HotPathsFixture {
 
 fn build_index_mutate_plan(repo: &Repository) -> IndexMutatePlan {
     const REPLACEMENT: &[u8] = b"bench-index-replacement\n";
-    let baseline = repo.load_index().expect("load index for mutate plan");
+    let baseline = repo
+        .index_handle()
+        .load()
+        .expect("load index for mutate plan");
     let n = ((baseline.entries().len() as f64) * 0.10).round() as usize;
     let n = n.max(1);
     let replace_oid = repo
@@ -263,7 +267,7 @@ fn walk_txt(base: &Path, dir: &Path, out: &mut Vec<String>) {
 
 fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
     let work_tree = repo.work_tree().expect("work tree");
-    let mut index = repo.load_index()?;
+    let mut index = repo.index_handle().load()?;
     for rel in list_txt_paths(work_tree) {
         let abs = work_tree.join(&rel);
         let data = std::fs::read(&abs)?;
@@ -273,7 +277,7 @@ fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
     }
     index.sort();
     let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
-    repo.write_index(&mut index)?;
+    repo.index_handle().write(&mut index)?;
     let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,

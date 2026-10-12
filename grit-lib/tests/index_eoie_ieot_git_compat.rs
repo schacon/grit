@@ -11,7 +11,7 @@ use grit_lib::index::{Index, IndexParseContext};
 use grit_lib::objects::HashAlgo;
 use grit_lib::objects::ObjectKind;
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 const ENTRY_COUNT: usize = 25_000;
 
 fn git_init(repo: &Path) {
@@ -134,8 +134,15 @@ fn grit_write_git_accepts(version: u32) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     populate_files(root, ENTRY_COUNT);
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
@@ -171,7 +178,7 @@ fn grit_write_git_accepts(version: u32) {
 
     let cfg = load_config(&repo);
     let policy = ThreadPolicy::with_threads_override(Some(4));
-    idx.write_with_config_and_policy(&repo.index_path(), &cfg, policy)
+    idx.write_with_config_and_policy(&repo.index_handle().path(), &cfg, policy)
         .expect("write");
 
     assert!(run_git(&["-C", root.to_str().expect("p"), "fsck"]).success());
@@ -192,8 +199,15 @@ fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     populate_files(root, 8);
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
@@ -229,7 +243,7 @@ fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
 
     let cfg = load_config(&repo);
     let policy = ThreadPolicy::with_threads_override(Some(4));
-    idx.write_with_config_and_policy(&repo.index_path(), &cfg, policy)
+    idx.write_with_config_and_policy(&repo.index_handle().path(), &cfg, policy)
         .expect("write v4 ieot index");
 
     let root_s = root.to_str().expect("path");
@@ -238,7 +252,7 @@ fn grit_write_v4_ieot_git_reads_with_one_index_thread() {
         "git serial index reader must accept grit-written v4 IEOT block restarts"
     );
 
-    let bytes = fs::read(repo.index_path()).expect("read index");
+    let bytes = fs::read(repo.index_handle().path()).expect("read index");
     let algo = repo.odb().hash_algo();
     let parsed = grit_parse_serial(&bytes, algo);
     assert_eq!(parsed.entries().len(), 8);
@@ -249,8 +263,15 @@ fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     populate_files(root, ENTRY_COUNT);
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let mut cfg_text = fs::read_to_string(repo.git_dir().join("config")).expect("config");
     cfg_text.push_str(
         "\n[index]\n\tthreads = 4\n\trecordOffsetTable = true\n\trecordEndOfIndexEntries = true\n",
@@ -290,10 +311,10 @@ fn parallel_ieot_load_preserves_fsmonitor_valid_bits() {
 
     let cfg = load_config(&repo);
     let policy = ThreadPolicy::with_threads_override(Some(4));
-    idx.write_with_config_and_policy(&repo.index_path(), &cfg, policy)
+    idx.write_with_config_and_policy(&repo.index_handle().path(), &cfg, policy)
         .expect("write ieot index");
 
-    let bytes = fs::read(repo.index_path()).expect("read index");
+    let bytes = fs::read(repo.index_handle().path()).expect("read index");
     let algo = repo.odb().hash_algo();
     let body = &bytes[..bytes.len() - algo.len()];
     assert!(body.windows(4).any(|w| w == b"EOIE"));

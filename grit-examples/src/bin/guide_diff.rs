@@ -54,7 +54,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         .ok_or_else(|| grit_lib::error::Error::Message("missing repository path".into()))?;
     let repo = open_repo(&root)?;
 
-    let head = resolve_head(&repo.git_dir())?;
+    let head = resolve_head(repo.git_dir())?;
     let new_commit = head
         .oid()
         .cloned()
@@ -70,14 +70,14 @@ fn main() -> Result<(), grit_lib::error::Error> {
     let old_tree = tree_oid(&repo, &parent)?;
     let new_tree = new_commit_data.tree;
 
-    let tree_changes = diff_trees(&repo.odb(), Some(&old_tree), Some(&new_tree), "")?;
+    let tree_changes = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "")?;
     println!("tree_diff_begin");
     print_name_status(&tree_changes);
     println!("tree_diff_end");
 
-    if let Some(wt) = repo.work_tree().as_deref() {
-        let mut index = repo.load_index()?;
-        let wt_changes = diff_index_to_worktree(&repo.odb(), &mut index, wt, false, false)?;
+    if let Some(wt) = repo.work_tree() {
+        let mut index = repo.index_handle().load()?;
+        let wt_changes = diff_index_to_worktree(repo.odb(), &mut index, wt, false, false)?;
         println!("index_worktree_dirty={}", !wt_changes.is_empty());
     }
 

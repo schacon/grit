@@ -4,7 +4,7 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{rev_list, OrderingMode, RevListOptions};
 use std::fs;
 use std::path::Path;
@@ -33,7 +33,15 @@ fn write_commit(
 }
 
 fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
-    init_bare_clone_minimal(dir, "main", grit_lib::ref_storage::RefStorageFormat::Files)?;
+    Repository::init(
+        dir,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
     Repository::open(dir, &RepositoryOptions::empty())
 }
 

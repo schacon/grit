@@ -12,7 +12,7 @@ use grit_lib::merge_file::MergeFavor;
 use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -48,12 +48,13 @@ fn tree_of_commit(
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
@@ -78,8 +79,8 @@ fn main() -> grit_lib::error::Result<()> {
         path: b"base.txt".to_vec(),
         base_index_pos: 0,
     });
-    repo.write_index(&mut index)?;
-    let index = repo.load_index()?;
+    repo.index_handle().write(&mut index)?;
+    let index = repo.index_handle().load()?;
     let tree_a = write_tree_from_index(&repo.odb(), &index, "")?;
     let commit_a = commit_from_tree(&repo, tree_a, &[], "initial\n")?;
     refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_a)?;
@@ -121,8 +122,8 @@ fn main() -> grit_lib::error::Result<()> {
         path: b"picked.txt".to_vec(),
         base_index_pos: 0,
     });
-    repo.write_index(&mut index)?;
-    let index = repo.load_index()?;
+    repo.index_handle().write(&mut index)?;
+    let index = repo.index_handle().load()?;
     let tree_b = write_tree_from_index(&repo.odb(), &index, "")?;
     let commit_b = commit_from_tree(&repo, tree_b, &[commit_a], "add picked file\n")?;
     refs::write_ref(&repo.git_dir(), "refs/heads/topic", &commit_b)?;

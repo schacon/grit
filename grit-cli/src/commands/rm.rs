@@ -54,12 +54,9 @@ pub fn run(paths: &[String], cached: bool, force: bool) -> Result<RmOutcome> {
 }
 
 fn rm(repo: &Repository, selectors: &[String], cached: bool, force: bool) -> Result<RemoveOutcome> {
-    let work_tree = repo
-        .work_tree()
-        .clone()
-        .context("grit rm needs a working tree")?;
+    let work_tree = repo.work_tree().context("grit rm needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;
-    let prefix = pathdiff(&cwd, &work_tree);
+    let prefix = pathdiff(&cwd, work_tree);
 
     let mut pathspecs = Vec::with_capacity(selectors.len());
     let mut recursive = false;
@@ -68,7 +65,7 @@ fn rm(repo: &Repository, selectors: &[String], cached: bool, force: bool) -> Res
             bail!("invalid path ''");
         }
         let trailing_dir = sel.ends_with('/') || sel.ends_with('\\');
-        let resolved = resolve_pathspec_in_worktree(sel, sel, &work_tree, prefix.as_deref())
+        let resolved = resolve_pathspec_in_worktree(sel, sel, work_tree, prefix.as_deref())
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if trailing_dir || work_tree.join(&resolved).is_dir() {
             recursive = true;

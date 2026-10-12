@@ -11,7 +11,7 @@ use grit_lib::reflog::{
     expire_reflog_git, load_gc_reflog_expire_config, ReflogExpireActionKind, ReflogExpireParams,
 };
 use grit_lib::refs::{append_reflog, write_ref};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
 use tempfile::TempDir;
 
@@ -50,12 +50,13 @@ fn git(repo_root: &std::path::Path, args: &[&str]) -> String {
 #[test]
 fn reflog_expire_reports_actions_dry_run_and_real() {
     let tmp = TempDir::new().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.git_dir().to_path_buf();
@@ -154,12 +155,13 @@ fn reflog_expire_reports_actions_dry_run_and_real() {
 #[test]
 fn prune_packed_reports_removed_paths_dry_run_and_real() {
     let tmp = TempDir::new().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     fs::write(tmp.path().join("x.txt"), "payload\n").expect("write");
@@ -221,12 +223,13 @@ fn index_conflict_entry(path: &str, stage: u16, oid: ObjectId) -> IndexEntry {
 #[test]
 fn rerere_records_then_reuses_resolution() {
     let tmp = TempDir::new().expect("tempdir");
-    init_repository(
+    Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let cfg_path = tmp.path().join(".git/config");
@@ -257,7 +260,7 @@ fn rerere_records_then_reuses_resolution() {
     index.add_or_replace(index_conflict_entry(path, 1, base));
     index.add_or_replace(index_conflict_entry(path, 2, ours));
     index.add_or_replace(index_conflict_entry(path, 3, theirs));
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
 
     let events = repo_rerere(&repo, RerereAutoupdate::No).expect("rerere");
     assert!(
@@ -281,7 +284,9 @@ fn rerere_records_then_reuses_resolution() {
     index.add_or_replace(index_conflict_entry(path, 1, base));
     index.add_or_replace(index_conflict_entry(path, 2, ours));
     index.add_or_replace(index_conflict_entry(path, 3, theirs));
-    repo.write_index(&mut index).expect("write index again");
+    repo.index_handle()
+        .write(&mut index)
+        .expect("write index again");
 
     let events = repo_rerere(&repo, RerereAutoupdate::No).expect("rerere3");
     assert!(

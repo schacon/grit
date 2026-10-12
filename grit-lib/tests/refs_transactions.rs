@@ -16,7 +16,7 @@ use grit_lib::refs::{
     write_ref, BranchCommitRefUpdate,
 };
 use grit_lib::reftable::{ReftableReader, ReftableStack};
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 use support::{
     assert_fsck_when_git_interop, duplicate_repo, each_backend, git, git_empty_commit_oid,
@@ -395,12 +395,13 @@ fn concurrent_cas_delete_single_winner_packed_only() {
 #[test]
 fn concurrent_reftable_cas_single_winner() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Reftable,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Reftable,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = repo.git_dir().to_path_buf();

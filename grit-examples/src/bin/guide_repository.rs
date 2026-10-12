@@ -16,7 +16,7 @@ fn main() -> Result<(), Error> {
         Ok(r) => r,
         Err(Error::NotARepository(_)) => {
             let git_dir = cwd.join(".git");
-            Repository::open(&git_dir, &&options.clone().with_work_tree(&cwd))?
+            Repository::open(&git_dir, &options.clone().with_work_tree(&cwd))?
         }
         Err(err) => return Err(err),
     };
@@ -28,7 +28,7 @@ fn main() -> Result<(), Error> {
         println!("work_tree=<bare>");
     }
 
-    let cfg = ConfigSet::load(repo.environment(), Some(&repo.git_dir()), true)?;
+    let cfg = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)?;
     let name = cfg.get("user.name").unwrap_or_default();
     if !name.is_empty() {
         println!("user.name={name}");

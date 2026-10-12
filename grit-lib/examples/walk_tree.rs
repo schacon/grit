@@ -5,7 +5,7 @@
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::{parse_tree, serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -35,12 +35,13 @@ fn walk_tree(
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
@@ -72,8 +73,8 @@ fn main() -> grit_lib::error::Result<()> {
         };
         index.add_or_replace(entry);
     }
-    repo.write_index(&mut index)?;
-    let index = repo.load_index()?;
+    repo.index_handle().write(&mut index)?;
+    let index = repo.index_handle().load()?;
     let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
 
     let commit = CommitData {

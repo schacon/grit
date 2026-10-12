@@ -123,7 +123,8 @@ fn remove_dirty_worktree_requires_force() {
     )
     .expect("add");
     fs::write(linked.join("f"), "dirty change\n").unwrap();
-    let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
+    let repo =
+        Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
     assert!(remove_linked_worktree(&repo, &linked, false).is_err());
     remove_linked_worktree(&repo, &linked, true).expect("force remove");
 }
@@ -165,7 +166,8 @@ fn second_worktree_same_branch_is_rejected() {
         },
     )
     .is_err());
-    let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
+    let repo =
+        Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
     let found = find_worktree_with_branch_checked_out(&repo, "shared", None).expect("find");
     assert!(found.is_some());
     assert!(ensure_branch_not_checked_out_elsewhere(&repo, "shared").is_err());

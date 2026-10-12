@@ -182,9 +182,9 @@ fn grit_record_commit(
     parent: Option<ObjectId>,
     message: &str,
 ) -> Result<ObjectId> {
-    let mut index = repo.load_index()?;
+    let mut index = repo.index_handle().load()?;
     let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
-    repo.write_index(&mut index)?;
+    repo.index_handle().write(&mut index)?;
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -253,12 +253,13 @@ fn deepest_deltified_oid(pack_bytes: &[u8], stem: &str) -> (ObjectId, u64) {
 
 fn build_delta_chain_pack(depth: usize) -> (Vec<u8>, ObjectId, u64) {
     let tmp = tempfile::tempdir().expect("delta chain tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init bench repo for delta chain");
     let mut parent = None;
@@ -365,12 +366,13 @@ pub fn build_parallel_packed_blob_fixture(count: usize) -> (TempDir, Odb, Vec<Ob
 
 fn build_large_pack_index(objects_dir: &Path, object_count: usize) -> (PackIndex, ObjectId) {
     let tmp = tempfile::tempdir().expect("large pack tempdir");
-    let repo = init_repository(
+    let repo = Repository::init(
         tmp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init repo");
     let mut parent = None;

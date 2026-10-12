@@ -4,18 +4,19 @@ use std::fs;
 
 use grit_lib::environment::Environment;
 use grit_lib::init_filesystem::{apply_init_filesystem_config, InitFilesystemConfigOptions};
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
 #[test]
 fn init_sets_precomposeunicode_when_options_force_probe() {
     let td = TempDir::new().expect("tempdir");
-    init_repository(
+    Repository::init(
         td.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     apply_init_filesystem_config(
@@ -37,12 +38,13 @@ fn init_sets_precomposeunicode_when_options_force_probe() {
 #[test]
 fn second_init_does_not_overwrite_local_config() {
     let td = TempDir::new().expect("tempdir");
-    init_repository(
+    Repository::init(
         td.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let config_path = td.path().join(".git/config");
@@ -50,12 +52,13 @@ fn second_init_does_not_overwrite_local_config() {
     config.push_str("\n[custom]\n\tmarker = kept\n");
     fs::write(&config_path, &config).expect("write config");
 
-    init_repository(
+    Repository::init(
         td.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("reinit");
 

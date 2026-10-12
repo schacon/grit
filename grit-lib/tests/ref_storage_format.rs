@@ -7,7 +7,7 @@ use grit_lib::error::Error;
 use std::str::FromStr;
 
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_repository, validate_repo_format};
+use grit_lib::repo::{validate_repo_format, InitOptions, Repository};
 use tempfile::TempDir;
 
 static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -57,7 +57,15 @@ fn ignores_global_config() {
     let global = tmp.path().join("global.gitconfig");
     fs::write(&global, "[extensions]\n\trefstorage = reftable\n").unwrap();
     let root = tmp.path().join("repo");
-    init_repository(&root, false, "main", None, RefStorageFormat::Files).unwrap();
+    Repository::init(
+        &root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .unwrap();
     let git_dir = root.join(".git");
 
     let prev_global = std::env::var("GIT_CONFIG_GLOBAL").ok();
@@ -114,7 +122,15 @@ fn detect_rejects_unsupported_repository_version() {
 #[test]
 fn detect_reads_local_reftable_config() {
     let tmp = TempDir::new().unwrap();
-    init_repository(tmp.path(), false, "main", None, RefStorageFormat::Reftable).unwrap();
+    Repository::init(
+        tmp.path(),
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: RefStorageFormat::Reftable,
+            ..InitOptions::default()
+        },
+    )
+    .unwrap();
     let git_dir = tmp.path().join(".git");
     assert_eq!(
         RefStorageFormat::detect(&git_dir).unwrap(),

@@ -106,7 +106,7 @@ fn create_commit_rejects_unmerged_index_like_git() {
     let root = tmp.path();
     let repo = init_conflict_merge(root);
 
-    let index = repo.load_index().expect("index");
+    let index = repo.index_handle().load().expect("index");
     assert!(
         index.has_unmerged_entries(),
         "git merge should leave unmerged index entries"
@@ -128,7 +128,7 @@ fn create_commit_rejects_unmerged_index_like_git() {
         "grit should refuse unmerged commit: {err}"
     );
 
-    let index_after = repo.load_index().expect("index");
+    let index_after = repo.index_handle().load().expect("index");
     assert!(
         index_after.has_unmerged_entries(),
         "refusal must not clear unmerged stages"
@@ -148,7 +148,11 @@ fn stage_for_commit_then_create_commit_concludes_resolved_merge_without_prior_ad
     std::fs::write(root.join("f"), b"resolved\n").unwrap();
     stage_for_commit(&repo, &mut NullProgress).expect("stage resolved merge");
     assert!(
-        !repo.load_index().expect("index").has_unmerged_entries(),
+        !repo
+            .index_handle()
+            .load()
+            .expect("index")
+            .has_unmerged_entries(),
         "staging resolved worktree should collapse unmerged stages"
     );
 

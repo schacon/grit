@@ -32,8 +32,8 @@ fn grit_add_and_remove_linked_worktree_git_list() {
     git(&main, &["add", "tracked.txt"]);
     git(&main, &["commit", "-qm", "seed"]);
 
-    let repo = Repository::discover(Some(main.as_path()), &RepositoryOptions::empty())
-        .expect("discover");
+    let repo =
+        Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
     let linked = root.join("linked");
     let entry = add_linked_worktree(
         &repo,

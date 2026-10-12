@@ -3813,7 +3813,7 @@ mod line_coverage_tests {
     use crate::objects::ObjectKind;
     use crate::odb::Odb;
     use crate::ref_storage::RefStorageFormat;
-    use crate::repo::{init_bare_clone_minimal, init_repository};
+    use crate::repo::{init_repository, InitOptions, Repository};
     use crate::write_tree::write_tree_from_index;
     use std::fs;
     use tempfile::tempdir;
@@ -3935,7 +3935,15 @@ mod line_coverage_tests {
     #[test]
     fn bare_repo_resolve_variants() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let body = format!(
@@ -4013,7 +4021,15 @@ mod line_coverage_tests {
     #[test]
     fn deep_chain_resolve_exercises_navigation() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut tip = repo.odb().write_loose_materialize(
@@ -4099,7 +4115,15 @@ mod line_coverage_tests {
     #[test]
     fn resolve_revision_impl_flag_matrix() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut tip = repo.odb().write_loose_materialize(
@@ -4183,7 +4207,15 @@ mod line_coverage_tests {
     #[test]
     fn bare_merge_commit_and_tag_object_matrix() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let base = repo.odb().write_loose_materialize(
@@ -4258,7 +4290,15 @@ mod line_coverage_tests {
     #[test]
     fn resolve_base_error_path_sweep() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let tip = repo.odb().write_loose_materialize(
@@ -4352,7 +4392,15 @@ mod line_coverage_tests {
     #[test]
     fn ambiguous_abbrev_and_disambiguate_config() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         fs::write(
             repo.git_dir().join("config"),
@@ -4696,7 +4744,15 @@ mod line_coverage_tests {
         let _ = normalize_components(Path::new("/a/b/../c"));
         let _ = path_is_within(Path::new("/a/b"), Path::new("/a"));
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let blob = repo
             .odb()
@@ -4907,7 +4963,15 @@ mod line_coverage_tests {
     #[test]
     fn describe_name_and_dwim_helpers() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
-        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files)?;
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".to_owned(),
+                ref_storage: crate::RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )?;
         let repo = crate::repo::Repository::open(dir.path(), &RepositoryOptions::empty())?;
         let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let c1 = repo.odb().write_loose_materialize(

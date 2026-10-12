@@ -5,7 +5,7 @@
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectKind};
 use grit_lib::refs;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::write_tree::write_tree_from_index;
 
 fn commit_tree(
@@ -36,8 +36,8 @@ fn commit_tree(
     };
     let mut index = Index::new();
     index.add_or_replace(entry);
-    repo.write_index(&mut index)?;
-    let index = repo.load_index()?;
+    repo.index_handle().write(&mut index)?;
+    let index = repo.index_handle().load()?;
     let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
 
     let mut parents = Vec::new();
@@ -62,12 +62,13 @@ fn commit_tree(
 
 fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         root.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
 
     let base = commit_tree(&repo, None, "common root")?;

@@ -14,6 +14,9 @@ impl RefName {
     ///
     /// Returns [`RefNameError`] when the name is empty or otherwise invalid.
     pub fn try_from(name: &str) -> Result<Self, RefNameError> {
+        if name == "HEAD" {
+            return Ok(Self(name.to_owned()));
+        }
         check_refname_format(name, &RefNameOptions::default())?;
         Ok(Self(name.to_owned()))
     }

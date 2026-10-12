@@ -100,7 +100,7 @@ pub fn run(rev: Option<String>, soft: bool, _mixed: bool, hard: bool) -> Result<
 
     let env = repo.environment();
     let config =
-        ConfigSet::load(env, Some(&repo.git_dir()), true).context("could not load config")?;
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
     let now = context::wall_clock_now(env);
     let identity = context::identity(
         env,

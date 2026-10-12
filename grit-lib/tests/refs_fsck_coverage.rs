@@ -7,7 +7,7 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::write_ref;
 use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckIssue};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn oid(byte: u8) -> ObjectId {
@@ -17,12 +17,13 @@ fn oid(byte: u8) -> ObjectId {
 #[test]
 fn refs_fsck_reports_bad_symref_and_formats_line() {
     let dir = tempdir().expect("tempdir");
-    init_repository(
+    Repository::init(
         dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

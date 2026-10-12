@@ -4,7 +4,7 @@ use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{rev_list, ObjectFilter, RevListOptions};
 use grit_lib::rev_list_error::RevListError;
 use grit_lib::rev_parse::{
@@ -28,7 +28,15 @@ fn write_commit(odb: &Odb, msg: &str) -> grit_lib::error::Result<ObjectId> {
 }
 
 fn open_bare_with_main(dir: &Path) -> grit_lib::error::Result<(Repository, ObjectId)> {
-    init_bare_clone_minimal(dir, "main", grit_lib::ref_storage::RefStorageFormat::Files)?;
+    Repository::init(
+        dir,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::ref_storage::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
     let repo = Repository::open(dir, &RepositoryOptions::empty())?;
     let tip = write_commit(&repo.odb(), "init")?;
     fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))?;

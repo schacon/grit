@@ -13,7 +13,7 @@ use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::checkout::checkout_tree_changes;
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_test_support::git_fsck;
 use std::collections::BTreeMap;
@@ -33,7 +33,7 @@ fn open_with_policy(root: &Path, threads: usize, min_items: Option<usize>) -> Re
     let git_dir = root.join(".git");
     let mut options = RepositoryOptions::empty();
     options.thread_policy = policy(threads, min_items);
-    Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open repo")
+    Repository::open(&git_dir, &options.clone().with_work_tree(root)).expect("open repo")
 }
 
 fn enable_parallel_checkout_config(root: &Path) {
@@ -53,10 +53,10 @@ fn open_with_forced_parallel_pool(root: &Path, threads: usize) -> Repository {
 fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
     use grit_lib::porcelain::add::{stage, StageOptions};
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
-    repo.write_index(&mut index).expect("write index");
+    repo.index_handle().write(&mut index).expect("write index");
     let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
@@ -246,7 +246,7 @@ fn checkout_diff_with_policy(
     checkout_tree_changes(&repo, &changes).expect("checkout");
     let wt = repo.work_tree().expect("wt");
     let snap = snapshot_worktree(wt);
-    let index = fs::read(repo.index_path()).expect("index");
+    let index = fs::read(repo.index_handle().path()).expect("index");
     (snap, index)
 }
 
@@ -279,8 +279,15 @@ fn assert_serial_parallel_match(
 fn parallel_matches_serial_crlf_and_ident() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     fs::write(
         root.join(".gitattributes"),
         "* ident\n*.txt text eol=crlf\n",
@@ -303,15 +310,22 @@ fn parallel_matches_serial_crlf_and_ident() {
 fn parallel_matches_serial_gitlink_and_replacements() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let wt = repo.work_tree().expect("wt");
     let gitlink: ObjectId = "855827c583bc30645ba427885caa40c5b81764d2"
         .parse()
         .expect("oid");
     fs::create_dir_all(wt.join("sub")).expect("sub");
     fs::write(wt.join("file"), b"v1\n").expect("file");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     index.add_or_replace(
         entry_from_stat(
             &wt.join("file"),
@@ -350,7 +364,7 @@ fn parallel_matches_serial_gitlink_and_replacements() {
         .odb()
         .write(ObjectKind::Blob, b"target\n")
         .expect("blob");
-    index = repo.load_index().expect("reload");
+    index = repo.index_handle().load().expect("reload");
     index.remove(b"sub");
     index.remove(b"file");
     index.add_or_replace(
@@ -400,11 +414,11 @@ fn external_smudge_filter_runs_once_via_recording_runner() {
     let mut options = RepositoryOptions::empty();
     options.command_runner = runner.clone();
     options.thread_policy = policy(4, Some(0));
-    let repo = Repository::open(&git_dir, &&options.clone().with_work_tree(root)).expect("open");
+    let repo = Repository::open(&git_dir, &options.clone().with_work_tree(root)).expect("open");
     let wt = repo.work_tree().expect("wt");
     fs::write(wt.join("filtered"), b"blob\n").expect("write");
     let blob = repo.odb().write(ObjectKind::Blob, b"blob\n").expect("blob");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     index.add_or_replace(
         entry_from_stat(&wt.join("filtered"), b"filtered", blob, MODE_REGULAR).expect("e"),
     );
@@ -449,8 +463,15 @@ fn external_smudge_filter_runs_once_via_recording_runner() {
 fn ignorecase_collision_uses_serial_path_and_matches() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     fs::write(
         root.join(".git/config"),
         "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tignorecase = true\n",
@@ -459,7 +480,7 @@ fn ignorecase_collision_uses_serial_path_and_matches() {
     repo.reload_config().expect("reload");
     let wt = repo.work_tree().expect("wt");
     let empty = repo.odb().write(ObjectKind::Blob, b"").expect("empty");
-    let mut index = repo.load_index().expect("index");
+    let mut index = repo.index_handle().load().expect("index");
     for name in ["FILE_x", "file_x", "other.txt"] {
         let path = wt.join(name);
         fs::write(&path, b"").expect("write");
@@ -481,8 +502,15 @@ fn parallel_pool_error_does_not_write_jobs_after_failure() {
     const N: usize = 128;
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     enable_parallel_checkout_config(root);
     let wt = repo.work_tree().expect("wt");
     let good_oid = repo.odb().write(ObjectKind::Blob, b"ok\n").expect("blob");
@@ -559,8 +587,15 @@ fn missing_blob_errors_after_earlier_write() {
     use grit_lib::diff::{DiffEntry, DiffStatus};
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    let repo = init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files)
-        .expect("init");
+    let repo = Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
     let wt = repo.work_tree().expect("wt");
     let good_oid = repo.odb().write(ObjectKind::Blob, b"ok\n").expect("blob");
     let missing: ObjectId = "1111111111111111111111111111111111111111"

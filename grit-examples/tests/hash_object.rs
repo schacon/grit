@@ -3,17 +3,18 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectKind;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 
 #[test]
 fn hash_object_writes_file_contents_as_blob() -> Result<()> {
     let temp = tempfile::tempdir()?;
-    let repo = init_repository(
+    let repo = Repository::init(
         temp.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
     )?;
     let input_path = temp.path().join("hello.txt");
     let contents = b"hello from grit examples\n";

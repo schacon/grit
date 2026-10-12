@@ -15,7 +15,7 @@ use grit_lib::objects::{parse_commit, ObjectKind};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use time::OffsetDateTime;
 
 const FIXED_EPOCH: i64 = 1_112_911_993;
@@ -58,7 +58,15 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
 
     let td = tempfile::TempDir::new().expect("tempdir");
     let root = td.path();
-    init_repository(root, false, "main", None, grit_lib::RefStorageFormat::Files).expect("init");
+    Repository::init(
+        root,
+        &InitOptions {
+            initial_branch: "main".to_owned(),
+            ref_storage: grit_lib::RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
 
     let vars = [
         ("TZ", "America/New_York"),

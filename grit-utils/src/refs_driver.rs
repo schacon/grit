@@ -48,7 +48,7 @@ pub fn for_each_ref(repo: &Repository, pattern: Option<&str>) -> Result<()> {
 
 /// Read `create` / `update` / `delete` lines from stdin and apply one batch via [`update_refs`].
 pub fn update_ref_stdin(repo: &Repository) -> Result<()> {
-    update_ref_stdin_at(&repo.git_dir())
+    update_ref_stdin_at(repo.git_dir())
 }
 
 /// Like [`update_ref_stdin`] but takes a git directory path directly (avoids extra work on open).
