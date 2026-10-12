@@ -2724,7 +2724,8 @@ fn push_index_blob_worktree_diff(
     if eff_oid != ie.oid || mode_differs {
         let path_owned = path_str_ref.to_owned();
         // `git diff-files --raw` uses the null OID for the worktree side when content differs.
-        let new_oid = if eff_oid != ie.oid {
+        // Staging (`diff_index_to_worktree_for_staging`) materializes blobs and needs the real OID.
+        let new_oid = if eff_oid != ie.oid && !materialize_dirty_blobs {
             zero_oid()
         } else {
             eff_oid
