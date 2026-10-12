@@ -235,6 +235,7 @@ fn handle_worktree_add_matches_git_porcelain() {
             new_branch: true,
             detach: false,
             start_point: None,
+            force: false,
         })
         .expect("add");
 
@@ -262,6 +263,7 @@ fn handle_worktree_lock_visible_to_git() {
             new_branch: true,
             detach: false,
             start_point: None,
+            force: false,
         })
         .expect("add");
     repo.worktrees()
