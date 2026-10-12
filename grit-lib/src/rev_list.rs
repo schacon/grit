@@ -8887,7 +8887,7 @@ mod line_coverage_tests {
 
     #[test]
     fn deep_linear_render_and_rev_list_objects() -> Result<()> {
-        let (_dir, repo, tip) = seed_repo(120, false);
+        let (_dir, repo, tip) = seed_repo(120, true);
         let format_specs = [
             "format:%H %h %T %t %P %p %an %ae %at %cn %ce %ct %s %b %N %G? %GS %GK %GF %GP %GT %GG %d %D %gD",
             "format:%ad %cd %as %cs %ai %ci %ar %cr %aI %cI %aD %cD",
