@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::commands::diff::{self, DiffOutcome};
 use crate::commands::show::{self, DiffStat};
 use crate::context;
+use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit stash push` (or bare `grit stash`).
@@ -48,7 +49,12 @@ impl HumanRender for StashPushOutcome {
     }
 }
 
-impl MarkdownRender for StashPushOutcome {}
+impl MarkdownRender for StashPushOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_stash_push_outcome(w, self)?;
+        Ok(())
+    }
+}
 
 /// Result of `grit stash list` (`--json` is the bare array of entries).
 #[derive(Serialize, JsonSchema)]
@@ -156,7 +162,12 @@ impl HumanRender for StashApplyOutcome {
     }
 }
 
-impl MarkdownRender for StashApplyOutcome {}
+impl MarkdownRender for StashApplyOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_stash_apply_outcome(w, self)?;
+        Ok(())
+    }
+}
 
 /// Result of `grit stash pop`.
 #[derive(Serialize, JsonSchema)]
@@ -189,7 +200,12 @@ impl HumanRender for StashPopOutcome {
     }
 }
 
-impl MarkdownRender for StashPopOutcome {}
+impl MarkdownRender for StashPopOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_stash_pop_outcome(w, self)?;
+        Ok(())
+    }
+}
 
 /// Result of `grit stash drop`.
 #[derive(Serialize, JsonSchema)]
@@ -204,7 +220,12 @@ impl HumanRender for StashDropOutcome {
     }
 }
 
-impl MarkdownRender for StashDropOutcome {}
+impl MarkdownRender for StashDropOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        markdown::print_stash_drop_outcome(w, self)?;
+        Ok(())
+    }
+}
 
 pub fn run_push(message: Option<String>, include_untracked: bool) -> Result<StashPushOutcome> {
     let repo = context::discover()?;
