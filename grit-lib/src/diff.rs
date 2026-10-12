@@ -4507,7 +4507,10 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 let options = DiffIndexToWorktreeOptions {
                     repository_git_dir: Some(repository_git_dir.to_path_buf()),
                     refresh_index_stat_in_pass: false,
-                    for_status: true,
+                    // Tree↔worktree (`git diff <rev>:`) must hash worktree blobs (null OID in
+                    // `--raw` when dirty), not the status fast path that marks size-only drift
+                    // with identical OIDs on both sides.
+                    for_status: false,
                     config: config.cloned().map(std::sync::Arc::new),
                     ..DiffIndexToWorktreeOptions::default()
                 };
