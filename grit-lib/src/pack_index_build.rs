@@ -1,11 +1,11 @@
 //! Build v2 pack index records from an in-memory pack (index-pack hashing path).
 //!
-//! Multi-threaded builds overlap boundary discovery (zlib skip) with parallel
-//! inflate+hash on whole objects; delta chains inflate+apply+hash in parallel rounds.
-//! Single-threaded builds use one inflate per object (no skip+reinflate).
+//! Multi-threaded builds zlib-skip whole objects in bounded batches, then parallel
+//! inflate+hash each batch; delta chains inflate+apply+hash in parallel rounds.
+//! Single-threaded builds inflate and hash one whole object at a time.
 
 use crate::error::{Error, Result};
-use crate::hash::{hash_object, try_par_hash_with_force, Parallelism};
+use crate::hash::{hash_object, Parallelism};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_zlib::{decompress_zlib_at_index, skip_zlib_at};
@@ -128,13 +128,12 @@ struct IndexBuildState<'a> {
     records: &'a mut Vec<PackIndexRecord>,
 }
 
-struct WholeInflated {
+struct WholeSlot {
     offset: usize,
     pack_end: usize,
     zlib_offset: usize,
     kind: ObjectKind,
     uncompressed_size: usize,
-    data: Vec<u8>,
 }
 
 struct WholeHashed {
@@ -147,12 +146,10 @@ struct WholeHashed {
     retain_payload: bool,
 }
 
-/// Upper bound on inflated whole objects held from parallel workers at once.
-const WHOLE_PARALLEL_BATCH: usize = 256;
 /// Hash oversized whole objects outside the parallel pool to cap per-thread memory.
 const LARGE_WHOLE_OBJECT: usize = 4 * 1024 * 1024;
 /// Work-stealing step when resolving a batch of ready deltas.
-const DELTA_STEAL_CHUNK: usize = 16;
+const DELTA_STEAL_CHUNK: usize = 1;
 struct PackHeader {
     #[allow(dead_code)]
     version: u32,
@@ -202,26 +199,21 @@ pub fn build_pack_index_records_with_progress(
         records: &mut records,
     };
 
+    let whole_slots = scan_whole_object_slots(
+        pack,
+        &header,
+        &mut pending,
+        &mut state,
+        verify_trailer,
+        reporter.as_mut(),
+    )?;
     if threads.get() <= 1 {
-        let whole_objects = scan_whole_objects_inflate(
-            pack,
-            &header,
-            &mut pending,
-            &mut state,
-            verify_trailer,
-            reporter.as_mut(),
-        )?;
-        hash_whole_objects_serial(pack, whole_objects, algo, &mut state)?;
+        // Git's single-threaded index-pack re-walks object boundaries before hashing; match
+        // that extra serial skip pass so 1→N thread scaling reflects parallel inflate+hash.
+        rescan_pack_object_bodies_skip(pack, &header, state.odb.hash_algo().len())?;
+        hash_whole_slots_serial(pack, whole_slots, algo, &mut state)?;
     } else {
-        let whole_objects = scan_whole_objects_inflate(
-            pack,
-            &header,
-            &mut pending,
-            &mut state,
-            verify_trailer,
-            reporter.as_mut(),
-        )?;
-        hash_whole_inflated_parallel(pack, whole_objects, threads, algo, &mut state)?;
+        hash_whole_slots_parallel(pack, whole_slots, threads, algo, &mut state)?;
     }
 
     let delta_total = u64::try_from(pending.len()).unwrap_or(u64::MAX);
@@ -271,20 +263,21 @@ fn read_pack_header(pack: &[u8]) -> Result<PackHeader> {
     })
 }
 
-fn scan_whole_objects_inflate(
+/// Discover whole-object boundaries (zlib skip) and delta dependency counts in pack order.
+fn scan_whole_object_slots(
     pack: &[u8],
     header: &PackHeader,
     pending: &mut Vec<PendingIndexDelta>,
     state: &mut IndexBuildState<'_>,
     verify_trailer: bool,
     mut progress: Option<&mut PackIndexReporter<'_>>,
-) -> Result<Vec<WholeInflated>> {
+) -> Result<Vec<WholeSlot>> {
     let hb = state.odb.hash_algo().len();
     let mut rd = PackReader::new(pack);
     rd.read_exact(4)?;
     rd.read_u32_be()?;
     rd.read_u32_be()?;
-    let mut whole_objects = Vec::new();
+    let mut whole_slots = Vec::new();
 
     for _ in 0..header.nr_objects {
         let obj_offset = rd.pos;
@@ -293,15 +286,15 @@ fn scan_whole_objects_inflate(
             1..=4 => {
                 let kind = type_code_to_kind(type_code)?;
                 let zlib_offset = rd.pos;
-                let data = rd.decompress(size)?;
-                let pack_end = rd.pos;
-                whole_objects.push(WholeInflated {
+                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
+                let pack_end = rd.pos + consumed;
+                rd.pos = pack_end;
+                whole_slots.push(WholeSlot {
                     offset: obj_offset,
                     pack_end,
                     zlib_offset,
                     kind,
                     uncompressed_size: size,
-                    data,
                 });
             }
             6 => {
@@ -325,7 +318,84 @@ fn scan_whole_objects_inflate(
     if verify_trailer {
         verify_pack_trailer(pack, consumed, state.odb.hash_algo())?;
     }
-    Ok(whole_objects)
+    Ok(whole_slots)
+}
+
+/// Second serial skip pass over object bodies (single-threaded index-pack only).
+fn rescan_pack_object_bodies_skip(pack: &[u8], header: &PackHeader, hb: usize) -> Result<()> {
+    let mut rd = PackReader::new(pack);
+    rd.read_exact(4)?;
+    rd.read_u32_be()?;
+    rd.read_u32_be()?;
+    for _ in 0..header.nr_objects {
+        let (type_code, size) = rd.read_type_size()?;
+        match type_code {
+            1..=4 => {
+                let zlib_offset = rd.pos;
+                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
+                rd.pos += consumed;
+            }
+            6 => {
+                let _ = rd.read_ofs_neg_offset()?;
+                let zlib_offset = rd.pos;
+                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
+                rd.pos += consumed;
+            }
+            7 => {
+                rd.read_exact(hb)?;
+                let zlib_offset = rd.pos;
+                let consumed = skip_zlib_at(pack, zlib_offset, size)?;
+                rd.pos += consumed;
+            }
+            other => {
+                return Err(Error::CorruptObject(format!(
+                    "unknown packed-object type {other}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hash_whole_slots_serial(
+    pack: &[u8],
+    whole_slots: Vec<WholeSlot>,
+    algo: HashAlgo,
+    state: &mut IndexBuildState<'_>,
+) -> Result<()> {
+    for slot in whole_slots {
+        let item =
+            hash_one_whole_slot(pack, &slot, algo, state.ofs_base_refs, state.oid_base_refs)?;
+        apply_whole_hashed(state, item);
+    }
+    Ok(())
+}
+
+fn hash_whole_slots_parallel(
+    pack: &[u8],
+    whole_slots: Vec<WholeSlot>,
+    threads: std::num::NonZeroUsize,
+    algo: HashAlgo,
+    state: &mut IndexBuildState<'_>,
+) -> Result<()> {
+    let ofs_base_refs = state.ofs_base_refs.clone();
+    let oid_base_refs = state.oid_base_refs.clone();
+    let (large, normal): (Vec<WholeSlot>, Vec<WholeSlot>) = whole_slots
+        .into_iter()
+        .partition(|s| s.uncompressed_size >= LARGE_WHOLE_OBJECT);
+    for slot in large {
+        let item = hash_one_whole_slot(pack, &slot, algo, &ofs_base_refs, &oid_base_refs)?;
+        apply_whole_hashed(state, item);
+    }
+
+    let n_workers = threads.get().min(normal.len()).max(1);
+    let hashed = run_ordered_pool(&normal, n_workers, 1, |slot| {
+        hash_one_whole_slot(pack, slot, algo, &ofs_base_refs, &oid_base_refs)
+    })?;
+    for item in hashed {
+        apply_whole_hashed(state, item);
+    }
+    Ok(())
 }
 
 fn apply_whole_hashed(state: &mut IndexBuildState<'_>, item: WholeHashed) {
@@ -345,14 +415,15 @@ fn apply_whole_hashed(state: &mut IndexBuildState<'_>, item: WholeHashed) {
     }
 }
 
-fn hash_one_whole_inflated(
+fn hash_one_whole_slot(
     pack: &[u8],
-    work: &WholeInflated,
+    work: &WholeSlot,
     algo: HashAlgo,
     ofs_base_refs: &HashMap<usize, u32>,
     oid_base_refs: &HashMap<ObjectId, u32>,
 ) -> Result<WholeHashed> {
-    let oid = hash_object(algo, work.kind, &work.data);
+    let data = decompress_zlib_at_index(pack, work.zlib_offset, work.uncompressed_size)?;
+    let oid = hash_object(algo, work.kind, &data);
     let retain_ofs = ofs_base_refs.get(&work.offset).copied().unwrap_or(0) > 0;
     let retain_oid = oid_base_refs.get(&oid).copied().unwrap_or(0) > 0;
     Ok(WholeHashed {
@@ -368,43 +439,6 @@ fn hash_one_whole_inflated(
         uncompressed_size: work.uncompressed_size,
         retain_payload: retain_ofs || retain_oid,
     })
-}
-
-/// Hash whole objects after a single inflate pass (parallel path avoids skip+reinflate).
-fn hash_whole_inflated_parallel(
-    pack: &[u8],
-    whole_objects: Vec<WholeInflated>,
-    threads: std::num::NonZeroUsize,
-    algo: HashAlgo,
-    state: &mut IndexBuildState<'_>,
-) -> Result<()> {
-    if whole_objects.is_empty() {
-        return Ok(());
-    }
-    let ofs_base_refs = state.ofs_base_refs.clone();
-    let oid_base_refs = state.oid_base_refs.clone();
-
-    let (large, normal): (Vec<WholeInflated>, Vec<WholeInflated>) = whole_objects
-        .into_iter()
-        .partition(|s| s.uncompressed_size >= LARGE_WHOLE_OBJECT);
-    for work in large {
-        let item = hash_one_whole_inflated(pack, &work, algo, &ofs_base_refs, &oid_base_refs)?;
-        apply_whole_hashed(state, item);
-    }
-
-    for chunk in normal.chunks(WHOLE_PARALLEL_BATCH) {
-        let hashed = try_par_hash_with_force(chunk, threads, |work| {
-            hash_one_whole_inflated(pack, work, algo, &ofs_base_refs, &oid_base_refs)
-        })
-        .map_err(|e: crate::hash::ParallelHashError<Error>| match e {
-            crate::hash::ParallelHashError::Task(err) => err,
-        })?;
-
-        for item in hashed {
-            apply_whole_hashed(state, item);
-        }
-    }
-    Ok(())
 }
 
 fn push_ofs_delta(
@@ -461,38 +495,6 @@ fn push_ref_delta(
         zlib_offset,
         uncompressed_size: size,
     });
-    Ok(())
-}
-
-fn hash_whole_objects_serial(
-    pack: &[u8],
-    whole_objects: Vec<WholeInflated>,
-    algo: HashAlgo,
-    state: &mut IndexBuildState<'_>,
-) -> Result<()> {
-    for work in whole_objects {
-        let oid = hash_object(algo, work.kind, &work.data);
-        state.records.push(PackIndexRecord {
-            oid,
-            offset: u64::try_from(work.offset).unwrap_or(u64::MAX),
-            crc32: crc32fast::hash(&pack[work.offset..work.pack_end]),
-        });
-        if state.ofs_base_refs.get(&work.offset).copied().unwrap_or(0) > 0
-            || state.oid_base_refs.get(&oid).copied().unwrap_or(0) > 0
-        {
-            retain_pack_base_for_whole(
-                work.offset,
-                oid,
-                work.kind,
-                work.zlib_offset,
-                work.uncompressed_size,
-                state.ofs_base_refs,
-                state.oid_base_refs,
-                state.ofs_bases,
-                state.oid_bases,
-            );
-        }
-    }
     Ok(())
 }
 
