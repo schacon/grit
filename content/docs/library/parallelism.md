@@ -62,9 +62,9 @@ Optional `pack.windowMemory` caps sliding-window retention during delta search (
 
 | Value | Effect |
 | --- | --- |
-| **`0`** | Auto — all logical CPUs for every [`ParallelOp`](https://docs.rs/grit-lib/latest/grit_lib/parallel/enum.ParallelOp.html) (same as unset config keys after resolve). |
+| **`0`** | Auto — all logical CPUs for ops that honor unset config (`index.threads`, `pack.threads`, etc.). Does **not** turn on checkout parallelism by itself: unset **`checkout.workers`** still means one worker until you set **`checkout.workers`** or pass **`--threads` ≥ 2**. |
 | **`1`** | Force serial pools (`threads = 1`) regardless of `index.threads` / `pack.threads` / `checkout.workers`. |
-| **`N > 1`** | Cap workers at **`min(N, available CPUs)`** for all parallel operations. |
+| **`N > 1`** | Cap workers at **`min(N, available CPUs)`** for all parallel operations (including checkout when the entry threshold is met). |
 
 Embedders pass the same semantics via [`ThreadPolicy::with_threads_override`](https://docs.rs/grit-lib/latest/grit_lib/parallel/struct.ThreadPolicy.html#method.with_threads_override).
 

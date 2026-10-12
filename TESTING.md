@@ -110,7 +110,7 @@ export GIT_CONFIG_VALUE_3=0
 cargo test --release --workspace
 ```
 
-**Latest tracked run (2026-10-12, roadmap item 15 close-out):** [`test-threaded` job on `main` run 38201576682](https://github.com/gitbutlerapp/grit/actions/runs/38201576682/job/114655937278) — failed on `grit-lib` **`config_parse`** (`t1300_*` vs system **`git config`**) after CI upgraded to **Git 2.55**; parallel pool tests under `grit-lib/src/parallel/` still pass under this env. Re-link a green run here when `main` is green again.
+**Latest tracked run (2026-10-12, roadmap item 15 close-out):** [`test-threaded` on `main` run 38217276891](https://github.com/gitbutlerapp/grit/actions/runs/38217276891/job/114704849345) — still **failed** (bundle CLI + other workspace tests on tip `54ef4babb`; not parallelism). **`factory/parallel-bench-1006`** adds fixes for **`config_parse`** / Git **2.55**, ODB alternates, and reftable batch transactions; the local repro below passes those suites once that branch is checked out. **Replace this link with a green `test-threaded` job on `main` after those commits integrate.**
 
 Each job uses **`ubuntu-latest`** (the **scripts** job uses **`timeout-minutes: 5`**; **coverage** uses **30**; the others use **15**), and the jobs run in parallel. The website has its own workflow, **[`site.yml`](.github/workflows/site.yml)** (see below).
 
