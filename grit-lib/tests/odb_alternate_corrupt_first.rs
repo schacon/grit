@@ -8,6 +8,25 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
+fn git_version_at_least(major: u32, minor: u32) -> bool {
+    let Ok(out) = Command::new("git").arg("--version").output() else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let Some(token) = text.split_whitespace().nth(2) else {
+        return false;
+    };
+    let mut parts = token.split('.');
+    let Some(maj) = parts.next().and_then(|s| s.parse().ok()) else {
+        return false;
+    };
+    let min: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    (maj, min) >= (major, minor)
+}
+
 fn git_in(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .current_dir(dir)
@@ -77,6 +96,11 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
     let mut buf = Vec::new();
     std::io::Read::read_to_end(&mut stream.reader, &mut buf).expect("read stream");
     assert_eq!(buf, payload);
+
+    if !git_version_at_least(2, 44) {
+        eprintln!("SKIP: system git lacks corrupt-first alternate fallback oracle (need >= 2.44)");
+        return;
+    }
 
     let git_dir = layout.path().join("primary.git");
     let cat = Command::new("git")
