@@ -732,6 +732,9 @@ fn build_list_refs_v2_request(
     pkt_line::write_delim(&mut req).map_err(Error::Io)?;
     if opts.symrefs {
         pkt_line::write_line(&mut req, "symrefs").map_err(Error::Io)?;
+        if crate::protocol_v2::server_advertises_ls_refs_unborn(server_caps) {
+            pkt_line::write_line(&mut req, "unborn").map_err(Error::Io)?;
+        }
     }
     if opts.peel {
         pkt_line::write_line(&mut req, "peel").map_err(Error::Io)?;
@@ -794,6 +797,10 @@ fn parse_list_refs_v2_response(
                         "remote error: {}",
                         msg.trim_end()
                     ))));
+                }
+                if let Some(t) = crate::fetch::parse_v2_ls_refs_unborn_head_symref(line) {
+                    head_symref = Some(t);
+                    continue;
                 }
                 let Some((name, oid, symref_target, peel)) = parse_ls_refs_v2_line(line) else {
                     continue;
