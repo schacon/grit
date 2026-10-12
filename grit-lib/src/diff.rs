@@ -4507,9 +4507,9 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                 let options = DiffIndexToWorktreeOptions {
                     repository_git_dir: Some(repository_git_dir.to_path_buf()),
                     refresh_index_stat_in_pass: false,
-                    // Tree↔worktree (`git diff <rev>:`) must hash worktree blobs (null OID in
-                    // `--raw` when dirty), not the status fast path that marks size-only drift
-                    // with identical OIDs on both sides.
+                    // Tree↔worktree raw lines use a null worktree OID when content differs; the
+                    // status fast path (`for_status`) may report size-only drift with both sides
+                    // set to the index blob (see `try_push_status_modified_on_size_mismatch`).
                     for_status: false,
                     config: config.cloned().map(std::sync::Arc::new),
                     ..DiffIndexToWorktreeOptions::default()
@@ -4786,7 +4786,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
                         &conv,
                         &file_attrs,
                         path,
-                        idx_ent,
+                        None,
                         filter_fp,
                     )?;
                     if wt_oid != te.oid {
@@ -5646,17 +5646,7 @@ fn read_new_side_bytes(
         let conv = crate::crlf::ConversionConfig::from_config(config);
         let attrs = crate::crlf::load_gitattributes(root);
         let file_attrs = crate::crlf::get_file_attrs(&attrs, path, false, config);
-        let index_entry = index_stage0_entry(wctx.index, path);
-        return worktree_blob_bytes(
-            odb,
-            &file_path,
-            &meta,
-            &conv,
-            &file_attrs,
-            path,
-            index_entry,
-            None,
-        );
+        return worktree_blob_bytes(odb, &file_path, &meta, &conv, &file_attrs, path, None, None);
     }
     fs::read(root.join(path)).map_err(Error::Io)
 }
