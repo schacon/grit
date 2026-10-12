@@ -19,6 +19,8 @@ When the destination is an existing directory, each source is moved into that di
 
 Grit refuses untracked sources, overwriting an existing destination without `--force`, and moving a directory into one of its own subdirectories.
 
+On case-insensitive volumes with `core.ignorecase=true`, case-only renames (for example `README.md` to `readme.md`) succeed: the worktree spelling updates and the index tracks the destination path, matching `git mv`.
+
 ## Options
 
 | Option | Description |
