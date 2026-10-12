@@ -16,7 +16,8 @@ pub use corrupt::{flip_byte_at, overwrite_range, truncate_file};
 pub use delta_ops::DeltaOps;
 pub use git_check::{
     git_cat_file_batch_check, git_commit_graph_verify, git_fsck, git_midx_verify,
-    git_supports_sha256, git_verify_pack, BatchCheckOutcome, FsckOutcome, GitToolOutcome,
+    git_supports_alternate_past_corrupt_first, git_supports_sha256, git_verify_pack,
+    BatchCheckOutcome, FsckOutcome, GitToolOutcome,
 };
 pub use hash::HashAlgo;
 pub use install::{write_pack_and_index, IndexPackOptions, IndexVersion, PackInstallOutcome};

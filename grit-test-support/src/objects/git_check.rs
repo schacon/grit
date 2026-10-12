@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use super::hash::HashAlgo;
 
@@ -30,6 +31,91 @@ pub struct BatchCheckOutcome {
     pub ok: bool,
     /// Raw batch-check lines (stdout, UTF-8 lossy).
     pub lines: Vec<String>,
+}
+
+/// Whether system `git` reads an object from a later `info/alternates` entry when an
+/// earlier alternate holds corrupt bytes for the same oid.
+///
+/// Grit continues searching alternates; some Git versions stop at the first corrupt match.
+#[must_use]
+pub fn git_supports_alternate_past_corrupt_first() -> bool {
+    static PROBE: OnceLock<bool> = OnceLock::new();
+    *PROBE.get_or_init(probe_git_alternate_past_corrupt_first)
+}
+
+fn probe_git_alternate_past_corrupt_first() -> bool {
+    use grit_lib::objects::ObjectKind;
+    use grit_lib::odb::Odb;
+
+    let layout = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    let primary_git = layout.path().join("primary.git");
+    if !Command::new("git")
+        .current_dir(layout.path())
+        .args(["init", "-q", "--bare", "primary.git"])
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let primary_objects = primary_git.join("objects");
+    let good_objects = layout.path().join("good/objects");
+    let bad_objects = layout.path().join("bad/objects");
+    if std::fs::create_dir_all(&good_objects).is_err()
+        || std::fs::create_dir_all(&bad_objects).is_err()
+    {
+        return false;
+    }
+
+    let payload = b"grit alternate corrupt-first probe";
+    let good_odb = Odb::new(&good_objects);
+    let oid = match good_odb.write(ObjectKind::Blob, payload) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let bad_odb = Odb::new(&bad_objects);
+    if bad_odb.write(ObjectKind::Blob, payload).ok().as_ref() != Some(&oid) {
+        return false;
+    }
+    let bad_path = bad_odb.object_path(&oid);
+    if std::fs::write(&bad_path, b"not-valid-zlib").is_err() {
+        return false;
+    }
+
+    let bad_abs = match std::fs::canonicalize(&bad_objects) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let good_abs = match std::fs::canonicalize(&good_objects) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if std::fs::create_dir_all(primary_objects.join("info")).is_err() {
+        return false;
+    }
+    if std::fs::write(
+        primary_objects.join("info/alternates"),
+        format!("{}\n{}\n", bad_abs.display(), good_abs.display()),
+    )
+    .is_err()
+    {
+        return false;
+    }
+
+    Command::new("git")
+        .args(["cat-file", "blob", &oid.to_hex()])
+        .env("GIT_DIR", &primary_git)
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .map(|o| o.status.success() && o.stdout == payload)
+        .unwrap_or(false)
 }
 
 /// Probe whether the installed `git` supports `--object-format=sha256`.

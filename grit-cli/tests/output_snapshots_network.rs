@@ -82,8 +82,8 @@ fn snapshot_fetch_new() {
         noop_opts(),
         |mode| {
             let net = Box::new(CliFixture::new().with_upstream());
-            empty_commit_on_bare(net.upstream_path(), "upstream-ahead");
             let client = client_synced(net.as_ref(), mode);
+            empty_commit_on_bare(net.upstream_path(), "upstream-ahead");
             PreparedNetworkRun::from_owned_upstream(net, client, vec!["fetch".into()])
         },
     );
@@ -124,8 +124,8 @@ fn snapshot_pull_ff() {
         noop_opts(),
         |mode| {
             let net = Box::new(CliFixture::new().with_upstream());
-            empty_commit_on_bare(net.upstream_path(), "pull-ff-tip");
             let client = client_synced(net.as_ref(), mode);
+            empty_commit_on_bare(net.upstream_path(), "pull-ff-tip");
             PreparedNetworkRun::from_owned_upstream(net, client, vec!["pull".into()])
         },
     );

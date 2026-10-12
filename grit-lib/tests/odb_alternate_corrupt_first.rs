@@ -2,6 +2,7 @@
 
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
+use grit_test_support::git_supports_alternate_past_corrupt_first;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -77,6 +78,13 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
     let mut buf = Vec::new();
     std::io::Read::read_to_end(&mut stream.reader, &mut buf).expect("read stream");
     assert_eq!(buf, payload);
+
+    if !git_supports_alternate_past_corrupt_first() {
+        eprintln!(
+            "SKIP: system git does not read past a corrupt first alternate; grit fallback verified above"
+        );
+        return;
+    }
 
     let git_dir = layout.path().join("primary.git");
     let cat = Command::new("git")
