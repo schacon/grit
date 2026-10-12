@@ -131,6 +131,21 @@ pub trait Connection {
     }
 }
 
+/// Write the v0/v1 client-side flush pkt-line (`0000`) after reading the ref
+/// advertisement when there are no `want` lines or ref-update commands to send.
+///
+/// Git's upload-pack/receive-pack expect this tail on streaming transports;
+/// closing the write side without it makes the server log "hung up unexpectedly".
+/// No-op for stateless smart-HTTP RPC, where each POST carries a complete body.
+pub(crate) fn send_client_flush(conn: &mut dyn Connection) -> Result<()> {
+    if conn.stateless_rpc() {
+        return Ok(());
+    }
+    conn.writer().write_all(b"0000")?;
+    conn.writer().flush()?;
+    Ok(())
+}
+
 /// A factory that connects to a remote and performs the protocol handshake.
 ///
 /// Implementations legitimately perform socket / subprocess / HTTP I/O; the

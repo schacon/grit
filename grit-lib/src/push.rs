@@ -139,7 +139,12 @@ pub fn push_remote(
     //       early-returns; the shared planner mirrors `push_local`'s gate.
     let mut plan = match plan_push(refs, &local_odb, local_git_dir, &adv, opts)? {
         PlanOutcome::Send(plan) => plan,
-        PlanOutcome::Done(results) => return finish_push_outcome(local_git_dir, opts, results),
+        PlanOutcome::Done(results) => {
+            if !opts.dry_run {
+                crate::transport::send_client_flush(conn)?;
+            }
+            return finish_push_outcome(local_git_dir, opts, results);
+        }
     };
 
     // 4. Write the ref-update commands (first carries the cap list after a NUL),

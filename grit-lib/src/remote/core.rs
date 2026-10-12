@@ -655,7 +655,10 @@ fn list_refs_from_connection(
     if conn.protocol_version() >= 2 && want_v2 {
         list_refs_v2_connection(conn, local_git_dir, odb, opts)
     } else {
-        list_refs_v0_advertisement(conn.advertised_refs(), conn.head_symref(), odb, opts)
+        let out =
+            list_refs_v0_advertisement(conn.advertised_refs(), conn.head_symref(), odb, opts)?;
+        crate::transport::send_client_flush(conn).map_err(RemoteError::Library)?;
+        Ok(out)
     }
 }
 
@@ -673,9 +676,10 @@ fn list_refs_v2_connection(
     let req = build_list_refs_v2_request(conn.capabilities(), &local_odb, opts)?;
     conn.writer().write_all(&req).map_err(Error::Io)?;
     conn.writer().flush().map_err(Error::Io)?;
-    conn.finish_send();
     let discovery_head = conn.head_symref().map(str::to_owned);
-    parse_list_refs_v2_response(conn.reader(), opts, discovery_head)
+    let out = parse_list_refs_v2_response(conn.reader(), opts, discovery_head)?;
+    conn.finish_send();
+    Ok(out)
 }
 
 fn build_list_refs_v2_request(

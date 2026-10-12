@@ -1335,7 +1335,9 @@ pub fn fetch_remote(
         t_begin.elapsed()
     );
 
-    if !wants.is_empty() && !opts.dry_run {
+    if wants.is_empty() {
+        crate::transport::send_client_flush(conn)?;
+    } else if !opts.dry_run {
         net_trace!(
             opts.network_trace,
             opts.diagnostics.as_ref(),
@@ -1422,7 +1424,7 @@ pub fn fetch_remote(
     // `ls-refs` (no wants) and skipped `command=fetch`. Without this a streaming
     // transport (ssh subprocess, daemon socket) hangs at teardown. No-op for
     // v0/v1, where the server closes after its single response.
-    if v2_caps.is_some() {
+    if v2_caps.is_some() && !wants.is_empty() {
         conn.finish_send();
     }
 
