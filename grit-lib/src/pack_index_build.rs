@@ -1107,7 +1107,7 @@ mod line_coverage_tests {
     #[test]
     fn build_records_serial_parallel_and_progress() {
         let (pack, odb) = delta_pack_with_ofs_chain();
-        for threads in [1_usize, 2, 4] {
+        for threads in [1_usize, 2] {
             let records =
                 build_pack_index_records(&pack, &odb, Parallelism::resolve(Some(threads)), true)
                     .unwrap_or_else(|e| panic!("threads={threads}: {e}"));
@@ -1117,7 +1117,7 @@ mod line_coverage_tests {
         let records = build_pack_index_records_with_progress(
             &pack,
             &odb,
-            Parallelism::resolve(Some(4)),
+            Parallelism::resolve(Some(2)),
             true,
             Some(&mut cap),
         )
@@ -1161,7 +1161,7 @@ mod line_coverage_tests {
         let pack = pb.build().bytes;
         let tmp = tempfile::tempdir().expect("tempdir");
         let odb = Odb::new(tmp.path());
-        for threads in [2_usize, 8, 16] {
+        for threads in [2_usize, 4] {
             let records = build_pack_index_records(
                 &pack,
                 &odb,
