@@ -1427,7 +1427,8 @@ pub struct DiffEntry {
     pub new_mode: String,
     /// Old object ID (zero OID for Added).
     pub old_oid: ObjectId,
-    /// New object ID (zero OID for Deleted).
+    /// New object ID (zero OID for Deleted, or for Modified index↔worktree / tree↔worktree
+    /// entries whose content lives only on disk — raw output uses the null OID on that side).
     pub new_oid: ObjectId,
     /// Similarity score (0–100) for renames/copies.
     pub score: Option<u32>,
@@ -5565,7 +5566,8 @@ pub fn detect_copies_with_policy(
 /// Options for Git-style rename, copy, and break-rewrite post-processing on tree diffs.
 #[derive(Debug, Clone, Copy)]
 pub struct DiffPostprocessOptions {
-    /// When set, `--break-rewrites` threshold on Git's internal 0–600000 scale (`None` = off).
+    /// When set, `--break-rewrites` threshold on Git's internal 0–[`GIT_DIFF_MAX_SCORE`] scale
+    /// (`None` = off).
     pub break_score: Option<u64>,
     /// `-M` similarity threshold (0–100); `100` disables rename detection.
     pub rename_threshold: u32,
@@ -5573,6 +5575,9 @@ pub struct DiffPostprocessOptions {
     pub copy_threshold: Option<u32>,
     /// `-C --find-copies-harder`: treat unmodified source-tree paths as copy sources.
     pub find_copies_harder: bool,
+    /// When break-rewrite runs on tree↔worktree diffs, fill `new_oid` from worktree bytes for
+    /// `--raw` output (matches `git diff <tree> -B`; leave false for index↔worktree / diff-files).
+    pub materialize_break_worktree_new_oid: bool,
 }
 
 impl Default for DiffPostprocessOptions {
@@ -5582,6 +5587,7 @@ impl Default for DiffPostprocessOptions {
             rename_threshold: 100,
             copy_threshold: None,
             find_copies_harder: false,
+            materialize_break_worktree_new_oid: false,
         }
     }
 }
@@ -5590,8 +5596,26 @@ fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
     Ok(odb.read(oid)?.data)
 }
 
+/// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
+fn read_new_side_bytes(odb: &Odb, entry: &DiffEntry, work_root: Option<&Path>) -> Result<Vec<u8>> {
+    if entry.new_oid != zero_oid() {
+        return blob_bytes(odb, &entry.new_oid);
+    }
+    let path = entry.new_path.as_deref().ok_or_else(|| {
+        Error::ObjectNotFound("modified entry missing new_path for worktree read".into())
+    })?;
+    let root = work_root.ok_or_else(|| {
+        Error::ObjectNotFound(format!(
+            "worktree bytes required for {} but no work_root was provided",
+            path
+        ))
+    })?;
+    std::fs::read(root.join(path)).map_err(Error::Io)
+}
+
 fn split_broken_modifications(
     odb: &Odb,
+    work_root: Option<&Path>,
     entries: Vec<DiffEntry>,
     break_score: u64,
 ) -> Result<Vec<DiffEntry>> {
@@ -5602,7 +5626,7 @@ fn split_broken_modifications(
             continue;
         }
         let old = blob_bytes(odb, &e.old_oid)?;
-        let new = blob_bytes(odb, &e.new_oid)?;
+        let new = read_new_side_bytes(odb, &e, work_root)?;
         if should_break_rewrite_pair(&old, &new, break_score) {
             let path = e.path().to_owned();
             out.push(DiffEntry {
@@ -5634,6 +5658,7 @@ fn split_broken_modifications(
 
 fn annotate_broken_modifications(
     odb: &Odb,
+    work_root: Option<&Path>,
     entries: Vec<DiffEntry>,
     break_score: u64,
 ) -> Result<Vec<DiffEntry>> {
@@ -5641,14 +5666,32 @@ fn annotate_broken_modifications(
     for mut e in entries {
         if e.status == DiffStatus::Modified {
             let old = blob_bytes(odb, &e.old_oid)?;
-            let new = blob_bytes(odb, &e.new_oid)?;
+            let new = read_new_side_bytes(odb, &e, work_root)?;
             if should_break_rewrite_pair(&old, &new, break_score) {
-                e.score = rewrite_dissimilarity_index_percent(&old, &new);
+                // `git diff-files -B` keeps plain `M` in raw output (no `M###` score suffix).
+                if e.new_oid != zero_oid() {
+                    e.score = rewrite_dissimilarity_index_percent(&old, &new);
+                }
             }
         }
         out.push(e);
     }
     Ok(out)
+}
+
+fn materialize_break_worktree_new_oids(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: &mut [DiffEntry],
+) -> Result<()> {
+    for e in entries {
+        if e.status != DiffStatus::Modified || e.new_oid != zero_oid() {
+            continue;
+        }
+        let bytes = read_new_side_bytes(odb, e, work_root)?;
+        e.new_oid = odb.hash(ObjectKind::Blob, &bytes);
+    }
+    Ok(())
 }
 
 /// Apply break-rewrite, rename, and copy detection to a flat tree or index diff.
@@ -5672,10 +5715,13 @@ pub fn postprocess_diff_entries(
     if let Some(break_score) = opts.break_score {
         let rename_or_copy = opts.rename_threshold < 100 || opts.copy_threshold.is_some();
         entries = if rename_or_copy {
-            split_broken_modifications(odb, entries, break_score)?
+            split_broken_modifications(odb, work_root, entries, break_score)?
         } else {
-            annotate_broken_modifications(odb, entries, break_score)?
+            annotate_broken_modifications(odb, work_root, entries, break_score)?
         };
+        if opts.materialize_break_worktree_new_oid {
+            materialize_break_worktree_new_oids(odb, work_root, &mut entries)?;
+        }
     }
 
     let source_tree_entries = source_tree_oid
