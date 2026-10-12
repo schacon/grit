@@ -1924,4 +1924,38 @@ mod tests {
         let r = uc.root.as_ref().expect("root");
         assert!(!r.dirs[0].valid);
     }
+
+    #[test]
+    fn write_untracked_extension_skips_stale_invalid_child_payload() {
+        let mut uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
+        let mut root = UntrackedCacheDir::new(String::new());
+        root.valid = true;
+        root.recurse = true;
+        let mut stale = UntrackedCacheDir::new("stale".to_string());
+        stale.valid = false;
+        stale.recurse = true;
+        stale.untracked.push("ghost.txt".to_string());
+        root.dirs.push(stale);
+        uc.root = Some(root);
+        let raw = write_untracked_extension(&uc);
+        assert!(raw.len() > 32);
+        let back = parse_untracked_extension(&raw).expect("parse");
+        let child = &back.root.as_ref().expect("root").dirs[0];
+        assert!(child.untracked.is_empty());
+    }
+
+    #[test]
+    fn untracked_extension_round_trip_exclude_oid_on_directory() {
+        let mut uc = UntrackedCache::new_shell(6, b"id\x00".to_vec());
+        let mut root = UntrackedCacheDir::new(String::new());
+        root.valid = true;
+        root.recurse = true;
+        root.exclude_oid =
+            ObjectId::from_hex("0123456789abcdef0123456789abcdef01234567").expect("oid");
+        uc.root = Some(root);
+        let raw = write_untracked_extension(&uc);
+        let back = parse_untracked_extension(&raw).expect("parse");
+        let r = back.root.as_ref().expect("root");
+        assert_eq!(r.exclude_oid, uc.root.as_ref().unwrap().exclude_oid);
+    }
 }
