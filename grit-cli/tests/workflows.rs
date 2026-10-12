@@ -1224,6 +1224,77 @@ fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {
     Ok(())
 }
 
+/// GitHub issue #967: `grit fetch --prune` must not report phantom updates when
+/// already up to date (including packed `origin/main` + loose `origin/HEAD`).
+#[test]
+fn fetch_prune_up_to_date_reports_no_updates() -> TestResult {
+    let scratch = Scratch::new("fetch-prune-967")?;
+    let src = scratch.child("src");
+    let clone = scratch.child("clone");
+    let src_s = path_arg(&src)?;
+    let clone_s = path_arg(&clone)?;
+
+    git_ok(
+        scratch.path(),
+        &["init", "-q", "-b", "main", src_s.as_str()],
+    )?;
+    git_ok(&src, &["commit", "-q", "--allow-empty", "-m", "seed"])?;
+
+    gs_ok(scratch.path(), &["clone", &src_s, &clone_s])?;
+    let first = gs_ok(&clone, ["fetch", "--prune"])?;
+    assert!(
+        first.stdout.contains("Already up to date"),
+        "first fetch --prune should be up to date:\n{}",
+        first.dump()
+    );
+    let second = gs_ok(&clone, ["fetch", "--prune", "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(&second.stdout)?;
+    assert_eq!(
+        parsed.get("updated").and_then(|v| v.as_u64()),
+        Some(0),
+        "second fetch --prune --json should list no updates: {}",
+        second.stdout
+    );
+    Ok(())
+}
+
+/// Remote names may contain `/`; prune must not touch `refs/remotes/<name>/HEAD`.
+#[test]
+fn fetch_prune_slash_remote_name_reports_no_updates() -> TestResult {
+    let scratch = Scratch::new("fetch-prune-967-slash-remote")?;
+    let src = scratch.child("src");
+    let clone = scratch.child("clone");
+    let src_s = path_arg(&src)?;
+    let clone_s = path_arg(&clone)?;
+
+    git_ok(
+        scratch.path(),
+        &["init", "-q", "-b", "main", src_s.as_str()],
+    )?;
+    git_ok(&src, &["commit", "-q", "--allow-empty", "-m", "seed"])?;
+
+    gs_ok(scratch.path(), &["clone", &src_s, &clone_s])?;
+    git_ok(&clone, &["remote", "rename", "origin", "team/origin"])?;
+
+    let first = gs_ok(&clone, ["fetch", "team/origin", "--prune", "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(&first.stdout)?;
+    assert_eq!(
+        parsed.get("updated").and_then(|v| v.as_u64()),
+        Some(0),
+        "first fetch team/origin --prune should list no updates: {}",
+        first.stdout
+    );
+    let second = gs_ok(&clone, ["fetch", "team/origin", "--prune", "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(&second.stdout)?;
+    assert_eq!(
+        parsed.get("updated").and_then(|v| v.as_u64()),
+        Some(0),
+        "second fetch team/origin --prune should list no updates: {}",
+        second.stdout
+    );
+    Ok(())
+}
+
 /// GitHub issue #961: `grit fetch --prune` and fetch prune config remove stale
 /// remote-tracking branches.
 #[test]

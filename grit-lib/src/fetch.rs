@@ -1571,6 +1571,16 @@ pub fn fetch_remote(
         t_begin.elapsed()
     );
     finish_initial_remote_fetch_layout(local_git_dir, opts, default_branch.as_deref())?;
+    let remote = opts
+        .remote_name
+        .as_deref()
+        .unwrap_or(crate::remote::DEFAULT_REMOTE);
+    ensure_remote_tracking_head_symref(
+        local_git_dir,
+        remote,
+        default_branch.as_deref(),
+        opts.dry_run,
+    )?;
     Ok(FetchOutcome {
         updates,
         default_branch,
@@ -1593,6 +1603,30 @@ pub fn fetch_operation_identity(
         .unwrap_or_else(|| "unknown".to_owned());
     let now = time::OffsetDateTime::now_utc();
     Ok(format!("{name} <{email}> {} +0000", now.unix_timestamp()))
+}
+
+/// Ensure `refs/remotes/<remote>/HEAD` exists when the remote default branch is known.
+pub(crate) fn ensure_remote_tracking_head_symref(
+    git_dir: &Path,
+    remote: &str,
+    default_branch: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run {
+        return Ok(());
+    }
+    let Some(branch) = default_branch else {
+        return Ok(());
+    };
+    let head_ref = format!("refs/remotes/{remote}/HEAD");
+    if crate::refs::resolve_ref(git_dir, &head_ref).is_ok() {
+        return Ok(());
+    }
+    let target = format!("refs/remotes/{remote}/{branch}");
+    if crate::refs::resolve_ref(git_dir, &target).is_err() {
+        return Ok(());
+    }
+    crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)
 }
 
 pub(crate) fn finish_initial_remote_fetch_layout(

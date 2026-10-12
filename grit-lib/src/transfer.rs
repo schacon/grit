@@ -1318,6 +1318,16 @@ pub fn fetch_local_with_progress(
         opts,
         default_branch.as_deref(),
     )?;
+    let remote = opts
+        .remote_name
+        .as_deref()
+        .unwrap_or(crate::remote::DEFAULT_REMOTE);
+    crate::fetch::ensure_remote_tracking_head_symref(
+        local_git_dir,
+        remote,
+        default_branch.as_deref(),
+        opts.dry_run,
+    )?;
     let new_shallow = if opts.initial_remote_fetch {
         remote_shallow.iter().copied().collect()
     } else {
@@ -2062,6 +2072,13 @@ pub(crate) fn classify_update(
     UpdateMode::NonFastForwardRejected
 }
 
+/// Default-branch symref for a wildcard refspec destination (`<prefix>HEAD`).
+///
+/// Remote names may contain `/` (e.g. `team/origin` → `refs/remotes/team/origin/HEAD`).
+fn is_default_head_under_tracking_prefix(refname: &str, tracking_prefix: &str) -> bool {
+    refname == format!("{tracking_prefix}HEAD")
+}
+
 /// Delete local tracking refs whose remote counterpart no longer exists.
 ///
 /// A local tracking ref is a prune candidate when it lives under the destination
@@ -2097,11 +2114,18 @@ pub(crate) fn prune_tracking_refs(
                 if !name.starts_with(prefix) {
                     continue;
                 }
+                if is_default_head_under_tracking_prefix(&name, prefix) {
+                    continue;
+                }
                 if !live.contains(&name) {
                     pruned.entry(name).or_insert(oid);
                 }
             }
         } else if !live.contains(dst) {
+            let exact_prefix = dst.strip_suffix("HEAD").filter(|p| p.ends_with('/'));
+            if exact_prefix.is_some_and(|p| is_default_head_under_tracking_prefix(dst, p)) {
+                continue;
+            }
             // Exact refspec (e.g. `refs/heads/a2:refs/remotes/origin/a2`): when
             // the source ref is gone from the remote, `dst` is absent from `live`,
             // so prune the tracking ref if it still exists locally. This is the
@@ -2112,6 +2136,10 @@ pub(crate) fn prune_tracking_refs(
         }
     }
 
+    let prune_delete_flags = crate::refs::store::RefUpdateFlags {
+        no_deref: true,
+        ..Default::default()
+    };
     for (name, oid) in pruned {
         if !dry_run {
             if let Some(batch) = store_batch.as_mut() {
@@ -2120,7 +2148,7 @@ pub(crate) fn prune_tracking_refs(
                     new_value: None,
                     expected: crate::refs::store::Expected::Any,
                     reflog: None,
-                    flags: Default::default(),
+                    flags: prune_delete_flags,
                 });
             } else {
                 crate::refs::delete_ref(local_git_dir, &name)?;

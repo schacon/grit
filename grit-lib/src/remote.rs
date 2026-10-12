@@ -307,6 +307,9 @@ impl Remote {
         if opts.refspecs.is_empty() {
             opts.refspecs = self.fetch_refspecs.clone();
         }
+        if opts.remote_name.is_none() {
+            opts.remote_name = self.name.clone();
+        }
         if opts.diagnostics.is_none() {
             opts.diagnostics = Some(repo.diagnostics());
             opts.network_trace = repo.network_trace_enabled();
