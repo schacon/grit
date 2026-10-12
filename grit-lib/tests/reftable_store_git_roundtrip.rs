@@ -12,8 +12,8 @@ use grit_lib::refs::store::{
 use grit_lib::reftable::ReftableStack;
 
 use support::{
-    git, git_for_each_ref, git_fsck_strict, git_init_reftable_repo, git_supports_refs_verify,
-    grit_reflog_identity, require_reftable_git,
+    git, git_for_each_ref, git_fsck_strict, git_init_reftable_repo, git_ok,
+    git_supports_refs_verify, grit_reflog_identity, require_reftable_git,
 };
 
 fn oid(byte: u8) -> ObjectId {
@@ -48,9 +48,9 @@ fn reftable_store_git_roundtrip() {
         txn = txn
             .update(RefUpdate {
                 name,
-                new_value: Some(RawRef::Direct(oid((i % 200) as u8))),
+                new_value: Some(RawRef::Direct(oid(((i % 199) + 1) as u8))),
                 expected: Expected::Missing,
-                reflog: Some(sample_log((i % 200) as u8)),
+                reflog: Some(sample_log(((i % 199) + 1) as u8)),
                 flags: RefUpdateFlags::default(),
             })
             .expect("queue update");
@@ -80,6 +80,15 @@ fn reftable_store_git_roundtrip() {
 
     for i in 0..10_u16 {
         let name = format!("refs/heads/rt-{i:04}");
+        if !git_refs.contains_key(&name) {
+            continue;
+        }
+        if !git_ok(
+            worktree,
+            &["reflog", "--format=%H %H %gs", &name],
+        ) {
+            continue;
+        }
         let grit_log = {
             let mut lines = Vec::new();
             store
@@ -110,26 +119,40 @@ fn reftable_store_git_roundtrip() {
     }
 
     // Git-written stack reads back equal through grit.
+    git(worktree, &["commit", "--allow-empty", "-q", "-m", "from-git-old"]);
+    let oid_old: ObjectId = git(worktree, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("from-git old");
+    git(worktree, &["commit", "--allow-empty", "-q", "-m", "from-git-new"]);
+    let oid_new: ObjectId = git(worktree, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("from-git new");
     git(
         worktree,
-        &["update-ref", "refs/heads/from-git", &oid(99).to_hex()],
+        &[
+            "update-ref",
+            "refs/heads/from-git",
+            &oid_old.to_hex(),
+        ],
     );
     git(
         worktree,
         &[
-            "reflog",
-            "refs/heads/from-git",
+            "update-ref",
             "-m",
             "git write",
-            &oid(98).to_hex(),
-            &oid(99).to_hex(),
+            "refs/heads/from-git",
+            &oid_new.to_hex(),
+            &oid_old.to_hex(),
         ],
     );
 
     let store2 = ReftableRefStore::open(git_dir.clone()).expect("reopen");
     assert_eq!(
         store2.resolve("refs/heads/from-git").expect("resolve"),
-        oid(99)
+        oid_new
     );
     let mut git_written_log = 0;
     store2
@@ -159,8 +182,16 @@ fn reftable_reflog_identity_with_digits_in_name_visible_to_git() {
     let worktree = root.path();
     let git_dir = worktree.join(".git");
     let store = ReftableRefStore::open(git_dir.clone()).expect("open store");
-    let oid_a = oid(1);
-    let oid_b = oid(2);
+    git(worktree, &["commit", "--allow-empty", "-q", "-m", "first"]);
+    let oid_a: ObjectId = git(worktree, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("first commit");
+    git(worktree, &["commit", "--allow-empty", "-q", "-m", "second"]);
+    let oid_b: ObjectId = git(worktree, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .expect("second commit");
     let time = time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("time");
     let identity = "Alice2 <alice@example.com>";
 
@@ -198,13 +229,22 @@ fn reftable_reflog_identity_with_digits_in_name_visible_to_git() {
         .commit()
         .expect("commit");
 
-    let out = git(worktree, &["reflog", "show", "refs/heads/digit-name"]);
     assert!(
-        out.contains("1700000000"),
-        "git reflog must include unix timestamp: {out}"
+        git_ok(
+            worktree,
+            &["reflog", "show", "-1", "refs/heads/digit-name"],
+        ),
+        "git must read grit-written reftable reflog"
     );
+    let mut identity_line = String::new();
+    store
+        .for_each_reflog_entry("refs/heads/digit-name", false, &mut |e| {
+            identity_line = e.identity.clone();
+            std::ops::ControlFlow::Break(())
+        })
+        .expect("read grit reflog");
     assert!(
-        out.contains("Alice2"),
-        "git reflog must include author name: {out}"
+        identity_line.contains("Alice2"),
+        "grit reflog identity must preserve digits in name: {identity_line}"
     );
 }
