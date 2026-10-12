@@ -37,6 +37,15 @@ pub enum RevListError {
     /// `--no-walk=` was given a value other than `sorted` or `unsorted`.
     #[error("invalid argument to --no-walk")]
     InvalidNoWalkArgument,
+
+    /// Object walk expected a tree, blob, commit, or tag but read another kind from the ODB (upstream `t6102`).
+    #[error("object {input} is not a {expected}")]
+    UnexpectedObjectKind {
+        /// User-facing revision or path spec.
+        input: String,
+        /// Expected object type name (`tree`, `blob`, `commit`, `tag`).
+        expected: &'static str,
+    },
 }
 
 #[cfg(test)]
@@ -71,5 +80,14 @@ mod tests {
         let msg = RevListError::InvalidNoWalkArgument.to_string();
         assert!(!msg.contains("fatal:"));
         assert!(!msg.contains("error:"));
+    }
+
+    #[test]
+    fn unexpected_object_kind_display() {
+        let err = RevListError::UnexpectedObjectKind {
+            input: "abc".into(),
+            expected: "tree",
+        };
+        assert_eq!(err.to_string(), "object abc is not a tree");
     }
 }

@@ -1251,6 +1251,9 @@ pub fn rev_list(
             options.show_pulls,
             options.preserve_simplify_merges_graph_merges,
         )?;
+        if options.path_graph_reorder {
+            ordered = reorder_path_limited_graph_commits(repo, &ordered, options.first_parent)?;
+        }
     }
 
     // Git-style path-limited parent reordering (dense history and `--sparse` only). Pure
@@ -1411,6 +1414,13 @@ pub fn rev_list(
         ordered.retain(|oid| keep.contains(oid));
     }
 
+    // Git omits negative-side range tips from `--ancestry-path` output (`A..B` keeps B-side
+    // ancestry but not the excluded pivot commit itself).
+    if options.ancestry_path && !effective_ancestry_path_bottoms.is_empty() {
+        let bottoms: HashSet<ObjectId> = effective_ancestry_path_bottoms.iter().copied().collect();
+        ordered.retain(|oid| !bottoms.contains(oid));
+    }
+
     if options.skip > 0 {
         ordered = ordered.into_iter().skip(options.skip).collect();
     }
@@ -1427,11 +1437,14 @@ pub fn rev_list(
         let mut boundary = Vec::new();
         let mut boundary_seen = HashSet::new();
         for &oid in &ordered {
-            if let Ok(parents) = graph.parents_of(oid).map(|p| p.to_vec()) {
-                for parent in parents {
-                    if !included_set.contains(&parent) && boundary_seen.insert(parent) {
-                        boundary.push(parent);
-                    }
+            let parents = if options.first_parent {
+                load_commit(repo, oid).map(|c| c.parents)?
+            } else {
+                graph.parents_of(oid).map(|p| p.to_vec())?
+            };
+            for parent in parents.into_iter().rev() {
+                if !included_set.contains(&parent) && boundary_seen.insert(parent) {
+                    boundary.push(parent);
                 }
             }
         }
@@ -4189,16 +4202,6 @@ fn limit_to_ancestry(
 ) -> Result<()> {
     let mut keep = HashSet::new();
 
-    for &bottom in bottoms {
-        let ancestors = walk_closure(graph, &[bottom])?;
-        keep.extend(
-            ancestors
-                .iter()
-                .copied()
-                .filter(|oid| selected.contains(oid)),
-        );
-    }
-
     let mut descendants: HashSet<ObjectId> = bottoms.iter().copied().collect();
     loop {
         let mut made_progress = false;
@@ -4382,6 +4385,7 @@ fn commit_touches_paths(
 
     if ancestry_path
         && !ancestry_path_bottoms.is_empty()
+        && !differs_any
         && if parent_rewrite {
             treesame_parents != parents.len()
                 && treesame_parent_is_ancestry_bottom_or_ancestor(
@@ -4800,12 +4804,18 @@ fn path_differs_for_specs(
     false
 }
 
+fn rev_list_unexpected_kind(oid: ObjectId, expected: &'static str) -> Error {
+    RevListError::UnexpectedObjectKind {
+        input: oid.to_hex(),
+        expected,
+    }
+    .into()
+}
+
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
     let object = repo.odb.read(&oid)?;
     if object.kind != ObjectKind::Commit {
-        return Err(Error::CorruptObject(format!(
-            "object {oid} is not a commit"
-        )));
+        return Err(rev_list_unexpected_kind(oid, "commit"));
     }
     repo.odb.hot_path_metrics().record_commit_parse();
     parse_commit(&object.data)
@@ -5335,11 +5345,8 @@ fn apply_stdin_pseudo_opt(
     Ok(None)
 }
 
-/// Read `--stdin` revision lines and pathspec tail (after `--`), matching Git `read_revisions_from_stdin`.
-fn read_revisions_from_stdin_lines(git_dir: &Path) -> Result<StdinRevisionSpecs> {
-    let stdin = std::io::read_to_string(std::io::stdin()).map_err(Error::Io)?;
-    let lines: Vec<String> = stdin.lines().map(std::borrow::ToOwned::to_owned).collect();
-
+/// Parse `--stdin` revision lines and pathspec tail (after `--`), matching Git `read_revisions_from_stdin`.
+fn parse_revision_stdin_lines(git_dir: &Path, lines: &[String]) -> Result<StdinRevisionSpecs> {
     let mut positive = Vec::new();
     let mut negative = Vec::new();
     let mut stdin_all_refs = false;
@@ -5393,6 +5400,42 @@ fn read_revisions_from_stdin_lines(git_dir: &Path) -> Result<StdinRevisionSpecs>
     }
 
     Ok((positive, negative, stdin_all_refs, Vec::new()))
+}
+
+/// Read `--stdin` revision lines from the process stdin stream.
+fn read_revisions_from_stdin_lines(git_dir: &Path) -> Result<StdinRevisionSpecs> {
+    let stdin = std::io::read_to_string(std::io::stdin()).map_err(Error::Io)?;
+    let lines: Vec<String> = stdin.lines().map(std::borrow::ToOwned::to_owned).collect();
+    parse_revision_stdin_lines(git_dir, &lines)
+}
+
+/// Merge command-line revision strings with explicit `--stdin` lines (tests and embedders).
+///
+/// Same behavior as [`collect_revision_specs_with_stdin`] when stdin contains `lines`.
+///
+/// # Errors
+///
+/// Propagates [`RevListError`] for invalid stdin pseudo-options.
+pub fn collect_revision_specs_from_stdin_lines(
+    git_dir: &Path,
+    args_specs: &[String],
+    lines: &[&str],
+) -> Result<StdinRevisionSpecs> {
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+
+    for spec in args_specs {
+        let (pos, neg) = split_revision_token(spec);
+        positive.extend(pos);
+        negative.extend(neg);
+    }
+
+    let owned: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();
+    let (s_pos, s_neg, stdin_all_refs, stdin_paths) = parse_revision_stdin_lines(git_dir, &owned)?;
+    positive.extend(s_pos);
+    negative.extend(s_neg);
+
+    Ok((positive, negative, stdin_all_refs, stdin_paths))
 }
 
 /// Merge command-line revision strings with `--stdin` lines (and optional stdin pathspecs).
@@ -6318,9 +6361,7 @@ impl TreeWalkState {
         }
         let object = repo.odb.read(&tree_oid)?;
         if object.kind != ObjectKind::Tree {
-            return Err(Error::CorruptObject(format!(
-                "object {tree_oid} is not a tree"
-            )));
+            return Err(rev_list_unexpected_kind(tree_oid, "tree"));
         }
         let entries = Arc::new(parse_tree(&object.data)?);
         self.parsed_trees.insert(tree_oid, Arc::clone(&entries));
@@ -7049,10 +7090,7 @@ fn collect_tree_objects_filtered(
                     Err(err) => return Err(err),
                 };
                 if child_info.kind != ObjectKind::Tree {
-                    return Err(Error::CorruptObject(format!(
-                        "object {} is not a tree",
-                        entry.oid
-                    )));
+                    return Err(rev_list_unexpected_kind(entry.oid, "tree"));
                 }
             }
             if let Some(parents) = parent_commit_trees {
@@ -7170,24 +7208,48 @@ fn collect_tree_objects_filtered(
                     }
                 } else {
                     if emitted.contains(&entry.oid) {
-                        return Err(Error::CorruptObject(format!(
-                            "object {} is not a blob",
-                            entry.oid
-                        )));
+                        return Err(rev_list_unexpected_kind(entry.oid, "blob"));
                     }
                     if emitted.insert(entry.oid) {
                         result.push((entry.oid, path));
                     }
                 }
-            } else if emitted.insert(entry.oid)
-                && !packed_set.is_some_and(|p| p.contains(&entry.oid))
-            {
-                let out_path = if omit_object_paths {
-                    String::new()
-                } else {
-                    path.clone()
+            } else {
+                let child_info = match repo.odb.read_info(&entry.oid) {
+                    Ok(info) => info,
+                    Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                        if missing_action.reports_missing() && missing_seen.insert(entry.oid) {
+                            missing.push(entry.oid);
+                        }
+                        continue;
+                    }
+                    Err(err) => return Err(err),
                 };
-                result.push((entry.oid, out_path));
+                if child_info.kind != ObjectKind::Blob {
+                    if emitted.contains(&entry.oid) {
+                        return Err(rev_list_unexpected_kind(entry.oid, "blob"));
+                    }
+                    if emitted.insert(entry.oid)
+                        && !packed_set.is_some_and(|p| p.contains(&entry.oid))
+                    {
+                        let out_path = if omit_object_paths {
+                            String::new()
+                        } else {
+                            path.clone()
+                        };
+                        result.push((entry.oid, out_path));
+                    }
+                    continue;
+                }
+                if emitted.insert(entry.oid) && !packed_set.is_some_and(|p| p.contains(&entry.oid))
+                {
+                    let out_path = if omit_object_paths {
+                        String::new()
+                    } else {
+                        path.clone()
+                    };
+                    result.push((entry.oid, out_path));
+                }
             }
         }
     }
@@ -7250,11 +7312,11 @@ fn collect_root_object(
 
     if let Some(expected) = root.expected_kind {
         if !expected.matches(object.kind) {
-            return Err(Error::CorruptObject(format!(
-                "object {} is not a {}",
-                root.input,
-                expected.as_str()
-            )));
+            return Err(RevListError::UnexpectedObjectKind {
+                input: root.input.clone(),
+                expected: expected.as_str(),
+            }
+            .into());
         }
     }
 
@@ -7647,4 +7709,140 @@ pub fn merge_bases(
         bases.push(sorted[0]);
     }
     Ok(bases)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::ObjectKind;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn object_filter_parse_success_variants() {
+        assert_eq!(
+            ObjectFilter::parse("blob:none").expect("blob:none"),
+            ObjectFilter::BlobNone
+        );
+        assert_eq!(
+            ObjectFilter::parse("blob:limit=1k").expect("limit"),
+            ObjectFilter::BlobLimit(1024)
+        );
+        assert_eq!(
+            ObjectFilter::parse("tree:3").expect("tree"),
+            ObjectFilter::TreeDepth(3)
+        );
+        assert_eq!(
+            ObjectFilter::parse("object:type=tag").expect("type"),
+            ObjectFilter::ObjectType(FilterObjectKind::Tag)
+        );
+        assert_eq!(
+            ObjectFilter::parse("sparse:oid=deadbeef:path").expect("sparse"),
+            ObjectFilter::SparseOid("deadbeef:path".into())
+        );
+        let combine = ObjectFilter::parse("combine:blob:none+tree:1").expect("combine");
+        assert_eq!(
+            combine,
+            ObjectFilter::Combine(vec![ObjectFilter::BlobNone, ObjectFilter::TreeDepth(1),])
+        );
+    }
+
+    #[test]
+    fn object_filter_merge_and_includes() {
+        let a = ObjectFilter::BlobNone;
+        let b = ObjectFilter::TreeDepth(2);
+        let merged = a.clone().merge_with(b.clone());
+        assert!(matches!(merged, ObjectFilter::Combine(_)));
+        assert!(!a.includes_blob(10));
+        assert!(b.includes_tree(1));
+        assert!(!b.includes_tree(2));
+        assert!(ObjectFilter::BlobLimit(100).includes_blob(50));
+        assert!(!ObjectFilter::BlobLimit(100).includes_blob(100));
+        assert!(ObjectFilter::ObjectType(FilterObjectKind::Commit)
+            .includes_commit_or_tag_object(ObjectKind::Commit));
+        assert!(!ObjectFilter::ObjectType(FilterObjectKind::Commit)
+            .includes_commit_or_tag_object(ObjectKind::Blob));
+        assert!(!ObjectFilter::BlobNone.includes_blob_under_tree(1, 0));
+        assert!(ObjectFilter::TreeDepth(5).includes_blob_under_tree(1, 0));
+    }
+
+    #[test]
+    fn expand_and_url_encode_filter_subspec() {
+        let expanded = expand_object_filter_for_protocol("blob:none").expect("expand");
+        assert!(expanded.contains("blob"));
+        let encoded = url_encode_object_filter_subspec("tree:1");
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn split_revision_token_and_symmetric_diff() {
+        let (pos, neg) = split_revision_token("main..feature");
+        assert_eq!(pos, vec!["feature".to_owned()]);
+        assert_eq!(neg, vec!["main".to_owned()]);
+        assert!(is_symmetric_diff("a...b"));
+        let pair = split_symmetric_diff("left...right").expect("sym");
+        assert_eq!(pair.0, "left");
+        assert_eq!(pair.1, "right");
+    }
+
+    fn minimal_git_dir() -> (TempDir, PathBuf) {
+        let tmp = TempDir::new().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(git_dir.join("refs/heads")).expect("refs");
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("head");
+        (tmp, git_dir)
+    }
+
+    #[test]
+    fn stdin_revision_specs_pathspec_tail() -> Result<()> {
+        let (_tmp, git_dir) = minimal_git_dir();
+        let (_, _, _, paths) = collect_revision_specs_from_stdin_lines(
+            &git_dir,
+            &[String::from("HEAD")],
+            &["--", "src/foo.rs"],
+        )?;
+        assert_eq!(paths, vec!["src/foo.rs".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn stdin_invalid_no_walk_and_unknown_option() {
+        let (_tmp, git_dir) = minimal_git_dir();
+        let err = collect_revision_specs_from_stdin_lines(&git_dir, &[], &["--no-walk=bogus"])
+            .expect_err("no-walk");
+        assert!(matches!(
+            err,
+            Error::RevList(RevListError::InvalidNoWalkArgument)
+        ));
+        let err = collect_revision_specs_from_stdin_lines(&git_dir, &[], &["--not-a-real-flag"])
+            .expect_err("bad opt");
+        assert!(matches!(
+            err,
+            Error::RevList(RevListError::InvalidStdinOption { .. })
+        ));
+    }
+
+    #[test]
+    fn rev_list_unexpected_kind_display() {
+        let oid = ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").expect("oid");
+        let err: Error = rev_list_unexpected_kind(oid, "tree").into();
+        let msg = err.to_string();
+        assert!(msg.contains("tree"));
+    }
+
+    #[test]
+    fn object_filter_parse_errors_and_merge() {
+        assert!(ObjectFilter::parse("bogus").is_err());
+        assert!(ObjectFilter::parse("combine:tree:+1").is_err());
+        let merged = ObjectFilter::BlobNone.merge_with(ObjectFilter::TreeDepth(1));
+        assert!(matches!(merged, ObjectFilter::Combine(_)));
+        trace_combine_filter_append("blob%3Anone");
+    }
+
+    #[test]
+    fn symmetric_diff_helpers() {
+        assert!(!is_symmetric_diff("a..b"));
+        assert!(is_symmetric_diff("a...b"));
+        assert!(split_symmetric_diff("not-symmetric").is_none());
+    }
 }
