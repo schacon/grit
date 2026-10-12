@@ -1245,6 +1245,10 @@ fn report_status_v1_and_v2_both_parse_over_ssh() {
     }
 }
 
+/// End-to-end push over fake SSH when the receive-pack process exits right after
+/// emitting report-status (no post-report sleep). Exercises the full
+/// read/demux/apply path on Unix; abrupt TCP reset coverage lives in the
+/// `read_receive_pack_response` / side-band unit tests (issue #975).
 #[cfg(unix)]
 #[test]
 fn push_succeeds_when_fake_receive_pack_exits_immediately_after_report() {
