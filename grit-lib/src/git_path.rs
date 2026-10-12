@@ -722,6 +722,16 @@ pub fn user_display_path(path: &Path) -> String {
     strip_verbatim_path_prefix_str(&path.display().to_string()).replace('\\', "/")
 }
 
+/// Absolute path for Git worktree gitfiles (linked `.git` `gitdir:` lines and `gitdir` files).
+///
+/// Resolves symlinks via [`std::fs::canonicalize`] when possible, strips Windows `\\?\`
+/// extended-length prefixes, and uses forward slashes so system Git can open linked worktrees.
+#[must_use]
+pub fn absolute_path_for_gitfile_stored_path(path: &Path) -> String {
+    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    user_display_path(&canon)
+}
+
 /// Lexical absolute path for comparison (does not follow symlinks).
 ///
 /// Strips Windows verbatim prefixes when present. Used for repository entry paths so
@@ -944,6 +954,24 @@ mod git_path_component_tests {
             user_display_path(Path::new(r"\\?\C:\tmp\p\.git")),
             "C:/tmp/p/.git"
         );
+    }
+
+    #[test]
+    fn absolute_path_for_gitfile_stored_path_strips_verbatim() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("linked");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let stored = absolute_path_for_gitfile_stored_path(&dir);
+        assert!(!stored.contains(r"\\?\"));
+        assert!(!stored.contains("//?/"));
+        #[cfg(windows)]
+        {
+            assert!(stored.contains('/'));
+            assert_eq!(
+                absolute_path_for_gitfile_stored_path(Path::new(r"\\?\C:\tmp\t\src\.git")),
+                "C:/tmp/t/src/.git"
+            );
+        }
     }
 
     #[test]

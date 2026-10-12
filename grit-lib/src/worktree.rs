@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::check_ref_format::validate_branch_short_name;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::git_path::{absolute_path_for_gitfile_stored_path, path_for_disk_compare};
 use crate::objects::{parse_commit, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::status::{status, StatusOptions};
@@ -117,11 +118,7 @@ fn head_is_branch(head: &HeadState, branch_short_name: &str) -> bool {
 }
 
 fn admin_dirs_match(a: &Path, b: &Path) -> bool {
-    a.canonicalize()
-        .ok()
-        .zip(b.canonicalize().ok())
-        .is_some_and(|(x, y)| x == y)
-        || a == b
+    path_for_disk_compare(a) == path_for_disk_compare(b) || a == b
 }
 
 /// Find a worktree that has `branch_short_name` checked out, optionally skipping one admin dir.
@@ -207,7 +204,7 @@ pub fn list_worktrees(repo: &Repository) -> Result<Vec<WorktreeEntry>> {
     } else if let Some(wt) = repo.work_tree.as_ref() {
         // When opened from the main worktree, use the discovered work tree path.
         if repo.git_dir == common || !repo.git_dir.starts_with(common.join("worktrees")) {
-            wt.clone()
+            path_for_disk_compare(wt)
         } else {
             common.parent().unwrap_or(&common).to_path_buf()
         }
@@ -513,19 +510,11 @@ pub fn add_linked_worktree(
         &wt_git,
         format!(
             "gitdir: {}\n",
-            admin
-                .canonicalize()
-                .unwrap_or_else(|_| admin.clone())
-                .to_string_lossy()
-                .replace('\\', "/")
+            absolute_path_for_gitfile_stored_path(&admin)
         ),
     )
     .map_err(Error::Io)?;
-    let wt_git_abs = wt_git
-        .canonicalize()
-        .unwrap_or_else(|_| wt_git.clone())
-        .to_string_lossy()
-        .replace('\\', "/");
+    let wt_git_abs = absolute_path_for_gitfile_stored_path(&wt_git);
     fs::write(admin.join("commondir"), "../..\n").map_err(Error::Io)?;
     fs::write(admin.join("gitdir"), format!("{wt_git_abs}\n")).map_err(Error::Io)?;
 
@@ -540,7 +529,7 @@ pub fn add_linked_worktree(
     let linked = Repository::discover(Some(&wt_path))?;
     checkout_between_trees(&linked, None, &tree_oid)?;
 
-    let wt_canon = wt_path.canonicalize().unwrap_or_else(|_| wt_path.clone());
+    let wt_canon = path_for_disk_compare(&wt_path);
     list_worktrees(repo)?
         .into_iter()
         .find(|e| e.path == wt_canon)
@@ -555,7 +544,7 @@ pub fn add_linked_worktree(
 /// trees (unless `force`).
 pub fn remove_linked_worktree(repo: &Repository, path: &Path, force: bool) -> Result<()> {
     let common = common_git_dir(&repo.git_dir);
-    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let target = path_for_disk_compare(path);
     let entry = list_worktrees(repo)?
         .into_iter()
         .find(|e| e.path == target)
@@ -652,7 +641,7 @@ pub fn read_worktree_path(admin: &Path) -> Result<PathBuf> {
         p = admin.join(p);
     }
     let parent = p.parent().unwrap_or(&p).to_path_buf();
-    Ok(parent.canonicalize().unwrap_or(parent))
+    Ok(path_for_disk_compare(&parent))
 }
 
 fn read_lock_state(admin: &Path) -> Result<(bool, Option<String>)> {
@@ -692,7 +681,7 @@ mod tests {
         let repo = Repository::open(&root.join(".git"), Some(&root)).unwrap();
         let list = list_worktrees(&repo).unwrap();
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].path, root.canonicalize().unwrap());
+        assert_eq!(list[0].path, path_for_disk_compare(&root));
         assert!(!list[0].is_bare);
     }
 
@@ -742,6 +731,6 @@ mod tests {
         )
         .unwrap();
         let path = read_worktree_path(&admin).unwrap();
-        assert_eq!(path, wt.canonicalize().unwrap());
+        assert_eq!(path, path_for_disk_compare(&wt));
     }
 }
