@@ -12,16 +12,17 @@ use grit_lib::rev_parse::{
     expand_rev_token_circ_bang, is_inside_git_dir, is_inside_work_tree, list_all_abbrev_matches,
     list_loose_abbrev_matches, load_graft_parents, parse_index_colon_spec, parse_peel_suffix,
     reflog_date_selector_timestamp, reflog_date_selector_timestamp_at, reflog_walk_refname,
-    resolve_at_minus_to_oid, resolve_index_path_entry, resolve_revision_for_checkout_guess,
+    resolve_at_minus_to_oid, resolve_index_path_entry, resolve_push_full_ref_for_branch,
+    resolve_reflog_walk_log_ref, resolve_revision_for_checkout_guess,
     resolve_revision_for_commit_tree_tree, resolve_revision_for_patch_old_blob,
     resolve_revision_for_range_end, resolve_revision_for_range_end_without_index_dwim,
-    resolve_revision_without_index_dwim, revision_spec_contains_ancestry_navigation, show_prefix,
-    spec_has_parent_shorthand_suffix, split_treeish_colon,
-    superproject_work_tree_from_nested_git_modules, symbolic_full_name, to_relative_path,
-    try_parse_double_dot_log_range, upstream_suffix_info,
+    resolve_revision_without_index_dwim, resolve_upstream_symbolic_name,
+    revision_spec_contains_ancestry_navigation, show_prefix, spec_has_parent_shorthand_suffix,
+    split_treeish_colon, superproject_work_tree_from_nested_git_modules, symbolic_full_name,
+    to_relative_path, try_parse_double_dot_log_range, upstream_suffix_info,
 };
 
-use support::{build_commit_dag, commit_file, HistoryRepo};
+use support::{build_commit_dag, commit_file, git, HistoryRepo};
 
 fn open_grit(wt: &Path) -> Repository {
     let mut env = Environment::empty();
@@ -132,4 +133,28 @@ fn abbrev_and_reflog_helpers() {
     assert!(reflog_date_selector_timestamp("1.day.ago").is_some());
     assert!(reflog_date_selector_timestamp_at("now", 1_700_000_000).is_some());
     let _ = load_graft_parents(&repo.git_dir);
+    let _ = resolve_reflog_walk_log_ref(&repo, "HEAD");
+    let _ = resolve_reflog_walk_log_ref(&repo, "main");
+    let _ = resolve_reflog_walk_log_ref(&repo, "@{-1}");
+    let _ = resolve_push_full_ref_for_branch(&repo, "main");
+    let _ = resolve_upstream_symbolic_name(&repo, "main@{u}");
+}
+
+#[test]
+fn describe_style_name_and_triple_dot() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "1\n", "one");
+    git(wt, &["tag", "-a", "v1.0", "-m", "release"]);
+    commit_file(wt, "f.txt", "2\n", "two");
+    git(wt, &["checkout", "-b", "side"]);
+    commit_file(wt, "f.txt", "3\n", "three");
+    git(wt, &["checkout", "main"]);
+    let repo = open_grit(wt);
+    let head = grit_lib::rev_parse::resolve_revision_for_verify(&repo, "HEAD").expect("head");
+    let abbrev = &head.to_hex()[..7];
+    let describe = format!("v1.0-1-g{abbrev}");
+    let _ = grit_lib::rev_parse::resolve_revision_for_verify(&repo, &describe);
+    let _ = grit_lib::rev_parse::resolve_revision_as_commit(&repo, "main...side");
+    let _ = grit_lib::rev_parse::resolve_revision(&repo, "HEAD^{tree}");
 }

@@ -3813,7 +3813,8 @@ pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<
 #[cfg(test)]
 mod line_coverage_tests {
     use super::*;
-    use crate::index::{entry_from_stat, Index, MODE_REGULAR};
+    use crate::index::{entry_from_stat, Index, IndexEntry, MODE_REGULAR};
+    use crate::objects::ObjectId;
     use crate::objects::ObjectKind;
     use crate::odb::Odb;
     use crate::ref_storage::RefStorageFormat;
@@ -3821,6 +3822,51 @@ mod line_coverage_tests {
     use crate::write_tree::write_tree_from_index;
     use std::fs;
     use tempfile::tempdir;
+
+    fn ambiguous_hex_prefix_among(
+        oids: &[ObjectId],
+        min_len: usize,
+        max_len: usize,
+    ) -> Option<String> {
+        for i in 0..oids.len() {
+            for j in (i + 1)..oids.len() {
+                let a = oids[i].to_hex();
+                let b = oids[j].to_hex();
+                let cap = max_len.min(a.len()).min(b.len());
+                for len in (min_len..=cap).rev() {
+                    if a[..len] == b[..len] {
+                        return Some(a[..len].to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn seed_commits_until_ambiguous_prefix(
+        repo: &Repository,
+        tree: ObjectId,
+        oids: &mut Vec<ObjectId>,
+        min_len: usize,
+        max_commits: usize,
+    ) -> String {
+        let mut counter = oids.len() as i32;
+        while oids.len() < max_commits && max_commits > 0 {
+            let body = format!(
+                "tree {tree}\nauthor T <t@e.com> {counter} +0000\ncommitter T <t@e.com> {counter} +0000\n\nc{counter}\n"
+            );
+            counter += 1;
+            let oid = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
+                .expect("commit");
+            oids.push(oid);
+            if let Some(prefix) = ambiguous_hex_prefix_among(oids, min_len, 12) {
+                return prefix;
+            }
+        }
+        panic!("could not find {min_len}+ hex prefix collision among {max_commits} commits");
+    }
 
     fn exercise_resolve_base(repo: &Repository, spec: &str) {
         for index_dwim in [false, true] {
@@ -4244,6 +4290,8 @@ mod line_coverage_tests {
             "AUTO_MERGE",
             "HEAD:../outside",
             ":1:missing",
+            ":0:/etc/passwd",
+            ":2:/etc/passwd",
             "main...",
             "...",
             "tags/",
@@ -4286,9 +4334,19 @@ mod line_coverage_tests {
             "^{}",
             "HEAD^^{}",
             "main^@^!",
+            ":0:../../../../etc/passwd",
+            ":2:../../../../etc/passwd",
+            ":../../../../etc/passwd",
+            "HEAD:../../../../etc/passwd",
+            "remotes/origin/main",
+            "origin",
+            "FETCH_HEAD",
+            "MERGE_HEAD",
+            "AUTO_MERGE",
         ];
         for spec in SPECS {
             exercise_resolve_base(&repo, spec);
+            exercise_impl_matrix(&repo, spec);
         }
         Ok(())
     }
@@ -4305,39 +4363,316 @@ mod line_coverage_tests {
         .map_err(crate::error::Error::Io)?;
         let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
-        for i in 0..200_i32 {
-            let body = format!(
-                "tree {tree}\nauthor T <t@e.com> {i} +0000\ncommitter T <t@e.com> {i} +0000\n\nc{i}\n"
-            );
-            let oid = repo
-                .odb
-                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
-            oids.push(oid);
-        }
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
-        let mut shared_prefix: Option<String> = None;
-        'outer: for i in 0..oids.len() {
-            for j in (i + 1)..oids.len() {
-                let a = oids[i].to_hex();
-                let b = oids[j].to_hex();
-                for len in (4..=10).rev() {
-                    if a[..len] == b[..len] {
-                        shared_prefix = Some(a[..len].to_string());
-                        break 'outer;
+        for commit_only in [false, true] {
+            for use_disambiguate in [false, true] {
+                let _ = resolve_revision_impl(
+                    &repo,
+                    &prefix,
+                    false,
+                    commit_only,
+                    use_disambiguate,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
+                let _ = resolve_revision_as_commit(&repo, &prefix);
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("commit"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tree"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("blob"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tag"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, None);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn push_remote_ambiguous_and_graft_coverage() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let tip = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nm\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::create_dir_all(repo.git_dir.join("refs/remotes/origin"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(
+            repo.git_dir.join("refs/remotes/origin/main"),
+            format!("{tip}\n"),
+        )
+        .map_err(crate::error::Error::Io)?;
+        fs::write(
+            repo.git_dir.join("refs/remotes/origin/HEAD"),
+            b"ref: refs/remotes/origin/main\n",
+        )
+        .map_err(crate::error::Error::Io)?;
+        fs::create_dir_all(repo.git_dir.join("info")).map_err(crate::error::Error::Io)?;
+
+        let write_config = |body: &str| {
+            fs::write(repo.git_dir.join("config"), body).map_err(crate::error::Error::Io)
+        };
+        write_config(
+            "[remote \"origin\"]\n\turl = /x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n[push]\n\tdefault = nothing\n",
+        )?;
+        let _ = resolve_push_full_ref_for_branch(&repo, "main");
+        write_config(
+            "[remote \"origin\"]\n\turl = /x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n[push]\n\tdefault = simple\n",
+        )?;
+        let _ = resolve_push_full_ref_for_branch(&repo, "main");
+        write_config(
+            "[remote \"origin\"]\n\turl = /x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\tpush = refs/heads/main:refs/heads/main\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+        )?;
+        let _ = resolve_push_full_ref_for_branch(&repo, "main");
+        write_config(
+            "[remote \"origin\"]\n\turl = /x\n[branch \"main\"]\n\tpushRemote = origin\n[push]\n\tdefault = upstream\n",
+        )?;
+        let _ = resolve_push_full_ref_for_branch(&repo, "main");
+
+        for s in [
+            "now",
+            "1.day.ago",
+            "2.weeks.ago",
+            "1979-01-01",
+            "not-a-date",
+            "@{1}",
+        ] {
+            let _ = reflog_date_selector_timestamp_at(s, 1_700_000_000);
+        }
+
+        let graft_line = format!("{tip} {tip}\n");
+        fs::write(repo.git_dir.join("info/grafts"), graft_line).map_err(crate::error::Error::Io)?;
+        let _ = load_graft_parents(&repo.git_dir);
+
+        let prefix = &tip.to_hex()[..7];
+        let _ = ambiguous_object_hint_lines(&repo, prefix, None);
+        let _ = resolve_revision_as_commit_without_index_dwim(&repo, "main");
+        let _ = resolve_revision_as_commit_without_index_dwim(&repo, prefix);
+        let _ = symbolic_full_name(&repo, "main");
+        let _ = discover_optional(Some(dir.path()));
+        Ok(())
+    }
+
+    #[test]
+    fn tree_blob_peel_and_dwim_coverage() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"leaf\n")?;
+        let sub_tree = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tree, b"100644 blob {blob}\tleaf.txt\n")?;
+        let root_tree = repo.odb.write_loose_materialize(
+            ObjectKind::Tree,
+            format!("040000 tree {sub_tree}\tsub\n").as_bytes(),
+        )?;
+        let c1 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {root_tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\none\n"
+            )
+            .as_bytes(),
+        )?;
+        let c2 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {root_tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\ntwo\n"
+            )
+            .as_bytes(),
+        )?;
+        let tag_body_a = format!(
+            "object {c2}\ntype commit\ntag ta\ntagger T <t@e.com> 300 +0000\n\nannotated\n"
+        );
+        let tag_a = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tag, tag_body_a.as_bytes())?;
+        let tag_body_b = format!(
+            "object {c2}\ntype commit\ntag tb\ntagger T <t@e.com> 301 +0000\n\nannotated\n"
+        );
+        let tag_b = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tag, tag_body_b.as_bytes())?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir.join("refs/tags/t"), format!("{tag_a}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let abbrev = &c2.to_hex()[..7];
+        fs::write(
+            repo.git_dir.join(format!("refs/heads/{abbrev}")),
+            format!("{c1}\n"),
+        )
+        .map_err(crate::error::Error::Io)?;
+
+        for spec in [
+            "HEAD:sub",
+            "HEAD:sub/leaf.txt",
+            "HEAD:",
+            "main:sub/leaf.txt",
+            "t",
+            "t^{commit}",
+            "tags/t",
+            abbrev,
+        ] {
+            let _ = resolve_treeish_blob_at_path(&repo, spec);
+            let _ = resolve_revision_as_commit_without_index_dwim(&repo, spec);
+            exercise_resolve_base(&repo, spec);
+            exercise_impl_matrix(&repo, spec);
+        }
+        let _ = ambiguous_object_hint_lines(&repo, abbrev, Some("commit"));
+        let _ = disambiguate_hex_by_peel(&repo, abbrev, &[c2, tag_a], "commit");
+        let _ = disambiguate_hex_by_peel(&repo, "tags", &[tag_a, tag_b], "tag");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_base_outside_paths_and_ambiguous_hex() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let mut oids = Vec::new();
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
+        let tip = *oids.last().expect("tip");
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(
+            repo.git_dir.join("config"),
+            "[core]\n\tdisambiguate = commit\n",
+        )
+        .map_err(crate::error::Error::Io)?;
+        let shared_prefix = Some(prefix);
+
+        const OUTSIDE: &[&str] = &[":0:/etc/passwd", ":2:/etc/passwd"];
+        for spec in OUTSIDE {
+            let err = resolve_base(&repo, spec, true, false, true, None, false, false, false)
+                .expect_err(spec);
+            assert!(
+                matches!(
+                    err,
+                    Error::RevParse(RevParseError::OutsideRepository { .. })
+                ),
+                "{spec}: {err:?}"
+            );
+            for index_dwim in [false, true] {
+                for commit_only in [false, true] {
+                    for use_disambiguate in [false, true] {
+                        let _ = resolve_base(
+                            &repo,
+                            spec,
+                            index_dwim,
+                            commit_only,
+                            use_disambiguate,
+                            None,
+                            false,
+                            false,
+                            false,
+                        );
                     }
                 }
             }
         }
+
         if let Some(prefix) = shared_prefix {
-            let _ = resolve_revision_impl(
-                &repo, &prefix, false, true, true, false, false, false, false,
-            );
-            let _ = resolve_revision_impl(
-                &repo, &prefix, false, false, true, false, false, false, false,
-            );
+            for commit_only in [false, true] {
+                for use_disambiguate in [false, true] {
+                    let _ = resolve_base(
+                        &repo,
+                        &prefix,
+                        false,
+                        commit_only,
+                        use_disambiguate,
+                        Some("commit"),
+                        false,
+                        false,
+                        false,
+                    );
+                    let _ = resolve_revision_as_commit(&repo, &prefix);
+                }
+            }
+            let mut pair: Option<(ObjectId, ObjectId)> = None;
+            for i in 0..oids.len() {
+                for j in (i + 1)..oids.len() {
+                    let a = oids[i].to_hex();
+                    let b = oids[j].to_hex();
+                    if a.starts_with(prefix.as_str()) && b.starts_with(prefix.as_str()) {
+                        pair = Some((oids[i], oids[j]));
+                        break;
+                    }
+                }
+                if pair.is_some() {
+                    break;
+                }
+            }
+            if let Some((a, b)) = pair {
+                let _ = disambiguate_hex_by_peel(&repo, &prefix, &[a, b], "commit");
+                let _ = resolve_base(
+                    &repo,
+                    &prefix,
+                    false,
+                    true,
+                    true,
+                    Some("commit"),
+                    false,
+                    false,
+                    false,
+                );
+            }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn commit_message_search_abbrev_and_loose_matches() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let c1 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nneedle alpha\n"
+            )
+            .as_bytes(),
+        )?;
+        let c2 = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\nbeta only\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
+            .map_err(crate::error::Error::Io)?;
+        fs::write(repo.git_dir.join("refs/heads/side"), format!("{c1}\n"))
+            .map_err(crate::error::Error::Io)?;
+
+        for spec in [
+            ":/needle",
+            ":/!beta",
+            ":/!!needle",
+            ":/n[e-e]dle",
+            ":/missing",
+        ] {
+            let _ = resolve_revision_for_verify(&repo, spec);
+            exercise_resolve_base(&repo, spec);
+        }
+
+        let missing = ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").expect("oid");
+        let _ = abbreviate_object_id(&repo, missing, 7);
+        let prefix = &c2.to_hex()[..7];
+        let _ = list_loose_abbrev_matches(&repo, prefix);
+        let _ = list_all_abbrev_matches(&repo, prefix);
+        let _ = list_all_abbrev_matches(&repo, "zzz");
+        let _ = to_relative_path(&dir.path().join("sub/leaf.txt"), &dir.path().join("sub"));
         Ok(())
     }
 
@@ -4545,6 +4880,179 @@ mod line_coverage_tests {
         let _ = dwim_refname(&repo, "main");
         let _ = reflog_display_name("refs/heads/main", "main");
         Ok(())
+    }
+
+    fn conflict_index_entry(path: &str, stage: u8, oid: ObjectId, mode: u32) -> IndexEntry {
+        let path_bytes = path.as_bytes().to_vec();
+        IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: (path_bytes.len().min(0xFFF) as u16) | ((stage as u16) << 12),
+            flags_extended: None,
+            path: path_bytes,
+            base_index_pos: 0,
+        }
+    }
+
+    #[test]
+    fn unmerged_index_stages_resolve_and_diagnose() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let base = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"base\n")?;
+        let ours = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"ours\n")?;
+        let theirs = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"theirs\n")?;
+        let mut index = Index::new();
+        index
+            .entries_mut()
+            .push(conflict_index_entry("conflict.txt", 1, base, MODE_REGULAR));
+        index
+            .entries_mut()
+            .push(conflict_index_entry("conflict.txt", 2, ours, MODE_REGULAR));
+        index.entries_mut().push(conflict_index_entry(
+            "conflict.txt",
+            3,
+            theirs,
+            MODE_REGULAR,
+        ));
+        let nested_blob = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Blob, b"nested\n")?;
+        fs::create_dir_all(dir.path().join("sub")).map_err(crate::error::Error::Io)?;
+        fs::write(dir.path().join("sub/leaf.txt"), b"nested\n").map_err(crate::error::Error::Io)?;
+        let nested_entry = entry_from_stat(
+            &dir.path().join("sub/leaf.txt"),
+            b"sub/leaf.txt",
+            nested_blob,
+            MODE_REGULAR,
+        )?;
+        index.entries_mut().push(nested_entry);
+        index.write_to_path(&repo.git_dir.join("index"), false)?;
+
+        assert_eq!(resolve_revision_for_verify(&repo, ":1:conflict.txt")?, base);
+        assert_eq!(resolve_revision_for_verify(&repo, ":2:conflict.txt")?, ours);
+        assert_eq!(
+            resolve_revision_for_verify(&repo, ":3:conflict.txt")?,
+            theirs
+        );
+        assert!(resolve_revision_for_verify(&repo, ":0:conflict.txt").is_err());
+
+        let _ = diagnose_index_path_error(
+            &repo,
+            "conflict.txt",
+            1,
+            Error::ObjectNotFound("conflict.txt".into()),
+        );
+        let _ =
+            diagnose_index_path_error(&repo, "no-such", 2, Error::ObjectNotFound("no-such".into()));
+        fs::write(dir.path().join("disk-only.txt"), b"x\n").map_err(crate::error::Error::Io)?;
+        let _ = diagnose_index_path_error(
+            &repo,
+            "disk-only.txt",
+            0,
+            Error::ObjectNotFound("disk-only.txt".into()),
+        );
+
+        let _ = resolve_revision_for_verify(&repo, ":0:sub/leaf.txt");
+        let _ = resolve_index_path_entry(&repo, ":sub/leaf.txt");
+        let _ = diagnose_tree_path_error(
+            &repo,
+            "HEAD",
+            "./sub/leaf.txt",
+            "sub/leaf.txt",
+            Error::ObjectNotFound("not found in tree".into()),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn outside_repo_ambiguous_hex_and_shorthand_matrix() -> crate::error::Result<()> {
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let base = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nbase\n"
+            )
+            .as_bytes(),
+        )?;
+        let side = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {base}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\nside\n"
+            )
+            .as_bytes(),
+        )?;
+        let merge = repo.odb.write_loose_materialize(
+            ObjectKind::Commit,
+            format!(
+                "tree {tree}\nparent {base}\nparent {side}\nauthor T <t@e.com> 300 +0000\ncommitter T <t@e.com> 300 +0000\n\nmerge\n"
+            )
+            .as_bytes(),
+        )?;
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{merge}\n"))
+            .map_err(crate::error::Error::Io)?;
+
+        let outside = [
+            "HEAD:../../../../etc/passwd",
+            ":0:../../../../etc/passwd",
+            ":2:../../../../etc/passwd",
+            "HEAD:",
+        ];
+        for spec in outside {
+            let _ = resolve_treeish_blob_at_path(&repo, spec);
+            let _ = resolve_revision_for_verify(&repo, spec);
+            let _ = resolve_index_path_entry(&repo, spec);
+        }
+
+        let bang = expand_rev_token_circ_bang(&repo, "main^!")?;
+        assert!(bang.len() >= 2);
+        let _ = expand_parent_shorthand_rev_parse_lines(&repo, "main^-2", false, None);
+        let _ = expand_parent_shorthand_rev_parse_lines(&repo, "main^-99", false, None);
+        let _ = resolve_reflog_walk_log_ref(&repo, "main");
+        let _ = resolve_reflog_walk_log_ref(&repo, "missing-branch");
+        let _ = resolve_reflog_walk_log_ref(&repo, "@{-1}");
+
+        fs::write(
+            repo.git_dir.join("config"),
+            "[core]\n\tdisambiguate = commit\n",
+        )
+        .map_err(crate::error::Error::Io)?;
+        let mut oids = Vec::new();
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
+        let _ = resolve_revision(&repo, &prefix);
+        let _ = resolve_revision_as_commit(&repo, &prefix);
+        let _ = resolve_revision_for_verify(&repo, &prefix);
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "could not find")]
+    fn seed_commits_until_ambiguous_prefix_exhaustion() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
+        let repo = crate::repo::Repository::open(dir.path(), None).expect("open");
+        let tree = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tree, b"")
+            .expect("tree");
+        let mut oids = Vec::new();
+        let _ = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 40, 0);
     }
 }
 

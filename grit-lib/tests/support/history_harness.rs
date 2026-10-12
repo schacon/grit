@@ -46,6 +46,16 @@ fn hermetic_git(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawn git")
 }
 
+/// Start a merge that is expected to stop with conflicts (non-zero exit, index left unmerged).
+pub fn git_merge_expect_conflict(dir: &Path, branch: &str) {
+    let out = hermetic_git(dir, &["merge", branch, "--no-commit", "--no-ff"]);
+    assert!(
+        !out.status.success(),
+        "git merge {branch} should fail with conflicts: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Run `git` in `dir` with hermetic config and monotonically advancing author/committer dates.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = hermetic_git(dir, args);
