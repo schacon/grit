@@ -7621,6 +7621,16 @@ pub fn annotate_unified_diff_no_newline_at_eof(patch: &str, old: &str, new: &str
         if line.starts_with(' ') {
             out.push_str(line);
             out.push('\n');
+            let already_marked = lines
+                .peek()
+                .is_some_and(|next| *next == "\\ No newline at end of file");
+            if !already_marked {
+                let old_idx = old_line.saturating_sub(1);
+                let new_idx = new_line.saturating_sub(1);
+                if old_last == Some(old_idx) || new_last == Some(new_idx) {
+                    out.push_str("\\ No newline at end of file\n");
+                }
+            }
             old_line += 1;
             new_line += 1;
             continue;
@@ -9701,6 +9711,18 @@ mod read_worktree_bytes_for_mode_tests {
         fs::write(&path, b"hello\n").expect("write");
         let bytes = read_worktree_bytes_for_mode(&path, crate::index::MODE_REGULAR).expect("read");
         assert_eq!(bytes, b"hello\n");
+    }
+
+    #[test]
+    fn annotate_marks_context_line_when_eof_line_is_unchanged() {
+        let old = "a\nb\nc";
+        let new = "a\nx\nc";
+        let raw = super::unified_diff_histogram_hunks_only(old, new, 3, 0);
+        let out = annotate_unified_diff_no_newline_at_eof(&raw, old, new);
+        assert!(
+            out.contains(" c\n\\ No newline at end of file"),
+            "histogram hunk should mark trailing context line:\n{out}"
+        );
     }
 
     #[test]

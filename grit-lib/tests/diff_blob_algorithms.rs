@@ -421,20 +421,42 @@ fn t4052_diffstat_block_matches_git_stat_summary() {
 fn no_newline_at_eof_pairs_match_git_or_apply() {
     let pairs = blob_pairs();
     for pair in pairs.iter().filter(|p| p.name.contains("no-newline")) {
-        let opts = default_opts(LineDiffAlgo::Myers);
-        let git_p = git_diff_no_index_patch(pair.old, pair.new, "f", opts.algo, opts.ws, &[]);
-        let grit_p = grit_blob_patch(pair.old, pair.new, "f", &opts);
-        let gh = patch_hunk_body(&git_p);
-        let rh = patch_hunk_body(&grit_p);
-        if gh == rh {
-            continue;
+        for algo in [LineDiffAlgo::Myers, LineDiffAlgo::Histogram] {
+            let opts = default_opts(algo);
+            let git_p = git_diff_no_index_patch(pair.old, pair.new, "f", opts.algo, opts.ws, &[]);
+            let grit_p = grit_blob_patch(pair.old, pair.new, "f", &opts);
+            let gh = patch_hunk_body(&git_p);
+            let rh = patch_hunk_body(&grit_p);
+            if gh == rh {
+                continue;
+            }
+            let patch = wrap_apply_patch("f", &grit_p);
+            assert!(
+                git_apply_check(pair.old, &patch, "f"),
+                "git apply --check failed for {} algo={algo:?}",
+                pair.name
+            );
+            git_apply_and_compare(pair.old, pair.new, &patch, "f");
         }
-        let patch = wrap_apply_patch("f", &grit_p);
-        assert!(
-            git_apply_check(pair.old, &patch, "f"),
-            "git apply --check failed for {}",
-            pair.name
-        );
-        git_apply_and_compare(pair.old, pair.new, &patch, "f");
     }
+}
+
+#[test]
+fn histogram_no_newline_eof_context_line_matches_git_and_applies() {
+    let old = b"a\nb\nc";
+    let new = b"a\nx\nc";
+    let opts = default_opts(LineDiffAlgo::Histogram);
+    let git_p = git_diff_no_index_patch(old, new, "f", opts.algo, opts.ws, &[]);
+    let grit_p = grit_blob_patch(old, new, "f", &opts);
+    assert_eq!(
+        patch_hunk_body(&git_p),
+        patch_hunk_body(&grit_p),
+        "histogram hunk body should match git for EOF context marker"
+    );
+    let patch = wrap_apply_patch("f", &grit_p);
+    assert!(
+        git_apply_check(old, &patch, "f"),
+        "git apply --check must accept histogram patch with EOF context"
+    );
+    git_apply_and_compare(old, new, &patch, "f");
 }
