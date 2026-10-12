@@ -947,7 +947,7 @@ fn collect_worktree_paths_blocking_stash_untracked_restore(
         }
     }
     let worktree_rules = crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?;
-    let (untracked, ignored) = collect_untracked_and_ignored_inner(
+    let (untracked, ignored, _) = collect_untracked_and_ignored_inner(
         repo,
         &mut index,
         work_tree,
