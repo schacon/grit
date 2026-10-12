@@ -17,7 +17,7 @@ use crate::porcelain::worktree_guard::{
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::expand_at_minus_to_branch_name;
-use crate::rev_parse::resolve_revision;
+use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use crate::state::resolve_head;
 
 /// Resolved switch target after DWIM and revision parsing.
@@ -185,7 +185,12 @@ fn resolve_unique_dwim_switch(repo: &Repository, spec: &str) -> Result<Option<Sw
 
 /// Resolve a revision expression for `--detach` or `-c` start points.
 pub fn resolve_revision_spec(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision(repo, spec).map_err(|_| Error::Message(format!("invalid revision '{spec}'")))
+    let oid = resolve_revision(repo, spec)
+        .map_err(|_| Error::Message(format!("invalid revision '{spec}'")))?;
+    peel_to_commit_for_merge_base(repo, oid).map_err(|e| match e {
+        Error::InvalidRef(msg) => Error::Message(msg),
+        other => other,
+    })
 }
 
 /// Perform a branch switch or detached checkout.
@@ -446,10 +451,12 @@ fn ensure_local_changes_compatible_with_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::objects::{serialize_commit, CommitData, ObjectKind};
+    use crate::objects::{serialize_commit, serialize_tag, CommitData, ObjectKind, TagData};
     use crate::porcelain::status::{status, StatusOptions};
     use crate::progress::NullProgress;
     use crate::repo::{init_repository, Repository};
+    use crate::state::resolve_head;
+    use crate::state::HeadState;
     use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
     use crate::RefStorageFormat;
     use tempfile::TempDir;
@@ -592,6 +599,65 @@ mod tests {
                 assert_eq!(oid, local_tip);
             }
             other => panic!("expected existing local main, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_revision_spec_peels_annotated_tag() {
+        let (_dir, repo) = init_repo();
+        let tip = commit_on_branch(&repo, "main", "f", "x\n", None);
+        let tag_bytes = serialize_tag(&TagData {
+            object: tip,
+            object_type: "commit".into(),
+            tag: "v1".into(),
+            tagger: Some("T <t@t> 0 +0000".into()),
+            message: "annotated\n".into(),
+        });
+        let tag_oid = repo
+            .odb()
+            .write(ObjectKind::Tag, &tag_bytes)
+            .expect("tag object");
+        refs::write_ref(repo.git_dir(), "refs/tags/v1", &tag_oid).expect("tag ref");
+
+        let resolved = resolve_revision_spec(&repo, "v1").expect("peel tag");
+        assert_eq!(resolved, tip);
+
+        switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Detached {
+                    commit: resolved,
+                    reflog_to_label: "v1".into(),
+                },
+            },
+        )
+        .expect("detach at annotated tag");
+
+        let head = resolve_head(repo.git_dir()).expect("head");
+        assert!(matches!(head, HeadState::Detached { oid } if oid == tip));
+    }
+
+    #[test]
+    fn create_branch_start_point_peels_annotated_tag() {
+        let (_dir, repo) = init_repo();
+        let tip = commit_on_branch(&repo, "main", "f", "x\n", None);
+        let tag_bytes = serialize_tag(&TagData {
+            object: tip,
+            object_type: "commit".into(),
+            tag: "v1".into(),
+            tagger: Some("T <t@t> 0 +0000".into()),
+            message: "annotated\n".into(),
+        });
+        let tag_oid = repo
+            .odb()
+            .write(ObjectKind::Tag, &tag_bytes)
+            .expect("tag object");
+        refs::write_ref(repo.git_dir(), "refs/tags/v1", &tag_oid).expect("tag ref");
+
+        let mode = resolve_create_branch(&repo, "from-tag", Some("v1")).expect("create mode");
+        match mode {
+            SwitchMode::Create { start_oid, .. } => assert_eq!(start_oid, tip),
+            other => panic!("expected create, got {other:?}"),
         }
     }
 

@@ -8,6 +8,7 @@ use grit_lib::porcelain::switch::{
     resolve_create_branch, resolve_revision_spec, resolve_switch_target, switch_repository,
     SwitchMode, SwitchOptions,
 };
+use grit_lib::porcelain::tag::{create_tag, CreateTagRequest};
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
@@ -211,6 +212,88 @@ fn run_repro_sequence(repo: &Repository) {
     .expect("switch main");
 
     create_branch(repo, "b2").expect("branch b2");
+}
+
+#[test]
+fn detach_at_annotated_tag_matches_git() {
+    let (dir, repo) = init_repo();
+    git_config(dir.path());
+    let tip = grit_commit(&repo, "a.txt", "hi\n", None);
+    create_tag(
+        &repo,
+        &CreateTagRequest {
+            name: "v1".into(),
+            target: tip,
+            message: Some("annotated".into()),
+            tagger: Some("A <a@b.c> 0 +0000".into()),
+        },
+    )
+    .expect("annotated tag");
+
+    let commit = resolve_revision_spec(&repo, "v1").expect("resolve tag to commit");
+    assert_eq!(commit, tip);
+
+    switch_repository(
+        &repo,
+        &SwitchOptions {
+            mode: SwitchMode::Detached {
+                commit,
+                reflog_to_label: "v1".into(),
+            },
+        },
+    )
+    .expect("grit switch --detach v1");
+
+    let grit_head = match resolve_head(repo.git_dir()).expect("head") {
+        HeadState::Detached { oid } => oid,
+        other => panic!("expected detached HEAD, got {other:?}"),
+    };
+    assert_eq!(grit_head, tip);
+
+    let git_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git rev-parse");
+    assert!(git_head.status.success(), "git rev-parse HEAD failed");
+    let git_oid = String::from_utf8(git_head.stdout)
+        .expect("utf8")
+        .trim()
+        .to_owned();
+    assert_eq!(git_oid, tip.to_string());
+
+    let fsck = Command::new("git")
+        .args(["fsck"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git fsck");
+    assert!(
+        fsck.status.success(),
+        "git fsck failed: {}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+
+    refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("reattach");
+    let git_switch = Command::new("git")
+        .args(["switch", "--detach", "v1"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git switch --detach");
+    assert!(
+        git_switch.status.success(),
+        "git switch --detach v1 failed: {}",
+        String::from_utf8_lossy(&git_switch.stderr)
+    );
+    let git_detached = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .expect("git rev-parse after switch");
+    assert!(git_detached.status.success());
+    assert_eq!(
+        String::from_utf8(git_detached.stdout).expect("utf8").trim(),
+        tip.to_string()
+    );
 }
 
 #[test]
