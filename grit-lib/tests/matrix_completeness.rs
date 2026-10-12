@@ -645,6 +645,40 @@ fn push_http_propagates_discovery_transport_error_typed() {
 // ===========================================================================
 
 #[test]
+fn ssh_connect_refused_port_is_remote_read_failed_not_hang() {
+    use grit_lib::environment::Environment;
+    use std::ffi::OsString;
+    use std::sync::Arc;
+
+    let Some(port) = free_port() else {
+        eprintln!("SKIP: could not allocate a free port");
+        return;
+    };
+    let url = format!("ssh://127.0.0.1:{port}/nope");
+    let env = Environment::from_vars(
+        [(
+            OsString::from("GIT_SSH_COMMAND"),
+            OsString::from("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=2"),
+        )],
+        std::env::current_dir().expect("cwd"),
+    );
+    let transport = SshTransport::new().with_ssh_environment(Arc::new(env));
+
+    let err = with_watchdog(15, "ssh connect-refused", move || {
+        transport
+            .connect(&url, Service::UploadPack, &ConnectOptions::default())
+            .err()
+    });
+    let Some(err) = err else {
+        panic!("connecting ssh to a closed port must return Err (got Ok)");
+    };
+    assert!(
+        matches!(err, Error::RemoteReadFailed),
+        "expected RemoteReadFailed, got {err}"
+    );
+}
+
+#[test]
 fn git_daemon_connect_refused_port_is_typed_error_not_hang() {
     // Allocate then immediately release a port: nothing is listening, so the
     // connect must fail fast (ECONNREFUSED) with a typed Error rather than hang.

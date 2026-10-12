@@ -563,6 +563,10 @@ pub enum Error {
     /// A directory pathspec was used without `recursive` ([`crate::porcelain::paths::remove_paths`]).
     #[error("not removing '{0}' recursively without -r")]
     NotRemovingRecursively(String),
+    /// The remote transport failed before a valid ref advertisement (SSH down, missing repo, etc.).
+    #[error("could not read from remote repository")]
+    RemoteReadFailed,
+
     /// User-facing message that should be printed verbatim (no extra prefix).
     ///
     /// Used for revision errors that must match Git's `fatal:` lines exactly.

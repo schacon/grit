@@ -1221,6 +1221,13 @@ pub fn fetch_remote(
             .unwrap_or(" (v0/v1 advertisement)")
     );
 
+    if opts.initial_remote_fetch
+        && remote_refs.is_empty()
+        && !crate::transport::connection_handshake_complete(conn)
+    {
+        return Err(Error::RemoteReadFailed);
+    }
+
     // 2. Parse refspecs.
     let mut positive: Vec<RefspecItem> = Vec::new();
     let mut negatives: Vec<RefspecItem> = Vec::new();

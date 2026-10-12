@@ -553,6 +553,11 @@ fn main() {
             .is_some()
         {
             commands::bundle::MISSING_PREREQUISITE_EXIT
+        } else if err
+            .downcast_ref::<grit_lib::clone::CloneError>()
+            .is_some_and(grit_lib::clone::CloneError::is_remote_read_failure)
+        {
+            128
         } else {
             1
         };

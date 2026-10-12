@@ -861,6 +861,7 @@ pub grit_lib::clone::CloneError::Library(grit_lib::error::Error)
 pub grit_lib::clone::CloneError::Remote(grit_lib::remote::RemoteError)
 impl grit_lib::clone::CloneError
 pub fn grit_lib::clone::CloneError::should_cleanup_failed_clone(&self) -> bool
+pub fn grit_lib::clone::CloneError::is_remote_read_failure(&self) -> bool
 impl core::convert::From<grit_lib::error::Error> for grit_lib::clone::CloneError
 pub fn grit_lib::clone::CloneError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::remote::RemoteError> for grit_lib::clone::CloneError
@@ -4042,6 +4043,7 @@ pub grit_lib::error::Error::LooseHashMismatch::path: alloc::string::String
 pub grit_lib::error::Error::LooseHashMismatch::real_oid: alloc::string::String
 pub grit_lib::error::Error::MergeCommit
 pub grit_lib::error::Error::MergeCommit::oid: grit_lib::objects::ObjectId
+pub grit_lib::error::Error::RemoteReadFailed
 pub grit_lib::error::Error::Message(alloc::string::String)
 pub grit_lib::error::Error::Midx(grit_lib::midx_error::MidxError)
 pub grit_lib::error::Error::NotARepository(alloc::string::String)
@@ -11974,6 +11976,7 @@ pub grit_lib::prelude::Error::LooseHashMismatch::path: alloc::string::String
 pub grit_lib::prelude::Error::LooseHashMismatch::real_oid: alloc::string::String
 pub grit_lib::prelude::Error::MergeCommit
 pub grit_lib::prelude::Error::MergeCommit::oid: grit_lib::objects::ObjectId
+pub grit_lib::prelude::Error::RemoteReadFailed
 pub grit_lib::prelude::Error::Message(alloc::string::String)
 pub grit_lib::prelude::Error::Midx(grit_lib::midx_error::MidxError)
 pub grit_lib::prelude::Error::NotARepository(alloc::string::String)
@@ -14921,6 +14924,7 @@ pub grit_lib::remote::clone::CloneError::Library(grit_lib::error::Error)
 pub grit_lib::remote::clone::CloneError::Remote(grit_lib::remote::RemoteError)
 impl grit_lib::clone::CloneError
 pub fn grit_lib::clone::CloneError::should_cleanup_failed_clone(&self) -> bool
+pub fn grit_lib::clone::CloneError::is_remote_read_failure(&self) -> bool
 impl core::convert::From<grit_lib::error::Error> for grit_lib::clone::CloneError
 pub fn grit_lib::clone::CloneError::from(grit_lib::error::Error) -> Self
 impl core::convert::From<grit_lib::remote::RemoteError> for grit_lib::clone::CloneError

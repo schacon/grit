@@ -47,6 +47,18 @@ impl CloneError {
     pub fn should_cleanup_failed_clone(&self) -> bool {
         !matches!(self, Self::DestNotEmpty(_))
     }
+
+    /// Whether the failure is a transport/read error (not an empty remote with no branches).
+    #[must_use]
+    pub fn is_remote_read_failure(&self) -> bool {
+        match self {
+            Self::Library(e) => matches!(e, Error::RemoteReadFailed),
+            Self::Remote(crate::remote::RemoteError::Library(e)) => {
+                matches!(e, Error::RemoteReadFailed)
+            }
+            Self::DestNotEmpty(_) | Self::Remote(_) => false,
+        }
+    }
 }
 
 /// Options for [`clone`].

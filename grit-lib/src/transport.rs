@@ -182,6 +182,50 @@ pub struct Advertisement {
     pub protocol_version: u8,
 }
 
+/// True when the connect-time advertisement shows a completed Git protocol handshake.
+///
+/// An empty repository still advertises server capabilities (v0/v1 zero-oid carrier or a v2
+/// capability block). A completely empty [`Advertisement`] means the transport never spoke Git.
+#[must_use]
+pub(crate) fn remote_handshake_complete(adv: &Advertisement) -> bool {
+    if adv.protocol_version >= 2 {
+        !adv.capabilities.is_empty()
+    } else {
+        !adv.capabilities.is_empty() || !adv.refs.is_empty() || adv.head_symref.is_some()
+    }
+}
+
+#[must_use]
+pub(crate) fn connection_handshake_complete(conn: &dyn Connection) -> bool {
+    if conn.protocol_version() >= 2 {
+        !conn.capabilities().is_empty()
+    } else {
+        !conn.capabilities().is_empty()
+            || !conn.advertised_refs().is_empty()
+            || conn.head_symref().is_some()
+    }
+}
+
+fn verify_ssh_child_after_advertisement(child: &mut Child, adv: &Advertisement) -> Result<()> {
+    if remote_handshake_complete(adv) {
+        return Ok(());
+    }
+    for _ in 0..50 {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Err(Error::RemoteReadFailed),
+            Ok(Some(_)) => return Err(Error::RemoteReadFailed),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => {
+                return Err(Error::Message(format!("ssh wait failed: {e}")));
+            }
+        }
+    }
+    if !remote_handshake_complete(adv) {
+        return Err(Error::RemoteReadFailed);
+    }
+    Ok(())
+}
+
 /// Read and parse a v0/v1 (or v2 preamble) ref advertisement from `reader`,
 /// stopping at the first flush packet.
 ///
@@ -1127,7 +1171,7 @@ impl Transport for SshTransport {
         let running = self.command_runner.spawn(&cmd_spec).map_err(|e| {
             Error::Message(format!("failed to spawn ssh for {}: {e}", spec.ssh_host))
         })?;
-        let (child, writer, reader, _stderr) = running
+        let (mut child, writer, reader, _stderr) = running
             .into_system_parts()
             .map_err(|_| Error::Message("ssh child is not backed by a live process".to_owned()))?;
         let writer = writer.ok_or_else(|| Error::Message("ssh child has no stdin".to_owned()))?;
@@ -1135,6 +1179,7 @@ impl Transport for SshTransport {
             reader.ok_or_else(|| Error::Message("ssh child has no stdout".to_owned()))?;
 
         let adv = read_advertisement(&mut reader)?;
+        verify_ssh_child_after_advertisement(&mut child, &adv)?;
         crate::net_trace::net_trace!(
             opts.network_trace,
             opts.diagnostics.as_ref(),
@@ -1305,6 +1350,45 @@ mod tests {
         assert!(parse_ssh_url("ssh://-badhost/repo").is_err());
         assert!(parse_ssh_url("host:-dashpath").is_err());
         assert!(parse_ssh_url("host:").is_err());
+    }
+
+    #[test]
+    fn remote_handshake_complete_empty_vs_capabilities_carrier() {
+        let empty = Advertisement::default();
+        assert!(!remote_handshake_complete(&empty));
+
+        let mut empty_repo = Advertisement::default();
+        empty_repo.capabilities = vec!["multi_ack".to_owned()];
+        assert!(remote_handshake_complete(&empty_repo));
+
+        let mut v2 = Advertisement::default();
+        v2.protocol_version = 2;
+        v2.capabilities = vec!["ls-refs".to_owned()];
+        assert!(remote_handshake_complete(&v2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ssh_connect_failed_subprocess_empty_advertisement_is_remote_read_failed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("fake-ssh-fail.sh");
+        std::fs::write(&script, b"#!/bin/sh\nexit 255\n").expect("write script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let transport = SshTransport::with_program(&script);
+        let err = match transport.connect(
+            "git@127.0.0.1:/nope",
+            Service::UploadPack,
+            &ConnectOptions::default(),
+        ) {
+            Ok(_) => panic!("failed ssh must not yield a connection"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::RemoteReadFailed),
+            "expected RemoteReadFailed, got {err}"
+        );
     }
 
     #[test]
