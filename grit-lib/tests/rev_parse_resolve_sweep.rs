@@ -15,9 +15,9 @@ use grit_lib::rev_parse::{
     resolve_revision_for_checkout_guess, resolve_revision_for_commit_tree_tree,
     resolve_revision_for_patch_old_blob, resolve_revision_for_range_end,
     resolve_revision_for_range_end_without_index_dwim, resolve_revision_for_verify,
-    resolve_revision_without_index_dwim, resolve_treeish_blob_at_path, resolve_upstream_symbolic_name,
-    split_double_dot_range, split_treeish_colon, split_triple_dot_range, symbolic_full_name,
-    try_peel_to_commit_for_merge_base,
+    resolve_revision_without_index_dwim, resolve_treeish_blob_at_path,
+    resolve_upstream_symbolic_name, split_double_dot_range, split_treeish_colon,
+    split_triple_dot_range, symbolic_full_name, try_peel_to_commit_for_merge_base,
 };
 
 use support::{build_commit_dag, commit_file, git, HistoryRepo};
