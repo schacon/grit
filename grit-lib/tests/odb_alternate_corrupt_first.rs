@@ -1,4 +1,4 @@
-//! Alternate ordering when an earlier store holds corrupt bytes for an OID (system git oracle).
+//! Alternate ordering when an earlier store cannot serve an OID (system git oracle).
 
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
@@ -50,7 +50,11 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
     assert_eq!(oid, bad_oid);
     let bad_path = bad_odb.object_path(&oid);
     fs::set_permissions(&bad_path, fs::Permissions::from_mode(0o644)).expect("chmod");
-    fs::write(&bad_path, b"not-valid-zlib").expect("corrupt");
+    fs::remove_file(&bad_path).expect("remove good loose from bad store");
+    // Stock git 2.43 aborts on zlib-corrupt loose objects in an earlier alternate without
+    // trying the next store. A dangling symlink is still an unusable first hit for grit,
+    // while git skips it and reads the good alternate (same oracle as a missing object).
+    std::os::unix::fs::symlink("/nonexistent", &bad_path).expect("symlink bad loose");
 
     let bad_abs = fs::canonicalize(&bad_objects).expect("bad canon");
     let good_abs = fs::canonicalize(&good_objects).expect("good canon");
@@ -85,7 +89,7 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
         .expect("git cat-file");
     assert!(
         cat.status.success(),
-        "git must read via later alternate when earlier is corrupt, stderr={}",
+        "git must read via later alternate when earlier is unusable, stderr={}",
         String::from_utf8_lossy(&cat.stderr)
     );
     assert_eq!(cat.stdout, payload);
