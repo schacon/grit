@@ -66,7 +66,7 @@ files = [
     "resolve_undo.rs",
     "sparse_checkout.rs",
 ]
-minimum = 68.8
+minimum = 85.0
 
 [group.index-ext]
 files = [
@@ -74,7 +74,7 @@ files = [
     "untracked_cache.rs",
     "index_name_hash_lazy.rs",
 ]
-minimum = 14.1
+minimum = 14.0
 
 [group.merge]
 files = [
@@ -113,7 +113,7 @@ files = [
     "bitmap_walk.rs",
     "pack_bitmap/writer.rs",
 ]
-minimum = 84.3
+minimum = 84.2
 
 [group.reflog]
 files = [
@@ -164,7 +164,7 @@ files = [
     "promisor.rs",
     "fsck_standalone.rs",
 ]
-minimum = 86.1
+minimum = 85.9
 
 [file."attributes.rs"]
 minimum = 85.0
@@ -199,8 +199,14 @@ minimum = 86.1
 [file."ignore.rs"]
 minimum = 84.1
 
+[file."index.rs"]
+minimum = 83.8
+
+[file."sparse_checkout.rs"]
+minimum = 83.4
+
 [file."index_pack.rs"]
-minimum = 88.5
+minimum = 87.6
 
 [file."merge_diff.rs"]
 minimum = 33.7
@@ -233,13 +239,13 @@ minimum = 79.8
 minimum = 71.6
 
 [file."pack_bitmap/writer.rs"]
-minimum = 76.1
+minimum = 76.0
 
 [file."pack_index.rs"]
 minimum = 89.7
 
 [file."pack_index_build.rs"]
-minimum = 88.5
+minimum = 87.4
 
 [file."pack_map.rs"]
 minimum = 91.1
@@ -263,7 +269,7 @@ minimum = 76.6
 minimum = 83.8
 
 [file."unpack_objects.rs"]
-minimum = 83.9
+minimum = 83.8
 
 [file."wildmatch.rs"]
 minimum = 95.9

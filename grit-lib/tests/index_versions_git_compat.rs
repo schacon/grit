@@ -113,6 +113,9 @@ fn t1601_bogus_index_typed_errors() {
         base_index_pos: 0,
     });
     good.write(&path).expect("write index");
+    let loaded_null = Index::load(&path).expect("load index with null oid entry");
+    assert_eq!(loaded_null.entries()[0].oid, ObjectId::zero());
+
     let mut bytes = fs::read(&path).expect("read");
     // Corrupt entry count in header.
     bytes[8..12].copy_from_slice(&9999u32.to_be_bytes());

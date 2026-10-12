@@ -282,6 +282,51 @@ class UpstreamMappingTests(unittest.TestCase):
             "unknown test functions in mapping table(s)",
         )
 
+    def test_required_history_tuples_appear_in_mapping_rows(self) -> None:
+        text = TESTING.read_text(encoding="utf-8")
+        sections = _mapping_sections(text)
+        index_section = next(
+            s
+            for s in sections
+            if "index, diff, revwalk" in s or "index, diff" in s
+        )
+        sparse_section = next(
+            (s for s in sections if "sparse" in s.lower()),
+            index_section,
+        )
+        index_ext_section = index_section
+
+        def upstream_ids(section: str) -> set[str]:
+            found: set[str] = set()
+            for line in section.splitlines():
+                col = _upstream_column(line)
+                if not col:
+                    continue
+                for token in re.findall(r"t[0-9]{4}", col):
+                    found.add(token)
+            return found
+
+        index_ids = upstream_ids(index_section)
+        for tid in REQUIRED_HISTORY_INDEX:
+            self.assertIn(
+                tid,
+                index_ids,
+                f"{tid} missing from index upstream mapping section",
+            )
+        sparse_ids = upstream_ids(sparse_section)
+        for tid in REQUIRED_HISTORY_SPARSE:
+            self.assertIn(
+                tid,
+                sparse_ids,
+                f"{tid} missing from sparse upstream mapping rows",
+            )
+        for tid in REQUIRED_HISTORY_INDEX_EXT:
+            self.assertIn(
+                tid,
+                upstream_ids(index_ext_section),
+                f"{tid} missing from index-ext mapping rows",
+            )
+
     def test_history_subsection_placeholders_exist(self) -> None:
         """Later plan steps extend these REQUIRED_* tuples; keep one per subsection."""
         placeholders = (

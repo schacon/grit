@@ -1561,6 +1561,68 @@ mod tests {
     }
 
     #[test]
+    fn index_cache_tree_inputs_match_detects_differences() {
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(dir.path());
+        let left = build_nested_index(&odb);
+        let mut right = left.clone();
+        assert!(index_cache_tree_inputs_match(&left, &right));
+        right.add_or_replace(entry(
+            "alpha/one",
+            MODE_REGULAR,
+            odb.write(ObjectKind::Blob, b"changed").unwrap(),
+        ));
+        assert!(!index_cache_tree_inputs_match(&left, &right));
+    }
+
+    #[test]
+    fn partial_write_tree_merges_head_with_index_paths() {
+        use std::collections::HashSet;
+
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(dir.path());
+        let oid_keep = odb.write(ObjectKind::Blob, b"keep").unwrap();
+        let oid_old = odb.write(ObjectKind::Blob, b"old").unwrap();
+        let oid_new = odb.write(ObjectKind::Blob, b"new").unwrap();
+
+        let mut base_index = Index::new();
+        base_index.add_or_replace(entry("keep.txt", MODE_REGULAR, oid_keep));
+        base_index.add_or_replace(entry("dir/old.txt", MODE_REGULAR, oid_old));
+        let base_tree = write_tree_from_index(&odb, &base_index, "").unwrap();
+
+        let mut index = base_index.clone();
+        index.add_or_replace(entry("dir/new.txt", MODE_REGULAR, oid_new));
+        index.add_or_replace(entry("added/sub/file.txt", MODE_REGULAR, oid_new));
+
+        let mut paths = HashSet::new();
+        paths.insert(b"dir/new.txt".to_vec());
+        paths.insert(b"added/sub/file.txt".to_vec());
+        let merged =
+            write_tree_partial_from_index(&odb, &index, &base_tree, &paths).expect("partial");
+        assert_ne!(merged, base_tree);
+
+        let tree_obj = odb.read(&merged).unwrap();
+        let top = parse_tree(&tree_obj.data).unwrap();
+        assert!(top.iter().any(|e| e.name == b"keep.txt"));
+        assert!(top.iter().any(|e| e.name == b"added"));
+    }
+
+    #[test]
+    fn write_tree_from_index_subset_and_silent_flags() {
+        use std::collections::HashSet;
+
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(dir.path());
+        let mut index = build_nested_index(&odb);
+        let mut paths = HashSet::new();
+        paths.insert(b"gamma".to_vec());
+        let subset = write_tree_from_index_subset(&odb, &index, &paths).unwrap();
+        assert!(odb.exists(&subset));
+        cache_tree_update(&odb, &mut index, WriteTreeFlags::silent()).unwrap();
+        assert!(index.cache_tree.is_some());
+    }
+
+    #[test]
     fn cache_tree_update_prefix() {
         let dir = TempDir::new().unwrap();
         let odb = Odb::new(dir.path());

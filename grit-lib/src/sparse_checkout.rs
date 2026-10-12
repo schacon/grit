@@ -1495,4 +1495,163 @@ mod sparse_public_api_coverage {
         assert!(serialized.contains("/*"));
         assert!(serialized.contains("/a/") || serialized.contains("a"));
     }
+
+    #[test]
+    fn cone_parse_warnings_cover_malformed_patterns() {
+        let mut warnings = Vec::new();
+        assert!(ConePatterns::try_parse_with_warnings("foo\n", &mut warnings).is_none());
+        assert!(!warnings.is_empty());
+        warnings.clear();
+        assert!(ConePatterns::try_parse_with_warnings("/*\n!/*/\n/**/\n", &mut warnings).is_none());
+        warnings.clear();
+        assert!(
+            ConePatterns::try_parse_with_warnings("/*\n!/*/\n!/missing/*/\n", &mut warnings)
+                .is_none()
+        );
+        warnings.clear();
+        assert!(ConePatterns::try_parse_with_warnings("/*\n!/*/\n/bad\n", &mut warnings).is_none());
+        warnings.clear();
+        assert!(ConePatterns::try_parse_with_warnings("/*\n!/*/\n/w*/\n", &mut warnings).is_none());
+    }
+
+    #[test]
+    fn cone_serialization_and_list_directories() {
+        let cone = ConePatterns::try_parse("/*\n!/*/\n/docs/\n/sub/\n").expect("cone");
+        let ws = ConeWorkspace::from_cone_patterns(&cone);
+        let file = ws.to_sparse_checkout_file();
+        assert!(file.contains("docs") || file.contains("/docs/"));
+        let listed = ws.list_cone_directories();
+        assert!(listed
+            .iter()
+            .any(|d| d.contains("docs") || d.contains("sub")));
+    }
+
+    #[test]
+    fn non_cone_glob_and_dup_filter_edge_cases() {
+        assert!(non_cone_line_matches("*.txt", "dir/file.txt"));
+        assert!(!non_cone_line_matches("*.txt", "dir/file.md"));
+        assert_eq!(dup_and_filter_pattern("/foo/\\*/"), "/foo/*/");
+        assert!(glob_special_unescaped(b"foo*bar"));
+        assert!(!glob_special_unescaped(b"foo\\*bar"));
+    }
+
+    #[test]
+    fn clear_skip_worktree_hits_path_found_cache() {
+        let tmp = write_sparse_repo(true, "/*\n!/*/\n/hidden/\n");
+        let git_dir = tmp.path().join(".git");
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join("visible")).expect("mkdir");
+        fs::write(wt.join("visible/keep.txt"), "x").expect("write");
+        fs::create_dir_all(wt.join("hidden")).expect("mkdir hidden");
+        fs::write(wt.join("hidden/secret.txt"), "y").expect("write");
+        let mut index = crate::index::Index::new();
+        for path in ["visible/keep.txt", "hidden/secret.txt"] {
+            index.add_or_replace(crate::index::IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: crate::index::MODE_REGULAR,
+                uid: 0,
+                gid: 0,
+                size: 1,
+                oid: crate::objects::ObjectId::zero(),
+                flags: path.len().min(0xFFF) as u16,
+                flags_extended: Some(0),
+                path: path.as_bytes().to_vec(),
+                base_index_pos: 0,
+            });
+        }
+        for e in index.entries_mut() {
+            e.set_skip_worktree(true);
+        }
+        apply_sparse_checkout_skip_worktree(&git_dir, Some(wt), &mut index, false);
+        clear_skip_worktree_from_present_files(&git_dir, wt, &mut index, None);
+        assert!(!index.entries()[0].skip_worktree());
+    }
+
+    #[test]
+    fn cone_directory_inputs_for_add_non_cone_fallback() {
+        let inputs = cone_directory_inputs_for_add("top\nnested/\n");
+        assert_eq!(inputs, vec!["top".to_string(), "nested".to_string()]);
+    }
+
+    #[test]
+    fn path_in_sparse_patterns_empty_and_parent_fallback() {
+        assert!(path_in_sparse_checkout_patterns("", &["/*".into()], true));
+        let lines = vec!["/*".to_string(), "!/*/".to_string(), "/pkg/".to_string()];
+        assert!(path_in_sparse_checkout_patterns(
+            "pkg/deep/file",
+            &lines,
+            true
+        ));
+        assert!(!path_in_sparse_checkout_patterns(
+            "other/file",
+            &lines,
+            true
+        ));
+    }
+
+    #[test]
+    fn expanded_cone_parent_and_recursive_matching() {
+        let lines = vec![
+            "/*".to_string(),
+            "!/*/".to_string(),
+            "/sub/".to_string(),
+            "!/sub/*/".to_string(),
+            "/sub/dir/".to_string(),
+        ];
+        assert!(path_in_sparse_checkout_patterns(
+            "sub/file.txt",
+            &lines,
+            true
+        ));
+        assert!(path_in_sparse_checkout_patterns(
+            "sub/dir/nested",
+            &lines,
+            true
+        ));
+        assert!(!path_in_sparse_checkout_patterns(
+            "sub/other/nested",
+            &lines,
+            true
+        ));
+    }
+
+    #[test]
+    fn build_expanded_cone_skips_redundant_parent_dirs() {
+        let lines = build_expanded_cone_sparse_checkout_lines(&[
+            "a".to_string(),
+            "a/b".to_string(),
+            "c".to_string(),
+        ]);
+        assert!(lines.iter().any(|l| l.contains("/a/") || l == "/a/"));
+        assert!(lines.iter().any(|l| l.contains("/c/") || l == "/c/"));
+    }
+
+    #[test]
+    fn cone_workspace_serializes_parent_and_recursive_rules() {
+        let cone = ConePatterns::try_parse("/*\n!/*/\n/parent/\n/leaf/\n").expect("parse");
+        let ws = ConeWorkspace::from_cone_patterns(&cone);
+        let body = ws.to_sparse_checkout_file();
+        assert!(body.contains("parent") || body.contains("/parent/"));
+        assert!(body.contains("leaf") || body.contains("/leaf/"));
+        let listed = ws.list_cone_directories();
+        assert!(listed.iter().any(|d| d.contains("leaf")));
+    }
+
+    #[test]
+    fn expanded_cone_parse_parent_recursive_and_escape() {
+        let lines =
+            build_expanded_cone_sparse_checkout_lines(&["src".to_string(), "docs".to_string()]);
+        assert!(path_in_expanded_cone("src/lib.rs", &lines));
+        let esc = escape_cone_pattern_path("/src");
+        assert_eq!(unescape_cone_pattern_path(&esc), "/src");
+        assert!(recursive_set_has_strict_ancestor(
+            &BTreeSet::from(["/a/b".to_string()]),
+            "/a/b/c"
+        ));
+    }
 }

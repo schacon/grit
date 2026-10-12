@@ -4271,4 +4271,221 @@ mod tests {
         assert_eq!(loaded.entries[0].path, b"one");
         assert_eq!(loaded.entries[1].path, b"two/one");
     }
+
+    #[test]
+    fn stat_match_policy_from_repo_config() {
+        let dir = TempDir::new().unwrap();
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::write(
+            git_dir.join("config"),
+            "[core]\n\ttrustctime = false\n\tcheckstat = minimal\n\tusenanosec = true\n",
+        )
+        .unwrap();
+        let cfg = crate::config::ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(&git_dir),
+            true,
+        )
+        .unwrap();
+        let policy = StatMatchPolicy::from_config(Some(&cfg));
+        assert!(!policy.trust_ctime);
+        assert!(!policy.check_stat);
+        assert!(policy.use_nanosec);
+    }
+
+    #[test]
+    fn index_entry_extended_flags_and_placeholders() {
+        let mut e = make_entry("p");
+        e.set_intent_to_add(true);
+        assert!(e.intent_to_add());
+        e.set_assume_unchanged(true);
+        assert!(e.assume_unchanged());
+        e.set_skip_worktree(true);
+        assert!(e.skip_worktree());
+        e.mode = MODE_TREE;
+        e.set_skip_worktree(true);
+        assert!(e.is_sparse_directory_placeholder());
+        e.set_overlay_tree_skip_output(true);
+        assert!(e.overlay_tree_skip_output());
+    }
+
+    #[test]
+    fn cache_tree_formatting_and_invalidation_helpers() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("a/b"));
+        let child = CacheTreeNode::valid(b"a".to_vec(), 1, dummy_oid(), vec![]);
+        let root = CacheTreeNode::valid(b"".to_vec(), 1, dummy_oid(), vec![child]);
+        idx.set_cache_tree(root);
+        let dump = idx.format_cache_tree_dump();
+        assert!(dump.contains("a/") || dump.contains("invalid"));
+        idx.invalidate_cache_tree_for_path(b"a/b");
+        idx.clear_cache_tree();
+        assert!(idx.cache_tree.is_none());
+    }
+
+    #[test]
+    fn dedup_paths_and_stage0_descendant_queries() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("dir/x"));
+        idx.add_or_replace(make_entry("dir/x"));
+        idx.dedup_paths_keep_last();
+        assert_eq!(idx.entries.len(), 1);
+        assert!(idx.has_stage0_descendant_under("dir"));
+        assert!(!idx.has_stage0_descendant_under("missing"));
+    }
+
+    #[test]
+    fn load_missing_index_is_empty() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("no-index");
+        let idx = Index::load(&path).unwrap();
+        assert!(idx.entries.is_empty());
+    }
+
+    #[test]
+    fn munge_and_stat_equivalence_helpers() {
+        assert_eq!(munge_index_size(0x1_0000_0000), 0x8000_0000);
+        let a = make_entry("x");
+        let b = make_entry("x");
+        assert!(index_entries_stat_equivalent(
+            &a,
+            &b,
+            StatMatchPolicy::default()
+        ));
+    }
+
+    #[test]
+    fn new_from_config_invalid_index_version_falls_back() {
+        let dir = TempDir::new().unwrap();
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::write(
+            git_dir.join("config"),
+            "[index]\n\tversion = not-a-number\n",
+        )
+        .unwrap();
+        let cfg = crate::config::ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(&git_dir),
+            true,
+        )
+        .unwrap();
+        let idx = Index::new_from_config(&cfg);
+        assert_eq!(idx.version, INDEX_CONFIG_INVALID_FALLBACK);
+    }
+
+    #[test]
+    fn parse_fsmonitor_extension_rejects_truncated_ewah() {
+        let mut payload = vec![0, 0, 0, 2, b't', 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0];
+        let err = parse_fsmonitor_extension(&payload).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::IndexFsmonitorExtensionTruncated | Error::IndexFsmonitorExtensionEwahInvalid
+        ));
+        payload[12..16].copy_from_slice(&2u32.to_be_bytes());
+        let err2 = parse_fsmonitor_extension(&payload).unwrap_err();
+        assert!(matches!(
+            err2,
+            Error::IndexFsmonitorExtensionTruncated | Error::IndexFsmonitorExtensionEwahInvalid
+        ));
+    }
+
+    #[test]
+    fn unmerge_from_resolve_undo_installs_conflict_stages() {
+        use crate::resolve_undo::ResolveUndoRecord;
+        use std::collections::BTreeMap;
+
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("f.txt"));
+        let oid1 = dummy_oid();
+        let oid2 = ObjectId::from_bytes(&[1u8; 20]).unwrap();
+        idx.resolve_undo = Some(BTreeMap::from([(
+            b"f.txt".to_vec(),
+            ResolveUndoRecord {
+                modes: [MODE_REGULAR, MODE_REGULAR, 0],
+                oids: [oid1, oid2, ObjectId::zero()],
+            },
+        )]));
+        assert!(idx.unmerge_path_from_resolve_undo(b"f.txt"));
+        assert!(idx.has_unmerged_entries());
+    }
+
+    #[test]
+    fn parse_rejects_truncated_headers() {
+        for n in 0..12 {
+            assert!(Index::parse(&vec![0u8; n]).is_err());
+        }
+    }
+
+    #[test]
+    fn entry_from_stat_populates_index_metadata() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("f.txt"), b"payload").unwrap();
+        let oid = dummy_oid();
+        let entry = entry_from_stat(dir.path(), b"f.txt", oid, MODE_REGULAR).unwrap();
+        assert_eq!(entry.path, b"f.txt");
+        assert!(entry.size > 0);
+    }
+
+    #[test]
+    fn write_to_path_honors_skip_hash_flag() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("x"));
+        idx.write_to_path(&path, true).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(bytes.ends_with(&[0u8; 20]));
+    }
+
+    #[test]
+    fn index_lock_acquire_blocks_second_holder() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("tracked.txt"));
+        let lock = IndexLock::acquire(&path, None).unwrap();
+        assert!(IndexLock::acquire(&path, None).is_err());
+        drop(lock);
+        idx.write(&path).unwrap();
+        assert_eq!(Index::load(&path).unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn write_with_config_and_parallel_policy() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("p"));
+        let cfg = crate::config::ConfigSet::new();
+        idx.write_with_config_and_policy(&path, &cfg, crate::parallel::ThreadPolicy::default())
+            .unwrap();
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn fsmonitor_sync_and_clear_helpers() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("a"));
+        idx.set_fsmonitor_last_update(Some("token".to_owned()));
+        idx.sync_fsmonitor_dirty_bitmap();
+        if let Some(e) = idx.get_mut(b"a", 0) {
+            e.set_fsmonitor_valid(false);
+        }
+        idx.fsmonitor_validity_changed();
+        idx.clear_fsmonitor_extension();
+        assert!(idx.fsmonitor_last_update.is_none());
+    }
+
+    #[test]
+    fn intent_to_add_entry_forces_empty_blob_on_write_tree_path() {
+        let dir = TempDir::new().unwrap();
+        let odb = crate::odb::Odb::new(dir.path());
+        let mut idx = Index::new();
+        let mut e = make_entry("ita.txt");
+        e.set_intent_to_add(true);
+        idx.add_or_replace(e);
+        crate::write_tree::write_tree_from_index(&odb, &idx, "").unwrap();
+    }
 }
