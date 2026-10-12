@@ -285,6 +285,31 @@ enum Command {
         #[arg(long)]
         ignored: bool,
     },
+    /// Pack reachable objects and remove redundant packs.
+    Repack {
+        /// Show what would be packed without writing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Suppress progress summary on stderr.
+        #[arg(short, long)]
+        quiet: bool,
+    },
+    /// Repack, expire reflogs, and prune unreachable loose objects.
+    Gc {
+        /// Show what would run without writing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Suppress progress summary on stderr.
+        #[arg(short, long)]
+        quiet: bool,
+    },
+    /// Check refs, objects, and pack indexes for problems.
+    #[command(alias = "verify")]
+    Fsck {
+        /// Treat ref warnings as errors.
+        #[arg(long)]
+        strict: bool,
+    },
     /// Stage every change and record a new commit.
     Commit {
         /// Commit message (you can also pass it with -m).
@@ -707,6 +732,19 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             force,
             ignored,
         } => emit(&commands::clean::run(&paths, force, ignored)?, opts, ctx),
+        Command::Repack { dry_run, quiet } => {
+            emit(&commands::repack::run(dry_run, quiet)?, opts, ctx)
+        }
+        Command::Gc { dry_run, quiet } => emit(&commands::gc::run(dry_run, quiet)?, opts, ctx),
+        Command::Fsck { strict } => {
+            let outcome = commands::fsck::run(strict)?;
+            let code = commands::fsck::exit_code(&outcome);
+            emit(&outcome, opts, ctx)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         Command::Commit {
             message,
             message_flag,

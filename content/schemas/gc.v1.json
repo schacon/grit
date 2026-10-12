@@ -1,0 +1,103 @@
+{
+  "$id": "https://grit-scm.com/schemas/gc/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "PruneSummary": {
+      "properties": {
+        "kept": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "pruned": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kept",
+        "pruned"
+      ],
+      "type": "object"
+    },
+    "RepackSummary": {
+      "properties": {
+        "loose_before": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "objects_packed": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pack_bytes": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pack_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packs_before": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "pruned_loose": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "removed_pack_files": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "loose_before",
+        "packs_before",
+        "pruned_loose",
+        "removed_pack_files"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Result of `grit gc`.",
+  "properties": {
+    "dry_run": {
+      "type": "boolean"
+    },
+    "prune": {
+      "$ref": "#/definitions/PruneSummary"
+    },
+    "reflog_entries_pruned": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "repack": {
+      "$ref": "#/definitions/RepackSummary"
+    }
+  },
+  "required": [
+    "dry_run",
+    "prune",
+    "reflog_entries_pruned",
+    "repack"
+  ],
+  "title": "GcOutcome",
+  "type": "object"
+}
