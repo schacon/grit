@@ -1246,6 +1246,77 @@ fn diff_eol_crlf_append_single_line() -> TestResult {
     Ok(())
 }
 
+/// Nested `.gitattributes` (`dir/.gitattributes`) must apply to paths under `dir/` (issue #995 review).
+#[test]
+fn diff_eol_crlf_nested_gitattributes_append_single_line() -> TestResult {
+    let scratch = Scratch::new("diff-995-nested-attrs")?;
+    let repo = scratch.path();
+    gs_ok(repo, ["init", "."])?;
+    git_ok(repo, &["config", "user.name", "T"])?;
+    git_ok(repo, &["config", "user.email", "t@e.com"])?;
+    fs::create_dir_all(repo.join("dir"))?;
+    fs::write(repo.join("dir/.gitattributes"), b"*.txt text eol=crlf\n")?;
+    fs::write(repo.join("dir/f.txt"), b"a\r\nb\r\n")?;
+    gs_ok(repo, &["add"])?;
+    gs_ok(repo, ["commit", "-m", "base"])?;
+
+    let mut append = fs::OpenOptions::new()
+        .append(true)
+        .open(repo.join("dir/f.txt"))?;
+    use std::io::Write;
+    append.write_all(b"z\r\n")?;
+
+    let git_numstat = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(repo)
+        .output()?;
+    assert!(git_numstat.status.success());
+    let git_numstat_s = String::from_utf8_lossy(&git_numstat.stdout);
+    assert!(
+        git_numstat_s.trim().starts_with("1\t0\t"),
+        "git numstat should be one addition: {git_numstat_s:?}"
+    );
+
+    let diff = gs(repo, ["--json", "diff"])?;
+    assert_eq!(diff.status, Some(0), "{}", diff.dump());
+    let diff_json: serde_json::Value = serde_json::from_str(&diff.stdout)?;
+    let files = diff_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .expect("diff json files");
+    assert_eq!(files.len(), 1, "expected one changed file: {diff_json}");
+    let hunks = files[0]
+        .get("hunks")
+        .and_then(|h| h.as_array())
+        .expect("hunks");
+    let added: usize = hunks
+        .iter()
+        .flat_map(|h| {
+            h.get("lines")
+                .and_then(|l| l.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .filter(|line| line.get("kind").and_then(|k| k.as_str()) == Some("add"))
+        .count();
+    let removed: usize = hunks
+        .iter()
+        .flat_map(|h| {
+            h.get("lines")
+                .and_then(|l| l.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .filter(|line| line.get("kind").and_then(|k| k.as_str()) == Some("remove"))
+        .count();
+    assert_eq!(
+        added, 1,
+        "nested gitattributes: grit diff should show one added line: {diff_json}"
+    );
+    assert_eq!(removed, 0, "unexpected removed lines: {diff_json}");
+    Ok(())
+}
+
 /// `core.autocrlf=true` and `core.filemode=false`: grit diff must match git/status (issue #947).
 #[test]
 fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {

@@ -5620,6 +5620,7 @@ fn read_worktree_side_bytes_normalized(
     entry: &DiffEntry,
     work_root: &Path,
     worktree: &DiffPostprocessWorktree<'_>,
+    rules: Option<&crate::worktree_rules::WorktreeRules>,
     config: &ConfigSet,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<Vec<u8>> {
@@ -5628,10 +5629,23 @@ fn read_worktree_side_bytes_normalized(
     })?;
     let file_path = work_root.join(path);
     let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
+    let index_entry = worktree.index.get(path.as_bytes(), 0);
+    if let Some(rules) = rules {
+        let file_attrs = rules.file_attrs(path, false);
+        return worktree_blob_bytes(
+            odb,
+            &file_path,
+            &meta,
+            rules.conversion(),
+            &file_attrs,
+            path,
+            index_entry,
+            Some(rules.filter_process()),
+        );
+    }
     let conv = crate::crlf::ConversionConfig::from_config(config);
     let attrs = crate::crlf::load_gitattributes(work_root);
     let file_attrs = crate::crlf::get_file_attrs(&attrs, path, false, config);
-    let index_entry = worktree.index.get(path.as_bytes(), 0);
     worktree_blob_bytes(
         odb,
         &file_path,
@@ -5658,13 +5672,20 @@ pub fn diff_entry_worktree_side_bytes(
     entry: &DiffEntry,
     work_root: &Path,
     worktree: &DiffPostprocessWorktree<'_>,
-    config: &ConfigSet,
-    filter_process: Option<&crate::filter_process::FilterProcessState>,
+    rules: &crate::worktree_rules::WorktreeRules,
 ) -> Result<Vec<u8>> {
     if entry.new_oid != zero_oid() {
         return blob_bytes(odb, &entry.new_oid);
     }
-    read_worktree_side_bytes_normalized(odb, entry, work_root, worktree, config, filter_process)
+    read_worktree_side_bytes_normalized(
+        odb,
+        entry,
+        work_root,
+        worktree,
+        Some(rules),
+        rules.config(),
+        None,
+    )
 }
 
 /// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
@@ -5692,7 +5713,15 @@ fn read_new_side_bytes(
         ))
     })?;
     if let Some(wctx) = worktree {
-        return read_worktree_side_bytes_normalized(odb, entry, root, wctx, config, filter_process);
+        return read_worktree_side_bytes_normalized(
+            odb,
+            entry,
+            root,
+            wctx,
+            None,
+            config,
+            filter_process,
+        );
     }
     fs::read(root.join(path)).map_err(Error::Io)
 }

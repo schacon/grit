@@ -15,7 +15,6 @@
 //! on a TTY (honoring `NO_COLOR`); piped output is plain text with `+`/`-`.
 
 use anyhow::{Context, Result};
-use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     diff_commits_with_renames, diff_entry_worktree_side_bytes, diff_index_to_tree,
     diff_index_to_worktree_with_options, diff_trees_with_renames, read_submodule_head_oid,
@@ -26,7 +25,6 @@ use grit_lib::diff::{
     submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffPostprocessWorktree,
     DiffStatus,
 };
-use grit_lib::filter_process::FilterProcessState;
 use grit_lib::merge_base::merge_base_for_diff_two_commits;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -35,6 +33,7 @@ use grit_lib::rev_parse::{
     split_double_dot_range, split_triple_dot_range,
 };
 use grit_lib::state::resolve_head;
+use grit_lib::worktree_rules::WorktreeRules;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -245,8 +244,7 @@ fn outcome_from_changes(changes: Vec<FileChange>) -> DiffOutcome {
 struct WorktreeDiffSideContext<'a> {
     work_root: &'a Path,
     worktree: DiffPostprocessWorktree<'a>,
-    config: &'a ConfigSet,
-    filter_process: Option<&'a FilterProcessState>,
+    rules: &'a WorktreeRules,
 }
 
 /// A changed file with both sides' text resolved.
@@ -292,8 +290,7 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
             repository_git_dir: repo.git_dir(),
             index: &index,
         },
-        config: rules.config(),
-        filter_process: Some(rules.filter_process()),
+        rules: &rules,
     };
     entries
         .into_iter()
@@ -490,8 +487,7 @@ fn worktree_against_tree(
             repository_git_dir: repo.git_dir(),
             index: &index,
         },
-        config: worktree_rules.config(),
-        filter_process: Some(worktree_rules.filter_process()),
+        rules: &worktree_rules,
     };
 
     entries
@@ -593,14 +589,7 @@ fn new_side_bytes(
         return blob_bytes(odb, &e.new_oid);
     }
     if let Some(ctx) = worktree_side {
-        let data = diff_entry_worktree_side_bytes(
-            odb,
-            e,
-            ctx.work_root,
-            &ctx.worktree,
-            ctx.config,
-            ctx.filter_process,
-        )?;
+        let data = diff_entry_worktree_side_bytes(odb, e, ctx.work_root, &ctx.worktree, ctx.rules)?;
         return Ok(bytes_for_diff(&data));
     }
     blob_bytes(odb, &e.new_oid)

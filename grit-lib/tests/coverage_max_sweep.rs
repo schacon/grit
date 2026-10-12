@@ -202,14 +202,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
             repository_git_dir: repo.git_dir(),
             index: &index,
         };
-        let _ = diff_entry_worktree_side_bytes(
-            repo.odb(),
-            e,
-            dir.path(),
-            &wctx,
-            &cfg,
-            Some(rules.filter_process()),
-        )?;
+        let _ = diff_entry_worktree_side_bytes(repo.odb(), e, dir.path(), &wctx, &rules)?;
     }
     let patch = "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n";
     let _ = parse_patch(patch, 1, "p", false, None)?;
