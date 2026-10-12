@@ -27,12 +27,44 @@ pub enum TagOutcome {
         name: String,
         /// Hex object id the tag ref points at.
         oid: String,
-        kind: String,
+        kind: TagRefKind,
         #[serde(skip_serializing_if = "Option::is_none")]
         peeled: Option<String>,
     },
     /// A tag was deleted.
     Delete { name: String },
+}
+
+/// Tag ref kind in JSON (`lightweight` or `annotated`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TagRefKind {
+    Lightweight,
+    Annotated,
+}
+
+impl TagRefKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Lightweight => "lightweight",
+            Self::Annotated => "annotated",
+        }
+    }
+}
+
+impl From<TagKind> for TagRefKind {
+    fn from(kind: TagKind) -> Self {
+        match kind {
+            TagKind::Lightweight => Self::Lightweight,
+            TagKind::Annotated => Self::Annotated,
+        }
+    }
+}
+
+impl std::fmt::Display for TagRefKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
 }
 
 /// One tag in a `list` outcome.
@@ -41,7 +73,7 @@ pub struct TagEntry {
     pub name: String,
     /// Hex object id the tag ref points at.
     pub oid: String,
-    pub kind: String,
+    pub kind: TagRefKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peeled: Option<String>,
 }
@@ -76,7 +108,7 @@ impl MarkdownRender for TagOutcome {
                 peeled,
             } => {
                 let short = oid.get(..7).unwrap_or(oid.as_str());
-                let kind_note = if kind == "annotated" {
+                let kind_note = if *kind == TagRefKind::Annotated {
                     " (annotated)"
                 } else {
                     ""
@@ -90,13 +122,6 @@ impl MarkdownRender for TagOutcome {
             TagOutcome::Delete { name } => outln!(w, "Deleted tag `{name}`."),
         }
         Ok(())
-    }
-}
-
-fn kind_str(kind: TagKind) -> &'static str {
-    match kind {
-        TagKind::Lightweight => "lightweight",
-        TagKind::Annotated => "annotated",
     }
 }
 
@@ -131,7 +156,7 @@ fn list(repo: &Repository) -> Result<TagOutcome> {
                     .unwrap_or(&refname)
                     .to_owned(),
                 oid: oid.to_hex(),
-                kind: kind_str(kind).to_owned(),
+                kind: kind.into(),
                 peeled: peeled.map(|p| p.to_hex()),
             }
         })
@@ -192,7 +217,7 @@ fn create(
     Ok(TagOutcome::Create {
         name: outcome.name,
         oid: outcome.oid.to_hex(),
-        kind: kind_str(outcome.kind).to_owned(),
+        kind: outcome.kind.into(),
         peeled: outcome.peeled.map(|p| p.to_hex()),
     })
 }

@@ -7,7 +7,7 @@ use grit_lib::diff::{DiffEntry, DiffStatus};
 use crate::commands::add::AddOutcome;
 use crate::commands::commit::CommitOutcome;
 use crate::commands::diff::{FileDiff, Hunk, Line, LineKind, Segment};
-use crate::commands::merge::MergeOutcome;
+use crate::commands::merge::{MergeOutcome, MergeResult};
 use crate::commands::pick::PickOutcome;
 use crate::commands::revert::RevertOutcome;
 use crate::commands::switch::SwitchOutcome;
@@ -363,15 +363,15 @@ pub fn print_commit_outcome(w: &mut dyn Write, outcome: &CommitOutcome) -> anyho
 pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow::Result<()> {
     outln!(w, "## Merge");
     outln!(w);
-    match outcome.result.as_str() {
-        "up_to_date" => {
+    match outcome.result {
+        MergeResult::UpToDate => {
             outln!(w, "Already up to date with **`{}`**.", outcome.branch);
         }
-        "fast_forward" => {
+        MergeResult::FastForward => {
             let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
             outln!(w, "- Fast-forwarded **`{}`** → `{short}`", outcome.branch);
         }
-        "merged" => {
+        MergeResult::Merged => {
             let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
             outln!(
                 w,
@@ -379,7 +379,7 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
                 outcome.branch
             );
         }
-        "conflicts" => {
+        MergeResult::Conflicts => {
             outln!(w, "- Merge **`{}`** stopped with conflicts", outcome.branch);
             outln!(w);
             for path in outcome.conflicts.as_deref().unwrap_or(&[]) {
@@ -391,8 +391,8 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
                 "→ fix conflicts, then `grit commit \"message\"`, or `grit merge --abort`"
             );
         }
-        "aborted" => outln!(w, "Merge aborted."),
-        "set_upstream" => {
+        MergeResult::Aborted => outln!(w, "Merge aborted."),
+        MergeResult::SetUpstream => {
             let short = outcome.oid.as_deref().map(short_hex).unwrap_or("");
             let upstream = outcome.upstream.as_deref().unwrap_or("");
             outln!(
@@ -401,7 +401,6 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
                 outcome.branch
             );
         }
-        other => outln!(w, "{other}"),
     }
     Ok(())
 }
@@ -470,18 +469,18 @@ pub fn print_push_results(
     outln!(w, "## Push to `{remote}`");
     for result in results {
         let target = format!("{remote} {}", result.ref_name);
-        match result.status.as_str() {
-            "ok" => outln!(
+        match result.status {
+            crate::commands::push::PushRefOutcomeStatus::Ok => outln!(
                 w,
                 "- **`{}`** · pushed `{branch}` → `{target}`",
                 result.ref_name
             ),
-            "up_to_date" => outln!(
+            crate::commands::push::PushRefOutcomeStatus::UpToDate => outln!(
                 w,
                 "- **`{}`** · `{target}` already up to date",
                 result.ref_name
             ),
-            _ => {
+            crate::commands::push::PushRefOutcomeStatus::Rejected => {
                 let reason = result.reason.as_deref().unwrap_or("rejected");
                 outln!(
                     w,

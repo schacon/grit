@@ -267,19 +267,39 @@ impl CommitJson {
 #[derive(Serialize)]
 pub struct ChangeJson {
     pub path: String,
-    pub status: String,
+    pub status: ChangeStatus,
 }
 
-/// Stable machine-readable name for a diff status (snake_case).
-pub fn change_status_str(status: &DiffStatus) -> &'static str {
-    match status {
-        DiffStatus::Added => "added",
-        DiffStatus::Deleted => "deleted",
-        DiffStatus::Modified => "modified",
-        DiffStatus::TypeChanged => "type_changed",
-        DiffStatus::Renamed => "renamed",
-        DiffStatus::Copied => "copied",
-        DiffStatus::Unmerged => "unmerged",
+/// Machine-readable diff change status (`--json` / `--markdown` contract).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStatus {
+    Added,
+    Deleted,
+    Modified,
+    TypeChanged,
+    Renamed,
+    Copied,
+    Unmerged,
+}
+
+impl From<DiffStatus> for ChangeStatus {
+    fn from(status: DiffStatus) -> Self {
+        match status {
+            DiffStatus::Added => Self::Added,
+            DiffStatus::Deleted => Self::Deleted,
+            DiffStatus::Modified => Self::Modified,
+            DiffStatus::TypeChanged => Self::TypeChanged,
+            DiffStatus::Renamed => Self::Renamed,
+            DiffStatus::Copied => Self::Copied,
+            DiffStatus::Unmerged => Self::Unmerged,
+        }
+    }
+}
+
+impl From<&DiffStatus> for ChangeStatus {
+    fn from(status: &DiffStatus) -> Self {
+        (*status).into()
     }
 }
 
@@ -287,7 +307,7 @@ pub fn change_status_str(status: &DiffStatus) -> &'static str {
 pub fn change_json(entry: &DiffEntry) -> ChangeJson {
     ChangeJson {
         path: entry_path(entry).to_owned(),
-        status: change_status_str(&entry.status).to_owned(),
+        status: entry.status.into(),
     }
 }
 

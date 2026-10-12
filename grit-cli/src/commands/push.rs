@@ -34,13 +34,31 @@ pub struct PushOutcome {
     pub rejected: bool,
 }
 
+/// Per-ref push status in JSON (`ok`, `up_to_date`, or `rejected`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PushRefOutcomeStatus {
+    Ok,
+    UpToDate,
+    Rejected,
+}
+
+impl From<&PushRefStatus> for PushRefOutcomeStatus {
+    fn from(status: &PushRefStatus) -> Self {
+        match status {
+            PushRefStatus::Ok => Self::Ok,
+            PushRefStatus::UpToDate => Self::UpToDate,
+            _ => Self::Rejected,
+        }
+    }
+}
+
 /// One ref's push result.
 #[derive(Serialize)]
 pub struct PushRefResult {
     #[serde(rename = "ref")]
     pub ref_name: String,
-    /// `ok` | `up_to_date` | `rejected`.
-    pub status: String,
+    pub status: PushRefOutcomeStatus,
     /// Rejection detail, present only when `status == "rejected"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -50,10 +68,10 @@ impl HumanRender for PushOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         for result in &self.results {
             let target = format!("{} {}", self.remote, result.ref_name);
-            match result.status.as_str() {
-                "ok" => outln!(w, "  pushed {} → {target}", self.branch),
-                "up_to_date" => outln!(w, "  {target} already up to date"),
-                _ => outln!(
+            match result.status {
+                PushRefOutcomeStatus::Ok => outln!(w, "  pushed {} → {target}", self.branch),
+                PushRefOutcomeStatus::UpToDate => outln!(w, "  {target} already up to date"),
+                PushRefOutcomeStatus::Rejected => outln!(
                     w,
                     "  rejected {target}: {}",
                     result.reason.as_deref().unwrap_or("rejected")
@@ -176,32 +194,26 @@ pub fn run(
         .results
         .iter()
         .map(|result| {
-            let (status, reason) = match result.status {
-                PushRefStatus::Ok => ("ok", None),
-                PushRefStatus::UpToDate => ("up_to_date", None),
+            let status = PushRefOutcomeStatus::from(&result.status);
+            let reason = match result.status {
+                PushRefStatus::Ok | PushRefStatus::UpToDate => None,
                 PushRefStatus::RejectNonFastForward => {
                     rejected = true;
-                    (
-                        "rejected",
-                        Some("not a fast-forward — run `grit pull` first".to_owned()),
-                    )
+                    Some("not a fast-forward — run `grit pull` first".to_owned())
                 }
                 _ => {
                     rejected = true;
-                    (
-                        "rejected",
-                        Some(
-                            result
-                                .message
-                                .clone()
-                                .unwrap_or_else(|| "rejected".to_owned()),
-                        ),
+                    Some(
+                        result
+                            .message
+                            .clone()
+                            .unwrap_or_else(|| "rejected".to_owned()),
                     )
                 }
             };
             PushRefResult {
                 ref_name: result.remote_ref.clone(),
-                status: status.to_owned(),
+                status,
                 reason,
             }
         })
@@ -270,4 +282,26 @@ fn push_once(
             Some(factory),
         )
         .map_err(|e| anyhow::Error::msg(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_status_serializes_snake_case() {
+        for (status, expected) in [
+            (PushRefOutcomeStatus::Ok, "ok"),
+            (PushRefOutcomeStatus::UpToDate, "up_to_date"),
+            (PushRefOutcomeStatus::Rejected, "rejected"),
+        ] {
+            let result = PushRefResult {
+                ref_name: "refs/heads/main".to_owned(),
+                status,
+                reason: None,
+            };
+            let value = serde_json::to_value(&result).expect("json");
+            assert_eq!(value["status"].as_str(), Some(expected));
+        }
+    }
 }

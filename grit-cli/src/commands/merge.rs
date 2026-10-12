@@ -17,11 +17,22 @@ use grit_lib::state::{resolve_head, HeadState};
 use serde::Serialize;
 use std::io::Write;
 
+/// Merge / pull integration result (`--json` contract).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeResult {
+    UpToDate,
+    FastForward,
+    Merged,
+    Conflicts,
+    Aborted,
+    SetUpstream,
+}
+
 /// Result of `grit merge` (and the merge half of `grit pull`).
 #[derive(Serialize)]
 pub struct MergeOutcome {
-    /// `up_to_date` | `fast_forward` | `merged` | `conflicts` | `aborted` | `set_upstream`.
-    pub result: String,
+    pub result: MergeResult,
     /// The merge source label (for `set_upstream`, the branch being set).
     pub branch: String,
     /// Resulting commit (fast-forward target, merge commit, or adopted upstream).
@@ -38,7 +49,7 @@ pub struct MergeOutcome {
 impl MergeOutcome {
     fn up_to_date(label: &str) -> Self {
         Self {
-            result: "up_to_date".to_owned(),
+            result: MergeResult::UpToDate,
             branch: label.to_owned(),
             oid: None,
             upstream: None,
@@ -48,7 +59,7 @@ impl MergeOutcome {
 
     fn fast_forward(label: &str, oid: ObjectId) -> Self {
         Self {
-            result: "fast_forward".to_owned(),
+            result: MergeResult::FastForward,
             branch: label.to_owned(),
             oid: Some(oid.to_hex()),
             upstream: None,
@@ -58,7 +69,7 @@ impl MergeOutcome {
 
     fn merged(label: &str, oid: ObjectId) -> Self {
         Self {
-            result: "merged".to_owned(),
+            result: MergeResult::Merged,
             branch: label.to_owned(),
             oid: Some(oid.to_hex()),
             upstream: None,
@@ -68,7 +79,7 @@ impl MergeOutcome {
 
     fn conflicts(label: &str, paths: Vec<String>) -> Self {
         Self {
-            result: "conflicts".to_owned(),
+            result: MergeResult::Conflicts,
             branch: label.to_owned(),
             oid: None,
             upstream: None,
@@ -78,7 +89,7 @@ impl MergeOutcome {
 
     fn aborted() -> Self {
         Self {
-            result: "aborted".to_owned(),
+            result: MergeResult::Aborted,
             branch: String::new(),
             oid: None,
             upstream: None,
@@ -89,7 +100,7 @@ impl MergeOutcome {
     /// `grit pull` on an unborn branch adopting the upstream as the first commit.
     pub fn set_upstream(branch: &str, upstream: &str, oid: ObjectId) -> Self {
         Self {
-            result: "set_upstream".to_owned(),
+            result: MergeResult::SetUpstream,
             branch: branch.to_owned(),
             oid: Some(oid.to_hex()),
             upstream: Some(upstream.to_owned()),
@@ -101,15 +112,15 @@ impl MergeOutcome {
 impl HumanRender for MergeOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         let short = self.oid.as_deref().map(short_hex).unwrap_or_default();
-        match self.result.as_str() {
-            "up_to_date" => outln!(w, "Already up to date."),
-            "fast_forward" => outln!(w, "Fast-forwarded {} → {short}", self.branch),
-            "merged" => outln!(
+        match self.result {
+            MergeResult::UpToDate => outln!(w, "Already up to date."),
+            MergeResult::FastForward => outln!(w, "Fast-forwarded {} → {short}", self.branch),
+            MergeResult::Merged => outln!(
                 w,
                 "Merged {} into the current branch ({short})",
                 self.branch
             ),
-            "conflicts" => {
+            MergeResult::Conflicts => {
                 eprintln!("Merge has conflicts in:");
                 for path in self.conflicts.as_deref().unwrap_or(&[]) {
                     eprintln!("  {path}");
@@ -118,14 +129,13 @@ impl HumanRender for MergeOutcome {
                     "\nAutomatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`."
                 );
             }
-            "aborted" => outln!(w, "Merge aborted."),
-            "set_upstream" => outln!(
+            MergeResult::Aborted => outln!(w, "Merge aborted."),
+            MergeResult::SetUpstream => outln!(
                 w,
                 "Set {} to {}.",
                 self.branch,
                 self.upstream.as_deref().unwrap_or_default()
             ),
-            other => outln!(w, "{other}"),
         }
         Ok(())
     }
@@ -200,4 +210,33 @@ fn resolve_branch(repo: &Repository, name: &str) -> Result<ObjectId> {
         }
     }
     bail!("no branch named '{name}'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grit_lib::objects::ObjectId;
+
+    #[test]
+    fn merge_result_serializes_snake_case() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid");
+        let cases = [
+            (MergeOutcome::up_to_date("topic"), "up_to_date"),
+            (MergeOutcome::fast_forward("topic", oid), "fast_forward"),
+            (MergeOutcome::merged("topic", oid), "merged"),
+            (
+                MergeOutcome::conflicts("topic", vec!["a.txt".into()]),
+                "conflicts",
+            ),
+            (MergeOutcome::aborted(), "aborted"),
+            (
+                MergeOutcome::set_upstream("main", "origin/main", oid),
+                "set_upstream",
+            ),
+        ];
+        for (outcome, expected) in cases {
+            let value = serde_json::to_value(&outcome).expect("json");
+            assert_eq!(value["result"].as_str(), Some(expected), "{value}");
+        }
+    }
 }

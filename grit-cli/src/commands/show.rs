@@ -19,10 +19,20 @@ use crate::commands::diff::{diff_of_commit, DiffOutcome, LineKind};
 use crate::context::{self, subject_line};
 use crate::dates::rfc3339_from_identity_when;
 use crate::markdown;
-use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderContext};
 
 /// Width budget for the `+`/`-` change bars in the diffstat.
 const BAR_WIDTH: usize = 40;
+
+/// What `grit show` resolved (`--json` contract).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowKind {
+    Commit,
+    Branch,
+    Tag,
+    AnnotatedTag,
+}
 
 /// Result of `grit show`.
 #[derive(Serialize)]
@@ -30,8 +40,7 @@ pub struct ShowOutcome {
     /// Non-fatal warnings emitted while resolving the object.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<crate::diagnostics::WarningRecord>,
-    /// `commit` | `branch` | `tag` | `annotated_tag`.
-    pub kind: String,
+    pub kind: ShowKind,
     /// Branch or tag name, when shown via a ref.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_name: Option<String>,
@@ -57,7 +66,7 @@ pub struct FileStat {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_path: Option<String>,
-    pub status: String,
+    pub status: ChangeStatus,
     pub insertions: usize,
     pub deletions: usize,
     pub binary: bool,
@@ -150,7 +159,7 @@ pub(crate) fn diffstat(diff: &DiffOutcome) -> DiffStat {
         files.push(FileStat {
             path: file.path.clone(),
             old_path: file.old_path.clone(),
-            status: file.status.clone(),
+            status: file.status,
             insertions: ins,
             deletions: del,
             binary: file.binary,
@@ -166,20 +175,23 @@ pub(crate) fn diffstat(diff: &DiffOutcome) -> DiffStat {
 
 /// Determine what `target` names: a branch, a tag (light or annotated), or a
 /// bare commit. Returns `(kind, ref_name, annotated_tag_info)`.
-fn classify(repo: &Repository, target: &str) -> Result<(String, Option<String>, Option<TagInfo>)> {
+fn classify(
+    repo: &Repository,
+    target: &str,
+) -> Result<(ShowKind, Option<String>, Option<TagInfo>)> {
     let git_dir = &repo.git_dir;
 
     if target == "HEAD" {
         if let Ok(Some(sym)) = refs::read_symbolic_ref(git_dir, "HEAD") {
             if let Some(branch) = sym.strip_prefix("refs/heads/") {
-                return Ok(("branch".to_owned(), Some(branch.to_owned()), None));
+                return Ok((ShowKind::Branch, Some(branch.to_owned()), None));
             }
         }
-        return Ok(("commit".to_owned(), None, None));
+        return Ok((ShowKind::Commit, None, None));
     }
 
     if refs::resolve_ref(git_dir, &format!("refs/heads/{target}")).is_ok() {
-        return Ok(("branch".to_owned(), Some(target.to_owned()), None));
+        return Ok((ShowKind::Branch, Some(target.to_owned()), None));
     }
 
     if let Ok(tag_oid) = refs::resolve_ref(git_dir, &format!("refs/tags/{target}")) {
@@ -191,16 +203,12 @@ fn classify(repo: &Repository, target: &str) -> Result<(String, Option<String>, 
                 tagger: td.tagger.as_deref().map(Person::parse),
                 message: td.message.trim_end().to_owned(),
             };
-            return Ok((
-                "annotated_tag".to_owned(),
-                Some(target.to_owned()),
-                Some(info),
-            ));
+            return Ok((ShowKind::AnnotatedTag, Some(target.to_owned()), Some(info)));
         }
-        return Ok(("tag".to_owned(), Some(target.to_owned()), None));
+        return Ok((ShowKind::Tag, Some(target.to_owned()), None));
     }
 
-    Ok(("commit".to_owned(), None, None))
+    Ok((ShowKind::Commit, None, None))
 }
 
 /// Follow tag objects until reaching a commit.
@@ -243,12 +251,12 @@ impl MarkdownRender for ShowOutcome {
                 print_markdown_message(w, &tag.message)?;
             }
             outln!(w);
-        } else if self.kind == "branch" {
+        } else if self.kind == ShowKind::Branch {
             if let Some(name) = &self.ref_name {
                 outln!(w, "# Branch `{name}`");
                 outln!(w);
             }
-        } else if self.kind == "tag" {
+        } else if self.kind == ShowKind::Tag {
             if let Some(name) = &self.ref_name {
                 outln!(w, "# Tag `{name}`");
                 outln!(w);
@@ -304,11 +312,11 @@ impl HumanRender for ShowOutcome {
             outln!(w);
             print_message(w, &tag.message)?;
             outln!(w);
-        } else if self.kind == "branch" {
+        } else if self.kind == ShowKind::Branch {
             if let Some(name) = &self.ref_name {
                 outln!(w, "{}", paint(color, "36", &format!("branch {name}")));
             }
-        } else if self.kind == "tag" {
+        } else if self.kind == ShowKind::Tag {
             if let Some(name) = &self.ref_name {
                 outln!(w, "{}", paint(color, "36", &format!("tag {name}")));
             }

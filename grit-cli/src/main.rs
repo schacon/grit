@@ -792,7 +792,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Merge { branch, abort } => {
             let outcome = commands::merge::run(branch.as_deref(), abort)?;
             emit(&outcome, opts, ctx)?;
-            if outcome.result == "conflicts" {
+            if outcome.result == commands::merge::MergeResult::Conflicts {
                 std::process::exit(1);
             }
             Ok(())
@@ -866,7 +866,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Pull => {
             let outcome = commands::pull::run(opts.mode)?;
             emit(&outcome, opts, ctx)?;
-            if outcome.result == "conflicts" {
+            if outcome.result == commands::merge::MergeResult::Conflicts {
                 std::process::exit(1);
             }
             Ok(())

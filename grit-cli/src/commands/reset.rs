@@ -11,10 +11,29 @@ use std::io::Write;
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
+/// Reset mode in JSON (`soft`, `mixed`, or `hard`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetCliMode {
+    Soft,
+    Mixed,
+    Hard,
+}
+
+impl From<ResetMode> for ResetCliMode {
+    fn from(mode: ResetMode) -> Self {
+        match mode {
+            ResetMode::Soft => Self::Soft,
+            ResetMode::Mixed => Self::Mixed,
+            ResetMode::Hard => Self::Hard,
+        }
+    }
+}
+
 /// CLI view of [`ResetOutcome`].
 #[derive(Serialize)]
 pub struct ResetCliOutcome {
-    pub mode: String,
+    pub mode: ResetCliMode,
     pub target: String,
     pub previous: String,
     pub r#ref: String,
@@ -23,7 +42,7 @@ pub struct ResetCliOutcome {
 impl From<ResetOutcome> for ResetCliOutcome {
     fn from(value: ResetOutcome) -> Self {
         Self {
-            mode: value.mode.as_str().to_owned(),
+            mode: value.mode.into(),
             target: value.target.to_hex(),
             previous: value.previous.to_hex(),
             r#ref: value.ref_updated,
@@ -38,7 +57,7 @@ impl HumanRender for ResetCliOutcome {
             "Reset {} to {} ({})",
             self.r#ref,
             &self.target[..7.min(self.target.len())],
-            self.mode
+            reset_mode_label(self.mode)
         );
         Ok(())
     }
@@ -49,10 +68,18 @@ impl MarkdownRender for ResetCliOutcome {
         outln!(w, "## Reset");
         outln!(w);
         outln!(w, "- **ref:** `{}`", self.r#ref);
-        outln!(w, "- **mode:** `{}`", self.mode);
+        outln!(w, "- **mode:** `{}`", reset_mode_label(self.mode));
         outln!(w, "- **target:** `{}`", self.target);
         outln!(w, "- **previous:** `{}`", self.previous);
         Ok(())
+    }
+}
+
+fn reset_mode_label(mode: ResetCliMode) -> &'static str {
+    match mode {
+        ResetCliMode::Soft => "soft",
+        ResetCliMode::Mixed => "mixed",
+        ResetCliMode::Hard => "hard",
     }
 }
 

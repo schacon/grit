@@ -39,7 +39,7 @@ use std::path::Path;
 
 use crate::context;
 use crate::markdown;
-use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderContext};
 
 /// Lines of unchanged context to show around each change.
 const CONTEXT_LINES: usize = 3;
@@ -74,7 +74,7 @@ pub struct FileDiff {
     /// Pre-rename path, when different from `path`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_path: Option<String>,
-    pub status: String,
+    pub status: ChangeStatus,
     /// Old git mode (octal), when present on this side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_mode: Option<String>,
@@ -599,10 +599,6 @@ fn bytes_for_diff(data: &[u8]) -> (SideBytes, bool) {
     }
 }
 
-fn status_str(status: DiffStatus) -> &'static str {
-    crate::output::change_status_str(&status)
-}
-
 fn build_file_diff(fc: FileChange) -> FileDiff {
     let structured = structured_file_diff(
         &fc.old_mode,
@@ -650,7 +646,7 @@ fn build_file_diff(fc: FileChange) -> FileDiff {
     FileDiff {
         path: fc.path,
         old_path: fc.old_path,
-        status: status_str(fc.status).to_owned(),
+        status: fc.status.into(),
         old_mode: structured.old_mode,
         new_mode: structured.new_mode,
         old_encoding_lossy: structured.old_encoding_lossy,
