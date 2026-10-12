@@ -8,7 +8,7 @@ mod map;
 mod policy;
 mod pool;
 
-pub(crate) use pool::run_ordered_pool;
+pub(crate) use pool::{run_ordered_pool, run_ordered_pool_with_local};
 
 pub use map::{
     par_map, parallel_worthwhile, try_par_map, try_par_map_force, try_par_map_with_local,

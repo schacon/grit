@@ -6,6 +6,7 @@ use flate2::read::ZlibDecoder;
 
 use crate::error::{Error, Result};
 use crate::unpack_objects::decompress_zlib_at;
+use crate::zlib_inflate::ZlibInflateScratch;
 
 const SKIP_BUF_LEN: usize = 64 * 1024;
 
@@ -61,6 +62,18 @@ pub(crate) fn skip_zlib_at(pack: &[u8], offset: usize, expected_size: usize) -> 
     Ok(decoder.total_in() as usize)
 }
 
+/// Like [`skip_zlib_at`], reusing `scratch` for the inflate state machine.
+pub(crate) fn skip_zlib_at_with_scratch(
+    scratch: &mut ZlibInflateScratch,
+    pack: &[u8],
+    offset: usize,
+    expected_size: usize,
+) -> Result<usize> {
+    let mut pos = offset;
+    scratch.skip_zlib_stream(pack, &mut pos, expected_size as u64)?;
+    Ok(pos - offset)
+}
+
 /// Decompress a zlib stream at `offset` for parallel index-pack workers.
 pub(crate) fn decompress_zlib_at_index(
     pack: &[u8],
@@ -74,6 +87,27 @@ pub(crate) fn decompress_zlib_at_index(
 mod tests {
     use super::*;
     use crate::unpack_objects::decompress_zlib_at;
+
+    #[test]
+    fn skip_zlib_at_with_scratch_matches_skip_zlib_at() {
+        let plain = b"hello pack zlib skip scratch";
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        use std::io::Write;
+        enc.write_all(plain).expect("zlib");
+        let zlib = enc.finish().expect("finish");
+        let mut pack = Vec::new();
+        pack.extend_from_slice(b"PACK");
+        pack.extend_from_slice(&2u32.to_be_bytes());
+        pack.extend_from_slice(&1u32.to_be_bytes());
+        pack.push(0x32);
+        let offset = pack.len();
+        pack.extend_from_slice(&zlib);
+        let mut scratch = ZlibInflateScratch::default();
+        let skipped = skip_zlib_at_with_scratch(&mut scratch, &pack, offset, plain.len())
+            .expect("scratch skip");
+        let direct = skip_zlib_at(&pack, offset, plain.len()).expect("direct skip");
+        assert_eq!(skipped, direct);
+    }
 
     #[test]
     fn skip_zlib_at_matches_decompress_for_zero_byte_object() {
