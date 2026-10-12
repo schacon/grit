@@ -3983,7 +3983,7 @@ mod line_coverage_tests {
             )
             .as_bytes(),
         )?;
-        for i in 1..=80_i64 {
+        for i in 1..=120_i64 {
             let body = format!(
                 "tree {tree}\nparent {tip}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nc{i}\n",
                 100 + i,
@@ -3995,7 +3995,7 @@ mod line_coverage_tests {
         }
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
-        for n in 0..80 {
+        for n in 0..120 {
             for spec in [
                 format!("HEAD~{n}"),
                 format!("main~{n}"),
@@ -4850,7 +4850,6 @@ mod line_coverage_tests {
         Ok(())
     }
 
-    #[test]
     #[test]
     fn discovery_graft_and_abbrev_sweep() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;

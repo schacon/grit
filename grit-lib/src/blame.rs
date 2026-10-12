@@ -2314,4 +2314,53 @@ mod tests {
         );
         assert_eq!(parse_diff_algorithm_name("nope"), None);
     }
+
+    #[test]
+    fn blame_file_walks_linear_history() -> Result<()> {
+        use crate::objects::ObjectKind;
+        use crate::repo::init_repository;
+        use crate::RefStorageFormat;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let path = "trace.txt";
+        let mut parent: Option<ObjectId> = None;
+        let mut tip = repo.odb.write(ObjectKind::Blob, b"line0\n")?;
+        for i in 1..=48_i32 {
+            let content = format!("line{i}\n");
+            fs::write(dir.path().join(path), &content).map_err(crate::error::Error::Io)?;
+            tip = repo.odb.write(ObjectKind::Blob, content.as_bytes())?;
+            let mut body = format!("100644 {path}\0").into_bytes();
+            body.extend_from_slice(tip.as_bytes());
+            let tree = repo.odb.write(ObjectKind::Tree, &body)?;
+            let mut commit_body = format!("tree {tree}\n");
+            if let Some(p) = parent {
+                commit_body.push_str(&format!("parent {p}\n"));
+            }
+            commit_body.push_str(&format!(
+                "author T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nc{i}\n",
+                100 + i,
+                100 + i
+            ));
+            tip = repo.odb.write(ObjectKind::Commit, commit_body.as_bytes())?;
+            parent = Some(tip);
+        }
+        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        for name in ["myers", "histogram", "minimal", "patience"] {
+            let _ = parse_diff_algorithm_name(name);
+        }
+        let result = blame_file(
+            &repo,
+            path,
+            &BlameOptions {
+                start: Some(tip),
+                line_range: Some(1..=10),
+            },
+        )?;
+        assert!(!result.lines.is_empty());
+        Ok(())
+    }
 }

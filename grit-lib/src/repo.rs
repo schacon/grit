@@ -3493,3 +3493,7 @@ fn test_inject_index_write_fail() -> Result<()> {
 fn test_inject_index_write_fail() -> Result<()> {
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "repo_line_coverage_tests.rs"]
+mod line_coverage_tests;

@@ -8937,4 +8937,103 @@ mod line_coverage_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn object_filter_and_walk_flag_surface() -> Result<()> {
+        use FilterObjectKind;
+        let (_dir, repo, tip) = seed_repo(100, true);
+        let listed = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions::default(),
+        )?;
+        let bottom = listed
+            .commits
+            .get(listed.commits.len().saturating_sub(8))
+            .copied()
+            .unwrap_or(tip);
+        let filters = [
+            ObjectFilter::BlobNone,
+            ObjectFilter::BlobLimit(2048),
+            ObjectFilter::TreeDepth(4),
+            ObjectFilter::ObjectType(FilterObjectKind::Blob),
+            ObjectFilter::Combine(vec![
+                ObjectFilter::BlobLimit(4096),
+                ObjectFilter::TreeDepth(6),
+            ]),
+        ];
+        for filter in filters {
+            for objects in [false, true] {
+                let opts = RevListOptions {
+                    filter: Some(filter.clone()),
+                    filter_raw_specs: vec!["blob:limit=2k".to_owned()],
+                    filter_provided_objects: objects,
+                    filter_print_omitted: true,
+                    objects,
+                    no_object_names: objects,
+                    in_commit_order: objects,
+                    unpacked_only: objects,
+                    use_bitmap_index: objects,
+                    bitmap_oid_only_objects: objects,
+                    maximal_only: true,
+                    ancestry_path: true,
+                    ancestry_path_bottoms: vec![bottom],
+                    include_reflog_entries: true,
+                    include_indexed_objects: true,
+                    exclude_indexed_objects: false,
+                    exclude_promisor_objects: true,
+                    no_kept_objects: true,
+                    use_commit_graph: true,
+                    use_commit_graph_bloom: true,
+                    commit_graph_read_changed_paths: true,
+                    commit_graph_changed_paths_version: -1,
+                    preserve_simplify_merges_graph_merges: true,
+                    path_graph_reorder: true,
+                    left_only: objects,
+                    right_only: !objects,
+                    left_right_explicit: true,
+                    show_pulls: true,
+                    exclude_first_parent_only: true,
+                    parent_rewrite: true,
+                    output_mode: OutputMode::Parents,
+                    paths: vec!["tracked.txt".to_owned()],
+                    full_history: true,
+                    sparse: true,
+                    simplify_merges: true,
+                    ignore_missing: true,
+                    ..RevListOptions::default()
+                };
+                let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+                let mut all_refs_opts = opts.clone();
+                all_refs_opts.all_refs = true;
+                let _ = rev_list(&repo, &[], &[], &all_refs_opts)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deep_history_format_and_parent_rewrite() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(160, true);
+        let formats = [
+            "format:%H %P %T %t %p %s %D %d %gD %N %G? %GS %GK %GF %GP %GT %GG",
+            "format:%an %ae %at %cn %ce %ct %ad %cd %as %cs %ai %ci %ar %cr",
+            "tformat:%<(12,trunc)%h %<(30,mtrunc)%s %>(8,trunc)%an",
+        ];
+        for fmt in formats {
+            let mode = OutputMode::Format(fmt.to_owned());
+            let opts = RevListOptions {
+                output_mode: mode.clone(),
+                parent_rewrite: true,
+                objects: true,
+                ordering: OrderingMode::AuthorDateTopo,
+                ..RevListOptions::default()
+            };
+            let out = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+            let _ = render_commit_with_color(&repo, tip, &mode, 12, true)?;
+            assert!(!out.commits.is_empty());
+        }
+        Ok(())
+    }
 }
