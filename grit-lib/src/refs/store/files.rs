@@ -490,9 +490,6 @@ impl FilesRefStore {
         packed_lock_held: bool,
         persisted_refs: &mut HashSet<String>,
     ) -> Result<()> {
-        if persisted_refs.contains(name) {
-            return Ok(());
-        }
         let (_, _, lock_path) = self.ref_lock_paths(name);
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent).map_err(Error::Io)?;
@@ -510,7 +507,7 @@ impl FilesRefStore {
         &self,
         before: &RefBatchState,
         after: &RefBatchState,
-        held_locks: &mut HashMap<String, PathBuf>,
+        _held_locks: &mut HashMap<String, PathBuf>,
         packed_lock_held: bool,
         updates: &[RefUpdate],
     ) -> Result<()> {

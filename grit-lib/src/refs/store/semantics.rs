@@ -1,11 +1,13 @@
 //! Shared ref-update semantics for in-memory and reftable [`super::RefStore`] backends.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::diff::zero_oid;
 use crate::objects::ObjectId;
 use crate::refs::SYMREF_MAXDEPTH;
 
+use super::apply::check_storage_write;
+use super::apply::RefBatchState;
 use super::error::RefStoreError;
 use super::transaction::expected_matches;
 use super::{RawRef, RefUpdate, RefUpdateFlags};
@@ -18,6 +20,7 @@ pub fn simulate_batch_apply(
     updates: &[RefUpdate],
 ) -> StoreResult<()> {
     let mut trial = refs.clone();
+    let mut storage_writes = HashMap::new();
     for update in updates {
         let actual = trial.get(&update.name);
         if !expected_matches(actual, &update.expected) {
@@ -27,6 +30,11 @@ pub fn simulate_batch_apply(
                 actual: actual.cloned(),
             });
         }
+        let batch_view = RefBatchState {
+            refs: trial.clone(),
+            reflogs: BTreeMap::new(),
+        };
+        check_storage_write(&mut storage_writes, &batch_view, update)?;
         apply_update_to_map(&mut trial, refs, update)?;
     }
     Ok(())
