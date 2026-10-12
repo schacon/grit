@@ -12,7 +12,7 @@ These options work on any command (and on `grit` itself when you pass no subcomm
 | `--filter <EXPR>` | Apply a jq expression to the JSON output. Requires `--json`. |
 | `--threads <N>` | Worker threads for parallel library work inside this process. `0` selects all logical CPUs (Git-style auto); `1` forces serial paths. Does not change human, `--json`, or `--markdown` output shape. |
 | `-h`, `--help` | Print help for `grit` or for a command. |
-| `-V`, `--version` | Print the version of `grit`. |
+| `-v`, `--version` | Print the version of `grit`. `-V` works too. |
 
 Running `grit` with no command is the same as [`grit status`](../status/).
 

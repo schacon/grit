@@ -125,7 +125,7 @@ $ grit auth logout --json
 
 These speak binary or line protocols on stdin/stdout and have **no** `--json` mode: [`grit manager`](../manager/), [`grit upload-pack`](../upload-pack/), [`grit receive-pack`](../receive-pack/). Agents should not wrap them as JSON commands.
 
-`-V` / `--version` prints a version string and does not emit JSON even if `--json` is passed:
+`-v` / `--version` (or `-V`) prints a version string and does not emit JSON even if `--json` is passed:
 
 ```console
 $ grit --json --version

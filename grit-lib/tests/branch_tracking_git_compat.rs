@@ -72,8 +72,7 @@ fn t6040_branch_tracking_ahead_behind_matches_git() {
         .status()
         .unwrap();
 
-    let repo =
-        Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let grit_stat =
         stat_branch_pair(&repo, "topic", "refs/heads/main", AheadBehindMode::Full).expect("stat");
     let (git_left, git_right) = git_ahead_behind(dir.path(), "main", "topic");
