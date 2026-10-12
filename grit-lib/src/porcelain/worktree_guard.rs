@@ -37,12 +37,8 @@ pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
-    let index_path = repo.index_path();
-    let mut index = match Index::load(&index_path) {
-        Ok(i) => i,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e),
-    };
+    let index_path = repo.index_path_for_env()?;
+    let mut index = repo.load_index_at(&index_path)?;
     let _ = index.expand_sparse_directory_placeholders(repo.odb());
 
     let head = resolve_head(repo.git_dir())?;
@@ -67,7 +63,7 @@ pub(crate) fn local_change_diffs(
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
-    let index_path = repo.index_path();
+    let index_path = repo.index_path_for_env()?;
     let index_mtime = index_file_mtime(&index_path);
     let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)
         .ok()
@@ -105,10 +101,13 @@ fn ensure_worktree_clean_with_message(
     persist_index_stat_refresh: bool,
 ) -> Result<()> {
     let mut snapshot = load_worktree_snapshot(repo)?;
-    let index_path = repo.index_path();
+    let index_path = repo.index_path_for_env()?;
     let (staged, unstaged, index_changed) =
         local_change_diffs(repo, &mut snapshot.index, snapshot.head_tree)?;
-    if persist_index_stat_refresh && index_changed && repo.try_write_index(&mut snapshot.index)? {
+    if persist_index_stat_refresh
+        && index_changed
+        && repo.try_write_index_at(&index_path, &mut snapshot.index)?
+    {
         snapshot.index.source_mtime = index_file_mtime(&index_path);
     }
     if !staged.is_empty() || !unstaged.is_empty() {
@@ -162,10 +161,10 @@ pub fn prepare_tree_switch(
     to_tree: &ObjectId,
 ) -> Result<TreeSwitchPlan> {
     let mut snapshot = load_worktree_snapshot(repo)?;
-    let index_path = repo.index_path();
+    let index_path = repo.index_path_for_env()?;
     let (staged, unstaged, index_changed) =
         local_change_diffs(repo, &mut snapshot.index, snapshot.head_tree)?;
-    if index_changed && repo.try_write_index(&mut snapshot.index)? {
+    if index_changed && repo.try_write_index_at(&index_path, &mut snapshot.index)? {
         snapshot.index.source_mtime = index_file_mtime(&index_path);
     }
     if !staged.is_empty() || !unstaged.is_empty() {

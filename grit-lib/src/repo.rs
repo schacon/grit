@@ -1186,7 +1186,13 @@ impl Repository {
     /// Propagates non-recoverable failures (for example cache-tree verification or split-index
     /// constraints).
     pub(crate) fn try_write_index(&self, index: &mut Index) -> Result<bool> {
-        match self.write_index(index) {
+        self.try_write_index_at(&self.index_path(), index)
+    }
+
+    /// Like [`Repository::try_write_index`], but writes to an explicit index file path
+    /// (for example the path selected by `GIT_INDEX_FILE`).
+    pub(crate) fn try_write_index_at(&self, path: &Path, index: &mut Index) -> Result<bool> {
+        match self.write_index_at(path, index) {
             Ok(()) => Ok(true),
             Err(e) if Self::opportunistic_index_write_skippable(&e) => Ok(false),
             Err(e) => Err(e),

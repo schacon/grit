@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::diff::stat_matches;
 use grit_lib::index::Index;
 use grit_lib::porcelain::status::{status, StatusOptions};
@@ -472,4 +472,111 @@ fn status_deep_linear_tree_second_run_stays_fast_with_autocrlf() {
             "warm deep-tree status should be faster than the first pass (first {first_elapsed:?}, second {second_elapsed:?})"
         );
     }
+}
+
+fn open_grit_with_git_index_file(repo_root: &Path, git_index_file: &Path) -> Repository {
+    let mut env = Environment::empty();
+    env.cwd = repo_root.to_path_buf();
+    env.git_index_file = Some(
+        git_index_file
+            .canonicalize()
+            .unwrap_or_else(|_| git_index_file.to_path_buf())
+            .to_string_lossy()
+            .into_owned(),
+    );
+    Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::with_environment(env).with_work_tree(repo_root),
+    )
+    .expect("open grit repo with GIT_INDEX_FILE")
+}
+
+#[test]
+fn status_with_git_index_file_stat_refresh_does_not_rewrite_default_index() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    fs::write(repo_root.join("a"), "one\n").expect("write a");
+    fs::write(repo_root.join("b"), "two\n").expect("write b");
+    git(repo_root, &["add", "-A"]);
+    git(repo_root, &["commit", "-qm", "initial"]);
+
+    let git_dir = repo_root.join(".git");
+    let default_index = git_dir.join("index");
+    let alt_index = git_dir.join("index.alt");
+    fs::copy(&default_index, &alt_index).expect("copy index");
+
+    let remove_b = Command::new("git")
+        .args(["update-index", "--force-remove", "b"])
+        .env("GIT_INDEX_FILE", &alt_index)
+        .current_dir(repo_root)
+        .output()
+        .expect("spawn git");
+    assert!(
+        remove_b.status.success(),
+        "git update-index on alternate index: {}",
+        String::from_utf8_lossy(&remove_b.stderr)
+    );
+
+    let default_before = fs::read(&default_index).expect("read default index");
+
+    std::thread::sleep(Duration::from_secs(1));
+    filetime::set_file_mtime(&repo_root.join("a"), filetime::FileTime::now()).expect("touch a");
+
+    let grit_repo = open_grit_with_git_index_file(repo_root, &alt_index);
+    let _model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+
+    let default_after = fs::read(&default_index).expect("read default index after status");
+    assert_eq!(
+        default_after, default_before,
+        "stat refresh with GIT_INDEX_FILE must not rewrite the default .git/index"
+    );
+
+    let git_status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .env("GIT_INDEX_FILE", &alt_index)
+        .current_dir(repo_root)
+        .output()
+        .expect("git status");
+    assert!(git_status.status.success());
+    let default_after_git = fs::read(&default_index).expect("read default after git status");
+    assert_eq!(
+        default_after_git, default_before,
+        "default index must stay unchanged under git status oracle too"
+    );
+}
+
+#[test]
+fn worktree_guard_with_git_index_file_stat_refresh_does_not_rewrite_default_index() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    fs::write(repo_root.join("a"), "one\n").expect("write a");
+    fs::write(repo_root.join("b"), "two\n").expect("write b");
+    git(repo_root, &["add", "-A"]);
+    git(repo_root, &["commit", "-qm", "initial"]);
+
+    let git_dir = repo_root.join(".git");
+    let default_index = git_dir.join("index");
+    let alt_index = git_dir.join("index.alt");
+    fs::copy(&default_index, &alt_index).expect("copy index");
+
+    let default_before = fs::read(&default_index).expect("read default index");
+
+    std::thread::sleep(Duration::from_secs(1));
+    filetime::set_file_mtime(&repo_root.join("a"), filetime::FileTime::now()).expect("touch a");
+
+    let grit_repo = open_grit_with_git_index_file(repo_root, &alt_index);
+    grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_merge(&grit_repo)
+        .expect("merge guard on clean tree");
+
+    let default_after = fs::read(&default_index).expect("read default index after guard");
+    assert_eq!(
+        default_after, default_before,
+        "worktree guard stat refresh with GIT_INDEX_FILE must not rewrite default index"
+    );
 }

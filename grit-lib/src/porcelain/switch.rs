@@ -343,10 +343,10 @@ fn prepare_tree_switch_allow_local(
     to_tree: &ObjectId,
 ) -> Result<PreparedSwitch> {
     let mut snapshot = load_worktree_snapshot(repo)?;
-    let index_path = repo.index_path();
+    let index_path = repo.index_path_for_env()?;
     let (staged, unstaged, index_changed) =
         local_change_diffs(repo, &mut snapshot.index, snapshot.head_tree)?;
-    if index_changed && repo.try_write_index(&mut snapshot.index)? {
+    if index_changed && repo.try_write_index_at(&index_path, &mut snapshot.index)? {
         snapshot.index.source_mtime = crate::index::index_file_mtime(&index_path);
     }
 
