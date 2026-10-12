@@ -198,24 +198,15 @@ pub fn builtin_warnings_for_rules(rules: &[AttrRule], display_path: &str) -> Vec
     w
 }
 
-fn default_global_attributes_path() -> Option<PathBuf> {
-    let home = crate::environment::Environment::empty().var("HOME")?;
-    if let Some(xdg) = crate::environment::Environment::empty().var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("git/attributes"));
-        }
-    }
-    Some(PathBuf::from(home).join(".config/git/attributes"))
-}
-
 pub(crate) fn global_attributes_path(
     repo: &Repository,
 ) -> std::result::Result<Option<PathBuf>, crate::error::Error> {
     let config = repo.config()?;
+    let env = repo.environment();
     if let Some(path) = config.get("core.attributesfile") {
-        return Ok(Some(PathBuf::from(parse_path(repo.environment(), &path))));
+        return Ok(Some(PathBuf::from(parse_path(env, &path))));
     }
-    Ok(default_global_attributes_path())
+    Ok(env.default_xdg_config_git_file("attributes"))
 }
 
 /// Read a `.gitattributes` path; if it is a symlink, record an error and skip (in-tree rules).

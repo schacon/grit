@@ -5,6 +5,7 @@
 
 use std::process::Command;
 
+use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::ignore::{
     parse_sparse_patterns_from_blob, path_in_sparse_checkout, path_matches_sparse_pattern_list,
     submodule_containing_path, IgnoreMatch, IgnoreMatcher,
@@ -505,6 +506,77 @@ fn t3001_exclude_from_and_per_directory_name() {
         assert_eq!(ignored, want, "{path}");
     }
     let _ = home;
+}
+
+#[test]
+fn default_global_excludes_from_xdg_config_git_ignore() {
+    let home = unique_tmp("ignore", "default-global-home");
+    fs::create_dir_all(home.join(".config/git")).expect("config git");
+    fs::write(home.join(".config/git/ignore"), "xdgignored*\n").expect("global ignore");
+
+    let root = unique_tmp("ignore", "default-global-repo");
+    assert!(
+        hermetic_git(&home, &root, &["init"]).status.success(),
+        "git init"
+    );
+
+    fs::write(root.join("a"), "a\n").expect("a");
+    fs::write(root.join("xdgignored_a"), "b\n").expect("xdgignored_a");
+    fs::create_dir_all(root.join("src")).expect("src");
+    fs::write(root.join("src/xdgignored_b"), "c\n").expect("xdgignored_b");
+
+    let mut env = Environment::empty();
+    env.home = Some(home.as_os_str().to_os_string());
+    env.cwd = root.clone();
+    let options = RepositoryOptions::with_environment(env);
+    let repo = Repository::open_with(&options, &root.join(".git"), Some(&root)).expect("open");
+    let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
+
+    for path in ["xdgignored_a", "src/xdgignored_b", "a"] {
+        let git_map = git_check_ignore_verbose(&home, &root, &[path], false);
+        let git = git_map.get(path).expect("git check-ignore");
+        let (ignored, m) = grit_check(&repo, &mut matcher, None, path, false);
+        assert_match_eq(path, git, ignored, &m);
+    }
+}
+
+#[test]
+fn default_global_excludes_from_xdg_config_home() {
+    let home = unique_tmp("ignore", "xdg-home-only");
+    let xdg = unique_tmp("ignore", "xdg-config-home");
+    fs::create_dir_all(xdg.join("git")).expect("git dir");
+    fs::write(xdg.join("git/ignore"), "xdgignored*\n").expect("global ignore");
+
+    let root = unique_tmp("ignore", "xdg-env-repo");
+    assert!(
+        hermetic_git(&home, &root, &["init"]).status.success(),
+        "git init"
+    );
+    fs::write(root.join("xdgignored_x"), "x\n").expect("file");
+
+    let mut env = Environment::empty();
+    env.home = Some(home.as_os_str().to_os_string());
+    env.xdg_config_home = Some(xdg.display().to_string());
+    env.cwd = root.clone();
+    let repo = Repository::open_with(
+        &RepositoryOptions::with_environment(env),
+        &root.join(".git"),
+        Some(&root),
+    )
+    .expect("open");
+    let mut matcher = IgnoreMatcher::from_repository(&repo).expect("matcher");
+
+    let out = git_cmd(&["check-ignore", "-v", "-n", "xdgignored_x"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .in_dir(&root)
+        .suc();
+    let git_map = parse_git_check_ignore_output(&out.stdout);
+    let git = git_map.get("xdgignored_x").expect("git");
+    let (ignored, m) = grit_check(&repo, &mut matcher, None, "xdgignored_x", false);
+    assert_match_eq("xdgignored_x", git, ignored, &m);
 }
 
 #[test]

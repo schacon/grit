@@ -400,36 +400,26 @@ impl IgnoreMatcher {
 
 fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
     let config = repo.config()?;
-    let Some(raw_path) = config
-        .get("core.excludesfile")
-        .or_else(default_global_ignore_path)
-    else {
+    let env = repo.environment();
+    let (resolved, display_path) = if let Some(raw_path) = config.get("core.excludesfile") {
+        let expanded = parse_path(env, &raw_path);
+        let resolved = if Path::new(&expanded).is_absolute() {
+            PathBuf::from(&expanded)
+        } else if let Some(work_tree) = &repo.work_tree {
+            work_tree.join(&expanded)
+        } else {
+            repo.git_dir.join(&expanded)
+        };
+        (resolved, raw_path)
+    } else if let Some(path) = env.default_xdg_config_git_file("ignore") {
+        let display = path.display().to_string();
+        (path, display)
+    } else {
         return Ok(Vec::new());
     };
 
-    let expanded = parse_path(repo.environment(), &raw_path);
-    let resolved = if Path::new(&expanded).is_absolute() {
-        PathBuf::from(&expanded)
-    } else if let Some(work_tree) = &repo.work_tree {
-        work_tree.join(&expanded)
-    } else {
-        repo.git_dir.join(&expanded)
-    };
-
     let mut sink = Vec::new();
-    load_rules_from_file(&resolved, raw_path, String::new(), false, &mut sink)
-}
-
-fn default_global_ignore_path() -> Option<String> {
-    if let Some(xdg) = crate::environment::Environment::empty().var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(format!("{xdg}/git/ignore"));
-        }
-    }
-
-    crate::environment::Environment::empty()
-        .var("HOME")
-        .map(|home| format!("{home}/.config/git/ignore"))
+    load_rules_from_file(&resolved, display_path, String::new(), false, &mut sink)
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {

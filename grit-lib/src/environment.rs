@@ -511,6 +511,42 @@ impl Environment {
         }
         set
     }
+
+    /// User home directory using the same resolution as Git config loading.
+    #[must_use]
+    pub fn home_dir(&self) -> Option<PathBuf> {
+        if let Some(home) = self.home.as_ref().filter(|h| !h.is_empty()) {
+            return Some(PathBuf::from(home));
+        }
+        #[cfg(windows)]
+        {
+            if let (Some(drive), Some(path)) = (
+                self.homedrive.as_ref().filter(|d| !d.is_empty()),
+                self.homepath.as_ref().filter(|p| !p.is_empty()),
+            ) {
+                let mut combined = drive.clone();
+                combined.push(path);
+                return Some(PathBuf::from(combined));
+            }
+            if let Some(profile) = self.userprofile.as_ref().filter(|p| !p.is_empty()) {
+                return Some(PathBuf::from(profile));
+            }
+        }
+        None
+    }
+
+    /// Default path for `$XDG_CONFIG_HOME/git/{name}` or `$HOME/.config/git/{name}`.
+    ///
+    /// Used for Git's implicit global excludes (`ignore`) and attributes (`attributes`) files
+    /// when `core.excludesfile` / `core.attributesfile` are unset.
+    #[must_use]
+    pub fn default_xdg_config_git_file(&self, name: &str) -> Option<PathBuf> {
+        if let Some(xdg) = self.xdg_config_home.as_deref().filter(|s| !s.is_empty()) {
+            return Some(PathBuf::from(xdg).join("git").join(name));
+        }
+        self.home_dir()
+            .map(|home| home.join(".config").join("git").join(name))
+    }
 }
 
 impl IdentityEnv for Environment {
@@ -656,5 +692,26 @@ mod tests {
         assert!(fp
             .iter()
             .any(|(k, v)| k == "GIT_CONFIG_GLOBAL" && v.as_deref() == Some("/tmp/global.cfg")));
+    }
+
+    #[test]
+    fn default_xdg_config_git_file_prefers_xdg() {
+        let mut env = Environment::empty();
+        env.home = Some(OsString::from("/home/u"));
+        env.xdg_config_home = Some("/xdg".to_owned());
+        assert_eq!(
+            env.default_xdg_config_git_file("ignore"),
+            Some(PathBuf::from("/xdg/git/ignore"))
+        );
+    }
+
+    #[test]
+    fn default_xdg_config_git_file_falls_back_to_home_config() {
+        let mut env = Environment::empty();
+        env.home = Some(OsString::from("/home/u"));
+        assert_eq!(
+            env.default_xdg_config_git_file("ignore"),
+            Some(PathBuf::from("/home/u/.config/git/ignore"))
+        );
     }
 }
