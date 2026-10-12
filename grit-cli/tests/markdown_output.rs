@@ -338,6 +338,76 @@ fn blame_markdown_table_rows_are_single_lines() {
 }
 
 #[test]
+fn clone_markdown_lists_stats() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let origin = base.path().join("origin.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    let git = |args: &[&str], cwd: &std::path::Path| {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .status()
+            .unwrap()
+            .success());
+    };
+    git(&["init", "--bare", origin.to_str().unwrap()], base.path());
+    git(
+        &["clone", "-q", origin.to_str().unwrap(), "seed"],
+        base.path(),
+    );
+    let seed = base.path().join("seed");
+    std::fs::write(seed.join("f.txt"), "x\n").unwrap();
+    git(&["add", "f.txt"], &seed);
+    git(
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.com",
+            "commit",
+            "-m",
+            "c",
+        ],
+        &seed,
+    );
+    assert!(Command::new(GRIT)
+        .args(["push"])
+        .current_dir(&seed)
+        .status()
+        .unwrap()
+        .success());
+
+    let clone_dir = base.path().join("cloned");
+    let out = Command::new(GRIT)
+        .args([
+            "clone",
+            "--markdown",
+            origin.to_str().unwrap(),
+            clone_dir.to_str().unwrap(),
+        ])
+        .current_dir(base.path())
+        .output()
+        .expect("clone");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for key in [
+        "**objects**",
+        "**bytes**",
+        "**branches**",
+        "**tags**",
+        "**files**",
+    ] {
+        assert!(stdout.contains(key), "missing {key} in:\n{stdout}");
+    }
+}
+
+#[test]
 fn completions_rejects_json_and_markdown() {
     for flag in ["--json", "--markdown"] {
         let out = Command::new(GRIT)

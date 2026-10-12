@@ -1,6 +1,7 @@
 //! `grit clone` — copy a remote repository into a new directory.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use grit_lib::clone::{
@@ -13,7 +14,7 @@ use serde::Serialize;
 
 use crate::context;
 use crate::output::{progress, HumanRender, MarkdownRender, OutputMode};
-use crate::progress::TerminalProgress;
+use crate::progress::{format_bytes, TerminalProgress};
 
 /// Result of `grit clone`.
 #[derive(Serialize)]
@@ -23,23 +24,62 @@ pub struct CloneOutcome {
     pub path: String,
     /// Default branch checked out.
     pub branch: String,
+    /// Objects received during the fetch.
+    pub objects: u64,
+    /// Pack bytes received during the fetch.
+    pub bytes: u64,
+    /// Remote branches fetched.
+    pub branches: u64,
+    /// Remote tags fetched.
+    pub tags: u64,
+    /// Working-tree files checked out.
+    pub files: u64,
+    #[serde(skip)]
+    pub elapsed: Duration,
 }
 
 impl HumanRender for CloneOutcome {
     fn render_human(&self) {
-        println!("Cloned into '{}' on branch {}.", self.path, self.branch);
+        let size = format_bytes(self.bytes);
+        let secs = self.elapsed.as_secs_f64();
+        println!(
+            "Cloned into '{}' on branch {} — {} objects ({size}), {} branches, {} tags, {} files in {secs:.2}s.",
+            self.path,
+            self.branch,
+            self.objects,
+            self.branches,
+            self.tags,
+            self.files,
+        );
     }
 }
 
-impl MarkdownRender for CloneOutcome {}
+impl MarkdownRender for CloneOutcome {
+    fn render_markdown(&self) {
+        let size = format_bytes(self.bytes);
+        let secs = self.elapsed.as_secs_f64();
+        println!("## Clone complete");
+        println!();
+        println!("- **path**: `{}`", self.path);
+        println!("- **branch**: `{}`", self.branch);
+        println!("- **url**: `{}`", self.url);
+        println!("- **objects**: {}", self.objects);
+        println!("- **bytes**: {} ({size})", self.bytes);
+        println!("- **branches**: {}", self.branches);
+        println!("- **tags**: {}", self.tags);
+        println!("- **files**: {}", self.files);
+        println!("- **elapsed**: {secs:.2}s");
+    }
+}
 
 pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutcome> {
     let dir = dir.unwrap_or_else(|| derive_clone_dir(url));
     let path = PathBuf::from(&dir);
     let dest_preexisted_empty = dest_preexisted_empty(&path);
+    let started = Instant::now();
 
     progress(mode, &format!("Cloning into '{dir}' ..."));
-    match clone_into(url, &path, &dir, mode) {
+    match clone_into(url, &path, &dir, mode, started) {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             let skip_cleanup = matches!(
@@ -54,7 +94,13 @@ pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutc
     }
 }
 
-fn clone_into(url: &str, path: &Path, dir: &str, mode: OutputMode) -> Result<CloneOutcome> {
+fn clone_into(
+    url: &str,
+    path: &Path,
+    dir: &str,
+    mode: OutputMode,
+    started: Instant,
+) -> Result<CloneOutcome> {
     let factory = DefaultHttpClientFactory;
     let clone_opts = CloneOptions {
         url: url.to_owned(),
@@ -73,10 +119,18 @@ fn clone_into(url: &str, path: &Path, dir: &str, mode: OutputMode) -> Result<Clo
     let mut progress = crate::terminal_progress::TerminalProgress::new(progress_enabled);
     checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut progress)
         .context("could not check out files")?;
+    let index = outcome.repo.load_index().context("could not read index")?;
+    let files = u64::try_from(index.entries().len()).unwrap_or(u64::MAX);
 
     Ok(CloneOutcome {
         url: url.to_owned(),
         path: dir.to_owned(),
         branch: outcome.branch,
+        objects: outcome.transfer.objects,
+        bytes: outcome.transfer.bytes,
+        branches: outcome.branches,
+        tags: outcome.tags,
+        files,
+        elapsed: started.elapsed(),
     })
 }

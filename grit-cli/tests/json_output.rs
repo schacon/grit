@@ -490,6 +490,47 @@ fn shortlog_json() -> TestResult {
 }
 
 #[test]
+fn clone_json_has_stats_fields() -> TestResult {
+    let scratch = Scratch::new("clone-stats")?;
+    let seed = scratch.child("seed");
+    let remote = scratch.child("remote.git");
+    let clone = scratch.child("clone");
+    fs::create_dir_all(&seed)?;
+
+    gs_ok(&seed, &["init", "."]);
+    write_file(&seed.join("README.md"), "seed\n");
+    gs_ok(&seed, &["commit", "seed commit"]);
+    gs_ok(&seed, &["tag", "v0"]);
+    gs_ok(scratch.path(), &["init", "--bare", &path_arg(&remote)]);
+    gs_ok(&seed, &["remote", "add", "origin", &path_arg(&remote)]);
+    gs_ok(&seed, &["push"]);
+
+    let cloned = gs_json(
+        scratch.path(),
+        &["clone", &path_arg(&remote), &path_arg(&clone)],
+    );
+    for key in ["objects", "bytes", "branches", "tags", "files"] {
+        assert!(
+            cloned.get(key).is_some(),
+            "clone json missing {key}: {cloned}"
+        );
+        assert!(
+            cloned[key].is_number(),
+            "clone json {key} must be a number: {cloned}"
+        );
+    }
+    assert!(cloned["objects"].as_u64().unwrap_or(0) > 0);
+    assert!(cloned["bytes"].as_u64().unwrap_or(0) > 0);
+    assert!(cloned["branches"].as_u64().unwrap_or(0) >= 1);
+    assert!(cloned["files"].as_u64().unwrap_or(0) >= 1);
+    assert!(
+        cloned.get("elapsed_ms").is_none() && cloned.get("elapsed").is_none(),
+        "elapsed must not appear in json: {cloned}"
+    );
+    Ok(())
+}
+
+#[test]
 fn remote_workflow_json_clone_push_fetch_pull() -> TestResult {
     let scratch = Scratch::new("workflow")?;
     let seed = scratch.child("seed");

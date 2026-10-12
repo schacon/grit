@@ -44,7 +44,7 @@ Clone a repository from GitHub:
 $ grit clone https://github.com/gitbutlerapp/grit.git
 Cloning into 'grit' ...
 Receiving objects: 4.12 MiB, 8.50 MiB/s, done.
-Cloned into 'grit' on branch main.
+Cloned into 'grit' on branch main — 12543 objects (4.12 MiB), 12 branches, 48 tags, 842 files in 2.35s.
 ```
 
 Progress lines are written to stderr and update in place on a terminal. When stderr is not a TTY (for example in a CI log or with stderr redirected), only the initial `Cloning into …` line is shown.
@@ -70,6 +70,11 @@ Pass `--json` for stable, scripting-friendly output:
 | `url` | string | The URL or path that was cloned. |
 | `path` | string | Directory the clone was created in. |
 | `branch` | string | Branch that was checked out. |
+| `objects` | integer | Objects received in the fetch pack. |
+| `bytes` | integer | Size in bytes of the received pack. |
+| `branches` | integer | Remote branches fetched. |
+| `tags` | integer | Remote tags fetched. |
+| `files` | integer | Working-tree files checked out. |
 
 Example:
 
@@ -77,7 +82,12 @@ Example:
 {
   "url": "/srv/git/project.git",
   "path": "project",
-  "branch": "main"
+  "branch": "main",
+  "objects": 42,
+  "bytes": 8192,
+  "branches": 1,
+  "tags": 0,
+  "files": 3
 }
 ```
 
