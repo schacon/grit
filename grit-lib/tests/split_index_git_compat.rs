@@ -35,6 +35,11 @@ fn enable_split_index(git_dir: &Path) {
     );
 }
 
+fn assert_index_matches_git(worktree: &Path, repo: &Repository) {
+    let index = repo.load_index().expect("load index for ls-files oracle");
+    assert_grit_index_matches_git_ls_files(worktree, &index);
+}
+
 #[test]
 fn t1700_split_index_written_by_grit_read_by_git() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -57,7 +62,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
         "expected one sharedindex file"
     );
 
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
     fsck_strict(root);
 
     // Mutate one tracked file and rewrite split index; git must still read merged view.
@@ -76,7 +81,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
         .expect("blob");
     idx.add_or_replace(entry);
     repo.write_index(&mut idx).expect("rewrite split");
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
     fsck_strict(root);
 }
 
@@ -91,7 +96,7 @@ fn t1700_git_split_index_read_by_grit() {
     assert!(index_contains_extension(&bytes, b"link"));
 
     let repo = Repository::discover(Some(root)).expect("open");
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
 
     // resolve_split_index_if_needed on raw parse (Git-shaped on-disk index).
     let mut raw = Index::parse(&bytes).expect("parse split index file");
@@ -102,7 +107,7 @@ fn t1700_git_split_index_read_by_grit() {
     resolve_split_index_if_needed(&mut raw, &repo.git_dir, &repo.index_path())
         .expect("resolve split");
     assert_eq!(raw.entries().len(), 30);
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
 }
 
 #[test]
@@ -131,7 +136,7 @@ fn t1700_split_index_delete_and_replace_bitmaps_match_git() {
 
     enable_split_index(&root.join(".git"));
     repo.write_index(&mut idx).expect("write split after edits");
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
     fsck_strict(root);
 }
 
@@ -189,7 +194,7 @@ fn t1700_max_percent_change_rewrites_shared_index() {
         first_oid, second_oid,
         "maxPercentChange should force a new shared index base"
     );
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
     fsck_strict(root);
 }
 
@@ -369,5 +374,5 @@ fn split_index_explicit_no_split_writes_unified_index() {
         !index_contains_extension(&bytes, b"link"),
         "--no-split-index equivalent must drop link extension"
     );
-    assert_grit_index_matches_git_ls_files(root, &repo);
+    assert_index_matches_git(root, &repo);
 }
