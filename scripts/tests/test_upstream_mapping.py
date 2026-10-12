@@ -83,7 +83,18 @@ REQUIRED_HISTORY_DIFF_TREES: tuple[str, ...] = (
     "t4054",
     "t4057",
 )
-REQUIRED_HISTORY_REVWALK_ORDER: tuple[str, ...] = ()
+REQUIRED_HISTORY_REVWALK_ORDER: tuple[str, ...] = (
+    "t6000",
+    "t6001",
+    "t6003",
+    "t6005",
+    "t6009",
+    "t6013",
+    "t6014",
+    "t6019",
+    "t6100",
+    "t4217",
+)
 REQUIRED_HISTORY_REVWALK_SIMPLIFY: tuple[str, ...] = (
     "t6002",
     "t6004",

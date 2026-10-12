@@ -567,6 +567,29 @@ pub struct RevListOptions {
     pub bloom_stats: Option<BloomWalkStatsHandle>,
 }
 
+impl RevListOptions {
+    /// Whether path-limited walks should keep TREESAME merges for parent rewriting.
+    ///
+    /// Matches Git when `--parents` is set or the output format includes `%P` / `%p`.
+    #[must_use]
+    pub fn wants_parent_rewrite(&self) -> bool {
+        if self.parent_rewrite {
+            return true;
+        }
+        match &self.output_mode {
+            OutputMode::Parents => true,
+            OutputMode::Format(fmt) => {
+                let raw = fmt
+                    .strip_prefix("format:")
+                    .or_else(|| fmt.strip_prefix("tformat:"))
+                    .unwrap_or(fmt.as_str());
+                raw.contains("%P") || raw.contains("%p")
+            }
+            OutputMode::OidOnly => false,
+        }
+    }
+}
+
 impl Default for RevListOptions {
     fn default() -> Self {
         Self {
@@ -1226,7 +1249,7 @@ pub fn rev_list(
                 options.simplify_merges,
                 options.preserve_simplify_merges_graph_merges,
                 options.show_pulls,
-                options.parent_rewrite,
+                options.wants_parent_rewrite(),
                 options.ancestry_path,
                 &effective_ancestry_path_bottoms,
                 &excluded,
@@ -1421,6 +1444,8 @@ pub fn rev_list(
         ordered.retain(|oid| !bottoms.contains(oid));
     }
 
+    let selected_before_limit: HashSet<ObjectId> = ordered.iter().copied().collect();
+
     if options.skip > 0 {
         ordered = ordered.into_iter().skip(options.skip).collect();
     }
@@ -1431,19 +1456,41 @@ pub fn rev_list(
         ordered.reverse();
     }
 
-    // Collect boundary commits: parents of included commits that are in the excluded set
+    // Collect boundary commits: parents of emitted commits omitted from output because they
+    // lie in the excluded set (^tips) or were truncated by --skip/--max-count after selection.
     let boundary_commits = if options.boundary {
-        let included_set: HashSet<ObjectId> = ordered.iter().copied().collect();
+        let output_set: HashSet<ObjectId> = ordered.iter().copied().collect();
         let mut boundary = Vec::new();
         let mut boundary_seen = HashSet::new();
+        let use_path_parent_rewrite = options.wants_parent_rewrite() && !options.paths.is_empty();
         for &oid in &ordered {
-            let parents = if options.first_parent {
+            let parents = if use_path_parent_rewrite {
+                path_limited_rewrite_parents_for_boundary(
+                    repo,
+                    oid,
+                    &output_set,
+                    &selected_before_limit,
+                    &excluded,
+                    options.first_parent,
+                )?
+            } else if options.first_parent {
                 load_commit(repo, oid).map(|c| c.parents)?
             } else {
                 graph.parents_of(oid).map(|p| p.to_vec())?
             };
-            for parent in parents.into_iter().rev() {
-                if !included_set.contains(&parent) && boundary_seen.insert(parent) {
+            let parent_iter: Vec<ObjectId> = if use_path_parent_rewrite || !options.first_parent {
+                parents
+            } else {
+                parents.into_iter().rev().collect()
+            };
+            for parent in parent_iter {
+                let is_boundary = if use_path_parent_rewrite {
+                    !output_set.contains(&parent)
+                        && (excluded.contains(&parent) || selected_before_limit.contains(&parent))
+                } else {
+                    !output_set.contains(&parent)
+                };
+                if is_boundary && boundary_seen.insert(parent) {
                     boundary.push(parent);
                 }
             }
@@ -4044,6 +4091,53 @@ fn collect_visible_parent_for_graph_lib(
         )?;
     }
     Ok(())
+}
+
+/// Parents used for `--boundary` with path-limited `--parents` rewriting.
+///
+/// Walks from each raw parent until hitting an emitted commit, a commit dropped only by
+/// `--skip`/`--max-count`, or an excluded boundary commit.
+fn path_limited_rewrite_parents_for_boundary(
+    repo: &Repository,
+    oid: ObjectId,
+    output_set: &HashSet<ObjectId>,
+    selected_set: &HashSet<ObjectId>,
+    excluded: &HashSet<ObjectId>,
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
+    let mut raw = load_navigation_parents_lib(repo, oid, &grafts)?;
+    if first_parent_only && raw.len() > 1 {
+        raw.truncate(1);
+    }
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for start in raw {
+        let mut cur = start;
+        loop {
+            if output_set.contains(&cur) {
+                break;
+            }
+            if selected_set.contains(&cur) {
+                if seen.insert(cur) {
+                    out.push(cur);
+                }
+                break;
+            }
+            if excluded.contains(&cur) {
+                if seen.insert(cur) {
+                    out.push(cur);
+                }
+                break;
+            }
+            let parents = load_navigation_parents_lib(repo, cur, &grafts)?;
+            if parents.is_empty() {
+                break;
+            }
+            cur = parents[0];
+        }
+    }
+    Ok(out)
 }
 
 fn visible_parents_for_graph_lib(
@@ -7715,8 +7809,10 @@ pub fn merge_bases(
 mod tests {
     use super::*;
     use crate::objects::ObjectKind;
+    use crate::odb::Odb;
+    use crate::repo::{init_bare_clone_minimal, Repository};
     use std::path::PathBuf;
-    use tempfile::TempDir;
+    use tempfile::{tempdir, TempDir};
 
     #[test]
     fn object_filter_parse_success_variants() {
@@ -7844,5 +7940,396 @@ mod tests {
         assert!(!is_symmetric_diff("a..b"));
         assert!(is_symmetric_diff("a...b"));
         assert!(split_symmetric_diff("not-symmetric").is_none());
+    }
+
+    #[test]
+    fn wants_parent_rewrite_from_output_mode() {
+        let parents = RevListOptions {
+            output_mode: OutputMode::Parents,
+            ..RevListOptions::default()
+        };
+        assert!(parents.wants_parent_rewrite());
+        let format_p = RevListOptions {
+            output_mode: OutputMode::Format("format:%h %P".to_owned()),
+            ..RevListOptions::default()
+        };
+        assert!(format_p.wants_parent_rewrite());
+        assert!(!RevListOptions::default().wants_parent_rewrite());
+    }
+
+    #[test]
+    fn split_revision_token_range_and_caret() {
+        let (pos, neg) = split_revision_token("main..feature");
+        assert_eq!(pos, vec!["feature".to_owned()]);
+        assert_eq!(neg, vec!["main".to_owned()]);
+        let (pos, neg) = split_revision_token("^deadbeef");
+        assert!(pos.is_empty());
+        assert_eq!(neg, vec!["deadbeef".to_owned()]);
+    }
+
+    #[test]
+    fn symmetric_diff_token_detection() {
+        assert!(is_symmetric_diff("main...feature"));
+        assert!(!is_symmetric_diff("main..feature"));
+        let (l, r) = split_symmetric_diff("a...b").expect("split");
+        assert_eq!(l, "a");
+        assert_eq!(r, "b");
+    }
+
+    #[test]
+    fn object_filter_parse_and_merge() {
+        let a = ObjectFilter::parse("blob:none").expect("blob none");
+        let b = ObjectFilter::parse("tree:2").expect("tree");
+        let merged = a.clone().merge_with(b.clone());
+        assert_eq!(
+            merged,
+            ObjectFilter::Combine(vec![ObjectFilter::BlobNone, ObjectFilter::TreeDepth(2)])
+        );
+        assert!(!ObjectFilter::BlobNone.includes_blob(1));
+        assert!(ObjectFilter::BlobLimit(10).includes_blob(5));
+        assert!(!ObjectFilter::BlobLimit(10).includes_blob(50));
+        assert!(!ObjectFilter::TreeDepth(1).includes_tree(2));
+        assert!(ObjectFilter::TreeDepth(1).includes_tree(0));
+        assert!(ObjectFilter::ObjectType(FilterObjectKind::Commit)
+            .includes_commit_or_tag_object(ObjectKind::Commit));
+    }
+
+    #[test]
+    fn reachable_object_ids_respects_blob_none_filter() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        let repo = Repository::open(dir.path(), None).expect("open");
+        let blob = repo
+            .odb
+            .write(ObjectKind::Blob, b"filter test\n")
+            .expect("blob");
+        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let mut body = format!("tree {tree}\n");
+        body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
+        let commit = repo
+            .odb
+            .write(ObjectKind::Commit, body.as_bytes())
+            .expect("commit");
+        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        let _ = blob;
+        let ids = reachable_object_ids_for_cat_file(&repo, Some(&ObjectFilter::BlobNone), false)
+            .expect("reachable");
+        assert!(ids.contains(&commit));
+        assert!(ids.contains(&tree));
+        assert!(!ids.iter().any(|id| *id == blob));
+    }
+
+    #[test]
+    fn object_filter_parse_variants_and_errors() {
+        assert!(ObjectFilter::parse("blob:limit=bad").is_err());
+        assert!(ObjectFilter::parse("tree:").is_err());
+        assert!(ObjectFilter::parse("tree:abc").is_err());
+        assert!(ObjectFilter::parse("object:type=").is_err());
+        assert!(ObjectFilter::parse("object:type=unknown").is_err());
+        assert!(ObjectFilter::parse("sparse:oid=").is_err());
+        assert!(ObjectFilter::parse("combine:").is_err());
+        assert!(ObjectFilter::parse("not-a-filter").is_err());
+
+        let limit = ObjectFilter::parse("blob:limit=2k").expect("limit");
+        assert_eq!(limit, ObjectFilter::BlobLimit(2048));
+        let tree = ObjectFilter::parse("tree:3").expect("tree");
+        assert_eq!(tree, ObjectFilter::TreeDepth(3));
+        let tag = ObjectFilter::parse("object:type=tag").expect("tag");
+        assert_eq!(tag, ObjectFilter::ObjectType(FilterObjectKind::Tag));
+
+        let combined = ObjectFilter::parse("combine:blob%3Anone+tree%3A1").expect("combine");
+        assert_eq!(
+            combined,
+            ObjectFilter::Combine(vec![ObjectFilter::BlobNone, ObjectFilter::TreeDepth(1)])
+        );
+        assert!(ObjectFilter::parse("combine:blob+none").is_err());
+    }
+
+    #[test]
+    fn object_filter_includes_methods() {
+        let sparse = ObjectFilter::SparseOid("deadbeef".to_owned());
+        assert!(sparse.includes_tree(99));
+        assert!(sparse.includes_blob(0));
+        assert!(sparse.includes_commit_or_tag_object(ObjectKind::Commit));
+
+        let blob_type = ObjectFilter::ObjectType(FilterObjectKind::Blob);
+        assert!(!blob_type.includes_tree(0));
+        assert!(blob_type.includes_blob_under_tree(10, 0));
+
+        let depth = ObjectFilter::TreeDepth(2);
+        assert!(depth.includes_blob_under_tree(100, 0));
+        assert!(!depth.includes_blob_under_tree(100, 2));
+        assert!(!depth.includes_tree(2));
+        assert!(depth.includes_loose_object(ObjectKind::Tree, 0));
+        assert!(depth.passes_for_object(ObjectKind::Blob, 1));
+    }
+
+    #[test]
+    fn object_filter_protocol_and_url_helpers() {
+        assert_eq!(
+            expand_object_filter_for_protocol("blob:limit=1k").expect("expand"),
+            format!("blob:limit={}", 1024)
+        );
+        assert_eq!(
+            expand_object_filter_for_protocol("blob:none").expect("none"),
+            "blob:none".to_owned()
+        );
+        let encoded = url_encode_object_filter_subspec("blob:none+tree:2");
+        assert!(encoded.contains("%2b") || encoded.contains('%'));
+        std::env::set_var("GIT_TRACE", "1");
+        trace_combine_filter_append("blob%3Anone");
+        std::env::remove_var("GIT_TRACE");
+    }
+
+    #[test]
+    fn object_ids_for_cat_file_filtered_includes_provided() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        let repo = Repository::open(dir.path(), None).expect("open");
+        let blob = repo.odb.write(ObjectKind::Blob, b"x").expect("blob");
+        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let mut body = format!("tree {tree}\n");
+        body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
+        let commit = repo
+            .odb
+            .write(ObjectKind::Commit, body.as_bytes())
+            .expect("commit");
+        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        let filter = ObjectFilter::BlobNone;
+        let ids = object_ids_for_cat_file_filtered(&repo, &filter).expect("filtered");
+        assert!(ids.contains(&commit));
+        assert!(!ids.contains(&blob));
+    }
+
+    fn unit_test_repo_with_merge() -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        let repo = Repository::open(dir.path(), None).expect("open");
+        let blob = repo.odb.write(ObjectKind::Blob, b"file\n").expect("blob");
+        let mut tree_body = format!("100644 blob {blob}\0f.txt");
+        let tree = repo
+            .odb
+            .write(ObjectKind::Tree, tree_body.as_bytes())
+            .expect("tree");
+        let ident = "A <a@e.com> 100 +0000";
+        let mut c1 = format!("tree {tree}\nauthor {ident}\ncommitter {ident}\n\none\n");
+        let parent = repo
+            .odb
+            .write(ObjectKind::Commit, c1.as_bytes())
+            .expect("c1");
+        tree_body = format!("100644 blob {blob}\0f.txt");
+        let tree2 = repo
+            .odb
+            .write(ObjectKind::Tree, tree_body.as_bytes())
+            .expect("tree2");
+        c1 = format!("tree {tree2}\nparent {parent}\nauthor {ident}\ncommitter {ident}\n\ntwo\n");
+        let child = repo
+            .odb
+            .write(ObjectKind::Commit, c1.as_bytes())
+            .expect("child");
+        let side_tree = repo.odb.write(ObjectKind::Tree, b"").expect("side tree");
+        let side_body = format!(
+            "tree {side_tree}\nparent {parent}\nauthor {ident}\ncommitter {ident}\n\nside\n"
+        );
+        let side = repo
+            .odb
+            .write(ObjectKind::Commit, side_body.as_bytes())
+            .expect("side");
+        let merge_body = format!(
+            "tree {tree2}\nparent {child}\nparent {side}\nauthor {ident}\ncommitter {ident}\n\nmerge\n"
+        );
+        let merge = repo
+            .odb
+            .write(ObjectKind::Commit, merge_body.as_bytes())
+            .expect("merge");
+        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &merge).expect("ref");
+        (dir, repo, parent, merge)
+    }
+
+    #[test]
+    fn render_commit_output_modes() {
+        let (_dir, repo, _base, tip) = unit_test_repo_with_merge();
+        let oid_line = render_commit(&repo, tip, &OutputMode::OidOnly, 7).expect("oid");
+        assert_eq!(oid_line, tip.to_hex());
+        let parents = render_commit(&repo, tip, &OutputMode::Parents, 7).expect("parents");
+        assert!(parents.starts_with(&tip.to_hex()));
+        assert_eq!(parents.matches(' ').count(), 2);
+
+        for fmt in ["oneline", "short", "medium"] {
+            let out = render_commit(&repo, tip, &OutputMode::Format(fmt.to_owned()), 7).expect(fmt);
+            assert!(!out.is_empty());
+        }
+
+        let custom = render_commit_with_color(
+            &repo,
+            tip,
+            &OutputMode::Format("format:%<(10,trunc)h %s".to_owned()),
+            7,
+            false,
+        )
+        .expect("custom");
+        assert!(custom.contains("merge") || custom.contains(".."));
+
+        let placeholders = render_commit(
+            &repo,
+            tip,
+            &OutputMode::Format(
+                "format:%H%n%h%n%T%n%t%n%P%n%p%n%an %ae%n%at%n%cn%n%s%n%b".to_owned(),
+            ),
+            12,
+        )
+        .expect("placeholders");
+        assert!(placeholders.lines().count() >= 5);
+
+        let dates = render_commit(
+            &repo,
+            tip,
+            &OutputMode::Format("format:%ad %cd %as %cs %ai %ci %ar %cr %x0a".to_owned()),
+            12,
+        )
+        .expect("dates");
+        assert!(!dates.is_empty());
+
+        let colored = render_commit_with_color(
+            &repo,
+            tip,
+            &OutputMode::Format("format:%Cred%h%Creset %<(8)%s".to_owned()),
+            7,
+            true,
+        )
+        .expect("color");
+        assert!(colored.contains('\x1b') || colored.contains(&tip.to_hex()[..7]));
+
+        let mega = render_commit_with_color(
+            &repo,
+            tip,
+            &OutputMode::Format(
+                "tformat:%w(78,9)%+s%-b%G?%GS%GK%GF%GP%GT%GG%d%D%e%gD%>(10,trunc)h%><(15,mtrunc)s %aI %cI %x20"
+                    .to_owned(),
+            ),
+            10,
+            true,
+        )
+        .expect("mega format");
+        assert!(!mega.is_empty());
+    }
+
+    #[test]
+    fn select_bisect_commits_ranks_linear_history() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        let repo = Repository::open(dir.path(), None).expect("open");
+        let ident = "T <t@e.com> 1 +0000";
+        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let mut parent: Option<ObjectId> = None;
+        let mut tips = Vec::new();
+        for i in 0..5 {
+            let mut body = format!("tree {tree}\n");
+            if let Some(p) = parent {
+                body.push_str(&format!("parent {p}\n"));
+            }
+            body.push_str(&format!("author {ident}\ncommitter {ident}\n\nc{i}\n"));
+            let oid = repo
+                .odb
+                .write(ObjectKind::Commit, body.as_bytes())
+                .expect("c");
+            parent = Some(oid);
+            tips.push(oid);
+        }
+        let empty = select_bisect_commits(&repo, &[], false).expect("empty");
+        assert!(empty.best.is_none());
+        let sel = select_bisect_commits(&repo, &tips, false).expect("bisect");
+        assert_eq!(sel.total, tips.len());
+        assert!(sel.best.is_some());
+        assert_eq!(sel.all.len(), tips.len());
+    }
+
+    #[test]
+    fn rev_list_maximal_simplify_merges_and_parents() {
+        let (_dir, repo, base, tip) = unit_test_repo_with_merge();
+        let all = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions::default(),
+        )
+        .expect("all");
+        assert!(all.commits.contains(&tip));
+
+        let maximal = rev_list(
+            &repo,
+            &[String::from("main"), String::from(&base.to_hex())],
+            &[],
+            &RevListOptions {
+                maximal_only: true,
+                ..RevListOptions::default()
+            },
+        )
+        .expect("maximal");
+        assert!(!maximal.commits.is_empty());
+
+        let _simplified = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions {
+                paths: vec!["f.txt".to_owned()],
+                simplify_merges: true,
+                full_history: true,
+                ..RevListOptions::default()
+            },
+        )
+        .expect("simplify");
+
+        let with_parents = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions {
+                output_mode: OutputMode::Parents,
+                parent_rewrite: true,
+                ..RevListOptions::default()
+            },
+        )
+        .expect("parents");
+        assert_eq!(with_parents.commits.len(), all.commits.len());
+    }
+
+    #[test]
+    fn resolve_revision_commits_and_split_tokens() {
+        let (_dir, repo, _, tip) = unit_test_repo_with_merge();
+        let resolved = resolve_revision_commits(&repo, &[String::from("main")]).expect("resolve");
+        assert!(resolved.contains(&tip));
+        let (pos, neg) = split_revision_token("HEAD^..HEAD");
+        assert!(!pos.is_empty());
+        assert!(!neg.is_empty());
+    }
+
+    #[test]
+    fn cat_file_filtered_with_blob_limit_and_combine() {
+        let dir = tempdir().expect("tempdir");
+        init_bare_clone_minimal(dir.path(), "main", crate::RefStorageFormat::Files).expect("init");
+        let repo = Repository::open(dir.path(), None).expect("open");
+        let blob = repo
+            .odb
+            .write(ObjectKind::Blob, b"0123456789")
+            .expect("blob");
+        let tree = repo.odb.write(ObjectKind::Tree, b"").expect("tree");
+        let mut body = format!("tree {tree}\n");
+        body.push_str("author T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
+        let commit = repo
+            .odb
+            .write(ObjectKind::Commit, body.as_bytes())
+            .expect("commit");
+        crate::refs::write_ref(&repo.git_dir, "refs/heads/main", &commit).expect("ref");
+        let _ = blob;
+        let filter = ObjectFilter::parse("combine:blob%3Alimit%3D5+tree%3A1").expect("combine");
+        let ids = object_ids_for_cat_file_filtered(&repo, &filter).expect("ids");
+        assert!(!ids.is_empty());
+        let _ = commit;
+        assert_eq!(
+            expand_object_filter_for_protocol("blob:limit=1m").expect("proto"),
+            format!("blob:limit={}", 1024 * 1024)
+        );
     }
 }

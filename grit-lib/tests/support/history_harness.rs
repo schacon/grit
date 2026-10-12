@@ -10,9 +10,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use grit_lib::error::Result;
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};
+use grit_lib::rev_list::{
+    rev_list, split_revision_token, ObjectFilter, OrderingMode, RevListOptions,
+};
+use grit_lib::rev_parse::{
+    peel_to_commit_for_merge_base, resolve_revision_for_range_end, split_triple_dot_range,
+};
 
 use super::refs_harness::{git as refs_git, null_device_for_tests, AUTHOR_EMAIL, AUTHOR_NAME};
 
@@ -222,9 +228,26 @@ fn parse_rev_list_lines(out: &str) -> Vec<ObjectId> {
 }
 
 fn parse_rev_list_token(token: &str) -> Option<ObjectId> {
+    let token = token.trim();
+    let token = token
+        .strip_prefix('-')
+        .or_else(|| token.strip_prefix('<').or_else(|| token.strip_prefix('>')))
+        .or_else(|| token.strip_prefix('='))
+        .unwrap_or(token);
     let token = token.strip_prefix('?').unwrap_or(token);
-    let token = token.strip_prefix('-').unwrap_or(token);
-    token.parse().ok()
+    token.split_whitespace().next()?.parse().ok()
+}
+
+/// Raw `git rev-list` lines (includes `-`, `<`, `>`, `=` prefixes when requested).
+pub fn git_rev_list_lines(worktree: &Path, args: &[&str]) -> Vec<String> {
+    let mut full: Vec<&str> = vec!["rev-list"];
+    full.extend_from_slice(args);
+    refs_git(worktree, &full)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `git rev-list` lines with boundary commits (`-` prefix) preserved.
@@ -257,7 +280,17 @@ pub fn grit_rev_list_commits(
     options: &RevListOptions,
 ) -> Result<Vec<ObjectId>> {
     let repo = Repository::discover(Some(worktree))?;
-    Ok(rev_list(&repo, positive, negative, options)?.commits)
+    grit_rev_list_commits_in_repo(&repo, positive, negative, options)
+}
+
+/// Grit `rev_list` commit OID sequence for an already-open repository.
+pub fn grit_rev_list_commits_in_repo(
+    repo: &Repository,
+    positive: &[String],
+    negative: &[String],
+    options: &RevListOptions,
+) -> Result<Vec<ObjectId>> {
+    Ok(rev_list(repo, positive, negative, options)?.commits)
 }
 
 /// Assert grit commit order matches `git rev-list` with the same argv tail (after `rev-list`).
@@ -360,4 +393,150 @@ pub fn git_ls_files_stage0_map(dir: &Path) -> BTreeMap<String, ObjectId> {
         .filter(|(_, stage, _, _)| *stage == 0)
         .map(|(path, _, _, oid)| (path, oid))
         .collect()
+}
+
+/// Open a grit [`Repository`] for a harness work tree.
+pub fn open_grit_repo(worktree: &Path) -> Repository {
+    Repository::discover(Some(worktree)).expect("discover grit repo")
+}
+
+/// Write a reachable commit-graph with system `git` (matches CI / user repos).
+pub fn git_commit_graph_write(worktree: &Path) {
+    let out = hermetic_git(
+        worktree,
+        &["commit-graph", "write", "--reachable", "--changed-paths"],
+    );
+    assert!(
+        out.status.success(),
+        "git commit-graph write: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Create an empty-tree commit with explicit author/committer dates (`commit-tree`).
+pub fn commit_labeled_with_dates(
+    worktree: &Path,
+    label: &str,
+    parents: &[ObjectId],
+    author_date: &str,
+    committer_date: &str,
+) -> ObjectId {
+    let tree = git(worktree, &["mktree"]).trim().to_string();
+    let msg = format!("history harness {label}");
+    let mut args: Vec<String> = vec!["commit-tree".to_owned(), tree, "-m".to_owned(), msg];
+    for parent in parents {
+        args.push("-p".to_owned());
+        args.push(parent.to_hex());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = Command::new("git")
+        .current_dir(worktree)
+        .args(&arg_refs)
+        .env("GIT_AUTHOR_NAME", AUTHOR_NAME)
+        .env("GIT_AUTHOR_EMAIL", AUTHOR_EMAIL)
+        .env("GIT_COMMITTER_NAME", AUTHOR_NAME)
+        .env("GIT_COMMITTER_EMAIL", AUTHOR_EMAIL)
+        .env(
+            "GIT_AUTHOR_DATE",
+            if author_date.starts_with('@') {
+                author_date.to_owned()
+            } else {
+                format!("@{author_date}")
+            },
+        )
+        .env(
+            "GIT_COMMITTER_DATE",
+            if committer_date.starts_with('@') {
+                committer_date.to_owned()
+            } else {
+                format!("@{committer_date}")
+            },
+        )
+        .env("GIT_CONFIG_GLOBAL", null_device_for_tests())
+        .env("GIT_CONFIG_SYSTEM", null_device_for_tests())
+        .output()
+        .expect("spawn git commit-tree");
+    assert!(
+        out.status.success(),
+        "commit-tree: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let commit = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let refname = format!("refs/history/{label}");
+    git(worktree, &["update-ref", &refname, &commit]);
+    commit.parse().expect("commit oid")
+}
+
+/// Split CLI revision tokens into positive/negative specs (`A..B`, `^rev`, plain tips).
+#[must_use]
+pub fn expand_revision_tokens(tokens: &[&str]) -> (Vec<String>, Vec<String>) {
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    for token in tokens {
+        let (pos, neg) = split_revision_token(token);
+        positive.extend(pos);
+        negative.extend(neg);
+    }
+    (positive, negative)
+}
+
+/// Positive/negative specs and symmetric-diff markers for `left...right`.
+pub fn symmetric_rev_list_specs(
+    repo: &Repository,
+    left_spec: &str,
+    right_spec: &str,
+) -> Result<(Vec<String>, Vec<String>, ObjectId, ObjectId)> {
+    let left_tip = resolve_revision_for_range_end(repo, left_spec)?;
+    let right_tip = resolve_revision_for_range_end(repo, right_spec)?;
+    let left = peel_to_commit_for_merge_base(repo, left_tip)?;
+    let right = peel_to_commit_for_merge_base(repo, right_tip)?;
+    let bases = merge_bases_first_vs_rest(repo, left, &[right])?;
+    let mut negative = Vec::new();
+    for base in bases {
+        negative.push(base.to_hex());
+    }
+    Ok((vec![left.to_hex(), right.to_hex()], negative, left, right))
+}
+
+/// Expand one token that may use `A...B` symmetric-diff syntax.
+pub fn expand_token_for_rev_list(
+    repo: &Repository,
+    token: &str,
+    opts: &mut RevListOptions,
+) -> Result<(Vec<String>, Vec<String>)> {
+    if let Some((left, right)) = split_triple_dot_range(token) {
+        let left_spec = if left.is_empty() { "HEAD" } else { left };
+        let right_spec = if right.is_empty() { "HEAD" } else { right };
+        let (pos, neg, left_oid, right_oid) =
+            symmetric_rev_list_specs(repo, left_spec, right_spec)?;
+        opts.symmetric_left = Some(left_oid);
+        opts.symmetric_right = Some(right_oid);
+        return Ok((pos, neg));
+    }
+    Ok(split_revision_token(token))
+}
+
+/// Assert grit commit order matches `git rev-list` for both commit-graph modes.
+pub fn assert_rev_list_commits_match_git(
+    worktree: &Path,
+    repo: &Repository,
+    git_args: &[&str],
+    positive: &[String],
+    negative: &[String],
+    mut opts: RevListOptions,
+    context: &str,
+) {
+    let git_oids = git_rev_list(worktree, git_args);
+    for use_graph in [false, true] {
+        if use_graph {
+            git_commit_graph_write(worktree);
+        }
+        opts.use_commit_graph = use_graph;
+        let grit_oids = grit_rev_list_commits_in_repo(repo, positive, negative, &opts)
+            .unwrap_or_else(|e| panic!("grit rev_list failed ({context}, graph={use_graph}): {e}"));
+        assert_eq!(
+            grit_oids, git_oids,
+            "{context}: commit order mismatch (use_commit_graph={use_graph})"
+        );
+    }
 }
