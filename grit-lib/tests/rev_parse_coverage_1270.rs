@@ -9,8 +9,9 @@ use grit_lib::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
-    expand_rev_token_circ_bang, resolve_at_minus_to_oid, resolve_reflog_walk_log_ref,
-    resolve_revision_for_verify, resolve_treeish_blob_at_path,
+    abbreviate_ref_name, expand_rev_token_circ_bang, resolve_at_minus_to_oid,
+    resolve_push_full_ref_for_branch, resolve_reflog_walk_log_ref, resolve_revision_for_verify,
+    resolve_treeish_blob_at_path, resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use grit_lib::rev_parse_error::RevParseError;
 
@@ -149,7 +150,13 @@ fn remote_shorthand_stash_and_outside_paths() {
     }
     let _ = resolve_reflog_walk_log_ref(&repo, "main");
     let _ = resolve_reflog_walk_log_ref(&repo, "@{-1}");
+    let _ = resolve_reflog_walk_log_ref(&repo, "main@{upstream}");
     let _ = expand_rev_token_circ_bang(&repo, "HEAD^!");
+    assert_eq!(abbreviate_ref_name("refs/heads/main"), "main");
+    assert!(upstream_suffix_info("main@{u}").is_some());
+    assert!(upstream_suffix_info("main@{push}").is_some());
+    let _ = resolve_upstream_symbolic_name(&repo, "main@{u}");
+    let _ = resolve_push_full_ref_for_branch(&repo, "main");
 }
 
 #[test]

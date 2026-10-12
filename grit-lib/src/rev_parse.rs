@@ -3823,6 +3823,51 @@ mod line_coverage_tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn ambiguous_hex_prefix_among(
+        oids: &[ObjectId],
+        min_len: usize,
+        max_len: usize,
+    ) -> Option<String> {
+        for i in 0..oids.len() {
+            for j in (i + 1)..oids.len() {
+                let a = oids[i].to_hex();
+                let b = oids[j].to_hex();
+                let cap = max_len.min(a.len()).min(b.len());
+                for len in (min_len..=cap).rev() {
+                    if a[..len] == b[..len] {
+                        return Some(a[..len].to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn seed_commits_until_ambiguous_prefix(
+        repo: &Repository,
+        tree: ObjectId,
+        oids: &mut Vec<ObjectId>,
+        min_len: usize,
+        max_commits: usize,
+    ) -> String {
+        let mut counter = oids.len() as i32;
+        while oids.len() < max_commits {
+            let body = format!(
+                "tree {tree}\nauthor T <t@e.com> {counter} +0000\ncommitter T <t@e.com> {counter} +0000\n\nc{counter}\n"
+            );
+            counter += 1;
+            let oid = repo
+                .odb
+                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
+                .expect("commit");
+            oids.push(oid);
+            if let Some(prefix) = ambiguous_hex_prefix_among(oids, min_len, 12) {
+                return prefix;
+            }
+        }
+        panic!("could not find {min_len}+ hex prefix collision among {max_commits} commits");
+    }
+
     fn exercise_resolve_base(repo: &Repository, spec: &str) {
         for index_dwim in [false, true] {
             for commit_only in [false, true] {
@@ -4318,52 +4363,29 @@ mod line_coverage_tests {
         .map_err(crate::error::Error::Io)?;
         let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
-        for i in 0..200_i32 {
-            let body = format!(
-                "tree {tree}\nauthor T <t@e.com> {i} +0000\ncommitter T <t@e.com> {i} +0000\n\nc{i}\n"
-            );
-            let oid = repo
-                .odb
-                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
-            oids.push(oid);
-        }
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
-        let mut shared_prefix: Option<String> = None;
-        'outer: for i in 0..oids.len() {
-            for j in (i + 1)..oids.len() {
-                let a = oids[i].to_hex();
-                let b = oids[j].to_hex();
-                for len in (4..=10).rev() {
-                    if a[..len] == b[..len] {
-                        shared_prefix = Some(a[..len].to_string());
-                        break 'outer;
-                    }
-                }
-            }
-        }
-        if let Some(prefix) = shared_prefix {
-            for commit_only in [false, true] {
-                for use_disambiguate in [false, true] {
-                    let _ = resolve_revision_impl(
-                        &repo,
-                        &prefix,
-                        false,
-                        commit_only,
-                        use_disambiguate,
-                        false,
-                        false,
-                        false,
-                        false,
-                    );
-                    let _ = resolve_revision_as_commit(&repo, &prefix);
-                    let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("commit"));
-                    let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tree"));
-                    let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("blob"));
-                    let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tag"));
-                    let _ = ambiguous_object_hint_lines(&repo, &prefix, None);
-                }
+        for commit_only in [false, true] {
+            for use_disambiguate in [false, true] {
+                let _ = resolve_revision_impl(
+                    &repo,
+                    &prefix,
+                    false,
+                    commit_only,
+                    use_disambiguate,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
+                let _ = resolve_revision_as_commit(&repo, &prefix);
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("commit"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tree"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("blob"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, Some("tag"));
+                let _ = ambiguous_object_hint_lines(&repo, &prefix, None);
             }
         }
         Ok(())
@@ -4469,15 +4491,21 @@ mod line_coverage_tests {
             )
             .as_bytes(),
         )?;
-        let tag_body = format!(
-            "object {c2}\ntype commit\ntag t\ntagger T <t@e.com> 300 +0000\n\nannotated\n"
+        let tag_body_a = format!(
+            "object {c2}\ntype commit\ntag ta\ntagger T <t@e.com> 300 +0000\n\nannotated\n"
         );
-        let tag_oid = repo
+        let tag_a = repo
             .odb
-            .write_loose_materialize(ObjectKind::Tag, tag_body.as_bytes())?;
+            .write_loose_materialize(ObjectKind::Tag, tag_body_a.as_bytes())?;
+        let tag_body_b = format!(
+            "object {c2}\ntype commit\ntag tb\ntagger T <t@e.com> 301 +0000\n\nannotated\n"
+        );
+        let tag_b = repo
+            .odb
+            .write_loose_materialize(ObjectKind::Tag, tag_body_b.as_bytes())?;
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
             .map_err(crate::error::Error::Io)?;
-        fs::write(repo.git_dir.join("refs/tags/t"), format!("{tag_oid}\n"))
+        fs::write(repo.git_dir.join("refs/tags/t"), format!("{tag_a}\n"))
             .map_err(crate::error::Error::Io)?;
         let abbrev = &c2.to_hex()[..7];
         fs::write(
@@ -4502,7 +4530,8 @@ mod line_coverage_tests {
             exercise_impl_matrix(&repo, spec);
         }
         let _ = ambiguous_object_hint_lines(&repo, abbrev, Some("commit"));
-        let _ = disambiguate_hex_by_peel(&repo, abbrev, &[c2, tag_oid], "commit");
+        let _ = disambiguate_hex_by_peel(&repo, abbrev, &[c2, tag_a], "commit");
+        let _ = disambiguate_hex_by_peel(&repo, "tags", &[tag_a, tag_b], "tag");
         Ok(())
     }
 
@@ -4512,15 +4541,7 @@ mod line_coverage_tests {
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
         let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
-        for i in 0..300_i32 {
-            let body = format!(
-                "tree {tree}\nauthor T <t@e.com> {i} +0000\ncommitter T <t@e.com> {i} +0000\n\nc{i}\n"
-            );
-            let oid = repo
-                .odb
-                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
-            oids.push(oid);
-        }
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
@@ -4529,35 +4550,12 @@ mod line_coverage_tests {
             "[core]\n\tdisambiguate = commit\n",
         )
         .map_err(crate::error::Error::Io)?;
-
-        let mut shared_prefix: Option<String> = None;
-        'outer: for i in 0..oids.len() {
-            for j in (i + 1)..oids.len() {
-                let a = oids[i].to_hex();
-                let b = oids[j].to_hex();
-                for len in (4..=16).rev() {
-                    if a[..len] == b[..len] {
-                        shared_prefix = Some(a[..len].to_string());
-                        break 'outer;
-                    }
-                }
-            }
-        }
+        let shared_prefix = Some(prefix);
 
         const OUTSIDE: &[&str] = &[":0:/etc/passwd", ":2:/etc/passwd"];
         for spec in OUTSIDE {
-            let err = resolve_base(
-                &repo,
-                spec,
-                true,
-                false,
-                true,
-                None,
-                false,
-                false,
-                false,
-            )
-            .expect_err(spec);
+            let err = resolve_base(&repo, spec, true, false, true, None, false, false, false)
+                .expect_err(spec);
             assert!(
                 matches!(
                     err,
@@ -4601,23 +4599,13 @@ mod line_coverage_tests {
                     let _ = resolve_revision_as_commit(&repo, &prefix);
                 }
             }
-        }
-
-        let mut pair: Option<(ObjectId, ObjectId)> = None;
-        for _ in 0..5000 {
-            let body = format!(
-                "tree {tree}\nauthor T <t@e.com> {} +0000\ncommitter T <t@e.com> {} +0000\n\nx\n",
-                10_000 + oids.len(),
-                10_000 + oids.len()
-            );
-            let oid = repo
-                .odb
-                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
-            let hex = oid.to_hex();
-            for prev in &oids {
-                for len in 7..=12 {
-                    if hex[..len] == prev.to_hex()[..len] {
-                        pair = Some((*prev, oid));
+            let mut pair: Option<(ObjectId, ObjectId)> = None;
+            for i in 0..oids.len() {
+                for j in (i + 1)..oids.len() {
+                    let a = oids[i].to_hex();
+                    let b = oids[j].to_hex();
+                    if a.starts_with(prefix.as_str()) && b.starts_with(prefix.as_str()) {
+                        pair = Some((oids[i], oids[j]));
                         break;
                     }
                 }
@@ -4625,31 +4613,20 @@ mod line_coverage_tests {
                     break;
                 }
             }
-            oids.push(oid);
-            if pair.is_some() {
-                break;
+            if let Some((a, b)) = pair {
+                let _ = disambiguate_hex_by_peel(&repo, &prefix, &[a, b], "commit");
+                let _ = resolve_base(
+                    &repo,
+                    &prefix,
+                    false,
+                    true,
+                    true,
+                    Some("commit"),
+                    false,
+                    false,
+                    false,
+                );
             }
-        }
-        if let Some((a, b)) = pair {
-            let a_hex = a.to_hex();
-            let b_hex = b.to_hex();
-            let mut prefix_len = 7;
-            while prefix_len < a_hex.len() && a_hex[..prefix_len] == b_hex[..prefix_len] {
-                prefix_len += 1;
-            }
-            let prefix = a_hex[..prefix_len.saturating_sub(1).max(7)].to_string();
-            let _ = disambiguate_hex_by_peel(&repo, &prefix, &[a, b], "commit");
-            let _ = resolve_base(
-                &repo,
-                &prefix,
-                false,
-                true,
-                true,
-                Some("commit"),
-                false,
-                false,
-                false,
-            );
         }
         Ok(())
     }
@@ -4695,10 +4672,7 @@ mod line_coverage_tests {
         let _ = list_loose_abbrev_matches(&repo, prefix);
         let _ = list_all_abbrev_matches(&repo, prefix);
         let _ = list_all_abbrev_matches(&repo, "zzz");
-        let _ = to_relative_path(
-            &dir.path().join("sub/leaf.txt"),
-            &dir.path().join("sub"),
-        );
+        let _ = to_relative_path(&dir.path().join("sub/leaf.txt"), &dir.path().join("sub"));
         Ok(())
     }
 
@@ -5060,32 +5034,10 @@ mod line_coverage_tests {
         )
         .map_err(crate::error::Error::Io)?;
         let mut oids = Vec::new();
-        for i in 0..250_i32 {
-            let body = format!(
-                "tree {tree}\nauthor T <t@e.com> {i} +0000\ncommitter T <t@e.com> {i} +0000\n\nc{i}\n"
-            );
-            let oid = repo
-                .odb
-                .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
-            oids.push(oid);
-        }
-        let mut shared_prefix: Option<String> = None;
-        'outer: for i in 0..oids.len() {
-            for j in (i + 1)..oids.len() {
-                let a = oids[i].to_hex();
-                let b = oids[j].to_hex();
-                for len in (4..=14).rev() {
-                    if a[..len] == b[..len] {
-                        shared_prefix = Some(a[..len].to_string());
-                        break 'outer;
-                    }
-                }
-            }
-        }
-        if let Some(prefix) = shared_prefix {
-            let _ = resolve_revision_as_commit(&repo, &prefix);
-            let _ = resolve_revision_for_verify(&repo, &prefix);
-        }
+        let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 20_000);
+        let _ = resolve_revision(&repo, &prefix);
+        let _ = resolve_revision_as_commit(&repo, &prefix);
+        let _ = resolve_revision_for_verify(&repo, &prefix);
         Ok(())
     }
 }
