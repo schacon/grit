@@ -370,6 +370,32 @@ pub fn git_rev_parse(dir: &Path, spec: &str) -> Option<ObjectId> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+/// `git rev-parse --verify -q` for `spec` (plumbing verify, no DWIM stdout noise).
+pub fn git_rev_parse_verify(dir: &Path, spec: &str) -> Option<ObjectId> {
+    let out = hermetic_git(dir, &["rev-parse", "--verify", "-q", spec]);
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Run `git merge-base` with arguments; returns OIDs in git's order (one per line).
+pub fn git_merge_base(dir: &Path, args: &[&str]) -> Vec<ObjectId> {
+    let mut full: Vec<&str> = vec!["merge-base"];
+    full.extend_from_slice(args);
+    let out = git(dir, &full);
+    out.lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect()
+}
+
+/// `git merge-base --is-ancestor A B` exit status (true when ancestor).
+pub fn git_merge_base_is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> bool {
+    hermetic_git(dir, &["merge-base", "--is-ancestor", ancestor, descendant])
+        .status
+        .success()
+}
+
 /// `git ls-files -s` as `(path, stage, mode, oid)` tuples.
 pub fn git_ls_files_stage(dir: &Path) -> Vec<(String, u32, String, ObjectId)> {
     let out = git(dir, &["ls-files", "-s"]);

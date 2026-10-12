@@ -109,8 +109,22 @@ REQUIRED_HISTORY_REVWALK_SIMPLIFY: tuple[str, ...] = (
     "t6112",
     "t4216",
 )
-REQUIRED_HISTORY_REVPARSE: tuple[str, ...] = ()
-REQUIRED_HISTORY_MERGE: tuple[str, ...] = ()
+REQUIRED_HISTORY_REVPARSE: tuple[str, ...] = (
+    "t1500",
+    "t1503",
+    "t1505",
+    "t1506",
+    "t1507",
+    "t1508",
+    "t1511",
+    "t1512",
+    "t1514",
+    "t6101",
+)
+REQUIRED_HISTORY_MERGE: tuple[str, ...] = (
+    "t6010",
+    "t6099",
+)
 REQUIRED_HISTORY_STASH_NOTES: tuple[str, ...] = (
     "t3903",
     "t3905",

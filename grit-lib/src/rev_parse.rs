@@ -2485,8 +2485,14 @@ fn resolve_base(
     // As a last resort, try resolving as an index path (porcelain / DWIM only).
     if !spec.contains(':') && !spec.starts_with('-') {
         if index_dwim {
-            if let Ok(oid) = resolve_index_path(repo, spec) {
-                return Ok(oid);
+            if resolve_index_path(repo, spec).is_ok() {
+                if repo.work_tree.is_some() {
+                    return Err(RevParseError::AmbiguousArgument {
+                        spec: spec.to_owned(),
+                    }
+                    .into());
+                }
+                return resolve_index_path(repo, spec);
             }
             return Err(RevParseError::AmbiguousArgument {
                 spec: spec.to_owned(),
