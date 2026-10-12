@@ -8,7 +8,7 @@ use std::os::unix::fs::symlink;
 use grit_lib::objects::ObjectId;
 use grit_test_support::git;
 
-use support::history_git as hist_git;
+use support::git as hist_git;
 use support::{
     assert_merge_commits_match_git, commit_file, commit_tree, grit_merge_result_tree,
     open_grit_repo, skip_merge_tree_git, CommitMergeLabels, HistoryRepo,
@@ -47,7 +47,7 @@ fn t6406_merge_drivers_match_git() {
     hist_git(history.worktree(), &["add", "f.bin", "union.txt"]);
     hist_git(history.worktree(), &["commit", "-m", "ours"]);
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -83,7 +83,7 @@ fn add_add_conflict_matches_git_merge_tree() {
     commit_file(history.worktree(), "new.txt", "theirs\n", "theirs add");
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "new.txt", "ours\n", "ours add");
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -120,7 +120,7 @@ fn modify_delete_conflict_matches_git_merge_tree() {
     hist_git(history.worktree(), &["commit", "-m", "delete"]);
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "f.txt", "ours\n", "modify");
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -156,7 +156,7 @@ fn content_conflict_markers_match_git_merge_tree() {
     commit_file(history.worktree(), "g.txt", "1\nSIDE\n3\n", "theirs");
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "g.txt", "1\nOURS\n3\n", "ours");
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -195,7 +195,7 @@ fn t6400_df_conflicts_match_git_merge_tree() {
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "dir", "file dir\n", "file dir");
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "B"])
         .trim()
         .parse()
@@ -243,7 +243,7 @@ fn t6402_rename_merges_match_git_merge_tree() {
         "edit on ours",
     );
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -285,7 +285,7 @@ fn t6422_rename_corner_cases_match_git_merge_tree() {
     hist_git(history.worktree(), &["mv", "shared.txt", "renamed.txt"]);
     commit_file(history.worktree(), "renamed.txt", "base\n", "ours rename");
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -339,7 +339,7 @@ fn t6411_filemode_merge_matches_git() {
     );
     hist_git(history.worktree(), &["commit", "-m", "non-exec on ours"]);
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -386,7 +386,7 @@ fn t6405_symlink_merge_matches_git() {
     hist_git(history.worktree(), &["add", "link"]);
     hist_git(history.worktree(), &["commit", "-m", "ours symlink"]);
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -431,7 +431,7 @@ fn t6407_binary_conflict_matches_git() {
     hist_git(history.worktree(), &["add", "bin"]);
     hist_git(history.worktree(), &["commit", "-m", "ours"]);
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -473,7 +473,7 @@ fn t4301_merge_tree_write_tree_clean_merge_matches_git() {
         "edit on main",
     );
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -509,7 +509,7 @@ fn ours_only_addition_persists_matches_git() {
     commit_file(history.worktree(), "shared.txt", "topic\n", "topic");
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "main-only.txt", "main\n", "main-only");
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -546,7 +546,7 @@ fn t6417_merge_ours_theirs_favor_matches_git() {
     hist_git(history.worktree(), &["switch", "main"]);
     commit_file(history.worktree(), "f.txt", "ours\n", "ours");
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "main"])
         .trim()
         .parse()
@@ -592,7 +592,7 @@ fn cherry_pick_tree_remap_matches_git() {
         "main advance",
     );
 
-    let grit = open_grit_repo(&history);
+    let grit = open_grit_repo(history.worktree());
     let pick_oid: ObjectId = pick.parse().unwrap();
     let main_oid: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
         .trim()
