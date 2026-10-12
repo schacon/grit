@@ -458,6 +458,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "wall-clock performance check")]
     fn collision_scan_scales_linearly() {
         let paths: Vec<String> = (0..10_000).map(|i| format!("files/{i}.txt")).collect();
         let start = std::time::Instant::now();

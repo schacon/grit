@@ -137,7 +137,9 @@ mod tests {
 
     #[test]
     fn parallel_matches_serial_counts_and_threads() {
-        let sizes = [0_usize, 1, 7, 10_000];
+        // Miri interprets every SHA-1 round; keep its batch small enough to finish.
+        let large = if cfg!(miri) { 64 } else { 10_000 };
+        let sizes = [0_usize, 1, 7, large];
         let thread_counts = [1_usize, 2, 8];
         let blob = vec![0xAB_u8; 512];
         for &n in &sizes {
