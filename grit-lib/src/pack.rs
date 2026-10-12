@@ -1542,10 +1542,10 @@ fn merge_sorted_index_entry_chunks(entries: &mut [(ObjectId, u64, u32)], chunk: 
         for (ci, cursor) in cursors.iter().enumerate() {
             let start = ci * chunk;
             let chunk_len = entries.len().saturating_sub(start).min(chunk);
-            if cursors[ci] >= chunk_len {
+            if *cursor >= chunk_len {
                 continue;
             }
-            let idx = start + cursors[ci];
+            let idx = start + *cursor;
             let Some(entry) = entries.get(idx) else {
                 continue;
             };
