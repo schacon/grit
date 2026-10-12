@@ -50,7 +50,7 @@ files = [
     "combined_diff_patch.rs",
     "merge_diff.rs",
 ]
-minimum = 48.8
+minimum = 54.0
 
 [group.ignore]
 files = [
@@ -266,7 +266,7 @@ minimum = 85.0
 minimum = 85.0
 
 [file."diffstat.rs"]
-minimum = 55.0
+minimum = 85.0
 
 [file."diff.rs"]
-minimum = 57.0
+minimum = 60.6
