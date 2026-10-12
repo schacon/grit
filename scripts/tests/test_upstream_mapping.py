@@ -64,7 +64,25 @@ REQUIRED_HISTORY_DIFF_BLOBS: tuple[str, ...] = (
     "t4049",
     "t4047",
 )
-REQUIRED_HISTORY_DIFF_TREES: tuple[str, ...] = ()
+REQUIRED_HISTORY_DIFF_TREES: tuple[str, ...] = (
+    "t4000",
+    "t4001",
+    "t4002",
+    "t4003",
+    "t4005",
+    "t4006",
+    "t4007",
+    "t4008",
+    "t4009",
+    "t4011",
+    "t4022",
+    "t4023",
+    "t4038",
+    "t4043",
+    "t4046",
+    "t4054",
+    "t4057",
+)
 REQUIRED_HISTORY_REVWALK_ORDER: tuple[str, ...] = ()
 REQUIRED_HISTORY_REVWALK_SIMPLIFY: tuple[str, ...] = ()
 REQUIRED_HISTORY_REVPARSE: tuple[str, ...] = ()
