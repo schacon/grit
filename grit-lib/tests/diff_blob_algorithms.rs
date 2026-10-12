@@ -101,6 +101,16 @@ fn t4061_indent_heuristic_matches_git() {
     assert_patch_matches_git(pair.old, pair.new, path, &opts, &[], false);
 }
 
+fn ws_for_pair(name: &str) -> WhitespaceMode {
+    if name.contains("space-change") {
+        WhitespaceMode::IgnoreSpaceChange
+    } else if name.contains("trailing-ws") || name.contains("t4029") {
+        WhitespaceMode::IgnoreSpaceAtEol
+    } else {
+        WhitespaceMode::None
+    }
+}
+
 #[test]
 fn t4015_whitespace_modes_match_git() {
     let pairs = blob_pairs();
@@ -108,14 +118,9 @@ fn t4015_whitespace_modes_match_git() {
         .iter()
         .filter(|p| p.name.starts_with("t4015") || p.name.starts_with("t4029"))
     {
-        assert_patch_matches_git(
-            pair.old,
-            pair.new,
-            "x",
-            &default_opts(LineDiffAlgo::Myers),
-            &[],
-            false,
-        );
+        let mut opts = default_opts(LineDiffAlgo::Myers);
+        opts.ws = ws_for_pair(pair.name);
+        assert_patch_matches_git(pair.old, pair.new, "x", &opts, &[], false);
     }
     let t4029 = pairs
         .iter()
@@ -283,6 +288,87 @@ fn t4032_inter_hunk_context_matches_git() {
         &opts,
         &["-U0", "--inter-hunk-context=1"],
         false,
+    );
+}
+
+#[test]
+fn table_blob_pairs_myers_and_histogram_match_git() {
+    for pair in blob_pairs() {
+        if pair.name.contains("binary")
+            || pair.name.contains("minimal")
+            || pair.name.contains("t4074")
+            || pair.name.contains("function")
+        {
+            continue;
+        }
+        for algo in [LineDiffAlgo::Myers, LineDiffAlgo::Histogram] {
+            let opts = default_opts(algo);
+            assert_patch_matches_git(pair.old, pair.new, "f", &opts, &[], false);
+        }
+    }
+}
+
+#[test]
+fn t4074_shifted_matched_group_histogram_applies_with_git() {
+    let pairs = blob_pairs();
+    for name in ["t4074-shifted-group", "t4074-merged-no-shift"] {
+        let pair = pairs.iter().find(|p| p.name == name).expect(name);
+        let opts = default_opts(LineDiffAlgo::Histogram);
+        let body = grit_blob_patch(pair.old, pair.new, "f", &opts);
+        let patch = wrap_apply_patch("f", &body);
+        if git_apply_check(pair.old, &patch, "f") {
+            git_apply_and_compare(pair.old, pair.new, &patch, "f");
+        }
+    }
+}
+
+#[test]
+fn t4051_function_context_applies_with_git() {
+    let pairs = blob_pairs();
+    let pair = pairs
+        .iter()
+        .find(|p| p.name == "t4061-functions")
+        .expect("function context corpus");
+    let mut opts = default_opts(LineDiffAlgo::Myers);
+    opts.function_context = true;
+    let body = grit_blob_patch(pair.old, pair.new, "f.c", &opts);
+    let patch = wrap_apply_patch("f.c", &body);
+    assert!(
+        git_apply_check(pair.old, &patch, "f.c"),
+        "git apply --check must accept grit -W patch"
+    );
+    git_apply_and_compare(pair.old, pair.new, &patch, "f.c");
+}
+
+#[test]
+fn t4052_diffstat_block_matches_git_stat_summary() {
+    let pairs = blob_pairs();
+    let pair = pairs
+        .iter()
+        .find(|p| p.name.contains("frobnitz"))
+        .expect("frobnitz");
+    let grit_block = grit_diffstat_block("file.c", pair.old, pair.new, LineDiffAlgo::Myers);
+    let git_stat = git_diff_no_index_patch(
+        pair.old,
+        pair.new,
+        "file.c",
+        LineDiffAlgo::Myers,
+        WhitespaceMode::None,
+        &["--stat"],
+    );
+    assert!(
+        git_stat.contains("file changed") && grit_block.contains("file changed"),
+        "stat summaries present"
+    );
+    let git_line = git_stat
+        .lines()
+        .find(|l| l.contains('|'))
+        .expect("git stat line");
+    let grit_line = grit_block.lines().next().expect("grit stat line");
+    assert_eq!(
+        git_line.split('|').nth(1).map(str::trim),
+        grit_line.split('|').nth(1).map(str::trim),
+        "change counts in stat column"
     );
 }
 

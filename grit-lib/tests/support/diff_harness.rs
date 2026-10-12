@@ -86,6 +86,7 @@ pub struct GritBlobPatchOpts {
     pub context_lines: usize,
     pub inter_hunk_context: usize,
     pub indent_heuristic: bool,
+    pub function_context: bool,
     pub anchors: Vec<String>,
     pub use_anchored: bool,
 }
@@ -98,6 +99,7 @@ impl Default for GritBlobPatchOpts {
             context_lines: 3,
             inter_hunk_context: 0,
             indent_heuristic: true,
+            function_context: false,
             anchors: Vec::new(),
             use_anchored: false,
         }
@@ -265,7 +267,7 @@ pub fn grit_blob_patch(old: &[u8], new: &[u8], path: &str, opts: &GritBlobPatchO
 
     let old_t = text_or_lossy(old);
     let new_t = text_or_lossy(new);
-    let (old_in, new_in) = (&old_t, &new_t);
+    let (old_in, new_in) = preprocess_for_whitespace(&old_t, &new_t, opts.ws);
 
     let old_path = format!("a/{path}");
     let new_path = format!("b/{path}");
@@ -292,7 +294,31 @@ pub fn grit_blob_patch(old: &[u8], new: &[u8], path: &str, opts: &GritBlobPatchO
     }
 
     if matches!(opts.ws, WhitespaceMode::IgnoreBlankLines) && histogram {
-        return unified_diff_histogram_ignore_with_prefix_and_funcname(
+        return grit_lib::diff::annotate_unified_diff_no_newline_at_eof(
+            &unified_diff_histogram_ignore_with_prefix_and_funcname(
+                &old_in,
+                &new_in,
+                &old_path,
+                &new_path,
+                opts.context_lines,
+                opts.inter_hunk_context,
+                "",
+                "",
+                None,
+                false,
+                false,
+                |removed, added| {
+                    removed.iter().all(|l| ws_blank_line(l))
+                        && added.iter().all(|l| ws_blank_line(l))
+                },
+            ),
+            &old_t,
+            &new_t,
+        );
+    }
+
+    grit_lib::diff::annotate_unified_diff_no_newline_at_eof(
+        &unified_diff_with_prefix_and_funcname_and_algorithm(
             &old_in,
             &new_in,
             &old_path,
@@ -302,29 +328,14 @@ pub fn grit_blob_patch(old: &[u8], new: &[u8], path: &str, opts: &GritBlobPatchO
             "",
             "",
             None,
+            algo,
+            opts.function_context,
+            histogram,
+            opts.indent_heuristic,
             false,
-            false,
-            |removed, added| {
-                removed.iter().all(|l| ws_blank_line(l)) && added.iter().all(|l| ws_blank_line(l))
-            },
-        );
-    }
-
-    unified_diff_with_prefix_and_funcname_and_algorithm(
-        &old_in,
-        &new_in,
-        &old_path,
-        &new_path,
-        opts.context_lines,
-        opts.inter_hunk_context,
-        "",
-        "",
-        None,
-        algo,
-        false,
-        histogram,
-        opts.indent_heuristic,
-        false,
+        ),
+        &old_t,
+        &new_t,
     )
 }
 
@@ -337,6 +348,9 @@ pub fn patch_hunk_body(patch: &str) -> String {
             let mut out = String::from(line);
             out.push('\n');
             for rest in lines {
+                if rest.starts_with("\\ No newline at end of file") {
+                    continue;
+                }
                 out.push_str(rest);
                 out.push('\n');
             }

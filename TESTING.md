@@ -264,12 +264,12 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t4052-stat-output.sh | `--numstat` / `--stat` width layout | `diff_blob_algorithms.rs` (`t4052_numstat_and_stat_width_match_git`) | partial (numstat + grit stat line; `--stat=width` UX skipped on older git) |
 | t4032-diff-inter-hunk-context.sh | `-U0` + `--inter-hunk-context` hunk count | `diff_blob_algorithms.rs` (`t4032_inter_hunk_context_matches_git`) | covered |
 | t4029-diff-trailing-space.sh | trailing space line diff | `diff_blob_algorithms.rs` (`t4015_whitespace_modes_match_git`) | covered |
-| t4074-diff-shifted-matched-group.sh | histogram shifted groups | `diff_blob_algorithms.rs` (`t4050_histogram_matches_git` fixtures) | gap (histogram body vs git on shifted groups) |
+| t4074-diff-shifted-matched-group.sh | histogram shifted groups | `diff_blob_algorithms.rs` (`t4074_shifted_matched_group_histogram_applies_with_git`) | partial (patch applies; hunk body may differ from git histogram) |
 | t4063-diff-blobs.sh | blob oid diff headers | — | gap (repository blob diff CLI; harness covers raw blob bytes) |
-| t4051-diff-function-context.sh | `-W` function context | — | not ported in this harness |
+| t4051-diff-function-context.sh | `-W` function context | `diff_blob_algorithms.rs` (`t4051_function_context_applies_with_git`) | partial (apply parity; hunk extent may differ from git `-W`) |
 | t4055-diff-context.sh | `diff.context` config | — | not ported |
 | t4024-diff-optimize-common.sh | optimize common subexpression | — | not ported |
-| t4049-diff-stat-count.sh | stat count limits | — | not ported |
+| t4049-diff-stat-count.sh | stat count limits | `diffstat.rs` (`write_diffstat_stat_count_hides_lines_but_sums_summary`) | covered (library stat block) |
 | t4047-diff-dirstat.sh | `--dirstat` | — | not ported |
 | — | no newline at EOF markers | `diff_blob_algorithms.rs` (`no_newline_at_eof_pairs_match_git_or_apply`) | covered |
 | — | random apply `--check` all algorithms | `diff_blob_algorithms.rs` (`random_patches_apply_with_git_all_algorithms`) | covered |

@@ -487,6 +487,130 @@ mod tests {
     }
 
     #[test]
+    fn display_width_minus_ansi_skips_csi_sequences() {
+        let s = "\x1b[31mhello\x1b[m";
+        assert_eq!(display_width_minus_ansi(s), "hello".width());
+    }
+
+    #[test]
+    fn write_diffstat_unmerged_binary_and_truncation() {
+        let files = vec![
+            FileStatInput {
+                path_display: "data.bin".into(),
+                insertions: 100,
+                deletions: 50,
+                is_binary: true,
+                is_unmerged: false,
+            },
+            FileStatInput {
+                path_display: "src/very/long/path/that/exceeds/the/name/area/width/file.rs".into(),
+                insertions: 3,
+                deletions: 1,
+                is_binary: false,
+                is_unmerged: false,
+            },
+            FileStatInput {
+                path_display: "conflict.txt".into(),
+                insertions: 0,
+                deletions: 0,
+                is_binary: false,
+                is_unmerged: true,
+            },
+            FileStatInput {
+                path_display: "empty.bin".into(),
+                insertions: 0,
+                deletions: 0,
+                is_binary: true,
+                is_unmerged: false,
+            },
+        ];
+        let opts = DiffstatOptions {
+            total_width: 60,
+            line_prefix: "| ",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: Some(20),
+            stat_graph_width: Some(8),
+            stat_count: Some(3),
+            color_add: "\x1b[32m",
+            color_del: "\x1b[31m",
+            color_reset: "\x1b[m",
+            graph_bar_slack: 1,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("Unmerged"));
+        assert!(s.contains("..."));
+        assert!(s.contains("bytes") || s.contains("Bin"));
+        assert!(s.contains("file"));
+        assert!(s.contains("changed"));
+    }
+
+    #[test]
+    fn write_diffstat_subtract_prefix_and_zero_change_summary() {
+        let files = vec![FileStatInput {
+            path_display: "only-unmerged".into(),
+            insertions: 0,
+            deletions: 0,
+            is_binary: false,
+            is_unmerged: true,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            width_prefix: "graph ",
+            subtract_prefix_from_terminal: true,
+            terminal_width: 40,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 2,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("0 files changed"));
+    }
+
+    #[test]
+    fn write_diffstat_mixed_add_del_scales_graph() {
+        let files = vec![FileStatInput {
+            path_display: "x.txt".into(),
+            insertions: 40,
+            deletions: 10,
+            is_binary: false,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: Some(6),
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let line = s.lines().next().expect("stat line");
+        assert!(line.contains('+'));
+    }
+
+    #[test]
     fn diffstat_name_width_10_matches_git_padding() {
         let files = vec![FileStatInput {
             path_display: "d你好/f再见".to_string(),
@@ -518,5 +642,149 @@ mod tests {
             line.contains(".../f再见  |"),
             "expected two spaces before pipe like git, got {line:?}"
         );
+    }
+
+    #[test]
+    fn write_diffstat_empty_files_is_noop() {
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &[], &opts).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn terminal_columns_returns_positive_width() {
+        assert!(terminal_columns() >= 80);
+    }
+
+    #[test]
+    fn truncate_path_prefers_suffix_after_slash() {
+        let long = "aaaa/bbbb/cccc/dddd/eeee/ffff/gggg/hhhh/iiii/jjjj/kkkk/llll/mmmm/nnnn/oooo/pppp/qqqq/rrrr/ssss/tttt/uuuu/vvvv/wwww/xxxx/yyyy/zzzz/final.rs";
+        let (display, w) = truncate_path_for_name_area(long, 24);
+        assert!(display.starts_with("..."));
+        assert!(display.contains("final.rs") || display.contains('/'));
+        assert!(w <= 24);
+    }
+
+    #[test]
+    fn write_diffstat_deletions_heavier_than_insertions() {
+        let files = vec![FileStatInput {
+            path_display: "y.txt".into(),
+            insertions: 2,
+            deletions: 50,
+            is_binary: false,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: Some(10),
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains('-'));
+        assert!(s.contains("deletion"));
+    }
+
+    #[test]
+    fn write_diffstat_zero_line_changes_non_binary() {
+        let files = vec![FileStatInput {
+            path_display: "touch.txt".into(),
+            insertions: 0,
+            deletions: 0,
+            is_binary: false,
+            is_unmerged: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("0 insertions(+), 0 deletions(-)"));
+    }
+
+    #[test]
+    fn write_diffstat_stat_count_hides_lines_but_sums_summary() {
+        let files = vec![
+            FileStatInput {
+                path_display: "a.txt".into(),
+                insertions: 5,
+                deletions: 0,
+                is_binary: false,
+                is_unmerged: false,
+            },
+            FileStatInput {
+                path_display: "b.txt".into(),
+                insertions: 0,
+                deletions: 7,
+                is_binary: false,
+                is_unmerged: false,
+            },
+        ];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "P",
+            width_prefix: "",
+            subtract_prefix_from_terminal: false,
+            terminal_width: 80,
+            stat_name_width: None,
+            stat_graph_width: None,
+            stat_count: Some(1),
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("P..."));
+        assert!(s.contains("2 files changed"));
+        assert!(s.contains("5 insertion"));
+        assert!(s.contains("7 deletion"));
+    }
+
+    #[test]
+    fn display_width_minus_ansi_bare_escape_is_visible() {
+        assert_eq!(display_width_minus_ansi("\x1bX"), 1);
     }
 }

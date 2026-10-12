@@ -9439,3 +9439,67 @@ mod annotate_no_newline_tests {
         assert_eq!(out.matches("\\ No newline at end of file").count(), 2);
     }
 }
+
+#[cfg(test)]
+mod blob_diff_algorithm_smoke {
+    use super::{
+        anchored_unified_diff, count_changes_with_algorithm, unified_diff_histogram_hunks_only,
+        unified_diff_with_prefix_and_funcname_and_algorithm,
+    };
+    use similar::Algorithm;
+
+    const OLD: &str = "alpha\nbeta\ngamma\n";
+    const NEW: &str = "alpha\nBETA\ngamma\ndelta\n";
+
+    #[test]
+    fn myers_patience_histogram_minimal_emit_unified_hunks() {
+        for algo in [Algorithm::Myers, Algorithm::Patience, Algorithm::Histogram] {
+            let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+                OLD,
+                NEW,
+                "a/old.txt",
+                "b/new.txt",
+                3,
+                0,
+                "a/",
+                "b/",
+                None,
+                algo,
+                false,
+                false,
+                true,
+                false,
+            );
+            assert!(patch.contains("@@"), "algo {algo:?} should emit hunks");
+            assert!(patch.contains("-beta") || patch.contains("-BETA"));
+        }
+    }
+
+    #[test]
+    fn git_histogram_printer_and_anchored_diff_smoke() {
+        let hist = unified_diff_histogram_hunks_only(OLD, NEW, 3, 0);
+        assert!(!hist.is_empty());
+        let anchors = vec!["beta".to_string()];
+        let anchored = anchored_unified_diff(
+            OLD,
+            NEW,
+            "old",
+            "new",
+            3,
+            &anchors,
+            Algorithm::Myers,
+            false,
+            true,
+            false,
+        );
+        assert!(anchored.contains("@@"));
+    }
+
+    #[test]
+    fn count_changes_git_histogram_vs_similar() {
+        let hist = count_changes_with_algorithm(OLD, NEW, Algorithm::Myers, true);
+        let myers = count_changes_with_algorithm(OLD, NEW, Algorithm::Myers, false);
+        assert!(hist.0 + hist.1 > 0);
+        assert!(myers.0 + myers.1 > 0);
+    }
+}
