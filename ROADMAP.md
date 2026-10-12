@@ -249,6 +249,10 @@
 - There are no data races, checked with the test suite under `--release` with threads >1.
 - Benchmarks are published.
 
+**Status (2026-10-12, factory step 1006).** Published **`grit-utils/baselines/parallel-after.json`** plus refreshed **`suite-after-LH.json`**, **`hot-paths-after.json`**, and **`network.json`** on the **4-vCPU** factory VM (`git` **2.55.0**, `grit` **0.5.6**). Docs: [Parallelism benchmarks](content/docs/benchmarks.md#grit-bench-parallelism-threads1-vs-auto) and [library parallelism guide](content/docs/library/parallelism.md). **`test-threaded`** lane: latest **`main`** run at capture time was red ([workflow run 38201576682](https://github.com/gitbutlerapp/grit/actions/runs/38201576682/job/114655937278) — `config_parse` / Git **2.55** whitespace oracle drift, not parallelism regressions); see [TESTING.md](TESTING.md#test-threaded-release-workspace-with-parallel-config).
+
+**1.1× bar (100k synthetic repo, `parallel-after.json`, `-tauto`):** all five tracked scenarios **miss** today — **`parallel-status-dirty-100000-tauto`** **~2.67×**, **`parallel-status-clean-100000-tauto`** **~3.28×**, **`parallel-checkout-fresh-100000-tauto`** **~2.05×**, **`parallel-clone-file-100000-tauto`** **~1.53×**, **`parallel-index-pack-100000-tauto`** **~2.03×**. Dirty status improved from **~50×** (`parallel-before.json`); remaining gaps are index refresh + untracked work (status), checkout/index write paths (fresh checkout / clone), and in-memory index-pack vs Git’s **`index-pack`**. **`clone-file-prod`** in **`network.json`** is **~0.95×** (within bar). **`server-clone-http-compare-prod`** stays ≫ **1.2×** (upload-pack without bitmaps — MIDX/bitmap item, not parallelism). Parallel **index-pack** shows the largest **t1→tauto** Grit speedup (**~2.1×**) on this VM.
+
 ## 16. Rust tests: index, diff, revwalk, revparse, merge
 *Workstream: Testing*
 

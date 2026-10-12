@@ -278,11 +278,39 @@ Fixtures reuse the synthetic **100 000**-file repo (same shape as **`synthetic
 ```bash
 cargo build --release -p grit-cli -p grit-utils
 ./target/release/grit-bench parallel --format json --output grit-utils/baselines/parallel-before.json
-./target/release/grit-bench compare grit-utils/baselines/parallel-before.json /tmp/parallel-rerun.json --tolerance 0.10
+./target/release/grit-bench parallel --format json --output grit-utils/baselines/parallel-after.json
+./target/release/grit-bench compare grit-utils/baselines/parallel-before.json grit-utils/baselines/parallel-after.json --tolerance 0.10
 make docs
 ```
 
-The committed **`parallel-before.json`** baseline captures **before** parallelism work (maintenance plan step 997). The suite reuses the repacked **100k** synthetic repo from **`GRIT_BENCH_ODB_CACHE`**, caches status and rename fixtures, and uses at least **7** hyperfine warmups and **10** timed runs per command (still overridable with global **`--warmup`** / **`--min-runs`**). Noisy scenarios warm **`git diff`** and **`pack-objects`** in **`--prepare`**. Fresh checkout warms on a **disposable** sibling clone, then re-clones **`--no-checkout`** into the timed destination (asserted empty) before each iteration. Generated site tables include **threads** in the scenario id suffix; compare **`-t1`** and **`-tauto`** rows for the same workload to see scaling. **`machine.logical_cores`** in the JSON records core count at capture time.
+The committed **`parallel-before.json`** baseline captures **before** parallelism work (maintenance plan step 997). **`parallel-after.json`** (2026-10-12, roadmap item 15 close-out) captures the same scenarios after the full parallelism stack on **`origin/main`**, with **`git` 2.55.0**, release **`grit` 0.5.6**, hyperfine **1.19.0**, and **4** logical CPUs (see `machine` / `tools` in each JSON).
+
+The suite reuses the repacked **100k** synthetic repo from **`GRIT_BENCH_ODB_CACHE`**, caches status and rename fixtures, and uses at least **7** hyperfine warmups and **10** timed runs per command (still overridable with global **`--warmup`** / **`--min-runs`**). Noisy scenarios warm **`git diff`** and **`pack-objects`** in **`--prepare`**. Fresh checkout warms on a **disposable** sibling clone, then re-clones **`--no-checkout`** into the timed destination (asserted empty) before each iteration. Generated site tables include **threads** in the scenario id suffix; compare **`-t1`** and **`-tauto`** rows for the same workload to see scaling. **`machine.logical_cores`** in the JSON records core count at capture time.
+
+### Parallelism acceptance (100k synthetic repo, `-tauto`)
+
+Roadmap item **15** bars **Grit median ÷ Git median ≤ 1.1×** on the large-repo scenarios below (auto threads for both tools). Ratios come from **`parallel-after.json`**.
+
+| Scenario | Grit ÷ Git | vs 1.1× bar | Profile / notes |
+| --- | ---: | --- | --- |
+| **`parallel-status-dirty-100000-tauto`** | **2.67×** | miss | Down from ~**50×** in **`parallel-before.json`** after parallel stat/hash and untracked walks; remaining gap is mostly index refresh + untracked enumeration vs Git’s preload path on this fixture. |
+| **`parallel-status-clean-100000-tauto`** | **3.28×** | miss | Clean worktrees still pay full index/untracked setup; Git **2.55** median ~**65 ms** vs Grit ~**213 ms**. |
+| **`parallel-checkout-fresh-100000-tauto`** | **2.05×** | miss | Library checkout after **`clone --no-checkout`**; parallel file writers help but tree/blob materialization and index writes dominate. |
+| **`parallel-clone-file-100000-tauto`** | **1.53×** | miss | **`file://`** clone including checkout; within **1.6×** but above the **1.1×** close-out bar. |
+| **`parallel-index-pack-100000-tauto`** | **2.03×** | miss | In-memory **`drive index-pack`** on the repacked **100k** `.pack`; **~2.1×** Grit speedup **t1→tauto** but Git’s **`index-pack --threads=auto`** baseline is still faster. |
+
+**Within bar elsewhere:** refreshed **`network.json`** **`clone-file-prod`** ≈ **0.95×** (deep-history **`file://`** clone). **`server-clone-http-compare-prod`** remains ≫ **1.2×** (upload-pack without reachability bitmaps — tracked under the bitmap/MIDX item, not parallelism).
+
+### Thread scaling (`parallel-after.json`, Grit medians)
+
+On **4** logical CPUs, pinning **`--threads=1`** vs **`--threads=0`** (auto) shows where pool policy pays off:
+
+- **Status (dirty/clean, 100k):** ~**1.17–1.19×** faster at auto vs single-threaded Grit — parallel stat/hash helps, but the workload is still Git-limited on ratio.
+- **`parallel-index-pack-100000`:** **~2.12×** faster **t1→tauto** (Grit **~713 ms** → **~337 ms**); largest win in the suite.
+- **`parallel-switch-wide-100000`:** **~1.02×** **t1→tauto** — still **~13×** Git at auto (checkout/merge bound; not part of the 1.1× bar).
+- **`parallel-pack-write-100000`:** **~3×** **t1→tauto** on Grit medians (delta encode + zlib pool); ratio vs Git at auto ~**75×** (Git streams a highly optimized **`pack-objects`**).
+
+Refreshed companion baselines on the same VM capture **`status-*` / `add-*`** in **`suite-after-LH.json`**, **`switch-*`** in **`hot-paths-after.json`**, and **`clone-file-prod`** / **`server-clone-http-compare-prod`** in **`network.json`** (Git **2.55** for suite/network portions of the capture run).
 
 Integration smoke (tiny fixtures, sixteen scenarios; requires **hyperfine** on `PATH`): `cargo test -p grit-utils parallel_scenario_smoke_end_to_end`.
 

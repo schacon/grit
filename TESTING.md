@@ -92,6 +92,26 @@ GitHub Actions workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | **test-threaded** | `cargo test --release --workspace` with `GIT_CONFIG_COUNT` pairs forcing parallel config (`index.threads`, `pack.threads`, `checkout.workers`, `checkout.thresholdForParallelism=0`) | Same env vars as the workflow step in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | **miri** | `cargo +nightly miri test -p grit-lib --lib parallel::` over the scoped ordered pool unit tests | `rustup toolchain install nightly -c miri` then the command above |
 
+### test-threaded (release workspace with parallel config)
+
+Reproduce the CI job locally (install **Git ≥ 2.45** for reftable interop tests, same as the workflow):
+
+```bash
+export GRIT_REQUIRE_REFTABLE_GIT=1
+export GIT_CONFIG_COUNT=4
+export GIT_CONFIG_KEY_0=index.threads
+export GIT_CONFIG_VALUE_0=4
+export GIT_CONFIG_KEY_1=pack.threads
+export GIT_CONFIG_VALUE_1=4
+export GIT_CONFIG_KEY_2=checkout.workers
+export GIT_CONFIG_VALUE_2=4
+export GIT_CONFIG_KEY_3=checkout.thresholdForParallelism
+export GIT_CONFIG_VALUE_3=0
+cargo test --release --workspace
+```
+
+**Latest tracked run (2026-10-12, roadmap item 15 close-out):** [`test-threaded` job on `main` run 38201576682](https://github.com/gitbutlerapp/grit/actions/runs/38201576682/job/114655937278) — failed on `grit-lib` **`config_parse`** (`t1300_*` vs system **`git config`**) after CI upgraded to **Git 2.55**; parallel pool tests under `grit-lib/src/parallel/` still pass under this env. Re-link a green run here when `main` is green again.
+
 Each job uses **`ubuntu-latest`** (the **scripts** job uses **`timeout-minutes: 5`**; **coverage** uses **30**; the others use **15**), and the jobs run in parallel. The website has its own workflow, **[`site.yml`](.github/workflows/site.yml)** (see below).
 
 ## Coverage
