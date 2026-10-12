@@ -25,4 +25,7 @@ pub use history_harness::{
 pub use refs_harness::*;
 pub use refstore_conformance::*;
 pub use revparse_oracle::*;
-pub use revwalk_fixtures::{setup_path_simplify_history, setup_treesame_history};
+pub use revwalk_fixtures::{
+    setup_dual_merge_back_simplify_oracle, setup_first_parent_boundary_history,
+    setup_path_simplify_history, setup_treesame_history,
+};
