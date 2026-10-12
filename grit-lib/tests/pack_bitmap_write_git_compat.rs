@@ -102,7 +102,7 @@ fn reachability_positions(repo: &Repository, index: &BitmapIndex, tip: &ObjectId
 }
 
 fn all_commits(repo: &Repository) -> Vec<ObjectId> {
-    let dir = repo.work_tree().unwrap_or(&repo.git_dir());
+    let dir = repo.work_tree().unwrap_or(repo.git_dir());
     let out = Command::new("git")
         .current_dir(dir)
         .args(["rev-list", "--all"])

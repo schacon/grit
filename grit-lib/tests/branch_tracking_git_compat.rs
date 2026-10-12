@@ -3,6 +3,7 @@
 use std::process::Command;
 
 use grit_lib::branch_tracking::{stat_branch_pair, AheadBehindMode, TrackingStat};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use tempfile::TempDir;
 
@@ -71,7 +72,8 @@ fn t6040_branch_tracking_ahead_behind_matches_git() {
         .status()
         .unwrap();
 
-    let repo = Repository::discover(Some(dir.path())).expect("open");
+    let repo =
+        Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let grit_stat =
         stat_branch_pair(&repo, "topic", "refs/heads/main", AheadBehindMode::Full).expect("stat");
     let (git_left, git_right) = git_ahead_behind(dir.path(), "main", "topic");

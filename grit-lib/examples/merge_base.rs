@@ -38,7 +38,7 @@ fn commit_tree(
     index.add_or_replace(entry);
     repo.index_handle().write(&mut index)?;
     let index = repo.index_handle().load()?;
-    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
+    let tree_oid = write_tree_from_index(repo.odb(), &index, "")?;
 
     let mut parents = Vec::new();
     if let Some(p) = parent {
@@ -72,10 +72,10 @@ fn main() -> grit_lib::error::Result<()> {
     )?;
 
     let base = commit_tree(&repo, None, "common root")?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &base)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &base)?;
 
     let feature_tip = commit_tree(&repo, Some(base), "feature work")?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/feature", &feature_tip)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/feature", &feature_tip)?;
 
     let main_tip = base;
     let bases = merge_bases_first_vs_rest(&repo, feature_tip, &[main_tip])?;

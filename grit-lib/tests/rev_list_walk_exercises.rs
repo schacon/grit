@@ -69,10 +69,10 @@ fn seed_linear(repo: &Repository, n: usize) -> Vec<ObjectId> {
     let mut commits = Vec::new();
     let mut parent: Option<ObjectId> = None;
     for i in 0..n {
-        let blob = write_blob(&repo.odb(), format!("file{i}\n").as_bytes()).expect("blob");
-        let tree = write_tree(&repo.odb(), &[(0o100644, "path/file", blob)]).expect("tree");
+        let blob = write_blob(repo.odb(), format!("file{i}\n").as_bytes()).expect("blob");
+        let tree = write_tree(repo.odb(), &[(0o100644, "path/file", blob)]).expect("tree");
         let parents: Vec<ObjectId> = parent.into_iter().collect();
-        let c = write_commit(&repo.odb(), tree, &parents, &format!("c{i}")).expect("commit");
+        let c = write_commit(repo.odb(), tree, &parents, &format!("c{i}")).expect("commit");
         parent = Some(c);
         commits.push(c);
         fs::write(repo.git_dir().join("refs/heads/main"), format!("{c}\n")).expect("ref");
@@ -81,17 +81,17 @@ fn seed_linear(repo: &Repository, n: usize) -> Vec<ObjectId> {
 }
 
 fn seed_merge(repo: &Repository) -> (ObjectId, ObjectId, ObjectId) {
-    let blob = write_blob(&repo.odb(), b"shared\n").expect("blob");
-    let tree = write_tree(&repo.odb(), &[(0o100644, "path/file", blob)]).expect("tree");
-    let base = write_commit(&repo.odb(), tree, &[], "base").expect("base");
-    let blob2 = write_blob(&repo.odb(), b"side\n").expect("blob2");
+    let blob = write_blob(repo.odb(), b"shared\n").expect("blob");
+    let tree = write_tree(repo.odb(), &[(0o100644, "path/file", blob)]).expect("tree");
+    let base = write_commit(repo.odb(), tree, &[], "base").expect("base");
+    let blob2 = write_blob(repo.odb(), b"side\n").expect("blob2");
     let tree2 = write_tree(
-        &repo.odb(),
+        repo.odb(),
         &[(0o100644, "path/file", blob), (0o100644, "other", blob2)],
     )
     .expect("tree2");
-    let side = write_commit(&repo.odb(), tree2, &[base], "side").expect("side");
-    let tip = write_commit(&repo.odb(), tree2, &[base, side], "merge").expect("merge");
+    let side = write_commit(repo.odb(), tree2, &[base], "side").expect("side");
+    let tip = write_commit(repo.odb(), tree2, &[base, side], "merge").expect("merge");
     fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("ref");
     fs::write(repo.git_dir().join("refs/heads/side"), format!("{side}\n")).expect("side ref");
     (base, side, tip)
@@ -224,14 +224,14 @@ fn ref_tips_exclusions_and_revision_resolve() {
         format!("{hidden}\n"),
     )
     .expect("hidden ref");
-    let pairs = refs::list_refs(&repo.git_dir(), "refs/").expect("refs");
+    let pairs = refs::list_refs(repo.git_dir(), "refs/").expect("refs");
     let mut exclusions = RefExclusions::default();
     exclusions.add_excluded_ref("refs/hidden/*");
     let tips = commit_tips_from_named_refs(&repo, &pairs, &exclusions).expect("tips");
     assert!(!tips.contains(&hidden));
     let resolved = resolve_revision_commits(&repo, &["main".to_owned()]).expect("resolve");
     assert_eq!(resolved.len(), 1);
-    let tags = tag_targets(&repo.git_dir()).expect("tags");
+    let tags = tag_targets(repo.git_dir()).expect("tags");
     assert!(tags.is_empty());
 }
 
@@ -242,7 +242,7 @@ fn shallow_and_cat_file_reachability() {
     let commits = seed_linear(&repo, 3);
     let tip = commits.last().copied().expect("tip");
     fs::write(repo.git_dir().join("shallow"), format!("{tip}\n")).expect("shallow");
-    let bounds = shallow_boundary_oids(&repo.git_dir());
+    let bounds = shallow_boundary_oids(repo.git_dir());
     assert!(bounds.contains(&tip));
     let borders = shallow_borders_reachable_from_wants(&repo, &[tip]);
     assert_eq!(borders, vec![tip]);
@@ -258,7 +258,7 @@ fn tagged_tip_object_walk_and_symmetric_range() {
     let repo = open_bare(dir.path()).expect("repo");
     let commits = seed_linear(&repo, 3);
     let tip = commits.last().copied().expect("tip");
-    let tag_oid = write_tag(&repo.odb(), tip, "v1").expect("tag");
+    let tag_oid = write_tag(repo.odb(), tip, "v1").expect("tag");
     fs::write(repo.git_dir().join("refs/tags/v1"), format!("{tag_oid}\n")).expect("tag ref");
     let opts = RevListOptions {
         objects: true,
@@ -278,7 +278,7 @@ fn tagged_tip_object_walk_and_symmetric_range() {
     )
     .expect("range");
     assert!(!range.commits.is_empty());
-    let tag_set: HashSet<_> = tag_targets(&repo.git_dir())
+    let tag_set: HashSet<_> = tag_targets(repo.git_dir())
         .expect("tags")
         .into_iter()
         .collect();

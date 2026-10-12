@@ -10,7 +10,7 @@ use grit_lib::porcelain::switch::{
 };
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::RefStorageFormat;
@@ -20,8 +20,7 @@ use tempfile::TempDir;
 
 fn init_repo() -> (TempDir, Repository) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let repo =
-        init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     (dir, repo)
 }
 
@@ -44,16 +43,16 @@ fn grit_commit(
     contents: &str,
     parent: Option<ObjectId>,
 ) -> ObjectId {
-    let wt = repo.work_tree.as_ref().expect("wt");
-    std::fs::write(wt.join(path), contents).expect("write");
-    let mut index = repo.load_index().expect("index");
+    let work_tree = repo.work_tree().expect("wt");
+    std::fs::write(work_tree.join(path), contents).expect("write");
+    let mut index = repo.index_handle().load().expect("index");
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, contents.as_bytes())
         .expect("blob");
     index.add_or_replace(
         entry_from_stat(
-            &wt.join(path),
+            &work_tree.join(path),
             path.as_bytes(),
             oid,
             grit_lib::index::MODE_REGULAR,
@@ -61,9 +60,9 @@ fn grit_commit(
         .expect("entry"),
     );
     index.sort();
-    let tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
-    repo.write_index(&mut index).expect("write index");
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
+    repo.index_handle().write(&mut index).expect("write index");
     let commit = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -77,11 +76,11 @@ fn grit_commit(
         extra_headers: Vec::new(),
     };
     let co = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))
         .expect("commit");
-    refs::write_ref(&repo.git_dir, "refs/heads/main", &co).expect("branch");
-    refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("head");
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &co).expect("branch");
+    refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
     co
 }
 
@@ -92,16 +91,16 @@ fn grit_commit_to_ref(
     contents: &str,
     parent: Option<ObjectId>,
 ) -> ObjectId {
-    let wt = repo.work_tree.as_ref().expect("wt");
-    std::fs::write(wt.join(path), contents).expect("write");
-    let mut index = repo.load_index().expect("index");
+    let work_tree = repo.work_tree().expect("wt");
+    std::fs::write(work_tree.join(path), contents).expect("write");
+    let mut index = repo.index_handle().load().expect("index");
     let oid = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, contents.as_bytes())
         .expect("blob");
     index.add_or_replace(
         entry_from_stat(
-            &wt.join(path),
+            &work_tree.join(path),
             path.as_bytes(),
             oid,
             grit_lib::index::MODE_REGULAR,
@@ -109,9 +108,9 @@ fn grit_commit_to_ref(
         .expect("entry"),
     );
     index.sort();
-    let tree =
-        write_tree_update_index(&repo.odb, &mut index, "", WriteTreeFlags::silent()).expect("tree");
-    repo.write_index(&mut index).expect("write index");
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        .expect("tree");
+    repo.index_handle().write(&mut index).expect("write index");
     let commit = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -125,10 +124,10 @@ fn grit_commit_to_ref(
         extra_headers: Vec::new(),
     };
     let co = repo
-        .odb
+        .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit))
         .expect("commit");
-    refs::write_ref(&repo.git_dir, branch_ref, &co).expect("branch");
+    refs::write_ref(repo.git_dir(), branch_ref, &co).expect("branch");
     co
 }
 
@@ -176,7 +175,7 @@ fn run_repro_sequence(repo: &Repository) {
     )
     .expect("switch -c topic");
 
-    let main_oid = refs::resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+    let main_oid = refs::resolve_ref(repo.git_dir(), "refs/heads/main").unwrap();
     switch_repository(
         repo,
         &SwitchOptions {
@@ -220,7 +219,7 @@ fn switch_sequence_reflog_matches_git() {
     git_config(dir.path());
     run_repro_sequence(&repo);
 
-    let head_log = read_reflog(&repo.git_dir, "HEAD").expect("head reflog");
+    let head_log = read_reflog(repo.git_dir(), "HEAD").expect("head reflog");
     let checkout_msgs: Vec<_> = head_log
         .iter()
         .filter_map(|e| {
@@ -232,11 +231,11 @@ fn switch_sequence_reflog_matches_git() {
     assert_eq!(checkout_msgs.len(), 4);
     assert!(checkout_msgs.iter().any(|m| m.contains(" to HEAD~1")));
 
-    let topic_log = read_reflog(&repo.git_dir, "refs/heads/topic").expect("topic log");
+    let topic_log = read_reflog(repo.git_dir(), "refs/heads/topic").expect("topic log");
     assert_eq!(topic_log.len(), 1);
     assert_eq!(topic_log[0].message, "branch: Created from HEAD");
 
-    let b2_log = read_reflog(&repo.git_dir, "refs/heads/b2").expect("b2 log");
+    let b2_log = read_reflog(repo.git_dir(), "refs/heads/b2").expect("b2 log");
     assert_eq!(b2_log.len(), 1);
     assert_eq!(b2_log[0].message, "branch: Created from main");
 
@@ -269,7 +268,7 @@ fn switch_minus_and_at_minus_one_return_previous_branch() {
         },
     )
     .expect("topic");
-    let main_oid = refs::resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+    let main_oid = refs::resolve_ref(repo.git_dir(), "refs/heads/main").unwrap();
     switch_repository(
         &repo,
         &SwitchOptions {
@@ -328,7 +327,7 @@ fn checkout_appends_existing_head_reflog_when_log_all_ref_updates_false() {
         .status()
         .expect("git config");
 
-    let before = read_reflog(&repo.git_dir, "HEAD").expect("head log");
+    let before = read_reflog(repo.git_dir(), "HEAD").expect("head log");
     assert_eq!(before.len(), 1, "git commit should seed HEAD reflog");
 
     switch_repository(
@@ -339,7 +338,7 @@ fn checkout_appends_existing_head_reflog_when_log_all_ref_updates_false() {
     )
     .expect("switch -c topic");
 
-    let after = read_reflog(&repo.git_dir, "HEAD").expect("head log after");
+    let after = read_reflog(repo.git_dir(), "HEAD").expect("head log after");
     assert_eq!(
         after.len(),
         2,
@@ -357,7 +356,7 @@ fn same_branch_switch_appends_head_checkout_reflog() {
     let (_dir, repo) = init_repo();
     let c1 = grit_commit(&repo, "f", "1\n", None);
     let _c2 = grit_commit(&repo, "f", "1\n2\n", Some(c1));
-    let main_oid = refs::resolve_ref(&repo.git_dir, "refs/heads/main").unwrap();
+    let main_oid = refs::resolve_ref(repo.git_dir(), "refs/heads/main").unwrap();
 
     switch_repository(
         &repo,
@@ -370,7 +369,7 @@ fn same_branch_switch_appends_head_checkout_reflog() {
     )
     .expect("same-branch switch");
 
-    let head_log = read_reflog(&repo.git_dir, "HEAD").expect("head log");
+    let head_log = read_reflog(repo.git_dir(), "HEAD").expect("head log");
     assert!(
         head_log
             .iter()
@@ -387,7 +386,7 @@ fn same_branch_switch_appends_head_checkout_reflog() {
 fn remote_dwim_create_uses_remote_ref_in_branch_reflog() {
     let (_dir, repo) = init_repo();
     let tip = grit_commit(&repo, "f", "1\n", None);
-    refs::write_ref(&repo.git_dir, "refs/remotes/origin/topic", &tip).expect("remote");
+    refs::write_ref(repo.git_dir(), "refs/remotes/origin/topic", &tip).expect("remote");
 
     let mode = resolve_switch_target(&repo, "topic").expect("resolve");
     match &mode {
@@ -400,7 +399,7 @@ fn remote_dwim_create_uses_remote_ref_in_branch_reflog() {
 
     switch_repository(&repo, &SwitchOptions { mode }).expect("switch");
 
-    let topic_log = read_reflog(&repo.git_dir, "refs/heads/topic").expect("topic log");
+    let topic_log = read_reflog(repo.git_dir(), "refs/heads/topic").expect("topic log");
     assert_eq!(topic_log.len(), 1);
     assert_eq!(
         topic_log[0].message,
@@ -412,9 +411,9 @@ fn remote_dwim_create_uses_remote_ref_in_branch_reflog() {
 fn unborn_symbolic_head_switch_writes_zero_to_tip_checkout_reflog() {
     let (dir, repo) = init_repo();
     git_config(dir.path());
-    refs::write_symbolic_ref(&repo.git_dir, "HEAD", "refs/heads/main").expect("symhead");
-    let _ = std::fs::remove_file(repo.git_dir.join("refs/heads/main"));
-    let head = resolve_head(&repo.git_dir).expect("head");
+    refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
+    let _ = std::fs::remove_file(repo.git_dir().join("refs/heads/main"));
+    let head = resolve_head(repo.git_dir()).expect("head");
     assert!(matches!(
         head,
         HeadState::Branch {
@@ -437,7 +436,7 @@ fn unborn_symbolic_head_switch_writes_zero_to_tip_checkout_reflog() {
     )
     .expect("switch to feature");
 
-    let head_after = resolve_head(&repo.git_dir).expect("head after");
+    let head_after = resolve_head(repo.git_dir()).expect("head after");
     assert!(matches!(
         head_after,
         HeadState::Branch {
@@ -447,7 +446,7 @@ fn unborn_symbolic_head_switch_writes_zero_to_tip_checkout_reflog() {
         } if refname == "refs/heads/feature" && oid == tip
     ));
 
-    let head_log = read_reflog(&repo.git_dir, "HEAD").expect("head log");
+    let head_log = read_reflog(repo.git_dir(), "HEAD").expect("head log");
     assert_eq!(head_log.len(), 1);
     assert!(head_log[0].old_oid.is_zero() || head_log[0].old_oid == zero_oid());
     assert_eq!(head_log[0].new_oid, tip);
@@ -477,7 +476,7 @@ fn create_branch_leaves_no_ref_when_reflog_dir_not_writable() {
     std::fs::set_permissions(&logs_heads, std::fs::Permissions::from_mode(0o755))
         .expect("restore chmod");
     assert!(
-        refs::resolve_ref(&repo.git_dir, "refs/heads/fail").is_err(),
+        refs::resolve_ref(repo.git_dir(), "refs/heads/fail").is_err(),
         "branch ref must not exist when reflog write fails"
     );
 }

@@ -1579,7 +1579,7 @@ mod coverage_tests {
         index.sort();
         repo.write_index(&mut index).unwrap();
         let tree = write_stash_tree_from_index(&repo, &mut index).unwrap();
-        let parent = refs::resolve_ref(repo.git_dir()(), "HEAD").ok();
+        let parent = refs::resolve_ref(repo.git_dir(), "HEAD").ok();
         let commit = CommitData {
             tree,
             parents: parent.into_iter().collect(),
@@ -1593,8 +1593,8 @@ mod coverage_tests {
             extra_headers: Vec::new(),
         };
         let commit_oid = write_commit_object(&repo, &commit, None).unwrap();
-        refs::write_ref(repo.git_dir()(), "HEAD", &commit_oid).unwrap();
-        refs::write_ref(repo.git_dir()(), "refs/heads/main", &commit_oid).unwrap();
+        refs::write_ref(repo.git_dir(), "HEAD", &commit_oid).unwrap();
+        refs::write_ref(repo.git_dir(), "refs/heads/main", &commit_oid).unwrap();
         repo
     }
 

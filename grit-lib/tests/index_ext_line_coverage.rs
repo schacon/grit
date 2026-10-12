@@ -356,7 +356,7 @@ fn split_index_rebuild_when_change_exceeds_max_percent() {
     repo.index_handle()
         .write(&mut idx)
         .expect("rewrite triggers rebuild");
-    assert!(support::list_sharedindex_paths(&repo.git_dir()).len() >= 1);
+    assert!(support::list_sharedindex_paths(repo.git_dir()).len() >= 1);
 }
 
 #[test]

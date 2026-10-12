@@ -100,7 +100,7 @@ fn grit_init_add_nfd_untracked_stores_nfc_in_index() {
 
     let repo =
         Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("discover repo");
-    let head_state = resolve_head(&repo.git_dir()).expect("resolve head");
+    let head_state = resolve_head(repo.git_dir()).expect("resolve head");
     let head = head_state.oid().expect("HEAD after commit").clone();
     let commit_obj = repo.odb().read(&head).expect("read commit");
     let commit_data = parse_commit(&commit_obj.data).expect("parse commit");

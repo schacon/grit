@@ -21,7 +21,7 @@ fn main() -> grit_lib::error::Result<()> {
 
     let repo = Repository::discover(Some(path), &RepositoryOptions::empty())?;
     let mut index = repo.index_handle().load()?;
-    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.index_handle().write(&mut index)?;
     println!("{tree}");
     Ok(())

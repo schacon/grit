@@ -25,22 +25,22 @@ fn exercise_index_public_api(repo: &Repository, index: &mut Index) {
     let _ = index.has_unmerged_entries();
     let _ = index.has_sparse_directory_placeholders();
     let _ = index.format_cache_tree_dump();
-    let _ = index.dump_cache_tree(&repo.odb());
+    let _ = index.dump_cache_tree(repo.odb());
     let _ = index.split_index_base_oid();
     index.invalidate_cache_tree_for_path(b"a");
     index.invalidate_untracked_cache_for_path("a/f0.txt");
     index.dedup_paths_keep_last();
     index.sync_fsmonitor_dirty_bitmap();
     let _ = index.has_stage0_descendant_under("a");
-    let _ = write_tree_update_index(&repo.odb(), index, "", WriteTreeFlags::default());
-    let _ = Index::load_expand_sparse(&repo.index_handle().path(), &repo.odb());
+    let _ = write_tree_update_index(repo.odb(), index, "", WriteTreeFlags::default());
+    let _ = Index::load_expand_sparse(&repo.index_handle().path(), repo.odb());
     if let Ok(head) = grit_lib::rev_parse::resolve_revision(repo, "HEAD") {
         let head_obj = repo.odb().read(&head).ok();
         if let Some(obj) = head_obj {
             if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {
                 let patterns = vec!["/*".to_string(), "!/*/".to_string()];
                 let _ = index.try_collapse_sparse_directories(
-                    &repo.odb(),
+                    repo.odb(),
                     &commit.tree,
                     &patterns,
                     true,

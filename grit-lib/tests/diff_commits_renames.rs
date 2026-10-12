@@ -51,7 +51,7 @@ fn diff_commits_with_renames_reports_pure_rename() {
     )
     .expect("open");
     let entries =
-        diff_commits_with_renames(&repo.odb(), &base, &tip, 50).expect("diff_commits_with_renames");
+        diff_commits_with_renames(repo.odb(), &base, &tip, 50).expect("diff_commits_with_renames");
     assert_eq!(
         entries.len(),
         1,

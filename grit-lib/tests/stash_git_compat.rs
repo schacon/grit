@@ -773,7 +773,7 @@ fn stash_push_u_tracked_file_replaced_by_untracked_dir_pop_refuses() {
         .expect("push")
         .expect("stash oid");
 
-    let stash_obj = repo.odb.read(&stash_oid).expect("read stash");
+    let stash_obj = repo.odb().read(&stash_oid).expect("read stash");
     let stash_commit = parse_commit(&stash_obj.data).expect("parse stash");
     assert_eq!(
         stash_commit.parents.len(),

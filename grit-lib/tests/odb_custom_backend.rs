@@ -114,7 +114,7 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
 
     let tip = commit.to_hex();
     let listed =
@@ -135,7 +135,7 @@ fn memory_primary_revwalk_diff_without_loose_objects() {
         .odb()
         .write(ObjectKind::Tree, &tree2_body)
         .expect("tree2");
-    let diff = diff_trees(&repo.odb(), Some(&tree2), Some(&tree), "").expect("diff");
+    let diff = diff_trees(repo.odb(), Some(&tree2), Some(&tree), "").expect("diff");
     assert!(!diff.is_empty());
 
     assert_eq!(
@@ -223,7 +223,7 @@ fn files_primary_gc_prunes_unreachable_loose() {
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
 
     let orphan_payload = b"orphan\n";
     let orphan_oid = grit_lib::hash::hash_object(
@@ -241,7 +241,7 @@ fn files_primary_gc_prunes_unreachable_loose() {
         "gc must prune unreachable loose objects"
     );
     assert!(repo.odb().read(&kept_blob).is_ok());
-    let stats = prune_loose_unreachable(&repo.odb(), &[commit], None).expect("verify prune");
+    let stats = prune_loose_unreachable(repo.odb(), &[commit], None).expect("verify prune");
     assert_eq!(stats.pruned, 0, "gc should have already pruned orphans");
 }
 
@@ -295,7 +295,7 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
         .odb()
         .write(ObjectKind::Blob, b"tagged-blob\n")
         .expect("blob");
-    write_ref(&repo.git_dir(), "refs/tags/blob-tip", &blob).expect("blob ref");
+    write_ref(repo.git_dir(), "refs/tags/blob-tip", &blob).expect("blob ref");
 
     let tree_body = serialize_tree(&[TreeEntry {
         mode: 0o100644,
@@ -306,7 +306,7 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
         .odb()
         .write(ObjectKind::Tree, &tree_body)
         .expect("tree");
-    write_ref(&repo.git_dir(), "refs/tags/tree-tip", &tree).expect("tree ref");
+    write_ref(repo.git_dir(), "refs/tags/tree-tip", &tree).expect("tree ref");
 
     let tag_bytes = serialize_tag(&TagData {
         object: blob,
@@ -319,7 +319,7 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
         .odb()
         .write(ObjectKind::Tag, &tag_bytes)
         .expect("tag object");
-    write_ref(&repo.git_dir(), "refs/tags/annotated", &tag_oid).expect("tag ref");
+    write_ref(repo.git_dir(), "refs/tags/annotated", &tag_oid).expect("tag ref");
 
     repo.odb().gc().expect("gc");
 

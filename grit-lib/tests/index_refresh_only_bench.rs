@@ -38,14 +38,14 @@ fn refresh_index_stat_only_timing() {
     let index_mtime = index.source_mtime;
     let config = grit_lib::config::ConfigSet::load(
         &grit_lib::environment::Environment::capture_process(),
-        Some(&repo.git_dir()),
+        Some(repo.git_dir()),
         true,
     )
     .unwrap_or_default();
     let start = Instant::now();
     let _ = refresh_index_stat_content_verified(
-        &repo.odb(),
-        &repo.git_dir(),
+        repo.odb(),
+        repo.git_dir(),
         &mut index,
         root,
         index_mtime,

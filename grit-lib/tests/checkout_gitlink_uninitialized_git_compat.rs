@@ -58,7 +58,7 @@ fn checkout_uninitialized_gitlink_matches_git_clone() {
         &RepositoryOptions::empty().with_work_tree(&grit_dest),
     )
     .expect("open bare+wt");
-    let head_oid = grit_lib::refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head");
+    let head_oid = grit_lib::refs::resolve_ref(repo.git_dir(), "HEAD").expect("head");
     let head_obj = repo.odb().read(&head_oid).expect("read");
     let commit = grit_lib::objects::parse_commit(&head_obj.data).expect("commit");
     checkout_between_trees(&repo, None, &commit.tree).expect("checkout with gitlink");
@@ -139,7 +139,7 @@ fn checkout_removes_uninitialized_gitlink_on_delete() {
     )
     .expect("open");
     let changes =
-        diff_trees(&repo.odb(), Some(&with_sub_tree), Some(&no_sub_tree), "").expect("diff");
+        diff_trees(repo.odb(), Some(&with_sub_tree), Some(&no_sub_tree), "").expect("diff");
     let sub_delete = changes
         .iter()
         .find(|c| c.status == DiffStatus::Deleted && c.old_path.as_deref() == Some("sub"))

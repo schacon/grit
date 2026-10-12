@@ -25,7 +25,7 @@ fn open_grit(wt: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn disambiguate_config_with_ambiguous_prefix() {
 
     let (_dir, repo, prefix) = bare_repo_with_ambiguous_prefix(8_000);
     std::fs::write(
-        repo.git_dir.join("config"),
+        repo.git_dir().join("config"),
         "[core]\n\tdisambiguate = treeish\n",
     )
     .expect("config");

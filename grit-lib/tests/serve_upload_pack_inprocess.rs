@@ -2,9 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use std::io::Cursor;
 
@@ -15,24 +16,24 @@ fn pkt_line(payload: &str) -> Vec<u8> {
 
 fn seed_bare_main(repo: &Repository) -> ObjectId {
     let blob = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"payload\n")
         .expect("blob");
     let tree_body = format!("100644 file.txt\0").into_bytes();
     let mut tree_bytes = tree_body;
     tree_bytes.extend_from_slice(blob.as_bytes());
     let tree = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, &tree_bytes)
         .expect("tree");
     let commit_body = format!(
         "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nseed\n"
     );
     let tip = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
-    std::fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("ref");
+    std::fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("ref");
     tip
 }
 
@@ -48,8 +49,17 @@ fn v0_stateless_fetch_body(want: ObjectId) -> Vec<u8> {
 #[test]
 fn upload_pack_v0_advertise_and_stateless_fetch() {
     let dir = tempfile::tempdir().expect("tempdir");
-    init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
-    let repo = Repository::open(dir.path(), None).expect("open");
+    Repository::init(
+        dir.path(),
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".into(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
+    let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
     let tip = seed_bare_main(&repo);
 
     let mut ad_out = Vec::new();
@@ -88,8 +98,17 @@ fn upload_pack_v0_advertise_and_stateless_fetch() {
 #[test]
 fn upload_pack_v1_and_v2_entry_points() {
     let dir = tempfile::tempdir().expect("tempdir");
-    init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
-    let repo = Repository::open(dir.path(), None).expect("open");
+    Repository::init(
+        dir.path(),
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".into(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
+    let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
     let tip = seed_bare_main(&repo);
 
     let mut v1_out = Vec::new();

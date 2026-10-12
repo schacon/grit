@@ -3,6 +3,7 @@
 use grit_lib::branch_tracking::shorten_tracking_ref;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::crlf::{convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs};
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::gitmodules::{
     check_submodule_name, check_submodule_url, validate_gitmodules_blob_line,
 };
@@ -47,18 +48,12 @@ fn gitmodules_and_submodule_gitdir_helpers() {
 #[test]
 fn state_detect_and_repo_state_on_fresh_repo() {
     let dir = TempDir::new().expect("tempdir");
-    grit_lib::repo::init_repository(
-        dir.path(),
-        false,
-        "main",
-        None,
-        grit_lib::RefStorageFormat::Files,
-    )
-    .expect("init");
+    grit_lib::repo::Repository::init(dir.path(), &grit_lib::repo::InitOptions::default())
+        .expect("init");
     let git_dir = dir.path().join(".git");
     assert!(detect_in_progress(&git_dir).is_empty());
     let _head = resolve_head(&git_dir).expect("head");
-    let _repo = Repository::discover(Some(dir.path())).expect("open");
+    let _repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let _rs = repo_state(&git_dir, false).expect("repo_state");
     assert_eq!(
         shorten_tracking_ref("refs/remotes/origin/main"),

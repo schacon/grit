@@ -51,7 +51,7 @@ impl<'repo> RepositoryBundles<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let spec = BundleSpec {
     ///     include: vec![(ObjectId::zero(), "refs/heads/main".into())],
     ///     ..Default::default()
@@ -78,7 +78,7 @@ impl<'repo> RepositoryBundles<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let report = repo.bundles().verify(Path::new("changes.bundle"))?;
     /// assert!(report.is_ok() || !report.missing_prerequisites.is_empty());
     /// # Ok(())

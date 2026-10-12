@@ -8,6 +8,7 @@ use grit_lib::notes::NotesRef;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::remote::ListRefsOptions;
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::repo_handles::{
     LockWorktreeOptions, NotesWriteOptions, StashApplyOptions, StashPushOptions,
@@ -26,7 +27,11 @@ fn init_repo(root: &Path) {
 }
 
 fn open_grit(root: &Path) -> Repository {
-    Repository::open(&root.join(".git"), Some(root)).expect("open grit repo")
+    Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open grit repo")
 }
 
 fn assert_fsck_strict(root: &Path) {
@@ -407,10 +412,10 @@ fn handle_notes_add_rejects_invalid_existing_notes_ref() {
 
     let repo = open_grit(dir.path());
     let blob = repo
-        .odb
+        .odb()
         .write(ObjectKind::Blob, b"not a commit\n")
         .expect("blob");
-    refs::write_ref(&repo.git_dir, "refs/notes/commits", &blob).expect("seed bad notes ref");
+    refs::write_ref(repo.git_dir(), "refs/notes/commits", &blob).expect("seed bad notes ref");
 
     let notes_before = git_cmd(dir.path(), &["rev-parse", "refs/notes/commits"]);
     let err = repo

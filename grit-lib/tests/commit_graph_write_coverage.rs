@@ -44,7 +44,7 @@ fn linear_repo(n: usize) -> (tempfile::TempDir, Repository) {
 #[test]
 fn build_commit_graph_with_base_chain_and_filter_reuse() {
     let (dir, repo) = linear_repo(5);
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -53,14 +53,14 @@ fn build_commit_graph_with_base_chain_and_filter_reuse() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (base_bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         true,
         &bloom,
         None,
@@ -82,13 +82,13 @@ fn build_commit_graph_with_base_chain_and_filter_reuse() {
             existing.insert(*oid, bytes);
         }
     }
-    let tips = count_referenced_commit_tips(&repo.git_dir(), &repo.odb()).expect("tips");
+    let tips = count_referenced_commit_tips(repo.git_dir(), repo.odb()).expect("tips");
     assert!(tips >= 1);
 
     std::fs::write(dir.path().join("extra.txt"), b"x\n").unwrap();
     git_cmd(dir.path(), &["add", "extra.txt"]);
     git_cmd(dir.path(), &["commit", "-q", "-m", "extra tip"]);
-    sorted = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    sorted = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -97,13 +97,13 @@ fn build_commit_graph_with_base_chain_and_filter_reuse() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("info"),
         );
     }
     let (split_bytes, stats) = build_commit_graph_bytes(
         &sorted[sorted.len() - 1..].to_vec(),
         &infos,
-        &repo.odb(),
+        repo.odb(),
         true,
         &bloom,
         Some(&chain),
@@ -121,7 +121,7 @@ fn build_commit_graph_with_base_chain_and_filter_reuse() {
 #[test]
 fn build_without_generation_or_bloom_chunks() {
     let (_dir, repo) = linear_repo(2);
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -130,14 +130,14 @@ fn build_without_generation_or_bloom_chunks() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         false,
         &bloom,
         None,
@@ -170,7 +170,7 @@ fn build_reuses_upgraded_bloom_filter_bytes() {
         .expect("upgradable filter");
     let mut upgraded_map = HashMap::new();
     upgraded_map.insert(oid, upgraded);
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -179,13 +179,13 @@ fn build_reuses_upgraded_bloom_filter_bytes() {
     for o in &sorted {
         infos.insert(
             *o,
-            load_commit_graph_commit_info(&repo.odb(), *o).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *o).expect("info"),
         );
     }
     let (_bytes, stats) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         true,
         &v2,
         None,
@@ -212,7 +212,7 @@ fn build_includes_base_graph_hash_chunk() {
     let hash_bytes: Vec<u8> = (0..base_hash.len() / 2)
         .map(|i| u8::from_str_radix(&base_hash[i * 2..i * 2 + 2], 16).expect("hex"))
         .collect();
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -221,7 +221,7 @@ fn build_includes_base_graph_hash_chunk() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
@@ -229,7 +229,7 @@ fn build_includes_base_graph_hash_chunk() {
     let (bytes, _) = build_commit_graph_bytes(
         &tip_only,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         false,
         &bloom,
         Some(&chain),

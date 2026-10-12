@@ -2,9 +2,10 @@
 
 use std::fs;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 
 pub fn ambiguous_hex_prefix_among(
     oids: &[ObjectId],
@@ -31,10 +32,19 @@ pub fn bare_repo_with_ambiguous_prefix(
     max_commits: usize,
 ) -> (tempfile::TempDir, Repository, String) {
     let dir = tempfile::tempdir().expect("tempdir");
-    init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
-    let repo = Repository::open(dir.path(), None).expect("open");
+    Repository::init(
+        dir.path(),
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".into(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )
+    .expect("init");
+    let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");
     let tree = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, b"")
         .expect("tree");
     let mut oids = Vec::new();
@@ -45,7 +55,7 @@ pub fn bare_repo_with_ambiguous_prefix(
         );
         counter += 1;
         let oid = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
             .expect("commit");
         oids.push(oid);
@@ -58,6 +68,6 @@ pub fn bare_repo_with_ambiguous_prefix(
         );
     };
     let tip = *oids.last().expect("tip");
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("main");
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("main");
     (dir, repo, prefix)
 }

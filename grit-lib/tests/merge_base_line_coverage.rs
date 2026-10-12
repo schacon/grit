@@ -76,7 +76,7 @@ fn resolve_commit_specs_and_ancestor_closure() {
     assert_eq!(resolved, vec![g, h]);
     let g_anc = ancestor_closure(&repo, g).expect("closure");
     assert!(g_anc.contains(&b));
-    assert!(is_ancestor_odb_walk(&repo.odb(), b, h).expect("odb walk"));
+    assert!(is_ancestor_odb_walk(repo.odb(), b, h).expect("odb walk"));
 }
 
 #[test]

@@ -66,7 +66,7 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
     let source_oid = ObjectId::from_hex(source_hex).expect("source");
     let source_obj = repo.odb().read(&source_oid)?;
     let source = grit_lib::objects::parse_commit(&source_obj.data)?;
-    let head_oid = refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head");
+    let head_oid = refs::resolve_ref(repo.git_dir(), "HEAD").expect("head");
     let head_obj = repo.odb().read(&head_oid)?;
     let head_commit = grit_lib::objects::parse_commit(&head_obj.data)?;
     let head_tree = head_commit.tree;
@@ -87,7 +87,7 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
         TreeMergeConflictPresentation::default(),
     )?;
     let mut index = merged.index;
-    let new_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let new_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
     let commit_data = CommitData {
         tree: new_tree,
@@ -104,7 +104,7 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
     let new_oid = repo
         .odb()
         .write(ObjectKind::Commit, &serialize_commit(&commit_data))?;
-    refs::write_ref(&repo.git_dir(), "HEAD", &new_oid).expect("update head");
+    refs::write_ref(repo.git_dir(), "HEAD", &new_oid).expect("update head");
     Ok(())
 }
 

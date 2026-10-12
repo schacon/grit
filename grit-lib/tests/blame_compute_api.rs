@@ -60,7 +60,7 @@ fn compute_blame_public_entry_point_attributes_lines() {
     let grafts = HashMap::new();
 
     let lines = compute_blame(
-        &repo.odb(),
+        repo.odb(),
         start,
         "f.txt",
         &ignore_revs,

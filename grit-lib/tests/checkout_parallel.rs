@@ -54,10 +54,10 @@ fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
     use grit_lib::porcelain::add::{stage, StageOptions};
     stage(repo, &StageOptions::default(), &mut NullProgress).expect("stage");
     let mut index = repo.index_handle().load().expect("index");
-    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
     repo.index_handle().write(&mut index).expect("write index");
-    let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
+    let parent = refs::resolve_ref(repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -75,7 +75,7 @@ fn commit_tree(repo: &Repository, message: &str) -> ObjectId {
         .odb()
         .write(ObjectKind::Commit, &bytes)
         .expect("commit");
-    refs::write_ref(&repo.git_dir(), "HEAD", &commit_oid).expect("head");
+    refs::write_ref(repo.git_dir(), "HEAD", &commit_oid).expect("head");
     tree
 }
 
@@ -242,7 +242,7 @@ fn checkout_diff_with_policy(
             pin_worktree_mtrees(wt);
         }
     }
-    let changes = diff_trees(&repo.odb(), from.as_ref(), Some(&to), "").expect("diff");
+    let changes = diff_trees(repo.odb(), from.as_ref(), Some(&to), "").expect("diff");
     checkout_tree_changes(&repo, &changes).expect("checkout");
     let wt = repo.work_tree().expect("wt");
     let snap = snapshot_worktree(wt);
@@ -353,7 +353,7 @@ fn parallel_matches_serial_gitlink_and_replacements() {
         base_index_pos: 0,
     });
     index.sort();
-    let base_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let base_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
     fs::remove_dir_all(wt.join("sub")).ok();
     fs::remove_file(wt.join("file")).ok();
@@ -378,7 +378,7 @@ fn parallel_matches_serial_gitlink_and_replacements() {
     );
     index.add_or_replace(entry_from_stat(&wt.join("link"), b"link", link_oid, 0o120000).unwrap());
     index.sort();
-    let to_tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let to_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree2");
     checkout_between_trees(&repo, Some(&base_tree), &to_tree).expect("seed serial");
     let snap_serial = snapshot_worktree(wt);
@@ -423,7 +423,7 @@ fn external_smudge_filter_runs_once_via_recording_runner() {
         entry_from_stat(&wt.join("filtered"), b"filtered", blob, MODE_REGULAR).expect("e"),
     );
     index.sort();
-    let _tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let _tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
     let tree1 = commit_tree(&repo, "c1");
     fs::write(wt.join("filtered"), b"blob2\n").expect("new blob for checkout");
@@ -489,7 +489,7 @@ fn ignorecase_collision_uses_serial_path_and_matches() {
         );
     }
     index.sort();
-    let from = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let from = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
     fs::write(wt.join("other.txt"), b"changed\n").expect("chg");
     let to = commit_tree(&repo, "tip");

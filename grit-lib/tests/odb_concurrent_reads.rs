@@ -89,7 +89,7 @@ fn odb_concurrent_reads() {
             batch_oids.push(oid);
         }
         let pack = build_pack(
-            &repo.odb(),
+            repo.odb(),
             &batch_oids,
             &[],
             &PackBuildOptions {
@@ -235,7 +235,7 @@ fn stale_read_after_invalidation() {
         .write(ObjectKind::Blob, b"only-in-pack\n")
         .expect("write blob");
     let pack = build_pack(
-        &repo.odb(),
+        repo.odb(),
         &[oid],
         &[],
         &PackBuildOptions {

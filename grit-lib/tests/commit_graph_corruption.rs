@@ -292,7 +292,7 @@ fn corrupt_graph_generation_inconsistency_and_trailer() {
     expect_corrupt_load(&objects, &path, bytes.clone());
 
     let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -301,14 +301,14 @@ fn corrupt_graph_generation_inconsistency_and_trailer() {
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (good, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         false,
         &bloom,
         None,

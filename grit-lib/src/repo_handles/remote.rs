@@ -40,7 +40,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let names = repo.remotes().list()?;
     /// let _ = names;
     /// # Ok(())
@@ -63,7 +63,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// if let Ok(origin) = repo.remotes().get("origin") {
     ///     let _url = origin.fetch_url();
     /// }
@@ -102,7 +102,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let remote = Remote::from_url("/path/to/other.git")?;
     /// let refs = repo.remotes().ls_remote(&remote, &ListRefsOptions::default(), None)?;
     /// let _ = refs.len();
@@ -133,7 +133,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # use grit_lib::transfer::FetchOptions;
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let remote = Remote::from_url("/path/to/upstream.git")?;
     /// let mut progress = NoProgress;
     /// let _out = repo
@@ -167,7 +167,7 @@ impl<'repo> RepositoryRemotes<'repo> {
     /// # use grit_lib::transfer::{PushOptions, PushRefSpec};
     /// # use std::path::Path;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let remote = Remote::from_url("/path/to/upstream.git")?;
     /// let mut progress = NoProgress;
     /// let refs: Vec<PushRefSpec> = Vec::new();

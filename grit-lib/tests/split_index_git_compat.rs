@@ -63,7 +63,7 @@ fn t1700_split_index_written_by_grit_read_by_git() {
         "grit index must contain link extension"
     );
     assert_eq!(
-        list_sharedindex_paths(&repo.git_dir()).len(),
+        list_sharedindex_paths(repo.git_dir()).len(),
         1,
         "expected one sharedindex file"
     );
@@ -110,7 +110,7 @@ fn t1700_git_split_index_read_by_grit() {
         raw.split_index_base_oid().is_some(),
         "on-disk index keeps link before merge"
     );
-    resolve_split_index_if_needed(&mut raw, &repo.git_dir(), &repo.index_handle().path())
+    resolve_split_index_if_needed(&mut raw, repo.git_dir(), &repo.index_handle().path())
         .expect("resolve split");
     assert_eq!(raw.entries().len(), 30);
     assert_index_matches_git(root, &repo);
@@ -158,7 +158,7 @@ fn t1700_max_percent_change_rewrites_shared_index() {
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.index_handle().load().expect("load");
     repo.index_handle().write(&mut idx).expect("initial split");
-    let first_shared = list_sharedindex_paths(&repo.git_dir());
+    let first_shared = list_sharedindex_paths(repo.git_dir());
     assert_eq!(first_shared.len(), 1);
     let first_oid = first_shared[0]
         .file_name()
@@ -186,7 +186,7 @@ fn t1700_max_percent_change_rewrites_shared_index() {
     repo.index_handle()
         .write(&mut idx)
         .expect("rewrite after local additions");
-    let shared = list_sharedindex_paths(&repo.git_dir());
+    let shared = list_sharedindex_paths(repo.git_dir());
     let second_oid = shared
         .iter()
         .map(|p| {
@@ -217,7 +217,7 @@ fn t1700_shared_index_expire_removes_stale_file() {
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut idx = repo.index_handle().load().expect("load");
     repo.index_handle().write(&mut idx).expect("split");
-    let first = list_sharedindex_paths(&repo.git_dir());
+    let first = list_sharedindex_paths(repo.git_dir());
     assert_eq!(first.len(), 1);
 
     // Force a rebuild with a new shared base while leaving the old file on disk.
@@ -226,7 +226,7 @@ fn t1700_shared_index_expire_removes_stale_file() {
     idx.add_or_replace(entry_from_worktree_path(&repo, "force-rebuild.txt", b"x\n"));
     repo.index_handle().write(&mut idx).expect("rebuild shared");
 
-    let all = list_sharedindex_paths(&repo.git_dir());
+    let all = list_sharedindex_paths(repo.git_dir());
     assert_eq!(
         all.len(),
         2,
@@ -250,7 +250,7 @@ fn t1700_shared_index_expire_removes_stale_file() {
         .write(&mut idx)
         .expect("write triggers cleanup");
 
-    let remaining: Vec<_> = list_sharedindex_paths(&repo.git_dir())
+    let remaining: Vec<_> = list_sharedindex_paths(repo.git_dir())
         .into_iter()
         .filter(|p| p != stale)
         .collect();
@@ -313,7 +313,7 @@ fn t1701_racy_split_index_entries_rechecked() {
     let mut grit_index = repo.index_handle().load().expect("reload");
     assert_eq!(grit_index.source_mtime, Some(index_mtime));
     let diff =
-        diff_index_to_worktree(&repo.odb(), &mut grit_index, root, false, false).expect("diff");
+        diff_index_to_worktree(repo.odb(), &mut grit_index, root, false, false).expect("diff");
     assert_eq!(
         diff.len(),
         1,

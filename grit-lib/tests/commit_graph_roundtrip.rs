@@ -62,7 +62,7 @@ fn git_available() -> bool {
 }
 
 fn sorted_commit_set(repo: &Repository) -> Vec<ObjectId> {
-    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb())
+    let mut sorted: Vec<ObjectId> = collect_reachable_commit_oids(repo.git_dir(), repo.odb())
         .expect("commits")
         .into_iter()
         .collect();
@@ -78,7 +78,7 @@ fn commit_infos(
     for oid in sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("commit info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("commit info"),
         );
     }
     infos
@@ -95,7 +95,7 @@ fn write_grit_graph_file(
     let (bytes, _stats) = build_commit_graph_bytes(
         sorted,
         infos,
-        &repo.odb(),
+        repo.odb(),
         changed_paths,
         &bloom,
         None,
@@ -259,7 +259,7 @@ fn grit_written_graph_verify_and_topo_rev_list() {
     );
 
     let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("load grit graph");
-    assert_chain_matches_objects(&chain, &repo.odb());
+    assert_chain_matches_objects(&chain, repo.odb());
     assert!(chain.layer_commit_counts_tip_first()[0] > 0);
 }
 
@@ -297,7 +297,7 @@ fn git_written_graph_grit_chain_api_matches_objects() {
         .expect("graph");
     assert!(chain.num_layers() >= 1);
     assert!(chain.top_layer_bloom_settings().is_some());
-    assert_chain_matches_objects(&chain, &repo.odb());
+    assert_chain_matches_objects(&chain, repo.odb());
     let _ = chain.layer_hashes_tip_first();
     let _ = chain.layer_has_generation_data_tip_first();
     let _ = chain.sub_chain_tip_first(0, 1);
@@ -354,9 +354,9 @@ fn bloom_filter_bytes_match_git_changed_paths_graph() {
     let settings = chain.top_layer_bloom_settings().expect("bloom settings");
     assert_eq!(git_lines.len(), sorted.len());
     for (i, oid) in sorted.iter().enumerate() {
-        let info = load_commit_graph_commit_info(&repo.odb(), *oid).expect("info");
+        let info = load_commit_graph_commit_info(repo.odb(), *oid).expect("info");
         let (grit_bytes, _) =
-            bloom_filter_for_commit_write(&repo.odb(), &info.parents, info.tree, &settings)
+            bloom_filter_for_commit_write(repo.odb(), &info.parents, info.tree, &settings)
                 .expect("grit bloom");
         let git_hex = &git_lines[i];
         let grit_hex: String = grit_bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -385,14 +385,14 @@ fn high_bit_paths_bloom_and_upgrade_detection() {
     );
     let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     let tip = sorted_commit_set(&repo)[0];
-    assert!(commit_tree_has_high_bit_paths(&repo.odb(), tip));
+    assert!(commit_tree_has_high_bit_paths(repo.odb(), tip));
     let graph_path = repo.git_dir().join("objects/info/commit-graph");
     let git_lines = dump_bloom_filters(&graph_path).expect("git bloom dump");
     let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     let settings = chain.top_layer_bloom_settings().expect("bloom settings");
-    let info = load_commit_graph_commit_info(&repo.odb(), tip).expect("info");
+    let info = load_commit_graph_commit_info(repo.odb(), tip).expect("info");
     let (grit_bytes, _) =
-        bloom_filter_for_commit_write(&repo.odb(), &info.parents, info.tree, &settings)
+        bloom_filter_for_commit_write(repo.odb(), &info.parents, info.tree, &settings)
             .expect("grit bloom");
     let grit_hex: String = grit_bytes.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
@@ -539,7 +539,7 @@ fn root_commit_and_grit_only_write_without_generation_chunk() {
         path: b"f.txt".to_vec(),
         base_index_pos: 0,
     });
-    let tree = grit_lib::write_tree::write_tree_from_index(&repo.odb(), &index, "").expect("tree");
+    let tree = grit_lib::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
     let raw = serialize_commit(&CommitData {
         tree,
         parents: vec![],
@@ -553,7 +553,7 @@ fn root_commit_and_grit_only_write_without_generation_chunk() {
         extra_headers: Vec::new(),
     });
     let commit = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
-    grit_lib::refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit).expect("ref");
+    grit_lib::refs::write_ref(repo.git_dir(), "refs/heads/main", &commit).expect("ref");
     let sorted = vec![commit];
     let infos = commit_infos(&repo, &sorted);
     write_grit_graph_file(&repo, &sorted, &infos, false, false);
@@ -615,7 +615,7 @@ fn bloom_precheck_for_paths_on_git_graph() {
     let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("chain");
     let tip = sorted_commit_set(&repo).into_iter().max().expect("tip");
     let pre = chain
-        .bloom_precheck_for_paths(&repo.odb(), tip, &["f8.txt".to_owned()], None, -1, true)
+        .bloom_precheck_for_paths(repo.odb(), tip, &["f8.txt".to_owned()], None, -1, true)
         .expect("precheck");
     assert_ne!(
         pre,

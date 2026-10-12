@@ -183,7 +183,7 @@ fn grit_record_commit(
     message: &str,
 ) -> Result<ObjectId> {
     let mut index = repo.index_handle().load()?;
-    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.index_handle().write(&mut index)?;
     let commit_data = CommitData {
         tree,
@@ -199,7 +199,7 @@ fn grit_record_commit(
     };
     let bytes = serialize_commit(&commit_data);
     let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &oid)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &oid)?;
     Ok(oid)
 }
 

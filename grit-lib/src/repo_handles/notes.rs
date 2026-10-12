@@ -58,7 +58,7 @@ impl<'repo> RepositoryNotes<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let notes = repo.notes().list(&NotesRef::commits())?;
     /// let _ = notes.len();
     /// # Ok(())
@@ -111,7 +111,7 @@ impl<'repo> RepositoryNotes<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use grit_lib::repo_handles::NotesWriteOptions;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// # let repo = Repository::discover(None)?;
+    /// # let repo = Repository::discover(None, &grit_lib::environment::RepositoryOptions::empty())?;
     /// # let object = ObjectId::zero();
     /// let opts = NotesWriteOptions {
     ///     message: "add note".into(),

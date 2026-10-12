@@ -5,12 +5,13 @@ use grit_lib::diff::{
     diff_commits, diff_trees, diff_trees_with_renames, postprocess_diff_entries,
     DiffPostprocessOptions, DiffStatus,
 };
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_bare_clone_minimal, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{
     merge_bases, resolve_object_walk_roots, rev_list, OrderingMode, OutputMode, RevListOptions,
 };
@@ -42,22 +43,34 @@ fn write_commit(
 fn open_repo() -> grit_lib::error::Result<(tempfile::TempDir, Repository)> {
     let dir = tempdir().map_err(Error::Io)?;
     let path = dir.path().to_path_buf();
-    init_bare_clone_minimal(&path, "main", RefStorageFormat::Files)?;
-    Ok((dir, Repository::open(&path, None)?))
+    Repository::init(
+        &path,
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".into(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
+    Ok((dir, Repository::open(&path, &RepositoryOptions::empty())?))
 }
 
 #[test]
 fn symmetric_range_ancestry_and_object_roots() -> grit_lib::error::Result<()> {
     let (_dir, repo) = open_repo()?;
-    let b1 = repo.odb.write_loose_materialize(ObjectKind::Blob, b"a\n")?;
-    let b2 = repo.odb.write_loose_materialize(ObjectKind::Blob, b"b\n")?;
-    let t1 = write_tree(&repo.odb, "f.txt", b1)?;
-    let t2 = write_tree(&repo.odb, "f.txt", b2)?;
-    let base = write_commit(&repo.odb, t1, &[], "base")?;
-    let tip = write_commit(&repo.odb, t2, &[base], "tip")?;
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).map_err(Error::Io)?;
+    let b1 = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"a\n")?;
+    let b2 = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"b\n")?;
+    let t1 = write_tree(repo.odb(), "f.txt", b1)?;
+    let t2 = write_tree(repo.odb(), "f.txt", b2)?;
+    let base = write_commit(repo.odb(), t1, &[], "base")?;
+    let tip = write_commit(repo.odb(), t2, &[base], "tip")?;
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).map_err(Error::Io)?;
     fs::write(
-        repo.git_dir.join("refs/heads/ancestor"),
+        repo.git_dir().join("refs/heads/ancestor"),
         format!("{base}\n"),
     )
     .map_err(Error::Io)?;
@@ -81,13 +94,13 @@ fn symmetric_range_ancestry_and_object_roots() -> grit_lib::error::Result<()> {
 fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
     let (_dir, repo) = open_repo()?;
     let unchanged = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"same\n")?;
     let old_only = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"removed\n")?;
     let new_only = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"added line\n")?;
     let old_tree = {
         let mut body = Vec::new();
@@ -95,7 +108,8 @@ fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
             body.extend_from_slice(format!("100644 {n}\0").as_bytes());
             body.extend_from_slice(oid.as_bytes());
         }
-        repo.odb.write_loose_materialize(ObjectKind::Tree, &body)?
+        repo.odb()
+            .write_loose_materialize(ObjectKind::Tree, &body)?
     };
     let new_tree = {
         let mut body = Vec::new();
@@ -103,14 +117,15 @@ fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
             body.extend_from_slice(format!("100644 {n}\0").as_bytes());
             body.extend_from_slice(oid.as_bytes());
         }
-        repo.odb.write_loose_materialize(ObjectKind::Tree, &body)?
+        repo.odb()
+            .write_loose_materialize(ObjectKind::Tree, &body)?
     };
-    let base = write_commit(&repo.odb, old_tree, &[], "base")?;
-    let tip = write_commit(&repo.odb, new_tree, &[base], "tip")?;
+    let base = write_commit(repo.odb(), old_tree, &[], "base")?;
+    let tip = write_commit(repo.odb(), new_tree, &[base], "tip")?;
 
-    let raw = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "")?;
+    let raw = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "")?;
     assert!(raw.iter().any(|e| e.status == DiffStatus::Deleted));
-    let renamed = diff_trees_with_renames(&repo.odb, Some(&old_tree), Some(&new_tree), "", 30)?;
+    let renamed = diff_trees_with_renames(repo.odb(), Some(&old_tree), Some(&new_tree), "", 30)?;
     assert!(!renamed.is_empty());
 
     let config = ConfigSet::new();
@@ -122,7 +137,7 @@ fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
         ..DiffPostprocessOptions::default()
     };
     let processed = postprocess_diff_entries(
-        &repo.odb,
+        repo.odb(),
         raw,
         Some(&old_tree),
         None,
@@ -133,7 +148,7 @@ fn diff_postprocess_across_commit_pair() -> grit_lib::error::Result<()> {
     )?;
     assert!(!processed.is_empty());
 
-    let via_commits = diff_commits(&repo.odb, &base, &tip)?;
+    let via_commits = diff_commits(repo.odb(), &base, &tip)?;
     assert!(!via_commits.is_empty());
     let _ = merge_bases(&repo, tip, base, false)?;
     Ok(())

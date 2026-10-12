@@ -8657,7 +8657,7 @@ mod tests {
 mod line_coverage_tests {
     use super::*;
     use crate::objects::ObjectKind;
-    use crate::repo::{init_bare_clone_minimal, Repository};
+    use crate::repo::{InitOptions, Repository};
     use crate::RefStorageFormat;
     use std::collections::HashSet;
     use std::fs;
@@ -8671,13 +8671,23 @@ mod line_coverage_tests {
 
     fn seed_repo(depth: usize, with_merge: bool) -> (tempfile::TempDir, Repository, ObjectId) {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
-        let repo = Repository::open(dir.path(), None).expect("open");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".into(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
+        let repo = Repository::open(dir.path(), &crate::environment::RepositoryOptions::empty())
+            .expect("open");
         let blob = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, b"payload\n")
             .expect("blob");
-        let tree = write_tree_entry(&repo.odb, 0o100644, "tracked.txt", blob);
+        let tree = write_tree_entry(&repo.odb(), 0o100644, "tracked.txt", blob);
         let ident = "T <t@e.com> 100 +0000";
         let mut parent: Option<ObjectId> = None;
         let mut tips = Vec::new();
@@ -8688,7 +8698,7 @@ mod line_coverage_tests {
             }
             body.push_str(&format!("author {ident}\ncommitter {ident}\n\nc{i}\n"));
             let oid = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Commit, body.as_bytes())
                 .expect("commit");
             parent = Some(oid);
@@ -8700,19 +8710,20 @@ mod line_coverage_tests {
             let side_body =
                 format!("tree {tree}\nparent {base}\nauthor {ident}\ncommitter {ident}\n\nside\n");
             let side = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Commit, side_body.as_bytes())
                 .expect("side");
-            fs::write(repo.git_dir.join("refs/heads/side"), format!("{side}\n")).expect("side ref");
+            fs::write(repo.git_dir().join("refs/heads/side"), format!("{side}\n"))
+                .expect("side ref");
             let merge_body = format!(
                 "tree {tree}\nparent {tip}\nparent {side}\nauthor {ident}\ncommitter {ident}\n\nmerge\n"
             );
             tip = repo
-                .odb
+                .odb()
                 .write(ObjectKind::Commit, merge_body.as_bytes())
                 .expect("merge");
         }
-        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("main");
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("main");
         (dir, repo, tip)
     }
 
@@ -8799,8 +8810,8 @@ mod line_coverage_tests {
         .commits;
         assert!(commits.len() >= 4);
         let mid = commits[commits.len() / 2];
-        fs::write(repo.git_dir.join("shallow"), format!("{mid}\n")).expect("shallow");
-        let borders = shallow_boundary_oids(&repo.git_dir);
+        fs::write(repo.git_dir().join("shallow"), format!("{mid}\n")).expect("shallow");
+        let borders = shallow_boundary_oids(&repo.git_dir());
         assert!(borders.contains(&mid));
         let grafts = shallow_grafts_for_upload_pack_deepen(&repo, &[tip], &[], 2);
         assert!(!grafts.is_empty() || commits.len() <= 2);
@@ -8811,12 +8822,12 @@ mod line_coverage_tests {
         let since_grafts =
             shallow_grafts_for_upload_pack_rev_list(&repo, &[tip], &[], Some(50), &[])?;
         let _ = since_grafts;
-        let list_path = repo.git_dir.join("rev-list-input.txt");
+        let list_path = repo.git_dir().join("rev-list-input.txt");
         fs::write(&list_path, format!("main\n^{}\n", commits[0].to_hex())).expect("list");
         let lines = read_lines(&list_path)?;
         assert_eq!(lines.len(), 2);
         let (_specs, _neg, _all, paths) = collect_revision_specs_from_stdin_lines(
-            &repo.git_dir,
+            &repo.git_dir(),
             &[String::from("HEAD")],
             &["--", "tracked.txt"],
         )?;
@@ -8943,14 +8954,14 @@ mod line_coverage_tests {
         let filter = ObjectFilter::BlobLimit(512);
         let _ = reachable_object_ids_for_cat_file(&repo, Some(&filter), true)?;
         let _ = object_ids_for_cat_file_filtered(&repo, &filter)?;
-        let _ = tag_targets(&repo.git_dir)?;
+        let _ = tag_targets(&repo.git_dir())?;
         let pairs = vec![
             (String::from("refs/heads/main"), tip),
             (String::from("refs/heads/side"), tip),
         ];
         let _ = commit_tips_from_named_refs(&repo, &pairs, &RefExclusions::default())?;
         let (_pos, _neg, _all, _paths) =
-            collect_revision_specs_with_stdin(&repo.git_dir, &[String::from("main")], false)?;
+            collect_revision_specs_with_stdin(&repo.git_dir(), &[String::from("main")], false)?;
         let borders = shallow_borders_reachable_from_wants(&repo, &[tip]);
         let _ = borders;
         Ok(())

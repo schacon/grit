@@ -15,7 +15,7 @@ use grit_lib::interpret_trailers::{
 };
 use grit_lib::objects::ObjectKind;
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rerere::{
     repo_rerere, rerere_clear, rerere_conflict_id, rerere_diff_for_path, rerere_enabled, rerere_gc,
     rerere_post_commit, rerere_remaining_lines, rerere_status_lines, RerereAutoupdate,
@@ -25,20 +25,19 @@ use tempfile::tempdir;
 
 fn linear_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::objects::ObjectId) {
     let dir = tempdir().expect("tempdir");
-    let repo =
-        init_repository(dir.path(), false, "main", None, RefStorageFormat::Files).expect("init");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     let mut parent: Option<grit_lib::objects::ObjectId> = None;
-    let mut tip = repo.odb.write(ObjectKind::Blob, b"v0\n").expect("blob");
+    let mut tip = repo.odb().write(ObjectKind::Blob, b"v0\n").expect("blob");
     for i in 0..depth {
         fs::write(dir.path().join("track.txt"), format!("v{i}\n")).expect("wt");
         let blob = repo
-            .odb
+            .odb()
             .write(ObjectKind::Blob, format!("v{i}\n").as_bytes())
             .expect("blob");
         let tree_body = format!("100644 track.txt\0").into_bytes();
         let mut tree = tree_body;
         tree.extend_from_slice(blob.as_bytes());
-        let tree_oid = repo.odb.write(ObjectKind::Tree, &tree).expect("tree");
+        let tree_oid = repo.odb().write(ObjectKind::Tree, &tree).expect("tree");
         let mut body = format!("tree {tree_oid}\n");
         if let Some(p) = parent {
             body.push_str(&format!("parent {p}\n"));
@@ -49,12 +48,12 @@ fn linear_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::object
             100 + i as i64
         ));
         tip = repo
-            .odb
+            .odb()
             .write(ObjectKind::Commit, body.as_bytes())
             .expect("commit");
         parent = Some(tip);
     }
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n")).expect("ref");
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("ref");
     (dir, repo, tip)
 }
 
@@ -91,7 +90,7 @@ fn blame_apply_binary_and_trailer_sweep() -> grit_lib::error::Result<()> {
     let _ = trailer_if_missing_from_str("doNothing");
     let msg = "subject\n\nSigned-off-by: T <t@e.com>\n";
     let opts = ProcessTrailerOptions::default();
-    let _ = process_trailers(msg, &opts, &[], Some(&repo.git_dir));
+    let _ = process_trailers(msg, &opts, &[], Some(repo.git_dir()));
     let _ = complete_line("partial");
     Ok(())
 }
@@ -100,21 +99,19 @@ fn blame_apply_binary_and_trailer_sweep() -> grit_lib::error::Result<()> {
 fn rerere_and_repository_index_paths() -> grit_lib::error::Result<()> {
     let (dir, repo, _) = linear_repo(6);
     let cfg = ConfigSet::new();
-    let _ = rerere_enabled(&cfg, &repo.git_dir);
-    let _ = rerere_conflict_id(repo.odb.hash_algo(), "<<<<<<<\n", 7);
+    let _ = rerere_enabled(&cfg, repo.git_dir());
+    let _ = rerere_conflict_id(repo.odb().hash_algo(), "<<<<<<<\n", 7);
     let _ = repo_rerere(&repo, RerereAutoupdate::No)?;
     let _ = rerere_status_lines(&repo)?;
     let _ = rerere_remaining_lines(&repo)?;
     let _ = rerere_diff_for_path(&repo, "track.txt")?;
     let _ = rerere_post_commit(&repo)?;
-    let _ = rerere_clear(&repo.git_dir);
-    let _ = rerere_gc(repo.environment(), &repo.git_dir, 200)?;
+    let _ = rerere_clear(repo.git_dir());
+    let _ = rerere_gc(repo.environment(), repo.git_dir(), 200)?;
 
     let _ = repo.reload_config();
-    let _ = Repository::open_for_serving(dir.path(), &RepositoryOptions::empty());
-    let mut index = repo.load_index()?;
-    let mut lock = repo.begin_index_update()?;
-    let _ = repo.flush_index_update(&mut lock, &mut index);
-    let _ = repo.finish_index_update(&mut lock, false);
+    let _ = Repository::open(dir.path(), &RepositoryOptions::empty().for_serving());
+    let mut index = repo.index_handle().load()?;
+    repo.index_handle().write(&mut index)?;
     Ok(())
 }

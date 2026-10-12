@@ -135,7 +135,7 @@ fn grit_merge_leaves_conflict_markers_and_clean_side_files() {
     );
 
     let grit_stage0 =
-        grit_lib::write_tree::write_tree_from_index(&repo.odb(), &index, "").expect("stage0 tree");
+        grit_lib::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("stage0 tree");
     for path in ["b.txt", "x.txt"] {
         let grit_oid = git_out(root, &["ls-tree", "-r", &grit_stage0.to_hex(), "--", path]);
         let git_oid = git_out(root, &["ls-tree", "-r", git_tree, "--", path]);

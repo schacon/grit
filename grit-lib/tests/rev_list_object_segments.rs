@@ -57,17 +57,17 @@ fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
 fn rev_list_object_segments_one_per_commit_plus_roots_trailer() {
     let dir = tempdir().expect("tempdir");
     let repo = open_bare(dir.path()).expect("repo");
-    let blob_a = write_blob(&repo.odb(), b"a\n").expect("blob a");
-    let tree1 = write_tree(&repo.odb(), &[(0o100644, "a.txt", blob_a)]).expect("tree1");
-    let root = write_commit(&repo.odb(), tree1, &[], "root").expect("root");
+    let blob_a = write_blob(repo.odb(), b"a\n").expect("blob a");
+    let tree1 = write_tree(repo.odb(), &[(0o100644, "a.txt", blob_a)]).expect("tree1");
+    let root = write_commit(repo.odb(), tree1, &[], "root").expect("root");
 
-    let blob_b = write_blob(&repo.odb(), b"b\n").expect("blob b");
+    let blob_b = write_blob(repo.odb(), b"b\n").expect("blob b");
     let tree2 = write_tree(
-        &repo.odb(),
+        repo.odb(),
         &[(0o100644, "a.txt", blob_a), (0o100644, "b.txt", blob_b)],
     )
     .expect("tree2");
-    let child = write_commit(&repo.odb(), tree2, &[root], "child").expect("child");
+    let child = write_commit(repo.odb(), tree2, &[root], "child").expect("child");
 
     let opts = RevListOptions {
         objects: true,

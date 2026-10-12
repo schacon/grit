@@ -68,7 +68,7 @@ fn diff_trees_with_renames_pairs_rename_and_content_delta() {
 
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let entries =
-        diff_trees_with_renames(&repo.odb(), Some(&parent_tree), Some(&commit_tree), "", 50)
+        diff_trees_with_renames(repo.odb(), Some(&parent_tree), Some(&commit_tree), "", 50)
             .expect("diff_trees_with_renames");
 
     let renames: Vec<_> = entries

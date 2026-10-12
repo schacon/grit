@@ -158,7 +158,7 @@ pub fn grit_merge_result_tree(
         }
     }
     index.sort();
-    write_tree_from_index(&repo.odb(), &index, "")
+    write_tree_from_index(repo.odb(), &index, "")
 }
 
 fn conflict_path_bytes(merged: &TreeMergeOutput) -> BTreeSet<Vec<u8>> {

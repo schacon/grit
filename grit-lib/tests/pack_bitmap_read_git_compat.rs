@@ -45,7 +45,7 @@ fn head_commit(repo: &RepoFixture) -> ObjectId {
 
 fn all_commits(repo: &Repository) -> Vec<ObjectId> {
     let out = Command::new("git")
-        .current_dir(repo.work_tree().unwrap_or(&repo.git_dir()))
+        .current_dir(repo.work_tree().unwrap_or(repo.git_dir()))
         .args(["rev-list", "--all"])
         .output()
         .expect("rev-list");
@@ -104,7 +104,7 @@ fn assert_commit_bitmaps_decode(repo: &Repository, index: &BitmapIndex) {
         index.selected_commit_count()
     );
     let head_out = Command::new("git")
-        .current_dir(repo.work_tree().unwrap_or(&repo.git_dir()))
+        .current_dir(repo.work_tree().unwrap_or(repo.git_dir()))
         .args(["rev-parse", "HEAD"])
         .output()
         .expect("rev-parse HEAD");

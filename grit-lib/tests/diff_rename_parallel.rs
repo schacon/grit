@@ -178,12 +178,12 @@ fn parallel_rename_matches_serial_exact_and_inexact() {
     let parent = rev_parse_tree(root, "HEAD~1^{tree}");
     let commit = rev_parse_tree(root, "HEAD^{tree}");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    let raw = diff_trees(&repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
+    let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
     let config = ConfigSet::new();
-    assert_serial_parallel_rename_match(&repo.odb(), raw.clone(), 50, &config);
+    assert_serial_parallel_rename_match(repo.odb(), raw.clone(), 50, &config);
 
     let detected =
-        detect_renames_with_policy(&repo.odb(), None, raw, 50, &config, &parallel_policy());
+        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy());
     let git_lines = git_rename_and_copy_lines(root, &parent, &commit);
     let grit_lines = rename_and_copy_lines(&detected);
     assert_eq!(
@@ -215,10 +215,10 @@ fn exact_renames_above_default_rename_limit_match_git() {
     let parent = rev_parse_tree(root, "HEAD~1^{tree}");
     let commit = rev_parse_tree(root, "HEAD^{tree}");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    let raw = diff_trees(&repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
+    let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
     let config = ConfigSet::new();
     let detected =
-        detect_renames_with_policy(&repo.odb(), None, raw, 50, &config, &parallel_policy());
+        detect_renames_with_policy(repo.odb(), None, raw, 50, &config, &parallel_policy());
 
     let renames = detected
         .iter()
@@ -342,12 +342,12 @@ fn copy_mixed_exact_inexact_respects_rename_limit_like_git() {
     let parent = rev_parse_tree(root, "HEAD~1^{tree}");
     let commit = rev_parse_tree(root, "HEAD^{tree}");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    let raw = diff_trees(&repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
-    let source_tree = flatten_tree(&repo.odb(), &parent);
+    let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
+    let source_tree = flatten_tree(repo.odb(), &parent);
     let config = config_with_rename_limit(3);
 
     let detected = detect_copies_with_policy(
-        &repo.odb(),
+        repo.odb(),
         None,
         raw,
         50,
@@ -401,12 +401,12 @@ fn parallel_copy_many_to_one_matches_serial() {
     let parent = rev_parse_tree(root, "HEAD~1^{tree}");
     let commit = rev_parse_tree(root, "HEAD^{tree}");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    let raw = diff_trees(&repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
-    let source_tree = flatten_tree(&repo.odb(), &parent);
+    let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
+    let source_tree = flatten_tree(repo.odb(), &parent);
 
     let config = ConfigSet::new();
     let serial = detect_copies_with_policy(
-        &repo.odb(),
+        repo.odb(),
         None,
         raw.clone(),
         50,
@@ -416,7 +416,7 @@ fn parallel_copy_many_to_one_matches_serial() {
         &serial_policy(),
     );
     let parallel = detect_copies_with_policy(
-        &repo.odb(),
+        repo.odb(),
         None,
         raw,
         50,
@@ -501,7 +501,7 @@ fn blame_copy_serial_matches_parallel_scoring() {
     let ignore = std::collections::HashSet::new();
 
     let serial = compute_blame(
-        &repo.odb(),
+        repo.odb(),
         start_oid,
         "target.txt",
         &ignore,
@@ -516,7 +516,7 @@ fn blame_copy_serial_matches_parallel_scoring() {
     )
     .expect("serial blame");
     let parallel = compute_blame(
-        &repo.odb(),
+        repo.odb(),
         start_oid,
         "target.txt",
         &ignore,
@@ -557,7 +557,7 @@ fn parallel_rename_matrix_with_many_pairs() {
     let parent = rev_parse_tree(root, "HEAD~1^{tree}");
     let commit = rev_parse_tree(root, "HEAD^{tree}");
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
-    let raw = diff_trees(&repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
+    let raw = diff_trees(repo.odb(), Some(&parent), Some(&commit), "").expect("diff");
     let config = ConfigSet::new();
-    assert_serial_parallel_rename_match(&repo.odb(), raw, 50, &config);
+    assert_serial_parallel_rename_match(repo.odb(), raw, 50, &config);
 }

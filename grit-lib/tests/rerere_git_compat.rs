@@ -53,9 +53,13 @@ fn t4200_rerere_records_readable_by_git() {
         .expect("merge");
     assert!(!merge_out.status.success(), "expect merge conflict");
 
-    let repo = Repository::discover(Some(dir.path())).expect("open");
+    let repo = Repository::discover(
+        Some(dir.path()),
+        &grit_lib::environment::RepositoryOptions::empty(),
+    )
+    .expect("open");
     let cfg = repo.config().expect("cfg");
-    assert!(rerere_enabled(cfg.as_ref(), &repo.git_dir));
+    assert!(rerere_enabled(cfg.as_ref(), repo.git_dir()));
     let events = repo_rerere(&repo, RerereAutoupdate::No).expect("rerere");
     assert!(!events.is_empty(), "grit should record rerere preimage");
 

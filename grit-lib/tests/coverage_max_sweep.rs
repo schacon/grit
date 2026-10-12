@@ -15,7 +15,7 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::pathspec::{matches_pathspec_list, parse_pathspecs_from_source};
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions};
 use grit_lib::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_verify,
@@ -44,13 +44,13 @@ fn seed_long_history(
 ) -> grit_lib::error::Result<ObjectId> {
     let mut parent: Option<ObjectId> = None;
     let mut tip = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     for i in 0..depth {
         let blob = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, format!("v{i}\n").as_bytes())?;
-        let tree = write_tree(&repo.odb, &[("a.txt", blob), ("dir/b.txt", blob)])?;
+        let tree = write_tree(repo.odb(), &[("a.txt", blob), ("dir/b.txt", blob)])?;
         let mut body = format!("tree {tree}\n");
         if let Some(p) = parent {
             body.push_str(&format!("parent {p}\n"));
@@ -61,12 +61,12 @@ fn seed_long_history(
             100 + i as i64
         ));
         tip = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
         parent = Some(tip);
         fs::write(work_tree.join("a.txt"), format!("v{i}\n").as_bytes()).ok();
     }
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
         .map_err(grit_lib::error::Error::Io)?;
     Ok(tip)
 }
@@ -74,7 +74,7 @@ fn seed_long_history(
 #[test]
 fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
-    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    let repo = Repository::init(dir.path(), &InitOptions::default())?;
     let tip = seed_long_history(dir.path(), &repo, 180)?;
     for n in 0..120 {
         for spec in [format!("HEAD~{n}"), format!("main~{n}"), format!(":/c{n}")] {
@@ -119,34 +119,34 @@ fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
 #[test]
 fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
-    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    let repo = Repository::init(dir.path(), &InitOptions::default())?;
     let b1 = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"one\n")?;
     let b2 = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"two\n")?;
-    let t1 = write_tree(&repo.odb, &[("f.txt", b1)])?;
-    let t2 = write_tree(&repo.odb, &[("f.txt", b2), ("g.txt", b1)])?;
+    let t1 = write_tree(repo.odb(), &[("f.txt", b1)])?;
+    let t2 = write_tree(repo.odb(), &[("f.txt", b2), ("g.txt", b1)])?;
     let base = {
         let body =
             format!("tree {t1}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nb\n");
-        repo.odb
+        repo.odb()
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?
     };
     let tip = {
         let body = format!(
             "tree {t2}\nparent {base}\nauthor T <t@e.com> 2 +0000\ncommitter T <t@e.com> 2 +0000\n\nt\n"
         );
-        repo.odb
+        repo.odb()
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?
     };
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
         .map_err(grit_lib::error::Error::Io)?;
     fs::write(dir.path().join("f.txt"), b"two\n").map_err(grit_lib::error::Error::Io)?;
-    let raw = diff_trees(&repo.odb, Some(&t1), Some(&t2), "")?;
-    let _ = diff_trees_with_renames(&repo.odb, Some(&t1), Some(&t2), "", 50)?;
-    let _ = diff_commits_with_renames(&repo.odb, &base, &tip, 50)?;
+    let raw = diff_trees(repo.odb(), Some(&t1), Some(&t2), "")?;
+    let _ = diff_trees_with_renames(repo.odb(), Some(&t1), Some(&t2), "", 50)?;
+    let _ = diff_commits_with_renames(repo.odb(), &base, &tip, 50)?;
     let cfg = ConfigSet::new();
     let policy = ThreadPolicy::default();
     let opts = DiffPostprocessOptions {
@@ -155,7 +155,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         find_copies_harder: true,
         ..DiffPostprocessOptions::default()
     };
-    let _ = postprocess_diff_entries(&repo.odb, raw, Some(&t1), None, None, &cfg, &policy, &opts)?;
+    let _ = postprocess_diff_entries(repo.odb(), raw, Some(&t1), None, None, &cfg, &policy, &opts)?;
     let mut index = Index::new();
     index.entries_mut().push(IndexEntry {
         ctime_sec: 0,
@@ -174,24 +174,24 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
         path: b"f.txt".to_vec(),
         base_index_pos: 0,
     });
-    let head_tree = write_tree_from_index(&repo.odb, &index, "")?;
-    let _ = diff_index_to_tree(&repo.odb, &index, Some(&head_tree), false)?;
+    let head_tree = write_tree_from_index(repo.odb(), &index, "")?;
+    let _ = diff_index_to_tree(repo.odb(), &index, Some(&head_tree), false)?;
     let _ = diff_index_to_worktree_for_staging(
-        &repo.odb,
-        &repo.git_dir,
+        repo.odb(),
+        repo.git_dir(),
         &mut index,
         dir.path(),
         DiffIndexToWorktreeOptions {
-            repository_git_dir: Some(repo.git_dir.clone()),
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
             ..DiffIndexToWorktreeOptions::default()
         },
     )?;
     let rules = WorktreeRules::from_repository(&repo, &index)?;
     let _ = diff_tree_to_worktree_with_git_dir_and_rules(
-        &repo.odb,
+        repo.odb(),
         Some(&head_tree),
         dir.path(),
-        &repo.git_dir,
+        repo.git_dir(),
         &index,
         Some(&cfg),
         Some(&rules),

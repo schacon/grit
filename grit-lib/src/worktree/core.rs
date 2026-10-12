@@ -1245,7 +1245,9 @@ mod tests {
         git(&["add", "t"]);
         git(&["commit", "-qm", "init"]);
 
-        let repo = Repository::discover(Some(&main)).unwrap();
+        let repo =
+            Repository::discover(Some(&main), &crate::environment::RepositoryOptions::empty())
+                .unwrap();
         let linked = tmp.path().join("linked");
         add_linked_worktree(
             &repo,
@@ -1317,7 +1319,7 @@ mod tests {
             },
         )
         .unwrap();
-        let common = common_git_dir(repo.git_dir()());
+        let common = common_git_dir(repo.git_dir());
         let admin = fs::read_dir(common.join("worktrees"))
             .unwrap()
             .find_map(|e| e.ok())

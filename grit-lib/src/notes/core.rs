@@ -1254,12 +1254,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1317,12 +1317,12 @@ mod tests {
             tmp.path(),
             &["notes", "add", "-m", "base", &commit.to_hex()],
         );
-        let base = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
+        let base = crate::refs::resolve_ref(repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["notes", "add", "-f", "-m", "local", &commit.to_hex()],
         );
-        let local = crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap();
+        let local = crate::refs::resolve_ref(repo.git_dir(), "refs/notes/commits").unwrap();
         git(
             tmp.path(),
             &["update-ref", "refs/notes/remote", &base.to_hex()],
@@ -1359,7 +1359,7 @@ mod tests {
             "partial merge commit must differ from the pre-merge tip"
         );
         assert_eq!(
-            crate::refs::resolve_ref(repo.git_dir()(), "refs/notes/commits").unwrap(),
+            crate::refs::resolve_ref(repo.git_dir(), "refs/notes/commits").unwrap(),
             local,
             "manual merge conflicts must leave the live notes ref at the local tip"
         );

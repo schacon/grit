@@ -2,6 +2,7 @@
 
 use std::process::Command;
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::pathspec::{matches_pathspec_list, path_allowed_by_pathspec_list, pathspec_matches};
 use grit_lib::repo::Repository;
 use tempfile::TempDir;
@@ -77,5 +78,5 @@ fn t6132_pathspec_exclude_matches_git() {
     }
     assert!(!path_allowed_by_pathspec_list(&specs, "sub2/keep.txt"));
     assert!(!matches_pathspec_list("sub2/keep.txt", &specs));
-    let _repo = Repository::discover(Some(dir.path())).expect("open");
+    let _repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
 }

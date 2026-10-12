@@ -12,7 +12,7 @@ use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::ref_storage::RefStorageFormat;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::rev_list::{
     merge_bases, resolve_object_walk_roots, rev_list, OrderingMode, OutputMode, RevListOptions,
 };
@@ -73,16 +73,16 @@ fn index_entry(path: &str, oid: ObjectId) -> IndexEntry {
 #[test]
 fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
-    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    let repo = Repository::init(dir.path(), &InitOptions::default())?;
     let mut tip = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     let mut parent: Option<ObjectId> = None;
     for i in 0..40 {
         let blob = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, format!("v{i}\n").as_bytes())?;
-        let tree = write_tree(&repo.odb, "tracked.txt", blob)?;
+        let tree = write_tree(repo.odb(), "tracked.txt", blob)?;
         let mut body = format!("tree {tree}\n");
         if let Some(p) = parent {
             body.push_str(&format!("parent {p}\n"));
@@ -93,13 +93,13 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
             100 + i
         ));
         tip = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Commit, body.as_bytes())?;
         parent = Some(tip);
         fs::write(dir.path().join("tracked.txt"), format!("v{i}\n").as_bytes())
             .map_err(grit_lib::error::Error::Io)?;
     }
-    fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
         .map_err(grit_lib::error::Error::Io)?;
 
     for n in 0..40 {
@@ -145,16 +145,20 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
         assert!(!out.commits.is_empty());
     }
 
-    let blob_a = repo.odb.write_loose_materialize(ObjectKind::Blob, b"a\n")?;
-    let blob_b = repo.odb.write_loose_materialize(ObjectKind::Blob, b"b\n")?;
-    let old_tree = write_tree(&repo.odb, "other.txt", blob_a)?;
-    let new_tree = write_tree(&repo.odb, "other.txt", blob_b)?;
-    let base = write_commit(&repo.odb, old_tree, &[], "base")?;
-    let head = write_commit(&repo.odb, new_tree, &[base], "head")?;
-    let raw = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "")?;
+    let blob_a = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"a\n")?;
+    let blob_b = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"b\n")?;
+    let old_tree = write_tree(repo.odb(), "other.txt", blob_a)?;
+    let new_tree = write_tree(repo.odb(), "other.txt", blob_b)?;
+    let base = write_commit(repo.odb(), old_tree, &[], "base")?;
+    let head = write_commit(repo.odb(), new_tree, &[base], "head")?;
+    let raw = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "")?;
     assert!(raw.iter().any(|e| e.status == DiffStatus::Modified));
-    let _ = diff_trees_with_renames(&repo.odb, Some(&old_tree), Some(&new_tree), "", 50)?;
-    let _ = diff_commits_with_renames(&repo.odb, &base, &head, 50)?;
+    let _ = diff_trees_with_renames(repo.odb(), Some(&old_tree), Some(&new_tree), "", 50)?;
+    let _ = diff_commits_with_renames(repo.odb(), &base, &head, 50)?;
     let config = ConfigSet::new();
     let policy = ThreadPolicy::default();
     let opts = DiffPostprocessOptions {
@@ -164,7 +168,7 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
         ..DiffPostprocessOptions::default()
     };
     let _ = postprocess_diff_entries(
-        &repo.odb,
+        repo.odb(),
         raw,
         Some(&old_tree),
         None,
@@ -176,23 +180,23 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
 
     let mut index = Index::new();
     index.entries_mut().push(index_entry("tracked.txt", blob_b));
-    index.write_to_path(&repo.git_dir.join("index"), false)?;
-    let head_tree = write_tree_from_index(&repo.odb, &index, "")?;
-    let _ = diff_index_to_tree(&repo.odb, &index, Some(&head_tree), false)?;
+    index.write_to_path(&repo.git_dir().join("index"), false)?;
+    let head_tree = write_tree_from_index(repo.odb(), &index, "")?;
+    let _ = diff_index_to_tree(repo.odb(), &index, Some(&head_tree), false)?;
     let _ = diff_index_to_worktree_with_options(
-        &repo.odb,
+        repo.odb(),
         &mut index.clone(),
         dir.path(),
         DiffIndexToWorktreeOptions {
-            repository_git_dir: Some(repo.git_dir.clone()),
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
             ..DiffIndexToWorktreeOptions::default()
         },
     )?;
     let _ = diff_tree_to_worktree_with_git_dir(
-        &repo.odb,
+        repo.odb(),
         Some(&head_tree),
         dir.path(),
-        &repo.git_dir,
+        repo.git_dir(),
         &index,
         Some(&config),
     )?;

@@ -81,6 +81,6 @@ fn incompatible_bloom_settings_disable_lower_layer() {
     assert!(chain.num_layers() >= 2);
     let tip: ObjectId = chain.all_oids_in_order().into_iter().last().expect("tip");
     let pre =
-        chain.bloom_precheck_for_paths(&repo.odb(), tip, &["g.txt".to_owned()], None, -1, true);
+        chain.bloom_precheck_for_paths(repo.odb(), tip, &["g.txt".to_owned()], None, -1, true);
     assert!(pre.is_ok());
 }

@@ -34,7 +34,7 @@ fn open_repo(path: &std::path::Path) -> Repository {
 }
 
 fn all_commits(repo: &Repository) -> Vec<ObjectId> {
-    let wt = repo.work_tree().unwrap_or(&repo.git_dir());
+    let wt = repo.work_tree().unwrap_or(repo.git_dir());
     let out = Command::new("git")
         .current_dir(wt)
         .args(["rev-list", "--all"])

@@ -53,7 +53,7 @@ fn add_tip_accepts_annotated_tag() {
     let tag = write(&repo, ObjectKind::Tag, tag_bytes.as_bytes());
 
     // Re-open the repo so the negotiator reads through a fresh odb.
-    let repo = Repository::open(&repo.git_dir(), &RepositoryOptions::empty()).expect("open");
+    let repo = Repository::open(repo.git_dir(), &RepositoryOptions::empty()).expect("open");
     let mut neg = SkippingNegotiator::new(repo);
 
     // Both entry points previously panicked the fetch on a tag tip.

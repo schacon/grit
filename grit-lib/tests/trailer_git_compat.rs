@@ -71,7 +71,7 @@ fn init_git_repo(algo: HashAlgo) -> TempDir {
 }
 
 fn tip_oid(repo: &Repository) -> ObjectId {
-    match resolve_head(&repo.git_dir()).expect("head") {
+    match resolve_head(repo.git_dir()).expect("head") {
         HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => oid,
         _ => panic!("expected a commit at HEAD"),
     }
@@ -96,10 +96,10 @@ fn find_pack_and_idx(pack_dir: &Path) -> (PathBuf, PathBuf) {
 fn grit_write_trailer_artifacts(repo: &Repository) {
     let tip = tip_oid(repo);
     let pack =
-        build_pack(&repo.odb(), &[tip], &[], &PackBuildOptions::default()).expect("build pack");
-    install_pack_bytes(pack, &repo.odb(), &IngestPackOptions::default()).expect("install pack");
+        build_pack(repo.odb(), &[tip], &[], &PackBuildOptions::default()).expect("build pack");
+    install_pack_bytes(pack, repo.odb(), &IngestPackOptions::default()).expect("install pack");
 
-    let (pack_path, idx_path) = find_pack_and_idx(&pack_dir(&repo.git_dir()));
+    let (pack_path, idx_path) = find_pack_and_idx(&pack_dir(repo.git_dir()));
     let index = read_pack_index(&idx_path).expect("read idx after install");
     let pack_bytes = std::fs::read(&pack_path).expect("read pack");
     let hb = repo.odb().hash_algo().len();
@@ -111,7 +111,7 @@ fn grit_write_trailer_artifacts(repo: &Repository) {
 
     // Match the on-disk MIDX format version system `git` writes (v1 on Git 2.43).
     write_multi_pack_index_with_options(
-        &pack_dir(&repo.git_dir()),
+        &pack_dir(repo.git_dir()),
         &WriteMultiPackIndexOptions {
             version: Some(1),
             ..WriteMultiPackIndexOptions::default()
@@ -120,21 +120,21 @@ fn grit_write_trailer_artifacts(repo: &Repository) {
     .expect("write midx");
 
     let objects_dir = repo.git_dir().join("objects");
-    let commits = collect_reachable_commit_oids(&repo.git_dir(), &repo.odb()).expect("commits");
+    let commits = collect_reachable_commit_oids(repo.git_dir(), repo.odb()).expect("commits");
     let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
     sorted.sort();
     let mut infos = HashMap::new();
     for oid in &sorted {
         infos.insert(
             *oid,
-            load_commit_graph_commit_info(&repo.odb(), *oid).expect("commit info"),
+            load_commit_graph_commit_info(repo.odb(), *oid).expect("commit info"),
         );
     }
     let bloom = BloomFilterSettings::default();
     let (graph_bytes, _) = build_commit_graph_bytes(
         &sorted,
         &infos,
-        &repo.odb(),
+        repo.odb(),
         true,
         &bloom,
         None,
@@ -173,7 +173,7 @@ fn git_write_trailer_artifacts(repo_root: &Path) {
 }
 
 fn grit_verify_git_artifacts(repo: &Repository) {
-    let (_, idx_path) = find_pack_and_idx(&pack_dir(&repo.git_dir()));
+    let (_, idx_path) = find_pack_and_idx(&pack_dir(repo.git_dir()));
     read_pack_index(&idx_path).expect("grit verify pack idx trailer");
     let index_bytes = std::fs::read(repo.git_dir().join("index")).expect("read index");
     Index::parse_with_algo(&index_bytes, repo.odb().hash_algo()).expect("grit parse index trailer");
@@ -188,7 +188,7 @@ fn grit_written_trailers_pass_git_verify_sha1() {
     let tmp = init_git_repo(HashAlgo::Sha1);
     let repo = Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("open");
     grit_write_trailer_artifacts(&repo);
-    let (pack_path, _) = find_pack_and_idx(&pack_dir(&repo.git_dir()));
+    let (pack_path, _) = find_pack_and_idx(&pack_dir(repo.git_dir()));
     git_verify_all(tmp.path(), &pack_path);
 }
 
@@ -197,7 +197,7 @@ fn grit_written_trailers_pass_git_verify_sha256() {
     let tmp = init_git_repo(HashAlgo::Sha256);
     let repo = Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("open");
     grit_write_trailer_artifacts(&repo);
-    let (pack_path, _) = find_pack_and_idx(&pack_dir(&repo.git_dir()));
+    let (pack_path, _) = find_pack_and_idx(&pack_dir(repo.git_dir()));
     git_verify_all(tmp.path(), &pack_path);
 }
 
@@ -230,7 +230,7 @@ fn corrupt_trailer_byte_yields_typed_checksum_error() {
     let tmp = init_git_repo(HashAlgo::Sha1);
     let repo = Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("open");
     grit_write_trailer_artifacts(&repo);
-    let (_, idx_path) = find_pack_and_idx(&pack_dir(&repo.git_dir()));
+    let (_, idx_path) = find_pack_and_idx(&pack_dir(repo.git_dir()));
     let algo = repo.odb().hash_algo();
 
     corrupt_last_trailer_byte(&idx_path);

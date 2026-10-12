@@ -276,9 +276,9 @@ fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
         index.add_or_replace(entry);
     }
     index.sort();
-    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
     repo.index_handle().write(&mut index)?;
-    let parent = refs::resolve_ref(&repo.git_dir(), "HEAD").ok();
+    let parent = refs::resolve_ref(repo.git_dir(), "HEAD").ok();
     let commit_data = CommitData {
         tree,
         parents: parent.into_iter().collect(),
@@ -293,7 +293,7 @@ fn commit_all(repo: &Repository, message: &str) -> Result<ObjectId> {
     };
     let bytes = serialize_commit(&commit_data);
     let oid = repo.odb().write(ObjectKind::Commit, &bytes)?;
-    refs::write_ref(&repo.git_dir(), "HEAD", &oid)?;
+    refs::write_ref(repo.git_dir(), "HEAD", &oid)?;
     Ok(tree)
 }
 

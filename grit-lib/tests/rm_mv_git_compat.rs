@@ -743,10 +743,10 @@ fn cache_tree_valid_after_mv_commit() {
     move_path(&repo, "one.txt", "three.txt", false).expect("mv");
 
     let mut index = repo.index_handle().load().expect("index");
-    let _tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::default())
+    let _tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::default())
         .expect("write-tree");
     assert!(cache_tree_fully_valid(
-        &repo.odb(),
+        repo.odb(),
         index.cache_tree.as_ref()
     ));
     repo.index_handle().write(&mut index).expect("write index");

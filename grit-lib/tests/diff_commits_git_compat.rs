@@ -51,7 +51,7 @@ fn diff_commits_matches_git_raw_file_set() {
         &RepositoryOptions::empty().with_work_tree(root),
     )
     .expect("open");
-    let entries = diff_commits(&repo.odb(), &c1, &c2).expect("diff_commits");
+    let entries = diff_commits(repo.odb(), &c1, &c2).expect("diff_commits");
     let mut grit_paths: Vec<_> = entries.iter().map(|e| e.path().to_owned()).collect();
     grit_paths.sort();
 
@@ -79,7 +79,7 @@ fn diff_commits_two_commit_endpoints_match_git() {
         &RepositoryOptions::empty().with_work_tree(root),
     )
     .expect("open");
-    let entries = diff_commits(&repo.odb(), &base, &tip).expect("diff");
+    let entries = diff_commits(repo.odb(), &base, &tip).expect("diff");
     assert!(
         entries.iter().any(|e| e.path() == "x"),
         "expected change to x"

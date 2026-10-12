@@ -145,7 +145,7 @@ fn replay_pick_clean_commit_fsck_and_reflog() {
     };
 
     git_fsck_strict(root.path());
-    assert_eq!(resolve_ref(&repo.git_dir(), "HEAD").expect("head"), oid);
+    assert_eq!(resolve_ref(repo.git_dir(), "HEAD").expect("head"), oid);
     let body = git_cat_file_commit(root.path(), &oid);
     assert!(body.contains(&format!("parent {base}")));
     assert!(body.contains("author Test"));
@@ -248,7 +248,7 @@ fn replay_revert_rejects_merge_commit() {
         "unexpected error: {err:?}"
     );
     assert_eq!(
-        resolve_ref(&repo.git_dir(), "HEAD").expect("head"),
+        resolve_ref(repo.git_dir(), "HEAD").expect("head"),
         oid_from_rev(root.path(), "HEAD"),
         "revert must not advance HEAD on merge commit"
     );
@@ -400,7 +400,7 @@ fn replay_pick_reflog_failure_leaves_repo_unchanged() {
         "worktree must stay at HEAD tree when reflog append fails before checkout"
     );
     assert_eq!(
-        resolve_ref(&repo.git_dir(), "HEAD").expect("head"),
+        resolve_ref(repo.git_dir(), "HEAD").expect("head"),
         base,
         "HEAD must stay at base when reflog append fails"
     );
@@ -429,7 +429,7 @@ fn replay_pick_ref_lock_failure_leaves_repo_unchanged() {
     );
     assert_eq!(before, snapshot_tree(root.path()));
     assert_eq!(
-        resolve_ref(&repo.git_dir(), "HEAD").expect("head"),
+        resolve_ref(repo.git_dir(), "HEAD").expect("head"),
         base,
         "HEAD must stay at base when ref update cannot start"
     );

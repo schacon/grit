@@ -30,7 +30,7 @@ fn open_grit(wt: &std::path::Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn exercise_all(repo: &Repository, spec: &str) {
@@ -108,7 +108,7 @@ fn deep_history_resolver_sweep() {
     let _ = resolve_reflog_walk_log_ref(&repo, "main");
     let _ = expand_rev_token_circ_bang(&repo, "main^!");
     let _ = expand_parent_shorthand_rev_parse_lines(&repo, "main^@", false, Some(7));
-    let _ = load_graft_parents(&repo.git_dir);
+    let _ = load_graft_parents(repo.git_dir());
     assert!(reflog_date_selector_timestamp("1.day.ago").is_some());
     let _ = reflog_date_selector_timestamp_at("2.weeks.ago", 1_700_000_000);
     let (base, peel) = parse_peel_suffix("HEAD^{tree}");

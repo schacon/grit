@@ -60,7 +60,7 @@ fn apply_stash_succeeds_on_clean_tree_with_autocrlf() {
 
     ensure_crlf_worktree_lf_index(dir.path());
 
-    let stash_oid = grit_lib::refs::resolve_ref(&repo.git_dir(), "refs/stash").expect("stash ref");
+    let stash_oid = grit_lib::refs::resolve_ref(repo.git_dir(), "refs/stash").expect("stash ref");
 
     let grit_dir = tempfile::tempdir().expect("grit copy");
     std::process::Command::new("cp")

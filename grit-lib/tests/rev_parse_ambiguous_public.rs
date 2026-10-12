@@ -35,7 +35,7 @@ fn core_disambiguate_config_values() {
         "invalid",
     ] {
         std::fs::write(
-            repo.git_dir.join("config"),
+            repo.git_dir().join("config"),
             format!("[core]\n\tdisambiguate = {disambig}\n"),
         )
         .expect("config");
@@ -59,7 +59,7 @@ fn reflog_walk_ref_at_minus_branch_form() {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    let repo = Repository::discover_with(&options, Some(wt)).expect("discover");
+    let repo = Repository::discover(Some(wt), &options).expect("discover");
     let name = resolve_reflog_walk_log_ref(&repo, "@{-1}").expect("walk ref");
     assert!(name.contains("first") || name.starts_with("refs/"));
 }

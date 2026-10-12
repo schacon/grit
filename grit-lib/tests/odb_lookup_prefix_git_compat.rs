@@ -92,7 +92,7 @@ fn lookup_prefix_matches_git_disambiguate_loose_pack_midx_and_alternate() {
         &RepositoryOptions::empty().with_work_tree(&primary),
     )
     .expect("open");
-    let odb = &repo.odb();
+    let odb = repo.odb();
 
     // Sanity: objects span loose, pack, MIDX, and alternate layers.
     let mut all = Vec::new();

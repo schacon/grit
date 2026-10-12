@@ -3852,7 +3852,7 @@ mod line_coverage_tests {
             );
             counter += 1;
             let oid = repo
-                .odb
+                .odb()
                 .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
                 .expect("commit");
             oids.push(oid);
@@ -4518,20 +4518,20 @@ mod line_coverage_tests {
             .odb()
             .write_loose_materialize(ObjectKind::Blob, b"leaf\n")?;
         let sub_tree = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Tree, b"100644 blob {blob}\tleaf.txt\n")?;
-        let root_tree = repo.odb.write_loose_materialize(
+        let root_tree = repo.odb().write_loose_materialize(
             ObjectKind::Tree,
             format!("040000 tree {sub_tree}\tsub\n").as_bytes(),
         )?;
-        let c1 = repo.odb.write_loose_materialize(
+        let c1 = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {root_tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\none\n"
             )
             .as_bytes(),
         )?;
-        let c2 = repo.odb.write_loose_materialize(
+        let c2 = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {root_tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\ntwo\n"
@@ -4542,21 +4542,21 @@ mod line_coverage_tests {
             "object {c2}\ntype commit\ntag ta\ntagger T <t@e.com> 300 +0000\n\nannotated\n"
         );
         let tag_a = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Tag, tag_body_a.as_bytes())?;
         let tag_body_b = format!(
             "object {c2}\ntype commit\ntag tb\ntagger T <t@e.com> 301 +0000\n\nannotated\n"
         );
         let tag_b = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Tag, tag_body_b.as_bytes())?;
-        fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{c2}\n"))
             .map_err(crate::error::Error::Io)?;
-        fs::write(repo.git_dir.join("refs/tags/t"), format!("{tag_a}\n"))
+        fs::write(repo.git_dir().join("refs/tags/t"), format!("{tag_a}\n"))
             .map_err(crate::error::Error::Io)?;
         let abbrev = &c2.to_hex()[..7];
         fs::write(
-            repo.git_dir.join(format!("refs/heads/{abbrev}")),
+            repo.git_dir().join(format!("refs/heads/{abbrev}")),
             format!("{c1}\n"),
         )
         .map_err(crate::error::Error::Io)?;
@@ -4586,14 +4586,14 @@ mod line_coverage_tests {
     fn resolve_base_outside_paths_and_ambiguous_hex() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
+        let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
         let mut oids = Vec::new();
         let prefix = seed_commits_until_ambiguous_prefix(&repo, tree, &mut oids, 4, 8_000);
         let tip = *oids.last().expect("tip");
         fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
         fs::write(
-            repo.git_dir.join("config"),
+            repo.git_dir().join("config"),
             "[core]\n\tdisambiguate = commit\n",
         )
         .map_err(crate::error::Error::Io)?;
@@ -4682,24 +4682,24 @@ mod line_coverage_tests {
     fn commit_message_search_abbrev_and_loose_matches() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
-        let c1 = repo.odb.write_loose_materialize(
+        let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
+        let c1 = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nneedle alpha\n"
             )
             .as_bytes(),
         )?;
-        let c2 = repo.odb.write_loose_materialize(
+        let c2 = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nparent {c1}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\nbeta only\n"
             )
             .as_bytes(),
         )?;
-        fs::write(repo.git_dir.join("refs/heads/main"), format!("{c2}\n"))
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{c2}\n"))
             .map_err(crate::error::Error::Io)?;
-        fs::write(repo.git_dir.join("refs/heads/side"), format!("{c1}\n"))
+        fs::write(repo.git_dir().join("refs/heads/side"), format!("{c1}\n"))
             .map_err(crate::error::Error::Io)?;
 
         for spec in [
@@ -4919,22 +4919,24 @@ mod line_coverage_tests {
         let _ = resolve_at_minus_to_oid(&repo, "HEAD").ok();
         let _ = resolve_upstream_symbolic_name(&repo, "main@{upstream}").ok();
         let _ = resolve_push_full_ref_for_branch(&repo, "main").ok();
-        let _ = load_graft_parents(&repo.git_dir);
-        let blob = repo.odb.write_loose_materialize(ObjectKind::Blob, b"x\n")?;
+        let _ = load_graft_parents(&repo.git_dir());
+        let blob = repo
+            .odb()
+            .write_loose_materialize(ObjectKind::Blob, b"x\n")?;
         let tree_body = format!("100644 f.txt\0").into_bytes();
         let mut tree_bytes = tree_body;
         tree_bytes.extend_from_slice(blob.as_bytes());
         let tree = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Tree, &tree_bytes)?;
-        let tip = repo.odb.write_loose_materialize(
+        let tip = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n"
             )
             .as_bytes(),
         )?;
-        fs::write(repo.git_dir.join("refs/heads/main"), format!("{tip}\n"))
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
             .map_err(crate::error::Error::Io)?;
         let _ = list_all_abbrev_matches(&repo, &tip.to_hex()[..4])?;
         let _ = list_loose_abbrev_matches(&repo, &tip.to_hex()[..4])?;
@@ -5015,13 +5017,13 @@ mod line_coverage_tests {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
         let base = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, b"base\n")?;
         let ours = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, b"ours\n")?;
         let theirs = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, b"theirs\n")?;
         let mut index = Index::new();
         index
@@ -5037,7 +5039,7 @@ mod line_coverage_tests {
             MODE_REGULAR,
         ));
         let nested_blob = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Blob, b"nested\n")?;
         fs::create_dir_all(dir.path().join("sub")).map_err(crate::error::Error::Io)?;
         fs::write(dir.path().join("sub/leaf.txt"), b"nested\n").map_err(crate::error::Error::Io)?;
@@ -5048,7 +5050,7 @@ mod line_coverage_tests {
             MODE_REGULAR,
         )?;
         index.entries_mut().push(nested_entry);
-        index.write_to_path(&repo.git_dir.join("index"), false)?;
+        index.write_to_path(&repo.git_dir().join("index"), false)?;
 
         assert_eq!(resolve_revision_for_verify(&repo, ":1:conflict.txt")?, base);
         assert_eq!(resolve_revision_for_verify(&repo, ":2:conflict.txt")?, ours);
@@ -5090,29 +5092,29 @@ mod line_coverage_tests {
     fn outside_repo_ambiguous_hex_and_shorthand_matrix() -> crate::error::Result<()> {
         let dir = tempdir().map_err(crate::error::Error::Io)?;
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
-        let tree = repo.odb.write_loose_materialize(ObjectKind::Tree, b"")?;
-        let base = repo.odb.write_loose_materialize(
+        let tree = repo.odb().write_loose_materialize(ObjectKind::Tree, b"")?;
+        let base = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nauthor T <t@e.com> 100 +0000\ncommitter T <t@e.com> 100 +0000\n\nbase\n"
             )
             .as_bytes(),
         )?;
-        let side = repo.odb.write_loose_materialize(
+        let side = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nparent {base}\nauthor T <t@e.com> 200 +0000\ncommitter T <t@e.com> 200 +0000\n\nside\n"
             )
             .as_bytes(),
         )?;
-        let merge = repo.odb.write_loose_materialize(
+        let merge = repo.odb().write_loose_materialize(
             ObjectKind::Commit,
             format!(
                 "tree {tree}\nparent {base}\nparent {side}\nauthor T <t@e.com> 300 +0000\ncommitter T <t@e.com> 300 +0000\n\nmerge\n"
             )
             .as_bytes(),
         )?;
-        fs::write(repo.git_dir.join("refs/heads/main"), format!("{merge}\n"))
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{merge}\n"))
             .map_err(crate::error::Error::Io)?;
 
         let outside = [
@@ -5136,7 +5138,7 @@ mod line_coverage_tests {
         let _ = resolve_reflog_walk_log_ref(&repo, "@{-1}");
 
         fs::write(
-            repo.git_dir.join("config"),
+            repo.git_dir().join("config"),
             "[core]\n\tdisambiguate = commit\n",
         )
         .map_err(crate::error::Error::Io)?;
@@ -5152,10 +5154,23 @@ mod line_coverage_tests {
     #[should_panic(expected = "could not find")]
     fn seed_commits_until_ambiguous_prefix_exhaustion() {
         let dir = tempdir().expect("tempdir");
-        init_bare_clone_minimal(dir.path(), "main", RefStorageFormat::Files).expect("init");
-        let repo = crate::repo::Repository::open(dir.path(), None).expect("open");
+        crate::repo::Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".into(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
+        let repo = crate::repo::Repository::open(
+            dir.path(),
+            &crate::environment::RepositoryOptions::empty(),
+        )
+        .expect("open");
         let tree = repo
-            .odb
+            .odb()
             .write_loose_materialize(ObjectKind::Tree, b"")
             .expect("tree");
         let mut oids = Vec::new();

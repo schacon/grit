@@ -81,9 +81,9 @@ fn main() -> grit_lib::error::Result<()> {
     });
     repo.index_handle().write(&mut index)?;
     let index = repo.index_handle().load()?;
-    let tree_a = write_tree_from_index(&repo.odb(), &index, "")?;
+    let tree_a = write_tree_from_index(repo.odb(), &index, "")?;
     let commit_a = commit_from_tree(&repo, tree_a, &[], "initial\n")?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_a)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &commit_a)?;
 
     // Topic commit: parent A, adds picked.txt (not on main yet).
     let blob_pick = repo.odb().write(ObjectKind::Blob, b"hello from topic\n")?;
@@ -124,9 +124,9 @@ fn main() -> grit_lib::error::Result<()> {
     });
     repo.index_handle().write(&mut index)?;
     let index = repo.index_handle().load()?;
-    let tree_b = write_tree_from_index(&repo.odb(), &index, "")?;
+    let tree_b = write_tree_from_index(repo.odb(), &index, "")?;
     let commit_b = commit_from_tree(&repo, tree_b, &[commit_a], "add picked file\n")?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/topic", &commit_b)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/topic", &commit_b)?;
 
     // Cherry-pick `topic` onto `main` (still at A).
     let head = resolve_revision(&repo, "main")?;
@@ -167,8 +167,8 @@ fn main() -> grit_lib::error::Result<()> {
         )));
     }
 
-    let new_tree = write_tree_from_index(&repo.odb(), &merged.index, "")?;
-    let config = ConfigSet::load_repo_local_only(&repo.git_dir())?;
+    let new_tree = write_tree_from_index(repo.odb(), &merged.index, "")?;
+    let config = ConfigSet::load_repo_local_only(repo.git_dir())?;
     let msg = commit_trailers::finalize_cherry_pick_message(
         &picked_data.message,
         true,
@@ -179,7 +179,7 @@ fn main() -> grit_lib::error::Result<()> {
         &picked.to_hex(),
     );
     let new_commit = commit_from_tree(&repo, new_tree, &[head], &msg)?;
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &new_commit)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &new_commit)?;
 
     println!("cherry-picked {} onto {}", picked, head);
     println!("new main: {new_commit}");

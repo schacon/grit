@@ -1,5 +1,6 @@
 //! Regression for issue #980: missing-but-registered worktree paths must not get a second admin dir.
 
+use grit_lib::environment::RepositoryOptions;
 use grit_lib::git_path::path_for_disk_compare;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -33,7 +34,7 @@ fn missing_registered_worktree_rejects_duplicate_add() {
     git(&main, &["add", "f"]);
     git(&main, &["commit", "-qm", "init"]);
 
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).expect("discover");
     let wt = root.join("w9");
     add_linked_worktree(
         &repo,
@@ -121,7 +122,7 @@ fn forced_add_keeps_stale_registration_when_validation_fails() {
     git(&main, &["add", "f"]);
     git(&main, &["commit", "-qm", "init"]);
 
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).expect("discover");
     let wt = root.join("w9");
     add_linked_worktree(
         &repo,
@@ -179,7 +180,7 @@ fn forced_add_restores_stale_registration_when_checkout_fails() {
     git(&main, &["add", "f"]);
     git(&main, &["commit", "-qm", "init"]);
 
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).expect("discover");
     let wt = root.join("w9");
     add_linked_worktree(
         &repo,
@@ -198,14 +199,14 @@ fn forced_add_restores_stale_registration_when_checkout_fails() {
     let missing_blob = "0101010101010101010101010101010101010101";
     let tree_body = format!("100644 blob {missing_blob}\tmissing.txt\n");
     let tree_oid = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Tree, tree_body.as_bytes())
         .expect("tree");
     let commit_body = format!(
         "tree {tree_oid}\nauthor T <t@example.com> 0 +0000\ncommitter T <t@example.com> 0 +0000\n\nbroken\n"
     );
     let bad_commit = repo
-        .odb
+        .odb()
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
         .expect("commit");
 
@@ -258,7 +259,7 @@ fn prune_drops_missing_worktree_registration() {
     git(&main, &["add", "f"]);
     git(&main, &["commit", "-qm", "init"]);
 
-    let repo = Repository::discover(Some(&main)).expect("discover");
+    let repo = Repository::discover(Some(&main), &RepositoryOptions::empty()).expect("discover");
     let wt = root.join("gone");
     add_linked_worktree(
         &repo,

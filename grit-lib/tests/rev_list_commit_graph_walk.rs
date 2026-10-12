@@ -34,7 +34,7 @@ fn write_linear_commits(repo: &Repository, count: usize) -> grit_lib::objects::O
     let mut parent = None;
     let mut tip = blob;
     for i in 0..count {
-        let tree = write_tree_from_index(&repo.odb(), &index, "").expect("tree");
+        let tree = write_tree_from_index(repo.odb(), &index, "").expect("tree");
         let ts = 1_700_000_000i64 + i as i64;
         let ident = format!("T <t@example.com> {ts} +0000");
         let raw = serialize_commit(&CommitData {
@@ -52,7 +52,7 @@ fn write_linear_commits(repo: &Repository, count: usize) -> grit_lib::objects::O
         tip = repo.odb().write(ObjectKind::Commit, &raw).expect("commit");
         parent = Some(tip);
     }
-    write_ref(&repo.git_dir(), "refs/heads/main", &tip).expect("ref");
+    write_ref(repo.git_dir(), "refs/heads/main", &tip).expect("ref");
     tip
 }
 

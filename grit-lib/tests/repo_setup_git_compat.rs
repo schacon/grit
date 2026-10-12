@@ -30,7 +30,7 @@ fn grit_open(start: &Path, env: Environment) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(start)).expect("discover")
+    Repository::discover(Some(start), &options).expect("discover")
 }
 
 fn init_nested_repo() -> (TempDir, TempDir) {
@@ -58,9 +58,9 @@ fn t1510_repo_setup_matches_git() {
     env.cwd = outer.path().to_path_buf();
     env.git_dir = Some(git_dir_s.clone());
     let repo = grit_open(outer.path(), env);
-    let wt = repo.work_tree.as_ref().expect("worktree");
+    let wt = repo.work_tree().expect("worktree");
     assert_eq!(
-        wt.canonicalize().unwrap_or_else(|_| wt.clone()),
+        wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf()),
         outer
             .path()
             .canonicalize()
@@ -68,7 +68,9 @@ fn t1510_repo_setup_matches_git() {
         "GIT_DIR without GIT_WORK_TREE uses cwd as worktree (git toplevel {git_show:?})"
     );
     assert_eq!(
-        repo.git_dir.canonicalize().unwrap_or(repo.git_dir.clone()),
+        repo.git_dir()
+            .canonicalize()
+            .unwrap_or(repo.git_dir().to_path_buf()),
         git_dir.canonicalize().unwrap_or(git_dir)
     );
 }
@@ -87,10 +89,7 @@ fn t1510_repo_setup_git_work_tree_without_git_dir() {
     env.cwd = dir.path().to_path_buf();
     env.git_work_tree = Some(wt.clone());
     let repo = grit_open(dir.path(), env);
-    assert_eq!(
-        repo.work_tree.as_ref().map(|p| p.as_path()),
-        Some(dir.path())
-    );
+    assert_eq!(repo.work_tree(), Some(dir.path()));
 }
 
 #[test]
@@ -103,12 +102,12 @@ fn t1504_ceiling_directories_blocks_walk_above_ceiling() {
     let mut env = Environment::empty();
     env.cwd = below.clone();
     env.git_ceiling_directories = Some(ceiling_s);
-    let err = Repository::discover_with(
+    let err = Repository::discover(
+        Some(&below),
         &RepositoryOptions {
             environment: env,
             ..RepositoryOptions::empty()
         },
-        Some(&below),
     )
     .expect_err("no repository under ceiling-only tree");
     let msg = format!("{err}");

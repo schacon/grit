@@ -38,7 +38,7 @@ fn open_bare_with_main(dir: &Path) -> grit_lib::error::Result<(Repository, Objec
         },
     )?;
     let repo = Repository::open(dir, &RepositoryOptions::empty())?;
-    let tip = write_commit(&repo.odb(), "init")?;
+    let tip = write_commit(repo.odb(), "init")?;
     fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))?;
     Ok((repo, tip))
 }
@@ -52,7 +52,7 @@ fn upstream_missing_reports_no_upstream_variant() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir(),
+        repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n[branch \"main\"]\n",
     );
     let err = resolve_upstream_symbolic_name(&repo, "main@{u}").unwrap_err();
@@ -67,7 +67,7 @@ fn push_default_nothing_reports_variant() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir(),
+        repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n\
          [remote \"origin\"]\n\turl = /tmp/x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
          [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n\
@@ -145,7 +145,7 @@ fn push_refspec_missing_when_branch_not_mapped() {
     let dir = tempdir().expect("tempdir");
     let (repo, _) = open_bare_with_main(dir.path()).expect("repo");
     write_config(
-        &repo.git_dir(),
+        repo.git_dir(),
         "[core]\n\trepositoryformatversion = 0\n\
          [remote \"origin\"]\n\turl = /tmp/x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
          \tpush = refs/heads/other:refs/heads/other\n\

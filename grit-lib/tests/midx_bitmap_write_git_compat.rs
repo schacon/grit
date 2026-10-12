@@ -182,7 +182,7 @@ fn reachability_positions(repo: &Repository, index: &BitmapIndex, tip: &ObjectId
 
 fn verify_all_commit_bitmaps(repo: &Repository, index: &BitmapIndex) {
     let out = Command::new("git")
-        .current_dir(repo.work_tree().unwrap_or(&repo.git_dir()))
+        .current_dir(repo.work_tree().unwrap_or(repo.git_dir()))
         .args(["rev-list", "--all"])
         .output()
         .expect("rev-list");

@@ -111,15 +111,15 @@ fn chain_accessors_and_bloom_helpers_on_split_graph() {
             if c.parents.len() <= 2 {
                 assert_eq!(c.parents, parents);
             }
-            let info = load_commit_graph_commit_info(&repo.odb(), oid).expect("info");
+            let info = load_commit_graph_commit_info(repo.odb(), oid).expect("info");
             if let Some(p) = c.parents.first() {
-                let ptree = load_commit_graph_commit_info(&repo.odb(), *p)
+                let ptree = load_commit_graph_commit_info(repo.odb(), *p)
                     .expect("pinfo")
                     .tree;
-                let _ = diff_changed_paths_for_bloom(&repo.odb(), Some(ptree), info.tree);
+                let _ = diff_changed_paths_for_bloom(repo.odb(), Some(ptree), info.tree);
             }
             let _ = chain.bloom_precheck_for_paths(
-                &repo.odb(),
+                repo.odb(),
                 oid,
                 &["z.txt".to_owned(), ":exclude:missing".to_owned()],
                 None,

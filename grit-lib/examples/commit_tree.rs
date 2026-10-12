@@ -47,7 +47,7 @@ fn main() -> grit_lib::error::Result<()> {
     repo.index_handle().write(&mut index)?;
 
     let index = repo.index_handle().load()?;
-    let tree_oid = write_tree_from_index(&repo.odb(), &index, "")?;
+    let tree_oid = write_tree_from_index(repo.odb(), &index, "")?;
     println!("tree: {tree_oid}");
 
     let commit = CommitData {
@@ -66,7 +66,7 @@ fn main() -> grit_lib::error::Result<()> {
     let commit_oid = repo.odb().write(ObjectKind::Commit, &raw)?;
     println!("commit: {commit_oid}");
 
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &commit_oid)?;
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &commit_oid)?;
     println!("updated refs/heads/main -> {commit_oid}");
 
     Ok(())

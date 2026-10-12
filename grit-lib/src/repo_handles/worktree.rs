@@ -45,7 +45,7 @@ impl<'repo> RepositoryWorktrees<'repo> {
     /// # use grit_lib::repo::Repository;
     /// # use std::path::Path;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// let repo = Repository::discover(Some(Path::new(".")))?;
+    /// let repo = Repository::discover(Some(Path::new(".")), &grit_lib::environment::RepositoryOptions::empty())?;
     /// let rows = repo.worktrees().list()?;
     /// let _ = rows.first().map(|e| &e.path);
     /// # Ok(())
@@ -68,7 +68,7 @@ impl<'repo> RepositoryWorktrees<'repo> {
     /// # use grit_lib::worktree::AddLinkedWorktreeOptions;
     /// # use std::path::PathBuf;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// # let repo = grit_lib::repo::Repository::discover(None)?;
+    /// # let repo = grit_lib::repo::Repository::discover(None, &grit_lib::environment::RepositoryOptions::empty())?;
     /// let opts = AddLinkedWorktreeOptions {
     ///     path: PathBuf::from("/tmp/wt"),
     ///     branch: Some("feature".into()),
@@ -107,7 +107,7 @@ impl<'repo> RepositoryWorktrees<'repo> {
     /// # use grit_lib::repo_handles::LockWorktreeOptions;
     /// # use std::path::Path;
     /// # fn demo() -> grit_lib::error::Result<()> {
-    /// # let repo = grit_lib::repo::Repository::discover(None)?;
+    /// # let repo = grit_lib::repo::Repository::discover(None, &grit_lib::environment::RepositoryOptions::empty())?;
     /// let opts = LockWorktreeOptions {
     ///     reason: Some("maintenance".into()),
     /// };

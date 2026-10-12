@@ -21,9 +21,8 @@ use grit_lib::pathspec::{
 };
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{
-    common_git_dir_for_config, early_config_ignore_repo_reason, init_bare_clone_minimal,
-    init_repository, resolve_dot_git, validate_repo_config, validate_repo_format,
-    worktree_config_enabled,
+    common_git_dir_for_config, early_config_ignore_repo_reason, resolve_dot_git,
+    validate_repo_config, validate_repo_format, worktree_config_enabled, InitOptions, Repository,
 };
 use tempfile::tempdir;
 
@@ -79,7 +78,7 @@ fn pathspec_public_api_matrix() {
 #[test]
 fn repo_init_and_crlf_helpers() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(Error::Io)?;
-    init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    Repository::init(dir.path(), &InitOptions::default())?;
     let git_dir = dir.path().join(".git");
     let _ = validate_repo_format(&git_dir)?;
     let _ = common_git_dir_for_config(&git_dir);
@@ -89,7 +88,15 @@ fn repo_init_and_crlf_helpers() -> grit_lib::error::Result<()> {
     let _ = validate_repo_config("[core]\n\trepositoryformatversion = 0\n");
 
     let bare = tempdir().map_err(Error::Io)?;
-    init_bare_clone_minimal(bare.path(), "main", RefStorageFormat::Files)?;
+    Repository::init(
+        bare.path(),
+        &InitOptions {
+            bare: true,
+            initial_branch: "main".into(),
+            ref_storage: RefStorageFormat::Files,
+            ..InitOptions::default()
+        },
+    )?;
 
     let rules = parse_gitattributes_content("* text=auto\n*.bin binary\n");
     assert!(!rules.is_empty());

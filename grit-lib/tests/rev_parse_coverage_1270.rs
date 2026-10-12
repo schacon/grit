@@ -28,7 +28,7 @@ fn open_grit_at(wt: &Path, cwd: &Path) -> Repository {
         environment: env,
         ..RepositoryOptions::empty()
     };
-    Repository::discover_with(&options, Some(wt)).expect("discover")
+    Repository::discover(Some(wt), &options).expect("discover")
 }
 
 fn expect_rev_parse_variant(repo: &Repository, spec: &str, pred: fn(&RevParseError) -> bool) {

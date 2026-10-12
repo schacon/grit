@@ -74,7 +74,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
         "expected filter.test.process on file attributes"
     );
     let _ = hash_worktree_file(
-        &repo.odb(),
+        repo.odb(),
         &wt.join("a.txt"),
         &meta_a,
         &conv,
@@ -88,7 +88,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     let meta_b = fs::symlink_metadata(wt.join("b.txt")).expect("meta b");
     let attrs_b = rules.file_attrs("b.txt", false);
     let oid_b = hash_worktree_file(
-        &repo.odb(),
+        repo.odb(),
         &wt.join("b.txt"),
         &meta_b,
         &conv,
@@ -119,7 +119,7 @@ fn filter_process_reused_and_disable_persists_on_repository() {
     rules.filter_process().disable_process_filter(proc_cmd);
 
     let oid_b_after = hash_worktree_file(
-        &repo.odb(),
+        repo.odb(),
         &wt.join("b.txt"),
         &meta_b,
         &conv,

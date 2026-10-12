@@ -29,7 +29,7 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
     .expect("entry");
     index.add_or_replace(entry);
     index.sort();
-    let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
         .expect("tree");
     repo.index_handle().write(&mut index).expect("write index");
     let commit = objects::CommitData {
@@ -51,8 +51,8 @@ fn commit_file(repo: &Repository, path: &str, contents: &str, parent: Option<Obj
             &objects::serialize_commit(&commit),
         )
         .expect("commit");
-    refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
-    refs::write_ref(&repo.git_dir(), "refs/heads/main", &co).expect("branch");
+    refs::write_ref(repo.git_dir(), "HEAD", &co).expect("head");
+    refs::write_ref(repo.git_dir(), "refs/heads/main", &co).expect("branch");
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn mixed_reset_readable_by_git() {
     .expect("init");
     let c1 = {
         commit_file(&repo, "f", "1\n", None);
-        refs::resolve_ref(&repo.git_dir(), "HEAD").expect("head")
+        refs::resolve_ref(repo.git_dir(), "HEAD").expect("head")
     };
     commit_file(&repo, "f", "2\n", Some(c1));
 

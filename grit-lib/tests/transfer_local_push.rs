@@ -771,7 +771,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
         repo.work_tree()
     );
 
-    let resolved = resolve_local_remote_git_dir("../origin.git", &repo.git_dir(), repo.work_tree());
+    let resolved = resolve_local_remote_git_dir("../origin.git", repo.git_dir(), repo.work_tree());
     assert_eq!(
         resolved.canonicalize().expect("origin path"),
         origin.canonicalize().expect("origin canonical")
@@ -779,7 +779,7 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
 
     let head = rev_parse(&linked, "HEAD");
     let outcome = push_local(
-        &repo.git_dir(),
+        repo.git_dir(),
         &resolved,
         &[PushRefSpec {
             src: Some(head),

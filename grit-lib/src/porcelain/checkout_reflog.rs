@@ -68,7 +68,8 @@ pub fn append_head_checkout_reflog(
     from_label: &str,
     to_label: &str,
 ) -> Result<()> {
-    let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
+    let config =
+        ConfigSet::load(repo.environment(), Some(repo.git_dir()), true).unwrap_or_default();
     let identity = checkout_reflog_identity(repo);
     let message = format!("checkout: moving from {from_label} to {to_label}");
     append_reflog_with_config(

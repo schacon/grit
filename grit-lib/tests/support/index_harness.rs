@@ -112,7 +112,7 @@ pub fn git_status_porcelain_v2_lines(worktree: &Path) -> Vec<String> {
 /// Grit status rendered as porcelain v2 (same subset git uses for ordinary repos).
 pub fn grit_status_porcelain_v2_lines(repo: &Repository) -> Vec<String> {
     let model = status(repo, &StatusOptions::default(), &mut NullProgress).expect("grit status");
-    format_porcelain_v2(&model, &repo.odb(), repo.work_tree())
+    format_porcelain_v2(&model, repo.odb(), repo.work_tree())
 }
 
 pub fn assert_porcelain_v2_matches_git(worktree: &Path, repo: &Repository) {
