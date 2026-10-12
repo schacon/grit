@@ -1652,6 +1652,7 @@ pub fn format_porcelain_v2(
     use crate::diff::{format_mode, head_path_states};
     use std::collections::BTreeMap;
 
+    let null_oid_hex = ObjectId::null(odb.hash_algo()).to_hex();
     let head_states = head_path_states(odb, model.head_tree.as_ref()).unwrap_or_default();
 
     let mut staged_by_path: BTreeMap<String, &DiffEntry> = BTreeMap::new();
@@ -1696,7 +1697,7 @@ pub fn format_porcelain_v2(
         let (m_h, h_h) = head_states
             .get(path.as_str())
             .map(|(m, oid)| (format_mode(*m), oid.to_hex()))
-            .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
+            .unwrap_or_else(|| ("000000".to_owned(), null_oid_hex.clone()));
 
         let idx_e = model
             .index
@@ -1704,8 +1705,14 @@ pub fn format_porcelain_v2(
             .iter()
             .find(|e| e.stage() == 0 && String::from_utf8_lossy(&e.path) == *path);
         let (m_i, h_i) = idx_e
-            .map(|e| (format_mode(e.mode), e.oid.to_hex()))
-            .unwrap_or_else(|| ("000000".to_owned(), ObjectId::zero().to_hex()));
+            .map(|e| {
+                if e.intent_to_add() {
+                    ("000000".to_owned(), null_oid_hex.clone())
+                } else {
+                    (format_mode(e.mode), e.oid.to_hex())
+                }
+            })
+            .unwrap_or_else(|| ("000000".to_owned(), null_oid_hex.clone()));
 
         let m_w = porcelain_v2_worktree_mode(
             x,
@@ -1757,7 +1764,7 @@ pub fn format_porcelain_v2(
                 .iter()
                 .find(|e| e.stage() == stage)
                 .map(|e| e.oid.to_hex())
-                .unwrap_or_else(|| ObjectId::zero().to_hex());
+                .unwrap_or_else(|| null_oid_hex.clone());
             fields.push(oid);
         }
         fields.push(path.clone());
