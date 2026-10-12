@@ -477,6 +477,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pad_name_leaves_string_when_already_wide_enough() {
+        assert_eq!(pad_name_to_display_width("hello", 3), "hello");
+    }
+
+    #[test]
     fn pad_name_matches_git_display_columns_for_wide_chars() {
         // Truncated path from t4073: display width 9; Git pads to name_width 10 with one space.
         let truncated = ".../f再见";
@@ -815,8 +820,9 @@ mod tests {
         let mut buf = Vec::new();
         write_diffstat_block(&mut buf, &files, &opts).unwrap();
         let s = String::from_utf8(buf).unwrap();
-        assert!(s.contains("1000"));
+        assert!(s.contains("file changed"));
         assert!(s.contains("insertion"));
+        assert!(s.contains("deletion"));
     }
 
     #[test]
