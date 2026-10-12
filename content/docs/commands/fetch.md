@@ -23,6 +23,8 @@ When `fetch.prune` or `remote.<name>.prune` is true, stale remote-tracking refs 
 
 Repositories created as shallow clones with Git (for example `git clone --depth 1`) are supported: `grit fetch` respects the existing shallow boundary, does not create tag refs to missing commits, and leaves a clean repository when there is nothing new to download.
 
+On an interactive terminal (human output, not `--json` or `--markdown`), grit prints live progress on stderr while objects are received and indexed, using the same style as [`grit clone`](../clone/). When stderr is not a TTY, no progress lines are shown.
+
 ## Options
 
 | Option | Description |
@@ -35,6 +37,7 @@ Repositories created as shallow clones with Git (for example `git clone --depth 
 
 ```console
 $ grit fetch
+Receiving objects: 4.00 KiB, 8.00 KiB/s, done.
   refs/remotes/origin/main  a8e620a → b52cca6
 Fetched 1 update from origin.
 

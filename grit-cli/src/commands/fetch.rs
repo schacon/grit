@@ -1,8 +1,9 @@
 //! `grit fetch` — download refs and objects from a remote (default `origin`).
 
+use crate::output::OutputMode;
+use crate::progress::TerminalProgress;
 use anyhow::{Context, Result};
 use grit_lib::config::ConfigSet;
-use grit_lib::fetch::NoProgress;
 use grit_lib::remote::{DefaultHttpClientFactory, RemoteError, DEFAULT_REMOTE};
 use grit_lib::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use serde::Serialize;
@@ -60,7 +61,12 @@ fn short_hex(oid: &str) -> &str {
     oid.get(..7).unwrap_or(oid)
 }
 
-pub fn run(remote: Option<String>, prune: bool, no_prune: bool) -> Result<FetchOutcome> {
+pub fn run(
+    remote: Option<String>,
+    prune: bool,
+    no_prune: bool,
+    mode: OutputMode,
+) -> Result<FetchOutcome> {
     let repo = context::discover()?;
     let config = ConfigSet::load(&crate::context::environment(), Some(&repo.git_dir), true)
         .context("could not load config")?;
@@ -76,14 +82,14 @@ pub fn run(remote: Option<String>, prune: bool, no_prune: bool) -> Result<FetchO
         .context("could not resolve fetch prune settings")?;
 
     let factory = DefaultHttpClientFactory;
-    let result = match fetch_once(&repo, &config, &remote_name, prune_enabled, &factory) {
+    let result = match fetch_once(&repo, &config, &remote_name, prune_enabled, &factory, mode) {
         Ok(result) => result,
         Err(err) => {
             let url = config
                 .get(&format!("remote.{remote_name}.url"))
                 .unwrap_or_default();
             if auth::offer_reauth(&err, &url)? {
-                fetch_once(&repo, &config, &remote_name, prune_enabled, &factory)?
+                fetch_once(&repo, &config, &remote_name, prune_enabled, &factory, mode)?
             } else {
                 return Err(err);
             }
@@ -118,8 +124,10 @@ fn fetch_once(
     remote_name: &str,
     prune: bool,
     factory: &DefaultHttpClientFactory,
+    mode: OutputMode,
 ) -> Result<grit_lib::transfer::FetchOutcome> {
     let remote = crate::commands::remote::resolve_remote_or_url(Some(config), remote_name)?;
+    let mut progress = TerminalProgress::new(mode);
     remote
         .fetch(
             repo,
@@ -130,7 +138,7 @@ fn fetch_once(
                 prune,
                 ..Default::default()
             },
-            &mut NoProgress,
+            &mut progress,
             Some(factory),
         )
         .map_err(map_remote_fetch_error)

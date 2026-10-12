@@ -818,9 +818,12 @@ fn dispatch(cli: Cli, opts: &OutputOptions) -> Result<()> {
             remote,
             prune,
             no_prune,
-        } => emit(&commands::fetch::run(remote, prune, no_prune)?, opts),
+        } => emit(
+            &commands::fetch::run(remote, prune, no_prune, opts.mode)?,
+            opts,
+        ),
         Command::Pull => {
-            let outcome = commands::pull::run()?;
+            let outcome = commands::pull::run(opts.mode)?;
             emit(&outcome, opts)?;
             if outcome.result == "conflicts" {
                 std::process::exit(1);
