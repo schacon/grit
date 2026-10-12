@@ -7,6 +7,7 @@ use grit_lib::objects::parse_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
 use grit_lib::state::{resolve_head, HeadState};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -16,7 +17,7 @@ use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use grit_lib::porcelain::add::stage_for_commit;
 
 /// Result of `grit commit`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct CommitOutcome {
     pub oid: String,
     pub branch: String,

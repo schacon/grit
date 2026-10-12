@@ -10,8 +10,8 @@ use grit_lib::porcelain::stash::{
     apply_stash, drop_stash, list_stashes, pop_stash, push_stash, stash_diff, StashCreateOptions,
 };
 use grit_lib::repo::Repository;
-use serde::ser::SerializeStruct;
-use serde::{Serialize, Serializer};
+use schemars::JsonSchema;
+use serde::Serialize;
 
 use crate::commands::diff::{self, DiffOutcome};
 use crate::commands::show::{self, DiffStat};
@@ -19,35 +19,19 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit stash push` (or bare `grit stash`).
+#[derive(Serialize, JsonSchema)]
+#[serde(untagged)]
 pub enum StashPushOutcome {
     /// Local changes were saved to the stash.
     Saved { oid: String, message: String },
     /// Working tree and index already matched `HEAD`; nothing was saved.
-    Nothing,
-}
-
-impl Serialize for StashPushOutcome {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Saved { oid, message } => {
-                let mut st = serializer.serialize_struct("StashPushOutcome", 2)?;
-                st.serialize_field("oid", oid)?;
-                st.serialize_field("message", message)?;
-                st.end()
-            }
-            Self::Nothing => {
-                let mut st = serializer.serialize_struct("StashPushOutcome", 1)?;
-                st.serialize_field("stashed", &false)?;
-                st.end()
-            }
-        }
-    }
+    Nothing { stashed: bool },
 }
 
 impl HumanRender for StashPushOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         match self {
-            Self::Nothing => outln!(w, "No local changes to save"),
+            Self::Nothing { .. } => outln!(w, "No local changes to save"),
             Self::Saved { oid, message } => {
                 let short = oid.get(..7).unwrap_or(oid.as_str());
                 if message.is_empty() {
@@ -67,11 +51,11 @@ impl HumanRender for StashPushOutcome {
 impl MarkdownRender for StashPushOutcome {}
 
 /// Result of `grit stash list` (`--json` is the bare array of entries).
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct StashListOutcome(pub Vec<StashListEntry>);
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct StashListEntry {
     pub index: usize,
     pub oid: String,
@@ -108,12 +92,14 @@ impl MarkdownRender for StashListOutcome {
 }
 
 /// Result of `grit stash show`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct StashShowOutcome {
     pub index: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub stat: Option<DiffStat>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub patch: Option<DiffOutcome>,
 }
 
@@ -147,11 +133,12 @@ impl MarkdownRender for StashShowOutcome {
 }
 
 /// Result of `grit stash apply`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct StashApplyOutcome {
     pub index: usize,
     pub conflicts: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default)]
     pub conflict_paths: Vec<String>,
 }
 
@@ -172,12 +159,13 @@ impl HumanRender for StashApplyOutcome {
 impl MarkdownRender for StashApplyOutcome {}
 
 /// Result of `grit stash pop`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct StashPopOutcome {
     pub index: usize,
     pub dropped: bool,
     pub conflicts: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default)]
     pub conflict_paths: Vec<String>,
 }
 
@@ -204,7 +192,7 @@ impl HumanRender for StashPopOutcome {
 impl MarkdownRender for StashPopOutcome {}
 
 /// Result of `grit stash drop`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct StashDropOutcome {
     pub index: usize,
 }
@@ -249,7 +237,7 @@ pub fn run_push(message: Option<String>, include_untracked: bool) -> Result<Stas
                 message,
             }
         }
-        None => StashPushOutcome::Nothing,
+        None => StashPushOutcome::Nothing { stashed: false },
     })
 }
 

@@ -16,6 +16,7 @@
 
 use anyhow::{bail, Result};
 use grit_lib::diff::{DiffEntry, DiffStatus};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::{ErrorKind, Write};
 use time::OffsetDateTime;
@@ -237,7 +238,7 @@ fn markdown_scalar(value: &serde_json::Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// A commit in JSON output: full hex `oid`, subject, author, and dates.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct CommitJson {
     pub oid: String,
     pub subject: String,
@@ -247,6 +248,7 @@ pub struct CommitJson {
     pub author_date: String,
     /// Relative author date (e.g. `3 days ago`), when `now` is supplied.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub relative_date: Option<String>,
 }
 
@@ -264,14 +266,14 @@ impl CommitJson {
 }
 
 /// A single worktree/index change in JSON output.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ChangeJson {
     pub path: String,
     pub status: ChangeStatus,
 }
 
 /// Machine-readable diff change status (`--json` / `--markdown` contract).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeStatus {
     Added,
@@ -301,6 +303,12 @@ impl From<&DiffStatus> for ChangeStatus {
     fn from(status: &DiffStatus) -> Self {
         (*status).into()
     }
+}
+
+/// Maps each `--json` command path to the Rust type that defines its success schema.
+#[allow(dead_code)]
+pub fn schema_registry() -> &'static [crate::json_schema::SchemaRegistryEntry] {
+    crate::json_schema::schema_registry()
 }
 
 /// Serialize a [`DiffEntry`] as a [`ChangeJson`].

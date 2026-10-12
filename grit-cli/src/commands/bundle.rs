@@ -7,20 +7,21 @@ use anyhow::{bail, Result};
 use grit_lib::bundle::{Bundle, BundleError, BundleVerifyReport};
 use grit_lib::bundle_remote;
 use grit_lib::objects::ObjectId;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Outcome of `grit bundle create`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BundleCreateOutcome {
     pub path: String,
     pub refs: usize,
 }
 
 /// Outcome of `grit bundle verify`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BundleVerifyOutcome {
     pub path: String,
     pub ok: bool,
@@ -31,13 +32,13 @@ pub struct BundleVerifyOutcome {
 }
 
 /// Outcome of `grit bundle list`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BundleListOutcome {
     pub path: String,
     pub references: Vec<BundleRefJson>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct BundleRefJson {
     pub name: String,
     pub oid: String,

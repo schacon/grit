@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use grit_lib::git_path::user_display_path;
 use grit_lib::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
@@ -16,12 +17,13 @@ fn is_false(value: &bool) -> bool {
 }
 
 /// Result of `grit init`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct InitOutcome {
     /// `true` when a new repository was created.
     pub initialized: bool,
     /// `true` when an existing repository was reinitialized in place.
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[schemars(default)]
     pub reinitialized: bool,
     /// The created `.git` directory.
     pub path: String,

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::context;
@@ -17,7 +18,7 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// Result of `grit config`, tagged by `action`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ConfigOutcome {
     Get { key: String, value: String },
@@ -27,7 +28,7 @@ pub enum ConfigOutcome {
 }
 
 /// One entry in a `list` outcome. `value` is `null` for a bare/valueless key.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ConfigEntry {
     pub key: String,
     pub value: Option<String>,
@@ -35,6 +36,7 @@ pub struct ConfigEntry {
     pub scope: String,
     /// Source file, when the entry is file-backed.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
 }
 

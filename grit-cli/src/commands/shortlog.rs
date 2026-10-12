@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::state::{resolve_head, HeadState};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -15,7 +16,7 @@ use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContex
 use crate::ui;
 
 /// Result of `grit shortlog`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct ShortlogOutcome {
     pub branch: String,
     /// Target branch name, or `null` when none could be resolved.
@@ -23,6 +24,7 @@ pub struct ShortlogOutcome {
     pub ahead: usize,
     pub commits: Vec<CommitJson>,
     #[serde(skip)]
+    #[schemars(skip)]
     commit_rows: Vec<CommitSummary>,
 }
 

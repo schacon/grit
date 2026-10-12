@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use grit_lib::pathspec::{pathdiff, resolve_pathspec_in_worktree};
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreOutcome, RestoreSource};
 use grit_lib::rev_parse::resolve_revision;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -11,7 +12,7 @@ use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// CLI result (mirrors [`RestoreOutcome`]).
-#[derive(Serialize, Clone)]
+#[derive(Serialize, JsonSchema, Clone)]
 pub struct RestoreCliOutcome {
     pub restored: Vec<String>,
     pub removed: Vec<String>,

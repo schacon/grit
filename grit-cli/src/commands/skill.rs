@@ -1,6 +1,7 @@
 //! `grit skill` — print an agent skill that explains how to use grit.
 
 use anyhow::Result;
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
@@ -14,7 +15,7 @@ const SKILL: &str = include_str!("skill.md");
 const SUGGESTED_PATH: &str = ".agents/skills/grit/SKILL.md";
 
 /// Result of `grit skill`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct SkillOutcome {
     /// The skill's name, from its front matter.
     pub name: String,

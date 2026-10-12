@@ -8,6 +8,7 @@ use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, prune_linked_worktrees, remove_linked_worktree,
     resolve_linked_worktree_add_path, AddLinkedWorktreeOptions,
 };
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 use std::path::PathBuf;
@@ -17,7 +18,7 @@ use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use crate::ref_name_messages::branch_short_name_error_message;
 
 /// Result of `grit worktree`, tagged by `action`.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum WorktreeOutcome {
     List {
@@ -36,7 +37,7 @@ pub enum WorktreeOutcome {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct WorktreeRow {
     pub path: String,
     pub head: String,
@@ -45,6 +46,7 @@ pub struct WorktreeRow {
     pub bare: bool,
     pub locked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
     pub lock_reason: Option<String>,
     pub prunable: bool,
 }
