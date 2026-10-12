@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1633,7 +1633,16 @@ fn write_midx_rev_sidecar(
         )));
     }
     append_hashfile_checksum(&mut out, hash_len);
-    fs::write(path, out).map_err(Error::Io)
+    let mut file = fs::File::create(path).map_err(Error::Io)?;
+    file.write_all(&out).map_err(Error::Io)?;
+    file.sync_all().map_err(Error::Io)?;
+    if !path.is_file() {
+        return Err(Error::CorruptObject(format!(
+            "MIDX rev sidecar not present after write ({})",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn repo_hash_algo_for_pack_dir(pack_dir: &Path) -> HashAlgo {
@@ -3277,6 +3286,15 @@ pub fn write_multi_pack_index_with_options(
         if bitmap_ok && !chain_file_path(pack_dir).exists() {
             if let Ok(existing) = fs::read(&dest) {
                 if existing == out {
+                    if opts.write_rev_sidecar {
+                        if let Some(order) = bitmap_rid_order.as_ref() {
+                            let rev_path =
+                                pack_dir.join(format!("multi-pack-index-{hash_hex}.rev"));
+                            if !rev_path.exists() {
+                                write_midx_rev_sidecar(&rev_path, order, &hash_arr, repo_algo)?;
+                            }
+                        }
+                    }
                     return Ok(WriteMultiPackIndexResult {
                         bitmap: bitmap_outcome,
                     });
@@ -3290,17 +3308,31 @@ pub fn write_multi_pack_index_with_options(
 
         scrub_root_midx_sidecars_except(pack_dir, Some(&hash_hex))?;
 
-        if opts.write_rev_sidecar {
-            let rev_path = pack_dir.join(format!("multi-pack-index-{hash_hex}.rev"));
-            if let Some(order) = bitmap_rid_order.as_ref() {
-                write_midx_rev_sidecar(&rev_path, order, &hash_arr, repo_algo)?;
-            }
-        }
         if opts.write_bitmap {
             let rid = bitmap_rid_order.as_ref().ok_or_else(|| {
                 Error::CorruptObject("MIDX bitmap write missing reverse index order".to_owned())
             })?;
             write_midx_reachability_bitmap(pack_dir, &out, rid, hash, &bitmap_path)?;
+        }
+        if opts.write_rev_sidecar {
+            let rev_path = pack_dir.join(format!("multi-pack-index-{hash_hex}.rev"));
+            let order = bitmap_rid_order.as_ref().ok_or_else(|| {
+                Error::CorruptObject(
+                    "MIDX rev sidecar write missing reverse index order".to_owned(),
+                )
+            })?;
+            write_midx_rev_sidecar(&rev_path, order, &hash_arr, repo_algo)?;
+        }
+    }
+
+    if opts.write_rev_sidecar {
+        let hash_hex = hex::encode(hash);
+        let rev_root = pack_dir.join(format!("multi-pack-index-{hash_hex}.rev"));
+        let rev_layer = midx_d_dir(pack_dir).join(format!("multi-pack-index-{hash_hex}.rev"));
+        if !rev_root.is_file() && !rev_layer.is_file() {
+            return Err(Error::CorruptObject(format!(
+                "MIDX rev sidecar missing after write ({hash_hex})"
+            )));
         }
     }
 

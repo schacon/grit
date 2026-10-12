@@ -36,7 +36,27 @@ fn git_available() -> bool {
         .unwrap_or(false)
 }
 
+fn clear_existing_midx(pack_dir: &Path) {
+    let _ = std::fs::remove_file(pack_dir.join("multi-pack-index"));
+    let _ = std::fs::remove_file(pack_dir.join("multi-pack-index-chain"));
+    let midx_d = pack_dir.join("multi-pack-index.d");
+    if midx_d.is_dir() {
+        let _ = std::fs::remove_dir_all(&midx_d);
+    }
+    if let Ok(rd) = std::fs::read_dir(pack_dir) {
+        for ent in rd.filter_map(|e| e.ok()) {
+            let name = ent.file_name().to_string_lossy().into_owned();
+            if name.starts_with("multi-pack-index") {
+                let _ = std::fs::remove_file(ent.path());
+            }
+        }
+    }
+}
+
 fn grit_write_midx_rev(pack_dir: &Path) {
+    // Git `repack` may leave MIDX sidecars without `.rev`; clear them so grit writes
+    // a consistent MIDX + bitmap + rev set.
+    clear_existing_midx(pack_dir);
     let opts = WriteMultiPackIndexOptions {
         write_bitmap: true,
         write_rev_sidecar: true,
