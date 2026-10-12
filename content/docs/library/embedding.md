@@ -40,7 +40,7 @@ Long-running work (status, fetch, pack indexing) takes a [`ProgressSink`](rustdo
 
 [`CommandRunner`](rustdoc:grit_lib::command_runner::CommandRunner) is the only production path that spawns OS processes from the library ([`SystemCommandRunner`](rustdoc:grit_lib::command_runner::SystemCommandRunner)). Hooks, smudge/clean filters, credential helpers, and signing helpers build a [`CommandSpec`](rustdoc:grit_lib::command_runner::CommandSpec) and call `spawn`.
 
-For tests, [`RecordingRunner`](rustdoc:grit_lib::command_runner::RecordingRunner) records specs and returns scripted exit codes. Install it on `RepositoryOptions` before `Repository::open_with`.
+For tests, [`RecordingRunner`](rustdoc:grit_lib::command_runner::RecordingRunner) records specs and returns scripted exit codes. Install it on [`RepositoryOptions`](rustdoc:grit_lib::environment::RepositoryOptions) before [`Repository::open`](rustdoc:grit_lib::repo::Repository) or [`Repository::discover`](rustdoc:grit_lib::repo::Repository).
 
 ## Typed errors
 

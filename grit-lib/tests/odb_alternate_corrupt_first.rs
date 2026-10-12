@@ -2,7 +2,6 @@
 
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
-use grit_test_support::git_supports_alternate_past_corrupt_first;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -79,13 +78,6 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
     std::io::Read::read_to_end(&mut stream.reader, &mut buf).expect("read stream");
     assert_eq!(buf, payload);
 
-    if !git_supports_alternate_past_corrupt_first() {
-        eprintln!(
-            "SKIP: system git does not read past a corrupt first alternate; grit fallback verified above"
-        );
-        return;
-    }
-
     let git_dir = layout.path().join("primary.git");
     let cat = Command::new("git")
         .args(["cat-file", "blob", &oid.to_hex()])
@@ -95,13 +87,10 @@ fn corrupt_first_alternate_propagates_for_read_read_info_open_stream() {
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .output()
         .expect("git cat-file");
-    let stderr = String::from_utf8_lossy(&cat.stderr);
-    if cat.status.success() {
-        assert_eq!(cat.stdout, payload);
-    } else if stderr.contains("corrupt") || stderr.contains("unable to unpack") {
-        // Grit resolves via the later alternate (assertions above). System Git 2.43+
-        // may abort on the first corrupt alternate instead of continuing.
-    } else {
-        panic!("unexpected git cat-file failure: {stderr}");
-    }
+    assert!(
+        cat.status.success(),
+        "git must read via later alternate when earlier is unusable, stderr={}",
+        String::from_utf8_lossy(&cat.stderr)
+    );
+    assert_eq!(cat.stdout, payload);
 }

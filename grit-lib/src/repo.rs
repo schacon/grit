@@ -693,6 +693,7 @@ impl Repository {
         let cfg = repo.ensure_config_arc()?;
         repo.install_config_snapshot(cfg);
         warn_core_bare_worktree_conflict(options, repo.git_dir());
+        let _ = trace_repo_setup_if_requested(&repo);
         Ok(repo)
     }
 
@@ -812,6 +813,7 @@ impl Repository {
         let cfg = repo.ensure_config_arc()?;
         repo.install_config_snapshot(cfg);
         warn_core_bare_worktree_conflict(options, repo.git_dir());
+        let _ = trace_repo_setup_if_requested(&repo);
         Ok(repo)
     }
 
@@ -993,6 +995,7 @@ impl Repository {
                 if let Some(wt) = repo.work_tree.as_ref() {
                     repo.git_prefix = compute_git_prefix(env, wt);
                 }
+                let _ = trace_repo_setup_if_requested(&repo);
                 return Ok(repo);
             }
 
@@ -1467,7 +1470,7 @@ impl Repository {
 ///
 /// Upstream tests grep `^setup: ` from the trace file; they do not use the timestamped
 /// `trace.c:` prefix that full Git tracing adds.
-pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
+pub(crate) fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
     let Some(path) = repo.environment.git_trace_setup.as_deref() else {
         return Ok(());
     };
