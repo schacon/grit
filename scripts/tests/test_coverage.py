@@ -189,12 +189,61 @@ minimum = 50.0
             full_total = cov.library_total_stats(stats, src_root=src)
             self.assertLess(full_total.percent, keys_only.percent)
 
+<<<<<<< New base: test: rev-list/diff sweeps and supporting-module coverage for 80% gate
     def test_total_floor_fails_at_79_9_percent(self) -> None:
         total_stats = cov.LineStats(count=10_000, covered=7_990)
         self.assertAlmostEqual(total_stats.percent, 79.9, places=1)
         minimum = 80.0
         self.assertFalse(total_stats.percent + 1e-9 >= minimum)
 
+||||||| Common ancestor
+=======
+    def test_total_floor_fails_at_79_9_percent(self) -> None:
+        """79.9% total must fail against the committed 80% floor via check()."""
+        floors_path = ROOT / "grit-lib" / "coverage-floors.toml"
+        floors = cov.load_floors(floors_path)
+        self.assertIsNotNone(floors.total_minimum)
+        assert floors.total_minimum is not None
+        floors.total_minimum = 80.0
+
+        src = ROOT / "grit-lib" / "src"
+        payload_files = []
+        for rel in cov.grit_lib_src_rs_files(src_root=src):
+            line_count = cov.count_source_lines_for_coverage(src / rel)
+            if line_count == 0:
+                continue
+            payload_files.append(
+                {
+                    "filename": str(src / rel),
+                    "summary": {
+                        "lines": {
+                            "count": line_count,
+                            "covered": 0,
+                            "percent": 0.0,
+                        }
+                    },
+                }
+            )
+        total_lines = sum(
+            int(item["summary"]["lines"]["count"]) for item in payload_files
+        )
+        covered_target = int(round(total_lines * 0.799))
+        remaining = covered_target
+        for item in payload_files:
+            count = int(item["summary"]["lines"]["count"])
+            take = min(count, remaining)
+            item["summary"]["lines"]["covered"] = take
+            remaining -= take
+            if remaining <= 0:
+                break
+        stats = cov.parse_coverage_json(json.dumps({"data": [{"files": payload_files}]}))
+        total_stats = cov.library_total_stats(stats, src_root=src)
+        self.assertAlmostEqual(total_stats.percent, 79.9, delta=0.15)
+
+        _table, failures = cov.check(floors, stats, validate_src_tree=True)
+        self.assertTrue(any("total:" in f for f in failures))
+
+>>>>>>> Current commit: test: enforce 80% total floor via coverage check()
     def test_total_floor_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             floors_path = Path(tmp) / "floors.toml"
