@@ -2,9 +2,10 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output as ProcessOutput};
 
+use serde::de::Deserialize;
 use serde::Serialize;
 
 /// Fixed author/committer timestamp for deterministic commits in CLI fixtures.
@@ -47,6 +48,20 @@ pub struct CliFixture {
     grit_bin: OsString,
 }
 
+/// [`CliFixture`] history published to a bare upstream with system `git`.
+pub struct CliFixtureWithUpstream {
+    fixture: CliFixture,
+    upstream: tempfile::TempDir,
+    workspace: tempfile::TempDir,
+}
+
+/// Options for network command snapshots.
+#[derive(Clone, Copy, Default)]
+pub struct NetworkSnapshotOptions {
+    /// Run `git fsck --strict` on the bare upstream after the command.
+    pub fsck_upstream: bool,
+}
+
 impl Default for CliFixture {
     fn default() -> Self {
         Self::new()
@@ -81,6 +96,49 @@ impl CliFixture {
         fixture
     }
 
+    /// Publish this fixture to a bare upstream using system `git`, then verify both
+    /// repositories with `git fsck --strict`.
+    #[must_use]
+    pub fn with_upstream(self) -> CliFixtureWithUpstream {
+        let upstream = tempfile::tempdir().unwrap_or_else(|e| panic!("upstream tempdir: {e}"));
+        let workspace = tempfile::tempdir().unwrap_or_else(|e| panic!("workspace tempdir: {e}"));
+        let upstream_path = upstream.path();
+        crate::git(upstream_path, &["init", "--bare", "-b", "main"]);
+
+        let seed = self.path();
+        crate::git(seed, &["checkout", "main"]);
+        let upstream_utf8 = upstream_path.to_str().unwrap_or_else(|| {
+            panic!(
+                "upstream path must be valid UTF-8: {}",
+                upstream_path.display()
+            )
+        });
+        crate::git(seed, &["remote", "add", "origin", upstream_utf8]);
+        crate::git(seed, &["push", "-u", "origin", "main"]);
+        crate::git(seed, &["push", "origin", "feature"]);
+        crate::git(seed, &["tag", "-a", "v0.1", "-m", "snapshot-tag"]);
+        crate::git(seed, &["push", "origin", "v0.1"]);
+
+        let seed_fsck = git_fsck(seed, true);
+        assert!(
+            seed_fsck.ok,
+            "git fsck seed after push: {:?}",
+            seed_fsck.msg_ids
+        );
+        let upstream_fsck = git_fsck(upstream_path, true);
+        assert!(
+            upstream_fsck.ok,
+            "git fsck upstream after push: {:?}",
+            upstream_fsck.msg_ids
+        );
+
+        CliFixtureWithUpstream {
+            fixture: self,
+            upstream,
+            workspace,
+        }
+    }
+
     /// Repository working tree root.
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -110,7 +168,11 @@ impl CliFixture {
     }
 
     fn run_grit(&self, args: &[&str]) -> crate::Output {
-        let out = self.run_grit_process(args);
+        self.run_grit_in(self.path(), args)
+    }
+
+    fn run_grit_in(&self, cwd: &Path, args: &[&str]) -> crate::Output {
+        let out = self.run_grit_process(cwd, args);
         crate::Output {
             status: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -118,9 +180,9 @@ impl CliFixture {
         }
     }
 
-    fn run_grit_process(&self, args: &[&str]) -> ProcessOutput {
+    fn run_grit_process(&self, cwd: &Path, args: &[&str]) -> ProcessOutput {
         let mut cmd = Command::new(&self.grit_bin);
-        cmd.args(args).current_dir(self.path());
+        cmd.args(args).current_dir(cwd);
         self.apply_fixture_env(&mut cmd);
         cmd.output()
             .unwrap_or_else(|e| panic!("spawn grit {args:?}: {e}"))
@@ -279,7 +341,7 @@ impl CliFixture {
         settings.bind(|| { insta::assert_json_snapshot!(snapshot_name, payload); });
     }
 
-    fn capture_mode(&self, args: &[&str], kind: ModeKind) -> ModeCapture {
+    fn capture_mode_in(&self, cwd: &Path, args: &[&str], kind: ModeKind) -> ModeCapture {
         let mut argv: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
         match kind {
             ModeKind::Human => {}
@@ -287,13 +349,74 @@ impl CliFixture {
             ModeKind::Markdown => argv.push("--markdown".into()),
         }
         let arg_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let out = self.run_grit(&arg_refs);
+        let out = self.run_grit_in(cwd, &arg_refs);
         ModeCapture {
             exit: out.status.unwrap_or(-1),
             stdout: out.stdout,
             stderr: out.stderr,
         }
     }
+}
+
+impl CliFixtureWithUpstream {
+    /// Bare upstream repository path (`git init --bare`).
+    #[must_use]
+    pub fn upstream_path(&self) -> &Path {
+        self.upstream.path()
+    }
+
+    /// Scratch directory for clones and client repositories.
+    #[must_use]
+    pub fn workspace_path(&self) -> &Path {
+        self.workspace.path()
+    }
+
+    /// Access the original grit-built seed repository.
+    #[must_use]
+    pub fn seed(&self) -> &CliFixture {
+        &self.fixture
+    }
+
+    /// Clone the upstream into `workspace/<name>` with system `git` and return the path.
+    #[must_use]
+    pub fn git_clone_client(&self, name: &str) -> PathBuf {
+        let dest = self.workspace.path().join(name);
+        if dest.exists() {
+            fs::remove_dir_all(&dest).unwrap_or_else(|e| panic!("remove {name}: {e}"));
+        }
+        let upstream_utf8 = self.upstream_path().to_str().unwrap_or_else(|| {
+            panic!(
+                "upstream path must be valid UTF-8: {}",
+                self.upstream_path().display()
+            )
+        });
+        crate::git(self.workspace.path(), &["clone", "-q", upstream_utf8, name]);
+        dest
+    }
+
+    /// Snapshot a network command from `cwd`.
+    pub fn snapshot_network(
+        &self,
+        cwd: &Path,
+        snapshot_name: &str,
+        args: &[&str],
+        snapshot_dir: &Path,
+        options: NetworkSnapshotOptions,
+    ) {
+        let ctx = NetworkSnapshotContext {
+            upstream: self.upstream_path(),
+            extra_paths: &[cwd],
+            options,
+        };
+        self.fixture
+            .snapshot_all_modes_in(cwd, snapshot_name, args, snapshot_dir, Some(ctx));
+    }
+}
+
+struct NetworkSnapshotContext<'a> {
+    upstream: &'a Path,
+    extra_paths: &'a [&'a Path],
+    options: NetworkSnapshotOptions,
 }
 
 trait ExpectSuccess {
@@ -343,13 +466,28 @@ pub fn register_cli_snapshot_filters(settings: &mut insta::Settings, fixture: &C
     settings.add_filter(r"(?i)\bjust now\b", "[TIME_AGO]");
     settings.add_filter(r"\b\d+(?:\.\d+)?(?:ms|s|m)\b", "[DURATION]");
 
-    let repo = regex::escape(fixture.path().to_string_lossy().as_ref());
-    settings.add_filter(&repo, "[REPO]");
+    redact_path(settings, fixture.path(), "[REPO]");
+    redact_path(settings, fixture.home_root(), "[HOME]");
+}
 
-    let home = regex::escape(fixture.home_root().to_string_lossy().as_ref());
-    if home != repo {
-        settings.add_filter(&home, "[HOME]");
+/// Insta redactions for network CLI snapshots (transfer stats and temp paths).
+pub fn register_network_snapshot_filters(
+    settings: &mut insta::Settings,
+    fixture: &CliFixture,
+    upstream: &Path,
+    extra_paths: &[&Path],
+) {
+    register_cli_snapshot_filters(settings, fixture);
+    redact_path(settings, upstream, "[UPSTREAM]");
+    for path in extra_paths {
+        redact_path(settings, path, "[WORKTREE]");
     }
+
+    settings.add_filter(r#""bytes": \d+"#, r#""bytes": "[BYTES]""#);
+    settings.add_filter(r" \([\d.]+ (?:KiB|MiB|B)\)", " ([SIZE])");
+    settings.add_filter(r" in [\d.]+s\.", " in [ELAPSED].");
+    settings.add_filter(r" \([\d.]+s\)", " ([ELAPSED])");
+    settings.add_filter(r"\d+ objects", "[OBJECTS] objects");
 }
 
 /// Run `callback` with [`register_cli_snapshot_filters`] applied.
@@ -357,6 +495,54 @@ pub fn with_cli_snapshot_filters<F: FnOnce()>(fixture: &CliFixture, callback: F)
     let mut settings = insta::Settings::clone_current();
     register_cli_snapshot_filters(&mut settings, fixture);
     settings.bind(callback);
+}
+
+fn redact_path(settings: &mut insta::Settings, path: &Path, label: &str) {
+    let escaped = regex::escape(path.to_string_lossy().as_ref());
+    if !escaped.is_empty() {
+        settings.add_filter(&escaped, label);
+    }
+}
+
+fn assert_single_json_value(stdout: &str) {
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.is_empty(),
+        "expected JSON stdout, got empty output"
+    );
+    let mut de = serde_json::Deserializer::from_str(trimmed);
+    match serde_json::Value::deserialize(&mut de) {
+        Ok(_value) => {}
+        Err(err) => panic!("JSON stdout must parse: {err}"),
+    }
+    if let Err(err) = de.end() {
+        panic!("JSON stdout must be exactly one value: {err}");
+    }
+}
+
+fn assert_no_progress_in_json_stdout(stdout: &str) {
+    for marker in PROGRESS_STDOUT_FORBIDDEN {
+        assert!(
+            !stdout.contains(marker),
+            "progress marker {marker:?} must not appear in JSON stdout:\n{stdout}"
+        );
+    }
+}
+
+fn assert_progress_not_on_stdout(human: &ModeCapture) {
+    for marker in PROGRESS_STDOUT_FORBIDDEN {
+        assert!(
+            !human.stdout.contains(marker),
+            "progress marker {marker:?} must go to stderr, not stdout:\n{}",
+            human.stdout
+        );
+    }
+    if human.stderr.contains("Cloning into '") {
+        assert!(
+            !human.stdout.contains("Cloning into '"),
+            "clone progress must stay on stderr"
+        );
+    }
 }
 
 fn write_file(dir: &Path, name: &str, contents: &str) {

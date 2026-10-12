@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "Fast-forwarded origin/main → 844d29b\n",
+    "stderr": ""
+  },
+  "json": {
+    "exit": 0,
+    "stdout": "{\n  \"result\": \"up_to_date\",\n  \"branch\": \"origin/main\"\n}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 0,
+    "stdout": "- **branch**: origin/main\n- **result**: up_to_date\n",
+    "stderr": ""
+  }
+}

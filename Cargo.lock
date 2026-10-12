@@ -784,6 +784,7 @@ dependencies = [
  "insta",
  "regex",
  "serde",
+ "serde_json",
  "sha1",
  "sha2",
  "similar 3.2.0",

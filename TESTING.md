@@ -34,7 +34,10 @@ cargo test -p grit-lib --lib --release
 
 ```bash
 cargo test -p grit-cli --test output_snapshots
+cargo test -p grit-cli --test output_snapshots_network
 ```
+
+Network snapshots use [`CliFixture::with_upstream`](grit-test-support/src/cli_fixture.rs) to publish the grit-built fixture to a bare upstream with system `git`, then exercise clone, fetch, pull, push, and `remote refs` from client repositories. Push scenarios run `git fsck --strict` on the upstream after the command; JSON stdout is checked for a single parseable value with no progress lines mixed in.
 
 When you intentionally change CLI rendering or JSON/Markdown shape, refresh snapshots:
 
@@ -44,6 +47,7 @@ cargo insta review
 
 # Or update every snapshot in one shot (typical in CI/agent runs)
 INSTA_UPDATE=always cargo test -p grit-cli --test output_snapshots
+INSTA_UPDATE=always cargo test -p grit-cli --test output_snapshots_network
 ```
 
 Commit the updated `.snap` files with the code change. CI sets `CI=true`, so a stale snapshot fails the test instead of silently updating.

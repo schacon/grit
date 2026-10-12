@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "Cloned into 'cloned' on branch main — [OBJECTS] objects ([SIZE]), 2 branches, 1 tags, 2 files in [DURATION].\n",
+    "stderr": "Cloning into 'cloned' ...\n"
+  },
+  "json": {
+    "exit": 1,
+    "stdout": "{\"error\":\"destination 'cloned' already exists and is not empty\"}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 1,
+    "stdout": "**Error:** destination 'cloned' already exists and is not empty\n",
+    "stderr": ""
+  }
+}
