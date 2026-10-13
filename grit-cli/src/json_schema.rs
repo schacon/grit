@@ -69,6 +69,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fsck::FsckOutcome,
         gc::GcOutcome,
         hooks::HooksOutcome,
+        ignore::IgnoreCheckOutcome,
         init::InitOutcome,
         log::LogOutcome,
         merge::MergeOutcome,
@@ -128,6 +129,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HooksOutcome>("hooks"),
         entry::<HooksOutcome>("hooks.list"),
         entry::<HooksOutcome>("hooks.run"),
+        entry::<IgnoreCheckOutcome>("ignore.check"),
         entry::<PatchIdOutcome>("patch-id"),
         entry::<ResolveOutcome>("resolve"),
         entry::<CatOutcome>("cat"),
@@ -244,6 +246,10 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         "auth" => match positional.get(1).copied() {
             Some("logout") => "auth.logout",
             None => "auth",
+            _ => return None,
+        },
+        "ignore" => match positional.get(1).copied() {
+            Some("check") => "ignore.check",
             _ => return None,
         },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,

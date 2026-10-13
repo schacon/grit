@@ -556,6 +556,42 @@ fn prepare_stash(fixture: &CliFixture) {
 
 const LINKED_WT: &str = "linked-wt";
 
+fn prepare_ignore_check(fixture: &CliFixture) {
+    write_file(fixture.path(), ".gitignore", "*.log\n");
+    write_file(fixture.path(), "noise.log", "noise\n");
+    write_file(fixture.path(), "keep.txt", "ok\n");
+}
+
+#[test]
+fn snapshot_ignore_check() {
+    snapshot_fresh(
+        "ignore_check",
+        &["ignore", "check", "noise.log"],
+        prepare_ignore_check,
+    );
+}
+
+#[test]
+fn snapshot_ignore_check_all() {
+    snapshot_fresh(
+        "ignore_check_all",
+        &["ignore", "check", "--all", "noise.log", "keep.txt"],
+        prepare_ignore_check,
+    );
+}
+
+#[test]
+fn snapshot_ignore_check_json() {
+    let fixture = CliFixture::new();
+    prepare_ignore_check(&fixture);
+    fixture.snapshot_all_modes_exits(
+        "ignore_check_json",
+        &["ignore", "check", "keep.txt"],
+        snapshot_dir(),
+        SnapshotExitCodes::all(1),
+    );
+}
+
 #[test]
 fn snapshot_stash_push() {
     snapshot_fresh("stash_push", &["stash", "push", "-m", "wip"], |_| {});

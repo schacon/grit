@@ -99,6 +99,19 @@ enum ReflogAction {
     },
 }
 
+/// Subcommands of `grit ignore`.
+#[derive(Debug, Subcommand)]
+enum IgnoreAction {
+    /// Print whether paths match exclude rules.
+    Check {
+        /// Paths to query (repository-relative or from the current directory).
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+        /// Also list paths that are not ignored.
+        #[arg(long)]
+        all: bool,
+    },
+}
 /// Subcommands of `grit stash`.
 #[derive(Debug, Subcommand)]
 enum StashAction {
@@ -419,6 +432,11 @@ enum Command {
         /// Treat ref warnings as errors.
         #[arg(long)]
         strict: bool,
+    },
+    /// Query exclude (gitignore) rules.
+    Ignore {
+        #[command(subcommand)]
+        action: IgnoreAction,
     },
     /// List hook scripts or run one by name.
     Hooks {
@@ -936,6 +954,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             }
             Ok(())
         }
+        Command::Ignore { action } => match action {
+            IgnoreAction::Check { paths, all } => {
+                let outcome = commands::ignore::run(&paths, all)?;
+                let code = commands::ignore::exit_code(&outcome);
+                emit(&outcome, opts, ctx)?;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+                Ok(())
+            }
+        },
         Command::Hooks { action } => match action {
             None | Some(HooksAction::List) => emit(&commands::hooks::run_list()?, opts, ctx),
             Some(HooksAction::Run { name, hook_args }) => {
