@@ -5,6 +5,8 @@
 //! the index once, refreshes stat data when needed, and computes those slices without rename
 //! detection, ahead/behind, stash counts, or in-progress operation state.
 
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
@@ -86,13 +88,59 @@ pub(crate) fn local_change_diffs(
             index_mtime: crate::diff::index_mtime_for_diff(index, index_mtime),
             ignore_submodule_untracked: true,
             repository_git_dir: Some(repo.git_dir().to_path_buf()),
-            refresh_index_stat_in_pass: true,
+            refresh_index_stat_in_pass: false,
             config,
             worktree_rules,
             ..Default::default()
         },
     )?;
     Ok((staged, unstaged, index_changed))
+}
+
+/// Pathspec roots covering every [`DiffStatus::Added`] path and its parent directories.
+///
+/// Used before tree checkout to find untracked paths that would be overwritten without scanning
+/// the whole work tree.
+#[must_use]
+pub(crate) fn untracked_scan_pathspecs_for_tree_changes(tree_changes: &[DiffEntry]) -> Vec<String> {
+    let mut specs = BTreeSet::new();
+    for change in tree_changes {
+        if change.status != DiffStatus::Added {
+            continue;
+        }
+        let Some(added) = &change.new_path else {
+            continue;
+        };
+        let trimmed = added.trim_end_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+        specs.insert(trimmed.to_owned());
+        let mut prefix = String::new();
+        for part in trimmed.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            specs.insert(prefix.clone());
+        }
+    }
+    specs.into_iter().collect()
+}
+
+pub(crate) fn collect_untracked_for_tree_changes(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    tree_changes: &[DiffEntry],
+) -> Result<Vec<String>> {
+    if !tree_changes.iter().any(|c| c.status == DiffStatus::Added) {
+        return Ok(Vec::new());
+    }
+    let pathspecs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
+    let (untracked, _) =
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, true, &pathspecs)?;
+    Ok(untracked)
 }
 
 fn ensure_worktree_clean_with_message(
@@ -173,18 +221,12 @@ pub fn prepare_tree_switch(
         ));
     }
 
+    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
-    let (untracked, _) = collect_untracked_and_ignored(
-        repo,
-        &mut snapshot.index,
-        work_tree,
-        IgnoredMode::No,
-        true,
-        &[],
-    )?;
-    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
+    let untracked =
+        collect_untracked_for_tree_changes(repo, &mut snapshot.index, work_tree, &tree_changes)?;
     Ok(TreeSwitchPlan {
         untracked,
         tree_changes,
@@ -276,18 +318,12 @@ pub fn prepare_tree_checkout(
     to_tree: &ObjectId,
 ) -> Result<()> {
     let mut snapshot = load_worktree_snapshot(repo)?;
+    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
-    let (untracked, _) = collect_untracked_and_ignored(
-        repo,
-        &mut snapshot.index,
-        work_tree,
-        IgnoredMode::No,
-        true,
-        &[],
-    )?;
-    let tree_changes = diff_trees(repo.odb(), from_tree, Some(to_tree), "")?;
+    let untracked =
+        collect_untracked_for_tree_changes(repo, &mut snapshot.index, work_tree, &tree_changes)?;
     ensure_no_untracked_overwrite(&untracked, &tree_changes)
 }
 
@@ -383,6 +419,21 @@ mod tests {
             &[added_entry("slot/incoming.txt")],
         );
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn untracked_scan_pathspecs_include_added_and_parents() {
+        let changes = vec![
+            added_entry("dir/sub/new.txt"),
+            modified_entry("tracked.txt"),
+            added_entry("top"),
+        ];
+        let specs = super::untracked_scan_pathspecs_for_tree_changes(&changes);
+        assert!(specs.contains(&"dir/sub/new.txt".to_owned()));
+        assert!(specs.contains(&"dir/sub".to_owned()));
+        assert!(specs.contains(&"dir".to_owned()));
+        assert!(specs.contains(&"top".to_owned()));
+        assert!(!specs.contains(&"tracked.txt".to_owned()));
     }
 
     #[test]

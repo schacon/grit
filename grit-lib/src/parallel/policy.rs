@@ -298,10 +298,10 @@ fn resolve_checkout_workers(config: &ConfigSet, override_threads: Option<usize>)
         return Parallelism::resolve(Some(n)).threads();
     }
     match config.get_i64("checkout.workers") {
-        None => NonZeroUsize::MIN,
+        None => Parallelism::resolve(None).threads(),
         Some(Ok(n)) if n < 1 => Parallelism::resolve(None).threads(),
         Some(Ok(n)) => Parallelism::resolve(Some(n as usize)).threads(),
-        Some(Err(_)) => NonZeroUsize::MIN,
+        Some(Err(_)) => Parallelism::resolve(None).threads(),
     }
 }
 
@@ -427,10 +427,15 @@ mod tests {
     }
 
     #[test]
-    fn checkout_workers_unset_defaults_to_one() {
+    fn checkout_workers_unset_defaults_to_auto() {
         let cfg = ConfigSet::new();
         let opts = ThreadPolicy::default().resolve(ParallelOp::Checkout, &cfg);
-        assert_eq!(opts.threads, NonZeroUsize::MIN);
+        assert_eq!(
+            opts.threads.get(),
+            std::thread::available_parallelism()
+                .map(NonZeroUsize::get)
+                .unwrap_or(1)
+        );
         assert_eq!(opts.signed_entry_threshold, Some(100));
     }
 

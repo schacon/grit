@@ -15,14 +15,20 @@ use grit_lib::refs::{append_reflog, write_ref};
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
-fn git_fsck(repo_root: &std::path::Path) {
-    let out = Command::new("git")
-        .current_dir(repo_root)
-        .args(["fsck", "--strict"])
+fn hermetic_git_env(cmd: &mut Command) {
+    cmd.env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git fsck");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+}
+
+fn git_fsck(repo_root: &std::path::Path) {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root).args(["fsck", "--strict"]);
+    hermetic_git_env(&mut cmd);
+    let out = cmd.output().expect("git fsck");
     assert!(
         out.status.success(),
         "git fsck failed: {}",
@@ -31,13 +37,10 @@ fn git_fsck(repo_root: &std::path::Path) {
 }
 
 fn git(repo_root: &std::path::Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(repo_root)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git");
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root).args(args);
+    hermetic_git_env(&mut cmd);
+    let out = cmd.output().expect("git");
     assert!(
         out.status.success(),
         "git {} failed: {}",

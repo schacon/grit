@@ -883,9 +883,7 @@ fn write_checkout_entry(
     oid: ObjectId,
 ) -> Result<IndexEntry> {
     if mode == MODE_SYMLINK {
-        write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-        let abs = work_tree.join(rel_path);
-        let meta = written_file_symlink_metadata(&abs)?;
+        let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
         return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
     }
 
@@ -900,8 +898,7 @@ fn write_checkout_entry(
         {
             Ok(f) => f,
             Err(_) => {
-                write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-                let meta = written_file_symlink_metadata(&abs_path)?;
+                let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
                 return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
             }
         };
@@ -912,9 +909,7 @@ fn write_checkout_entry(
         return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
     }
 
-    write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
-    let abs = work_tree.join(rel_path);
-    let meta = written_file_symlink_metadata(&abs)?;
+    let meta = write_to_worktree_cached(work_tree, rel_path, data, mode, dir_cache)?;
     Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode))
 }
 
@@ -1050,7 +1045,7 @@ fn write_fresh_worktree_blob(
     rel_path: &str,
     data: &[u8],
     mode: u32,
-) -> Result<()> {
+) -> Result<fs::Metadata> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1064,13 +1059,20 @@ fn write_fresh_worktree_blob(
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
         file.write_all(data)
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+        written_file_metadata(&file, abs_path)
     }
     #[cfg(not(unix))]
     {
-        fs::write(abs_path, data)
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(abs_path)
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+        file.write_all(data)
+            .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
+        written_file_metadata(&file, abs_path)
     }
-    Ok(())
 }
 
 /// Adjust an existing file to an executable index mode (in-place checkout only).
@@ -1116,6 +1118,7 @@ pub fn prepare_parent_dirs_for_checkout(work_tree: &Path, rel_path: &str) -> Res
 /// Write data to a working tree file, handling symlinks and executable bits.
 pub fn write_to_worktree(work_tree: &Path, rel_path: &str, data: &[u8], mode: u32) -> Result<()> {
     write_to_worktree_cached(work_tree, rel_path, data, mode, &mut LeadingDirCache::new())
+        .map(|_| ())
 }
 
 pub(crate) fn write_to_worktree_cached(
@@ -1124,7 +1127,7 @@ pub(crate) fn write_to_worktree_cached(
     data: &[u8],
     mode: u32,
     dir_cache: &mut LeadingDirCache,
-) -> Result<()> {
+) -> Result<fs::Metadata> {
     let abs_path = work_tree.join(rel_path);
 
     dir_cache.ensure_parents(work_tree, rel_path)?;
@@ -1159,13 +1162,21 @@ pub(crate) fn write_to_worktree_cached(
         // Windows lacks unprivileged symlink creation; materialise the link as a
         // regular file containing the target path so the worktree stays populated.
         #[cfg(not(unix))]
-        fs::write(&abs_path, target.as_bytes())
-            .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
-    } else {
-        write_fresh_worktree_blob(&abs_path, rel_path, data, mode)?;
+        {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&abs_path)
+                .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
+            file.write_all(target.as_bytes())
+                .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
+            return written_file_metadata(&file, &abs_path);
+        }
+        #[cfg(unix)]
+        return written_file_symlink_metadata(&abs_path);
     }
-
-    Ok(())
+    write_fresh_worktree_blob(&abs_path, rel_path, data, mode)
 }
 
 /// Remove empty parent directories up to (but not including) `work_tree`.
