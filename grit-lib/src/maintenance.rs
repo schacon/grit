@@ -23,24 +23,24 @@ use std::time::SystemTime;
 use crate::config::ConfigSet;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
+use crate::fsck as repository_fsck;
 use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
-use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable, PruneStats};
+use crate::gc::{prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
-use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
-use crate::index::MODE_GITLINK;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
-use crate::midx::{clear_pack_midx_state, verify_midx};
+use crate::midx::clear_pack_midx_state;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_objects::{build_pack, PackBuildOptions};
+use crate::progress::{NeverCancel, NullProgress};
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
-    all_reflog_oids, expire_reflog_git, list_reflog_refs, load_gc_reflog_expire_config,
-    ReflogExpireParams,
+    expire_reflog_git, list_reflog_refs, load_gc_reflog_expire_config, ReflogExpireParams,
 };
-use crate::refs_fsck::{refs_fsck, RefsFsckIssue, RefsFsckSeverity};
+use crate::refs_fsck::{RefsFsckIssue, RefsFsckSeverity};
 use crate::repo::Repository;
+use repository_fsck::FsckIssue as RepoFsckIssue;
 
 /// Options for [`repack_all()`].
 #[derive(Debug, Clone)]
@@ -240,19 +240,7 @@ impl FsckOptions {
 ///
 /// Propagates ref, reflog, or index load failures.
 pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
-    let git_dir = repo.git_dir();
-    let mut roots: HashSet<ObjectId> = collect_referenced_object_roots(git_dir)?
-        .into_iter()
-        .collect();
-    roots.extend(all_reflog_oids(git_dir)?);
-    let index = repo.load_index()?;
-    for entry in index.entries() {
-        if entry.mode == MODE_GITLINK || entry.oid.is_zero() {
-            continue;
-        }
-        roots.insert(entry.oid);
-    }
-    Ok(roots.into_iter().collect())
+    repository_fsck::reachability_roots(repo)
 }
 
 /// Result of [`gc`].
@@ -348,44 +336,22 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
 
 /// Check ref integrity, reachable object graph, and optional MIDX.
 pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
-    let mut issues = Vec::new();
     let config = repo.config()?;
-    let odb = repo.odb();
-
-    if opts.check_objects {
-        // External `git gc` / repack does not notify grit; rescan before object checks.
-        odb.invalidate_packs();
-    }
-
-    if opts.check_refs {
-        for issue in refs_fsck(repo, odb, &config, opts.strict)? {
-            issues.push(fsck_issue_from_refs(issue));
+    let inner_opts = repository_fsck::FsckOptions {
+        connectivity_only: !opts.check_objects,
+        check_dangling: false,
+        strict: opts.strict,
+    };
+    let inner = repository_fsck::fsck(repo, &inner_opts, &mut NullProgress, &NeverCancel)?;
+    let mut issues = Vec::new();
+    for issue in inner.issues {
+        match &issue {
+            RepoFsckIssue::BadRef(_) if !opts.check_refs => continue,
+            RepoFsckIssue::MidxInvalid { .. } if !opts.check_midx => continue,
+            _ => {}
         }
+        issues.push(fsck_issue_from_repo(issue, &config, opts.strict));
     }
-
-    if opts.check_midx {
-        if let Some(objects_dir) = odb.files_objects_dir() {
-            let pack_dir = objects_dir.join("pack");
-            if pack_dir.join("multi-pack-index").exists() {
-                if let Err(errs) = verify_midx(&pack_dir) {
-                    for detail in errs {
-                        issues.push(FsckIssue {
-                            severity: FsckSeverity::Error,
-                            path: "multi-pack-index".to_owned(),
-                            msg_id: "badMidx".to_owned(),
-                            detail,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    if opts.check_objects {
-        fsck_reachable_objects(repo, &config, opts.strict, &mut issues)?;
-        fsck_index_entries(repo, &config, opts.strict, &mut issues)?;
-    }
-
     let ok = !issues.iter().any(|i| i.severity == FsckSeverity::Error);
     Ok(FsckReport { ok, issues })
 }
@@ -499,194 +465,63 @@ fn fsck_issue_from_refs(issue: RefsFsckIssue) -> FsckIssue {
     }
 }
 
-fn fsck_reachable_objects(
-    repo: &Repository,
-    config: &ConfigSet,
-    strict: bool,
-    issues: &mut Vec<FsckIssue>,
-) -> Result<()> {
-    let odb = repo.odb();
-    let roots = collect_maintenance_object_roots(repo)?;
-    let fsck_opts = FsckObjectOptions::new(odb.hash_algo());
-    let mut dot = DotFsckTracker::default();
-
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-    let mut queue: VecDeque<ObjectId> = VecDeque::new();
-    for root in roots {
-        if seen.insert(root) {
-            queue.push_back(root);
-        }
+fn fsck_issue_from_repo(issue: RepoFsckIssue, config: &ConfigSet, strict: bool) -> FsckIssue {
+    if let RepoFsckIssue::BadRef(r) = issue {
+        return fsck_issue_from_refs(r);
     }
-
-    while let Some(oid) = queue.pop_front() {
-        let path = oid.to_hex();
-        let obj = match odb.read(&oid) {
-            Ok(o) => o,
-            Err(_) => {
-                push_object_issue(
-                    issues,
-                    config,
-                    strict,
-                    &path,
-                    "missingObject",
-                    format!("object {path} is missing"),
-                );
-                continue;
-            }
-        };
-
-        if let Err(err) = fsck_object(obj.kind, &obj.data, fsck_opts) {
-            push_object_fsck_error(issues, config, strict, &path, err);
+    let severity = repository_fsck::issue_severity(&issue, config, strict);
+    let msg_id = repository_fsck::issue_msg_id(&issue).to_owned();
+    let (path, detail) = match &issue {
+        RepoFsckIssue::CorruptLoose { oid, path } => {
+            (oid.to_hex(), format!("could not read {}", path.display()))
         }
-        for dot_issue in dot.on_object(&oid, obj.kind, &obj.data) {
-            issues.push(dot_issue_to_fsck(dot_issue));
-        }
-
-        match obj.kind {
-            ObjectKind::Commit => {
-                let commit = parse_commit(&obj.data)?;
-                for parent in commit.parents {
-                    enqueue_fsck(&mut queue, &mut seen, parent);
-                }
-                enqueue_fsck(&mut queue, &mut seen, commit.tree);
-            }
-            ObjectKind::Tree => {
-                if let Ok(tree_issues) = dot.on_tree(&oid, &obj.data) {
-                    for ti in tree_issues {
-                        issues.push(dot_issue_to_fsck(ti));
-                    }
-                }
-                for entry in parse_tree(&obj.data)? {
-                    if entry.mode == 0o160000 {
-                        continue;
-                    }
-                    enqueue_fsck(&mut queue, &mut seen, entry.oid);
-                }
-            }
-            ObjectKind::Tag => {
-                let tag = parse_tag(&obj.data)?;
-                enqueue_fsck(&mut queue, &mut seen, tag.object);
-            }
-            ObjectKind::Blob => {}
-        }
-    }
-
-    for pending in dot.finish_pending(odb)? {
-        issues.push(dot_issue_to_fsck(pending));
-    }
-    Ok(())
-}
-
-fn fsck_index_entries(
-    repo: &Repository,
-    config: &ConfigSet,
-    strict: bool,
-    issues: &mut Vec<FsckIssue>,
-) -> Result<()> {
-    let index = repo.load_index()?;
-    let odb = repo.odb();
-    for entry in index.entries() {
-        if entry.mode == MODE_GITLINK || entry.oid.is_zero() {
-            continue;
-        }
-        let oid_hex = entry.oid.to_hex();
-        if odb.read(&entry.oid).is_err() {
-            let path = String::from_utf8_lossy(&entry.path).into_owned();
-            push_object_issue(
-                issues,
-                config,
-                strict,
-                &oid_hex,
-                "missingObject",
-                format!("index entry '{path}' references missing blob {oid_hex}"),
-            );
-        }
-    }
-    Ok(())
-}
-
-fn dot_issue_to_fsck(issue: DotFsckIssue) -> FsckIssue {
-    let severity = if issue.is_error_severity() {
-        FsckSeverity::Error
-    } else {
-        FsckSeverity::Warning
-    };
-    let (path, msg_id, detail) = match issue {
-        DotFsckIssue::TreeSymlink {
-            tree_oid,
-            id,
-            detail,
-        } => (tree_oid.to_hex(), id.to_owned(), detail.to_owned()),
-        DotFsckIssue::NonBlobDotFile {
-            oid,
-            kind,
-            id,
-            detail,
-        } => (
+        RepoFsckIssue::HashMismatch { oid, path } => (
             oid.to_hex(),
-            id.to_owned(),
-            format!("{}: {detail}", kind.as_str()),
+            format!("loose hash mismatch at {}", path.display()),
         ),
-        DotFsckIssue::BlobGitmodules {
-            blob_oid,
-            id,
-            detail,
-        } => (blob_oid.to_hex(), id.to_owned(), detail),
-        DotFsckIssue::BlobGitattributes {
-            blob_oid,
-            id,
-            detail,
-        } => (blob_oid.to_hex(), id.to_owned(), detail.to_owned()),
+        RepoFsckIssue::BadObject { oid, error } => (oid.to_hex(), error.detail.clone()),
+        RepoFsckIssue::PackChecksum { pack } => (
+            pack.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("pack")
+                .to_owned(),
+            format!("pack checksum invalid for {}", pack.display()),
+        ),
+        RepoFsckIssue::IdxMismatch { pack } => (
+            pack.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("pack")
+                .to_owned(),
+            format!("index checksum mismatch for {}", pack.display()),
+        ),
+        RepoFsckIssue::MissingObject { oid, referenced_by } => (
+            oid.to_hex(),
+            format!("referenced by {}", referenced_by.to_hex()),
+        ),
+        RepoFsckIssue::BrokenLink {
+            tree,
+            name,
+            mode,
+            target,
+        } => (
+            tree.to_hex(),
+            format!("entry {name} mode {mode:o} -> {}", target.to_hex()),
+        ),
+        RepoFsckIssue::BadRef(_) => unreachable!(),
+        RepoFsckIssue::MidxInvalid { details } => {
+            ("multi-pack-index".to_owned(), details.join("; "))
+        }
+        RepoFsckIssue::CommitGraphInvalid { detail } => ("commit-graph".to_owned(), detail.clone()),
     };
     FsckIssue {
-        severity,
+        severity: match severity {
+            repository_fsck::FsckSeverity::Error => FsckSeverity::Error,
+            repository_fsck::FsckSeverity::Warning => FsckSeverity::Warning,
+        },
         path,
         msg_id,
         detail,
     }
-}
-
-fn enqueue_fsck(queue: &mut VecDeque<ObjectId>, seen: &mut HashSet<ObjectId>, oid: ObjectId) {
-    if seen.insert(oid) {
-        queue.push_back(oid);
-    }
-}
-
-fn push_object_fsck_error(
-    issues: &mut Vec<FsckIssue>,
-    config: &ConfigSet,
-    strict: bool,
-    path: &str,
-    err: FsckError,
-) {
-    push_object_issue(issues, config, strict, path, err.id, err.detail);
-}
-
-fn push_object_issue(
-    issues: &mut Vec<FsckIssue>,
-    config: &ConfigSet,
-    strict: bool,
-    path: &str,
-    msg_id: &str,
-    detail: String,
-) {
-    let key = format!("fsck.{msg_id}");
-    let level = config.get(&key).map(|s| s.to_ascii_lowercase());
-    if matches!(level.as_deref(), Some("ignore")) {
-        return;
-    }
-    let severity = match level.as_deref() {
-        Some("warn") => FsckSeverity::Warning,
-        Some("error") => FsckSeverity::Error,
-        _ if strict => FsckSeverity::Error,
-        _ => FsckSeverity::Error,
-    };
-    issues.push(FsckIssue {
-        severity,
-        path: path.to_owned(),
-        msg_id: msg_id.to_owned(),
-        detail,
-    });
 }
 
 fn count_loose_objects(odb: &Odb) -> Result<usize> {
@@ -805,7 +640,7 @@ mod tests {
     use super::*;
     use crate::porcelain::add::stage_for_commit;
     use crate::porcelain::commit::{create_commit, CommitRequest};
-    use crate::progress::NullProgress;
+    use crate::progress::{NeverCancel, NullProgress};
     use crate::repo::InitOptions;
     use tempfile::TempDir;
 
