@@ -160,7 +160,7 @@ pub fn cleanup_failed_clone(path: &Path, keep_toplevel: bool) {
 ///
 /// # Errors
 ///
-/// Returns [`CloneError`] when the destination is invalid, fetch fails, or no branch exists.
+/// Returns [`CloneError`] when the destination is invalid or fetch fails.
 pub fn clone(
     opts: CloneOptions,
     progress: &mut dyn Progress,
@@ -328,6 +328,13 @@ fn choose_clone_default_branch(
     remote_name: &str,
     initial_branch: &str,
 ) -> String {
+    if let Some(advertised) = fetch_outcome.default_branch.as_deref() {
+        let name = advertised.strip_prefix("refs/heads/").unwrap_or(advertised);
+        if !name.is_empty() {
+            return name.to_owned();
+        }
+    }
+
     let mut candidates: Vec<String> = Vec::new();
     let mut push = |name: Option<String>| {
         if let Some(name) = name {
@@ -336,12 +343,6 @@ fn choose_clone_default_branch(
             }
         }
     };
-    push(
-        fetch_outcome
-            .default_branch
-            .as_deref()
-            .map(|d| d.strip_prefix("refs/heads/").unwrap_or(d).to_owned()),
-    );
     push(pick_default_branch(repo, remote_name));
     push(default_branch_from_local_remote(url, repo));
     push(Some(initial_branch.to_owned()));
@@ -505,6 +506,68 @@ mod tests {
     }
 
     #[test]
+    fn clone_unborn_advertised_trunk_not_populated_feature() {
+        use std::process::Command;
+
+        let upstream = tempfile::tempdir().expect("upstream");
+        let bare = upstream.path().join("origin.git");
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "trunk",
+                bare.to_str().unwrap(),
+            ],
+            upstream.path(),
+        );
+        git(
+            &["symbolic-ref", "HEAD", "refs/heads/trunk"],
+            &bare,
+        );
+        let wt = upstream.path().join("wt");
+        fs::create_dir_all(&wt).expect("mkdir");
+        git(&["init", "-q"], &wt);
+        git(&["config", "user.email", "t@example.com"], &wt);
+        git(&["config", "user.name", "Test"], &wt);
+        fs::write(wt.join("f"), b"x\n").expect("write");
+        git(&["add", "f"], &wt);
+        git(&["commit", "-m", "c"], &wt);
+        git(&["branch", "feature"], &wt);
+        git(&["push", bare.to_str().unwrap(), "feature"], &wt);
+
+        let dest = tempfile::tempdir().expect("dest");
+        let outcome = clone(
+            CloneOptions::new(bare.to_string_lossy(), dest.path().to_path_buf()),
+            &mut crate::fetch::NoProgress,
+            None,
+        )
+        .expect("clone");
+
+        assert_eq!(outcome.branch, "trunk");
+        assert!(outcome.checkout_oid.is_zero());
+        assert!(!dest.path().join(".git/refs/heads/trunk").exists());
+        assert!(!dest.path().join(".git/refs/heads/feature").exists());
+        let head = fs::read_to_string(dest.path().join(".git/HEAD")).expect("HEAD");
+        assert_eq!(head.trim(), "ref: refs/heads/trunk");
+    }
+
     fn clone_empty_bare_remote_leaves_unborn_default_branch() {
         use std::process::Command;
 

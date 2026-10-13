@@ -25,7 +25,10 @@ fn clone_progress_silent_when_not_tty() -> TestResult {
     let base = tempfile::tempdir()?;
     let origin = base.path().join("origin.git");
     fs::create_dir_all(&origin)?;
-    git_in(base.path(), &["init", "--bare", origin.to_str().unwrap()])?;
+    git_in(
+        base.path(),
+        &["init", "--bare", "-b", "main", origin.to_str().unwrap()],
+    )?;
     git_in(
         base.path(),
         &["clone", "-q", origin.to_str().unwrap(), "seed"],

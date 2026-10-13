@@ -23,7 +23,10 @@ fn git_in(dir: &Path, args: &[&str]) -> Result<(), Box<dyn Error>> {
 fn seed_bare_remote(base: &Path) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
     let origin = base.join("origin.git");
     fs::create_dir_all(&origin)?;
-    git_in(base, &["init", "--bare", origin.to_str().unwrap()])?;
+    git_in(
+        base,
+        &["init", "--bare", "-b", "main", origin.to_str().unwrap()],
+    )?;
     git_in(base, &["clone", "-q", origin.to_str().unwrap(), "seed"])?;
     let seed = base.join("seed");
     fs::write(seed.join("README.md"), "hello\n")?;
