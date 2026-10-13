@@ -78,7 +78,7 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
         .odb()
         .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     let mut parent: Option<ObjectId> = None;
-    for i in 0..120 {
+    for i in 0..160 {
         let blob = repo
             .odb()
             .write_loose_materialize(ObjectKind::Blob, format!("v{i}\n").as_bytes())?;

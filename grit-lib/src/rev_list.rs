@@ -9281,6 +9281,72 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn tree_modes_object_walk_and_tagged_refs() -> Result<()> {
+        let dir = tempdir().expect("tempdir");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".into(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
+        let repo = Repository::open(dir.path(), &crate::environment::RepositoryOptions::empty())
+            .expect("open");
+        let blob = repo.odb().write(ObjectKind::Blob, b"data\n").expect("blob");
+        let sub_tree = write_tree_entry(&repo.odb(), 0o100644, "inside.txt", blob);
+        let sub_commit_body = format!(
+            "tree {sub_tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nsub\n"
+        );
+        let sub_commit = repo
+            .odb()
+            .write(ObjectKind::Commit, sub_commit_body.as_bytes())
+            .expect("sub commit");
+        let link_target = repo.odb().write(ObjectKind::Blob, b"link\n").expect("link");
+        let tree = write_tree_entry(&repo.odb(), 0o120000, "symlink", link_target);
+        let tree = {
+            let mut body = format!("160000 submod\0").into_bytes();
+            body.extend_from_slice(sub_commit.as_bytes());
+            body.extend_from_slice(format!("100644 tracked.txt\0").as_bytes());
+            body.extend_from_slice(blob.as_bytes());
+            repo.odb().write(ObjectKind::Tree, &body).expect("tree")
+        };
+        let commit_body = format!(
+            "tree {tree}\nauthor T <t@e.com> 2 +0000\ncommitter T <t@e.com> 2 +0000\n\nroot\n"
+        );
+        let tip = repo
+            .odb()
+            .write(ObjectKind::Commit, commit_body.as_bytes())
+            .expect("tip");
+        let tag_body = format!("object {tip}\ntype commit\ntag v1\n\nmsg\n");
+        let tag = repo
+            .odb()
+            .write(ObjectKind::Tag, tag_body.as_bytes())
+            .expect("tag");
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n")).expect("main");
+        fs::write(repo.git_dir().join("refs/tags/v1"), format!("{tag}\n")).expect("tag ref");
+        let _ = resolve_object_walk_roots(
+            &repo,
+            &[
+                String::from("main^{tree}"),
+                String::from("refs/tags/v1"),
+                String::from("main^{commit}"),
+            ],
+        )?;
+        let opts = RevListOptions {
+            objects: true,
+            paths: vec!["tracked.txt".into(), "submod/".into()],
+            filter: Some(ObjectFilter::ObjectType(FilterObjectKind::Tree)),
+            ..RevListOptions::default()
+        };
+        let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+        let _ = tag_targets(&repo.git_dir())?;
+        Ok(())
+    }
+
+    #[test]
     fn ultrawide_history_ordering_and_filter_surface() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(640, true);
         repo.odb().write_commit_graph()?;

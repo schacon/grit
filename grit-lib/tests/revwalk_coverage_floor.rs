@@ -87,7 +87,7 @@ fn revwalk_floor_cartesian_sweep() -> grit_lib::error::Result<()> {
             .with_initial_branch("main")
             .with_ref_storage(RefStorageFormat::Files),
     )?;
-    let (merge, tip, side) = seed_merged_history(&repo, 720)?;
+    let (merge, tip, side) = seed_merged_history(&repo, 880)?;
     repo.odb().write_commit_graph()?;
 
     trace_combine_filter_append("blob:limit=1k");

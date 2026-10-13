@@ -590,8 +590,19 @@ fn midx_reuse_tables_bitmaps_and_sidecars() {
     let _ = grit_lib::objects::midx::cached_tip_midx_path(&pack_dir);
     let _ = grit_lib::objects::midx::load_midx_reuse_tables(&objects).expect("reuse");
     if let Ok(ranges) = grit_lib::objects::midx::read_midx_btmp_ranges(&objects) {
-        assert!(ranges.is_empty() || !ranges.is_empty());
-        let _ = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects);
+        let formatted =
+            grit_lib::objects::midx::format_midx_bitmapped_packs(&objects).expect("bitmaps");
+        if ranges.is_empty() {
+            assert!(
+                formatted.is_empty() || formatted.contains("no bitmapped"),
+                "expected empty-range message, got: {formatted}"
+            );
+        } else {
+            assert!(
+                !formatted.is_empty(),
+                "non-empty btmp ranges should produce bitmapped pack output"
+            );
+        }
     }
     let tip = tip_midx_path(&pack_dir);
     let _ = grit_lib::objects::midx::midx_sidecar_path_for_midx_file(&tip, "rev").expect("sidecar");
