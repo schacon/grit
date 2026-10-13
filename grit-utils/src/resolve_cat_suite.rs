@@ -1,6 +1,6 @@
 //! Resolve and cat benchmark scenarios (isolated from the main hot-path suite).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 

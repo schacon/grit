@@ -58,8 +58,17 @@
           "type": "object"
         },
         {
-          "description": "Commit or tag body in JSON (canonical object payload text).",
+          "description": "Commit or tag body in JSON (raw object payload bytes).",
           "properties": {
+            "data_base64": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "encoding": {
+              "type": "string"
+            },
             "kind": {
               "enum": [
                 "commit"
@@ -67,18 +76,30 @@
               "type": "string"
             },
             "text": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "kind",
-            "text"
+            "encoding",
+            "kind"
           ],
           "type": "object"
         },
         {
-          "description": "Commit or tag body in JSON (canonical object payload text).",
+          "description": "Commit or tag body in JSON (raw object payload bytes).",
           "properties": {
+            "data_base64": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "encoding": {
+              "type": "string"
+            },
             "kind": {
               "enum": [
                 "tag"
@@ -86,12 +107,15 @@
               "type": "string"
             },
             "text": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "kind",
-            "text"
+            "encoding",
+            "kind"
           ],
           "type": "object"
         }

@@ -4,9 +4,8 @@ use std::io::Write;
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use grit_lib::object_inspect::ResolveError;
-use grit_lib::objects::{Object, ObjectKind, TreeEntry};
-use grit_lib::repo::Repository;
+use grit_lib::object_inspect::{format_tree_cat_file_p, ResolveError};
+use grit_lib::objects::{Object, ObjectKind};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -35,10 +34,16 @@ pub struct TreeLineJson {
     pub path: String,
 }
 
-/// Commit or tag body in JSON (canonical object payload text).
+/// Commit or tag body in JSON (raw object payload bytes).
 #[derive(Serialize, JsonSchema)]
 pub struct TextObjectJson {
-    pub text: String,
+    pub encoding: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub data_base64: Option<String>,
 }
 
 /// Object payload shape in `--json` output.
@@ -62,25 +67,16 @@ pub struct CatOutcome {
     pub kind: String,
     pub size: u64,
     pub content: CatContentJson,
-    /// Raw bytes for human blob output (omitted from JSON).
+    /// Raw bytes written to stdout in human mode (omitted from JSON).
     #[serde(skip)]
     #[schemars(skip)]
-    pub human_blob: Option<Vec<u8>>,
-    /// Preformatted human text for tree/commit/tag (omitted from JSON).
-    #[serde(skip)]
-    #[schemars(skip)]
-    pub human_text: Option<String>,
+    pub human_raw: Option<Vec<u8>>,
 }
 
 impl HumanRender for CatOutcome {
     fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
-        if let Some(bytes) = &self.human_blob {
+        if let Some(bytes) = &self.human_raw {
             w.write_all(bytes)
-                .map_err(|e| anyhow::anyhow!("writing blob: {e}"))?;
-            return Ok(());
-        }
-        if let Some(text) = &self.human_text {
-            w.write_all(text.as_bytes())
                 .map_err(|e| anyhow::anyhow!("writing object: {e}"))?;
         }
         Ok(())
@@ -120,9 +116,13 @@ impl MarkdownRender for CatOutcome {
                 }
             }
             CatContentJson::Commit(t) | CatContentJson::Tag(t) => {
-                outln!(w, "```text");
-                outln!(w, "{}", t.text.trim_end());
-                outln!(w, "```");
+                if let Some(text) = &t.text {
+                    outln!(w, "```text");
+                    outln!(w, "{}", text.trim_end());
+                    outln!(w, "```");
+                } else {
+                    outln!(w, "_non-UTF-8 object payload (base64 in JSON)_");
+                }
             }
         }
         Ok(())
@@ -138,7 +138,7 @@ pub fn run(spec: String) -> Result<CatOutcome> {
         .odb()
         .read(&resolved.oid)
         .with_context(|| format!("read object {}", resolved.oid.to_hex()))?;
-    let (content, human_blob, human_text) = build_content(&repo, &obj)?;
+    let (content, human_raw) = build_content(&repo, &obj)?;
     Ok(CatOutcome {
         warnings: sink.warnings(),
         spec,
@@ -146,84 +146,57 @@ pub fn run(spec: String) -> Result<CatOutcome> {
         kind: kind_label(obj.kind).to_owned(),
         size: resolved.size,
         content,
-        human_blob,
-        human_text,
+        human_raw: Some(human_raw),
     })
 }
 
 fn build_content(
-    repo: &Repository,
+    repo: &grit_lib::repo::Repository,
     obj: &Object,
-) -> Result<(CatContentJson, Option<Vec<u8>>, Option<String>)> {
+) -> Result<(CatContentJson, Vec<u8>)> {
     match obj.kind {
         ObjectKind::Blob => {
-            let json = blob_json(&obj.data);
-            Ok((CatContentJson::Blob(json), Some(obj.data.clone()), None))
+            let json = blob_payload_json(&obj.data);
+            Ok((CatContentJson::Blob(json), obj.data.clone()))
         }
         ObjectKind::Tree => {
+            let human = format_tree_cat_file_p(repo, &obj.data)?;
             let parsed = grit_lib::objects::parse_tree(&obj.data)?;
-            let lines = tree_lines(repo, &parsed)?;
-            let human = format_tree_human(&lines);
-            let entries = lines
-                .into_iter()
-                .map(|l| TreeLineJson {
-                    mode: l.mode,
-                    object_type: l.object_type,
-                    oid: l.oid,
-                    path: l.path,
+            let entries = parsed
+                .iter()
+                .map(|e| TreeLineJson {
+                    mode: e.mode_str(),
+                    object_type: grit_lib::object_inspect::tree_entry_cat_file_type(
+                        repo, e.mode, &e.oid,
+                    )
+                    .to_owned(),
+                    oid: e.oid.to_hex(),
+                    path: String::from_utf8_lossy(&e.name).into_owned(),
                 })
                 .collect();
-            Ok((CatContentJson::Tree { entries }, None, Some(human)))
+            Ok((CatContentJson::Tree { entries }, human))
         }
-        ObjectKind::Commit | ObjectKind::Tag => {
-            let text = String::from_utf8_lossy(&obj.data).into_owned();
-            let json = match obj.kind {
-                ObjectKind::Commit => CatContentJson::Commit(TextObjectJson { text: text.clone() }),
-                ObjectKind::Tag => CatContentJson::Tag(TextObjectJson { text: text.clone() }),
-                _ => unreachable!(),
-            };
-            Ok((json, None, Some(text)))
-        }
+        ObjectKind::Commit => Ok((
+            CatContentJson::Commit(text_object_json(&obj.data)),
+            obj.data.clone(),
+        )),
+        ObjectKind::Tag => Ok((
+            CatContentJson::Tag(text_object_json(&obj.data)),
+            obj.data.clone(),
+        )),
     }
 }
 
-struct TreeLine {
-    mode: String,
-    object_type: String,
-    oid: String,
-    path: String,
-}
-
-fn tree_lines(repo: &Repository, entries: &[TreeEntry]) -> Result<Vec<TreeLine>> {
-    let mut out = Vec::with_capacity(entries.len());
-    for e in entries {
-        let info = repo.odb().read_info(&e.oid).ok();
-        let object_type = info
-            .map(|i| kind_label(i.kind).to_owned())
-            .unwrap_or_else(|| "blob".to_owned());
-        let path = String::from_utf8_lossy(&e.name).into_owned();
-        out.push(TreeLine {
-            mode: e.mode_str(),
-            object_type,
-            oid: e.oid.to_hex(),
-            path,
-        });
+fn text_object_json(data: &[u8]) -> TextObjectJson {
+    let b = blob_payload_json(data);
+    TextObjectJson {
+        encoding: b.encoding,
+        text: b.text,
+        data_base64: b.data_base64,
     }
-    Ok(out)
 }
 
-fn format_tree_human(lines: &[TreeLine]) -> String {
-    let mut out = String::new();
-    for line in lines {
-        out.push_str(&format!(
-            "{} {} {}\t{}\n",
-            line.mode, line.object_type, line.oid, line.path
-        ));
-    }
-    out
-}
-
-fn blob_json(data: &[u8]) -> BlobJson {
+fn blob_payload_json(data: &[u8]) -> BlobJson {
     if data.is_empty() || std::str::from_utf8(data).is_ok() {
         BlobJson {
             encoding: "utf-8".to_owned(),

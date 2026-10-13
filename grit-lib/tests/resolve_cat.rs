@@ -2,13 +2,18 @@
 
 mod support;
 
-use grit_lib::object_inspect::{ObjectContents, ResolveError};
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+use grit_lib::object_inspect::{format_tree_cat_file_p, ObjectContents, ResolveError};
 use grit_lib::objects::ObjectKind;
 
 use support::{
     bare_repo_with_ambiguous_prefix, commit_file, git, git_rev_parse_verify, open_grit_repo,
     HistoryRepo,
 };
+
+const ABSENT_GITLINK: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
 fn git_cat_file_type(wt: &std::path::Path, spec: &str) -> Option<String> {
     let out = std::process::Command::new("git")
@@ -165,6 +170,8 @@ fn cat_matches_git_cat_file() {
             "tree" => {
                 assert!(matches!(_parsed, ObjectContents::Tree(_)));
                 assert_eq!(resolved.kind, ObjectKind::Tree);
+                let grit_body = format_tree_cat_file_p(&repo, &obj.data).expect("format tree");
+                assert_eq!(grit_body, git_body, "tree cat-file -p body for {spec}");
             }
             "commit" => {
                 assert!(matches!(_parsed, ObjectContents::Commit(_)));
@@ -177,6 +184,80 @@ fn cat_matches_git_cat_file() {
             other => panic!("unexpected kind {other} for {spec}"),
         }
     }
+}
+
+#[test]
+fn cat_commit_non_utf8_payload_matches_git_cat_file_p() {
+    use grit_lib::objects::ObjectId;
+    use grit_test_support::{git_hash_object_literally, HashAlgo};
+
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "base.txt", "x\n", "base");
+    let tree = git(wt, &["rev-parse", "HEAD^{tree}"]).trim().to_string();
+    let mut body =
+        format!("tree {tree}\nauthor Test <t@test> 0 +0000\ncommitter Test <t@test> 0 +0000\n\n")
+            .into_bytes();
+    body.push(0xff);
+    body.extend_from_slice(b"note\n");
+    let oid_hex = git_hash_object_literally(wt, HashAlgo::Sha1, "commit", &body)
+        .expect("git hash-object --literally");
+    let git_body = git_cat_file_p(wt, &oid_hex).expect("git -p");
+    let repo = open_grit_repo(wt);
+    let oid = ObjectId::from_hex(&oid_hex).expect("hex");
+    let obj = repo.odb().read(&oid).expect("read");
+    assert_eq!(obj.data, git_body, "commit payload bytes");
+    assert_eq!(
+        obj.data.len(),
+        git_body.len(),
+        "byte length vs git cat-file -p"
+    );
+    assert!(
+        !std::str::from_utf8(&obj.data).is_ok(),
+        "fixture should contain non-UTF-8"
+    );
+}
+
+#[test]
+fn cat_tree_missing_gitlink_matches_git_cat_file_p() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "x\n", "init");
+    let tree_oid = {
+        let mut child = Command::new("git")
+            .current_dir(wt)
+            .args(["mktree"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("mktree");
+        writeln!(
+            child.stdin.as_mut().expect("stdin"),
+            "160000 commit {ABSENT_GITLINK}\tsubmodule"
+        )
+        .unwrap();
+        let out = child.wait_with_output().expect("mktree wait");
+        assert!(
+            out.status.success(),
+            "mktree: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let spec = tree_oid.as_str();
+    let git_body = git_cat_file_p(wt, spec).expect("git -p");
+    assert!(
+        git_body
+            .split(|&b| b == b'\n')
+            .any(|line| line.starts_with(b"160000 commit ")),
+        "git should label gitlink as commit: {}",
+        String::from_utf8_lossy(&git_body)
+    );
+    let repo = open_grit_repo(wt);
+    let oid = grit_lib::objects::ObjectId::from_hex(&tree_oid).expect("hex");
+    let obj = repo.odb().read(&oid).expect("read tree");
+    let grit_body = format_tree_cat_file_p(&repo, &obj.data).expect("format tree");
+    assert_eq!(grit_body, git_body, "tree with absent gitlink");
 }
 
 #[test]

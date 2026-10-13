@@ -2,6 +2,21 @@
 //!
 //! [`Repository::resolve`] resolves a user spec to an object id plus kind and size.
 //! [`Repository::read_object_for_display`] loads and parses object bytes for programmatic use.
+//!
+//! ```rust
+//! use grit_lib::object_inspect::ResolveError;
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let dir = tempfile::tempdir()?;
+//! let repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! match repo.resolve("HEAD") {
+//!     Ok(_resolved) => {}
+//!     Err(ResolveError::UnknownRevision { .. }) => {}
+//!     Err(e) => return Err(e.into()),
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use thiserror::Error;
 
@@ -108,8 +123,7 @@ impl Repository {
                     spec: spec.to_owned(),
                 });
             }
-            Err(Error::InvalidRef(msg)) if msg.contains("ambiguous") => {
-                let prefix = ambiguous_prefix_from_spec(spec);
+            Err(Error::RevParse(RevParseError::AmbiguousShortObject { spec: prefix })) => {
                 let candidates =
                     ambiguous_object_hint_lines(self, &prefix, None).unwrap_or_default();
                 return Err(ResolveError::AmbiguousShortObject {
@@ -156,6 +170,53 @@ impl Repository {
     }
 }
 
+/// Object type label for one tree entry in `git cat-file -p` / `ls-tree` output.
+///
+/// Git uses mode for trees and gitlinks; other entries use the stored object kind when present.
+#[must_use]
+pub fn tree_entry_cat_file_type(repo: &Repository, mode: u32, oid: &ObjectId) -> &'static str {
+    if mode == 0o040000 {
+        return "tree";
+    }
+    if mode == 0o160000 {
+        return "commit";
+    }
+    if let Ok(info) = repo.odb().read_info(oid) {
+        return object_kind_cat_file_label(info.kind);
+    }
+    "blob"
+}
+
+/// Format a tree object's payload like `git cat-file -p` (one line per entry).
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] when `data` is not a valid tree.
+pub fn format_tree_cat_file_p(repo: &Repository, data: &[u8]) -> Result<Vec<u8>> {
+    let entries = parse_tree(data)?;
+    let mut out = Vec::new();
+    for e in &entries {
+        out.extend_from_slice(e.mode_str().as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(tree_entry_cat_file_type(repo, e.mode, &e.oid).as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(e.oid.to_hex().as_bytes());
+        out.push(b'\t');
+        out.extend_from_slice(&e.name);
+        out.push(b'\n');
+    }
+    Ok(out)
+}
+
+fn object_kind_cat_file_label(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tree => "tree",
+        ObjectKind::Commit => "commit",
+        ObjectKind::Tag => "tag",
+    }
+}
+
 /// Abbreviate `oid` for human output using repository uniqueness rules.
 pub fn abbreviate_for_display(repo: &Repository, oid: ObjectId, short: bool) -> Result<String> {
     if short {
@@ -163,12 +224,6 @@ pub fn abbreviate_for_display(repo: &Repository, oid: ObjectId, short: bool) -> 
     } else {
         Ok(oid.to_hex())
     }
-}
-
-fn ambiguous_prefix_from_spec(spec: &str) -> String {
-    let rev_part = spec.split(':').next().unwrap_or(spec);
-    let (base, _) = parse_peel_suffix(rev_part);
-    base.to_owned()
 }
 
 fn infer_ref_name(repo: &Repository, spec: &str, oid: ObjectId) -> Option<String> {
@@ -207,10 +262,5 @@ mod tests {
             revision: "HEAD".into(),
         });
         assert!(matches!(err, ResolveError::PathNotInTree { .. }));
-    }
-
-    #[test]
-    fn ambiguous_prefix_strips_colon_path() {
-        assert_eq!(ambiguous_prefix_from_spec("abcd:file"), "abcd");
     }
 }
