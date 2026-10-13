@@ -181,7 +181,25 @@ python3 scripts/coverage.py --input target/llvm-cov/summary.json --update
 
 Each floor moves to `max(previous, current − 2.0)` rounded down to one decimal; the script never lowers an existing floor. Commit the updated `coverage-floors.toml` with the tests that improved coverage.
 
-**CI:** The **coverage** job runs `make coverage` and uploads the HTML/lcov artifact. Unit tests for the gate live in `scripts/tests/test_coverage.py` and run under `python3 -m unittest discover scripts/tests` with the **docs** job.
+**CI:** The **coverage** job runs `make coverage` and uploads the HTML/lcov artifact. Unit tests for the gate live in `scripts/tests/test_coverage.py` and run under `python3 -m unittest discover scripts/tests` with the **scripts** job.
+
+### Public function coverage
+
+Every **public** function and method in `grit-lib` must be executed at least once by the combined **`--lib`**, integration **`--tests`**, and **`--doc`** runs that feed `make coverage`. The gate is [`scripts/public_fn_coverage.py`](scripts/public_fn_coverage.py):
+
+- Public paths come from **rustdoc JSON** (`target/doc/grit_lib.json`), built with the same pinned nightly as [`scripts/public-api.sh`](scripts/public-api.sh) (see the **public-api** CI job).
+- Execution counts come from **`cargo llvm-cov --json`** function records (demangled with **`rustfilt`**), merged across `target/llvm-cov/summary.json` and `target/llvm-cov/functions-doc.json`.
+- Paths with zero executions must appear in [`grit-lib/public-fn-untested.txt`](grit-lib/public-fn-untested.txt). That allowlist **may only shrink**: the gate fails if an allowlisted path gains coverage (remove it in the same change as the new test) or if a public path is missing from both tests and the allowlist.
+
+Add focused calls in `grit-lib/tests/<domain>_api_coverage.rs` (and existing sweeps where appropriate). For on-disk formats and wire protocol, cross-check with the system **`git`** binary the same way as other compatibility tests. Regenerate the allowlist after large test additions:
+
+```bash
+python3 scripts/public_fn_coverage.py --write-allowlist \
+  --cov-json target/llvm-cov/summary.json \
+  --cov-json target/llvm-cov/functions-doc.json
+```
+
+Unit tests for the gate live in `scripts/tests/test_public_fn_coverage.py`.
 
 ### Upstream test mapping: refs, reflog, config, ignore, attributes
 

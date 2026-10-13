@@ -77,10 +77,14 @@ docs-check: site/node_modules
 LLVM_COV_FEATURES ?= http-ureq,unstable-bench-helpers
 
 coverage:
-	@mkdir -p target/llvm-cov
+	@mkdir -p target/llvm-cov target/doc
 	$(CARGO) build -p grit-cli --target-dir $(LLVM_COV_TARGET)
 	$(CARGO) build -p grit-http-server --target-dir $(LLVM_COV_TARGET)
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --summary-only --output-path target/llvm-cov/summary.json -- --test-threads=1
+	./scripts/public-api.sh ensure-toolchain
+	RUSTDOCFLAGS= python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'scripts'); from public_api import parse_pins; from public_fn_coverage import ensure_rustdoc_json; ensure_rustdoc_json(nightly=parse_pins()['nightly_date'], output=Path('target/doc/grit_lib.json'))"
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --output-path target/llvm-cov/summary.json -- --test-threads=1
+	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --doc --json --output-path target/llvm-cov/functions-doc.json -- --test-threads=1
 	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/coverage.py --input target/llvm-cov/summary.json
+	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/public_fn_coverage.py --cov-json target/llvm-cov/summary.json --cov-json target/llvm-cov/functions-doc.json
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --html --output-dir target/llvm-cov/html
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --lcov --output-path target/llvm-cov/lcov.info
