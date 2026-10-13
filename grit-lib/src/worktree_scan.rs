@@ -24,6 +24,9 @@ use std::sync::Arc;
 /// Minimum blob entries sharing a parent before `read_dir` amortizes separate stats.
 /// Deep trees often have one tracked file per leaf directory; `read_dir` still beats a
 /// separate stat per file when grouping parallel preload by directory.
+#[cfg(windows)]
+const READ_DIR_AMORTIZE_MIN: usize = 4;
+#[cfg(not(windows))]
 const READ_DIR_AMORTIZE_MIN: usize = 2;
 
 /// Test hook: incremented once per worktree metadata syscall used by directory scans.

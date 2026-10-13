@@ -337,6 +337,7 @@ fn large_index_stat_refresh_parallel_matches_serial() {
         allow_empty: false,
         sign_override: None,
         amend: false,
+        assume_worktree_synced: false,
     };
     grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).expect("commit");
     for rel in ["mix/00030.txt", "mix/00040.txt", "mix/00050.txt"] {

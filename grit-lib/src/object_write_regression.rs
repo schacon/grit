@@ -254,6 +254,7 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )
@@ -285,6 +286,7 @@ fn create_commit_one_change_writes_only_changed_path_trees() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )
@@ -404,6 +406,7 @@ fn pack_signature_not_restatted_per_object() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )
@@ -474,6 +477,7 @@ fn pack_signature_not_restatted_per_object() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )

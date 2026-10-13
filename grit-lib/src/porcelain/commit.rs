@@ -18,7 +18,9 @@ use crate::signing::{
 };
 use crate::state::{finish_merge_state, read_merge_heads, resolve_head, HeadState};
 use crate::worktree_rules::WorktreeRules;
-use crate::write_tree::{is_empty_tree_oid, write_tree_update_index, WriteTreeFlags};
+use crate::write_tree::{
+    cache_tree_fully_valid, is_empty_tree_oid, write_tree_update_index, WriteTreeFlags,
+};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -39,6 +41,9 @@ pub struct CommitRequest {
     /// Replace the current branch tip: parents and author come from the tip being replaced; an empty
     /// [`Self::message`] reuses that commit's message. Same-tree amends are allowed.
     pub amend: bool,
+    /// When true, skip the post-commit full-tree index stat refresh because the caller already
+    /// synced the index from the worktree (for example via [`crate::porcelain::add::stage_for_commit`]).
+    pub assume_worktree_synced: bool,
 }
 
 /// Result of [`create_commit`].
@@ -126,6 +131,21 @@ pub fn create_commit(
     let merge_heads = read_merge_heads(repo.git_dir())?;
     let concluding_merge = !merge_heads.is_empty();
     let index_path = repo.git_dir().join("index");
+    let parent_tree = parent
+        .as_ref()
+        .map(|parent_oid| commit_tree_oid(repo, parent_oid))
+        .transpose()?;
+
+    if !req.allow_empty && !req.amend && !concluding_merge {
+        if let Some(ref old) = parent_tree {
+            if index_staged_tree_matches(repo.odb(), &index, old) {
+                return Err(Error::NothingToCommit);
+            }
+        } else if index.entries.is_empty() {
+            return Err(Error::NothingToCommit);
+        }
+    }
+
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
         git_editor: Some(":"),
@@ -133,11 +153,6 @@ pub fn create_commit(
         extra_env: &[],
     };
     run_commit_hook_checked(repo, "pre-commit", &[], None, &commit_env)?;
-
-    let parent_tree = parent
-        .as_ref()
-        .map(|parent_oid| commit_tree_oid(repo, parent_oid))
-        .transpose()?;
 
     let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
 
@@ -231,19 +246,21 @@ pub fn create_commit(
         }
     });
 
-    if let Some(work_tree) = repo.work_tree() {
-        let rules = WorktreeRules::from_repository(repo, &index).ok();
-        let rules_arc = rules.map(|r| Arc::new(Mutex::new(r)));
-        let _ = refresh_index_stat_content_verified_with_rules(
-            repo.odb(),
-            repo.git_dir(),
-            &mut index,
-            work_tree,
-            None,
-            Some(config.as_ref()),
-            None,
-            rules_arc.as_ref(),
-        )?;
+    if !req.assume_worktree_synced {
+        if let Some(work_tree) = repo.work_tree() {
+            let rules = WorktreeRules::from_repository(repo, &index).ok();
+            let rules_arc = rules.map(|r| Arc::new(Mutex::new(r)));
+            let _ = refresh_index_stat_content_verified_with_rules(
+                repo.odb(),
+                repo.git_dir(),
+                &mut index,
+                work_tree,
+                None,
+                Some(config.as_ref()),
+                None,
+                rules_arc.as_ref(),
+            )?;
+        }
     }
     repo.write_index(&mut index)?;
 
@@ -314,6 +331,22 @@ pub fn write_commit_object(
     let config = repo.config()?;
     let bytes = prepare_commit_bytes(repo, config.as_ref(), data, sign_override)?;
     repo.odb().write(ObjectKind::Commit, &bytes)
+}
+
+/// True when stage-0 index entries describe `tree_oid`, using a valid cache-tree when present.
+fn index_staged_tree_matches(
+    odb: &crate::odb::Odb,
+    index: &crate::index::Index,
+    tree_oid: &ObjectId,
+) -> bool {
+    if index.cache_tree_root == Some(*tree_oid)
+        && cache_tree_fully_valid(odb, index.cache_tree.as_ref())
+    {
+        return true;
+    }
+    crate::diff::diff_index_to_tree(odb, index, Some(tree_oid), false)
+        .map(|d| d.is_empty())
+        .unwrap_or(false)
 }
 
 fn commit_tree_oid(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
@@ -406,6 +439,7 @@ mod tests {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         }
     }
 

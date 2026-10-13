@@ -79,6 +79,7 @@ fn seed_repo(root: &Path, preload_index: bool) -> Repository {
         allow_empty: false,
         sign_override: None,
         amend: false,
+        assume_worktree_synced: false,
     };
     grit_lib::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).expect("commit");
 

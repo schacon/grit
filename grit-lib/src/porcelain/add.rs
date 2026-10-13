@@ -22,17 +22,21 @@ use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
 use crate::pathspec::pathspec_is_exclude;
 use crate::porcelain::pathspec_match::pathspec_matches_known_in_repository;
-use crate::porcelain::stage_tracked::stage_tracked_modifications_in_index;
+use crate::porcelain::stage_tracked::{stage_tracked_modifications_in_index, StageTrackedSummary};
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedScan,
 };
 use crate::progress::ProgressSink;
 use crate::repo::Repository;
-use crate::state::resolve_head;
+use crate::state::{resolve_head, HeadState};
 use crate::unicode_normalization::resolve_worktree_path_for_staging;
+use crate::untracked_cache::{
+    try_untracked_from_valid_cache, untracked_cache_enabled_for_status, untracked_cache_ident,
+};
 use crate::worktree_batch::{prepare_worktree_blobs_parallel, WorktreeBlobReadInput};
 use crate::worktree_rules::WorktreeRules;
+use crate::write_tree::cache_tree_fully_valid;
 
 /// What paths [`stage`] should update (`git add` vs `git add -u`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -98,7 +102,7 @@ pub fn stage_for_commit(
         pathspec_sources: Vec::new(),
         mode: StageMode::All,
     };
-    stage_with_tracked_scan(repo, &opts, progress)
+    stage_with_tracked_scan(repo, &opts, progress, true)
 }
 
 /// Stage paths matching `opts` into the index.
@@ -117,7 +121,7 @@ pub fn stage(
     progress: &mut dyn ProgressSink,
 ) -> Result<StageOutcome> {
     if opts.pathspecs.is_empty() && opts.mode == StageMode::All {
-        return stage_with_tracked_scan(repo, opts, progress);
+        return stage_with_tracked_scan(repo, opts, progress, true);
     }
     stage_via_worktree_diff(repo, opts, progress)
 }
@@ -127,15 +131,16 @@ fn stage_via_worktree_diff(
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
 ) -> Result<StageOutcome> {
-    stage_inner(repo, opts, progress, false)
+    stage_inner(repo, opts, progress, false, false)
 }
 
 fn stage_with_tracked_scan(
     repo: &Repository,
     opts: &StageOptions,
     progress: &mut dyn ProgressSink,
+    allow_untracked_fast_path: bool,
 ) -> Result<StageOutcome> {
-    stage_inner(repo, opts, progress, true)
+    stage_inner(repo, opts, progress, true, allow_untracked_fast_path)
 }
 
 fn stage_inner(
@@ -143,6 +148,7 @@ fn stage_inner(
     opts: &StageOptions,
     _progress: &mut dyn ProgressSink,
     tracked_scan: bool,
+    allow_untracked_fast_path: bool,
 ) -> Result<StageOutcome> {
     let work_tree = repo
         .work_tree()
@@ -202,7 +208,14 @@ fn stage_inner(
     let rules = lock_rules(&rules_arc)?;
     let bulk_empty_index_add =
         opts.mode == StageMode::All && index.entries.is_empty() && opts.pathspecs.is_empty();
-    let untracked = if opts.mode == StageMode::All {
+    let skip_untracked_rescan = allow_untracked_fast_path
+        && opts.mode == StageMode::All
+        && opts.pathspecs.is_empty()
+        && untracked_rescan_skippable(repo, &index, work_tree, tracked_scan_summary.as_ref())?;
+
+    let untracked = if opts.mode == StageMode::All && skip_untracked_rescan {
+        Vec::new()
+    } else if opts.mode == StageMode::All {
         if bulk_empty_index_add {
             let scan = UntrackedScan {
                 ignored_mode: IgnoredMode::No,
@@ -916,6 +929,67 @@ fn mark_fsmonitor_staged(index: &mut Index, rel_path: &str) {
             staged.set_fsmonitor_valid(true);
         }
     }
+}
+
+fn head_commit_tree_oid(repo: &Repository) -> Result<Option<ObjectId>> {
+    let head = resolve_head(repo.git_dir())?;
+    let commit_oid = match head {
+        HeadState::Branch { oid, .. } => oid,
+        HeadState::Detached { oid } => Some(oid),
+        HeadState::Invalid => None,
+    };
+    let Some(commit_oid) = commit_oid else {
+        return Ok(None);
+    };
+    let obj = repo.odb().read(&commit_oid)?;
+    if obj.kind != crate::objects::ObjectKind::Commit {
+        return Ok(None);
+    }
+    Ok(Some(crate::objects::parse_commit(&obj.data)?.tree))
+}
+
+/// Skip a full untracked directory walk when the index already matches `HEAD`, the tracked scan
+/// found no edits, and a valid untracked cache reports no new paths.
+fn untracked_rescan_skippable(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    tracked: Option<&StageTrackedSummary>,
+) -> Result<bool> {
+    let Some(tracked) = tracked.filter(|s| s.change_count() == 0) else {
+        return Ok(false);
+    };
+    let _ = tracked;
+    let Some(head_tree) = head_commit_tree_oid(repo)? else {
+        return Ok(false);
+    };
+    if index.cache_tree_root != Some(head_tree)
+        || !cache_tree_fully_valid(repo.odb(), index.cache_tree.as_ref())
+    {
+        return Ok(false);
+    }
+    let rules = WorktreeRules::from_repository(repo, index)?;
+    let config = rules.config_arc();
+    if !untracked_cache_enabled_for_status(config.as_ref(), index) {
+        return Ok(false);
+    }
+    let ident = untracked_cache_ident(work_tree);
+    let Some(mut uc) = index.untracked_cache.clone() else {
+        return Ok(false);
+    };
+    if uc.ident != ident {
+        return Ok(false);
+    }
+    Ok(matches!(
+        try_untracked_from_valid_cache(
+            repo,
+            work_tree,
+            config.as_ref(),
+            &mut uc,
+            false,
+        )?,
+        Some(paths) if paths.is_empty()
+    ))
 }
 
 #[cfg(test)]
