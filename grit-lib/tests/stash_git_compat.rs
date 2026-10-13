@@ -645,6 +645,60 @@ fn t3903_grit_stash_read_by_git_and_reverse() {
     assert_fsck_strict(grit_dir.path());
 }
 
+/// Untracked embedded repositories must not be stashed or deleted (`git stash push -u` ignores them).
+#[test]
+fn stash_push_u_preserves_untracked_nested_repository() {
+    let grit_root = tempfile::tempdir().expect("tempdir");
+    let git_root = tempfile::tempdir().expect("tempdir");
+    for root in [grit_root.path(), git_root.path()] {
+        init_repo(root);
+        std::fs::write(root.join("README"), "root\n").expect("write");
+        git_cmd(root, &["add", "README"]);
+        git_cmd(root, &["commit", "-qm", "init"]);
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).expect("mkdir inner");
+        git_cmd(&inner, &["init", "-q"]);
+        git_cmd(&inner, &["config", "user.email", "nested@example.com"]);
+        git_cmd(&inner, &["config", "user.name", "Nested"]);
+        std::fs::write(inner.join("nested.txt"), "inside nested repo\n").expect("nested file");
+        git_cmd(&inner, &["add", "nested.txt"]);
+        git_cmd(&inner, &["commit", "-qm", "nested init"]);
+        std::fs::write(inner.join("other.txt"), "outer-untracked\n").expect("outer untracked");
+    }
+
+    push_stash(&open_grit(grit_root.path()), &stash_options(true, None))
+        .expect("grit push")
+        .expect("had changes");
+    git_cmd(git_root.path(), &["stash", "push", "-u"]);
+
+    for root in [grit_root.path(), git_root.path()] {
+        let inner = root.join("inner");
+        assert!(
+            inner.join(".git").exists(),
+            "nested .git must survive stash -u: {}",
+            root.display()
+        );
+        assert!(
+            inner.join("nested.txt").exists(),
+            "committed nested-repo file must not be deleted: {}",
+            root.display()
+        );
+    }
+
+    let grit_status = git_cmd(grit_root.path(), &["status", "--porcelain"]);
+    let git_status = git_cmd(git_root.path(), &["status", "--porcelain"]);
+    assert_eq!(
+        grit_status.trim(),
+        git_status.trim(),
+        "porcelain after stash -u with nested repo must match git"
+    );
+    assert!(
+        grit_status.contains("?? inner/"),
+        "nested repo should remain untracked: {grit_status}"
+    );
+    assert_fsck_strict(grit_root.path());
+}
+
 #[test]
 fn t3905_include_untracked_stash_shape_matches_git() {
     let grit_root = tempfile::tempdir().expect("tempdir");

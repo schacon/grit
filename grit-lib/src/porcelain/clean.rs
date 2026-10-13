@@ -500,7 +500,13 @@ fn index_gitlink_at(index: &Index, rel: &str) -> bool {
     })
 }
 
-fn should_skip_nested_git(work_tree: &Path, rel: &str) -> bool {
+/// True when `abs` is a directory containing a nested `.git` (embedded repository).
+pub(crate) fn is_nested_git_worktree(abs: &Path) -> bool {
+    abs.is_dir() && abs.join(".git").exists()
+}
+
+/// True when `rel` names a nested repository root or a path inside one (matches `git clean` / `git stash -u`).
+pub(crate) fn path_in_nested_git_worktree(work_tree: &Path, rel: &str) -> bool {
     let trimmed = rel.trim_end_matches('/');
     if is_nested_git_worktree(&work_tree.join(trimmed)) {
         return true;
@@ -518,8 +524,8 @@ fn should_skip_nested_git(work_tree: &Path, rel: &str) -> bool {
     false
 }
 
-fn is_nested_git_worktree(abs: &Path) -> bool {
-    abs.is_dir() && abs.join(".git").exists()
+fn should_skip_nested_git(work_tree: &Path, rel: &str) -> bool {
+    path_in_nested_git_worktree(work_tree, rel)
 }
 
 fn removal_order(paths: &[String]) -> Vec<String> {

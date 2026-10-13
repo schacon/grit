@@ -29,6 +29,7 @@ use crate::index::MODE_EXECUTABLE;
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::porcelain::checkout::checkout_between_trees;
+use crate::porcelain::clean::{is_nested_git_worktree, path_in_nested_git_worktree};
 use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::merge::tree_to_index_entries;
 use crate::porcelain::status::{
@@ -340,14 +341,18 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
         },
         &worktree_rules,
     )?;
-    expand_untracked_for_staging_with_rules(
+    let expanded = expand_untracked_for_staging_with_rules(
         repo,
         &mut index,
         work_tree,
         untracked,
         &[],
         &worktree_rules,
-    )
+    )?;
+    Ok(expanded
+        .into_iter()
+        .filter(|path| !path_in_nested_git_worktree(work_tree, path))
+        .collect())
 }
 
 fn apply_worktree_diff_to_index(
@@ -573,8 +578,14 @@ fn write_untracked_stash_commit(
 
 fn remove_stashed_untracked(repo: &Repository, work_tree: &Path, paths: &[String]) -> Result<()> {
     for path in paths {
-        let file_path = work_tree.join(path);
+        if path_in_nested_git_worktree(work_tree, path) {
+            continue;
+        }
+        let file_path = work_tree.join(path.trim_end_matches('/'));
         if file_path.is_dir() {
+            if is_nested_git_worktree(&file_path) {
+                continue;
+            }
             let _ = fs::remove_dir_all(&file_path);
         } else if file_path.exists() || file_path.symlink_metadata().is_ok() {
             let _ = fs::remove_file(&file_path);
