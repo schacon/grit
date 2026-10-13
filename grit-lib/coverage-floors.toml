@@ -3,18 +3,18 @@
 
 [meta]
 baseline = "183dacae1"
-updated = "2026-10-12"
+updated = "2026-10-13"
 
 [core]
 groups = ["odb", "pack", "midx", "commit-graph"]
 minimum = 85.0
 
 [total]
-minimum = 62.5
+minimum = 80.0
 
 [aggregate.history]
 groups = ["index", "index-ext", "diff", "revwalk", "revparse", "merge", "stash-notes-worktree"]
-minimum = 50.1
+minimum = 85.0
 
 [aggregate.refs-config]
 groups = ["refs", "reflog", "config", "ignore", "attributes"]
@@ -50,7 +50,7 @@ files = [
     "combined_diff_patch.rs",
     "merge_diff.rs",
 ]
-minimum = 55.1
+minimum = 85.0
 
 [group.ignore]
 files = [
@@ -74,7 +74,7 @@ files = [
     "untracked_cache.rs",
     "index_name_hash_lazy.rs",
 ]
-minimum = 84.5
+minimum = 85.0
 
 [group.merge]
 files = [
@@ -145,7 +145,7 @@ files = [
     "rev_list.rs",
     "rev_list_error.rs",
 ]
-minimum = 58.1
+minimum = 85.0
 
 [group.stash-notes-worktree]
 files = [
