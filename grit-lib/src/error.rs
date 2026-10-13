@@ -687,6 +687,18 @@ pub enum Error {
     #[error("cannot amend: no commits on this branch yet")]
     AmendUnborn,
 
+    /// [`RepositoryNotes::add`](crate::repo_handles::RepositoryNotes::add) was called without
+    /// `force` when a note already exists on the object.
+    #[error("note for object {object} already exists")]
+    NoteAlreadyExists {
+        /// Annotated object that already has a note.
+        object: crate::objects::ObjectId,
+    },
+
+    /// A configured or environment notes ref is not under `refs/notes/`.
+    #[error("notes ref '{0}' must start with 'refs/notes/'")]
+    InvalidNotesRef(String),
+
     /// Multi-pack-index load or write failure.
     #[error(transparent)]
     Midx(#[from] MidxError),

@@ -221,6 +221,35 @@ fn snapshot_branch_delete() {
 }
 
 #[test]
+fn snapshot_notes_list() {
+    snapshot_all_modes("notes_list", &["notes"]);
+}
+
+#[test]
+fn snapshot_notes_show() {
+    let fixture = CliFixture::new();
+    fixture.run_ok(&["notes", "add", "HEAD", "-m", "snapshot note"]);
+    fixture.snapshot_all_modes("notes_show", &["notes", "show", "HEAD"], snapshot_dir());
+}
+
+#[test]
+fn snapshot_notes_add() {
+    let fixture = CliFixture::new();
+    fixture.snapshot_all_modes(
+        "notes_add",
+        &["notes", "add", "HEAD", "-m", "hello notes"],
+        snapshot_dir(),
+    );
+}
+
+#[test]
+fn snapshot_notes_remove() {
+    let fixture = CliFixture::new();
+    fixture.run_ok(&["notes", "add", "HEAD", "-m", "to remove"]);
+    fixture.snapshot_all_modes("notes_remove", &["notes", "remove", "HEAD"], snapshot_dir());
+}
+
+#[test]
 fn snapshot_tag_list() {
     snapshot_all_modes("tag_list", &["tag"]);
 }

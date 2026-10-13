@@ -54,6 +54,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
             committer: IDENT.into(),
             author: None,
         },
+        false,
     )?;
 
     let body = repo.notes().read(&notes_ref, &commit)?.unwrap_or_default();

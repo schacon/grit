@@ -128,6 +128,7 @@ fn handle_notes_roundtrip_with_git() {
                 committer: IDENT.into(),
                 author: None,
             },
+            false,
         )
         .expect("add");
 
@@ -429,6 +430,7 @@ fn handle_notes_add_rejects_invalid_existing_notes_ref() {
                 committer: IDENT.into(),
                 author: None,
             },
+            false,
         )
         .expect_err("must not write on corrupt notes ref");
     assert!(
