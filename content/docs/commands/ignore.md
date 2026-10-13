@@ -59,6 +59,8 @@ $ grit ignore check tracked.txt; echo $?
 
 ## JSON output
 
+Schema: [v1](/schemas/ignore.check/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
@@ -97,6 +99,8 @@ Example:
 ```
 
 ## Markdown output
+
+Schema: [v1](/schemas/ignore.check/v1.json)
 
 Pass `--markdown` for agent-friendly output with the same fields summarized in prose and lists.
 
