@@ -22,6 +22,7 @@ use grit_utils::refs_driver;
 use grit_utils::refs_fixture::{run_prepare_refs, RefsWorkMode};
 use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
 use grit_utils::render::{render_markdown, render_text};
+use grit_utils::revwalk_suite::run_revwalk_suite;
 use grit_utils::scenarios::{
     run_add_suite, run_blame_suite, run_commit_suite, run_diff_suite, run_hot_path_suite,
     run_log_suite, run_prepare_add, run_prepare_commit, run_prepare_merge, run_prepare_pick,
@@ -100,6 +101,11 @@ enum Cmd {
     Blame {
         #[arg(long, default_value_t = 2_000)]
         commits: usize,
+    },
+    /// `grit revs --count` and `grit merge-base` vs git on deep-history and pick fixtures
+    Revwalk {
+        #[arg(long)]
+        smoke: bool,
     },
     /// Benchmark `grit stash` push + pop at selected repo sizes
     Stash {
@@ -668,6 +674,11 @@ fn main() -> Result<()> {
             eprintln!("Running blame benchmarks...");
             let cfg = run_config(&cli, true);
             run_blame_suite(&hyperfine, &git, &grit, &cfg, *commits, timestamp)?
+        }
+        Cmd::Revwalk { smoke } => {
+            eprintln!("Running revwalk benchmarks...");
+            let cfg = run_config(&cli, true);
+            run_revwalk_suite(&hyperfine, &git, &grit, &cfg, *smoke, timestamp)?
         }
         Cmd::Stash { sizes } => {
             eprintln!("Running stash benchmarks...");

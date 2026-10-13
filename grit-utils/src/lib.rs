@@ -24,6 +24,7 @@ pub mod refs_fixture;
 pub mod refs_suite;
 pub mod render;
 pub mod resource;
+pub mod revwalk_suite;
 pub mod scenarios;
 pub mod schema;
 pub mod serve_request;
