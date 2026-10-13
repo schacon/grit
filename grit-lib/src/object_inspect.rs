@@ -140,18 +140,15 @@ impl Repository {
             }
         };
 
-        let obj =
-            self.read_object_raw_for_display(&oid)
-                .map_err(|_| ResolveError::UnknownRevision {
-                    spec: spec.to_owned(),
-                })?;
-        let size = u64::try_from(obj.data.len()).map_err(|_| ResolveError::UnknownRevision {
-            spec: spec.to_owned(),
-        })?;
+        let info = self
+            .read_info_replaced(&oid)
+            .map_err(|_| ResolveError::UnknownRevision {
+                spec: spec.to_owned(),
+            })?;
         Ok(ResolvedObject {
             oid,
-            kind: obj.kind,
-            size,
+            kind: info.kind,
+            size: info.size,
             ref_name: infer_ref_name(self, spec, oid),
         })
     }

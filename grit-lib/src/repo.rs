@@ -1558,6 +1558,23 @@ impl Repository {
         self.work_tree.is_none()
     }
 
+    /// Object id to use after applying `refs/replace` (when enabled).
+    pub(crate) fn object_id_after_replace(
+        &self,
+        oid: &crate::objects::ObjectId,
+    ) -> crate::objects::ObjectId {
+        self.resolve_replace_redirect(oid).unwrap_or(*oid)
+    }
+
+    /// Metadata for an object, following replace refs without reading the payload.
+    pub(crate) fn read_info_replaced(
+        &self,
+        oid: &crate::objects::ObjectId,
+    ) -> Result<crate::objects::ObjectInfo> {
+        let effective = self.object_id_after_replace(oid);
+        self.odb.read_info(&effective)
+    }
+
     /// Read an object, transparently following replace refs.
     ///
     /// If `refs/replace/<hex>` exists for the requested OID and
@@ -1568,27 +1585,35 @@ impl Repository {
         &self,
         oid: &crate::objects::ObjectId,
     ) -> Result<crate::objects::Object> {
+        let effective = self.object_id_after_replace(oid);
+        self.odb.read(&effective)
+    }
+
+    fn resolve_replace_redirect(
+        &self,
+        oid: &crate::objects::ObjectId,
+    ) -> Option<crate::objects::ObjectId> {
         if self.environment.git_no_replace_objects {
-            return self.odb.read(oid);
+            return None;
         }
         let settings = self.cached_settings();
         if !settings.use_replace_refs {
-            return self.odb.read(oid);
+            return None;
         }
         let replace_ref =
             self.git_dir
                 .join(format!("{}{}", settings.replace_ref_base, oid.to_hex()));
-        if replace_ref.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&replace_ref) {
-                let hex = content.trim();
-                if let Ok(replacement_oid) = hex.parse::<crate::objects::ObjectId>() {
-                    if let Ok(obj) = self.odb.read(&replacement_oid) {
-                        return Ok(obj);
-                    }
-                }
-            }
+        if !replace_ref.is_file() {
+            return None;
         }
-        self.odb.read(oid)
+        let content = std::fs::read_to_string(&replace_ref).ok()?;
+        let hex = content.trim();
+        let replacement_oid = hex.parse::<crate::objects::ObjectId>().ok()?;
+        if self.odb.read_info(&replacement_oid).is_ok() {
+            Some(replacement_oid)
+        } else {
+            None
+        }
     }
 }
 
