@@ -341,6 +341,19 @@ Acceptance bars for the network performance pass are **≤1.2×** git wall time 
 
 Regenerate release binaries with **`cargo build --release -p grit-lib`** before **`grit-bench network`** so the timed **`grit`** binary includes library changes.
 
+## grit-bench: repository fsck (`fsck-medium`)
+
+Scenario **`fsck-medium`** (`grit-bench fsck`) runs **`grit fsck --no-dangling`** and **`git fsck --no-dangling`** on a cloned deep-history worktree (same fixture as other network-cache scenarios). Baseline: **`grit-utils/baselines/fsck-medium.json`**.
+
+**Acceptance bar:** ≤**1.1×** git median wall time (same bar as other maintenance hot paths).
+
+**2026-10-13 status:** After aligning workloads (`--no-dangling` on both sides), the committed baseline is still ~**9.4×** git (~**1840 ms** vs ~**196 ms** median on the factory VM). Grit pays full Rust-side loose/pack verification and connectivity walks without the mature C fsck fast paths Git uses on this fixture. **Follow-up:** factory performance pass on repository fsck (parallel pack verification, avoid redundant reads, bitmap-assisted reachability where applicable) — track with the fsck CLI factory step close-out, not by weakening checks to match the ratio.
+
+```bash
+cargo build --release -p grit-cli -p grit-utils
+./target/release/grit-bench fsck --format json --output grit-utils/baselines/fsck-medium.json
+```
+
 ### Results
 
 <!-- grit:benchmark-tables -->

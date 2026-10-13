@@ -5,7 +5,7 @@
 //! Progress is reported through [`ProgressSink`]; the library never prints.
 //!
 //! ```rust
-//! use grit_lib::fsck::{fsck, FsckOptions};
+//! use grit_lib::maintenance::repository_fsck::{fsck, FsckOptions};
 //! use grit_lib::progress::{NeverCancel, NullProgress};
 //! use grit_lib::repo::{InitOptions, Repository};
 //! # fn main() -> grit_lib::error::Result<()> {
@@ -37,6 +37,7 @@ use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
 use crate::index::MODE_GITLINK;
 use crate::midx::verify_midx;
+use crate::objects::HashAlgo;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack::verify_pack_and_collect;
@@ -45,7 +46,7 @@ use crate::progress::{Cancel, ProgressPhase, ProgressSink};
 use crate::refs_fsck::{refs_fsck, RefsFsckIssue};
 use crate::repo::Repository;
 
-pub use roots::reachability_roots;
+pub use roots::{index_object_roots, reachability_roots};
 
 /// Controls which fsck phases run and how strictly diagnostics are treated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,12 +325,21 @@ pub fn fsck(
         }
     }
 
+    let index_roots = index_object_roots(repo)?;
     let roots = reachability_roots(repo)?;
-    let (reachable, connectivity_issues) =
-        walk_connectivity(repo, &roots, &config, options.strict, progress, cancel)?;
+    let (reachable, connectivity_issues) = walk_connectivity(
+        repo,
+        &roots,
+        &index_roots,
+        &config,
+        options.strict,
+        progress,
+        cancel,
+    )?;
     issues.extend(connectivity_issues);
 
     fsck_index_missing_blobs(repo, &config, options.strict, &mut issues)?;
+    dedupe_issues(&mut issues);
 
     let mut dangling = Vec::new();
     if options.check_dangling {
@@ -389,6 +399,64 @@ fn push_corrupt_parse(
         oid,
         FsckError::new("corruptObject", detail),
     );
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WalkRootKind {
+    General,
+    IndexOnly,
+}
+
+/// Parse `tree` and `parent` lines from a commit buffer even when author/committer headers fail fsck.
+fn commit_link_targets(data: &[u8], algo: HashAlgo) -> Option<(ObjectId, Vec<ObjectId>)> {
+    let hex_len = algo.hex_len();
+    if data.len() < 5 + hex_len || !data.starts_with(b"tree ") {
+        return None;
+    }
+    let mut i = 5usize;
+    let tree_hex = std::str::from_utf8(&data[i..i + hex_len]).ok()?;
+    let tree = ObjectId::from_hex(tree_hex).ok()?;
+    i += hex_len;
+    if data.get(i) == Some(&b'\n') {
+        i += 1;
+    }
+    let mut parents = Vec::new();
+    while data
+        .get(i..)
+        .is_some_and(|tail| tail.starts_with(b"parent "))
+    {
+        i += 7;
+        let parent_hex = std::str::from_utf8(&data[i..i + hex_len]).ok()?;
+        parents.push(ObjectId::from_hex(parent_hex).ok()?);
+        i += hex_len;
+        if data.get(i) == Some(&b'\n') {
+            i += 1;
+        }
+    }
+    Some((tree, parents))
+}
+
+fn dedupe_issues(issues: &mut Vec<FsckIssue>) {
+    let mut seen = HashSet::new();
+    issues.retain(|issue| {
+        let key = match issue {
+            FsckIssue::BadObject { oid, error } => format!("bad:{}:{}", oid, error.id),
+            FsckIssue::MissingObject { oid, referenced_by } => {
+                format!("missing:{}:{}", oid, referenced_by)
+            }
+            FsckIssue::BrokenLink {
+                tree, name, target, ..
+            } => format!("link:{}:{}:{}", tree, name, target),
+            FsckIssue::BadRef(r) => format!("ref:{}:{}", r.path, r.msg_id),
+            FsckIssue::CorruptLoose { oid, .. } => format!("corrupt:{}", oid),
+            FsckIssue::HashMismatch { oid, .. } => format!("hash:{}", oid),
+            FsckIssue::PackChecksum { pack } => format!("packsum:{}", pack.display()),
+            FsckIssue::IdxMismatch { pack } => format!("idx:{}", pack.display()),
+            FsckIssue::MidxInvalid { .. } => "midx".to_owned(),
+            FsckIssue::CommitGraphInvalid { .. } => "commit-graph".to_owned(),
+        };
+        seen.insert(key)
+    });
 }
 
 enum LooseCheckOutcome {
@@ -455,9 +523,9 @@ fn verify_loose_objects(
         match outcome {
             LooseCheckOutcome::Clean => {
                 if let Ok(obj) = Odb::read_loose_verify_oid(&item.1, &item.0) {
-                    for dot_issue in dot.on_object(&item.0, obj.kind, &obj.data) {
-                        push_dot_issue(issues, config, strict, dot_issue);
-                    }
+                    apply_dot_checks(
+                        &mut dot, issues, config, strict, &item.0, obj.kind, &obj.data,
+                    );
                 }
             }
             LooseCheckOutcome::Issue(issue) => match &issue {
@@ -477,6 +545,27 @@ fn verify_loose_objects(
     }
     progress.finish();
     Ok(checked)
+}
+
+fn apply_dot_checks(
+    dot: &mut DotFsckTracker,
+    issues: &mut Vec<FsckIssue>,
+    config: &ConfigSet,
+    strict: bool,
+    oid: &ObjectId,
+    kind: ObjectKind,
+    data: &[u8],
+) {
+    if kind == ObjectKind::Tree {
+        if let Ok(tree_issues) = dot.on_tree(oid, data) {
+            for dot_issue in tree_issues {
+                push_dot_issue(issues, config, strict, dot_issue);
+            }
+        }
+    }
+    for dot_issue in dot.on_object(oid, kind, data) {
+        push_dot_issue(issues, config, strict, dot_issue);
+    }
 }
 
 fn push_dot_issue(
@@ -538,6 +627,7 @@ fn verify_pack_objects(
         .collect();
     progress.start(ProgressPhase::IndexingObjects, Some(packs.len() as u64));
     let mut checked = 0usize;
+    let mut dot = DotFsckTracker::default();
     for (i, idx_path) in packs.iter().enumerate() {
         if cancel.is_cancelled() {
             return Err(Error::Message("cancelled".into()));
@@ -555,6 +645,7 @@ fn verify_pack_objects(
                     if let Err(err) = fsck_object(obj.kind, &obj.data, fsck_opts) {
                         push_bad_object(issues, config, strict, oid, err);
                     }
+                    apply_dot_checks(&mut dot, issues, config, strict, &oid, obj.kind, &obj.data);
                 }
             }
             Err(Error::CorruptObject(msg)) => {
@@ -568,6 +659,9 @@ fn verify_pack_objects(
             Err(e) => return Err(e),
         }
         progress.set((i + 1) as u64);
+    }
+    for pending in dot.finish_pending(odb)? {
+        push_dot_issue(issues, config, strict, pending);
     }
     progress.finish();
     Ok(checked)
@@ -596,24 +690,32 @@ fn verify_midx_and_commit_graph(repo: &Repository, issues: &mut Vec<FsckIssue>) 
 fn walk_connectivity(
     repo: &Repository,
     roots: &[ObjectId],
+    index_roots: &HashSet<ObjectId>,
     config: &ConfigSet,
     strict: bool,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
 ) -> Result<(HashSet<ObjectId>, Vec<FsckIssue>)> {
     let odb = repo.odb();
-    let fsck_opts = FsckObjectOptions::new(odb.hash_algo());
+    let algo = odb.hash_algo();
+    let fsck_opts = FsckObjectOptions::new(algo);
     let mut issues = Vec::new();
+    let mut dot = DotFsckTracker::default();
     let mut seen: HashSet<ObjectId> = HashSet::new();
-    let mut queue: VecDeque<(ObjectId, ObjectId)> = VecDeque::new();
+    let mut queue: VecDeque<(ObjectId, ObjectId, WalkRootKind)> = VecDeque::new();
     for &root in roots {
         if seen.insert(root) {
-            queue.push_back((root, ObjectId::zero()));
+            let kind = if index_roots.contains(&root) {
+                WalkRootKind::IndexOnly
+            } else {
+                WalkRootKind::General
+            };
+            queue.push_back((root, ObjectId::zero(), kind));
         }
     }
     progress.start(ProgressPhase::CopyingObjects, None);
     let mut visited = 0u64;
-    while let Some((oid, parent)) = queue.pop_front() {
+    while let Some((oid, parent, root_kind)) = queue.pop_front() {
         if cancel.is_cancelled() {
             return Err(Error::Message("cancelled".into()));
         }
@@ -624,7 +726,9 @@ fn walk_connectivity(
         let obj = match odb.read(&oid) {
             Ok(o) => o,
             Err(_) => {
-                if should_emit(config, strict, "missingObject") {
+                if root_kind == WalkRootKind::IndexOnly && parent.is_zero() {
+                    // Report once from [`fsck_index_missing_blobs`].
+                } else if should_emit(config, strict, "missingObject") {
                     issues.push(FsckIssue::MissingObject {
                         oid,
                         referenced_by: parent,
@@ -635,18 +739,26 @@ fn walk_connectivity(
         };
         if let Err(err) = fsck_object(obj.kind, &obj.data, fsck_opts) {
             push_bad_object(&mut issues, config, strict, oid, err);
-            continue;
         }
+        apply_dot_checks(
+            &mut dot,
+            &mut issues,
+            config,
+            strict,
+            &oid,
+            obj.kind,
+            &obj.data,
+        );
+
         match obj.kind {
             ObjectKind::Commit => {
-                let commit = match parse_commit(&obj.data) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        push_corrupt_parse(&mut issues, config, strict, oid, e);
-                        continue;
-                    }
+                let Some((tree, parents)) = (match parse_commit(&obj.data) {
+                    Ok(c) => Some((c.tree, c.parents)),
+                    Err(_) => commit_link_targets(&obj.data, algo),
+                }) else {
+                    continue;
                 };
-                for p in commit.parents {
+                for p in parents {
                     follow_typed_link(
                         odb,
                         config,
@@ -667,7 +779,7 @@ fn walk_connectivity(
                     &mut issues,
                     &mut queue,
                     &mut seen,
-                    commit.tree,
+                    tree,
                     oid,
                     ObjectKind::Tree,
                     "tree",
@@ -745,18 +857,21 @@ fn walk_connectivity(
             ObjectKind::Blob => {}
         }
     }
+    for pending in dot.finish_pending(odb)? {
+        push_dot_issue(&mut issues, config, strict, pending);
+    }
     progress.finish();
     Ok((seen, issues))
 }
 
 fn enqueue(
-    queue: &mut VecDeque<(ObjectId, ObjectId)>,
+    queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
     seen: &mut HashSet<ObjectId>,
     oid: ObjectId,
     parent: ObjectId,
 ) {
     if seen.insert(oid) {
-        queue.push_back((oid, parent));
+        queue.push_back((oid, parent, WalkRootKind::General));
     }
 }
 
@@ -766,7 +881,7 @@ fn follow_typed_link(
     config: &ConfigSet,
     strict: bool,
     issues: &mut Vec<FsckIssue>,
-    queue: &mut VecDeque<(ObjectId, ObjectId)>,
+    queue: &mut VecDeque<(ObjectId, ObjectId, WalkRootKind)>,
     seen: &mut HashSet<ObjectId>,
     target: ObjectId,
     parent: ObjectId,
@@ -820,7 +935,7 @@ fn fsck_index_missing_blobs(
         if odb.read(&entry.oid).is_err() && should_emit(config, strict, "missingObject") {
             issues.push(FsckIssue::MissingObject {
                 oid: entry.oid,
-                referenced_by: entry.oid,
+                referenced_by: ObjectId::zero(),
             });
         }
     }

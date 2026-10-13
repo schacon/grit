@@ -75,6 +75,28 @@ pub fn reachability_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
     Ok(roots.into_iter().collect())
 }
 
+/// Object ids recorded only in the index (and cache-tree), excluding gitlinks and zero ids.
+///
+/// Used to route missing-object diagnostics through the index fsck pass instead of the
+/// connectivity walk (avoids duplicate `missingObject` reports for staged blobs).
+pub fn index_object_roots(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    let index = repo.load_index()?;
+    for entry in index.entries() {
+        if entry.mode == MODE_GITLINK || entry.oid.is_zero() {
+            continue;
+        }
+        out.insert(entry.oid);
+    }
+    if let Some(root) = index.cache_tree_root {
+        out.insert(root);
+    }
+    if let Some(node) = &index.cache_tree {
+        collect_cache_tree_oids(node, &mut out);
+    }
+    Ok(out)
+}
+
 fn collect_cache_tree_oids(node: &CacheTreeNode, out: &mut HashSet<ObjectId>) {
     if let Some(oid) = node.oid {
         out.insert(oid);

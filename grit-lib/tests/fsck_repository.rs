@@ -210,6 +210,98 @@ fn missing_blob_reported_as_missing_object() {
     );
     let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
     assert!(has_msg_id(&report, "missingObject"), "{:?}", report.issues);
+    let missing_count = report
+        .issues
+        .iter()
+        .filter(|i| fsck::issue_msg_id(i) == "missingObject")
+        .count();
+    assert_eq!(missing_count, 1, "{:?}", report.issues);
+}
+
+#[test]
+fn gitmodules_invalid_path_matches_git() {
+    let (dir, repo) = init_repo();
+    let objects = dir.path().join(".git/objects");
+    let bad = b"[submodule \"x\"]\n\tpath = -bad\n\turl = https://example.com\n";
+    let blob_hex = write_loose_object(&objects, FixtureAlgo::Sha1, "blob", bad).expect("blob");
+    let blob_oid: ObjectId = blob_hex.parse().expect("parse");
+    let mut tree_body = b"100644 .gitmodules\0".to_vec();
+    tree_body.extend_from_slice(blob_oid.as_bytes());
+    let tree_hex =
+        write_loose_object(&objects, FixtureAlgo::Sha1, "tree", &tree_body).expect("tree");
+    let tree_oid: ObjectId = tree_hex.parse().expect("parse");
+    let commit_body = format!(
+        "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\nm\n",
+        tree_oid.to_hex()
+    );
+    let commit_hex = write_loose_object(
+        &objects,
+        FixtureAlgo::Sha1,
+        "commit",
+        commit_body.as_bytes(),
+    )
+    .expect("commit");
+    let commit_oid: ObjectId = commit_hex.parse().expect("parse");
+    write_ref_loose(dir.path(), "refs/heads/main", commit_oid);
+
+    let git_out = git_fsck(dir.path(), true);
+    assert!(
+        git_out.msg_ids.iter().any(|id| id == "gitmodulesPath"),
+        "{:?}",
+        git_out.msg_ids
+    );
+    let config = repo.config().expect("config");
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(has_msg_id(&report, "gitmodulesPath"), "{:?}", report.issues);
+    assert!(!report.ok(&config, &FsckOptions::full_repository(false)));
+}
+
+#[test]
+fn missing_author_still_reaches_tree_without_duplicate_or_false_dangling() {
+    let (dir, repo) = init_repo();
+    let objects = dir.path().join(".git/objects");
+    let blob_hex =
+        write_loose_object(&objects, FixtureAlgo::Sha1, "blob", b"payload\n").expect("blob");
+    let blob_oid: ObjectId = blob_hex.parse().expect("parse");
+    let mut tree_body = b"100644 file\0".to_vec();
+    tree_body.extend_from_slice(blob_oid.as_bytes());
+    let tree_hex =
+        write_loose_object(&objects, FixtureAlgo::Sha1, "tree", &tree_body).expect("tree");
+    let tree_oid: ObjectId = tree_hex.parse().expect("parse");
+    let commit_body = format!(
+        "tree {}\ncommitter T <t@example.com> 1 +0000\n\n\n",
+        tree_oid.to_hex()
+    );
+    let commit_hex = write_loose_object(
+        &objects,
+        FixtureAlgo::Sha1,
+        "commit",
+        commit_body.as_bytes(),
+    )
+    .expect("commit");
+    let commit_oid: ObjectId = commit_hex.parse().expect("parse");
+    write_ref_loose(dir.path(), "refs/heads/main", commit_oid);
+
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.contains("missingAuthor"),
+        "git fsck should report missingAuthor: {git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    let author_count = report
+        .issues
+        .iter()
+        .filter(|i| fsck::issue_msg_id(i) == "missingAuthor")
+        .count();
+    assert_eq!(author_count, 1, "{:?}", report.issues);
+    assert!(
+        !report
+            .dangling
+            .iter()
+            .any(|(_, oid)| *oid == blob_oid || *oid == tree_oid),
+        "tree and blob must stay reachable: {:?}",
+        report.dangling
+    );
 }
 
 #[test]

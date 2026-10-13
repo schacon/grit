@@ -63,7 +63,7 @@ pub fn run_fsck_suite(
             group: "maintenance".into(),
             fixture: bare.display().to_string(),
             description: "fsck on deep-history worktree (medium fixture)".into(),
-            grit_argv: vec!["fsck".into()],
+            grit_argv: vec!["fsck".into(), "--no-dangling".into()],
             git_argv: vec!["fsck".into(), "--no-dangling".into()],
             driver: Driver::Cli,
             prepare_kind: None,

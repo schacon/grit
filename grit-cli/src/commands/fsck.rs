@@ -5,7 +5,7 @@ use std::io::Write;
 
 use anyhow::Result;
 use grit_lib::config::ConfigSet;
-use grit_lib::fsck::{
+use grit_lib::maintenance::repository_fsck::{
     issue_msg_id, issue_severity, FsckIssue, FsckOptions, FsckReport, FsckSeverity,
 };
 use grit_lib::objects::{ObjectId, ObjectKind};
@@ -24,6 +24,8 @@ pub struct FsckRunOptions {
     pub connectivity_only: bool,
     /// List objects not reachable from ref roots (always on for a full fsck).
     pub dangling: bool,
+    /// Skip dangling-object enumeration (matches `git fsck --no-dangling`).
+    pub no_dangling: bool,
     /// Treat ref-fsck warnings as errors.
     pub strict: bool,
     /// Output mode (controls stderr progress).
@@ -263,7 +265,9 @@ pub fn run(options: FsckRunOptions) -> Result<FsckOutcome> {
     } else {
         FsckOptions::full_repository(options.strict)
     };
-    if options.connectivity_only {
+    if options.no_dangling {
+        fsck_opts = fsck_opts.with_check_dangling(false);
+    } else if options.connectivity_only {
         fsck_opts = fsck_opts.with_check_dangling(options.dangling);
     }
 

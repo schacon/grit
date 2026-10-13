@@ -435,6 +435,9 @@ enum Command {
         /// Report unreachable objects (with `--connectivity-only`, off unless this flag is set).
         #[arg(long)]
         dangling: bool,
+        /// Do not list dangling objects (matches Git `--no-dangling`).
+        #[arg(long = "no-dangling")]
+        no_dangling: bool,
         /// Treat ref warnings as errors.
         #[arg(long)]
         strict: bool,
@@ -954,11 +957,13 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Fsck {
             connectivity_only,
             dangling,
+            no_dangling,
             strict,
         } => {
             let outcome = commands::fsck::run(commands::fsck::FsckRunOptions {
                 connectivity_only,
                 dangling,
+                no_dangling,
                 strict,
                 mode: opts.mode,
             })?;

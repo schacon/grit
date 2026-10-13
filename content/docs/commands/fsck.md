@@ -33,6 +33,7 @@ Progress during long checks is written to **stderr** in human mode (suppressed f
 | --- | --- |
 | `--connectivity-only` | Skip full object-store validation; check connectivity from ref roots only. |
 | `--dangling` | With `--connectivity-only`, also compute and list unreachable objects (full fsck always includes dangling). |
+| `--no-dangling` | Skip unreachable-object listing (matches Git `--no-dangling`). |
 | `--strict` | Treat ref-fsck warnings as errors. |
 
 ## Examples
