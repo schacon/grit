@@ -1172,6 +1172,58 @@ fn diff_linked_worktree_autocrlf_matches_git() -> TestResult {
     Ok(())
 }
 
+/// Staged new file plus further worktree edits: default diff must read worktree bytes (issue #995 review).
+#[test]
+fn diff_staged_new_file_then_worktree_edit() -> TestResult {
+    let scratch = Scratch::new("diff-staged-unstaged-new")?;
+    let repo = scratch.path();
+    gs_ok(repo, ["init", "."])?;
+    git_ok(repo, &["config", "user.name", "T"])?;
+    git_ok(repo, &["config", "user.email", "t@e.com"])?;
+    fs::write(repo.join("base.txt"), b"base\n")?;
+    gs_ok(repo, &["add"])?;
+    gs_ok(repo, ["commit", "-m", "base"])?;
+
+    fs::write(repo.join("new.txt"), b"staged\n")?;
+    gs_ok(repo, &["add", "new.txt"])?;
+    fs::write(repo.join("new.txt"), b"staged\nunstaged\n")?;
+
+    let git_diff = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(repo)
+        .output()?;
+    assert!(git_diff.status.success());
+    let git_numstat = String::from_utf8_lossy(&git_diff.stdout);
+    assert!(
+        git_numstat.contains("new.txt"),
+        "git should diff new.txt: {git_numstat:?}"
+    );
+
+    let diff = gs(repo, ["--json", "diff"])?;
+    assert_eq!(diff.status, Some(0), "{}", diff.dump());
+    let diff_json: serde_json::Value = serde_json::from_str(&diff.stdout)?;
+    let files = diff_json
+        .get("files")
+        .and_then(|f| f.as_array())
+        .expect("diff json files");
+    assert_eq!(files.len(), 1, "expected one file vs HEAD: {diff_json}");
+    assert_eq!(files[0]["path"], "new.txt");
+    assert_eq!(files[0]["status"], "added");
+    let added: usize = files[0]["hunks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|h| h["lines"].as_array())
+        .flatten()
+        .filter(|line| line["kind"] == "add")
+        .count();
+    assert_eq!(
+        added, 2,
+        "both staged and unstaged lines vs HEAD: {diff_json}"
+    );
+    Ok(())
+}
+
 /// `core.autocrlf=true` and `core.filemode=false`: grit diff must match git/status (issue #947).
 #[test]
 fn diff_autocrlf_filemode_false_clean_when_git_clean() -> TestResult {
