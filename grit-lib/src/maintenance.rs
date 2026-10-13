@@ -600,55 +600,51 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     }
 
     let pack_bytes = build_pack(odb, &roots, &[], &pack_opts)?;
-    if pack_bytes.len() <= 12 + odb.hash_algo().len() {
-        return Ok(RepackDetail {
-            report,
-            prune_packed_loose: 0,
-            unreachable_loose: 0,
-        });
-    }
-
-    clear_pack_midx_state(&pack_dir)?;
-
-    let ingest_opts = IngestPackOptions {
-        fix_thin: false,
-        threads: opts.threads,
-        merged_config: cfg.clone(),
-        environment: opts.environment.clone(),
-        ..IngestPackOptions::default()
-    };
-    let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
-    report.packs_written = 1;
-    report.objects = ingested.object_ids.len();
-
-    let idx_path = ingested.pack_path.with_extension("idx");
-    if cfg
-        .as_ref()
-        .is_none_or(|c| c.pack_write_reverse_index_default(&opts.environment))
-    {
-        write_pack_rev_sidecar_for_index_path(&idx_path)?;
-    }
-
-    if opts.write_bitmap {
-        let bitmap_opts = PackBitmapWriteOptions::default();
-        let now = opts
-            .now
-            .map(offset_to_system_time)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
-            .map_err(|e| Error::CorruptObject(e.to_string()))?;
-    }
-
-    report.packs_removed = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
-
-    let pruned = prune_packed_objects(objects_dir, PrunePackedOptions::default())?;
-    let prune_packed_loose = pruned.len();
+    let mut prune_packed_loose = 0usize;
     let mut unreachable_loose = 0usize;
+    let pack_trailer_len = 12 + odb.hash_algo().len();
+    if pack_bytes.len() > pack_trailer_len {
+        clear_pack_midx_state(&pack_dir)?;
 
-    odb.invalidate_packs();
+        let ingest_opts = IngestPackOptions {
+            fix_thin: false,
+            threads: opts.threads,
+            merged_config: cfg.clone(),
+            environment: opts.environment.clone(),
+            ..IngestPackOptions::default()
+        };
+        let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
+        report.packs_written = 1;
+        report.objects = ingested.object_ids.len();
 
-    if opts.write_commit_graph {
-        write_commit_graph(repo, &CommitGraphOptions::with_changed_paths(true))?;
+        let idx_path = ingested.pack_path.with_extension("idx");
+        if cfg
+            .as_ref()
+            .is_none_or(|c| c.pack_write_reverse_index_default(&opts.environment))
+        {
+            write_pack_rev_sidecar_for_index_path(&idx_path)?;
+        }
+
+        if opts.write_bitmap {
+            let bitmap_opts = PackBitmapWriteOptions::default();
+            let now = opts
+                .now
+                .map(offset_to_system_time)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
+                .map_err(|e| Error::CorruptObject(e.to_string()))?;
+        }
+
+        report.packs_removed = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
+
+        prune_packed_loose =
+            prune_packed_objects(objects_dir, PrunePackedOptions::default())?.len();
+
+        odb.invalidate_packs();
+
+        if opts.write_commit_graph {
+            write_commit_graph(repo, &CommitGraphOptions::with_changed_paths(true))?;
+        }
     }
 
     if !opts.keep_unreachable {

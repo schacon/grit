@@ -229,6 +229,30 @@ fn repack_git_written_repo() {
 }
 
 #[test]
+fn rootless_repo_prunes_unreachable_loose_when_pruning_enabled() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+
+    let orphan = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"rootless orphan\n")
+        .expect("orphan");
+
+    let mut opts = RepackOptions::default();
+    opts.keep_unreachable = false;
+    let report = repack(&repo, &opts).expect("repack");
+    assert_eq!(report.packs_written, 0);
+    assert!(
+        report.loose_removed >= 1,
+        "expected unreachable loose prune, got {report:?}"
+    );
+    assert!(
+        repo.odb().read(&orphan).is_err(),
+        "unreachable loose blob must be removed when keep_unreachable is false"
+    );
+}
+
+#[test]
 fn default_repack_preserves_unreachable_loose_like_git_repack_ad() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-b", "main"]);
