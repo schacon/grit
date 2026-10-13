@@ -20,8 +20,6 @@ With one commit, shows the change that commit introduced (its first parent’s t
 
 Each file starts with its path, and each hunk with its position. Lines have two number columns, the line number before and after the change. In a terminal, removed lines are red, added lines are green, and the words that changed within a line are highlighted. When the output isn't a terminal, or `NO_COLOR` is set, lines are marked with `-` and `+` instead. Three lines of unchanged context are shown around each change. Binary files print `Binary file differs` when the blob changed (mode-only binary changes show mode lines only).
 
-For diffs that read the working tree (default uncommitted diff, `--unstaged`, and `--against`), the worktree side is normalized the same way Git compares paths: `.gitattributes`, `text`/`eol`, clean filters, and `core.autocrlf` run before line diffs are computed, so CRLF on disk against LF blobs in Git shows only real content edits.
-
 `<commit>` can be anything that names a commit: a full or short commit id, a branch or tag name, or an expression like `HEAD~2`.
 
 ## Options
@@ -99,7 +97,7 @@ Pass `--json` for stable, scripting-friendly output:
 | ----- | ---- | ------- |
 | `files` | array | Changed files, each with `path`, `status`, `binary`, optional `old_mode` / `new_mode`, optional `old_encoding_lossy` / `new_encoding_lossy`, and `hunks`. |
 
-Nested fields include `files[].status` (`added`, `modified`, `deleted`, `renamed`, and so on), optional `files[].old_path` when `status` is `renamed`, `hunks[].old_start` / `new_start` / `old_lines` / `new_lines`, optional `hunks[].context` (enclosing definition line), `hunks[].lines[].kind` (`context`, `add`, or `del`), line numbers on `old` and `new`, `segments` with optional `emphasis` on intra-line changes, and `no_newline_at_eof` when that side lacks a trailing newline (Git’s `\ No newline at end of file`). Carriage returns inside a line are preserved in `segments[].text` (for example CRLF→LF). When file bytes are not valid UTF-8, `old_encoding_lossy` or `new_encoding_lossy` is true and non-UTF-8 bytes appear as U+FFFD in text fields.
+Nested fields include `files[].status` (`added`, `modified`, `deleted`, `renamed`, and so on), optional `files[].old_path` when `status` is `renamed`, `hunks[].old_start` / `new_start` / `old_lines` / `new_lines`, optional `hunks[].context` (enclosing definition line), `hunks[].lines[].kind` (`context`, `add`, or `del`), line numbers on `old` and `new`, `segments` with optional `emphasis` on intra-line changes, and `no_newline_at_eof` when that side lacks a trailing newline (Git’s `\ No newline at end of file`). For unstaged and other worktree-sourced sides, line text is normalized to repository form (`.gitattributes` / `core.autocrlf`) before diffing, so trailing `\r` from CRLF checkouts does not appear in `segments[].text`. Commit and staged diffs compare stored blobs and may still show carriage returns when the on-disk object bytes differ. When file bytes are not valid UTF-8, `old_encoding_lossy` or `new_encoding_lossy` is true and non-UTF-8 bytes appear as U+FFFD in text fields.
 
 Example:
 

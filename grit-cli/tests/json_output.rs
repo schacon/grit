@@ -677,6 +677,106 @@ fn diff_json_uncommitted_and_commit() -> TestResult {
 }
 
 #[test]
+fn diff_json_head_includes_staged_added_then_worktree_edited() -> TestResult {
+    let scratch = Scratch::new("diff-staged-add-edit")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("base.txt"), "base\n");
+    gs_ok(&repo, &["commit", "init"]);
+    write_file(&repo.join("new.txt"), "staged\n");
+    gs_ok(&repo, &["add", "new.txt"]);
+    write_file(&repo.join("new.txt"), "worktree\n");
+
+    let git = Command::new("git")
+        .args(["diff", "HEAD", "--numstat"])
+        .current_dir(&repo)
+        .output()?;
+    assert!(
+        git.status.success(),
+        "git diff: {}",
+        String::from_utf8_lossy(&git.stderr)
+    );
+    let numstat = String::from_utf8_lossy(&git.stdout);
+    assert!(
+        numstat.contains("new.txt"),
+        "git must report new.txt vs HEAD: {numstat}"
+    );
+
+    let v = gs_json(&repo, &["diff"]);
+    let files = v["files"].as_array().unwrap();
+    let newf = files.iter().find(|f| f["path"] == "new.txt").unwrap();
+    assert_eq!(newf["status"], "added");
+    let kinds: Vec<_> = newf["hunks"][0]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["kind"].as_str().unwrap())
+        .collect();
+    assert!(
+        kinds.iter().any(|k| *k == "add"),
+        "expected add lines for worktree content: {kinds:?}"
+    );
+    assert!(
+        newf["hunks"][0]["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["kind"] == "add" && l["segments"][0]["text"].as_str() == Some("worktree")),
+        "new side must reflect current worktree bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn diff_json_unstaged_eol_crlf_normalizes_worktree_lines() -> TestResult {
+    let scratch = Scratch::new("diff-eol990")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    let git = |args: &[&str]| {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .status()
+            .expect("git")
+            .success());
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.name", "a"]);
+    git(&["config", "user.email", "a@b"]);
+    fs::write(repo.join(".gitattributes"), "*.txt text eol=crlf\n")?;
+    fs::write(repo.join("f.txt"), "a\nb\nc\n")?;
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "1"]);
+    fs::remove_file(repo.join("f.txt"))?;
+    git(&["checkout", "--", "f.txt"]);
+    fs::write(repo.join("f.txt"), b"a\r\nB\r\nc\r\n")?;
+
+    let v = gs_json(&repo, &["diff", "--unstaged"]);
+    let kinds: Vec<_> = v["files"][0]["hunks"][0]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["context", "del", "add", "context"],
+        "one line change after eol normalization: {kinds:?}"
+    );
+    for line in v["files"][0]["hunks"][0]["lines"].as_array().unwrap() {
+        for seg in line["segments"].as_array().unwrap() {
+            let text = seg["text"].as_str().unwrap();
+            assert!(
+                !text.contains('\r'),
+                "JSON line text must not retain CR: {text:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn diff_json_preserves_crlf_no_eof_and_mode() -> TestResult {
     let scratch = Scratch::new("diffmeta")?;
     let repo = scratch.child("repo");
