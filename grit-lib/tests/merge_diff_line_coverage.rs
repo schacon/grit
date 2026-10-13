@@ -154,6 +154,18 @@ fn combined_paths_and_formatters() {
         7,
     );
     assert!(conflict_patch.contains("diff --cc"));
+    let renamed_tree = write_tree(
+        &odb,
+        &[("renamed.txt", merge_blob), ("nested/deep.txt", base_blob)],
+    );
+    let renamed_merge = write_commit(&odb, renamed_tree, &parents, "rename merge");
+    let _renamed_paths = combined_diff_paths(&odb, &renamed_tree, &parents);
+    let _ = all_blob_paths_in_tree_order(&odb, &renamed_tree);
+    for path in ["renamed.txt", "nested/deep.txt", "file.txt"] {
+        let _ = combined_merge_parent_blob_paths(&odb, path, &parents, &renamed_tree, 50);
+        let _ = read_blob_at_path(&odb, &renamed_tree, path);
+    }
+    let _ = renamed_merge;
     let _ = format_combined_textconv_patch(
         &git_dir,
         &cfg,

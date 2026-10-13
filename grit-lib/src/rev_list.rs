@@ -9347,6 +9347,71 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn exhaustive_rev_list_flag_product() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(220, true);
+        repo.odb().write_commit_graph()?;
+        let filters = [
+            None,
+            Some(ObjectFilter::BlobNone),
+            Some(ObjectFilter::BlobLimit(2048)),
+            Some(ObjectFilter::TreeDepth(8)),
+            Some(ObjectFilter::ObjectType(FilterObjectKind::Commit)),
+            Some(ObjectFilter::Combine(vec![
+                ObjectFilter::BlobLimit(4096),
+                ObjectFilter::TreeDepth(6),
+            ])),
+        ];
+        for mask in 0u32..512 {
+            for filter in &filters {
+                let opts = RevListOptions {
+                    first_parent: mask & 1 != 0,
+                    reverse: mask & 2 != 0,
+                    boundary: mask & 4 != 0,
+                    count: mask & 8 != 0,
+                    quiet: mask & 16 != 0,
+                    objects: mask & 32 != 0,
+                    left_right: mask & 64 != 0,
+                    cherry_mark: mask & 128 != 0,
+                    sparse: mask & 256 != 0,
+                    full_history: mask & 256 != 0,
+                    simplify_merges: mask & 1 == 0,
+                    use_commit_graph: mask & 32 != 0,
+                    use_commit_graph_bloom: mask & 32 != 0,
+                    use_bitmap_index: mask & 32 != 0,
+                    include_reflog_entries: mask & 64 != 0,
+                    include_indexed_objects: mask & 128 != 0,
+                    filter_print_omitted: true,
+                    filter: filter.clone(),
+                    paths: vec!["tracked.txt".into()],
+                    ancestry_path: mask & 4 != 0,
+                    ancestry_path_bottoms: vec![tip],
+                    ordering: match mask % 5 {
+                        0 => OrderingMode::Default,
+                        1 => OrderingMode::Topo,
+                        2 => OrderingMode::DateOrderWalk,
+                        3 => OrderingMode::AuthorDateWalk,
+                        _ => OrderingMode::AuthorDateTopo,
+                    },
+                    max_count: Some(48),
+                    missing_action: MissingAction::Allow,
+                    ignore_missing: true,
+                    ..RevListOptions::default()
+                };
+                let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+                if mask % 17 == 0 {
+                    let _ = rev_list(
+                        &repo,
+                        &[String::from("main"), String::from("side")],
+                        &[],
+                        &opts,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ultrawide_history_ordering_and_filter_surface() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(640, true);
         repo.odb().write_commit_graph()?;
