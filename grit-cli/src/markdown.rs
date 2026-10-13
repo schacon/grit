@@ -20,7 +20,7 @@ use crate::commands::worktree::{WorktreeOutcome, WorktreeRow};
 use crate::context::{self, CommitSummary};
 use crate::output::{outln, RenderContext};
 use crate::stdio;
-use crate::ui::{self, PathDisplayContext};
+use crate::ui::{self, PathDisplayOptions};
 
 /// Print a list of commits as Markdown bullets (`oid`, subject, author, date).
 pub fn print_commit_list(
@@ -51,7 +51,7 @@ pub fn print_change_section(
     w: &mut dyn Write,
     title: &str,
     entries: &[DiffEntry],
-    path_display: Option<&PathDisplayContext>,
+    path_opts: Option<&PathDisplayOptions>,
 ) -> anyhow::Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -59,10 +59,10 @@ pub fn print_change_section(
     outln!(w, "## {title}");
     for entry in entries {
         let repo_path = ui::entry_path(entry);
-        let shown = path_display
-            .map(|ctx| ctx.format_repo_path(repo_path).into_owned())
-            .unwrap_or_else(|| repo_path.to_owned());
-        outln!(w, "- **{}** `{shown}`", change_label(&entry.status));
+        let shown = path_opts
+            .map(|opts| format_inline_code(&opts.format_path_for_human(repo_path)))
+            .unwrap_or_else(|| format_inline_code(repo_path));
+        outln!(w, "- **{}** {shown}", change_label(&entry.status));
     }
     outln!(w);
     Ok(())
@@ -84,24 +84,28 @@ fn change_label(status: &DiffStatus) -> &'static str {
 pub fn print_untracked(
     w: &mut dyn Write,
     paths: &[String],
-    path_display: Option<&PathDisplayContext>,
+    path_opts: Option<&PathDisplayOptions>,
 ) -> anyhow::Result<()> {
     if paths.is_empty() {
         return Ok(());
     }
     outln!(w, "## Untracked");
     for path in paths {
-        let shown = path_display
-            .map(|ctx| ctx.format_repo_path(path).into_owned())
-            .unwrap_or_else(|| path.clone());
-        outln!(w, "- `{shown}`");
+        let shown = path_opts
+            .map(|opts| format_inline_code(&opts.format_path_for_human(path)))
+            .unwrap_or_else(|| format_inline_code(path));
+        outln!(w, "- {shown}");
     }
     outln!(w);
     Ok(())
 }
 
 /// Render a full diff outcome as Markdown (one fenced `diff` block per file).
-pub fn print_diff_files(w: &mut dyn Write, files: &[FileDiff]) -> anyhow::Result<()> {
+pub fn print_diff_files(
+    w: &mut dyn Write,
+    files: &[FileDiff],
+    path_opts: Option<&PathDisplayOptions>,
+) -> anyhow::Result<()> {
     if files.is_empty() {
         outln!(w, "No changes.");
         return Ok(());
@@ -110,10 +114,7 @@ pub fn print_diff_files(w: &mut dyn Write, files: &[FileDiff]) -> anyhow::Result
         if i > 0 {
             outln!(w);
         }
-        let header = match &file.old_path {
-            Some(old) => format!("{old} → {}", file.path),
-            None => file.path.clone(),
-        };
+        let header = ui::format_diff_file_header(file.old_path.as_deref(), &file.path, path_opts);
         outln!(w, "## {header}");
         if file.binary {
             if file.content_changed {
@@ -238,6 +239,29 @@ pub fn print_config_entries(
         outln!(w, "| `{}` | {} |", entry.key, escape_table_cell(value));
     }
     Ok(())
+}
+
+/// Wrap `content` in a Markdown inline code span.
+///
+/// Picks a backtick delimiter longer than any run of backticks in `content` (CommonMark
+/// code spans do not treat backslash as escape inside single-backtick spans).
+#[must_use]
+pub fn format_inline_code(content: &str) -> String {
+    let mut ticks = 1usize;
+    loop {
+        let marker = "`".repeat(ticks);
+        if !content.contains(&marker) {
+            let pad = content.starts_with(' ')
+                || content.ends_with(' ')
+                || content.starts_with('`')
+                || content.ends_with('`');
+            if pad {
+                return format!("{marker} {content} {marker}");
+            }
+            return format!("{marker}{content}{marker}");
+        }
+        ticks += 1;
+    }
 }
 
 /// Escape cell text so it stays on one Markdown table row.
@@ -725,7 +749,7 @@ pub fn print_push_results(
 
 #[cfg(test)]
 mod tests {
-    use super::{diff_code_fence, escape_table_cell};
+    use super::{diff_code_fence, escape_table_cell, format_inline_code};
 
     #[test]
     fn diff_code_fence_uses_longer_delimiter_when_body_has_triple_backticks() {
@@ -741,6 +765,17 @@ mod tests {
         let (open, close) = diff_code_fence(body);
         assert_eq!(open, "```diff");
         assert_eq!(close, "```");
+    }
+
+    #[test]
+    fn format_inline_code_uses_longer_delimiter_for_embedded_backtick() {
+        assert_eq!(format_inline_code("tick`name.txt"), "``tick`name.txt``");
+        assert_eq!(format_inline_code("plain.txt"), "`plain.txt`");
+    }
+
+    #[test]
+    fn format_inline_code_pads_when_content_touches_delimiter() {
+        assert_eq!(format_inline_code("`edge"), "`` `edge ``");
     }
 
     #[test]
