@@ -52,6 +52,7 @@ The same shape as [`grit merge`](../merge/#json-output). Pass `--json` for stabl
 | `oid` | string or null | Commit the current branch points at after the pull, when applicable. |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array | Conflicted paths when `result` is `conflicts`; omitted otherwise. |
+| `conflict_details` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |
 
 Example:
 
