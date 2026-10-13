@@ -454,7 +454,7 @@ pub fn print_stash_push_outcome(
     outln!(w, "## Stash");
     outln!(w);
     match outcome {
-        StashPushOutcome::Nothing => outln!(w, "No local changes to save."),
+        StashPushOutcome::Nothing { .. } => outln!(w, "No local changes to save."),
         StashPushOutcome::Saved { oid, message } => {
             let short = short_hex(oid);
             if message.is_empty() {
@@ -542,6 +542,17 @@ pub fn print_worktree_outcome(w: &mut dyn Write, outcome: &WorktreeOutcome) -> a
             outln!(w, "## Worktree remove");
             outln!(w);
             outln!(w, "- Removed **`{path}`**");
+        }
+        WorktreeOutcome::Prune { pruned } => {
+            outln!(w, "## Worktree prune");
+            outln!(w);
+            if pruned.is_empty() {
+                outln!(w, "No prunable worktrees.");
+            } else {
+                for path in pruned {
+                    outln!(w, "- Pruned **`{path}`**");
+                }
+            }
         }
     }
     Ok(())
@@ -727,6 +738,7 @@ mod tests {
                 bare: false,
                 locked: false,
                 lock_reason: None,
+                prunable: false,
             }],
         };
         let mut buf = Vec::new();

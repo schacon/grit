@@ -335,7 +335,11 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
 pub const SNAPSHOT_FILE_PREFIX: &str = "grit_test_support__cli_fixture__";
 
 /// Snapshot names whose JSON stdout is not a command outcome (filters, etc.).
-pub const SNAPSHOT_JSON_SKIP: &[&str] = &["log_json_filter_commits_oid"];
+pub const SNAPSHOT_JSON_SKIP: &[&str] = &[
+    "log_json_filter_commits_oid",
+    "auth_render",
+    "update_render",
+];
 
 /// Snapshot stems (insta name) for every `*.snap` in `dir`.
 pub fn discover_snapshot_stems(dir: &Path) -> std::collections::BTreeSet<String> {
@@ -478,6 +482,23 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             &["remote", "refs", "origin", "--heads"],
         ),
         ("remote_refs_tags", &["remote", "refs", "origin", "--tags"]),
+        ("stash_push", &["stash", "push", "-m", "wip"]),
+        ("stash_list", &["stash", "list"]),
+        ("stash_show", &["stash", "show"]),
+        ("stash_apply", &["stash", "apply"]),
+        ("stash_pop", &["stash", "pop"]),
+        ("stash_drop", &["stash", "drop"]),
+        ("worktree_list", &["worktree", "list"]),
+        (
+            "worktree_add",
+            &["worktree", "add", "linked-wt", "-b", "wt-new"],
+        ),
+        (
+            "worktree_remove",
+            &["worktree", "remove", "linked-wt", "-f"],
+        ),
+        ("auth_render", &[]),
+        ("update_render", &[]),
     ]
 }
 
