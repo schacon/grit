@@ -732,6 +732,9 @@ fn build_list_refs_v2_request(
     pkt_line::write_delim(&mut req).map_err(Error::Io)?;
     if opts.symrefs {
         pkt_line::write_line(&mut req, "symrefs").map_err(Error::Io)?;
+        if crate::protocol_v2::server_advertises_ls_refs_unborn(server_caps) {
+            pkt_line::write_line(&mut req, "unborn").map_err(Error::Io)?;
+        }
     }
     if opts.peel {
         pkt_line::write_line(&mut req, "peel").map_err(Error::Io)?;
@@ -794,6 +797,10 @@ fn parse_list_refs_v2_response(
                         "remote error: {}",
                         msg.trim_end()
                     ))));
+                }
+                if let Some(t) = crate::fetch::parse_v2_ls_refs_unborn_head_symref(line) {
+                    head_symref = Some(t);
+                    continue;
                 }
                 let Some((name, oid, symref_target, peel)) = parse_ls_refs_v2_line(line) else {
                     continue;
@@ -997,22 +1004,30 @@ pub fn list_refs_from_git_dir(
     let mut lazy_odb: Option<Odb> = None;
 
     let mut entries = Vec::new();
-    if list_refs_includes_head(opts) {
-        if let Ok(head_oid) = crate::refs::resolve_ref(git_dir, "HEAD") {
-            let symref_target = if opts.symrefs {
-                crate::refs::read_symbolic_ref(git_dir, "HEAD")
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-            if ref_matches_list_opts("HEAD", opts) {
+    if list_refs_includes_head(opts) && ref_matches_list_opts("HEAD", opts) {
+        let symref_target = if opts.symrefs {
+            crate::refs::read_symbolic_ref(git_dir, "HEAD")
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        match crate::refs::resolve_ref(git_dir, "HEAD") {
+            Ok(head_oid) => {
                 entries.push(RemoteRef {
                     name: "HEAD".to_owned(),
                     oid: head_oid,
                     symref_target,
                 });
             }
+            Err(_) if symref_target.is_some() => {
+                entries.push(RemoteRef {
+                    name: "HEAD".to_owned(),
+                    oid: ObjectId::zero(),
+                    symref_target,
+                });
+            }
+            Err(_) => {}
         }
     }
 

@@ -119,18 +119,27 @@ fn clone_into(
     let mut term_progress = TerminalProgress::new(mode);
     let outcome = clone_repo(clone_opts, &mut term_progress, Some(&factory))?;
 
-    let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
-    let progress_enabled =
-        mode == OutputMode::Human && crate::terminal_progress::stderr_progress_enabled();
-    let mut progress = crate::terminal_progress::TerminalProgress::new(progress_enabled);
-    checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut progress)
-        .context("could not check out files")?;
-    let index = outcome
-        .repo
-        .index_handle()
-        .load()
-        .context("could not read index")?;
-    let files = u64::try_from(index.entries().len()).unwrap_or(u64::MAX);
+    let files = if outcome.checkout_oid.is_zero() {
+        if mode == OutputMode::Human {
+            eprintln!("note: the remote repository is empty.");
+        } else if mode == OutputMode::Markdown {
+            eprintln!("> The remote repository is empty.");
+        }
+        0
+    } else {
+        let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
+        let progress_enabled =
+            mode == OutputMode::Human && crate::terminal_progress::stderr_progress_enabled();
+        let mut progress = crate::terminal_progress::TerminalProgress::new(progress_enabled);
+        checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut progress)
+            .context("could not check out files")?;
+        let index = outcome
+            .repo
+            .index_handle()
+            .load()
+            .context("could not read index")?;
+        u64::try_from(index.entries().len()).unwrap_or(u64::MAX)
+    };
 
     Ok(CloneOutcome {
         url: url.to_owned(),

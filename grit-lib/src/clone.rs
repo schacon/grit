@@ -19,7 +19,8 @@ use crate::remote::{HttpClientFactory, Remote, DEFAULT_REMOTE};
 use crate::repo::{init_repository, Repository};
 use crate::transfer::{CloneReflog, FetchOptions, TagMode, TransferStats};
 use crate::transport_path::{
-    absolute_local_clone_source_url, should_store_absolute_local_clone_url,
+    absolute_local_clone_source_url, resolve_local_remote_git_dir,
+    should_store_absolute_local_clone_url, url_is_local_not_ssh,
 };
 
 /// Errors during [`clone`].
@@ -103,6 +104,8 @@ pub struct CloneOutcome {
     /// Short name of the default branch that was created.
     pub branch: String,
     /// Commit to check out on that branch.
+    ///
+    /// [`ObjectId::zero()`] when the remote default branch has no commits yet.
     pub checkout_oid: ObjectId,
     /// Open handle to the new repository.
     pub repo: Repository,
@@ -235,44 +238,44 @@ pub fn clone(
     }
     let fetch_outcome = remote.fetch(&repo, fetch_opts, progress, http_factory)?;
 
-    let default = fetch_outcome
-        .default_branch
-        .as_deref()
-        .map(|d| d.strip_prefix("refs/heads/").unwrap_or(d).to_owned())
-        .or_else(|| pick_default_branch(&repo, &opts.remote_name))
-        .ok_or_else(|| {
-            CloneError::Library(Error::Message(
-                "the remote has no branches to check out".into(),
-            ))
-        })?;
+    let default = choose_clone_default_branch(
+        &repo,
+        &fetch_outcome,
+        &opts.url,
+        &opts.remote_name,
+        &opts.initial_branch,
+    );
 
     let tracking = format!("refs/remotes/{}/{default}", opts.remote_name);
-    let oid = refs::resolve_ref(repo.git_dir(), &tracking).map_err(CloneError::Library)?;
-
+    let oid = refs::resolve_ref(repo.git_dir(), &tracking).unwrap_or(ObjectId::zero());
     let branch_ref = format!("refs/heads/{default}");
-    refs::write_ref(repo.git_dir(), &branch_ref, &oid).map_err(CloneError::Library)?;
     let zero = ObjectId::zero();
-    refs::append_reflog(
-        repo.git_dir(),
-        &branch_ref,
-        &zero,
-        &oid,
-        &identity,
-        &clone_message,
-        false,
-    )
-    .map_err(CloneError::Library)?;
+    if !oid.is_zero() {
+        refs::write_ref(repo.git_dir(), &branch_ref, &oid).map_err(CloneError::Library)?;
+        refs::append_reflog(
+            repo.git_dir(),
+            &branch_ref,
+            &zero,
+            &oid,
+            &identity,
+            &clone_message,
+            false,
+        )
+        .map_err(CloneError::Library)?;
+    }
     refs::write_symbolic_ref(repo.git_dir(), "HEAD", &branch_ref).map_err(CloneError::Library)?;
-    refs::append_reflog(
-        repo.git_dir(),
-        "HEAD",
-        &zero,
-        &oid,
-        &identity,
-        &clone_message,
-        false,
-    )
-    .map_err(CloneError::Library)?;
+    if !oid.is_zero() {
+        refs::append_reflog(
+            repo.git_dir(),
+            "HEAD",
+            &zero,
+            &oid,
+            &identity,
+            &clone_message,
+            false,
+        )
+        .map_err(CloneError::Library)?;
+    }
     set_local_config(
         &repo,
         &[
@@ -316,6 +319,53 @@ fn set_local_config(repo: &Repository, entries: &[(&str, String)]) -> Result<()>
     }
     config.write()?;
     Ok(())
+}
+
+fn choose_clone_default_branch(
+    repo: &Repository,
+    fetch_outcome: &crate::transfer::FetchOutcome,
+    url: &str,
+    remote_name: &str,
+    initial_branch: &str,
+) -> String {
+    let mut candidates: Vec<String> = Vec::new();
+    let mut push = |name: Option<String>| {
+        if let Some(name) = name {
+            if !name.is_empty() && !candidates.iter().any(|c| c == &name) {
+                candidates.push(name);
+            }
+        }
+    };
+    push(
+        fetch_outcome
+            .default_branch
+            .as_deref()
+            .map(|d| d.strip_prefix("refs/heads/").unwrap_or(d).to_owned()),
+    );
+    push(pick_default_branch(repo, remote_name));
+    push(default_branch_from_local_remote(url, repo));
+    push(Some(initial_branch.to_owned()));
+
+    for name in &candidates {
+        let tracking = format!("refs/remotes/{remote_name}/{name}");
+        if refs::resolve_ref(repo.git_dir(), &tracking).is_ok() {
+            return name.clone();
+        }
+    }
+    candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| initial_branch.to_owned())
+}
+
+fn default_branch_from_local_remote(url: &str, repo: &Repository) -> Option<String> {
+    if !url_is_local_not_ssh(url.trim()) {
+        return None;
+    }
+    let remote_git = resolve_local_remote_git_dir(url.trim(), repo.git_dir(), repo.work_tree());
+    crate::gc::remote_default_branch_local(&remote_git)
+        .ok()
+        .flatten()
 }
 
 fn pick_default_branch(repo: &Repository, remote_name: &str) -> Option<String> {
@@ -452,6 +502,40 @@ mod tests {
         );
         assert!(outcome.branches >= 2, "expected at least main and feature");
         assert!(outcome.tags >= 1, "expected tag v1");
+    }
+
+    #[test]
+    fn clone_empty_bare_remote_leaves_unborn_default_branch() {
+        use std::process::Command;
+
+        let upstream = tempfile::tempdir().expect("upstream");
+        let bare = upstream.path().join("origin.git");
+        let out = Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .arg(&bare)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("git init");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let dest = tempfile::tempdir().expect("dest");
+        let outcome = clone(
+            CloneOptions::new(bare.to_string_lossy(), dest.path().to_path_buf()),
+            &mut crate::fetch::NoProgress,
+            None,
+        )
+        .expect("clone empty bare");
+
+        assert_eq!(outcome.branch, "main");
+        assert!(outcome.checkout_oid.is_zero());
+        assert!(!dest.path().join(".git").join("refs/heads/main").exists());
+        let head = fs::read_to_string(dest.path().join(".git/HEAD")).expect("HEAD");
+        assert_eq!(head.trim(), "ref: refs/heads/main");
     }
 
     #[test]

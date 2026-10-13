@@ -483,6 +483,15 @@ fn v2_ref_prefixes_from_refspecs(refspecs: &[String]) -> Vec<String> {
     out
 }
 
+/// Parse an `unborn HEAD symref-target:…` line from a v2 `ls-refs` response.
+#[must_use]
+pub(crate) fn parse_v2_ls_refs_unborn_head_symref(line: &str) -> Option<String> {
+    const PREFIX: &str = "unborn HEAD symref-target:";
+    let target = line.strip_prefix(PREFIX)?;
+    let target = target.split_whitespace().next()?.to_owned();
+    crate::refs::is_valid_advertised_symref_target(&target).then_some(target)
+}
+
 /// Parse one v2 `ls-refs` advertisement line into `(refname, oid, symref_target)`.
 ///
 /// Lines look like `<oid> <refname>[ symref-target:<t>][ peeled:<oid>]`. Lib-side
@@ -577,6 +586,9 @@ pub(crate) fn build_v2_ls_refs_request(
     }
     pkt_line::write_delim(&mut req)?;
     pkt_line::write_line(&mut req, "symrefs")?;
+    if crate::protocol_v2::server_advertises_ls_refs_unborn(server_caps) {
+        pkt_line::write_line(&mut req, "unborn")?;
+    }
     pkt_line::write_line(&mut req, "peel")?;
 
     // Always request `HEAD` so the server advertises its `symref-target`, which
@@ -620,6 +632,10 @@ pub(crate) fn parse_v2_ls_refs_response(reader: &mut dyn Read) -> Result<LsRefsA
                 let line = line.trim_end_matches('\n');
                 if let Some(msg) = line.strip_prefix("ERR ") {
                     return Err(Error::Message(format!("remote error: {}", msg.trim_end())));
+                }
+                if let Some(t) = parse_v2_ls_refs_unborn_head_symref(line) {
+                    head_symref = Some(t);
+                    continue;
                 }
                 let Some((name, oid, symref_target, peel)) = parse_ls_refs_v2_line(line) else {
                     continue;
@@ -1676,19 +1692,21 @@ pub(crate) fn finish_initial_remote_fetch_layout(
     if let Some(branch) = default_branch {
         let target = format!("refs/remotes/{remote}/{branch}");
         let head_ref = format!("refs/remotes/{remote}/HEAD");
-        crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)?;
-        if let Some(ref log) = opts.clone_reflog {
-            let zero = ObjectId::zero();
-            let tip = crate::refs::resolve_ref(git_dir, &target).unwrap_or(zero);
-            crate::refs::append_reflog(
-                git_dir,
-                &head_ref,
-                &zero,
-                &tip,
-                &log.identity,
-                &log.message,
-                true,
-            )?;
+        if crate::refs::resolve_ref(git_dir, &target).is_ok() {
+            crate::refs::write_symbolic_ref(git_dir, &head_ref, &target)?;
+            if let Some(ref log) = opts.clone_reflog {
+                let zero = ObjectId::zero();
+                let tip = crate::refs::resolve_ref(git_dir, &target).unwrap_or(zero);
+                crate::refs::append_reflog(
+                    git_dir,
+                    &head_ref,
+                    &zero,
+                    &tip,
+                    &log.identity,
+                    &log.message,
+                    true,
+                )?;
+            }
         }
     }
     Ok(())
@@ -1945,6 +1963,32 @@ mod fetch_advertised_ref_tests {
     use super::*;
     use crate::objects::ObjectId;
     use std::io::Cursor;
+
+    #[test]
+    fn build_v2_ls_refs_request_includes_unborn_when_advertised() {
+        use crate::odb::Odb;
+        use crate::transfer::TagMode;
+
+        let caps = vec!["ls-refs=unborn".to_owned()];
+        let odb = Odb::new(std::path::Path::new("/dev/null"));
+        let req = build_v2_ls_refs_request(&caps, &odb, TagMode::None, &[]).unwrap();
+        let text = String::from_utf8_lossy(&req);
+        assert!(
+            text.contains("unborn"),
+            "request must ask for unborn HEAD:\n{text}"
+        );
+    }
+
+    #[test]
+    fn parse_v2_ls_refs_unborn_head_symref_line() {
+        let mut body = Vec::new();
+        crate::pkt_line::write_line(&mut body, "unborn HEAD symref-target:refs/heads/trunk")
+            .unwrap();
+        crate::pkt_line::write_flush(&mut body).unwrap();
+
+        let (_, head, _) = parse_v2_ls_refs_response(&mut Cursor::new(body)).unwrap();
+        assert_eq!(head.as_deref(), Some("refs/heads/trunk"));
+    }
 
     #[test]
     fn parse_v2_ls_refs_drops_traversal_ref() {

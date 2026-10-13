@@ -25,6 +25,8 @@ On an interactive terminal (human output, not `--json` or `--markdown`), grit pr
 
 For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/).
 
+When the remote has no commits yet (an empty bare repository), grit still creates the destination directory, configures `origin`, and points `HEAD` at the remote's default branch without checking out files. Human output includes a short note on stderr; `--json` reports `"files": 0` and the configured branch name.
+
 You can clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
 
 Working-tree materialization after fetch uses the same parallel checkout path as [`grit switch`](../switch/). Configure [`checkout.workers`](../../library/parallelism.md) and `checkout.thresholdForParallelism` in the repository config, or pass global [`--threads`](../global-options.md) to override worker count for this process.
@@ -82,7 +84,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `tags` | integer | Remote tags fetched. |
 | `files` | integer | Working-tree files checked out. |
 
-Example:
+Example (repository with commits):
 
 ```json
 {
@@ -94,6 +96,21 @@ Example:
   "branches": 1,
   "tags": 0,
   "files": 3
+}
+```
+
+Empty remote (no branch tips yet):
+
+```json
+{
+  "url": "/tmp/origin.git",
+  "path": "project",
+  "branch": "main",
+  "objects": 0,
+  "bytes": 0,
+  "branches": 0,
+  "tags": 0,
+  "files": 0
 }
 ```
 

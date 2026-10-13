@@ -78,6 +78,19 @@ pub fn server_advertises_bundle_uri(caps: &[String]) -> bool {
         .any(|c| c == "bundle-uri" || c.starts_with("bundle-uri="))
 }
 
+/// True when the server's v2 capability advertisement includes `ls-refs=unborn`.
+///
+/// Required to learn the default branch symref on empty repositories over v2
+/// (`unborn HEAD symref-target:…` response lines).
+#[must_use]
+pub(crate) fn server_advertises_ls_refs_unborn(caps: &[String]) -> bool {
+    caps.iter().any(|c| {
+        c == "ls-refs=unborn"
+            || c.strip_prefix("ls-refs=")
+                .is_some_and(|rest| rest.split_whitespace().any(|tok| tok == "unborn"))
+    })
+}
+
 /// Build the capability lines a client echoes back when issuing a follow-up v2 command
 /// (e.g. `command=bundle-uri` or `command=fetch`).
 ///
@@ -183,6 +196,12 @@ mod tests {
                 "packfile"
             ]
         );
+    }
+
+    #[test]
+    fn ls_refs_unborn_capability() {
+        assert!(server_advertises_ls_refs_unborn(&s(&["ls-refs=unborn"])));
+        assert!(!server_advertises_ls_refs_unborn(&s(&["ls-refs"])));
     }
 
     #[test]
