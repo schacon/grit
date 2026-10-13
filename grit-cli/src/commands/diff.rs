@@ -16,13 +16,14 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_commits_with_renames, diff_index_to_tree, diff_index_to_worktree_with_options,
-    diff_trees_with_renames, read_submodule_head_oid, read_worktree_bytes_for_mode,
+    diff_commits_with_renames, diff_entry_worktree_side_bytes, diff_index_to_tree,
+    diff_index_to_worktree_with_options, diff_trees_with_renames, read_submodule_head_oid,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
     },
-    submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
+    submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffPostprocessWorktree,
+    DiffStatus,
 };
 use grit_lib::merge_base::merge_base_for_diff_two_commits;
 use grit_lib::objects::ObjectId;
@@ -32,6 +33,7 @@ use grit_lib::rev_parse::{
     split_double_dot_range, split_triple_dot_range,
 };
 use grit_lib::state::resolve_head;
+use grit_lib::worktree_rules::WorktreeRules;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -238,6 +240,13 @@ fn outcome_from_changes(changes: Vec<FileChange>) -> DiffOutcome {
     }
 }
 
+/// Index and config context for normalizing worktree-side diff bytes (attributes, filters, CRLF).
+struct WorktreeDiffSideContext<'a> {
+    work_root: &'a Path,
+    worktree: DiffPostprocessWorktree<'a>,
+    rules: &'a WorktreeRules,
+}
+
 /// A changed file with both sides' text resolved.
 struct FileChange {
     path: String,
@@ -272,11 +281,22 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         diff_index_to_worktree_with_options(repo.odb(), &mut index, work_tree, diff_opts)
             .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
+    let rules = rules_arc
+        .lock()
+        .map_err(|e| anyhow::anyhow!("worktree rules lock poisoned: {e}"))?;
+    let side_ctx = WorktreeDiffSideContext {
+        work_root: work_tree,
+        worktree: DiffPostprocessWorktree {
+            repository_git_dir: repo.git_dir(),
+            index: &index,
+        },
+        rules: &rules,
+    };
     entries
         .into_iter()
         .map(|e| {
             let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(work_tree))?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(&side_ctx))?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -419,7 +439,10 @@ fn worktree_against_tree(
         .index_handle()
         .load()
         .context("could not load the index")?;
-    let config = repo.config().context("could not load config")?;
+    let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
+        .context("could not load worktree rules")?;
+    let config_arc = worktree_rules.config_arc();
+    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(worktree_rules));
 
     let index_backed = base_tree
         .zip(index.cache_tree_root.as_ref())
@@ -434,37 +457,52 @@ fn worktree_against_tree(
             work_tree,
             DiffIndexToWorktreeOptions {
                 repository_git_dir: Some(repo.git_dir().to_path_buf()),
-                config: Some(config.clone()),
+                config: Some(std::sync::Arc::clone(&config_arc)),
+                worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
                 index_mtime: diff_index_mtime,
                 thread_policy: Some(repo.thread_policy()),
                 refresh_index_stat_in_pass: false,
-                for_status: true,
+                // Match tree↔worktree diffs: null worktree OID when content differs (not status size shortcut).
+                for_status: false,
                 ..DiffIndexToWorktreeOptions::default()
             },
         )
         .context("could not diff the working tree")?;
         entries
     } else {
-        let worktree_rules = grit_lib::worktree_rules::WorktreeRules::from_repository(repo, &index)
-            .context("could not load worktree rules")?;
+        let rules = rules_arc
+            .lock()
+            .map_err(|e| anyhow::anyhow!("worktree rules lock poisoned: {e}"))?;
         grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
             repo.odb(),
             base_tree,
             work_tree,
             repo.git_dir(),
             &index,
-            Some(config.as_ref()),
-            Some(&worktree_rules),
+            Some(rules.config()),
+            Some(&rules),
         )
         .context("could not diff the working tree")?
     };
     sort_entries(&mut entries);
 
+    let rules = rules_arc
+        .lock()
+        .map_err(|e| anyhow::anyhow!("worktree rules lock poisoned: {e}"))?;
+    let side_ctx = WorktreeDiffSideContext {
+        work_root: work_tree,
+        worktree: DiffPostprocessWorktree {
+            repository_git_dir: repo.git_dir(),
+            index: &index,
+        },
+        rules: &rules,
+    };
+
     entries
         .into_iter()
         .map(|e| {
             let (old_bytes, old_bin) = old_side_bytes(repo.odb(), &e)?;
-            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(work_tree))?;
+            let (new_bytes, new_bin) = new_side_bytes(repo.odb(), &e, Some(&side_ctx))?;
             Ok(file_change(e, old_bytes, new_bytes, old_bin || new_bin))
         })
         .collect()
@@ -539,22 +577,30 @@ fn old_side_bytes(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
     blob_bytes(odb, &e.old_oid)
 }
 
-fn new_side_bytes(odb: &Odb, e: &DiffEntry, work_tree: Option<&Path>) -> Result<(SideBytes, bool)> {
+fn new_side_bytes(
+    odb: &Odb,
+    e: &DiffEntry,
+    worktree_side: Option<&WorktreeDiffSideContext<'_>>,
+) -> Result<(SideBytes, bool)> {
     if e.new_mode == "160000" {
         return Ok((
-            SideBytes::from_bytes(gitlink_new_line(e, work_tree).into_bytes()),
+            SideBytes::from_bytes(
+                gitlink_new_line(e, worktree_side.map(|c| c.work_root)).into_bytes(),
+            ),
             false,
         ));
     }
     if e.new_mode == "000000" {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
-    if let (Some(wt), Some(p)) = (work_tree, e.new_path.as_deref().or(e.old_path.as_deref())) {
-        let mode = u32::from_str_radix(&e.new_mode, 8).unwrap_or(0);
-        Ok(file_bytes(&wt.join(p), mode))
-    } else {
-        blob_bytes(odb, &e.new_oid)
+    if e.new_oid != ObjectId::zero() {
+        return blob_bytes(odb, &e.new_oid);
     }
+    if let Some(ctx) = worktree_side {
+        let data = diff_entry_worktree_side_bytes(odb, e, ctx.work_root, &ctx.worktree, ctx.rules)?;
+        return Ok(bytes_for_diff(&data));
+    }
+    blob_bytes(odb, &e.new_oid)
 }
 
 fn gitlink_line(oid: &ObjectId, dirty_suffix: Option<&str>) -> String {
@@ -594,14 +640,6 @@ fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<(SideBytes, bool)> {
     }
     let data = odb.read(oid)?.data;
     Ok(bytes_for_diff(&data))
-}
-
-/// Read a worktree file. A missing file reads as empty (treated as a deletion).
-fn file_bytes(path: &Path, mode: u32) -> (SideBytes, bool) {
-    match read_worktree_bytes_for_mode(path, mode) {
-        Ok(data) => bytes_for_diff(&data),
-        Err(_) => (SideBytes::from_bytes(Vec::new()), false),
-    }
 }
 
 /// Convert bytes to `(SideBytes, is_binary)`. NUL in the first 8 KiB ⇒ binary.

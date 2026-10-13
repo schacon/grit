@@ -20,6 +20,8 @@ With one commit, shows the change that commit introduced (its first parent’s t
 
 Each file starts with its path, and each hunk with its position. Lines have two number columns, the line number before and after the change. In a terminal, removed lines are red, added lines are green, and the words that changed within a line are highlighted. When the output isn't a terminal, or `NO_COLOR` is set, lines are marked with `-` and `+` instead. Three lines of unchanged context are shown around each change. Binary files print `Binary file differs` when the blob changed (mode-only binary changes show mode lines only).
 
+For diffs that read the working tree (default uncommitted diff, `--unstaged`, and `--against`), the worktree side is normalized the same way Git compares paths: `.gitattributes`, `text`/`eol`, clean filters, and `core.autocrlf` run before line diffs are computed, so CRLF on disk against LF blobs in Git shows only real content edits.
+
 `<commit>` can be anything that names a commit: a full or short commit id, a branch or tag name, or an expression like `HEAD~2`.
 
 ## Options
