@@ -365,16 +365,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             }
         }
 
-        let change = DiffEntry {
-            status: DiffStatus::Modified,
-            old_path: Some(path.clone()),
-            new_path: Some(path.clone()),
-            old_mode: format_mode(mode),
-            new_mode: format_mode(mode),
-            old_oid: te.oid,
-            new_oid: te.oid,
-            score: None,
-        };
+        let change = diff_entry_for_worktree_blob_refresh(work_tree, &path, te.oid, mode);
         let object = repo.odb().read(&te.oid)?;
         let worktree_bytes = worktree_bytes_from_index_blob(
             repo,
@@ -796,6 +787,31 @@ fn smudge_retry_after_delay(
         Some(rules.filter_process()),
     )
     .map_err(|e| e.to_string())
+}
+
+/// Build a modified diff for rewriting an unchanged blob, using on-disk mode as `old_mode`.
+fn diff_entry_for_worktree_blob_refresh(
+    work_tree: &Path,
+    rel_path: &str,
+    oid: ObjectId,
+    target_mode: u32,
+) -> DiffEntry {
+    let abs = work_tree.join(rel_path);
+    let old_mode = fs::symlink_metadata(&abs)
+        .ok()
+        .filter(|meta| meta.is_file())
+        .map(|meta| crate::diff::mode_from_metadata(&meta))
+        .unwrap_or(target_mode);
+    DiffEntry {
+        status: DiffStatus::Modified,
+        old_path: Some(rel_path.to_owned()),
+        new_path: Some(rel_path.to_owned()),
+        old_mode: format_mode(old_mode),
+        new_mode: format_mode(target_mode),
+        old_oid: oid,
+        new_oid: oid,
+        score: None,
+    }
 }
 
 fn parse_git_mode(mode: &str) -> u32 {

@@ -482,6 +482,14 @@ fn worktree_index_entry_up_to_date(
     if !meta.is_file() || !stat_matches(entry, &meta) {
         return Ok(false);
     }
+    let trust_filemode = repo
+        .config()?
+        .get_bool("core.filemode")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+    if trust_filemode && crate::diff::mode_from_metadata(&meta) != entry.mode {
+        return Ok(false);
+    }
     if !entry_is_racy(entry, index_mtime) {
         return Ok(true);
     }
@@ -655,4 +663,89 @@ fn blob_index_size(repo: &Repository, entry: &FlatTreeEntry) -> Result<u32> {
     }
     let obj = repo.odb().read(&entry.oid)?;
     Ok(obj.data.len() as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::objects::{serialize_commit, CommitData, ObjectKind};
+    use crate::porcelain::status::{status, StatusOptions};
+    use crate::progress::NullProgress;
+    use crate::repo::{init_repository, Repository};
+    use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+    use crate::RefStorageFormat;
+    use tempfile::TempDir;
+
+    fn init_repo() -> (TempDir, Repository) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        (dir, repo)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_worktree_reverts_exec_bit_only_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        std::fs::write(wt.join("f"), "data\n").expect("write");
+        let mut index = repo.load_index().expect("index");
+        let oid = repo.odb().write(ObjectKind::Blob, b"data\n").expect("blob");
+        let entry =
+            crate::index::entry_from_stat(&wt.join("f"), b"f", oid, crate::index::MODE_REGULAR)
+                .expect("entry");
+        index.add_or_replace(entry);
+        index.sort();
+        let tree = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            .expect("tree");
+        repo.write_index(&mut index).expect("write index");
+        let commit = CommitData {
+            tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "c\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let co = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit))
+            .expect("commit");
+        crate::refs::write_ref(&repo.git_dir(), "refs/heads/main", &co).expect("branch");
+        crate::refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main")
+            .expect("symhead");
+
+        let mut perms = std::fs::metadata(wt.join("f")).expect("meta").permissions();
+        perms.set_mode(0o100755);
+        std::fs::set_permissions(wt.join("f"), perms).expect("chmod");
+
+        restore_paths(
+            &repo,
+            &RestoreOptions {
+                pathspecs: vec!["f".into()],
+                pathspec_sources: vec!["f".into()],
+                source: RestoreSource::Index,
+                staged: false,
+                worktree: true,
+            },
+        )
+        .expect("restore");
+
+        assert_eq!(
+            std::fs::metadata(wt.join("f"))
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+        let st = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+        assert!(st.unstaged.is_empty(), "{st:?}");
+    }
 }
