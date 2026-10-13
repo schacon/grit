@@ -2,6 +2,7 @@
 
 mod support;
 
+use std::collections::HashMap;
 use std::fs;
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
@@ -12,7 +13,8 @@ use grit_lib::revwalk::merge_base::{
 };
 
 use support::{
-    build_commit_dag, git_merge_base, git_merge_base_is_ancestor, git_rev_parse_verify, HistoryRepo,
+    build_commit_dag, commit_labeled_with_dates, git_merge_base, git_merge_base_is_ancestor,
+    git_rev_parse_verify, HistoryRepo,
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
@@ -109,6 +111,61 @@ fn git(wt: &std::path::Path, args: &[&str]) {
 
 fn empty_commit(wt: &std::path::Path, msg: &str) {
     git(wt, &["commit", "--allow-empty", "-m", msg]);
+}
+
+/// t6010 criss-cross with a child commit dated older than its parent (no commit-graph).
+fn build_t6010_skewed_commit_dates(wt: &std::path::Path) -> HashMap<String, ObjectId> {
+    let e = commit_labeled_with_dates(wt, "E", &[], "1000 +0000", "1000 +0000");
+    let d = commit_labeled_with_dates(wt, "D", &[e], "2000 +0000", "2000 +0000");
+    let f = commit_labeled_with_dates(wt, "F", &[e], "2000 +0000", "2000 +0000");
+    let c = commit_labeled_with_dates(wt, "C", &[d], "3000 +0000", "3000 +0000");
+    // Non-monotonic along B → C: B is newer in the walk heap but older by committer date.
+    let b = commit_labeled_with_dates(wt, "B", &[c], "500 +0000", "500 +0000");
+    let a = commit_labeled_with_dates(wt, "A", &[b], "4000 +0000", "4000 +0000");
+    let g = commit_labeled_with_dates(wt, "G", &[b, e], "4500 +0000", "4500 +0000");
+    let h = commit_labeled_with_dates(wt, "H", &[a, f], "5000 +0000", "5000 +0000");
+    let oids = HashMap::from([
+        ("A".to_owned(), a),
+        ("B".to_owned(), b),
+        ("G".to_owned(), g),
+        ("H".to_owned(), h),
+    ]);
+    for (label, refname) in [
+        ("A", "refs/tags/A"),
+        ("B", "refs/tags/B"),
+        ("G", "refs/tags/G"),
+        ("H", "refs/tags/H"),
+    ] {
+        git(wt, &["update-ref", refname, &oids[label].to_hex()]);
+    }
+    oids
+}
+
+#[test]
+fn merge_base_all_skewed_dates_without_commit_graph_matches_git() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let oids = build_t6010_skewed_commit_dates(wt);
+    let g = oids["G"];
+    let h = oids["H"];
+    let repo = open_grit(wt);
+
+    let graph_path = wt.join(".git/objects/info/commit-graph");
+    assert!(!graph_path.exists(), "fixture must not use commit-graph");
+
+    let git_all = git_merge_base(wt, &["--all", "G", "H"]);
+    let grit_all = merge_bases_all(&repo, &[g, h]).expect("all");
+    assert_eq!(grit_all, git_all);
+    for oid in &grit_all {
+        for other in &grit_all {
+            if oid != other {
+                assert!(
+                    !is_ancestor(&repo, *other, *oid).expect("ancestor check"),
+                    "merge-base --all must be mutually minimal: {other} should not reach {oid}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

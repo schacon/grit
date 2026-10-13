@@ -173,7 +173,9 @@ pub fn merge_bases_all(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<Ob
     }
     let mut cache = CommitGraphCache::new(repo);
     if commits.len() == 2 {
-        let mut bases = walk_intersecting_histories(&mut cache, commits[0], &[commits[1]], true)?;
+        let walked = walk_intersecting_histories(&mut cache, commits[0], &[commits[1]], true)?;
+        let candidates: HashSet<ObjectId> = walked.into_iter().collect();
+        let mut bases = reduce_to_best(candidates, &mut cache)?;
         sort_merge_bases_for_git_output(&mut cache, &mut bases)?;
         return Ok(bases);
     }
@@ -858,6 +860,7 @@ fn dequeue_commit_for_intersect_walk(
     pending: &mut BinaryHeap<RankedCommit>,
     tally: &mut OpenQueueTally,
     labels: &mut HashMap<ObjectId, u8>,
+    allow_rank_stop: bool,
 ) -> Option<ObjectId> {
     let node = pending.pop()?;
     tally.newest_rank_seen = node.rank;
@@ -865,9 +868,15 @@ fn dequeue_commit_for_intersect_walk(
     labels.insert(node.oid, before & !MARK_QUEUED);
     if tally.open_on_both == 0 {
         if tally.open_on_a == 0 && tally.open_on_b == 0 {
-            return None;
-        }
-        if (tally.open_on_a == 0 || tally.open_on_b == 0) && node.rank < tally.rank_stop {
+            if pending.is_empty() {
+                tally.apply_label(before, -1);
+                return Some(node.oid);
+            }
+        } else if allow_rank_stop
+            && (tally.open_on_a == 0 || tally.open_on_b == 0)
+            && node.rank != UNRANKED_COMMIT
+            && node.rank < tally.rank_stop
+        {
             return None;
         }
     }
@@ -906,7 +915,12 @@ fn walk_intersecting_histories(
         )?;
     }
 
-    while let Some(oid) = dequeue_commit_for_intersect_walk(&mut pending, &mut tally, &mut labels) {
+    while let Some(oid) = dequeue_commit_for_intersect_walk(
+        &mut pending,
+        &mut tally,
+        &mut labels,
+        !collect_every_base,
+    ) {
         let mut propagate =
             labels.get(&oid).copied().unwrap_or(0) & (MARK_TIP_A | MARK_TIP_B | MARK_PRUNED);
         if propagate == MARK_TIP_A | MARK_TIP_B {
