@@ -67,12 +67,14 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fetch::FetchOutcome,
         fsck::FsckOutcome,
         gc::GcOutcome,
+        hooks::HooksOutcome,
         init::InitOutcome,
         log::LogOutcome,
         merge::MergeOutcome,
         merge_base_cmd::MergeBaseOutcome,
         mv::MvOutcome,
         notes::NotesOutcome,
+        patch_id::PatchIdOutcome,
         pick::PickOutcome,
         push::PushOutcome,
         remote::RemoteOutcome,
@@ -117,6 +119,10 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<RepackOutcome>("repack"),
         entry::<GcOutcome>("gc"),
         entry::<FsckOutcome>("fsck"),
+        entry::<HooksOutcome>("hooks"),
+        entry::<HooksOutcome>("hooks.list"),
+        entry::<HooksOutcome>("hooks.run"),
+        entry::<PatchIdOutcome>("patch-id"),
         entry::<CommitOutcome>("commit"),
         entry::<BranchOutcome>("branch"),
         entry::<SwitchOutcome>("switch"),
@@ -332,7 +338,7 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
     }
 
     // Parent commands that run with no subcommand still emit JSON (remote list, stash push, auth login).
-    if matches!(full.as_str(), "remote" | "stash" | "auth") {
+    if matches!(full.as_str(), "remote" | "stash" | "auth" | "hooks") {
         out.push(full.clone());
     }
 
@@ -530,6 +536,12 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "worktree_remove",
             &["worktree", "remove", "linked-wt", "-f"],
         ),
+        ("hooks_list", &["hooks", "list"]),
+        ("hooks_run", &["hooks", "run", "pre-commit"]),
+        ("hooks_run_exit_17", &["hooks", "run", "pre-commit"]),
+        ("patch_id", &["patch-id", "HEAD"]),
+        ("auth_render", &[]),
+        ("update_render", &[]),
     ]
 }
 
