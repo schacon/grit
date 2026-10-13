@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Time conversion helpers that produce Git-compatible timestamps.
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +10,7 @@ pub type Timestamp = u64;
 /// Timezone in Git's signed HHMM encoding (e.g. +200 for +02:00, -500 for -05:00).
 pub type TzHhmm = i32;
 
+/// `TIMESTAMP_MAX` constant.
 pub const TIMESTAMP_MAX: u64 = (((2100u64 - 1970) * 365 + 32) * 24 * 60 * 60).saturating_sub(1);
 
 /// Convert a calendar `tm` to a Unix timestamp using only the date/time fields.
@@ -46,6 +46,7 @@ pub fn tm_to_time_t(tm: &tm) -> time_t {
     secs as time_t
 }
 
+/// `date_overflows` function.
 pub fn date_overflows(t: u64) -> bool {
     if t == u64::MAX {
         return true;
@@ -310,10 +311,12 @@ fn trim_ascii_ws(s: &[u8]) -> &[u8] {
     &s[a..b]
 }
 
+/// `empty_tm` function.
 pub fn empty_tm() -> tm {
     unsafe { std::mem::zeroed() }
 }
 
+/// `init_tm_unknown` function.
 pub fn init_tm_unknown() -> tm {
     let mut t = unsafe { std::mem::zeroed::<tm>() };
     t.tm_sec = -1;
@@ -328,18 +331,22 @@ pub fn init_tm_unknown() -> tm {
     t
 }
 
+/// `nodate` function.
 pub fn nodate(tm: &tm) -> bool {
     (tm.tm_year & tm.tm_mon & tm.tm_mday & tm.tm_hour & tm.tm_min & tm.tm_sec) < 0
 }
 
+/// `maybeiso8601` function.
 pub fn maybeiso8601(tm: &tm) -> bool {
     tm.tm_hour == -1 && tm.tm_min == 0 && tm.tm_sec == 0
 }
 
+/// `is_date_known` function.
 pub fn is_date_known(tm: &tm) -> bool {
     tm.tm_year != -1 && tm.tm_mon != -1 && tm.tm_mday != -1
 }
 
+/// `match_string` function.
 pub fn match_string(date: &[u8], pat: &str) -> usize {
     let pb = pat.as_bytes();
     let mut i = 0usize;
@@ -362,6 +369,7 @@ pub fn match_string(date: &[u8], pat: &str) -> usize {
     i
 }
 
+/// `skip_alpha` function.
 pub fn skip_alpha(date: &[u8]) -> usize {
     let mut i = 1usize;
     while i < date.len() && date[i].is_ascii_alphabetic() {

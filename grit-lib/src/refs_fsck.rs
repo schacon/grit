@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Reference database consistency checks for `git refs verify` and `git fsck --references`.
 //!
 //! Aligns with Git's `refs_fsck` / `files_fsck_*` and `packed_fsck` behavior and message text.
@@ -17,16 +16,22 @@ use crate::repo::Repository;
 /// Severity of a refs-fsck diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefsFsckSeverity {
+    /// `Error` variant.
     Error,
+    /// `Warning` variant.
     Warning,
 }
 
 /// One diagnostic (use [`format_refs_fsck_line`] for Git-compatible output).
 #[derive(Debug, Clone)]
 pub struct RefsFsckIssue {
+    /// `severity` field.
     pub severity: RefsFsckSeverity,
+    /// `path` field.
     pub path: String,
+    /// `msg_id` field.
     pub msg_id: &'static str,
+    /// `detail` field.
     pub detail: String,
 }
 

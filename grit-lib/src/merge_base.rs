@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Merge-base and reachability primitives.
 //!
 //! This module implements the subset needed by `grit merge-base`:
@@ -381,7 +380,9 @@ pub struct ReachableWalkSnapshot {
     pub done: Vec<ObjectId>,
     /// Every OID ever queued on the heap.
     pub queued: Vec<ObjectId>,
+    /// `seq` field.
     pub seq: u64,
+    /// `hide` field.
     pub hide: Vec<ObjectId>,
 }
 
@@ -577,6 +578,7 @@ pub fn ahead_of_target_commits(
     )
 }
 
+/// `commits_reachable_excluding_ancestors_of` function.
 pub fn commits_reachable_excluding_ancestors_of(
     repo: &Repository,
     tips: &[ObjectId],

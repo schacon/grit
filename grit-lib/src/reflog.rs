@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Reflog reading and management.
 //!
 //! The reflog records updates to refs.  Each ref's log is stored at
@@ -617,7 +616,9 @@ fn collect_reflog_refs(
 pub struct ReflogExpireParams {
     /// Prune entries whose commits fail a completeness walk (missing objects).
     pub stale_fix: bool,
+    /// `dry_run` field.
     pub dry_run: bool,
+    /// `verbose` field.
     pub verbose: bool,
 }
 
@@ -1050,8 +1051,11 @@ pub fn expire_reflog_git(
 /// Per-ref `gc.<pattern>.reflogExpire*` rules plus global `gc.reflogExpire` / `gc.reflogExpireUnreachable`.
 #[derive(Debug, Clone)]
 pub struct GcReflogExpireConfig {
+    /// `patterns` field.
     pub patterns: Vec<GcReflogPattern>,
+    /// `global_total` field.
     pub global_total: Option<i64>,
+    /// `global_unreachable` field.
     pub global_unreachable: Option<i64>,
 }
 

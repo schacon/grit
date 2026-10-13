@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Commit message trailer parsing and rewriting (Git-compatible).
 //!
 //! Behaviour matches upstream `git/trailer.c` / `git interpret-trailers`.
@@ -18,46 +17,73 @@ const TRAILER_ARG_PLACEHOLDER: &str = "$ARG";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrailerWhere {
     #[default]
+    /// `Default` variant.
     Default,
+    /// `End` variant.
     End,
+    /// `After` variant.
     After,
+    /// `Before` variant.
     Before,
+    /// `Start` variant.
     Start,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `TrailerIfExists` enum.
 pub enum TrailerIfExists {
     #[default]
+    /// `Default` variant.
     Default,
+    /// `AddIfDifferentNeighbor` variant.
     AddIfDifferentNeighbor,
+    /// `AddIfDifferent` variant.
     AddIfDifferent,
+    /// `Add` variant.
     Add,
+    /// `Replace` variant.
     Replace,
+    /// `DoNothing` variant.
     DoNothing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `TrailerIfMissing` enum.
 pub enum TrailerIfMissing {
     #[default]
+    /// `Default` variant.
     Default,
+    /// `Add` variant.
     Add,
+    /// `DoNothing` variant.
     DoNothing,
 }
 
 #[derive(Debug, Clone, Default)]
+/// `ProcessTrailerOptions` struct.
 pub struct ProcessTrailerOptions {
+    /// `trim_empty` field.
     pub trim_empty: bool,
+    /// `only_trailers` field.
     pub only_trailers: bool,
+    /// `only_input` field.
     pub only_input: bool,
+    /// `unfold` field.
     pub unfold: bool,
+    /// `no_divider` field.
     pub no_divider: bool,
 }
 
 #[derive(Debug, Clone)]
+/// `NewTrailerArg` struct.
 pub struct NewTrailerArg {
+    /// `text` field.
     pub text: String,
+    /// `where_` field.
     pub where_: TrailerWhere,
+    /// `if_exists` field.
     pub if_exists: TrailerIfExists,
+    /// `if_missing` field.
     pub if_missing: TrailerIfMissing,
 }
 

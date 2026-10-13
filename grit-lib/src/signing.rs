@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Commit/tag GPG (and gpgsm/ssh) signing and signature verification.
 //!
 //! This is a port of the parts of Git's `gpg-interface.c` and `commit.c`
@@ -43,10 +42,15 @@ pub const GPG_SIG_HEADER_SHA256: &str = "gpgsig-sha256";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum TrustLevel {
     #[default]
+    /// `Undefined = 0` variant.
     Undefined = 0,
+    /// `Never = 1` variant.
     Never = 1,
+    /// `Marginal = 2` variant.
     Marginal = 2,
+    /// `Fully = 3` variant.
     Fully = 3,
+    /// `Ultimate = 4` variant.
     Ultimate = 4,
 }
 
@@ -83,8 +87,11 @@ impl TrustLevel {
 /// The signature format selected via `gpg.format`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpgFormat {
+    /// `OpenPgp` variant.
     OpenPgp,
+    /// `X509` variant.
     X509,
+    /// `Ssh` variant.
     Ssh,
 }
 

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Stream side-band pack data from fetch/clone into memory or a pack temp file.
 //!
 //! HTTP and stateless-RPC responses carry the packfile inside side-band-64k
@@ -125,6 +124,7 @@ pub fn copy_reader_to_writer(reader: &mut dyn Read, writer: &mut dyn Write) -> R
     Ok(total)
 }
 
+/// `read_sideband_pack_tail` function.
 pub fn read_sideband_pack_tail(
     r: &mut dyn Read,
     target: &mut PackReceiveTarget<'_>,

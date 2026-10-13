@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Default [`HttpClient`] backed by `ureq` (feature `http-ureq`).
 //!
 //! This is the batteries-included client for embedders who do not want to wire
@@ -72,6 +71,7 @@ struct CachedAuthHeader {
     origin: String,
 }
 
+/// `UreqHttpClient` struct.
 pub struct UreqHttpClient {
     agent: ureq::Agent,
     user_agent: String,

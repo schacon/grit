@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible date display (`show_date`, `show_date_relative`, strftime handling).
 
 use super::compat::{self, time_t, tm};
@@ -40,26 +39,42 @@ const WEEKDAY_NAMES: [&str; 7] = [
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// `DateModeType` enum.
 pub enum DateModeType {
+    /// `Normal` variant.
     Normal,
+    /// `Human` variant.
     Human,
+    /// `Relative` variant.
     Relative,
+    /// `Short` variant.
     Short,
+    /// `Iso8601` variant.
     Iso8601,
+    /// `Iso8601Strict` variant.
     Iso8601Strict,
+    /// `Rfc2822` variant.
     Rfc2822,
+    /// `Strftime` variant.
     Strftime,
+    /// `Raw` variant.
     Raw,
+    /// `Unix` variant.
     Unix,
 }
 
+/// `DateMode` struct.
 pub struct DateMode {
+    /// `ty` field.
     pub ty: DateModeType,
+    /// `local` field.
     pub local: bool,
+    /// `strftime_fmt` field.
     pub strftime_fmt: Option<String>,
 }
 
 impl DateMode {
+    /// `from_type` associated function.
     pub fn from_type(ty: DateModeType) -> Self {
         Self {
             ty,
@@ -69,6 +84,7 @@ impl DateMode {
     }
 }
 
+/// `parse_date_format` function.
 pub fn parse_date_format(format: &str) -> Result<DateMode, &'static str> {
     let mut s = format;
     if let Some(rest) = s.strip_prefix("auto:") {
@@ -140,10 +156,12 @@ fn parse_date_type(s: &str) -> Result<(DateModeType, &str), &'static str> {
     Err("unknown date format")
 }
 
+/// `date_mode_release` function.
 pub fn date_mode_release(mode: &mut DateMode) {
     mode.strftime_fmt = None;
 }
 
+/// `show_date_relative` function.
 pub fn show_date_relative(time: u64, now_sec: i64) -> String {
     let now = now_sec as i128;
     let t = time as i128;
@@ -327,6 +345,7 @@ fn strbuf_expand_step(munged: &mut String, fmt: &mut &str) -> bool {
     true
 }
 
+/// `strbuf_addftime` function.
 pub fn strbuf_addftime(tm: &tm, tz_hhmm: TzHhmm, fmt: &str, suppress_tz_name: bool) -> String {
     if fmt.is_empty() {
         return String::new();
@@ -394,6 +413,7 @@ fn strftime_c(fmt: &str, tm: &tm) -> String {
     }
 }
 
+/// `show_date` function.
 pub fn show_date(time: u64, mut tz: TzHhmm, mode: &mut DateMode) -> String {
     if mode.ty == DateModeType::Unix {
         return format!("{time}");

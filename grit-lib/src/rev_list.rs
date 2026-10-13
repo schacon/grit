@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Commit traversal and output planning for `rev-list`.
 //!
 //! This module implements a focused `rev-list` subset used by the v2 test
@@ -81,9 +80,13 @@ type ReachableObjectsInOrder = (
 /// Kind selector for `object:type=<kind>` filters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterObjectKind {
+    /// `Blob` variant.
     Blob,
+    /// `Tree` variant.
     Tree,
+    /// `Commit` variant.
     Commit,
+    /// `Tag` variant.
     Tag,
 }
 
@@ -2851,6 +2854,7 @@ impl ExpectedObjectKind {
 pub struct ObjectWalkRoot {
     /// Object id of the peeled non-commit (tree or blob) or tag target.
     pub oid: ObjectId,
+    /// `input` field.
     pub input: String,
     /// Path within the tree for `rev:path` blob roots.
     pub root_path: Option<String>,
@@ -3121,6 +3125,7 @@ pub fn resolve_revision_specs_to_commits(
     resolve_specs(repo, specs)
 }
 
+/// `resolve_object_walk_roots` function.
 pub fn resolve_object_walk_roots(
     repo: &Repository,
     specs: &[String],

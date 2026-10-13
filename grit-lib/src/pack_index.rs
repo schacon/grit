@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Zero-copy in-memory representation of Git pack index (`.idx`) files.
 
 use crate::error::{Error, Result};
@@ -268,6 +267,7 @@ impl PackIndex {
         next
     }
 
+    /// `find_position_by_offset_sorted` method.
     pub fn find_position_by_offset_sorted(&self, offset: u64) -> Option<usize> {
         let mut guard = self.offset_lookup.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {

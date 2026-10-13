@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Pure protocol-v2 capability parsing and request-fragment building.
 //!
 //! These helpers operate purely on the textual capability/feature lines exchanged during a
@@ -62,6 +61,7 @@ pub fn fetch_prelude_shallow_before_wanted_refs(section_headers: &[&str]) -> boo
     }
 }
 
+/// `FETCH_RESPONSE_SECTION_ORDER` constant.
 pub const FETCH_RESPONSE_SECTION_ORDER: &[FetchResponseSection] = &[
     FetchResponseSection::Acknowledgments,
     FetchResponseSection::ShallowInfo,

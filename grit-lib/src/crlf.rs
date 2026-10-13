@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! CRLF / EOL conversion and clean/smudge filter support.
 //!
 //! This module handles line-ending conversion when staging files (`git add`)
@@ -86,24 +85,33 @@ fn external_filter_failed(rel_path: &str, driver: &str, phase: FilterPhase) -> F
 /// What `core.autocrlf` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoCrlf {
+    /// `True` variant.
     True,
+    /// `Input` variant.
     Input,
+    /// `False` variant.
     False,
 }
 
 /// What `core.eol` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreEol {
+    /// `Lf` variant.
     Lf,
+    /// `Crlf` variant.
     Crlf,
+    /// `Native` variant.
     Native,
 }
 
 /// What `core.safecrlf` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafeCrlf {
+    /// `True` variant.
     True,
+    /// `Warn` variant.
     Warn,
+    /// `False` variant.
     False,
 }
 
@@ -123,8 +131,11 @@ pub enum TextAttr {
 /// Per-file eol attribute from .gitattributes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EolAttr {
+    /// `Lf` variant.
     Lf,
+    /// `Crlf` variant.
     Crlf,
+    /// `Unspecified` variant.
     Unspecified,
 }
 
@@ -132,6 +143,7 @@ pub enum EolAttr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CrlfLegacyAttr {
     #[default]
+    /// `Unspecified` variant.
     Unspecified,
     /// `-crlf` — disable CRLF conversion.
     Unset,
@@ -168,11 +180,15 @@ pub enum DiffAttr {
 /// Per-file attributes relevant to conversion.
 #[derive(Debug, Clone)]
 pub struct FileAttrs {
+    /// `text` field.
     pub text: TextAttr,
+    /// `eol` field.
     pub eol: EolAttr,
     /// Effect of the `diff` gitattribute on diff output.
     pub diff_attr: DiffAttr,
+    /// `filter_clean` field.
     pub filter_clean: Option<String>,
+    /// `filter_smudge` field.
     pub filter_smudge: Option<String>,
     /// `filter.<name>.process` — long-running filter (takes precedence over clean/smudge commands).
     pub filter_process: Option<String>,
@@ -182,8 +198,11 @@ pub struct FileAttrs {
     pub filter_smudge_required: bool,
     /// Same config key as smudge; clean direction fails when unset if true.
     pub filter_clean_required: bool,
+    /// `ident` field.
     pub ident: bool,
+    /// `merge` field.
     pub merge: MergeAttr,
+    /// `conflict_marker_size` field.
     pub conflict_marker_size: Option<String>,
     /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
     pub working_tree_encoding: Option<String>,
@@ -219,8 +238,11 @@ impl Default for FileAttrs {
 /// Global conversion settings derived from config.
 #[derive(Clone)]
 pub struct ConversionConfig {
+    /// `autocrlf` field.
     pub autocrlf: AutoCrlf,
+    /// `eol` field.
     pub eol: CoreEol,
+    /// `safecrlf` field.
     pub safecrlf: SafeCrlf,
     /// `core.checkRoundtripEncoding` — comma/space separated encodings whose UTF-8 round trip is
     /// verified when writing to the object DB. `None` keeps Git's default (`SHIFT-JIS`).

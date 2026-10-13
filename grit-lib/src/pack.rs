@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Pack and pack-index helpers for object counting and verification.
 //!
 //! This module implements a focused subset of pack functionality required by
@@ -1456,11 +1455,13 @@ pub fn clear_pack_cache() {
     crate::pack_store::PackStore::invalidate_all_legacy();
 }
 
+/// Test helper: reset pack marker stat counter (integration tests only).
 #[cfg(test)]
 pub fn test_reset_pack_marker_stat_count() {
     pack_cache::test_reset_marker_stat_count();
 }
 
+/// Test helper: read pack marker stat counter (integration tests only).
 #[cfg(test)]
 #[must_use]
 pub fn test_pack_marker_stat_count() -> u64 {
@@ -1545,6 +1546,7 @@ pub fn write_v2_pack_index_with_trailer(
     write_v2_pack_index_body(idx_path, entries, pack_trailer, hash_bytes, sort_threads)
 }
 
+/// `write_v2_pack_index` function.
 pub fn write_v2_pack_index(
     idx_path: &Path,
     pack_path: &Path,
@@ -1671,6 +1673,7 @@ fn write_v2_pack_index_body(
 }
 
 #[must_use]
+/// `oid_bytes_to_hex` function.
 pub fn oid_bytes_to_hex(oid: &[u8]) -> String {
     hex::encode(oid)
 }
@@ -3388,6 +3391,7 @@ fn on_disk_delta_chain_in_send_map(
 /// Returns [`Error::CorruptObject`] when a pack stream is malformed.
 pub(crate) type OnDiskReuseZlibEntry = (ObjectId, u64, Arc<PackData>, usize, usize);
 
+/// `collect_packed_delta_reuse_for_send` function.
 pub fn collect_packed_delta_reuse_for_send(
     objects_dir: &Path,
     send: &HashSet<ObjectId>,
@@ -3527,6 +3531,7 @@ fn sort_pack_indexes_newest_first(indexes: &mut [Arc<PackIndex>]) {
     });
 }
 
+/// `packed_delta_base_oid` function.
 pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Option<ObjectId>> {
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_newest_first(&mut indexes);
@@ -3757,6 +3762,7 @@ pub fn slice_one_pack_object(
     Ok(&bytes[start..pos])
 }
 
+/// `skip_one_pack_object` function.
 pub fn skip_one_pack_object(
     bytes: &[u8],
     pos: &mut usize,

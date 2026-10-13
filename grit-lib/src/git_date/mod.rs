@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible date parsing and display.
 
 pub mod approx;
@@ -13,7 +12,9 @@ use tm::{atoi_bytes, parse_timestamp_prefix, Timestamp};
 
 /// Result of `test-tool date` — either lines for stdout or a process exit code (no output).
 pub enum TestToolDateResult {
+    /// `Output(Vec<String>)` variant.
     Output(Vec<String>),
+    /// `Exit(i32)` variant.
     Exit(i32),
 }
 

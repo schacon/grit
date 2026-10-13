@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! The "promisor-remote" protocol v2 capability (see `gitprotocol-v2(5)` and
 //! `Documentation/config/promisor.adoc`).
 //!
@@ -19,9 +18,13 @@ use crate::config::ConfigSet;
 /// One advertised or configured promisor remote.
 #[derive(Debug, Clone, Default)]
 pub struct PromisorInfo {
+    /// `name` field.
     pub name: String,
+    /// `url` field.
     pub url: Option<String>,
+    /// `filter` field.
     pub filter: Option<String>,
+    /// `token` field.
     pub token: Option<String>,
 }
 

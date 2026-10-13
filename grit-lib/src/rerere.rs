@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible rerere (`MERGE_RR`, `rr-cache/`, conflict ID hashing).
 //!
 //! Behaviour matches `git/rerere.c` for upstream harness tests.
@@ -15,14 +14,15 @@ use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::repo::Repository;
 
+/// Effective `rerere.autoupdate` setting for a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RerereAutoupdate {
+    /// Read `rerere.autoupdate` from config (Git default).
     #[default]
-    /// Returned when from config.
     FromConfig,
-    /// Returned when yes.
+    /// Autostage rerere resolutions when conflicts are cleared.
     Yes,
-    /// Returned when no.
+    /// Never autostage rerere resolutions.
     No,
 }
 

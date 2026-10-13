@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Rename-aware three-way tree merge for cherry-pick / revert style merges.
 //!
 //! Flattens trees to path → [`IndexEntry`] maps, aligns paths using rename detection
@@ -25,10 +24,15 @@ pub struct TreeMergeOutput {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+/// `WhitespaceMergeOptions` struct.
 pub struct WhitespaceMergeOptions {
+    /// `ignore_all_space` field.
     pub ignore_all_space: bool,
+    /// `ignore_space_change` field.
     pub ignore_space_change: bool,
+    /// `ignore_space_at_eol` field.
     pub ignore_space_at_eol: bool,
+    /// `ignore_cr_at_eol` field.
     pub ignore_cr_at_eol: bool,
 }
 

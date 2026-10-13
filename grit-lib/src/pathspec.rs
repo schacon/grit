@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible pathspec matching (magic tokens and global flags).
 //!
 //! Global flags are read from the same environment variables as Git:
@@ -536,6 +535,7 @@ pub fn bloom_lookup_prefix_with_cwd(
     Some(combined[..len].to_string())
 }
 
+/// Bloom filter lookup prefix for a pathspec at the repository root.
 #[must_use]
 pub fn bloom_lookup_prefix(spec: &str) -> Option<String> {
     bloom_lookup_prefix_with_cwd(spec, None)

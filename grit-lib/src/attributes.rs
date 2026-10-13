@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Gitattributes parsing and pattern matching for `check-attr` and validation.
 //!
 //! Implements Git-consistent rule ordering, macro expansion (`[attr]`), `binary`
@@ -39,11 +38,13 @@ pub const MAX_ATTR_FILE_BYTES: usize = 100 * 1024 * 1024;
 /// Parsed attribute value for display (`check-attr` output).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttrValue {
+    /// `Set` variant.
     Set,
     /// Explicit `-attr` in a rule — `check-attr` prints `unset`.
     Unset,
     /// Macro body `!attr` — clears the attribute to *unspecified* (not `unset`).
     Clear,
+    /// `Value(String)` variant.
     Value(String),
 }
 
@@ -138,8 +139,11 @@ pub struct MacroTable {
 /// Result of parsing a gitattributes file.
 #[derive(Debug, Clone, Default)]
 pub struct ParsedGitAttributes {
+    /// `rules` field.
     pub rules: Vec<AttrRule>,
+    /// `macros` field.
     pub macros: MacroTable,
+    /// `warnings` field.
     pub warnings: Vec<String>,
 }
 
@@ -1190,6 +1194,7 @@ fn merge_collected_gitattributes(
     }
 }
 
+/// `load_gitattributes_from_tree` function.
 pub fn load_gitattributes_from_tree(
     repo: &Repository,
     tree_oid: &ObjectId,

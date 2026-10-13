@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible wildmatch pattern matching.
 //!
 //! Implements shell-style pattern matching for `?`, `\`, `[]`, and `*`
@@ -7,7 +6,9 @@
 //! Based on the algorithm by Rich Salz (1986), modified by Wayne Davison
 //! for special `/` handling and `**` glob support.
 
+/// `WM_CASEFOLD` constant.
 pub const WM_CASEFOLD: u32 = 1;
+/// `WM_PATHNAME` constant.
 pub const WM_PATHNAME: u32 = 2;
 
 const WM_MATCH: i32 = 0;

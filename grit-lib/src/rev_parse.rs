@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Revision parsing and repository discovery helpers for `rev-parse`.
 //!
 //! This module implements a focused subset of Git's revision parser used by
@@ -890,6 +889,7 @@ pub fn expand_parent_shorthand_rev_parse_lines(
     Ok(Some(out))
 }
 
+/// Split a revision range at `..` (double-dot), excluding `...` triple-dot ranges.
 pub fn split_double_dot_range(spec: &str) -> Option<(&str, &str)> {
     if spec == ".." {
         return Some(("", ""));
@@ -1078,6 +1078,7 @@ pub fn revision_spec_contains_ancestry_navigation(spec: &str) -> bool {
     !steps.is_empty()
 }
 
+/// `resolve_revision_as_commit` function.
 pub fn resolve_revision_as_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if let Some((left, right)) = split_triple_dot_range(spec) {
         let left_tip = if left.is_empty() {

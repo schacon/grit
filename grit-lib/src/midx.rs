@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Multi-pack-index (MIDX) file writing and minimal reading.
 //!
 //! Writes a Git-compatible `multi-pack-index` file (version 1, SHA-1) covering
@@ -1071,6 +1070,7 @@ pub fn evict_midx_read_cache_for_pack_dir(pack_dir: &Path) {
     midx_cache::evict_pack_dir(pack_dir);
 }
 
+/// `resolve_tip_midx_path` function.
 pub fn resolve_tip_midx_path(pack_dir: &Path) -> Option<std::path::PathBuf> {
     let root = pack_dir.join("multi-pack-index");
     if root.exists() {
@@ -1140,6 +1140,7 @@ pub fn resolve_midx_bitmap_layer(pack_dir: &Path) -> Option<(PathBuf, PathBuf)> 
     None
 }
 
+/// `resolve_midx_layer_path` function.
 pub fn resolve_midx_layer_path(pack_dir: &Path, checksum: &str) -> Option<std::path::PathBuf> {
     let checksum = checksum.to_ascii_lowercase();
     if let Ok(hashes) = read_chain_layer_hashes(pack_dir) {
@@ -2121,6 +2122,7 @@ pub fn read_midx_pack_idx_names(objects_dir: &Path) -> Result<Vec<String>> {
 
 /// A single MIDX-referenced object together with the pack it is attributed to.
 pub struct MidxObjectRef {
+    /// `oid` field.
     pub oid: ObjectId,
     /// Index into the pack-names list returned alongside this.
     pub pack_int_id: usize,
@@ -2250,6 +2252,7 @@ pub fn format_midx_show_objects_layer(
     Ok(out)
 }
 
+/// `format_midx_dump` function.
 pub fn format_midx_dump(objects_dir: &Path) -> Result<String> {
     format_midx_dump_layer(objects_dir, None)
 }
@@ -2853,6 +2856,7 @@ pub fn try_read_info_via_midx_with_diagnostics(
     chain.try_read_info(oid, diagnostics)
 }
 
+/// `read_midx_preferred_idx_name` function.
 pub fn read_midx_preferred_idx_name(objects_dir: &Path) -> Result<String> {
     let pack_dir = objects_dir.join("pack");
     let path = resolve_tip_midx_path(&pack_dir)
@@ -2912,6 +2916,7 @@ pub fn clear_pack_midx_state(pack_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `write_multi_pack_index` function.
 pub fn write_multi_pack_index(pack_dir: &Path) -> Result<WriteMultiPackIndexResult> {
     write_multi_pack_index_with_options(pack_dir, &WriteMultiPackIndexOptions::default())
 }

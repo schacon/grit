@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Cherry-pick / sign-off trailer handling compatible with Git's `sequencer.c` and `trailer.c`.
 //!
 //! Used when rewriting commit messages for `cherry-pick -x` / `-s` so spacing and trailer
@@ -479,12 +478,19 @@ pub fn format_signoff_line(name: &str, email: &str) -> String {
 /// `process_trailer_options` in `pretty.c` / `trailer.c`.
 #[derive(Debug, Clone)]
 pub struct TrailerOpts {
+    /// `only_trailers` field.
     pub only_trailers: bool,
+    /// `unfold` field.
     pub unfold: bool,
+    /// `keyonly` field.
     pub keyonly: bool,
+    /// `valueonly` field.
     pub valueonly: bool,
+    /// `separator` field.
     pub separator: String,
+    /// `key_value_separator` field.
     pub key_value_separator: String,
+    /// `filter_keys` field.
     pub filter_keys: Vec<String>,
 }
 

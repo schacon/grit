@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Repository-scoped pack and MIDX read caches.
 //!
 //! [`PackStore`] holds parsed pack indexes, pack file bytes, directory listings (with mtime
@@ -21,15 +20,18 @@ pub mod test_hooks {
     static LEGACY_STORES_CREATED: AtomicUsize = AtomicUsize::new(0);
     static IMPLICIT_STORES_CREATED: AtomicUsize = AtomicUsize::new(0);
 
+    /// `reset` function.
     pub fn reset() {
         LEGACY_STORES_CREATED.store(0, Ordering::Release);
         IMPLICIT_STORES_CREATED.store(0, Ordering::Release);
     }
 
+    /// `legacy_stores_created` function.
     pub fn legacy_stores_created() -> usize {
         LEGACY_STORES_CREATED.load(Ordering::Acquire)
     }
 
+    /// `implicit_stores_created` function.
     pub fn implicit_stores_created() -> usize {
         IMPLICIT_STORES_CREATED.load(Ordering::Acquire)
     }

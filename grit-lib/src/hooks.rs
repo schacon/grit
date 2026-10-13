@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Hook execution utilities.
 //!
 //! Implements Git's multihook model: hooks from `hook.<name>.*` config plus the
@@ -35,10 +34,20 @@ fn is_enoexec(err: &std::io::Error) -> bool {
 pub enum HookError {
     /// A hook ran and returned a non-zero exit status.
     #[error("hook {hook_name} failed with exit status {status}")]
-    Failed { hook_name: String, status: i32 },
+    Failed {
+        /// Basename of the hook script that failed.
+        hook_name: String,
+        /// Process exit code from the hook subprocess.
+        status: i32,
+    },
     /// The hook executable could not be started.
     #[error("failed to run hook {hook_name}: {message}")]
-    Spawn { hook_name: String, message: String },
+    Spawn {
+        /// Basename of the hook script that could not be spawned.
+        hook_name: String,
+        /// OS or I/O error message from `Command` spawn.
+        message: String,
+    },
     /// Configuration or internal error while resolving hooks.
     #[error("{0}")]
     Internal(String),
@@ -747,6 +756,7 @@ pub fn run_commit_hook_checked(
     }
 }
 
+/// `run_commit_hook` function.
 pub fn run_commit_hook(
     repo: &Repository,
     hook_name: &str,
@@ -870,6 +880,7 @@ pub fn run_hook_with_env(
     }
 }
 
+/// `run_hook_capture` function.
 pub fn run_hook_capture(
     repo: &Repository,
     hook_name: &str,

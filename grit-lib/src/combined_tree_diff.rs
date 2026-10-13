@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Multi-parent combined tree diff (Git `diff_tree_paths` / `find_paths_multitree`).
 //!
 //! Implements the `D(T,P1...Pn)` walk from `tree-diff.c` for merge commits, producing
@@ -130,6 +129,7 @@ pub struct CombinedDiffPath {
     pub path: String,
     /// Mode and OID on the merge result side (`0` / zero OID when deleted from merge).
     pub merge_mode: u32,
+    /// `merge_oid` field.
     pub merge_oid: ObjectId,
     /// One slot per parent commit (same order as `parents` passed to [`combined_diff_paths_filtered`]).
     pub parents: Vec<CombinedParentSide>,
@@ -138,8 +138,11 @@ pub struct CombinedDiffPath {
 /// One parent's contribution at a combined-diff path.
 #[derive(Debug, Clone)]
 pub struct CombinedParentSide {
+    /// `mode` field.
     pub mode: u32,
+    /// `oid` field.
     pub oid: ObjectId,
+    /// `status` field.
     pub status: CombinedParentStatus,
     /// Source path when this parent saw the result as a rename (`-M`); `None` otherwise.
     pub rename_from: Option<String>,

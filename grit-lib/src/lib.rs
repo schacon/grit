@@ -119,6 +119,21 @@ pub mod porcelain;
 pub mod progress;
 
 /// The types most callers need, re-exported for `use grit_lib::prelude::*;`.
+///
+/// Library guide: [embedding](https://grit-scm.com/docs/library/embedding)
+///
+/// ```rust
+/// use grit_lib::prelude::*;
+/// use grit_lib::repo::InitOptions;
+///
+/// # fn main() -> Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+/// let _cfg = repo.config()?;
+/// assert!(repo.refs().read_raw("HEAD")?.is_some());
+/// # Ok(())
+/// # }
+/// ```
 pub mod prelude {
     pub use crate::command_runner::{CommandRunner, RecordingRunner, SystemCommandRunner};
     pub use crate::config::ConfigSet;

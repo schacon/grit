@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Changed-path Bloom filters for commit-graph files (Git `bloom.c` compatible).
 
 use std::collections::BTreeSet;
@@ -7,9 +6,13 @@ use thiserror::Error;
 /// Settings stored in the BDAT chunk header and used for hashing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BloomFilterSettings {
+    /// `hash_version` field.
     pub hash_version: u32,
+    /// `num_hashes` field.
     pub num_hashes: u32,
+    /// `bits_per_entry` field.
     pub bits_per_entry: u32,
+    /// `max_changed_paths` field.
     pub max_changed_paths: u32,
 }
 
@@ -25,6 +28,7 @@ impl Default for BloomFilterSettings {
 }
 
 const BITS_PER_WORD: u64 = 8;
+/// `BLOOMDATA_HEADER_LEN` constant.
 pub const BLOOMDATA_HEADER_LEN: usize = 12;
 
 #[inline]
@@ -268,8 +272,11 @@ pub fn collect_changed_paths_for_bloom(paths: &[String]) -> BTreeSet<String> {
 /// Result of building a Bloom filter payload for one commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BloomBuildOutcome {
+    /// `Normal` variant.
     Normal,
+    /// `TruncatedLarge` variant.
     TruncatedLarge,
+    /// `TruncatedEmpty` variant.
     TruncatedEmpty,
 }
 

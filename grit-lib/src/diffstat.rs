@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible `--stat` / diffstat layout (width, name truncation, bar scaling).
 //!
 //! Matches the width algorithm in Git's `show_stats()` (`diff.c`).
@@ -61,10 +60,15 @@ fn parse_columns_env(cols: Option<&str>) -> Option<usize> {
 pub const FORMAT_PATCH_STAT_WIDTH: usize = 72;
 
 #[derive(Debug, Clone)]
+/// `FileStatInput` struct.
 pub struct FileStatInput {
+    /// `path_display` field.
     pub path_display: String,
+    /// `insertions` field.
     pub insertions: usize,
+    /// `deletions` field.
     pub deletions: usize,
+    /// `is_binary` field.
     pub is_binary: bool,
     /// Unmerged (conflicted) path: rendered as ` name | Unmerged` and excluded
     /// from the "N files changed" count (git `diffstat_file.is_unmerged`).

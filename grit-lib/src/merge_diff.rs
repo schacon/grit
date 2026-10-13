@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Merge commit and combined (`--cc` / `-c`) diff helpers.
 //!
 //! These mirror the subset of Git's combine-diff output needed for porcelain
@@ -445,6 +444,7 @@ pub fn run_textconv(
         .map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
+/// `diff_textconv_cmd_line` function.
 pub fn diff_textconv_cmd_line(config: &ConfigSet, driver: &str) -> Option<String> {
     let mut cmd_line = config.get(&format!("diff.{driver}.textconv"))?;
     cmd_line = cmd_line.trim_end().to_string();
@@ -455,6 +455,7 @@ pub fn diff_textconv_cmd_line(config: &ConfigSet, driver: &str) -> Option<String
     Some(cmd_line)
 }
 
+/// `diff_cachetextconv_enabled` function.
 pub fn diff_cachetextconv_enabled(config: &ConfigSet, driver: &str) -> bool {
     config
         .get(&format!("diff.{driver}.cachetextconv"))

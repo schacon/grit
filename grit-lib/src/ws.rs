@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-compatible whitespace rules (`core.whitespace`, `whitespace` attribute).
 //!
 //! Ported from Git's `ws.c` / `ws.h` for `git apply` parity.
@@ -18,11 +17,14 @@ pub const WS_TAB_IN_INDENT: u32 = 1 << 11;
 /// Missing newline at end of file.
 pub const WS_INCOMPLETE_LINE: u32 = 1 << 12;
 
+/// Bitmask of trailing-whitespace rules (`blank-at-eol` and `blank-at-eof`).
 pub const WS_TRAILING_SPACE: u32 = WS_BLANK_AT_EOL | WS_BLANK_AT_EOF;
+/// Low six bits of a whitespace rule encoding the tab width.
 pub const WS_TAB_WIDTH_MASK: u32 = (1 << 6) - 1;
 /// Default `core.whitespace` when unset: trailing + space-before-tab, tab width 8.
 pub const WS_DEFAULT_RULE: u32 = WS_TRAILING_SPACE | WS_SPACE_BEFORE_TAB | 8;
 
+/// Parsed `whitespace` gitattribute value for a path.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WhitespaceGitAttr {
     /// No `whitespace` gitattribute applies (use `core.whitespace` / default).
@@ -58,8 +60,10 @@ impl WhitespaceGitAttr {
     }
 }
 
+/// Invalid combination of whitespace rule tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhitespaceRuleError {
+    /// Both tab-in-indent and indent-with-non-tab were requested.
     ConflictingTabAndIndentRules,
 }
 

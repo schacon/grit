@@ -1,6 +1,5 @@
 //! Git index UNTR (untracked cache) — `git/dir.c` / `read-cache.c`.
 #![allow(clippy::too_many_arguments)]
-#![allow(missing_docs)]
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -18,7 +17,9 @@ use crate::index::{Index, MODE_GITLINK};
 use crate::objects::{HashAlgo, ObjectId, ObjectKind};
 use crate::repo::Repository;
 
+/// `DIR_SHOW_OTHER_DIRECTORIES` constant.
 pub const DIR_SHOW_OTHER_DIRECTORIES: u32 = 1 << 1;
+/// `DIR_HIDE_EMPTY_DIRECTORIES` constant.
 pub const DIR_HIDE_EMPTY_DIRECTORIES: u32 = 1 << 2;
 
 /// Stage-0 entry count at or above which an untracked-cache shell is persisted on index write
@@ -57,14 +58,23 @@ pub fn ensure_untracked_cache_shell(index: &mut Index, work_tree: &Path, config:
 /// Git `struct stat_data` on disk (36 bytes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StatDataDisk {
+    /// `ctime_sec` field.
     pub ctime_sec: u32,
+    /// `ctime_nsec` field.
     pub ctime_nsec: u32,
+    /// `mtime_sec` field.
     pub mtime_sec: u32,
+    /// `mtime_nsec` field.
     pub mtime_nsec: u32,
+    /// `dev` field.
     pub dev: u32,
+    /// `ino` field.
     pub ino: u32,
+    /// `uid` field.
     pub uid: u32,
+    /// `gid` field.
     pub gid: u32,
+    /// `size` field.
     pub size: u32,
 }
 
@@ -133,9 +143,13 @@ fn stat_data_from_meta(meta: &fs::Metadata) -> StatDataDisk {
 }
 
 #[derive(Clone, Debug)]
+/// `OidStat` struct.
 pub struct OidStat {
+    /// `stat` field.
     pub stat: StatDataDisk,
+    /// `oid` field.
     pub oid: ObjectId,
+    /// `valid` field.
     pub valid: bool,
 }
 
@@ -150,14 +164,23 @@ impl Default for OidStat {
 }
 
 #[derive(Clone, Debug)]
+/// `UntrackedCacheDir` struct.
 pub struct UntrackedCacheDir {
+    /// `name` field.
     pub name: String,
+    /// `untracked` field.
     pub untracked: Vec<String>,
+    /// `dirs` field.
     pub dirs: Vec<UntrackedCacheDir>,
+    /// `recurse` field.
     pub recurse: bool,
+    /// `check_only` field.
     pub check_only: bool,
+    /// `valid` field.
     pub valid: bool,
+    /// `exclude_oid` field.
     pub exclude_oid: ObjectId,
+    /// `stat_data` field.
     pub stat_data: StatDataDisk,
 }
 
@@ -177,20 +200,32 @@ impl UntrackedCacheDir {
 }
 
 #[derive(Clone, Debug)]
+/// `UntrackedCache` struct.
 pub struct UntrackedCache {
+    /// `ident` field.
     pub ident: Vec<u8>,
+    /// `ss_info_exclude` field.
     pub ss_info_exclude: OidStat,
+    /// `ss_excludes_file` field.
     pub ss_excludes_file: OidStat,
+    /// `dir_flags` field.
     pub dir_flags: u32,
+    /// `exclude_per_dir` field.
     pub exclude_per_dir: String,
+    /// `root` field.
     pub root: Option<UntrackedCacheDir>,
+    /// `dir_created` field.
     pub dir_created: u64,
+    /// `gitignore_invalidated` field.
     pub gitignore_invalidated: u64,
+    /// `dir_invalidated` field.
     pub dir_invalidated: u64,
+    /// `dir_opened` field.
     pub dir_opened: u64,
 }
 
 impl UntrackedCache {
+    /// `new_shell` associated function.
     pub fn new_shell(dir_flags: u32, ident: Vec<u8>) -> Self {
         Self {
             ident,
@@ -206,6 +241,7 @@ impl UntrackedCache {
         }
     }
 
+    /// `reset_stats` method.
     pub fn reset_stats(&mut self) {
         self.dir_created = 0;
         self.gitignore_invalidated = 0;
@@ -534,6 +570,7 @@ pub fn parse_untracked_extension(data: &[u8]) -> Option<UntrackedCache> {
     Some(uc)
 }
 
+/// `untracked_cache_ident` function.
 pub fn untracked_cache_ident(work_tree: &Path) -> Vec<u8> {
     #[cfg(unix)]
     let sysname = match nix::sys::utsname::uname() {
@@ -549,6 +586,7 @@ pub fn untracked_cache_ident(work_tree: &Path) -> Vec<u8> {
     s.into_bytes()
 }
 
+/// `dir_flags_from_config` function.
 pub fn dir_flags_from_config(config: &ConfigSet) -> u32 {
     if config
         .get("status.showUntrackedFiles")
@@ -647,6 +685,7 @@ fn invalidate_one_directory_for_path(uc: &mut UntrackedCache, dir: &mut Untracke
     }
 }
 
+/// `invalidate_path` function.
 pub fn invalidate_path(uc: &mut UntrackedCache, path: &str) {
     let Some(mut root) = uc.root.take() else {
         return;
@@ -802,9 +841,13 @@ fn relative_path(parent: &str, name: &str) -> String {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// `UntrackedIgnoredMode` enum.
 pub enum UntrackedIgnoredMode {
+    /// `No` variant.
     No,
+    /// `Traditional` variant.
     Traditional,
+    /// `Matching` variant.
     Matching,
 }
 

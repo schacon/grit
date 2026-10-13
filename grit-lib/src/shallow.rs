@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Shallow repository metadata (`.git/shallow`).
 
 use crate::error::{Error, Result};
@@ -254,6 +253,7 @@ pub(crate) fn read_v2_fetch_primary_line(
     }
 }
 
+/// `read_shallow_info_section` function.
 pub fn read_shallow_info_section(r: &mut dyn Read) -> Result<(Vec<ObjectId>, Vec<ObjectId>)> {
     read_shallow_info_section_sideband(r, false)
 }

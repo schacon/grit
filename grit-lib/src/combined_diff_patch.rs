@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Git-style combined merge diff hunks (`diff --cc` / `diff --combined`).
 //!
 //! This approximates Git's `combine-diff.c` behaviour: per-parent Myers diffs against
@@ -10,14 +9,19 @@ use similar::{capture_diff_slices, Algorithm, DiffOp};
 /// Whitespace handling for combined diffs (Git `xdl_opts` subset).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CombinedDiffWsOptions {
+    /// `ignore_all_space` field.
     pub ignore_all_space: bool,
+    /// `ignore_space_change` field.
     pub ignore_space_change: bool,
+    /// `ignore_space_at_eol` field.
     pub ignore_space_at_eol: bool,
+    /// `ignore_cr_at_eol` field.
     pub ignore_cr_at_eol: bool,
 }
 
 impl CombinedDiffWsOptions {
     #[must_use]
+    /// `any` method.
     pub fn any(self) -> bool {
         self.ignore_all_space
             || self.ignore_space_change

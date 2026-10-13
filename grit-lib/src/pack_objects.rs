@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Negotiation-driven pack-objects: enumerate wants minus haves, delta search, stream PACK v2.
 //!
 //! Holds object metadata (not payloads) during planning; reads object bytes from the
@@ -155,11 +154,19 @@ pub struct PackStats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PackProgress {
     /// Enumeration finished (`total` objects selected).
-    Enumerated { total: usize },
+    Enumerated {
+        /// Number of objects selected for packing.
+        total: usize,
+    },
     /// Delta planning finished.
     PlannedDeltas,
     /// An object was written (`written` of `total`).
-    WroteObject { written: usize, total: usize },
+    WroteObject {
+        /// Objects written so far.
+        written: usize,
+        /// Total objects to write in this pack.
+        total: usize,
+    },
 }
 
 /// Streaming pack-objects builder over an [`Odb`].

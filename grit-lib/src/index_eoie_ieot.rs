@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! EOIE / IEOT index extensions for parallel index load (Git `read-cache.c` behavior).
 
 use std::collections::BTreeMap;
@@ -61,6 +60,7 @@ pub(crate) struct ParsedIndexExtensions {
 /// Context for index parse/load threading and config.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IndexParseContext {
+    /// `thread_policy` field.
     pub thread_policy: ThreadPolicy,
 }
 

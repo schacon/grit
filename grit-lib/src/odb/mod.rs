@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Loose object database: reading and writing zlib-compressed Git objects.
 //!
 //! Git stores objects as files under `<git-dir>/objects/<xx>/<38-hex-chars>`,

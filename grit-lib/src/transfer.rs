@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Embedder-facing transfer (fetch / push) result & option types, plus the
 //! negotiation-driven pack builder.
 //!
@@ -1049,6 +1048,7 @@ fn zlib_decompress_fixed(bytes: &[u8], expected_size: usize) -> Result<Vec<u8>> 
     Ok(out)
 }
 
+/// `fetch_local` function.
 pub fn fetch_local(
     local_git_dir: &Path,
     remote_git_dir: &Path,

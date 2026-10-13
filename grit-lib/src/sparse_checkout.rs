@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Sparse-checkout pattern parsing and path membership (cone and non-cone).
 //!
 //! Cone-mode parsing and matching follow Git's `add_pattern_to_hashsets` and
@@ -165,8 +164,11 @@ fn non_cone_line_matches(pattern: &str, path: &str) -> bool {
 /// Cone-mode sparse state: keys use a leading `/` (Git's internal form).
 #[derive(Debug, Clone, Default)]
 pub struct ConePatterns {
+    /// `full_cone` field.
     pub full_cone: bool,
+    /// `recursive_slash` field.
     pub recursive_slash: BTreeSet<String>,
+    /// `parent_slash` field.
     pub parent_slash: BTreeSet<String>,
 }
 
@@ -349,6 +351,7 @@ impl ConePatterns {
     }
 
     #[must_use]
+    /// `try_parse` associated function.
     pub fn try_parse(content: &str) -> Option<Self> {
         let mut w = Vec::new();
         Self::try_parse_with_warnings(content, &mut w)
@@ -699,7 +702,9 @@ pub fn clear_skip_worktree_from_present_files(
 /// Mutable cone sparse state (Git `pattern_list` hashmaps) for building `sparse-checkout` files.
 #[derive(Debug, Clone, Default)]
 pub struct ConeWorkspace {
+    /// `recursive_slash` field.
     pub recursive_slash: BTreeSet<String>,
+    /// `parent_slash` field.
     pub parent_slash: BTreeSet<String>,
 }
 

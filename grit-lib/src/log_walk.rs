@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Resumable HEAD log walks for bounded `grit log` paging.
 //!
 //! [`LogWalkCursor`] encodes the heap and visited sets of the date-order reachable walk
@@ -26,7 +25,9 @@ pub struct LogWalkCursor {
 /// One page of commits plus an optional continuation cursor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogWalkPage {
+    /// `commits` field.
     pub commits: Vec<ObjectId>,
+    /// `next` field.
     pub next: Option<LogWalkCursor>,
 }
 
