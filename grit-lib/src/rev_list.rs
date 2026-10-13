@@ -9281,7 +9281,6 @@ mod line_coverage_tests {
     }
 
     #[test]
-    #[test]
     fn ultrawide_history_ordering_and_filter_surface() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(640, true);
         repo.odb().write_commit_graph()?;
@@ -9339,6 +9338,7 @@ mod line_coverage_tests {
         Ok(())
     }
 
+    #[test]
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
 
