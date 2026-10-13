@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Time conversion helpers that produce Git-compatible timestamps.
 
 use std::time::{SystemTime, UNIX_EPOCH};

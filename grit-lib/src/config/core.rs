@@ -177,6 +177,20 @@ pub struct ConfigFile {
 ///
 /// Entries are stored in file-order within each scope; scopes are layered
 /// in priority order (system < global < local < worktree < command).
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::repo::{InitOptions, Repository};
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+/// let cfg = repo.config()?;
+/// assert!(cfg.get("core.repositoryformatversion").is_some());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct ConfigSet {
     /// All entries across all scopes, in load order.
@@ -219,6 +233,7 @@ pub struct LoadConfigOptions {
     pub process_includes: bool,
     /// Expand includes for synthetic command-line config built from `GIT_CONFIG_PARAMETERS`.
     pub command_includes: bool,
+    /// Git directory and environment used to evaluate `[includeIf]` conditions.
     pub include_ctx: IncludeContext,
     /// Optional sink for non-fatal config load warnings.
     pub diagnostics: Option<crate::diagnostics::DiagnosticsHandle>,
@@ -1996,6 +2011,7 @@ impl ConfigSet {
         }
     }
 
+    /// Maximum delta depth for `git pack-objects` (`pack.depth`, Git default 50).
     pub fn pack_object_depth(&self) -> usize {
         match self.get_i64("pack.depth") {
             None => crate::pack::DEFAULT_PACK_DEPTH,
@@ -3635,6 +3651,9 @@ enum ConfigParameter {
     Pair { key: String, value: Option<String> },
 }
 
+/// Parse `GIT_CONFIG_PARAMETERS` / `-c key=value` style parameter strings.
+///
+/// Returns Git's internal NUL-delimited representation used when bootstrapping config.
 pub fn parse_config_parameters(raw: &str) -> Vec<String> {
     parse_config_parameters_strict(raw)
         .map(|entries| {

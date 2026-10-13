@@ -11,6 +11,19 @@
 //! It also resolves `HEAD` to determine the current branch and commit,
 //! and provides working tree / index diff summaries used by `status`,
 //! `commit`, and other porcelain commands.
+//!
+//! Library guide: [state](https://grit-scm.com/docs/library/repository)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! use grit_lib::state::resolve_head; let _ = resolve_head(_repo.git_dir())?;
+//!
+//! # Ok(())
+//! # }
+//! ```
 
 use std::fs;
 use std::path::Path;
@@ -293,13 +306,15 @@ pub struct WtStatusState {
     pub am_empty_patch: bool,
     /// `CHERRY_PICK_HEAD` or sequencer pick without head.
     pub cherry_pick_in_progress: bool,
-    /// `None` means "in progress" without a specific commit (null OID / sequencer-only).
+    /// Commit being cherry-picked; `None` when only the sequencer records progress.
     pub cherry_pick_head_oid: Option<ObjectId>,
     /// `REVERT_HEAD` or sequencer revert without head.
     pub revert_in_progress: bool,
+    /// Commit being reverted when [`Self::revert_in_progress`] is true.
     pub revert_head_oid: Option<ObjectId>,
     /// `BISECT_LOG` exists (checked under common dir).
     pub bisect_in_progress: bool,
+    /// Label read from `BISECT_LOG` for status output when bisecting.
     pub bisecting_from: Option<String>,
     /// Detached HEAD: human label (`wt_status_get_detached_from`).
     pub detached_from: Option<String>,

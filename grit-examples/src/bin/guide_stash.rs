@@ -1,4 +1,4 @@
-//! Push a stash entry and list the stack through [`RepositoryStash`].
+//! Push a stash entry and list the stack through [`RepositoryStash`](grit_lib::repo_handles::RepositoryStash).
 //!
 //! Source for the library guide "Stash" page (included in the docs site).
 

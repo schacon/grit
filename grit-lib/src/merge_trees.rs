@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Rename-aware three-way tree merge for cherry-pick / revert style merges.
 //!
 //! Flattens trees to path → [`IndexEntry`] maps, aligns paths using rename detection

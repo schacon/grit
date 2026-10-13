@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Cherry-pick / sign-off trailer handling compatible with Git's `sequencer.c` and `trailer.c`.
 //!
 //! Used when rewriting commit messages for `cherry-pick -x` / `-s` so spacing and trailer

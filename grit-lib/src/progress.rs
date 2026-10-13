@@ -13,6 +13,16 @@
 //!
 //! Tests, `grit-cli`, and any call site that does not want output use the
 //! no-op [`NullProgress`] / [`NeverCancel`].
+//!
+//! Library guide: [progress](https://grit-scm.com/docs/library/parallelism)
+//!
+//! ```rust
+//! use grit_lib::progress::{NeverCancel, NullProgress};
+//! # fn main() {
+//! let _sink = NullProgress;
+//! let _cancel = NeverCancel;
+//! # }
+//! ```
 
 /// A coarse phase of a long-running Git operation.
 ///

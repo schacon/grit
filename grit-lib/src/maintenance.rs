@@ -2,6 +2,17 @@
 //!
 //! These APIs wrap existing pack, prune, and fsck primitives for embedders and the
 //! `grit` CLI. They never shell out to the system `git` binary.
+//!
+//! Library guide: [maintenance](https://grit-scm.com/docs/library/maintenance)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -45,6 +56,7 @@ pub struct RepackOptions {
     pub pack_build: Option<PackBuildOptions>,
     /// Config/environment for ingest and pack threads (defaults to repo config).
     pub merged_config: Option<ConfigSet>,
+    /// Process environment for config discovery and thread counts.
     pub environment: Environment,
 }
 
@@ -118,11 +130,13 @@ pub enum FsckSeverity {
 /// One fsck diagnostic (refs, objects, or MIDX).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FsckIssue {
+    /// Whether this issue should fail the overall fsck run.
     pub severity: FsckSeverity,
     /// Ref name, object id hex, or `multi-pack-index`.
     pub path: String,
     /// CamelCase message id (Git fsck vocabulary where applicable).
     pub msg_id: String,
+    /// Human-readable detail after the message id.
     pub detail: String,
 }
 
@@ -132,6 +146,7 @@ pub struct FsckIssue {
 pub struct FsckReport {
     /// True when no [`FsckSeverity::Error`] issues were recorded.
     pub ok: bool,
+    /// All recorded fsck findings in discovery order.
     pub issues: Vec<FsckIssue>,
 }
 
@@ -152,6 +167,7 @@ pub fn format_fsck_line(issue: &FsckIssue) -> String {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct GcOptions {
+    /// Repack options applied before pruning unreachable objects.
     pub repack: RepackOptions,
     /// Expire reflogs using `gc.reflogExpire*` before repack/prune.
     pub expire_reflog: bool,
@@ -242,8 +258,11 @@ pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectI
 /// Result of [`gc`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcStats {
+    /// Counters from the repack phase.
     pub repack: RepackStats,
+    /// Counters from loose-object pruning after repack.
     pub prune: PruneStats,
+    /// Reflog lines removed by expiry during gc.
     pub reflog_entries_pruned: usize,
 }
 

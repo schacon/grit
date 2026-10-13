@@ -1,4 +1,4 @@
-//! Attach a note to a commit with [`RepositoryNotes`].
+//! Attach a note to a commit with [`RepositoryNotes`](grit_lib::repo_handles::RepositoryNotes).
 //!
 //! Source for the library guide "Notes" page (included in the docs site).
 

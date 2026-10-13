@@ -3,6 +3,15 @@
 //! Library code uses [`enum@Error`] (a `thiserror` enum) so callers can match on
 //! specific failure modes. The binary wraps these with `anyhow` for human-
 //! readable top-level reporting.
+//!
+//! Library guide: [errors](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::error::Error;
+//! # fn main() {
+//! let _ = Error::Message("example".into());
+//! # }
+//! ```
 
 use thiserror::Error;
 
@@ -350,6 +359,15 @@ pub enum PathOutsideRepoError {
 }
 
 /// The top-level error type for all grit-lib operations.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::error::Error;
+///
+/// let err = Error::Message("repository not found".into());
+/// assert!(err.to_string().contains("repository not found"));
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -610,11 +628,17 @@ pub enum Error {
     #[error(
         "'{path}' is a missing but already registered worktree; use add with --force to override, or prune or remove to clear"
     )]
-    WorktreePathRegisteredMissing { path: String },
+    WorktreePathRegisteredMissing {
+        /// Worktree path that is registered but missing on disk.
+        path: String,
+    },
 
     /// A linked worktree path is already registered and its directory still exists.
     #[error("'{path}' is already a registered worktree")]
-    WorktreePathRegistered { path: String },
+    WorktreePathRegistered {
+        /// Existing registered worktree directory.
+        path: String,
+    },
 
     /// Stash commit object has fewer parents or an invalid shape for apply/show.
     #[error("corrupt stash commit: {0}")]

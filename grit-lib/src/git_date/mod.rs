@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible date parsing and display.
 
 pub mod approx;

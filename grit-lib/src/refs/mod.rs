@@ -12,6 +12,19 @@
 //!
 //! When `extensions.refStorage = reftable`, the reftable backend is used
 //! instead.  The public API is the same; dispatch is handled internally.
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/refs)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! assert!(_repo.refs().read_raw("HEAD")?.is_some());
+//!
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod handle;
 pub mod store;
@@ -2036,6 +2049,14 @@ pub(crate) fn reflog_oid_hex_pair(old: &ObjectId, new: &ObjectId) -> (String, St
     (render(old), render(new))
 }
 
+/// Append one line to the reflog for `refname`.
+///
+/// Creates the reflog file when `force_create` is true or when the ref already
+/// has a reflog. Identity and message are written in Git's standard reflog format.
+///
+/// # Errors
+///
+/// Propagates I/O failures and invalid refname errors.
 pub fn append_reflog(
     git_dir: &Path,
     refname: &str,
@@ -2133,6 +2154,7 @@ mod reflog_fail_inject {
     }
 }
 
+/// Test hook: fail the next reflog append for `refname` (or any ref when `None`).
 #[cfg(test)]
 pub fn set_test_inject_reflog_fail(refname: Option<&str>) {
     reflog_fail_inject::INJECT.with(|c| {
@@ -2179,6 +2201,11 @@ pub struct BranchCommitRefUpdate<'a> {
     pub reflog_message: &'a str,
 }
 
+/// Compare expected and current branch tips for compare-and-swap ref updates.
+///
+/// # Errors
+///
+/// Returns an error when `current` does not match `expected`.
 pub fn verify_branch_commit_cas(
     expected: Option<ObjectId>,
     current: Option<ObjectId>,
@@ -2888,6 +2915,14 @@ pub fn list_refs_for_repository(
     Ok(results)
 }
 
+/// List resolved refs under `git_dir` whose full names start with `prefix`.
+///
+/// Uses the on-disk ref backend (files or reftable) and applies linked-worktree
+/// visibility rules when `git_dir` is a linked worktree git directory.
+///
+/// # Errors
+///
+/// Propagates ref-store open/read failures.
 pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
     let prefix_norm = normalize_list_refs_prefix(git_dir, prefix);
     let prefix = prefix_norm.as_str();

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Commit/tag GPG (and gpgsm/ssh) signing and signature verification.
 //!
 //! This is a port of the parts of Git's `gpg-interface.c` and `commit.c`

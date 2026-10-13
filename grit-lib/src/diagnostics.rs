@@ -3,6 +3,17 @@
 //! Prefix helpers keep `fatal:` / `warning:` literals out of call sites. Structured
 //! [`Warning`] values flow through [`DiagnosticSink`] implementations; human-readable
 //! text is formatted by embedders (for example `grit-cli`), not by `grit-lib`.
+//!
+//! Library guide: [diagnostics](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashSet;
 use std::path::PathBuf;

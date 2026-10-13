@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible wildmatch pattern matching.
 //!
 //! Implements shell-style pattern matching for `?`, `\`, `[]`, and `*`

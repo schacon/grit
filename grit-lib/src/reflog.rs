@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Reflog reading and management.
 //!
 //! The reflog records updates to refs.  Each ref's log is stored at

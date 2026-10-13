@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Merge commit and combined (`--cc` / `-c`) diff helpers.
 //!
 //! These mirror the subset of Git's combine-diff output needed for porcelain

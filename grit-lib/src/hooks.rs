@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Hook execution utilities.
 //!
 //! Implements Git's multihook model: hooks from `hook.<name>.*` config plus the

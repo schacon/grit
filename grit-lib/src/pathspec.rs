@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible pathspec matching (magic tokens and global flags).
 //!
 //! Global flags are read from the same environment variables as Git:

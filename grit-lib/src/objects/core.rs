@@ -142,6 +142,18 @@ const WELL_KNOWN_EMPTY_TREE_LEGACY: [u8; 20] = [
 /// The digest is stored in a fixed 32-byte buffer with an explicit length;
 /// bytes beyond `len` are always zero, so the derived `Eq`/`Ord`/`Hash`
 /// remain correct. The hash algorithm is inferred from the length.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::objects::ObjectId;
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let id = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?;
+/// assert_eq!(id.to_hex(), "4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectId {
     bytes: [u8; MAX_OID_LEN],

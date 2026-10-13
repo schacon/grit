@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Pure protocol-v2 capability parsing and request-fragment building.
 //!
 //! These helpers operate purely on the textual capability/feature lines exchanged during a

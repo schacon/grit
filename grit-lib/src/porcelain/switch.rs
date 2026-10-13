@@ -32,13 +32,16 @@ pub enum SwitchMode {
     },
     /// Create `refs/heads/<branch>` at `start_oid`, then check it out.
     Create {
+        /// New branch name to create under `refs/heads/`.
         branch: String,
+        /// Commit the new branch should point at.
         start_oid: ObjectId,
         /// Label for `branch: Created from …` (e.g. `HEAD`, `main`, `refs/remotes/origin/topic`).
         create_source_label: String,
     },
     /// Detached `HEAD` at `commit`.
     Detached {
+        /// Commit oid for detached `HEAD`.
         commit: ObjectId,
         /// User-facing revision string for the reflog `to` label (e.g. `HEAD~1`).
         reflog_to_label: String,
@@ -48,6 +51,7 @@ pub enum SwitchMode {
 /// Inputs for [`switch_repository`].
 #[derive(Debug, Clone)]
 pub struct SwitchOptions {
+    /// Resolved target branch, create, or detach mode.
     pub mode: SwitchMode,
 }
 
@@ -56,7 +60,9 @@ pub struct SwitchOptions {
 pub struct SwitchOutcome {
     /// Short branch name when attached; empty when detached.
     pub branch: String,
+    /// True when [`SwitchMode::Create`] created a new branch ref.
     pub created: bool,
+    /// True when `HEAD` is detached after the switch.
     pub detached: bool,
     /// Commit `HEAD` resolves to after the switch.
     pub commit: ObjectId,

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Zero-copy in-memory representation of Git pack index (`.idx`) files.
 
 use crate::error::{Error, Result};

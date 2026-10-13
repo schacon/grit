@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Multi-parent combined tree diff (Git `diff_tree_paths` / `find_paths_multitree`).
 //!
 //! Implements the `D(T,P1...Pn)` walk from `tree-diff.c` for merge commits, producing

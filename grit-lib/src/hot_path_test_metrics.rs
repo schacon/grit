@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Per-[`crate::odb::Odb`] hot-path counters for regression tests (test builds only).
 
 use std::cell::RefCell;

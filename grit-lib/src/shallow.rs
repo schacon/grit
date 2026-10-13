@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Shallow repository metadata (`.git/shallow`).
 
 use crate::error::{Error, Result};

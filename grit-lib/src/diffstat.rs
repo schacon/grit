@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible `--stat` / diffstat layout (width, name truncation, bar scaling).
 //!
 //! Matches the width algorithm in Git's `show_stats()` (`diff.c`).

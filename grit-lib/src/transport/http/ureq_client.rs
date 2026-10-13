@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Default [`HttpClient`] backed by `ureq` (feature `http-ureq`).
 //!
 //! This is the batteries-included client for embedders who do not want to wire

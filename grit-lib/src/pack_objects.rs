@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Negotiation-driven pack-objects: enumerate wants minus haves, delta search, stream PACK v2.
 //!
 //! Holds object metadata (not payloads) during planning; reads object bytes from the

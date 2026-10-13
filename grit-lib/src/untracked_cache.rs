@@ -1,5 +1,6 @@
 //! Git index UNTR (untracked cache) — `git/dir.c` / `read-cache.c`.
 #![allow(clippy::too_many_arguments)]
+#![allow(missing_docs)]
 
 use std::collections::BTreeSet;
 use std::fs;

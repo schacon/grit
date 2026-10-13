@@ -1,4 +1,4 @@
-//! Create a bundle file and verify ref tips with [`RepositoryBundles`].
+//! Create a bundle file and verify ref tips with [`RepositoryBundles`](grit_lib::repo_handles::RepositoryBundles).
 //!
 //! Source for the library guide "Bundle" page (included in the docs site).
 

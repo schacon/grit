@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Gitattributes parsing and pattern matching for `check-attr` and validation.
 //!
 //! Implements Git-consistent rule ordering, macro expansion (`[attr]`), `binary`

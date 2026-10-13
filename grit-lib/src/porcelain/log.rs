@@ -28,11 +28,17 @@ use crate::state::{resolve_head, HeadState};
 /// Decoration category for `git log --decorate` colouring (`color.decorate.*`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum DecorationKind {
+    /// Local branch (`refs/heads/*`).
     Branch,
+    /// Remote-tracking branch (`refs/remotes/*`).
     RemoteBranch,
+    /// Annotated or lightweight tag (`refs/tags/*`).
     Tag,
+    /// Stash ref (`refs/stash`).
     Stash,
+    /// Synthetic `HEAD` label when decorating the current tip.
     Head,
+    /// Replace/graft decoration for rewritten history.
     Grafted,
     /// A ref outside the known namespaces (e.g. `refs/hidden/*`, `refs/prefetch/*`).
     /// Git renders these with `DECORATION_NONE` (reset color) and the full refname.
@@ -46,7 +52,9 @@ pub enum DecorationKind {
 pub struct DecorationItem {
     /// Full ref name when this came from a real ref (used for `HEAD -> branch` folding).
     pub refname: Option<String>,
+    /// Short or formatted label shown inside parentheses in `%d` output.
     pub display: String,
+    /// Category used by the CLI to pick `color.decorate.*` sequences.
     pub kind: DecorationKind,
 }
 
@@ -58,7 +66,9 @@ pub type DecorationMap = HashMap<String, Vec<DecorationItem>>;
 /// the library only applies it.
 #[derive(Default, Clone)]
 pub struct DecorationFilter {
+    /// Ref patterns from `--decorate-refs` (must match to decorate).
     pub include: Vec<String>,
+    /// Ref patterns from `--decorate-refs-exclude`.
     pub exclude: Vec<String>,
     /// Excludes from `log.excludeDecoration` config (same effect as `exclude`,
     /// but a matching `--decorate-refs` include overrides them, matching Git).
@@ -66,6 +76,7 @@ pub struct DecorationFilter {
 }
 
 impl DecorationFilter {
+    /// True when no include/exclude patterns are configured.
     pub fn is_empty(&self) -> bool {
         self.include.is_empty() && self.exclude.is_empty() && self.exclude_config.is_empty()
     }

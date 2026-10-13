@@ -2,6 +2,19 @@
 //!
 //! Canonical layout groups loose/packed storage, hashing, deltas, and reachability
 //! bitmaps under this module.
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/objects)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let _odb = _repo.odb();
+//!
+//! # Ok(())
+//! # }
+//! ```
 
 mod core;
 pub mod handle;

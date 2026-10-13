@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Embedder-facing transfer (fetch / push) result & option types, plus the
 //! negotiation-driven pack builder.
 //!

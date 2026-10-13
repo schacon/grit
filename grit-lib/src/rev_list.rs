@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Commit traversal and output planning for `rev-list`.
 //!
 //! This module implements a focused `rev-list` subset used by the v2 test

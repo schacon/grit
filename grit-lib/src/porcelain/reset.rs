@@ -23,6 +23,7 @@ pub enum ResetMode {
 }
 
 impl ResetMode {
+    /// Lowercase mode name (`soft`, `mixed`, `hard`) for logging and `--json` output.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {

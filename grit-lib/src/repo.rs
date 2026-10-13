@@ -14,6 +14,17 @@
 //!   bare repos).
 //! - `work_tree` — `Some(path)` for non-bare repos, `None` for bare.
 //! - [`Odb`] — the loose object database.
+//!
+//! Library guide: [repo](https://grit-scm.com/docs/library/repository)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -215,6 +226,24 @@ impl RepositoryBuilder {
 }
 
 /// A handle to an open Git repository.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::prelude::RepositoryOptions;
+/// use grit_lib::repo::{InitOptions, Repository};
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+/// let reopened = Repository::open(
+///     repo.git_dir(),
+///     &RepositoryOptions::empty().with_work_tree(dir.path()),
+/// )?;
+/// assert_eq!(reopened.git_dir(), repo.git_dir());
+/// # Ok(())
+/// # }
+/// ```
 pub struct Repository {
     git_dir: PathBuf,
     work_tree: Option<PathBuf>,

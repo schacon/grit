@@ -1,4 +1,17 @@
 //! Revision walking: rev-parse, rev-list, merge-base, and commit-graph acceleration.
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/revwalk)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let _ = _repo.rev_walk();
+//!
+//! # Ok(())
+//! # }
+//! ```
 pub mod handle;
 
 pub use handle::RevWalk;
@@ -16,7 +29,7 @@ pub mod merge_base {
     pub use crate::merge_base::*;
 }
 pub mod log_walk {
-    //! Canonical re-export of [`crate::log_walk`].
+    //! Log-order revision walking helpers re-exported at this path.
     pub use crate::log_walk::*;
 }
 pub mod commit_graph {

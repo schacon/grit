@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Sparse-checkout pattern parsing and path membership (cone and non-cone).
 //!
 //! Cone-mode parsing and matching follow Git's `add_pattern_to_hashsets` and

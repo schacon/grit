@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible rerere (`MERGE_RR`, `rr-cache/`, conflict ID hashing).
 //!
 //! Behaviour matches `git/rerere.c` for upstream harness tests.

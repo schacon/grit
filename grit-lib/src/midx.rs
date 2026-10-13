@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Multi-pack-index (MIDX) file writing and minimal reading.
 //!
 //! Writes a Git-compatible `multi-pack-index` file (version 1, SHA-1) covering

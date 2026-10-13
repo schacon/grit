@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! CRLF / EOL conversion and clean/smudge filter support.
 //!
 //! This module handles line-ending conversion when staging files (`git add`)

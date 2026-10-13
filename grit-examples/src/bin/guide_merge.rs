@@ -2,15 +2,15 @@
 //!
 //! Source for the library guide "Merge" page (included in the docs site).
 
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
-use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::diff::merge_file::MergeFavor;
+use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
-use grit_lib::index::write_tree::write_tree_from_index;
 use std::path::{Path, PathBuf};
 
 fn open_repo(root: &Path) -> Result<Repository, grit_lib::error::Error> {

@@ -24,9 +24,13 @@ use crate::merge_file::MergeFavor;
 /// Whitespace-handling flags parsed from `-X<option>` merge-strategy options.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WhitespaceStrategyOptions {
+    /// Ignore all whitespace when comparing lines (`-Xignore-all-space`).
     pub ignore_all_space: bool,
+    /// Ignore whitespace runs when comparing lines (`-Xignore-space-change`).
     pub ignore_space_change: bool,
+    /// Ignore whitespace at end of line (`-Xignore-space-at-eol`).
     pub ignore_space_at_eol: bool,
+    /// Ignore CR at end of line on the old side (`-Xignore-cr-at-eol`).
     pub ignore_cr_at_eol: bool,
 }
 

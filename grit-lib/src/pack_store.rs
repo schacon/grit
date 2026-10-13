@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Repository-scoped pack and MIDX read caches.
 //!
 //! [`PackStore`] holds parsed pack indexes, pack file bytes, directory listings (with mtime

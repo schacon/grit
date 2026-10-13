@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Reference database consistency checks for `git refs verify` and `git fsck --references`.
 //!
 //! Aligns with Git's `refs_fsck` / `files_fsck_*` and `packed_fsck` behavior and message text.

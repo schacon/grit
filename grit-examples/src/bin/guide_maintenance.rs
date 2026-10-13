@@ -2,8 +2,8 @@
 //!
 //! Source for the library guide "Maintenance" page (included in the docs site).
 
-use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::command_runner::hooks::{run_hook, HookResult};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::maintenance::fsck::{fsck_object, FsckObjectOptions};
 use grit_lib::objects::{HashAlgo, ObjectKind};
 use grit_lib::repo::Repository;

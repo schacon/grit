@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible whitespace rules (`core.whitespace`, `whitespace` attribute).
 //!
 //! Ported from Git's `ws.c` / `ws.h` for `git apply` parity.

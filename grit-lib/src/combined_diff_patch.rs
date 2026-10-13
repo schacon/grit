@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-style combined merge diff hunks (`diff --cc` / `diff --combined`).
 //!
 //! This approximates Git's `combine-diff.c` behaviour: per-parent Myers diffs against

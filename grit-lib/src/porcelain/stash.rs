@@ -45,8 +45,11 @@ use crate::write_tree::{is_empty_tree_oid, write_tree_update_index, WriteTreeFla
 /// A single blob entry from a recursively flattened tree.
 #[derive(Clone)]
 pub struct FlatTreeEntry {
+    /// Repository-relative path using `/` separators.
     pub path: String,
+    /// Git tree entry mode (file, symlink, gitlink, …).
     pub mode: u32,
+    /// Blob or subtree object id for this path.
     pub oid: ObjectId,
 }
 

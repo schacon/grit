@@ -1,4 +1,17 @@
 //! Configuration cascade, identity, and repository bootstrap helpers.
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/config)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let _cfg = _repo.config()?;
+//!
+//! # Ok(())
+//! # }
+//! ```
 mod core;
 pub mod handle;
 

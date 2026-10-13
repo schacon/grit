@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! The "promisor-remote" protocol v2 capability (see `gitprotocol-v2(5)` and
 //! `Documentation/config/promisor.adoc`).
 //!

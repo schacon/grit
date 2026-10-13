@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Pack and pack-index helpers for object counting and verification.
 //!
 //! This module implements a focused subset of pack functionality required by

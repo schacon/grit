@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Revision parsing and repository discovery helpers for `rev-parse`.
 //!
 //! This module implements a focused subset of Git's revision parser used by

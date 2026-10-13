@@ -7639,6 +7639,7 @@ pub fn format_stat_line(
     format_stat_line_width(path, insertions, deletions, max_path_len, 0)
 }
 
+/// Format one `--stat` line with explicit path and count column widths.
 pub fn format_stat_line_width(
     path: &str,
     insertions: usize,

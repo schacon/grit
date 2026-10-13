@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Resumable HEAD log walks for bounded `grit log` paging.
 //!
 //! [`LogWalkCursor`] encodes the heap and visited sets of the date-order reachable walk

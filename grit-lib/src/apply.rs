@@ -6,6 +6,17 @@
 //! engine and all CLI output still live in the `grit` crate; only the
 //! text-to-structured-data layer lives here so it can be unit-tested and reused
 //! as a library.
+//!
+//! Library guide: [apply](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::error::{ApplyError, Error, Result};
 use regex::Regex;
@@ -28,10 +39,14 @@ pub struct Hunk {
     pub lines: Vec<HunkLine>,
 }
 
+/// One line in a unified-diff hunk body.
 #[derive(Debug, Clone)]
 pub enum HunkLine {
+    /// Unchanged context line (leading space in the patch).
     Context(String),
+    /// Added line (leading `+`).
     Add(String),
+    /// Removed line (leading `-`).
     Remove(String),
     /// "\ No newline at end of file"
     NoNewline,
@@ -102,7 +117,9 @@ pub enum BinaryPatchSectionKind {
 /// One forward or reverse chunk in a `GIT binary patch`.
 #[derive(Debug, Clone)]
 pub struct BinaryPatchSection {
+    /// Whether this chunk is a full literal or a delta.
     pub kind: BinaryPatchSectionKind,
+    /// Zlib-compressed payload from the `GIT binary patch` section.
     pub compressed: Vec<u8>,
     /// Declared uncompressed size from the section header (`literal N` / `delta N`).
     pub declared_size: usize,
@@ -111,6 +128,7 @@ pub struct BinaryPatchSection {
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
 #[derive(Debug, Clone)]
 pub struct BinaryPatchPayload {
+    /// Forward-direction patch chunk applied when checking out the new blob.
     pub forward: BinaryPatchSection,
     /// Reverse section when present (second `literal`/`delta` block).
     pub reverse: Option<BinaryPatchSection>,

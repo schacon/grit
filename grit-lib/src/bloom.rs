@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Changed-path Bloom filters for commit-graph files (Git `bloom.c` compatible).
 
 use std::collections::BTreeSet;

@@ -312,6 +312,7 @@ impl IndexEntry {
         fe & Self::FLAG_EXT_ON_DISK
     }
 
+    /// Whether extended index flags request skipping overlay tree output.
     #[must_use]
     pub fn overlay_tree_skip_output(&self) -> bool {
         self.flags_extended
@@ -351,7 +352,21 @@ impl IndexEntry {
     }
 }
 
-/// The in-memory representation of the Git index file.
+/// The in-memory representation of the Git index file (staging area).
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::repo::{InitOptions, Repository};
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+/// let index = repo.index_handle().load()?;
+/// assert!(index.entries().is_empty());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Index {
     /// Index format version (2 or 3).

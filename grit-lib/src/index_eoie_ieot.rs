@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! EOIE / IEOT index extensions for parallel index load (Git `read-cache.c` behavior).
 
 use std::collections::BTreeMap;

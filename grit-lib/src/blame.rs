@@ -7,6 +7,17 @@
 //! parent rewrote) are provided. No I/O, no repository access — strings in,
 //! mappings out. [`compute_blame`] and [`blame_file`] drive the per-commit walk and
 //! call these helpers.
+//!
+//! Library guide: [blame](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::ops::RangeInclusive;
 

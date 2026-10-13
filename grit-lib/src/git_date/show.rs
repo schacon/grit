@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Git-compatible date display (`show_date`, `show_date_relative`, strftime handling).
 
 use super::compat::{self, time_t, tm};

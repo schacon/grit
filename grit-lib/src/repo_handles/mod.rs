@@ -2,6 +2,19 @@
 //!
 //! Each handle borrows the repository and exposes domain operations with typed options
 //! instead of scattering free functions across the crate root.
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/repository)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let _ = _repo.remotes();
+//!
+//! # Ok(())
+//! # }
+//! ```
 
 mod bundle;
 mod notes;

@@ -3,6 +3,17 @@
 //! All [`std::process::Command`] usage in non-test library code lives in
 //! [`SystemCommandRunner`]. Embedders and tests use [`RecordingRunner`] or custom
 //! [`CommandRunner`] implementations.
+//!
+//! Library guide: [command_runner](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::VecDeque;
 use std::ffi::OsString;

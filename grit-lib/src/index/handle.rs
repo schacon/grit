@@ -7,6 +7,21 @@ use crate::repo::Repository;
 use crate::split_index::WriteSplitIndexRequest;
 
 /// Load and persist the Git index for one repository.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::repo::{InitOptions, Repository};
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+/// let handle = repo.index_handle();
+/// let index = handle.load()?;
+/// assert!(index.entries().is_empty());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Copy, Clone)]
 pub struct IndexHandle<'repo> {
     repo: &'repo Repository,

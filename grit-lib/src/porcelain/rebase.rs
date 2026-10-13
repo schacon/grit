@@ -45,9 +45,13 @@ use crate::objects::CommitData;
 /// and friends are parsed separately in the CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RebaseTodoCmd {
+    /// Apply the commit as-is (`pick` / `p`).
     Pick,
+    /// Apply then open the editor for the message (`reword` / `r`).
     Reword,
+    /// Meld into the previous commit, discarding this message (`fixup` / `f`).
     Fixup,
+    /// Meld into the previous commit, combining messages (`squash` / `s`).
     Squash,
 }
 
@@ -79,7 +83,9 @@ impl RebaseTodoCmd {
 /// verbatim or opens an editor to amend it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FixupMessageMode {
+    /// Keep the replaced commit message (`fixup -C`).
     UseCommit,
+    /// Open the editor on the replaced message (`fixup -c`).
     EditCommit,
 }
 

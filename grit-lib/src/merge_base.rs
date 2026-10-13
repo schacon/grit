@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Merge-base and reachability primitives.
 //!
 //! This module implements the subset needed by `grit merge-base`:

@@ -12,6 +12,17 @@
 //! Commit creation from the index (write-tree, object write, ref/reflog updates)
 //! lives in [`crate::porcelain::commit`]; the `grit commit` command stages paths
 //! then calls that API.
+//!
+//! Library guide: [commit](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let _repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! # Ok(())
+//! # }
+//! ```
 
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;

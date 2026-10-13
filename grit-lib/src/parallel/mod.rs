@@ -3,6 +3,15 @@
 //! There is no global pool and no environment reads in this module. Embedders and
 //! the CLI pass an explicit [`ThreadPolicy`] (for example `--threads`) when opening
 //! a [`crate::repo::Repository`].
+//!
+//! Library guide: [parallelism](https://grit-scm.com/docs/library/parallelism)
+//!
+//! ```rust
+//! use grit_lib::parallel::ThreadPolicy;
+//! # fn main() {
+//! let _ = ThreadPolicy::default();
+//! # }
+//! ```
 
 mod map;
 mod policy;

@@ -19,6 +19,37 @@
 //! a submodule here and a matching thin handler in `grit-cli`.
 //!
 //! - [`add::stage`] — stage worktree changes into the index without a full status pass.
+//!
+//! # Examples
+//!
+//! ```
+//! use grit_lib::porcelain::status::{self, StatusOptions};
+//! use grit_lib::progress::{NeverCancel, NullProgress};
+//! use grit_lib::repo::{InitOptions, Repository};
+//!
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let mut progress = NullProgress;
+//! let model = status::status(&repo, &StatusOptions::default(), &mut progress)?;
+//! assert!(model.staged.is_empty() && model.unstaged.is_empty());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Library guide: [mod](https://grit-scm.com/docs/library/embedding)
+//!
+//! ```rust
+//! use grit_lib::progress::{NeverCancel, NullProgress};
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let _sink = NullProgress;
+//! let _cancel = NeverCancel;
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod add;
 pub mod branch;

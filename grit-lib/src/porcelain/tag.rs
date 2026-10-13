@@ -54,9 +54,11 @@ pub struct CreateTagRequest {
 /// Result of [`create_tag`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTagOutcome {
+    /// Short tag name (without `refs/tags/`).
     pub name: String,
     /// Object id stored at `refs/tags/<name>` (commit oid or tag object).
     pub oid: ObjectId,
+    /// Whether the tag is lightweight or annotated.
     pub kind: TagKind,
     /// Commit oid when the tag ultimately references a commit.
     pub peeled: Option<ObjectId>,

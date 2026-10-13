@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Commit message trailer parsing and rewriting (Git-compatible).
 //!
 //! Behaviour matches upstream `git/trailer.c` / `git interpret-trailers`.

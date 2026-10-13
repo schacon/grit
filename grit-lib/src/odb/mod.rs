@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Loose object database: reading and writing zlib-compressed Git objects.
 //!
 //! Git stores objects as files under `<git-dir>/objects/<xx>/<38-hex-chars>`,
@@ -123,6 +124,24 @@ fn objects_dir_has_pack_index_files(objects_dir: &Path) -> bool {
 }
 
 /// A loose-object database rooted at a given `objects/` directory.
+///
+/// # Examples
+///
+/// ```
+/// use grit_lib::objects::{ObjectKind, odb::Odb};
+/// use std::path::Path;
+///
+/// # fn main() -> grit_lib::error::Result<()> {
+/// let dir = tempfile::tempdir()?;
+/// let objects = dir.path().join("objects");
+/// std::fs::create_dir_all(&objects)?;
+/// let odb = Odb::new(&objects);
+/// let oid = odb.write(ObjectKind::Blob, b"hello")?;
+/// let obj = odb.read(&oid)?;
+/// assert_eq!(obj.data, b"hello");
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Odb {
     objects_dir: PathBuf,
