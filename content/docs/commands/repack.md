@@ -39,7 +39,7 @@ Preview only:
 
 ```console
 $ grit repack --dry-run
-Would pack 412 reachable objects (380 loose, 0 pack files now).
+Would pack 412 objects (380 loose, 0 pack files now).
 ```
 
 ## JSON output

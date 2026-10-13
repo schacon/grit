@@ -49,7 +49,7 @@ impl HumanRender for RepackOutcome {
         if self.dry_run {
             outln!(
                 w,
-                "Would pack {} reachable objects ({} loose, {} pack files now).",
+                "Would pack {} objects ({} loose, {} pack files now).",
                 self.objects_packed.unwrap_or(0),
                 self.loose_before,
                 self.packs_before

@@ -253,6 +253,84 @@ fn rootless_repo_prunes_unreachable_loose_when_pruning_enabled() {
 }
 
 #[test]
+fn keep_unreachable_preserves_packed_unreachable_like_git_repack_ad() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "main"]);
+    git(dir.path(), &["checkout", "-b", "side"]);
+    std::fs::write(dir.path().join("side.txt"), b"side-only\n").expect("write");
+    git(dir.path(), &["add", "side.txt"]);
+    git(dir.path(), &["commit", "-m", "side commit"]);
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-parse", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("rev-parse");
+    assert!(out.status.success());
+    let orphan_hex = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let orphan = ObjectId::from_hex(&orphan_hex).expect("oid");
+
+    git(dir.path(), &["checkout", "main"]);
+    git(dir.path(), &["repack", "-ad"]);
+
+    git(dir.path(), &["branch", "-D", "side"]);
+    git(dir.path(), &["reflog", "expire", "--expire=now", "--all"]);
+
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    assert!(
+        repo.odb().read(&orphan).is_ok(),
+        "orphan commit must still exist in pack before repack"
+    );
+
+    let git_only = TempDir::new().expect("git-only tempdir");
+    copy_repo_tree(dir.path(), git_only.path()).expect("copy repo");
+
+    repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    git(git_only.path(), &["repack", "-ad", "--keep-unreachable"]);
+
+    fn cat_file_exists(repo_path: &Path, hex: &str) -> bool {
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["cat-file", "-e", hex])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    assert!(
+        cat_file_exists(dir.path(), &orphan_hex),
+        "default grit repack must preserve unreachable objects already in a pack"
+    );
+    assert!(
+        cat_file_exists(git_only.path(), &orphan_hex),
+        "system git repack -ad --keep-unreachable must preserve packed unreachable commit"
+    );
+}
+
+fn copy_repo_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    copy_dir_recursive(src, dst)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn default_repack_preserves_unreachable_loose_like_git_repack_ad() {
     let dir = TempDir::new().expect("tempdir");
     git(dir.path(), &["init", "-b", "main"]);
@@ -280,24 +358,35 @@ fn default_repack_preserves_unreachable_loose_like_git_repack_ad() {
     let orphan_hex = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let orphan = ObjectId::from_hex(&orphan_hex).expect("oid");
 
+    let git_only = TempDir::new().expect("git-only tempdir");
+    copy_repo_tree(dir.path(), git_only.path()).expect("copy repo");
+
     let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
     repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    git(git_only.path(), &["repack", "-ad"]);
+
+    fn cat_file_exists(repo_path: &Path, hex: &str) -> bool {
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["cat-file", "-e", hex])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
     assert!(
-        repo.odb().read(&orphan).is_ok(),
+        cat_file_exists(dir.path(), &orphan_hex),
         "default grit repack must preserve unreachable loose objects"
     );
-
-    git(dir.path(), &["repack", "-ad"]);
-    let out = Command::new("git")
-        .current_dir(dir.path())
-        .args(["cat-file", "-e", &orphan_hex])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("cat-file");
     assert!(
-        out.status.success(),
+        cat_file_exists(git_only.path(), &orphan_hex),
         "system git repack -ad must preserve unreachable loose object"
+    );
+    assert!(
+        repo.odb().read(&orphan).is_ok(),
+        "grit odb must still read preserved orphan"
     );
 }
 
