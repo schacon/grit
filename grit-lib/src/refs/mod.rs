@@ -2336,7 +2336,7 @@ fn pack_refs_files(
             continue;
         }
         let peel = if refname.starts_with("refs/tags/") {
-            crate::commit_graph_write::peel_to_commit(odb, oid)
+            crate::commit_graph_write::peel_fully_for_packed_tag(odb, oid)
         } else {
             None
         };
@@ -4163,16 +4163,15 @@ mod pack_refs_tests {
             write_ref(&git_dir_hook, "refs/heads/race", &c2_hook).expect("concurrent update");
         })));
 
-        let (_path, packed, pruned) =
-            pack_refs_files(&git_dir, repo.odb(), true).expect("pack");
+        let (_path, packed, pruned) = pack_refs_files(&git_dir, repo.odb(), true).expect("pack");
         pack_refs_test_hooks::set_before_prune(None);
         assert!(packed >= 1);
         assert_eq!(pruned, 0, "stale CAS must not delete the updated loose ref");
 
         let resolved = resolve_ref(&git_dir, "refs/heads/race").expect("resolve");
         assert_eq!(resolved, *c2);
-        let packed_body = fs::read_to_string(store::paths::packed_refs_path(&git_dir))
-            .unwrap_or_default();
+        let packed_body =
+            fs::read_to_string(store::paths::packed_refs_path(&git_dir)).unwrap_or_default();
         assert!(
             !packed_body.contains("refs/heads/race"),
             "packed entry for concurrently updated ref must be removed"
@@ -4221,6 +4220,38 @@ mod pack_refs_tests {
         assert!(
             peel_line.contains(&commit.to_hex()),
             "peel must reach commit through nested tags, got {peel_line}"
+        );
+    }
+
+    #[test]
+    fn pack_refs_tree_target_tag_has_peel_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
+        let tag_body = format!(
+            "object {}\ntype tree\ntagger T <t@example.com> 1 +0000\n\ntree tag\n",
+            tree.to_hex()
+        );
+        let tag = repo
+            .odb()
+            .write(ObjectKind::Tag, tag_body.as_bytes())
+            .expect("tag");
+        write_ref(repo.git_dir(), "refs/tags/tree-tag", &tag).expect("tag ref");
+
+        pack_refs_files(repo.git_dir(), repo.odb(), true).expect("pack");
+        let body =
+            fs::read_to_string(store::paths::packed_refs_path(repo.git_dir())).expect("packed");
+        assert!(body.contains("refs/tags/tree-tag"));
+        assert!(
+            body.contains(&format!("^{}", tree.to_hex())),
+            "expected peel to tree: {body}"
         );
     }
 }

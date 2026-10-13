@@ -343,6 +343,48 @@ fn pack_refs_nested_annotated_tags_match_git_dereference() {
     );
 }
 
+#[test]
+fn pack_refs_tree_target_annotated_tag_matches_git() {
+    if !git_available() {
+        eprintln!("SKIP: git unavailable");
+        return;
+    }
+    const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let grit_dir = tempfile::tempdir().expect("tempdir");
+    let git_dir = tempfile::tempdir().expect("tempdir");
+    for root in [grit_dir.path(), git_dir.path()] {
+        git_cmd(root, &["init", "-q", "-b", "main"]);
+        git_cmd(
+            root,
+            &["tag", "-a", "tree-tag", "-m", "on empty tree", EMPTY_TREE],
+        );
+    }
+
+    let grit_repo =
+        Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty()).expect("open");
+    grit_repo
+        .references()
+        .pack(&PackRefsOptions::with_all(true))
+        .expect("pack");
+
+    git_cmd(git_dir.path(), &["pack-refs", "--all"]);
+
+    let grit_packed =
+        fs::read_to_string(grit_dir.path().join(".git/packed-refs")).expect("grit packed");
+    assert!(
+        grit_packed.contains("refs/tags/tree-tag"),
+        "expected tag in packed-refs: {grit_packed}"
+    );
+    assert!(
+        grit_packed.contains(&format!("^{EMPTY_TREE}")),
+        "expected fully-peeled empty tree line: {grit_packed}"
+    );
+    assert_eq!(
+        git_out(grit_dir.path(), &["show-ref", "--dereference", "--tags"]).trim(),
+        git_out(git_dir.path(), &["show-ref", "--dereference", "--tags"]).trim()
+    );
+}
+
 fn write_loose_ref(root: &Path, refname: &str, oid_hex: &str) {
     let rel = refname.strip_prefix("refs/").expect("refs prefix");
     let path = root.join(".git").join("refs").join(rel);

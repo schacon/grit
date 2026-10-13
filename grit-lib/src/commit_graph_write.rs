@@ -699,26 +699,41 @@ pub fn count_referenced_commit_tips(
     Ok(commits.len())
 }
 
-/// Peel `oid` through annotated tags until a commit is reached. Returns `None` if it does not
-/// resolve to a commit.
-pub(crate) fn peel_to_commit(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
+fn tag_object_target(data: &[u8]) -> Option<ObjectId> {
+    let text = std::str::from_utf8(data).ok()?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("object "))
+        .and_then(|rest| ObjectId::from_hex(rest.trim()).ok())
+}
+
+/// Peel `oid` through annotated tags until a non-tag object is reached.
+pub(crate) fn peel_through_annotated_tags(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
     let mut current = oid;
     for _ in 0..16 {
         let obj = odb.read(&current).ok()?;
-        match obj.kind {
-            ObjectKind::Commit => return Some(current),
-            ObjectKind::Tag => {
-                let text = std::str::from_utf8(&obj.data).ok()?;
-                let target = text
-                    .lines()
-                    .find_map(|line| line.strip_prefix("object "))
-                    .and_then(|rest| ObjectId::from_hex(rest.trim()).ok())?;
-                current = target;
-            }
-            _ => return None,
+        if obj.kind != ObjectKind::Tag {
+            return Some(current);
         }
+        current = tag_object_target(&obj.data)?;
     }
     None
+}
+
+/// Peel line for `packed-refs` when `oid` is an annotated tag object (`^` target in Git's
+/// `fully-peeled` format). Lightweight tags (ref points at a non-tag) yield `None`.
+pub(crate) fn peel_fully_for_packed_tag(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
+    let obj = odb.read(&oid).ok()?;
+    if obj.kind != ObjectKind::Tag {
+        return None;
+    }
+    peel_through_annotated_tags(odb, oid)
+}
+
+/// Peel `oid` through annotated tags until a commit is reached. Returns `None` if it does not
+/// resolve to a commit.
+pub(crate) fn peel_to_commit(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
+    peel_through_annotated_tags(odb, oid)
+        .and_then(|peeled| (odb.read(&peeled).ok()?.kind == ObjectKind::Commit).then_some(peeled))
 }
 
 #[cfg(test)]
@@ -925,6 +940,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn atomic_replace_renames_over_existing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(
@@ -946,6 +962,7 @@ mod tests {
         assert_eq!(on_disk, replacement);
     }
 
+    #[test]
     fn collect_reachable_follows_annotated_tag_to_commit() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(
