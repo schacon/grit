@@ -30,12 +30,11 @@ use crate::diff::bloom::BloomFilterSettings;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
 use crate::fsck as repo_fsck;
-use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{
-    clear_pack_midx_state, verify_midx, write_multi_pack_index_with_options,
+    clear_pack_midx_state, write_multi_pack_index_with_options,
     MidxBitmapWriteOutcome, WriteMultiPackIndexOptions, WriteMultiPackIndexResult,
 };
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -388,6 +387,9 @@ pub(crate) fn commit_graph_writes_generation_data(config: &ConfigSet) -> bool {
 }
 
 /// Write a monolithic reachable commit-graph under `objects/info/commit-graph`.
+///
+/// Reachable commits are discovered from [`Repository::refs`](crate::repo::Repository::refs)
+/// (reftable, packed-refs, and linked-worktree visibility), not by scanning `git_dir/refs` alone.
 ///
 /// # Errors
 ///
