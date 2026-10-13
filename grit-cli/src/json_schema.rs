@@ -555,6 +555,12 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("stash_apply", &["stash", "apply"]),
         ("stash_pop", &["stash", "pop"]),
         ("stash_drop", &["stash", "drop"]),
+        ("ignore_check", &["ignore", "check", "noise.log"]),
+        (
+            "ignore_check_all",
+            &["ignore", "check", "--all", "noise.log", "keep.txt"],
+        ),
+        ("ignore_check_json", &["ignore", "check", "keep.txt"]),
         ("worktree_list", &["worktree", "list"]),
         (
             "worktree_add",

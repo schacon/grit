@@ -53,6 +53,44 @@ fn tracked_paths_never_ignored() {
 }
 
 #[test]
+fn trailing_slash_directory_hint_matches_git() {
+    use std::fs;
+
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_test_support::unique_tmp;
+
+    let home = unique_tmp("ignore", "slash-home");
+    let root = unique_tmp("ignore", "slash-dir");
+    fs::create_dir_all(&home).expect("home");
+    assert!(
+        t0008::hermetic_git(&home, &root, &["init"])
+            .status
+            .success(),
+        "git init"
+    );
+    fs::write(root.join(".gitignore"), "missing-dir/\n").expect("gitignore");
+
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&root),
+    )
+    .expect("open");
+    let index = repo.index_handle().load().expect("index");
+    let path = "missing-dir/";
+    let git_map = git_check_ignore_verbose_batch(&home, &root, &[path]);
+    let git = git_map.get(path).expect("git result for missing-dir/");
+    assert!(git.ignored, "git should treat missing-dir/ as ignored");
+
+    let rel =
+        grit_lib::worktree::ignore::normalize_repo_relative(&repo, &root, path).expect("normalize");
+    assert_eq!(rel, path, "trailing slash must be preserved");
+
+    let results = grit_ignore_check(&repo, &index, &[path.to_owned()]);
+    assert_eq!(results.len(), 1);
+    assert_match_eq(path, git, results[0].ignored, &results[0].matched);
+}
+
+#[test]
 fn ignore_source_is_typed() {
     let fx = T0008Repo::setup();
     let repo = fx.open_grit();

@@ -1166,6 +1166,7 @@ pub fn normalize_repo_relative(repo: &Repository, cwd: &Path, path: &str) -> Res
     if path.starts_with(':') {
         return Ok(path.to_owned());
     }
+    let query_as_dir = path.ends_with('/');
     let input = Path::new(path);
     let combined = if input.is_absolute() {
         input.to_path_buf()
@@ -1173,9 +1174,13 @@ pub fn normalize_repo_relative(repo: &Repository, cwd: &Path, path: &str) -> Res
         cwd.join(input)
     };
     let normalized = normalize_path(&combined);
-    let rel = crate::git_path::strip_worktree_prefix(&normalized, work_tree).ok_or_else(|| {
-        Error::PathError(format!("path '{path}' is outside repository work tree"))
-    })?;
+    let mut rel =
+        crate::git_path::strip_worktree_prefix(&normalized, work_tree).ok_or_else(|| {
+            Error::PathError(format!("path '{path}' is outside repository work tree"))
+        })?;
+    if query_as_dir && !rel.is_empty() && !rel.ends_with('/') {
+        rel.push('/');
+    }
     Ok(rel)
 }
 
