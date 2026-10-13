@@ -1,4 +1,4 @@
-//! Exercise [`grit_lib::pathspec`] helpers for line coverage.
+//! Exercise [`grit_lib::worktree::pathspec`] helpers for line coverage.
 
 use grit_lib::worktree::pathspec::{
     bloom_lookup_prefix, bloom_lookup_prefix_with_cwd, context_from_mode_octal,

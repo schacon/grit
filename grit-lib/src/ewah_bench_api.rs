@@ -90,3 +90,21 @@ pub fn popcount_fixture(bytes: &[u8]) -> usize {
         Err(err) => panic!("popcount: {err}"),
     }
 }
+
+#[cfg(test)]
+mod coverage_smoke {
+    use super::{expand_fixture, git_sized_bytes, git_sized_sample, or_into_fixture, popcount_fixture};
+
+    #[test]
+    fn ewah_bench_fixture_helpers() {
+        let bytes = git_sized_bytes();
+        assert!(!bytes.is_empty());
+        let expanded = expand_fixture(bytes);
+        let merged = or_into_fixture();
+        let pop = popcount_fixture(bytes);
+        assert!(expanded > 0);
+        assert!(merged > 0);
+        assert_eq!(pop, expanded);
+        assert_eq!(git_sized_sample(), bytes);
+    }
+}

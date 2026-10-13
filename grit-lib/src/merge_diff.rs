@@ -1124,6 +1124,14 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn dump_sline_two_parent_hunk_body() {
+        let body = combined_hunk_two_parents("alpha\nbeta\n", "beta\ngamma\n", "beta\nmerged\n");
+        assert!(body.contains("@@@"));
+        assert!(body.contains('+'));
+        assert!(body.contains('-'));
+    }
+
+    #[test]
     fn combined_formatters_and_nested_paths() {
         let dir = tempdir().expect("tempdir");
         let odb = Odb::new(dir.path());
