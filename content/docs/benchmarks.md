@@ -347,7 +347,7 @@ Scenario **`fsck-medium`** (`grit-bench fsck`) runs **`grit fsck --no-dangling`*
 
 **Acceptance bar:** ≤**1.1×** git median wall time (same bar as other maintenance hot paths).
 
-**2026-10-13 status:** After aligning workloads (`--no-dangling` on both sides), the committed baseline is still ~**9.4×** git (~**1840 ms** vs ~**196 ms** median on the factory VM). Grit pays full Rust-side loose/pack verification and connectivity walks without the mature C fsck fast paths Git uses on this fixture. **Follow-up:** factory performance pass on repository fsck (parallel pack verification, avoid redundant reads, bitmap-assisted reachability where applicable) — track with the fsck CLI factory step close-out, not by weakening checks to match the ratio.
+**2026-10-13 status:** After aligning workloads (`--no-dangling` on both sides), the committed baseline is still ~**9.4×** git (~**1840 ms** vs ~**196 ms** median on the factory VM). Grit pays full Rust-side loose/pack verification and connectivity walks without the mature C fsck fast paths Git uses on this fixture. **Follow-up:** [factory step #1475](https://maint.grit-scm.com/factory/1475) performance close-out (parallel pack verification, avoid redundant reads, bitmap-assisted reachability where applicable) — do not weaken checks to match the ratio.
 
 ```bash
 cargo build --release -p grit-cli -p grit-utils

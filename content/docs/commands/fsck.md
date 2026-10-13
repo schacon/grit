@@ -11,6 +11,7 @@ order: 4
 grit fsck
 grit fsck --connectivity-only
 grit fsck --dangling
+grit fsck --no-dangling
 grit fsck --strict
 grit verify
 ```

@@ -10,7 +10,7 @@ use grit_lib::index::Index;
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
-use grit_test_support::CliFixture;
+use grit_test_support::{git_hash_object_literally, CliFixture, HashAlgo};
 
 fn grit_fsck(fixture: &CliFixture, extra: &[&str]) -> i32 {
     let mut args = vec!["fsck"];
@@ -70,6 +70,61 @@ fn fsck_cli_exit_codes() {
         grit_fsck(&corrupt, &[]),
         1,
         "missing index blob should exit 1"
+    );
+}
+
+#[test]
+fn fsck_missing_tagger_warning_exits_zero_like_git() {
+    let fix = CliFixture::new();
+    let wt = fix.path();
+    let head = std::process::Command::new("git")
+        .current_dir(wt)
+        .args(["rev-parse", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("rev-parse");
+    assert!(head.status.success());
+    let commit = String::from_utf8(head.stdout)
+        .expect("utf8")
+        .trim()
+        .to_owned();
+    let tag_body = format!("object {commit}\ntype commit\ntag v-no-tagger\n\nannotated\n");
+    let tag_oid = git_hash_object_literally(wt, HashAlgo::Sha1, "tag", tag_body.as_bytes())
+        .expect("write tag literally");
+    let update = std::process::Command::new("git")
+        .current_dir(wt)
+        .args(["update-ref", "refs/tags/ann", &tag_oid])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("update-ref");
+    assert!(update.success());
+
+    let git_fsck = std::process::Command::new("git")
+        .current_dir(wt)
+        .args(["fsck"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git fsck")
+        .code()
+        .unwrap_or(1);
+    assert_eq!(git_fsck, 0, "git fsck should exit 0 for missingTaggerEntry");
+    assert_eq!(
+        grit_fsck(&fix, &[]),
+        0,
+        "grit fsck should exit 0 for warning-class missingTaggerEntry"
+    );
+    assert_eq!(
+        grit_fsck(&fix, &["--json"]),
+        0,
+        "grit fsck --json should exit 0 for missingTaggerEntry"
+    );
+    assert_eq!(
+        grit_fsck(&fix, &["--strict"]),
+        0,
+        "strict should not promote INFO-level missingTaggerEntry to a failing exit"
     );
 }
 

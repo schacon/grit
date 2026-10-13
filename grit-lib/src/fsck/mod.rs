@@ -215,6 +215,56 @@ pub fn issue_msg_id(issue: &FsckIssue) -> &'static str {
     }
 }
 
+/// Git default level for object-buffer fsck msg-ids (`Documentation/fsck-msgids.txt` / `fsck.h`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObjectFsckDefaultLevel {
+    Fatal,
+    Error,
+    Warn,
+    Info,
+    Ignore,
+}
+
+fn object_fsck_default_level(msg_id: &str) -> ObjectFsckDefaultLevel {
+    match msg_id {
+        "nulInHeader" | "unterminatedHeader" => ObjectFsckDefaultLevel::Fatal,
+        "emptyName" | "fullPathname" | "hasDot" | "hasDotdot" | "hasDotgit" | "nullSha1"
+        | "zeroPaddedFilemode" | "nulInCommit" | "largePathname" => ObjectFsckDefaultLevel::Warn,
+        "badFilemode"
+        | "gitmodulesParse"
+        | "gitignoreSymlink"
+        | "gitattributesSymlink"
+        | "mailmapSymlink"
+        | "badTagName"
+        | "missingTaggerEntry" => ObjectFsckDefaultLevel::Info,
+        "extraHeaderEntry" => ObjectFsckDefaultLevel::Ignore,
+        _ => ObjectFsckDefaultLevel::Error,
+    }
+}
+
+fn severity_from_config(config: &ConfigSet, msg_id: &str) -> Option<FsckSeverity> {
+    let key = format!("fsck.{msg_id}");
+    match config.get(&key).map(|s| s.to_ascii_lowercase()).as_deref() {
+        Some("ignore") => Some(FsckSeverity::Warning),
+        Some("warn") => Some(FsckSeverity::Warning),
+        Some("error") => Some(FsckSeverity::Error),
+        _ => None,
+    }
+}
+
+fn object_buffer_fsck_severity(msg_id: &str, config: &ConfigSet, strict: bool) -> FsckSeverity {
+    if let Some(sev) = severity_from_config(config, msg_id) {
+        return sev;
+    }
+    match object_fsck_default_level(msg_id) {
+        ObjectFsckDefaultLevel::Fatal | ObjectFsckDefaultLevel::Error => FsckSeverity::Error,
+        ObjectFsckDefaultLevel::Warn if strict => FsckSeverity::Error,
+        ObjectFsckDefaultLevel::Warn
+        | ObjectFsckDefaultLevel::Info
+        | ObjectFsckDefaultLevel::Ignore => FsckSeverity::Warning,
+    }
+}
+
 /// Resolve severity using `fsck.<msg-id>` and `strict`.
 #[must_use]
 pub fn issue_severity(issue: &FsckIssue, config: &ConfigSet, strict: bool) -> FsckSeverity {
@@ -226,14 +276,13 @@ pub fn issue_severity(issue: &FsckIssue, config: &ConfigSet, strict: bool) -> Fs
         };
     }
     let msg_id = issue_msg_id(issue);
-    let key = format!("fsck.{msg_id}");
-    match config.get(&key).map(|s| s.to_ascii_lowercase()).as_deref() {
-        Some("ignore") => FsckSeverity::Warning,
-        Some("warn") => FsckSeverity::Warning,
-        Some("error") => FsckSeverity::Error,
-        _ if strict => FsckSeverity::Error,
-        _ => FsckSeverity::Error,
+    if matches!(issue, FsckIssue::BadObject { .. }) {
+        return object_buffer_fsck_severity(msg_id, config, strict);
     }
+    if let Some(sev) = severity_from_config(config, msg_id) {
+        return sev;
+    }
+    FsckSeverity::Error
 }
 
 /// Format one issue like Git fsck (`level: path: msgId: detail`).

@@ -3637,112 +3637,6 @@ impl core::marker::UnsafeUnpin for grit_lib::error::SparseCheckoutWarning
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::error::SparseCheckoutWarning
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::error::SparseCheckoutWarning
 pub type grit_lib::error::Result<T> = core::result::Result<T, grit_lib::error::Error>
-pub mod grit_lib::fsck
-#[non_exhaustive] pub enum grit_lib::fsck::FsckIssue
-pub grit_lib::fsck::FsckIssue::BadObject
-pub grit_lib::fsck::FsckIssue::BadObject::error: grit_lib::maintenance::fsck::FsckError
-pub grit_lib::fsck::FsckIssue::BadObject::oid: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::BadRef(grit_lib::refs::refs_fsck::RefsFsckIssue)
-pub grit_lib::fsck::FsckIssue::BrokenLink
-pub grit_lib::fsck::FsckIssue::BrokenLink::mode: u32
-pub grit_lib::fsck::FsckIssue::BrokenLink::name: alloc::string::String
-pub grit_lib::fsck::FsckIssue::BrokenLink::target: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::BrokenLink::tree: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::CommitGraphInvalid
-pub grit_lib::fsck::FsckIssue::CommitGraphInvalid::detail: alloc::string::String
-pub grit_lib::fsck::FsckIssue::CorruptLoose
-pub grit_lib::fsck::FsckIssue::CorruptLoose::oid: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::CorruptLoose::path: std::path::PathBuf
-pub grit_lib::fsck::FsckIssue::HashMismatch
-pub grit_lib::fsck::FsckIssue::HashMismatch::oid: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::HashMismatch::path: std::path::PathBuf
-pub grit_lib::fsck::FsckIssue::IdxMismatch
-pub grit_lib::fsck::FsckIssue::IdxMismatch::pack: std::path::PathBuf
-pub grit_lib::fsck::FsckIssue::MidxInvalid
-pub grit_lib::fsck::FsckIssue::MidxInvalid::details: alloc::vec::Vec<alloc::string::String>
-pub grit_lib::fsck::FsckIssue::MissingObject
-pub grit_lib::fsck::FsckIssue::MissingObject::oid: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::MissingObject::referenced_by: grit_lib::objects::ObjectId
-pub grit_lib::fsck::FsckIssue::PackChecksum
-pub grit_lib::fsck::FsckIssue::PackChecksum::pack: std::path::PathBuf
-impl core::clone::Clone for grit_lib::fsck::FsckIssue
-pub fn grit_lib::fsck::FsckIssue::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckIssue
-pub fn grit_lib::fsck::FsckIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::fsck::FsckIssue
-impl core::marker::Send for grit_lib::fsck::FsckIssue
-impl core::marker::Sync for grit_lib::fsck::FsckIssue
-impl core::marker::Unpin for grit_lib::fsck::FsckIssue
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckIssue
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckIssue
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckIssue
-pub enum grit_lib::fsck::FsckSeverity
-pub grit_lib::fsck::FsckSeverity::Error
-pub grit_lib::fsck::FsckSeverity::Warning
-impl core::clone::Clone for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::fsck::FsckSeverity
-impl core::cmp::PartialEq for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::fsck::FsckSeverity
-impl core::marker::StructuralPartialEq for grit_lib::fsck::FsckSeverity
-impl core::marker::Freeze for grit_lib::fsck::FsckSeverity
-impl core::marker::Send for grit_lib::fsck::FsckSeverity
-impl core::marker::Sync for grit_lib::fsck::FsckSeverity
-impl core::marker::Unpin for grit_lib::fsck::FsckSeverity
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckSeverity
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckSeverity
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckSeverity
-#[non_exhaustive] pub struct grit_lib::fsck::FsckOptions
-pub grit_lib::fsck::FsckOptions::check_dangling: bool
-pub grit_lib::fsck::FsckOptions::connectivity_only: bool
-pub grit_lib::fsck::FsckOptions::strict: bool
-impl grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::connectivity_and_refs(bool) -> Self
-pub fn grit_lib::fsck::FsckOptions::full_repository(bool) -> Self
-pub fn grit_lib::fsck::FsckOptions::with_check_dangling(self, bool) -> Self
-impl core::clone::Clone for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::fsck::FsckOptions
-impl core::cmp::PartialEq for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::eq(&self, &Self) -> bool
-impl core::default::Default for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::default() -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::fsck::FsckOptions
-impl core::marker::StructuralPartialEq for grit_lib::fsck::FsckOptions
-impl core::marker::Freeze for grit_lib::fsck::FsckOptions
-impl core::marker::Send for grit_lib::fsck::FsckOptions
-impl core::marker::Sync for grit_lib::fsck::FsckOptions
-impl core::marker::Unpin for grit_lib::fsck::FsckOptions
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckOptions
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckOptions
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckOptions
-#[non_exhaustive] pub struct grit_lib::fsck::FsckReport
-pub grit_lib::fsck::FsckReport::dangling: alloc::vec::Vec<(grit_lib::objects::ObjectKind, grit_lib::objects::ObjectId)>
-pub grit_lib::fsck::FsckReport::issues: alloc::vec::Vec<grit_lib::fsck::FsckIssue>
-pub grit_lib::fsck::FsckReport::objects_checked: usize
-impl grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::ok(&self, &grit_lib::config::ConfigSet, &grit_lib::fsck::FsckOptions) -> bool
-impl core::clone::Clone for grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::fsck::FsckReport
-impl core::marker::Send for grit_lib::fsck::FsckReport
-impl core::marker::Sync for grit_lib::fsck::FsckReport
-impl core::marker::Unpin for grit_lib::fsck::FsckReport
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckReport
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckReport
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::format_fsck_line(&grit_lib::fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> alloc::string::String
-pub fn grit_lib::fsck::fsck(&grit_lib::repo::Repository, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
-pub fn grit_lib::fsck::issue_msg_id(&grit_lib::fsck::FsckIssue) -> &'static str
-pub fn grit_lib::fsck::issue_severity(&grit_lib::fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::reachability_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub mod grit_lib::index
 pub mod grit_lib::index::handle
 pub struct grit_lib::index::handle::IndexHandle<'repo>
@@ -4427,83 +4321,84 @@ pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject::oid: grit_
 pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject::referenced_by: grit_lib::objects::ObjectId
 pub grit_lib::maintenance::repository_fsck::FsckIssue::PackChecksum
 pub grit_lib::maintenance::repository_fsck::FsckIssue::PackChecksum::pack: std::path::PathBuf
-impl core::clone::Clone for grit_lib::fsck::FsckIssue
-pub fn grit_lib::fsck::FsckIssue::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckIssue
-pub fn grit_lib::fsck::FsckIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::fsck::FsckIssue
-impl core::marker::Send for grit_lib::fsck::FsckIssue
-impl core::marker::Sync for grit_lib::fsck::FsckIssue
-impl core::marker::Unpin for grit_lib::fsck::FsckIssue
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckIssue
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckIssue
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckIssue
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckIssue
+pub fn grit_lib::maintenance::repository_fsck::FsckIssue::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::FsckIssue
+pub fn grit_lib::maintenance::repository_fsck::FsckIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckIssue
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckIssue
 pub enum grit_lib::maintenance::repository_fsck::FsckSeverity
 pub grit_lib::maintenance::repository_fsck::FsckSeverity::Error
 pub grit_lib::maintenance::repository_fsck::FsckSeverity::Warning
-impl core::clone::Clone for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::fsck::FsckSeverity
-impl core::cmp::PartialEq for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::fsck::FsckSeverity
-pub fn grit_lib::fsck::FsckSeverity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::fsck::FsckSeverity
-impl core::marker::StructuralPartialEq for grit_lib::fsck::FsckSeverity
-impl core::marker::Freeze for grit_lib::fsck::FsckSeverity
-impl core::marker::Send for grit_lib::fsck::FsckSeverity
-impl core::marker::Sync for grit_lib::fsck::FsckSeverity
-impl core::marker::Unpin for grit_lib::fsck::FsckSeverity
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckSeverity
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckSeverity
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckSeverity
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckSeverity
+pub fn grit_lib::maintenance::repository_fsck::FsckSeverity::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::cmp::PartialEq for grit_lib::maintenance::repository_fsck::FsckSeverity
+pub fn grit_lib::maintenance::repository_fsck::FsckSeverity::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::FsckSeverity
+pub fn grit_lib::maintenance::repository_fsck::FsckSeverity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
 #[non_exhaustive] pub struct grit_lib::maintenance::repository_fsck::FsckOptions
 pub grit_lib::maintenance::repository_fsck::FsckOptions::check_dangling: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::connectivity_only: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::strict: bool
-impl grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::connectivity_and_refs(bool) -> Self
-pub fn grit_lib::fsck::FsckOptions::full_repository(bool) -> Self
-pub fn grit_lib::fsck::FsckOptions::with_check_dangling(self, bool) -> Self
-impl core::clone::Clone for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::fsck::FsckOptions
-impl core::cmp::PartialEq for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::eq(&self, &Self) -> bool
-impl core::default::Default for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::default() -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckOptions
-pub fn grit_lib::fsck::FsckOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::fsck::FsckOptions
-impl core::marker::StructuralPartialEq for grit_lib::fsck::FsckOptions
-impl core::marker::Freeze for grit_lib::fsck::FsckOptions
-impl core::marker::Send for grit_lib::fsck::FsckOptions
-impl core::marker::Sync for grit_lib::fsck::FsckOptions
-impl core::marker::Unpin for grit_lib::fsck::FsckOptions
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckOptions
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckOptions
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckOptions
+impl grit_lib::maintenance::repository_fsck::FsckOptions
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::connectivity_and_refs(bool) -> Self
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::full_repository(bool) -> Self
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::with_check_dangling(self, bool) -> Self
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckOptions
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::cmp::PartialEq for grit_lib::maintenance::repository_fsck::FsckOptions
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::maintenance::repository_fsck::FsckOptions
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::FsckOptions
+pub fn grit_lib::maintenance::repository_fsck::FsckOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckOptions
 #[non_exhaustive] pub struct grit_lib::maintenance::repository_fsck::FsckReport
 pub grit_lib::maintenance::repository_fsck::FsckReport::dangling: alloc::vec::Vec<(grit_lib::objects::ObjectKind, grit_lib::objects::ObjectId)>
-pub grit_lib::maintenance::repository_fsck::FsckReport::issues: alloc::vec::Vec<grit_lib::fsck::FsckIssue>
+pub grit_lib::maintenance::repository_fsck::FsckReport::issues: alloc::vec::Vec<grit_lib::maintenance::repository_fsck::FsckIssue>
 pub grit_lib::maintenance::repository_fsck::FsckReport::objects_checked: usize
-impl grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::ok(&self, &grit_lib::config::ConfigSet, &grit_lib::fsck::FsckOptions) -> bool
-impl core::clone::Clone for grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::fsck::FsckReport
-pub fn grit_lib::fsck::FsckReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::fsck::FsckReport
-impl core::marker::Send for grit_lib::fsck::FsckReport
-impl core::marker::Sync for grit_lib::fsck::FsckReport
-impl core::marker::Unpin for grit_lib::fsck::FsckReport
-impl core::marker::UnsafeUnpin for grit_lib::fsck::FsckReport
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::fsck::FsckReport
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::fsck::FsckReport
-pub fn grit_lib::maintenance::repository_fsck::format_fsck_line(&grit_lib::fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> alloc::string::String
-pub fn grit_lib::maintenance::repository_fsck::fsck(&grit_lib::repo::Repository, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
-pub fn grit_lib::maintenance::repository_fsck::issue_msg_id(&grit_lib::fsck::FsckIssue) -> &'static str
-pub fn grit_lib::maintenance::repository_fsck::issue_severity(&grit_lib::fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> grit_lib::fsck::FsckSeverity
+impl grit_lib::maintenance::repository_fsck::FsckReport
+pub fn grit_lib::maintenance::repository_fsck::FsckReport::ok(&self, &grit_lib::config::ConfigSet, &grit_lib::maintenance::repository_fsck::FsckOptions) -> bool
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckReport
+pub fn grit_lib::maintenance::repository_fsck::FsckReport::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::FsckReport
+pub fn grit_lib::maintenance::repository_fsck::FsckReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckReport
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckReport
+pub fn grit_lib::maintenance::repository_fsck::format_fsck_line(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> alloc::string::String
+pub fn grit_lib::maintenance::repository_fsck::fsck(&grit_lib::repo::Repository, &grit_lib::maintenance::repository_fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::maintenance::repository_fsck::FsckReport>
+pub fn grit_lib::maintenance::repository_fsck::index_object_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
+pub fn grit_lib::maintenance::repository_fsck::issue_msg_id(&grit_lib::maintenance::repository_fsck::FsckIssue) -> &'static str
+pub fn grit_lib::maintenance::repository_fsck::issue_severity(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> grit_lib::maintenance::repository_fsck::FsckSeverity
 pub fn grit_lib::maintenance::repository_fsck::reachability_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub enum grit_lib::maintenance::FsckSeverity
 pub grit_lib::maintenance::FsckSeverity::Error
@@ -9647,7 +9542,6 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::Recordin
 pub struct grit_lib::prelude::Repository
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
-pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
 pub fn grit_lib::repo::Repository::config(&self) -> grit_lib::error::Result<alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>>
 pub fn grit_lib::repo::Repository::config_handle(&self) -> grit_lib::config::handle::ConfigHandle<'_>
@@ -9656,7 +9550,7 @@ pub fn grit_lib::repo::Repository::diff(&self) -> grit_lib::diff::handle::Diff<'
 pub fn grit_lib::repo::Repository::discover(core::option::Option<&std::path::Path>, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::discovery_info(&self) -> grit_lib::repo::DiscoveryInfo
 pub fn grit_lib::repo::Repository::environment(&self) -> &grit_lib::config::environment::Environment
-pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
+pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::maintenance::repository_fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::maintenance::repository_fsck::FsckReport>
 pub fn grit_lib::repo::Repository::git_dir(&self) -> &std::path::Path
 pub fn grit_lib::repo::Repository::hooks(&self) -> grit_lib::repo_handles::RepositoryHooks<'_>
 pub fn grit_lib::repo::Repository::index_handle(&self) -> grit_lib::index::handle::IndexHandle<'_>
@@ -9675,6 +9569,7 @@ pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::Rep
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
+pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
@@ -12790,7 +12685,6 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo::InitOptions
 pub struct grit_lib::repo::Repository
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
-pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
 pub fn grit_lib::repo::Repository::config(&self) -> grit_lib::error::Result<alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>>
 pub fn grit_lib::repo::Repository::config_handle(&self) -> grit_lib::config::handle::ConfigHandle<'_>
@@ -12799,7 +12693,7 @@ pub fn grit_lib::repo::Repository::diff(&self) -> grit_lib::diff::handle::Diff<'
 pub fn grit_lib::repo::Repository::discover(core::option::Option<&std::path::Path>, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::discovery_info(&self) -> grit_lib::repo::DiscoveryInfo
 pub fn grit_lib::repo::Repository::environment(&self) -> &grit_lib::config::environment::Environment
-pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
+pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::maintenance::repository_fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::maintenance::repository_fsck::FsckReport>
 pub fn grit_lib::repo::Repository::git_dir(&self) -> &std::path::Path
 pub fn grit_lib::repo::Repository::hooks(&self) -> grit_lib::repo_handles::RepositoryHooks<'_>
 pub fn grit_lib::repo::Repository::index_handle(&self) -> grit_lib::index::handle::IndexHandle<'_>
@@ -12818,6 +12712,7 @@ pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::Rep
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
+pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
