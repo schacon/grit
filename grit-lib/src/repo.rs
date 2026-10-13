@@ -657,6 +657,18 @@ impl Repository {
         crate::repo_handles::RepositoryBundles::new(self)
     }
 
+    /// Repack reachable objects into a single pack and prune redundant storage.
+    ///
+    /// # Errors
+    ///
+    /// Propagates pack, prune, or unsupported-backend failures from [`crate::maintenance::repack`].
+    pub fn repack(
+        &self,
+        opts: &crate::maintenance::RepackOptions,
+    ) -> crate::error::Result<crate::maintenance::RepackReport> {
+        crate::maintenance::repack(self, opts)
+    }
+
     /// Resolve `refname` through this repository's ref store.
     ///
     /// # Errors

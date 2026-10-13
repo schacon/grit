@@ -27,9 +27,11 @@ use crate::commit_graph_write::{
 };
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
-use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable};
+use crate::fsck::reachability_roots;
+use crate::gc::prune_loose_unreachable;
 use crate::objects::ObjectId;
 use crate::odb::store::{ObjectStore, WritableObjectStore};
+use crate::repo::Repository;
 
 use super::Odb;
 
@@ -151,7 +153,16 @@ impl Odb {
         let Some(git_dir) = self.config_git_dir() else {
             return Err(Error::UnsupportedObjectStore { operation: "gc" });
         };
-        let roots = collect_referenced_object_roots(git_dir)?;
+        let opts = crate::environment::RepositoryOptions::empty();
+        let repo = if git_dir.file_name().is_some_and(|n| n == ".git") {
+            let wt = git_dir
+                .parent()
+                .ok_or(Error::UnsupportedObjectStore { operation: "gc" })?;
+            Repository::open(git_dir, &opts.with_work_tree(wt))?
+        } else {
+            Repository::open(git_dir, &opts)?
+        };
+        let roots = reachability_roots(&repo)?;
         prune_loose_unreachable(self, &roots, None)?;
         Ok(())
     }

@@ -40,8 +40,10 @@ use crate::midx::{
 };
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::pack::read_pack_index;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_objects::{build_pack, PackBuildOptions};
+use crate::pack_rev::write_pack_rev_sidecar;
 use crate::progress::{NeverCancel, NullProgress};
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
@@ -50,6 +52,7 @@ use crate::reflog::{
 use crate::refs_fsck::{RefsFsckIssue, RefsFsckSeverity};
 use crate::repo::Repository;
 use repo_fsck::FsckIssue as RepoFsckIssue;
+use time::OffsetDateTime;
 
 /// Options for [`repack_all()`].
 #[derive(Debug, Clone)]
@@ -61,6 +64,14 @@ pub struct RepackOptions {
     pub write_commit_graph: bool,
     /// After repack, write a `.bitmap` sidecar for the new pack (files-backed only).
     pub write_bitmap: bool,
+    /// When set, prune unreachable loose objects not newer than this instant after repack.
+    pub prune_older_than: Option<OffsetDateTime>,
+    /// Wall clock for maintenance policy; `None` uses the current UTC time at run time.
+    pub now: Option<OffsetDateTime>,
+    /// When true, skip unreachable loose-object pruning even when [`Self::prune_older_than`] is set.
+    pub keep_unreachable: bool,
+    /// Worker threads for pack indexing (`None` reads `pack.threads` / CPU count).
+    pub threads: Option<usize>,
     /// Override pack-objects settings; `None` uses [`PackBuildOptions::for_local_copy`].
     pub pack_build: Option<PackBuildOptions>,
     /// Config/environment for ingest and pack threads (defaults to repo config).
@@ -75,6 +86,10 @@ impl Default for RepackOptions {
             dry_run: false,
             write_commit_graph: false,
             write_bitmap: false,
+            prune_older_than: None,
+            now: None,
+            keep_unreachable: false,
+            threads: None,
             pack_build: None,
             merged_config: None,
             environment: Environment::empty(),
@@ -93,7 +108,27 @@ impl RepackOptions {
     }
 }
 
-/// Counters and paths produced by [`repack_all`].
+struct RepackDetail {
+    report: RepackReport,
+    prune_packed_loose: usize,
+    unreachable_loose: usize,
+}
+
+/// Counters produced by [`repack`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepackReport {
+    /// New pack files installed (0 or 1 for all-into-one repack).
+    pub packs_written: usize,
+    /// Pack sidecar files removed from `objects/pack/` (excluding `.keep` packs).
+    pub packs_removed: usize,
+    /// Loose object files removed (`prune-packed` plus unreachable prune).
+    pub loose_removed: usize,
+    /// Objects written into the new pack.
+    pub objects: usize,
+}
+
+/// Extended counters and paths produced by [`repack_all`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RepackStats {
@@ -111,6 +146,8 @@ pub struct RepackStats {
     pub removed_pack_files: usize,
     /// Loose objects removed because they were redundant with the new pack.
     pub pruned_loose: usize,
+    /// Unreachable loose objects removed after repack when pruning is enabled.
+    pub unreachable_loose_pruned: usize,
 }
 
 /// Options for [`Repository::write_commit_graph`].
@@ -512,13 +549,18 @@ pub struct GcStats {
 
 /// Repack all reachable objects into a single pack and drop redundant storage.
 ///
-/// Mirrors a minimal `git repack -ad`: one pack for ref roots, delete other packs,
-/// then [`prune_packed_objects`] for loose objects already in the pack.
+/// Mirrors a minimal `git repack -ad`: one pack for [`reachability_roots`], optional `.rev` /
+/// `.bitmap` sidecars, delete other packs, [`prune_packed_objects`], and optional unreachable
+/// loose-object pruning.
 ///
 /// # Errors
 ///
 /// Propagates pack build/install failures, unsupported custom ODB backends, and I/O errors.
-pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats> {
+pub fn repack(repo: &Repository, opts: &RepackOptions) -> Result<RepackReport> {
+    Ok(repack_detail(repo, opts)?.report)
+}
+
+fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail> {
     let odb = repo.odb();
     odb.require_files_primary("repack")?;
     let objects_dir = odb
@@ -528,15 +570,17 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
         })?;
     let pack_dir = objects_dir.join("pack");
 
-    let mut stats = RepackStats {
-        loose_before: count_loose_objects(odb)?,
-        packs_before: count_pack_files(&pack_dir),
-        ..RepackStats::default()
-    };
+    let mut report = RepackReport::default();
+    let loose_before = count_loose_objects(odb)?;
+    let packs_before = count_pack_files(&pack_dir);
 
     let roots = collect_maintenance_object_roots(repo)?;
-    if roots.is_empty() && stats.loose_before == 0 && stats.packs_before == 0 {
-        return Ok(stats);
+    if roots.is_empty() && loose_before == 0 && packs_before == 0 {
+        return Ok(RepackDetail {
+            report,
+            prune_packed_loose: 0,
+            unreachable_loose: 0,
+        });
     }
 
     let cfg = opts
@@ -548,46 +592,143 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
         .unwrap_or_else(|| PackBuildOptions::for_local_copy(cfg.as_ref()));
 
     if opts.dry_run {
-        stats.objects_packed = Some(estimate_reachable_count(odb, &roots)?);
-        return Ok(stats);
+        report.objects = estimate_reachable_count(odb, &roots)?;
+        return Ok(RepackDetail {
+            report,
+            prune_packed_loose: 0,
+            unreachable_loose: 0,
+        });
     }
 
     let pack_bytes = build_pack(odb, &roots, &[], &pack_opts)?;
     if pack_bytes.len() <= 12 + odb.hash_algo().len() {
-        return Ok(stats);
+        return Ok(RepackDetail {
+            report,
+            prune_packed_loose: 0,
+            unreachable_loose: 0,
+        });
     }
 
     clear_pack_midx_state(&pack_dir)?;
 
     let ingest_opts = IngestPackOptions {
         fix_thin: false,
+        threads: opts.threads,
         merged_config: cfg.clone(),
         environment: opts.environment.clone(),
         ..IngestPackOptions::default()
     };
     let ingested = install_pack_bytes(pack_bytes, odb, &ingest_opts)?;
-    stats.objects_packed = Some(ingested.object_ids.len());
-    stats.pack_bytes = ingested.pack_path.metadata().ok().map(|m| m.len());
-    stats.pack_path = Some(ingested.pack_path.clone());
-    stats.removed_pack_files = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
+    report.packs_written = 1;
+    report.objects = ingested.object_ids.len();
+
+    let idx_path = ingested.pack_path.with_extension("idx");
+    let pack_index = read_pack_index(&idx_path)?;
+    if cfg
+        .as_ref()
+        .is_none_or(|c| c.pack_write_reverse_index_default(&opts.environment))
+    {
+        write_pack_rev_sidecar(&pack_index)?;
+    }
+
+    if opts.write_bitmap {
+        let bitmap_opts = PackBitmapWriteOptions::default();
+        let now = repack_now(opts);
+        PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
+            .map_err(|e| Error::CorruptObject(e.to_string()))?;
+    }
+
+    report.packs_removed = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
 
     let pruned = prune_packed_objects(objects_dir, PrunePackedOptions::default())?;
-    stats.pruned_loose = pruned.len();
+    let prune_packed_loose = pruned.len();
+    let mut unreachable_loose = 0usize;
 
-    // After prune-packed reads pack indexes, drop listings so later reads (and external
-    // `git gc` replacing packs) never reuse stale thread-local or catalog state.
     odb.invalidate_packs();
 
     if opts.write_commit_graph {
         write_commit_graph(repo, &CommitGraphOptions::with_changed_paths(true))?;
     }
-    if opts.write_bitmap {
-        let idx_path = ingested.pack_path.with_extension("idx");
-        let bitmap_opts = PackBitmapWriteOptions::default();
-        let _ = PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, SystemTime::UNIX_EPOCH);
+
+    if !opts.keep_unreachable {
+        let keep_newer_than = opts.prune_older_than.map(offset_to_system_time);
+        unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?.pruned;
     }
 
+    report.loose_removed = prune_packed_loose + unreachable_loose;
+    Ok(RepackDetail {
+        report,
+        prune_packed_loose,
+        unreachable_loose,
+    })
+}
+
+/// Like [`repack`], with legacy [`RepackStats`] fields for the CLI.
+pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats> {
+    let odb = repo.odb();
+    let objects_dir = odb
+        .files_objects_dir()
+        .ok_or(Error::UnsupportedObjectStore {
+            operation: "repack",
+        })?;
+    let pack_dir = objects_dir.join("pack");
+    let mut stats = RepackStats {
+        loose_before: count_loose_objects(odb)?,
+        packs_before: count_pack_files(&pack_dir),
+        ..RepackStats::default()
+    };
+    if opts.dry_run {
+        stats.objects_packed = Some(repack_detail(repo, opts)?.report.objects);
+        return Ok(stats);
+    }
+    let detail = repack_detail(repo, opts)?;
+    let report = detail.report;
+    stats.objects_packed = Some(report.objects);
+    stats.removed_pack_files = report.packs_removed;
+    stats.pruned_loose = detail.prune_packed_loose;
+    stats.unreachable_loose_pruned = detail.unreachable_loose;
+    if report.packs_written > 0 {
+        let packs: Vec<_> = fs::read_dir(&pack_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+            .map(|e| e.path())
+            .collect();
+        if packs.len() == 1 {
+            stats.pack_path = Some(packs[0].clone());
+            stats.pack_bytes = packs[0].metadata().ok().map(|m| m.len());
+        }
+    }
     Ok(stats)
+}
+
+fn repack_now(opts: &RepackOptions) -> SystemTime {
+    opts.now
+        .map(offset_to_system_time)
+        .unwrap_or_else(SystemTime::now)
+}
+
+fn offset_to_system_time(odt: OffsetDateTime) -> SystemTime {
+    SystemTime::UNIX_EPOCH
+        + std::time::Duration::new(odt.unix_timestamp().max(0) as u64, odt.nanosecond())
+}
+
+fn apply_gc_prune_policy_to_repack(repack: &mut RepackOptions, policy: &GcLoosePrunePolicy) {
+    match policy {
+        GcLoosePrunePolicy::Disabled => {
+            repack.keep_unreachable = true;
+        }
+        GcLoosePrunePolicy::Enabled { keep_newer_than } => {
+            repack.keep_unreachable = false;
+            repack.prune_older_than = keep_newer_than.map(|t| {
+                let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+                OffsetDateTime::from_unix_timestamp(dur.as_secs() as i64)
+                    .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+            });
+        }
+    }
 }
 
 /// Check ref integrity, reachable object graph, and optional MIDX.
@@ -626,17 +767,23 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
         stats.reflog_entries_pruned = expire_reflogs_for_gc(repo, opts.repack.dry_run, now)?;
     }
 
-    stats.repack = repack_all(repo, &opts.repack)?;
+    let mut repack_opts = opts.repack.clone();
+    apply_gc_prune_policy_to_repack(&mut repack_opts, &prune_policy);
+    if repack_opts.now.is_none() && now != 0 {
+        repack_opts.now = OffsetDateTime::from_unix_timestamp(now).ok();
+    }
+    stats.repack = repack_all(repo, &repack_opts)?;
 
     if opts.repack.dry_run {
         return Ok(stats);
     }
 
-    let roots = collect_maintenance_object_roots(repo)?;
-    stats.prune = match prune_policy {
-        GcLoosePrunePolicy::Disabled => PruneStats::default(),
-        GcLoosePrunePolicy::Enabled { keep_newer_than } => {
-            prune_loose_unreachable(odb, &roots, keep_newer_than)?
+    stats.prune = if repack_opts.keep_unreachable {
+        PruneStats::default()
+    } else {
+        PruneStats {
+            pruned: stats.repack.unreachable_loose_pruned,
+            kept: 0,
         }
     };
     Ok(stats)

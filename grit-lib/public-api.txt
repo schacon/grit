@@ -4753,8 +4753,12 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::PackRefsRep
 #[non_exhaustive] pub struct grit_lib::maintenance::RepackOptions
 pub grit_lib::maintenance::RepackOptions::dry_run: bool
 pub grit_lib::maintenance::RepackOptions::environment: grit_lib::config::environment::Environment
+pub grit_lib::maintenance::RepackOptions::keep_unreachable: bool
 pub grit_lib::maintenance::RepackOptions::merged_config: core::option::Option<grit_lib::config::ConfigSet>
+pub grit_lib::maintenance::RepackOptions::now: core::option::Option<time::offset_date_time::OffsetDateTime>
 pub grit_lib::maintenance::RepackOptions::pack_build: core::option::Option<grit_lib::objects::pack_objects::PackBuildOptions>
+pub grit_lib::maintenance::RepackOptions::prune_older_than: core::option::Option<time::offset_date_time::OffsetDateTime>
+pub grit_lib::maintenance::RepackOptions::threads: core::option::Option<usize>
 pub grit_lib::maintenance::RepackOptions::write_bitmap: bool
 pub grit_lib::maintenance::RepackOptions::write_commit_graph: bool
 impl grit_lib::maintenance::RepackOptions
@@ -4772,6 +4776,28 @@ impl core::marker::Unpin for grit_lib::maintenance::RepackOptions
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::RepackOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::RepackOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::RepackOptions
+#[non_exhaustive] pub struct grit_lib::maintenance::RepackReport
+pub grit_lib::maintenance::RepackReport::loose_removed: usize
+pub grit_lib::maintenance::RepackReport::objects: usize
+pub grit_lib::maintenance::RepackReport::packs_removed: usize
+pub grit_lib::maintenance::RepackReport::packs_written: usize
+impl core::clone::Clone for grit_lib::maintenance::RepackReport
+pub fn grit_lib::maintenance::RepackReport::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::RepackReport
+impl core::cmp::PartialEq for grit_lib::maintenance::RepackReport
+pub fn grit_lib::maintenance::RepackReport::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::maintenance::RepackReport
+pub fn grit_lib::maintenance::RepackReport::default() -> Self
+impl core::fmt::Debug for grit_lib::maintenance::RepackReport
+pub fn grit_lib::maintenance::RepackReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::RepackReport
+impl core::marker::Freeze for grit_lib::maintenance::RepackReport
+impl core::marker::Send for grit_lib::maintenance::RepackReport
+impl core::marker::Sync for grit_lib::maintenance::RepackReport
+impl core::marker::Unpin for grit_lib::maintenance::RepackReport
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::RepackReport
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::RepackReport
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::RepackReport
 #[non_exhaustive] pub struct grit_lib::maintenance::RepackStats
 pub grit_lib::maintenance::RepackStats::loose_before: usize
 pub grit_lib::maintenance::RepackStats::objects_packed: core::option::Option<usize>
@@ -4780,6 +4806,7 @@ pub grit_lib::maintenance::RepackStats::pack_path: core::option::Option<std::pat
 pub grit_lib::maintenance::RepackStats::packs_before: usize
 pub grit_lib::maintenance::RepackStats::pruned_loose: usize
 pub grit_lib::maintenance::RepackStats::removed_pack_files: usize
+pub grit_lib::maintenance::RepackStats::unreachable_loose_pruned: usize
 impl core::clone::Clone for grit_lib::maintenance::RepackStats
 pub fn grit_lib::maintenance::RepackStats::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::RepackStats
@@ -4803,6 +4830,7 @@ pub fn grit_lib::maintenance::fsck(&grit_lib::repo::Repository, &grit_lib::maint
 pub fn grit_lib::maintenance::gc(&grit_lib::repo::Repository, &grit_lib::maintenance::GcOptions) -> grit_lib::error::Result<grit_lib::maintenance::GcStats>
 pub fn grit_lib::maintenance::pack_refs(&grit_lib::repo::Repository, &grit_lib::maintenance::PackRefsOptions) -> grit_lib::error::Result<grit_lib::maintenance::PackRefsReport>
 pub fn grit_lib::maintenance::remove_superseded_pack_files(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<usize>
+pub fn grit_lib::maintenance::repack(&grit_lib::repo::Repository, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::maintenance::repack_all(&grit_lib::repo::Repository, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackStats>
 pub fn grit_lib::maintenance::write_commit_graph(&grit_lib::repo::Repository, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
 pub fn grit_lib::maintenance::write_midx(&grit_lib::repo::Repository, &grit_lib::maintenance::MidxOptions) -> grit_lib::error::Result<grit_lib::maintenance::MidxWriteReport>
@@ -7259,6 +7287,7 @@ pub fn grit_lib::objects::pack_rev::rev_path_for_index(&std::path::Path) -> std:
 pub fn grit_lib::objects::pack_rev::try_rev_positions_in_pack_order(&[u8], usize) -> core::option::Option<alloc::vec::Vec<u32>>
 pub fn grit_lib::objects::pack_rev::verify_pack_rev_file(&std::path::Path, &grit_lib::objects::pack::PackIndex) -> core::result::Result<(), alloc::string::String>
 pub fn grit_lib::objects::pack_rev::verify_pack_rev_file_contents(&[u8], &grit_lib::objects::pack::PackIndex, &str) -> core::result::Result<(), alloc::string::String>
+pub fn grit_lib::objects::pack_rev::write_pack_rev_sidecar(&grit_lib::objects::pack::PackIndex) -> grit_lib::error::Result<()>
 pub mod grit_lib::objects::pack_store
 pub mod grit_lib::objects::pack_store::test_hooks
 pub fn grit_lib::objects::pack_store::test_hooks::implicit_stores_created() -> usize
@@ -9617,6 +9646,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::command_runner::Recordin
 pub struct grit_lib::prelude::Repository
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
+pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
 pub fn grit_lib::repo::Repository::config(&self) -> grit_lib::error::Result<alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>>
 pub fn grit_lib::repo::Repository::config_handle(&self) -> grit_lib::config::handle::ConfigHandle<'_>
@@ -12758,6 +12788,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo::InitOptions
 pub struct grit_lib::repo::Repository
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::bundles(&self) -> grit_lib::repo_handles::RepositoryBundles<'_>
+pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::repo::Repository::command_runner(&self) -> alloc::rcs::arc::Arc<dyn grit_lib::command_runner::CommandRunner>
 pub fn grit_lib::repo::Repository::config(&self) -> grit_lib::error::Result<alloc::rcs::arc::Arc<grit_lib::config::ConfigSet>>
 pub fn grit_lib::repo::Repository::config_handle(&self) -> grit_lib::config::handle::ConfigHandle<'_>

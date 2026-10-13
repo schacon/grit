@@ -2,10 +2,15 @@
 //!
 //! Maps pack-file order (sorted by object offset) to index positions in the `.idx` OID table.
 
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
+use crate::error::{Error, Result};
 use crate::hash::verify_trailer;
 use crate::objects::HashAlgo;
 use crate::pack::PackIndex;
-use std::path::Path;
+use tempfile::NamedTempFile;
 
 /// Magic `RIDX` in big-endian form (same as Git's `RIDX_SIGNATURE`).
 pub const RIDX_SIGNATURE: u32 = 0x5249_4458;
@@ -99,6 +104,37 @@ pub fn build_pack_rev_bytes_from_index_order_offsets_and_checksum(
     debug_assert_eq!(out.len(), total_len);
 
     out
+}
+
+/// Write a valid `.rev` sidecar for `index` when missing or corrupt.
+///
+/// # Errors
+///
+/// Propagates pack read or I/O failures while building or publishing the sidecar.
+pub fn write_pack_rev_sidecar(index: &PackIndex) -> Result<()> {
+    let rev_path = rev_path_for_index(&index.idx_path);
+    if rev_path.is_file() && verify_pack_rev_file(&rev_path, index).is_ok() {
+        return Ok(());
+    }
+    let hash_len = index.hash_bytes();
+    let pack_data = fs::read(&index.pack_path).map_err(Error::Io)?;
+    if pack_data.len() < hash_len {
+        return Err(Error::CorruptObject("pack file too short for rev".into()));
+    }
+    let pack_checksum = pack_data[pack_data.len() - hash_len..].to_vec();
+    let offsets: Vec<u64> = (0..index.len()).map(|i| index.offset_at(i)).collect();
+    let rev_bytes =
+        build_pack_rev_bytes_from_index_order_offsets_and_checksum(&offsets, &pack_checksum);
+    let parent = rev_path.parent().ok_or_else(|| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "rev path has no parent",
+        ))
+    })?;
+    let tmp = NamedTempFile::new_in(parent).map_err(Error::Io)?;
+    tmp.as_file().write_all(&rev_bytes).map_err(Error::Io)?;
+    tmp.persist(&rev_path).map_err(|e| Error::Io(e.error))?;
+    Ok(())
 }
 
 /// Path for the reverse index alongside a `.idx` file (`other.idx` → `other.rev`).
