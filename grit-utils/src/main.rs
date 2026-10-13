@@ -6,6 +6,7 @@ use grit_utils::binary::{require_hyperfine, resolve_binary};
 use grit_utils::bitmap_suite::{run_bitmaps_suite, BitmapRunConfig};
 use grit_utils::compare::compare_files;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
+use grit_utils::ignore_suite::run_ignore_suite;
 use grit_utils::network_fixture::NetworkProfile;
 use grit_utils::network_suite::{
     prepare_network_clone, prepare_network_fetch_incr, prepare_network_fetch_noop,
@@ -151,6 +152,8 @@ enum Cmd {
     },
     /// Ref workloads (for-each-ref, update-ref --stdin) on 100k-ref fixtures
     Refs,
+    /// `grit ignore check` vs `git check-ignore --stdin` on 1000 paths
+    Ignore,
     /// Internal: library-backed workloads for ODB benchmarks
     #[command(hide = true)]
     Drive {
@@ -776,6 +779,11 @@ fn main() -> Result<()> {
             };
             let bench_exe = std::env::current_exe().context("current exe")?;
             run_refs_suite(&hyperfine, &git, &grit, &bench_exe, &cfg, timestamp)?
+        }
+        Cmd::Ignore => {
+            eprintln!("Running ignore check benchmarks...");
+            let cfg = run_config(&cli, false);
+            run_ignore_suite(&hyperfine, &git, &grit, &cfg, timestamp)?
         }
         Cmd::HotPaths {
             sizes,

@@ -9,6 +9,7 @@ pub mod compare;
 pub mod fixture;
 pub mod hot_path_fixture;
 pub mod hyperfine;
+pub mod ignore_suite;
 pub mod machine;
 pub mod network_fixture;
 pub mod network_http;
