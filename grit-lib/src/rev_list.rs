@@ -9173,6 +9173,64 @@ mod line_coverage_tests {
     }
 
     #[test]
+    #[test]
+    fn ultrawide_history_ordering_and_filter_surface() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(640, true);
+        repo.odb().write_commit_graph()?;
+        for i in 0..48 {
+            fs::write(
+                repo.git_dir().join(format!("refs/heads/extra-{i}")),
+                format!("{tip}\n"),
+            )
+            .expect("extra ref");
+        }
+        for ordering in [
+            OrderingMode::Default,
+            OrderingMode::Topo,
+            OrderingMode::DateOrderWalk,
+            OrderingMode::AuthorDateWalk,
+            OrderingMode::AuthorDateTopo,
+        ] {
+            for fp in [false, true] {
+                for objects in [false, true] {
+                    let opts = RevListOptions {
+                        ordering,
+                        first_parent: fp,
+                        reverse: fp,
+                        boundary: true,
+                        count: objects,
+                        objects,
+                        all_refs: objects,
+                        use_commit_graph: true,
+                        use_commit_graph_bloom: objects,
+                        use_bitmap_index: objects,
+                        paths: vec!["tracked.txt".into()],
+                        full_history: true,
+                        simplify_merges: !fp,
+                        sparse: fp,
+                        left_right: fp,
+                        cherry_mark: fp,
+                        ancestry_path: objects,
+                        ancestry_path_bottoms: vec![tip],
+                        filter: Some(ObjectFilter::TreeDepth(6)),
+                        filter_print_omitted: true,
+                        include_reflog_entries: fp,
+                        max_count: Some(96),
+                        ..RevListOptions::default()
+                    };
+                    let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+                    let _ = rev_list(
+                        &repo,
+                        &[String::from("main"), String::from("side")],
+                        &[],
+                        &opts,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
 

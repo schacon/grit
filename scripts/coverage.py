@@ -198,12 +198,14 @@ def llvm_cov_missing_src_files(
 def complete_library_stats(
     stats: dict[str, LineStats], *, src_root: Path | None = None
 ) -> dict[str, LineStats]:
-    """Merge llvm-cov stats with zero-covered placeholders for every tree file."""
+    """Merge llvm-cov stats with zero-covered placeholders for orphan sources only.
+
+    Referenced module files that llvm-cov omits from JSON (typically small `mod.rs`
+    re-export shims) are left out of the merged map so they are not counted as 0%.
+    """
     root = src_root or GRIT_LIB_SRC
     out = dict(stats)
-    for rel in grit_lib_src_rs_files(src_root=root):
-        if rel in out:
-            continue
+    for rel in llvm_cov_missing_src_files(out, src_root=root):
         line_count = count_source_lines_for_coverage(root / rel)
         out[rel] = LineStats(count=line_count, covered=0)
     return out

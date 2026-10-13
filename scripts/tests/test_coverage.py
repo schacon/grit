@@ -205,6 +205,20 @@ minimum = 50.0
                 )
             )
 
+    def test_referenced_module_omitted_from_json_not_zero_filled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "grit-lib" / "src"
+            src.mkdir(parents=True)
+            (src / "lib.rs").write_text("mod shim;\nmod included;\n", encoding="utf-8")
+            (src / "shim.rs").write_text("pub fn shim_only() {}\n", encoding="utf-8")
+            (src / "included.rs").write_text("pub fn covered() {}\n", encoding="utf-8")
+            stats = {"included.rs": cov.LineStats(count=10, covered=8)}
+            complete = cov.complete_library_stats(stats, src_root=src)
+            self.assertNotIn("shim.rs", complete)
+            total = cov.library_total_stats(stats, src_root=src)
+            self.assertEqual(total.count, 10)
+            self.assertEqual(total.covered, 8)
+
     def test_total_includes_omitted_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "grit-lib" / "src"
