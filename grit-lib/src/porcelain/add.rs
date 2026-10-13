@@ -20,7 +20,8 @@ use crate::index::{
 use crate::objects::{parse_commit, parse_tree, ObjectId};
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
-use crate::pathspec::{has_glob_chars, pathspec_is_exclude};
+use crate::pathspec::pathspec_is_exclude;
+use crate::porcelain::pathspec_match::pathspec_matches_known_in_repository;
 use crate::porcelain::stage_tracked::stage_tracked_modifications_in_index;
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
@@ -887,27 +888,13 @@ fn selector_matches_known(
     repo: &Repository,
     resolved: &str,
     known: &[String],
-    work_tree: &Path,
+    _work_tree: &Path,
 ) -> Result<bool> {
     let spec = [resolved.to_owned()];
     if known.iter().any(|p| repo.paths_match_pathspecs(p, &spec)) {
         return Ok(true);
     }
-    if has_glob_chars(resolved) || resolved.starts_with(":(") {
-        return Ok(false);
-    }
-    if !resolved.starts_with(':') {
-        let precompose = repo.pathspec_precompose_enabled();
-        if precompose {
-            let staged = resolve_worktree_path_for_staging(work_tree, resolved, true);
-            if staged.abs.exists() {
-                return Ok(true);
-            }
-        } else if work_tree.join(resolved).exists() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    pathspec_matches_known_in_repository(repo, resolved)
 }
 
 fn stage_gitlink_at(

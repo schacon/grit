@@ -1,11 +1,11 @@
 //! NFD argv pathspecs match NFC index paths when precompose is enabled (issue #1007).
 
+use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
+use grit_lib::repo::Repository;
 use grit_lib::worktree::pathspec::{
     matches_pathspec_list_precompose, precompose_argv_pathspec,
     resolve_pathspec_with_argv_precompose,
 };
-use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
-use grit_lib::repo::Repository;
 use grit_lib::{config::environment::RepositoryOptions, index::Index};
 use grit_test_support::{grit_cmd, unique_tmp};
 use std::fs;

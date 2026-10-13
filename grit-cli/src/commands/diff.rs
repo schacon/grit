@@ -27,6 +27,7 @@ use grit_lib::diff::{
 use grit_lib::index::Index;
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
+use grit_lib::porcelain::pathspec_match::ensure_pathspec_matches_known_in_repository;
 use grit_lib::revwalk::merge_base::merge_base_for_diff_two_commits;
 use grit_lib::revwalk::rev_parse::{
     peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
@@ -201,7 +202,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             } else if let Ok(oid) = resolve_diff_commit(&repo, spec) {
                 commit_changes(&repo, &oid)?
             } else {
-                path_filter_unstaged_changes(&repo, spec)?
+                single_argument_path_unstaged_diff(&repo, spec)?
             }
         }
         2 => {
@@ -262,8 +263,8 @@ struct FileChange {
     content_changed: bool,
 }
 
-/// Unstaged changes for one resolved pathspec (same as `git diff -- <path>`).
-fn path_filter_unstaged_changes(
+/// Unstaged diff for one pathspec argument when revision parsing failed (`git diff <path>`).
+fn single_argument_path_unstaged_diff(
     repo: &grit_lib::repo::Repository,
     pathspec: &str,
 ) -> Result<Vec<FileChange>> {
@@ -278,6 +279,8 @@ fn path_filter_unstaged_changes(
         Some(repo.git_dir()),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
+    ensure_pathspec_matches_known_in_repository(repo, pathspec, &resolved)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let specs = vec![resolved];
     let all = unstaged_changes(repo)?;
     Ok(all
