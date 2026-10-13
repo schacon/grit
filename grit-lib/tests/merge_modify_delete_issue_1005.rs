@@ -84,7 +84,6 @@ fn modify_delete_conflict_materializes_incoming_version_and_resolves_with_add_or
     let index = repo.index_handle().load().expect("index after add");
     assert!(!index.has_unmerged_entries());
     assert!(index.get(b"f", 0).is_some());
-
 }
 
 #[test]
@@ -92,8 +91,7 @@ fn modify_delete_conflict_resolves_by_accepting_deletion() {
     let (_tmp, repo) = issue_1005_repo();
     let root = repo.work_tree().expect("worktree");
     let main_oid = ObjectId::from_hex(&git(root, &["rev-parse", "HEAD"]).trim()).expect("main");
-    let feat_oid =
-        ObjectId::from_hex(&git(root, &["rev-parse", "feat"]).trim()).expect("feat");
+    let feat_oid = ObjectId::from_hex(&git(root, &["rev-parse", "feat"]).trim()).expect("feat");
     let outcome =
         integrate_branch(&repo, "refs/heads/main", main_oid, feat_oid, "feat").expect("merge");
     assert!(matches!(outcome, IntegrateBranchOutcome::Conflicts { .. }));
