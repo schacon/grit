@@ -27,7 +27,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
-use crate::diff::DiffEntry;
+use crate::diff::{is_unregistered_embedded_git_repo, DiffEntry};
 use crate::error::Result;
 use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
@@ -431,6 +431,15 @@ pub fn expand_untracked_for_staging_with_rules(
         }
         let dir = path.trim_end_matches('/').to_owned();
         if dir.is_empty() {
+            continue;
+        }
+        let abs_dir = work_tree.join(&dir);
+        let mut ignore = rules.ignore().clone();
+        if ignore.is_path_ignored(repo, Some(index), &dir, true)? {
+            continue;
+        }
+        if is_unregistered_embedded_git_repo(index, &dir, &abs_dir) {
+            expanded.push(format!("{dir}/"));
             continue;
         }
         let narrow = if pathspecs.is_empty() {
@@ -939,6 +948,11 @@ fn visit_untracked_directory(
     // Fast prune: in default ignored mode, a directory excluded as a directory cannot contribute
     // visible untracked paths (and tracked descendants were handled above).
     if ignored_mode == IgnoredMode::No && matcher.is_path_ignored(repo, Some(index), rel, true)? {
+        return Ok(());
+    }
+
+    if !rel.is_empty() && is_unregistered_embedded_git_repo(index, rel, abs) {
+        untracked_out.push(format!("{rel}/"));
         return Ok(());
     }
 

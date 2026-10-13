@@ -4,13 +4,13 @@
 //! [`StageMode::All`] is selected). It does **not** compute the index-vs-HEAD diff
 //! that full [`super::status::status`] requires.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::Path;
 
 use crate::diff::{
-    materialize_worktree_blob, mode_from_metadata, read_submodule_head_oid, DiffEntry,
-    DiffIndexToWorktreeOptions, DiffStatus,
+    is_unregistered_embedded_git_repo, materialize_worktree_blob, mode_from_metadata,
+    read_submodule_head_oid, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::hash::{try_par_hash_with, ParallelHashError, Parallelism};
@@ -493,6 +493,61 @@ fn stage_ignorecase_spelling_updates(
     Ok(updated)
 }
 
+fn embedded_gitlink_root_for_path(
+    index: &Index,
+    work_tree: &Path,
+    path: &str,
+    precompose_unicode: bool,
+) -> Option<String> {
+    let mut rel =
+        resolve_worktree_path_for_staging(work_tree, path, precompose_unicode).index_relpath;
+    loop {
+        if rel.is_empty() {
+            return None;
+        }
+        let abs = work_tree.join(&rel);
+        if is_unregistered_embedded_git_repo(index, &rel, &abs) {
+            return Some(rel.trim_end_matches('/').to_owned());
+        }
+        rel = match rel.rfind('/') {
+            Some(0) => return None,
+            Some(i) => rel[..i].to_string(),
+            None => return None,
+        };
+    }
+}
+
+fn collapse_embedded_git_repo_untracked_paths(
+    index: &Index,
+    work_tree: &Path,
+    untracked: &[String],
+    precompose_unicode: bool,
+) -> Vec<String> {
+    let mut roots: BTreeSet<String> = BTreeSet::new();
+    let mut plain = Vec::new();
+    for path in untracked {
+        if let Some(root) =
+            embedded_gitlink_root_for_path(index, work_tree, path, precompose_unicode)
+        {
+            roots.insert(root);
+        } else {
+            plain.push(path.clone());
+        }
+    }
+    let mut out: Vec<String> = plain
+        .into_iter()
+        .filter(|path| {
+            !roots
+                .iter()
+                .any(|root| path == root || path.starts_with(&format!("{root}/")))
+        })
+        .collect();
+    out.extend(roots);
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stage_untracked_paths_parallel(
     repo: &Repository,
@@ -512,10 +567,13 @@ fn stage_untracked_paths_parallel(
         .and_then(|r| r.ok())
         .unwrap_or(false);
 
+    let untracked =
+        collapse_embedded_git_repo_untracked_paths(index, work_tree, untracked, precompose_unicode);
+
     let mut batch_inputs: Vec<WorktreeBlobReadInput> = Vec::new();
     let mut deferred: Vec<String> = Vec::new();
 
-    for path in untracked {
+    for path in &untracked {
         if !matches(path) {
             continue;
         }
@@ -523,6 +581,10 @@ fn stage_untracked_paths_parallel(
             continue;
         }
         let resolved = resolve_worktree_path_for_staging(work_tree, path, precompose_unicode);
+        if is_unregistered_embedded_git_repo(index, &resolved.index_relpath, &resolved.abs) {
+            deferred.push(resolved.index_relpath.trim_end_matches('/').to_owned());
+            continue;
+        }
         let file_attrs = rules.file_attrs(&resolved.index_relpath, false);
         batch_inputs.push(WorktreeBlobReadInput {
             abs: resolved.abs,
@@ -610,6 +672,7 @@ fn stage_untracked_path(
     rules: &WorktreeRules,
     index: &mut Index,
 ) -> Result<()> {
+    let rel_path = rel_path.trim_end_matches('/');
     let precompose_unicode = rules
         .config()
         .get_bool("core.precomposeunicode")
@@ -1238,6 +1301,36 @@ mod tests {
     fn set_branch_head(repo: &Repository, head: ObjectId) {
         let main = repo.git_dir().join("refs/heads/main");
         fs::write(main, format!("{head}\n")).unwrap();
+    }
+
+    #[test]
+    fn stage_all_records_unregistered_embedded_repo_as_gitlink() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        fs::write(root.join("a"), b"a\n").unwrap();
+        let sub = root.join("inner");
+        fs::create_dir_all(&sub).unwrap();
+        let sub_repo = open_nested_repo(&sub);
+        let head = commit_in_repo(&sub_repo, "i", b"i\n", "i");
+        set_branch_head(&sub_repo, head);
+
+        stage(
+            &repo,
+            &StageOptions {
+                pathspecs: Vec::new(),
+                pathspec_sources: Vec::new(),
+                mode: StageMode::All,
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+
+        let index = repo.load_index().unwrap();
+        let entry = index.get(b"inner", 0).expect("gitlink at inner");
+        assert_eq!(entry.mode, MODE_GITLINK);
+        assert_eq!(entry.oid, head);
+        assert!(index.get(b"inner/i", 0).is_none());
     }
 
     #[test]

@@ -8332,6 +8332,28 @@ pub fn submodule_embedded_git_dir(sub_dir: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Whether `abs` is a nested Git checkout (embedded `.git`) not already indexed as a gitlink.
+///
+/// Matches Git's `is_nonbare_repository_dir` / `is_git_directory`: the embedded git dir must look
+/// like a real repository (valid `HEAD` plus `objects/`, or `objects/` and `refs/`), not a bare
+/// `.git` directory placeholder.
+#[must_use]
+pub(crate) fn is_unregistered_embedded_git_repo(index: &Index, rel: &str, abs: &Path) -> bool {
+    if rel.is_empty() {
+        return false;
+    }
+    if index
+        .get(rel.as_bytes(), 0)
+        .is_some_and(|e| e.mode == crate::index::MODE_GITLINK)
+    {
+        return false;
+    }
+    let Some(git_dir) = submodule_embedded_git_dir(abs) else {
+        return false;
+    };
+    crate::submodule_gitdir::git_directory_for_embedded_repo(&git_dir)
+}
+
 /// Walk upward from `sub_dir` to find the nearest containing Git work tree.
 fn find_superproject_git(sub_dir: &Path) -> Option<(PathBuf, PathBuf)> {
     let mut cur = sub_dir.parent()?;
