@@ -98,3 +98,8 @@ pub mod pack_receive {
     //! Receive-pack side pack ingestion.
     pub use crate::pack_receive::*;
 }
+
+#[cfg(feature = "unstable-bench-helpers")]
+pub mod ewah_bench {
+    include!("../ewah_bench_api.rs");
+}

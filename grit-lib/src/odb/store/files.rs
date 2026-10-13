@@ -202,6 +202,7 @@ impl FilesSource {
             }
         }
 
+        #[cfg(test)]
         crate::hot_path_test_metrics::record_loose_path_open_for_active_scope();
         self.loose.read(oid)
     }
@@ -249,6 +250,7 @@ impl FilesSource {
             }
         }
 
+        #[cfg(test)]
         crate::hot_path_test_metrics::record_loose_path_open_for_active_scope();
         self.loose.read_info(oid)
     }

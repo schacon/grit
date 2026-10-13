@@ -5178,6 +5178,7 @@ fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::Commi
     if object.kind != ObjectKind::Commit {
         return Err(rev_list_unexpected_kind(oid, "commit"));
     }
+    #[cfg(test)]
     repo.odb().hot_path_metrics().record_commit_parse();
     parse_commit(&object.data)
 }
@@ -9127,7 +9128,6 @@ mod line_coverage_tests {
     #[test]
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
-        use std::sync::Arc;
 
         let (_dir, repo, _tip) = seed_repo(32, false);
         repo.odb().write_commit_graph()?;

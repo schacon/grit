@@ -151,7 +151,6 @@ impl HotPathTestMetrics {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn record_midx_stamp_stat(&self) {
         if self.stamp_counting.load(Ordering::Relaxed) {
             self.midx_stamp_stats.fetch_add(1, Ordering::Relaxed);
@@ -168,7 +167,7 @@ impl HotPathTestMetrics {
     }
 }
 
-// hygiene: per-thread hot-path test metrics scope (test builds only)
+// hygiene: test-only thread-local scope for hot-path stat attribution in unit tests
 thread_local! {
     static ACTIVE: RefCell<Option<Arc<HotPathTestMetrics>>> = const { RefCell::new(None) };
 }
@@ -184,15 +183,6 @@ pub(crate) fn record_pack_signature_stat_for_active_scope() {
     with_active(|active| {
         if let Some(m) = active {
             m.record_pack_signature_stat();
-        }
-    });
-}
-
-#[allow(dead_code)]
-pub(crate) fn record_midx_stamp_stat_for_active_scope() {
-    with_active(|active| {
-        if let Some(m) = active {
-            m.record_midx_stamp_stat();
         }
     });
 }

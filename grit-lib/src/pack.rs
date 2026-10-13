@@ -727,6 +727,7 @@ pub(crate) mod pack_cache {
     }
 
     fn file_signature(path: &Path) -> Option<(SystemTime, u64)> {
+        #[cfg(test)]
         crate::hot_path_test_metrics::record_pack_signature_stat_for_active_scope();
         let m = fs::metadata(path).ok()?;
         let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -775,17 +776,33 @@ pub(crate) mod pack_cache {
         });
     }
 
+    fn index_cache_hit_stale(idx: &PackIndex) -> bool {
+        !idx.pack_path.is_file()
+    }
+
     /// Get a parsed pack index from cache, parsing from disk only on cache miss.
     pub fn get_index(idx_path: &Path) -> Result<Arc<PackIndex>> {
         if let Some(hit) = cached_index(idx_path) {
-            return Ok(hit);
+            if index_cache_hit_stale(&hit) {
+                PACK_INDEXES.with(|cell| {
+                    cell.borrow_mut().remove(idx_path);
+                });
+            } else {
+                return Ok(hit);
+            }
         }
         let store = crate::pack_store::PackStore::active_for_reads();
         if let Some(hit) =
             store.with_catalog_read(|g| g.by_idx.get(idx_path).map(|c| Arc::clone(&c.idx)))
         {
-            remember_index(idx_path, &hit);
-            return Ok(hit);
+            if index_cache_hit_stale(&hit) {
+                store.with_catalog(|g| {
+                    g.by_idx.remove(idx_path);
+                });
+            } else {
+                remember_index(idx_path, &hit);
+                return Ok(hit);
+            }
         }
         let parsed = Arc::new(read_pack_index_no_verify(idx_path)?);
         store.with_catalog(|g| {
@@ -945,8 +962,48 @@ pub(crate) mod pack_cache {
         Ok(fresh)
     }
 
+    fn idx_paths_on_disk(pack_dir: &Path) -> Result<HashSet<PathBuf>> {
+        let mut out = HashSet::new();
+        let rd = match fs::read_dir(pack_dir) {
+            Ok(rd) => rd,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(out),
+            Err(err) => return Err(Error::Io(err)),
+        };
+        for entry in rd {
+            let entry = entry.map_err(Error::Io)?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+                continue;
+            }
+            if path.with_extension("pack").is_file() {
+                out.insert(path);
+            }
+        }
+        Ok(out)
+    }
+
+    fn cached_dir_listing_stale(
+        pack_dir: &Path,
+        dir_mt: SystemTime,
+        cached: &CachedDir,
+    ) -> Result<bool> {
+        if cached.dir_mtime != dir_mt {
+            return Ok(true);
+        }
+        // Pack directory mtimes often have one-second resolution; external `git gc` / repack can
+        // replace `.idx` files without bumping the directory mtime (same wall-clock second).
+        let on_disk = idx_paths_on_disk(pack_dir)?;
+        let cached_paths: HashSet<PathBuf> = cached
+            .indexes
+            .iter()
+            .map(|idx| idx.idx_path.clone())
+            .collect();
+        Ok(on_disk != cached_paths)
+    }
+
     /// Re-scan `objects_dir`/`pack/` when its mtime changed since the cached listing (Git
-    /// `reprepare_packed_git`). Returns true if the listing was refreshed.
+    /// `reprepare_packed_git`), or when the set of pack index files no longer matches the
+    /// cached listing. Returns true if the listing was refreshed.
     pub fn reprepare_dir_on_miss(objects_dir: &Path) -> Result<bool> {
         let pack_dir = objects_dir.join("pack");
         let dir_mt = dir_mtime(&pack_dir);
@@ -954,7 +1011,7 @@ pub(crate) mod pack_cache {
             crate::pack_store::PackStore::active_for_reads().with_catalog_read(|g| {
                 match g.by_dir.get(&pack_dir) {
                     None => true,
-                    Some(c) => c.dir_mtime != dir_mt,
+                    Some(c) => cached_dir_listing_stale(&pack_dir, dir_mt, c).unwrap_or(true),
                 }
             });
         if !needs_rescan {

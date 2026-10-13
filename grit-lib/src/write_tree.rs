@@ -458,6 +458,7 @@ fn store_tree_payload(
         WriteTreePersistence::DryRun => Ok((hashed, false)),
         WriteTreePersistence::Repair => Ok((hashed, !odb.exists(&hashed))),
         WriteTreePersistence::Write => {
+            #[cfg(test)]
             odb.hot_path_metrics().record_tree_write();
             Ok((
                 odb.write_with_options(ObjectKind::Tree, payload, write_opts)?,

@@ -308,10 +308,12 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     stats.pack_path = Some(ingested.pack_path.clone());
     stats.removed_pack_files = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
 
-    odb.invalidate_packs();
-
     let pruned = prune_packed_objects(objects_dir, PrunePackedOptions::default())?;
     stats.pruned_loose = pruned.len();
+
+    // After prune-packed reads pack indexes, drop listings so later reads (and external
+    // `git gc` replacing packs) never reuse stale thread-local or catalog state.
+    odb.invalidate_packs();
 
     if opts.write_commit_graph {
         odb.write_commit_graph()?;
@@ -330,6 +332,11 @@ pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
     let mut issues = Vec::new();
     let config = repo.config()?;
     let odb = repo.odb();
+
+    if opts.check_objects {
+        // External `git gc` / repack does not notify grit; rescan before object checks.
+        odb.invalidate_packs();
+    }
 
     if opts.check_refs {
         for issue in refs_fsck(repo, odb, &config, opts.strict)? {

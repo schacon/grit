@@ -144,6 +144,7 @@ pub struct Odb {
     file_alternate_dirs_cache: Arc<RwLock<FileAlternatesCache>>,
     #[cfg(test)]
     exists_probe: Arc<AtomicUsize>,
+    #[cfg(test)]
     pub(crate) hot_path_test_metrics: Arc<crate::hot_path_test_metrics::HotPathTestMetrics>,
     /// Explicit env alternates from [`Self::with_env_alternate_dirs`] (tests / callers); empty uses lazy env read.
     env_alternate_dirs: Vec<PathBuf>,
@@ -281,6 +282,7 @@ impl Odb {
             alternates_enabled: true,
             #[cfg(test)]
             exists_probe: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
             hot_path_test_metrics: crate::hot_path_test_metrics::HotPathTestMetrics::new(),
         }
     }
@@ -329,16 +331,19 @@ impl Odb {
             alternates_enabled: true,
             #[cfg(test)]
             exists_probe: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
             hot_path_test_metrics: crate::hot_path_test_metrics::HotPathTestMetrics::new(),
         }
     }
 
-    /// Hot-path regression counters (crate-internal tests and benchmarks).
+    /// Hot-path regression counters (crate-internal tests only).
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn hot_path_metrics(&self) -> &crate::hot_path_test_metrics::HotPathTestMetrics {
         &self.hot_path_test_metrics
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn hot_path_metrics_arc(
         &self,
@@ -1828,6 +1833,7 @@ impl Odb {
 
     /// Update `path`'s mtime to "now" (Git `utime(path, NULL)`), returning whether it succeeded.
     fn touch_object_mtime(&self, path: &Path) -> Option<std::time::SystemTime> {
+        #[cfg(test)]
         self.hot_path_test_metrics.record_freshen();
         // `utime(path, NULL)` sets both atime and mtime to the current time.
         let now = filetime::FileTime::now();
@@ -2962,7 +2968,7 @@ mod tests {
         let odb = Odb::new(&objects);
         odb.hot_path_metrics().set_loose_open_counting(true);
         odb.hot_path_metrics().reset_loose_path_open_attempts();
-        let _scope = HotPathMetricsScope::install(Arc::clone(&odb.hot_path_test_metrics));
+        let _scope = HotPathMetricsScope::install(odb.hot_path_metrics_arc());
 
         let obj = odb.read(&oid).expect("packed read");
         assert_eq!(obj.kind, ObjectKind::Commit);
@@ -2987,7 +2993,7 @@ mod tests {
             .expect("write loose");
         odb.hot_path_metrics().set_loose_open_counting(true);
         odb.hot_path_metrics().reset_loose_path_open_attempts();
-        let _scope = HotPathMetricsScope::install(Arc::clone(&odb.hot_path_test_metrics));
+        let _scope = HotPathMetricsScope::install(odb.hot_path_metrics_arc());
 
         odb.read(&oid).expect("loose read");
         assert_eq!(

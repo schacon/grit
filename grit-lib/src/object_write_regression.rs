@@ -377,7 +377,7 @@ fn pack_signature_not_restatted_per_object() {
         crate::RefStorageFormat::Files,
     )
     .unwrap();
-    let _scope = HotPathMetricsScope::install(Arc::clone(&repo.odb().hot_path_test_metrics));
+    let _scope = HotPathMetricsScope::install(repo.odb().hot_path_metrics_arc());
     let metrics = repo.odb().hot_path_metrics();
     let wt = repo.work_tree().unwrap();
     let mut index = build_flat_index(PACK_REGRESSION_ENTRIES, 2);

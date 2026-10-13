@@ -550,6 +550,7 @@ fn read_worktree_blob_oid(
     }
     if let Ok(rel_path) = std::str::from_utf8(raw_path) {
         let file_attrs = rules.file_attrs(rel_path, false);
+        #[cfg(test)]
         repo.odb().hot_path_metrics().record_blob_content_read();
         return materialize_worktree_blob(
             repo.odb(),
@@ -574,6 +575,7 @@ fn read_worktree_blob_oid_raw(
         let target = fs::read_link(abs_path)?;
         symlink_target_bytes(&target)
     } else {
+        #[cfg(test)]
         repo.odb().hot_path_metrics().record_blob_content_read();
         fs::read(abs_path)?
     };
