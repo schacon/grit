@@ -5,6 +5,7 @@
 //! reflogs through [`crate::refs::update_branch_for_commit`].
 
 use crate::config::ConfigSet;
+use crate::diff::refresh_index_stat_content_verified_with_rules;
 use crate::diff::{diff_trees, zero_oid};
 use crate::error::{Error, Result};
 use crate::hooks::{run_commit_hook_checked, CommitHookEnv};
@@ -16,9 +17,11 @@ use crate::signing::{
     extra_headers_without_commit_signatures, should_sign_commit, sign_serialized_commit, GpgConfig,
 };
 use crate::state::{finish_merge_state, read_merge_heads, resolve_head, HeadState};
+use crate::worktree_rules::WorktreeRules;
 use crate::write_tree::{is_empty_tree_oid, write_tree_update_index, WriteTreeFlags};
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// Inputs for [`create_commit`].
 #[derive(Debug, Clone)]
@@ -228,6 +231,20 @@ pub fn create_commit(
         }
     });
 
+    if let Some(work_tree) = repo.work_tree() {
+        let rules = WorktreeRules::from_repository(repo, &index).ok();
+        let rules_arc = rules.map(|r| Arc::new(Mutex::new(r)));
+        let _ = refresh_index_stat_content_verified_with_rules(
+            repo.odb(),
+            repo.git_dir(),
+            &mut index,
+            work_tree,
+            None,
+            Some(config.as_ref()),
+            None,
+            rules_arc.as_ref(),
+        )?;
+    }
     repo.write_index(&mut index)?;
 
     let changes = diff_trees(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?.len();
