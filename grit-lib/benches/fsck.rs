@@ -7,7 +7,7 @@ mod s7;
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use grit_lib::fsck::{self, FsckOptions};
+use grit_lib::maintenance::repository_fsck::{self, FsckOptions};
 use grit_lib::progress::{NeverCancel, NullProgress};
 
 fn fsck_medium(c: &mut Criterion) {

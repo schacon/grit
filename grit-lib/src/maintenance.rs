@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use crate::config::ConfigSet;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
-use crate::fsck as repository_fsck;
+use crate::fsck as repo_fsck;
 use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
@@ -40,7 +40,7 @@ use crate::reflog::{
 };
 use crate::refs_fsck::{RefsFsckIssue, RefsFsckSeverity};
 use crate::repo::Repository;
-use repository_fsck::FsckIssue as RepoFsckIssue;
+use repo_fsck::FsckIssue as RepoFsckIssue;
 
 /// Options for [`repack_all()`].
 #[derive(Debug, Clone)]
@@ -240,7 +240,7 @@ impl FsckOptions {
 ///
 /// Propagates ref, reflog, or index load failures.
 pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
-    repository_fsck::reachability_roots(repo)
+    repo_fsck::reachability_roots(repo)
 }
 
 /// Result of [`gc`].
@@ -337,12 +337,12 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
 /// Check ref integrity, reachable object graph, and optional MIDX.
 pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
     let config = repo.config()?;
-    let inner_opts = repository_fsck::FsckOptions {
+    let inner_opts = repo_fsck::FsckOptions {
         connectivity_only: !opts.check_objects,
         check_dangling: false,
         strict: opts.strict,
     };
-    let inner = repository_fsck::fsck(repo, &inner_opts, &mut NullProgress, &NeverCancel)?;
+    let inner = repo_fsck::fsck(repo, &inner_opts, &mut NullProgress, &NeverCancel)?;
     let mut issues = Vec::new();
     for issue in inner.issues {
         match &issue {
@@ -469,8 +469,8 @@ fn fsck_issue_from_repo(issue: RepoFsckIssue, config: &ConfigSet, strict: bool) 
     if let RepoFsckIssue::BadRef(r) = issue {
         return fsck_issue_from_refs(r);
     }
-    let severity = repository_fsck::issue_severity(&issue, config, strict);
-    let msg_id = repository_fsck::issue_msg_id(&issue).to_owned();
+    let severity = repo_fsck::issue_severity(&issue, config, strict);
+    let msg_id = repo_fsck::issue_msg_id(&issue).to_owned();
     let (path, detail) = match &issue {
         RepoFsckIssue::CorruptLoose { oid, path } => {
             (oid.to_hex(), format!("could not read {}", path.display()))
@@ -515,8 +515,8 @@ fn fsck_issue_from_repo(issue: RepoFsckIssue, config: &ConfigSet, strict: bool) 
     };
     FsckIssue {
         severity: match severity {
-            repository_fsck::FsckSeverity::Error => FsckSeverity::Error,
-            repository_fsck::FsckSeverity::Warning => FsckSeverity::Warning,
+            repo_fsck::FsckSeverity::Error => FsckSeverity::Error,
+            repo_fsck::FsckSeverity::Warning => FsckSeverity::Warning,
         },
         path,
         msg_id,
@@ -631,6 +631,11 @@ fn pack_has_keep_marker(pack_dir: &Path, path: &Path) -> bool {
 /// Standalone object fsck helpers.
 pub mod fsck {
     pub use crate::fsck_standalone::*;
+}
+
+/// Repository-wide fsck (object store, connectivity, refs).
+pub mod repository_fsck {
+    pub use crate::fsck::*;
 }
 
 #[cfg(test)]

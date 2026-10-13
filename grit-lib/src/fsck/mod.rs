@@ -3,6 +3,25 @@
 //! Validates loose and packed objects (in parallel when worthwhile), walks reachability from
 //! [`reachability_roots`], optionally reports dangling objects, and runs ref/MIDX/graph checks.
 //! Progress is reported through [`ProgressSink`]; the library never prints.
+//!
+//! ```rust
+//! use grit_lib::fsck::{fsck, FsckOptions};
+//! use grit_lib::progress::{NeverCancel, NullProgress};
+//! use grit_lib::repo::{InitOptions, Repository};
+//! # fn main() -> grit_lib::error::Result<()> {
+//! let dir = tempfile::tempdir()?;
+//! let repo = Repository::init(dir.path(), &InitOptions::default())?;
+//! let config = repo.config()?;
+//! let report = fsck(
+//!     &repo,
+//!     &FsckOptions::connectivity_and_refs(false),
+//!     &mut NullProgress,
+//!     &NeverCancel,
+//! )?;
+//! assert!(report.ok(&config, &FsckOptions::connectivity_and_refs(false)));
+//! # Ok(())
+//! # }
+//! ```
 
 mod roots;
 
@@ -589,21 +608,35 @@ fn walk_connectivity(
             ObjectKind::Commit => {
                 let commit = parse_commit(&obj.data)?;
                 for p in commit.parents {
-                    enqueue(&mut queue, &mut seen, p, oid);
+                    follow_typed_link(
+                        odb,
+                        config,
+                        strict,
+                        &mut issues,
+                        &mut queue,
+                        &mut seen,
+                        p,
+                        oid,
+                        ObjectKind::Commit,
+                        "parent",
+                    );
                 }
-                enqueue(&mut queue, &mut seen, commit.tree, oid);
+                follow_typed_link(
+                    odb,
+                    config,
+                    strict,
+                    &mut issues,
+                    &mut queue,
+                    &mut seen,
+                    commit.tree,
+                    oid,
+                    ObjectKind::Tree,
+                    "tree",
+                );
             }
             ObjectKind::Tree => {
                 for entry in parse_tree(&obj.data)? {
                     if entry.mode == MODE_GITLINK {
-                        if odb.read(&entry.oid).is_err()
-                            && should_emit(config, strict, "missingObject")
-                        {
-                            issues.push(FsckIssue::MissingObject {
-                                oid: entry.oid,
-                                referenced_by: oid,
-                            });
-                        }
                         continue;
                     }
                     if let Some(expected) = kind_for_tree_mode(entry.mode) {
@@ -640,7 +673,22 @@ fn walk_connectivity(
             }
             ObjectKind::Tag => {
                 let tag = parse_tag(&obj.data)?;
-                enqueue(&mut queue, &mut seen, tag.object, oid);
+                let Some(expected) = ObjectKind::from_tag_type_field(tag.object_type.as_bytes())
+                else {
+                    continue;
+                };
+                follow_typed_link(
+                    odb,
+                    config,
+                    strict,
+                    &mut issues,
+                    &mut queue,
+                    &mut seen,
+                    tag.object,
+                    oid,
+                    expected,
+                    "object",
+                );
             }
             ObjectKind::Blob => {}
         }
@@ -657,6 +705,41 @@ fn enqueue(
 ) {
     if seen.insert(oid) {
         queue.push_back((oid, parent));
+    }
+}
+
+fn follow_typed_link(
+    odb: &Odb,
+    config: &ConfigSet,
+    strict: bool,
+    issues: &mut Vec<FsckIssue>,
+    queue: &mut VecDeque<(ObjectId, ObjectId)>,
+    seen: &mut HashSet<ObjectId>,
+    target: ObjectId,
+    parent: ObjectId,
+    expected: ObjectKind,
+    link_name: &str,
+) {
+    match odb.read(&target) {
+        Err(_) => {
+            if should_emit(config, strict, "missingObject") {
+                issues.push(FsckIssue::MissingObject {
+                    oid: target,
+                    referenced_by: parent,
+                });
+            }
+        }
+        Ok(child) if child.kind != expected => {
+            if should_emit(config, strict, "brokenLink") {
+                issues.push(FsckIssue::BrokenLink {
+                    tree: parent,
+                    name: link_name.to_owned(),
+                    mode: 0,
+                    target,
+                });
+            }
+        }
+        Ok(_) => enqueue(queue, seen, target, parent),
     }
 }
 
@@ -698,6 +781,7 @@ mod tests {
     use super::*;
     use crate::porcelain::add::stage_for_commit;
     use crate::porcelain::commit::{create_commit, CommitRequest};
+    use crate::progress::{NeverCancel, NullProgress};
     use crate::repo::InitOptions;
     use tempfile::TempDir;
 

@@ -4,7 +4,7 @@
 
 use std::process::Command;
 
-use grit_lib::fsck::{self, FsckIssue, FsckOptions};
+use grit_lib::maintenance::repository_fsck::{self as fsck, FsckIssue, FsckOptions};
 use grit_lib::index::Index;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
@@ -301,6 +301,86 @@ fn dangling_commit_and_blob() {
     assert_eq!(
         grit_set, git_set,
         "dangling mismatch git={git_set:?} grit={grit_set:?}"
+    );
+}
+
+#[test]
+fn gitlink_to_absent_commit_not_missing_object() {
+    let (dir, repo) = init_repo();
+    let head = one_commit(&repo);
+    let absent = ObjectId::from_hex("1111111111111111111111111111111111111111").expect("hex");
+    let mut tree_body = Vec::from(b"160000 sub\0" as &[u8]);
+    tree_body.extend_from_slice(absent.as_bytes());
+    let tree = repo
+        .odb()
+        .write(ObjectKind::Tree, &tree_body)
+        .expect("tree");
+    let commit_body = format!(
+        "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\n",
+        tree.to_hex()
+    );
+    let commit = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())
+        .expect("commit");
+    let _ = head;
+    git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &commit.to_hex()],
+    );
+
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        !git_text.contains(&absent.to_hex()),
+        "git must not report absent gitlink oid: {git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| matches!(i, FsckIssue::MissingObject { oid, .. } if oid == &absent)),
+        "gitlink must not require submodule commit in superproject ODB: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn commit_tree_wrong_kind_matches_git() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    let blob = repo
+        .odb()
+        .write(ObjectKind::Blob, b"not-a-tree")
+        .expect("blob");
+    let commit_body = format!(
+        "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\n",
+        blob.to_hex()
+    );
+    let bad_commit = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())
+        .expect("commit");
+    git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &bad_commit.to_hex()],
+    );
+
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.contains("not a tree") || git_text.contains("bad tree"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        report.issues.iter().any(|i| {
+            matches!(
+                i,
+                FsckIssue::BrokenLink { target, .. } if target == &blob
+            ) || matches!(i, FsckIssue::BadObject { .. })
+        }),
+        "wrong tree kind must be reported: {:?}",
+        report.issues
     );
 }
 

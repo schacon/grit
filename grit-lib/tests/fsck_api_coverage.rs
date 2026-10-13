@@ -1,9 +1,9 @@
-//! Coverage touch for public `grit_lib::fsck` types and helpers.
+//! Coverage touch for public repository fsck types and helpers.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use grit_lib::config::ConfigSet;
-use grit_lib::fsck::{
+use grit_lib::maintenance::repository_fsck::{
     format_fsck_line, issue_msg_id, issue_severity, FsckIssue, FsckOptions, FsckSeverity,
 };
 use grit_lib::maintenance::fsck::FsckError;
