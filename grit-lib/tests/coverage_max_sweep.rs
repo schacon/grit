@@ -210,7 +210,7 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
 #[test]
 fn supporting_and_submodule_gitdir_sweep() -> grit_lib::error::Result<()> {
     use grit_lib::config::gitmodules::gitdir::{
-        compute_default_submodule_gitdir, submodule_gitdir_filesystem_path,
+        ensure_submodule_gitdir_config, submodule_gitdir_filesystem_path,
         submodule_path_config_enabled,
     };
     use grit_lib::config::gitmodules::{check_submodule_name, validate_gitmodules_blob_line};
@@ -235,10 +235,14 @@ fn supporting_and_submodule_gitdir_sweep() -> grit_lib::error::Result<()> {
         "[submodule \"lib/foo\"]\n\tpath = lib/foo\n\turl = https://example.com/r.git\n",
         ConfigScope::Local,
     )?;
-    let _ = compute_default_submodule_gitdir(dir.path(), git_dir, &cfg, "lib/foo")?;
-    let _ = submodule_gitdir_filesystem_path(dir.path(), git_dir, &cfg, "lib/foo")?;
+    let mut cfg_mut = cfg.clone();
+    let gitdir_rel =
+        ensure_submodule_gitdir_config(dir.path(), git_dir, &mut cfg_mut, "lib/foo")?;
+    assert!(!gitdir_rel.is_empty());
+    let fs_path = submodule_gitdir_filesystem_path(dir.path(), git_dir, &cfg_mut, "lib/foo")?;
+    assert!(fs_path.exists() || fs_path.starts_with(dir.path()));
     let mut set = ConfigSet::new();
-    set.merge(&cfg);
+    set.merge(&cfg_mut);
     let crlf = ConversionConfig::from_config(&set);
     let attrs = FileAttrs::default();
     let git_bytes = convert_to_git(b"a\r\n", "x.txt", &crlf, &attrs)?;
