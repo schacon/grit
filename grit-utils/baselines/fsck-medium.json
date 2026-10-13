@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-13T19:06:26.04398289Z",
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor",
+    "physical_cores": 4,
+    "logical_cores": 4,
+    "ram_bytes": 16780713984,
+    "os": "linux",
+    "kernel": "Linux 6.12.94+",
+    "scratch_filesystem": "ext4",
+    "rustc_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo_profile": "release"
+  },
+  "tools": {
+    "git": "git version 2.43.0",
+    "grit": "grit 0.5.7",
+    "grit_commit": "ebff79363b98bd596107ac7277de697e695a3808"
+  },
+  "scenarios": [
+    {
+      "id": "fsck-medium",
+      "group": "maintenance",
+      "fixture": "/tmp/grit-bench-network-cache/deep-history-prod.git",
+      "description": "fsck on deep-history worktree (medium fixture)",
+      "driver": "cli",
+      "git": {
+        "mean_ms": 203.99974194,
+        "median_ms": 203.60225194000003,
+        "stddev_ms": 3.184814787348567,
+        "min_ms": 199.75981044,
+        "max_ms": 212.58358544,
+        "runs_ms": [
+          205.26312744,
+          202.09863944,
+          203.53079644,
+          204.53631344000001,
+          212.58358544,
+          203.67370744,
+          199.75981044,
+          205.51487444,
+          201.08283244,
+          205.20932244,
+          206.36395644,
+          202.86818444,
+          200.14835944,
+          203.36287744
+        ]
+      },
+      "grit": {
+        "mean_ms": 1887.0731579133333,
+        "median_ms": 1888.24573658,
+        "stddev_ms": 42.14524872397012,
+        "min_ms": 1844.35385558,
+        "max_ms": 1928.61988158,
+        "runs_ms": [
+          1844.35385558,
+          1888.24573658,
+          1928.61988158
+        ]
+      },
+      "ratio": 9.274188858856292
+    }
+  ]
+}

@@ -6,6 +6,7 @@ use grit_utils::binary::{require_hyperfine, resolve_binary};
 use grit_utils::bitmap_suite::{run_bitmaps_suite, BitmapRunConfig};
 use grit_utils::compare::compare_files;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
+use grit_utils::fsck_suite::run_fsck_suite;
 use grit_utils::ignore_suite::run_ignore_suite;
 use grit_utils::network_fixture::NetworkProfile;
 use grit_utils::network_suite::{
@@ -105,6 +106,11 @@ enum Cmd {
     },
     /// `grit revs --count` and `grit merge-base` vs git on deep-history and pick fixtures
     Revwalk {
+        #[arg(long)]
+        smoke: bool,
+    },
+    /// `grit fsck` vs `git fsck` on a deep-history worktree (medium fixture)
+    Fsck {
         #[arg(long)]
         smoke: bool,
     },
@@ -691,6 +697,11 @@ fn main() -> Result<()> {
             eprintln!("Running revwalk benchmarks...");
             let cfg = run_config(&cli, true);
             run_revwalk_suite(&hyperfine, &git, &grit, &cfg, *smoke, timestamp)?
+        }
+        Cmd::Fsck { smoke } => {
+            eprintln!("Running fsck benchmarks...");
+            let cfg = run_config(&cli, true);
+            run_fsck_suite(&hyperfine, &git, &grit, &cfg, *smoke, timestamp)?
         }
         Cmd::Stash { sizes } => {
             eprintln!("Running stash benchmarks...");

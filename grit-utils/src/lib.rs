@@ -7,6 +7,7 @@ pub mod bitmap_suite;
 pub mod capped_run;
 pub mod compare;
 pub mod fixture;
+pub mod fsck_suite;
 pub mod hot_path_fixture;
 pub mod hyperfine;
 pub mod ignore_suite;
