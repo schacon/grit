@@ -307,6 +307,147 @@ fn pack_refs_peeled_tags() {
 }
 
 #[test]
+fn commit_graph_write_reftable_includes_reachable_commits() {
+    if !git_available() {
+        eprintln!("SKIP: git unavailable");
+        return;
+    }
+    if !require_reftable_git() {
+        eprintln!("SKIP: reftable-capable git unavailable");
+        return;
+    }
+    let dir = git_init_reftable_repo("main");
+    fs::write(dir.path().join("a.txt"), b"a\n").unwrap();
+    git_cmd(dir.path(), &["add", "a.txt"]);
+    git_cmd(dir.path(), &["commit", "-q", "-m", "one"]);
+
+    let expected_count: usize = git_out(dir.path(), &["rev-list", "--count", "--all"])
+        .trim()
+        .parse()
+        .expect("count");
+    assert!(expected_count >= 1, "fixture must have reachable commits");
+
+    let head_oid =
+        ObjectId::from_hex(git_out(dir.path(), &["rev-parse", "HEAD"]).trim()).expect("head");
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    let report = write_commit_graph(&repo, &CommitGraphOptions::with_changed_paths(false))
+        .expect("write graph");
+    assert_eq!(
+        report.commit_count, expected_count,
+        "reftable refs must drive commit-graph reachability"
+    );
+
+    let chain = CommitGraphChain::load(repo.odb().objects_dir()).expect("load");
+    assert!(
+        chain.find_commit(&head_oid).is_some(),
+        "HEAD commit must appear in written commit-graph"
+    );
+    git_cmd(dir.path(), &["commit-graph", "verify"]);
+}
+
+#[test]
+fn commit_graph_write_linked_worktree_includes_common_refs() {
+    if !git_available() {
+        eprintln!("SKIP: git unavailable");
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let main = root.join("main");
+    fs::create_dir_all(&main).unwrap();
+    git_cmd(&main, &["init", "-q", "-b", "main"]);
+    fs::write(main.join("tracked.txt"), b"1\n").unwrap();
+    git_cmd(&main, &["add", "tracked.txt"]);
+    git_cmd(&main, &["commit", "-q", "-m", "seed"]);
+
+    let linked = root.join("linked");
+    git_cmd(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            linked.to_str().expect("utf8 path"),
+        ],
+    );
+
+    let expected_count: usize = git_out(&linked, &["rev-list", "--count", "--all"])
+        .trim()
+        .parse()
+        .expect("count");
+    assert!(expected_count >= 1);
+
+    let repo =
+        Repository::discover(Some(&linked), &RepositoryOptions::empty()).expect("open linked");
+    let report = write_commit_graph(&repo, &CommitGraphOptions::with_changed_paths(false))
+        .expect("write graph");
+    assert_eq!(
+        report.commit_count, expected_count,
+        "linked worktree must enumerate refs from the common git dir"
+    );
+    git_cmd(&linked, &["commit-graph", "verify"]);
+}
+
+#[test]
+fn commit_graph_write_injected_ref_store_head_when_disk_unborn() {
+    use std::sync::Arc;
+
+    use grit_lib::porcelain::add::stage_for_commit;
+    use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+    use grit_lib::progress::NullProgress;
+    use grit_lib::refs;
+    use grit_lib::refs::store::{MemoryRefStore, RawRef};
+    use grit_lib::repo::{InitOptions, Repository};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    let wt = repo.work_tree().expect("worktree");
+    fs::write(wt.join("a.txt"), b"a\n").unwrap();
+    stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    let ident = "T <t@example.com> 1 +0000".to_string();
+    create_commit(
+        &repo,
+        &CommitRequest {
+            message: "one".into(),
+            author: ident.clone(),
+            committer: ident,
+            allow_empty: false,
+            sign_override: None,
+            amend: false,
+        },
+        &mut NullProgress,
+    )
+    .expect("commit");
+
+    let tip = refs::resolve_ref(repo.git_dir(), "HEAD").expect("tip");
+    let git_dir = repo.git_dir();
+    let branch_ref = git_dir.join("refs/heads/main");
+    if branch_ref.is_file() {
+        fs::remove_file(&branch_ref).expect("remove branch");
+    }
+    fs::write(git_dir.join("HEAD"), b"ref: refs/heads/main\n").expect("unborn head");
+    assert!(
+        refs::resolve_ref(git_dir, "HEAD").is_err(),
+        "on-disk HEAD should be unborn after removing the branch ref"
+    );
+
+    let store = Arc::new(MemoryRefStore::new());
+    store
+        .set_ref("HEAD", RawRef::Direct(tip))
+        .expect("inject detached HEAD");
+    let repo = repo.with_ref_store(store);
+    assert_eq!(repo.refs().resolve("HEAD").expect("injected HEAD"), tip);
+
+    let report = write_commit_graph(&repo, &CommitGraphOptions::with_changed_paths(false))
+        .expect("write graph");
+    assert_eq!(
+        report.commit_count, 1,
+        "reachable commits must come from the injected RefStore, not on-disk HEAD"
+    );
+}
+
+#[test]
 fn pack_refs_nested_annotated_tags_match_git_dereference() {
     if !git_available() {
         eprintln!("SKIP: git unavailable");

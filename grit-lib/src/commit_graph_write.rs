@@ -462,13 +462,75 @@ pub fn build_commit_graph_bytes(
     Ok((out, bloom_stats))
 }
 
-/// Collect reachable commit OIDs from ref tips (same strategy as existing grit commit-graph).
+fn walk_reachable_commits_from_tip_stack(
+    odb: &Odb,
+    mut stack: Vec<ObjectId>,
+) -> crate::error::Result<HashSet<ObjectId>> {
+    let mut commits: HashSet<ObjectId> = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if commits.contains(&oid) {
+            continue;
+        }
+        let obj = match odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            if obj.kind == ObjectKind::Tag {
+                if let Ok(text) = std::str::from_utf8(&obj.data) {
+                    for line in text.lines() {
+                        if let Some(rest) = line.strip_prefix("object ") {
+                            if let Ok(target) = ObjectId::from_hex(rest.trim()) {
+                                stack.push(target);
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        for parent in &commit.parents {
+            stack.push(*parent);
+        }
+        commits.insert(oid);
+    }
+    Ok(commits)
+}
+
+/// Collect reachable commit OIDs from ref tips via the repository [`RefStore`](crate::refs::store::RefStore).
+///
+/// Resolves `HEAD` through [`Repository::refs`](crate::repo::Repository::refs), lists refs under
+/// `refs/` (reftable, packed-refs, and linked-worktree rules),
+/// peels annotated tags while walking, and traverses commit parents.
+///
+/// # Errors
+///
+/// Propagates ref listing or object read/parse failures.
+pub fn collect_reachable_commit_oids_for_repository(
+    repo: &crate::repo::Repository,
+) -> crate::error::Result<HashSet<ObjectId>> {
+    use crate::refs;
+    let odb = repo.odb();
+    let mut stack: Vec<ObjectId> = Vec::new();
+    if let Ok(oid) = repo.refs().resolve("HEAD") {
+        stack.push(oid);
+    }
+    for (_, oid) in refs::list_refs_for_repository(repo, "refs/")? {
+        stack.push(oid);
+    }
+    walk_reachable_commits_from_tip_stack(odb, stack)
+}
+
+/// Collect reachable commit OIDs from on-disk ref tips under `git_dir`.
+///
+/// Prefer [`collect_reachable_commit_oids_for_repository`] when a [`crate::repo::Repository`] is
+/// available (reftable and linked worktrees require the ref store).
 pub fn collect_reachable_commit_oids(
     git_dir: &std::path::Path,
     odb: &Odb,
 ) -> crate::error::Result<HashSet<ObjectId>> {
     use std::fs;
-    let mut commits: HashSet<ObjectId> = HashSet::new();
     let mut stack: Vec<ObjectId> = Vec::new();
 
     fn collect_ref_tips(
@@ -529,36 +591,7 @@ pub fn collect_reachable_commit_oids(
         }
     }
 
-    while let Some(oid) = stack.pop() {
-        if commits.contains(&oid) {
-            continue;
-        }
-        let obj = match odb.read(&oid) {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        if obj.kind != ObjectKind::Commit {
-            if obj.kind == ObjectKind::Tag {
-                if let Ok(text) = std::str::from_utf8(&obj.data) {
-                    for line in text.lines() {
-                        if let Some(rest) = line.strip_prefix("object ") {
-                            if let Ok(target) = ObjectId::from_hex(rest.trim()) {
-                                stack.push(target);
-                            }
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        let commit = parse_commit(&obj.data)?;
-        for parent in &commit.parents {
-            stack.push(*parent);
-        }
-        commits.insert(oid);
-    }
-
-    Ok(commits)
+    walk_reachable_commits_from_tip_stack(odb, stack)
 }
 
 /// Replace `objects/info/commit-graph` atomically (lock + tempfile + rename).

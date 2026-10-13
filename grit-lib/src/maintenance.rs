@@ -22,8 +22,9 @@ use std::time::SystemTime;
 
 use crate::commit_graph_file::CommitGraphChain;
 use crate::commit_graph_write::{
-    atomic_replace_commit_graph, build_commit_graph_bytes, collect_reachable_commit_oids,
-    load_commit_graph_commit_info, remove_commit_graph_chain_dir, BloomWriteStats,
+    atomic_replace_commit_graph, build_commit_graph_bytes,
+    collect_reachable_commit_oids_for_repository, load_commit_graph_commit_info,
+    remove_commit_graph_chain_dir, BloomWriteStats,
 };
 use crate::config::ConfigSet;
 use crate::diff::bloom::BloomFilterSettings;
@@ -406,16 +407,13 @@ pub fn write_commit_graph(
         .ok_or(Error::UnsupportedObjectStore {
             operation: "commit-graph write",
         })?;
-    let git_dir = odb.config_git_dir().ok_or(Error::UnsupportedObjectStore {
-        operation: "commit-graph write",
-    })?;
     let config = repo.config()?;
     let bloom = bloom_settings_for_commit_graph_write(&config, opts.changed_paths);
     let write_generation = commit_graph_writes_generation_data(&config);
 
     let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
 
-    let commits = collect_reachable_commit_oids(git_dir, odb)?;
+    let commits = collect_reachable_commit_oids_for_repository(repo)?;
     let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
     sorted.sort();
     let commit_count = sorted.len();
