@@ -1449,14 +1449,11 @@ pub fn status(
     let state = crate::state::wt_status_get_state(repo.git_dir(), &head, true)?;
     let repo_config = repo.config().ok();
 
-    // Load the index, remembering whether it was sparse on disk, then expand
-    // sparse-directory placeholders so the diffs see real entries.
-    let index_path = repo.index_path();
-    let mut index = match Index::load(&index_path) {
-        Ok(i) => i,
-        Err(crate::error::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e),
-    };
+    // Load the index (including split-index merge and GIT_INDEX_FILE), remembering
+    // whether it was sparse on disk, then expand sparse-directory placeholders
+    // so the diffs see real entries.
+    let index_path = repo.index_path_for_env()?;
+    let mut index = repo.load_index_at(&index_path)?;
     let index_mtime = index.source_mtime;
     let worktree_rules = Arc::new(Mutex::new(
         crate::worktree_rules::WorktreeRules::from_repository(repo, &index)?,
@@ -1568,7 +1565,7 @@ pub fn status(
         (untracked, ignored)
     };
 
-    if persist_index && repo.try_write_index(&mut index)? {
+    if persist_index && repo.try_write_index_at(&index_path, &mut index)? {
         index.source_mtime = crate::index::index_file_mtime(&index_path);
     }
 

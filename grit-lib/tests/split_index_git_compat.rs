@@ -14,9 +14,9 @@ use std::fs;
 use std::path::Path;
 
 use support::{
-    append_git_config, assert_grit_index_matches_git_ls_files, entry_from_worktree_path,
-    fsck_strict, git, git_update_index_split, index_contains_extension, list_sharedindex_paths,
-    populate_flat_files, read_index_bytes,
+    append_git_config, assert_grit_index_matches_git_ls_files, assert_porcelain_v2_matches_git,
+    entry_from_worktree_path, fsck_strict, git, git_update_index_split, index_contains_extension,
+    list_sharedindex_paths, populate_flat_files, read_index_bytes,
 };
 
 fn init_repo_with_files(root: &Path, count: usize) {
@@ -42,6 +42,48 @@ fn assert_index_matches_git(worktree: &Path, repo: &Repository) {
         .load()
         .expect("load index for ls-files oracle");
     assert_grit_index_matches_git_ls_files(worktree, &index);
+}
+
+/// Regression for <https://github.com/gitbutlerapp/grit/issues/989>: `grit status` must merge
+/// Git's split index before diffing, and switch/merge guards must not false-positive on a clean tree.
+#[test]
+fn issue_989_minimal_split_index_status_and_worktree_guards() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.name", "a"]);
+    git(root, &["config", "user.email", "a@b"]);
+    std::fs::write(root.join("a"), "one\n").expect("write a");
+    std::fs::write(root.join("b"), "two\n").expect("write b");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "1"]);
+    git_update_index_split(root);
+
+    assert!(
+        git(root, &["status", "--short"]).is_empty(),
+        "git must report a clean tree after split-index"
+    );
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    assert_porcelain_v2_matches_git(root, &repo);
+
+    grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_pick(&repo)
+        .expect("pick guard on clean split-index repo");
+    grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_merge(&repo)
+        .expect("merge guard on clean split-index repo");
+
+    std::fs::write(root.join("c"), "three\n").expect("write c");
+    git(root, &["add", "c"]);
+    git(root, &["commit", "-qm", "2"]);
+    git_update_index_split(root);
+
+    assert!(
+        git(root, &["status", "--short"]).is_empty(),
+        "git must stay clean after a second split-index rewrite"
+    );
+    assert_porcelain_v2_matches_git(root, &repo);
+    grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_merge(&repo)
+        .expect("merge guard after second split-index rewrite");
 }
 
 #[test]
