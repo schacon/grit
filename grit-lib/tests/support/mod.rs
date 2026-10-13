@@ -24,7 +24,7 @@ pub use history_harness::{
     git_rev_list_object_set, git_rev_list_with_boundary, git_rev_parse, git_rev_parse_verify,
     git_version, git_version_at_least, grit_rev_list_commits, grit_rev_list_commits_in_repo,
     grit_rev_list_object_set, open_grit_repo, ordering_from_git_args, rev_parse_many,
-    skip_unless_git_at_least, symmetric_rev_list_specs, HistoryRepo,
+    skip_unless_git_at_least, HistoryRepo,
 };
 pub use index_ext_harness::*;
 pub use index_harness::{

@@ -12714,6 +12714,11 @@ pub fn grit_lib::revwalk::handle::RevWalk<'repo>::new(&'repo grit_lib::repo::Rep
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve(&self, &str) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::walk(&self, &str, &grit_lib::revwalk::rev_list::RevListOptions) -> grit_lib::error::Result<grit_lib::revwalk::rev_list::RevListResult>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::parse_tokens(&self, &[&str]) -> grit_lib::error::Result<grit_lib::revwalk::RevWalkParsedSpecs>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::commits(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::count(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<usize>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::merge_bases(&self, &str, &str, bool) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::is_ancestor(&self, &str, &str) -> grit_lib::error::Result<bool>
 impl<'repo> core::clone::Clone for grit_lib::revwalk::handle::RevWalk<'repo>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::clone(&self) -> Self
 impl<'repo> core::fmt::Debug for grit_lib::revwalk::handle::RevWalk<'repo>
@@ -13383,6 +13388,11 @@ pub fn grit_lib::revwalk::handle::RevWalk<'repo>::new(&'repo grit_lib::repo::Rep
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve(&self, &str) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::walk(&self, &str, &grit_lib::revwalk::rev_list::RevListOptions) -> grit_lib::error::Result<grit_lib::revwalk::rev_list::RevListResult>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::parse_tokens(&self, &[&str]) -> grit_lib::error::Result<grit_lib::revwalk::RevWalkParsedSpecs>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::commits(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::count(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<usize>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::merge_bases(&self, &str, &str, bool) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::is_ancestor(&self, &str, &str) -> grit_lib::error::Result<bool>
 impl<'repo> core::clone::Clone for grit_lib::revwalk::handle::RevWalk<'repo>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::clone(&self) -> Self
 impl<'repo> core::fmt::Debug for grit_lib::revwalk::handle::RevWalk<'repo>
@@ -13395,6 +13405,9 @@ impl<'repo> core::marker::Unpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> core::marker::UnsafeUnpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
+pub fn grit_lib::revwalk::parse_rev_walk_tokens(&grit_lib::repo::Repository, &[&str]) -> grit_lib::error::Result<grit_lib::revwalk::RevWalkParsedSpecs>
+pub struct grit_lib::revwalk::RevWalkListOptions
+pub struct grit_lib::revwalk::RevWalkParsedSpecs
 pub mod grit_lib::stash
 pub struct grit_lib::stash::FlatTreeEntry
 pub grit_lib::stash::FlatTreeEntry::mode: u32

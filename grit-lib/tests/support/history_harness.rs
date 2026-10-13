@@ -13,13 +13,10 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Result;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
 use grit_lib::revwalk::rev_list::{
     rev_list, split_revision_token, ObjectFilter, OrderingMode, RevListOptions,
 };
-use grit_lib::revwalk::rev_parse::{
-    peel_to_commit_for_merge_base, resolve_revision_for_range_end, split_triple_dot_range,
-};
+use grit_lib::revwalk::{parse_rev_walk_tokens, RevWalkParsedSpecs};
 
 use super::refs_harness::{git as refs_git, null_device_for_tests, AUTHOR_EMAIL, AUTHOR_NAME};
 
@@ -517,40 +514,21 @@ pub fn expand_revision_tokens(tokens: &[&str]) -> (Vec<String>, Vec<String>) {
     (positive, negative)
 }
 
-/// Positive/negative specs and symmetric-diff markers for `left...right`.
-pub fn symmetric_rev_list_specs(
-    repo: &Repository,
-    left_spec: &str,
-    right_spec: &str,
-) -> Result<(Vec<String>, Vec<String>, ObjectId, ObjectId)> {
-    let left_tip = resolve_revision_for_range_end(repo, left_spec)?;
-    let right_tip = resolve_revision_for_range_end(repo, right_spec)?;
-    let left = peel_to_commit_for_merge_base(repo, left_tip)?;
-    let right = peel_to_commit_for_merge_base(repo, right_tip)?;
-    let bases = merge_bases_first_vs_rest(repo, left, &[right])?;
-    let mut negative = Vec::new();
-    for base in bases {
-        negative.push(base.to_hex());
-    }
-    Ok((vec![left.to_hex(), right.to_hex()], negative, left, right))
-}
-
 /// Expand one token that may use `A...B` symmetric-diff syntax.
 pub fn expand_token_for_rev_list(
     repo: &Repository,
     token: &str,
     opts: &mut RevListOptions,
 ) -> Result<(Vec<String>, Vec<String>)> {
-    if let Some((left, right)) = split_triple_dot_range(token) {
-        let left_spec = if left.is_empty() { "HEAD" } else { left };
-        let right_spec = if right.is_empty() { "HEAD" } else { right };
-        let (pos, neg, left_oid, right_oid) =
-            symmetric_rev_list_specs(repo, left_spec, right_spec)?;
-        opts.symmetric_left = Some(left_oid);
-        opts.symmetric_right = Some(right_oid);
-        return Ok((pos, neg));
-    }
-    Ok(split_revision_token(token))
+    let RevWalkParsedSpecs {
+        positive,
+        negative,
+        symmetric_left,
+        symmetric_right,
+    } = parse_rev_walk_tokens(repo, &[token])?;
+    opts.symmetric_left = symmetric_left;
+    opts.symmetric_right = symmetric_right;
+    Ok((positive, negative))
 }
 
 /// Assert grit commit order matches `git rev-list` for both commit-graph modes.
