@@ -419,6 +419,97 @@ mod tests {
         assert!(st.unstaged.is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn hard_reset_at_head_reverts_exec_bit_only_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        std::fs::write(wt.join("plain.txt"), "hi\n").expect("write");
+        std::fs::write(wt.join("run.sh"), "#!/bin/sh\n").expect("write");
+        let mut perms = std::fs::metadata(wt.join("run.sh"))
+            .expect("meta")
+            .permissions();
+        perms.set_mode(0o100755);
+        std::fs::set_permissions(wt.join("run.sh"), perms).expect("chmod");
+        let c1 = {
+            let mut index = repo.load_index().expect("index");
+            for (path, contents, mode) in [
+                ("plain.txt", "hi\n", crate::index::MODE_REGULAR),
+                ("run.sh", "#!/bin/sh\n", crate::index::MODE_EXECUTABLE),
+            ] {
+                let oid = repo
+                    .odb()
+                    .write(ObjectKind::Blob, contents.as_bytes())
+                    .expect("blob");
+                let entry =
+                    crate::index::entry_from_stat(&wt.join(path), path.as_bytes(), oid, mode)
+                        .expect("entry");
+                index.add_or_replace(entry);
+            }
+            index.sort();
+            let tree =
+                write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                    .expect("tree");
+            repo.write_index(&mut index).expect("write index");
+            let commit = CommitData {
+                tree,
+                parents: vec![],
+                author: "T <t@t> 0 +0000".into(),
+                committer: "T <t@t> 0 +0000".into(),
+                author_raw: vec![],
+                committer_raw: vec![],
+                encoding: None,
+                message: "c\n".into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            };
+            let co = repo
+                .odb()
+                .write(ObjectKind::Commit, &serialize_commit(&commit))
+                .expect("commit");
+            refs::write_ref(&repo.git_dir(), "refs/heads/main", &co).expect("branch");
+            refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("symhead");
+            co
+        };
+
+        let mut plain = std::fs::metadata(wt.join("plain.txt"))
+            .expect("meta")
+            .permissions();
+        plain.set_mode(0o100755);
+        std::fs::set_permissions(wt.join("plain.txt"), plain).expect("chmod plain");
+        let mut run = std::fs::metadata(wt.join("run.sh"))
+            .expect("meta")
+            .permissions();
+        run.set_mode(0o100644);
+        std::fs::set_permissions(wt.join("run.sh"), run).expect("chmod run");
+
+        reset_to_commit(&repo, &reset_opts(c1, ResetMode::Hard)).expect("reset");
+
+        assert_eq!(
+            std::fs::metadata(wt.join("plain.txt"))
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o111,
+            0,
+            "plain.txt should not be executable after hard reset"
+        );
+        assert_ne!(
+            std::fs::metadata(wt.join("run.sh"))
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o111,
+            0,
+            "run.sh should be executable after hard reset"
+        );
+        let st = status(&repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+        assert!(st.staged.is_empty(), "{st:?}");
+        assert!(st.unstaged.is_empty(), "{st:?}");
+    }
+
     #[test]
     fn bare_hard_reset_fails_without_moving_head() {
         let dir = tempfile::tempdir().expect("tempdir");

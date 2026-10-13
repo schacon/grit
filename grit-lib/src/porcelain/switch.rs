@@ -394,18 +394,47 @@ fn path_from_diff(entry: &DiffEntry) -> Option<&str> {
     entry.new_path.as_deref().or(entry.old_path.as_deref())
 }
 
+#[derive(Clone, Copy)]
+struct TargetTreeEntry {
+    oid: ObjectId,
+    mode: u32,
+}
+
+fn target_tree_entry_from_diff(change: &DiffEntry) -> Option<(&str, TargetTreeEntry)> {
+    let path = path_from_diff(change)?;
+    if change.status == DiffStatus::Deleted {
+        return None;
+    }
+    let mode = u32::from_str_radix(&change.new_mode, 8).unwrap_or(0);
+    Some((
+        path,
+        TargetTreeEntry {
+            oid: change.new_oid,
+            mode,
+        },
+    ))
+}
+
+fn index_matches_target_tree_entry(
+    index: &crate::index::Index,
+    path: &str,
+    target: TargetTreeEntry,
+) -> bool {
+    index
+        .get(path.as_bytes(), 0)
+        .is_some_and(|entry| entry.oid == target.oid && entry.mode == target.mode)
+}
+
 fn ensure_local_changes_compatible_with_switch(
     index: &crate::index::Index,
     staged: &[DiffEntry],
     unstaged: &[DiffEntry],
     tree_changes: &[DiffEntry],
 ) -> Result<HashSet<String>> {
-    let mut target_by_path: HashMap<&str, ObjectId> = HashMap::new();
+    let mut target_by_path: HashMap<&str, TargetTreeEntry> = HashMap::new();
     for change in tree_changes {
-        if let (Some(path), oid) = (path_from_diff(change), change.new_oid) {
-            if change.status != DiffStatus::Deleted {
-                target_by_path.insert(path, oid);
-            }
+        if let Some((path, target)) = target_tree_entry_from_diff(change) {
+            target_by_path.insert(path, target);
         }
     }
     let tree_changed_paths: HashSet<&str> =
@@ -420,11 +449,10 @@ fn ensure_local_changes_compatible_with_switch(
         if !tree_changed_paths.contains(path) {
             continue;
         }
-        if target_by_path.get(path).is_some_and(|target_oid| {
-            index
-                .get(path.as_bytes(), 0)
-                .is_some_and(|e| e.oid == *target_oid)
-        }) {
+        if target_by_path
+            .get(path)
+            .is_some_and(|target| index_matches_target_tree_entry(index, path, *target))
+        {
             continue;
         }
         return Err(Error::Message(
@@ -439,11 +467,10 @@ fn ensure_local_changes_compatible_with_switch(
         if !tree_changed_paths.contains(path) {
             continue;
         }
-        if target_by_path.get(path).is_some_and(|target_oid| {
-            index
-                .get(path.as_bytes(), 0)
-                .is_some_and(|e| e.oid == *target_oid)
-        }) {
+        if target_by_path
+            .get(path)
+            .is_some_and(|target| index_matches_target_tree_entry(index, path, *target))
+        {
             preserve_worktree_paths.insert(path.to_owned());
             continue;
         }
@@ -521,6 +548,84 @@ mod tests {
         refs::write_ref(repo.git_dir(), &refname, &co).expect("branch");
         refs::write_symbolic_ref(repo.git_dir(), "HEAD", &refname).expect("symhead");
         co
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn switch_refuses_when_dirty_file_differs_only_in_mode_between_commits() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn commit_x_sh(repo: &Repository, mode: u32, parent: Option<ObjectId>) -> ObjectId {
+            let wt = repo.work_tree().expect("wt");
+            std::fs::write(wt.join("x.sh"), "#!/bin/sh\n").expect("write");
+            #[cfg(unix)]
+            {
+                let mut perms = std::fs::metadata(wt.join("x.sh"))
+                    .expect("meta")
+                    .permissions();
+                perms.set_mode(if mode == crate::index::MODE_EXECUTABLE {
+                    0o100755
+                } else {
+                    0o100644
+                });
+                std::fs::set_permissions(wt.join("x.sh"), perms).expect("chmod");
+            }
+            let mut index = repo.load_index().expect("index");
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Blob, b"#!/bin/sh\n")
+                .expect("blob");
+            let entry =
+                crate::index::entry_from_stat(&wt.join("x.sh"), b"x.sh", oid, mode).expect("entry");
+            index.add_or_replace(entry);
+            index.sort();
+            let tree =
+                write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                    .expect("tree");
+            repo.write_index(&mut index).expect("write index");
+            let commit = CommitData {
+                tree,
+                parents: parent.into_iter().collect(),
+                author: "T <t@t> 0 +0000".into(),
+                committer: "T <t@t> 0 +0000".into(),
+                author_raw: vec![],
+                committer_raw: vec![],
+                encoding: None,
+                message: "c\n".into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            };
+            repo.odb()
+                .write(ObjectKind::Commit, &serialize_commit(&commit))
+                .expect("commit")
+        }
+
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        let c1 = commit_x_sh(&repo, crate::index::MODE_EXECUTABLE, None);
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &c1).expect("branch");
+        let c2 = commit_x_sh(&repo, crate::index::MODE_REGULAR, Some(c1));
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &c2).expect("branch");
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(wt.join("x.sh"))
+            .expect("open")
+            .write_all(b"more\n")
+            .expect("append");
+
+        let err = switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Detached {
+                    commit: c1,
+                    reflog_to_label: "HEAD~1".into(),
+                },
+            },
+        )
+        .expect_err("local changes should block switch");
+        assert!(matches!(err, Error::Message(_)));
     }
 
     #[test]
