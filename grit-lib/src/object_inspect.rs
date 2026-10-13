@@ -22,7 +22,8 @@ use thiserror::Error;
 
 use crate::error::{Error, Result};
 use crate::objects::{
-    parse_commit, parse_tag, parse_tree, CommitData, ObjectId, ObjectKind, TagData, TreeEntry,
+    parse_commit, parse_tag, parse_tree, CommitData, Object, ObjectId, ObjectKind, TagData,
+    TreeEntry,
 };
 use crate::repo::Repository;
 use crate::rev_parse::{
@@ -139,18 +140,29 @@ impl Repository {
             }
         };
 
-        let info = self
-            .odb()
-            .read_info(&oid)
-            .map_err(|_| ResolveError::UnknownRevision {
-                spec: spec.to_owned(),
-            })?;
+        let obj =
+            self.read_object_raw_for_display(&oid)
+                .map_err(|_| ResolveError::UnknownRevision {
+                    spec: spec.to_owned(),
+                })?;
+        let size = u64::try_from(obj.data.len()).map_err(|_| ResolveError::UnknownRevision {
+            spec: spec.to_owned(),
+        })?;
         Ok(ResolvedObject {
             oid,
-            kind: info.kind,
-            size: info.size,
+            kind: obj.kind,
+            size,
             ref_name: infer_ref_name(self, spec, oid),
         })
+    }
+
+    /// Read uncompressed object bytes for display, following replace refs when enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ObjectNotFound`] when the object is missing.
+    pub fn read_object_raw_for_display(&self, oid: &ObjectId) -> Result<Object> {
+        self.read_replaced(oid)
     }
 
     /// Read and parse the object named by `oid` for display.
@@ -160,13 +172,23 @@ impl Repository {
     /// Returns [`Error::ObjectNotFound`] when the object is missing and
     /// [`Error::CorruptObject`] when parsing fails.
     pub fn read_object_for_display(&self, oid: &ObjectId) -> Result<ObjectContents> {
-        let obj = self.read_replaced(oid)?;
+        let obj = self.read_object_raw_for_display(oid)?;
         match obj.kind {
             ObjectKind::Blob => Ok(ObjectContents::Blob(obj.data)),
             ObjectKind::Tree => Ok(ObjectContents::Tree(parse_tree(&obj.data)?)),
             ObjectKind::Commit => Ok(ObjectContents::Commit(parse_commit(&obj.data)?)),
             ObjectKind::Tag => Ok(ObjectContents::Tag(parse_tag(&obj.data)?)),
         }
+    }
+}
+
+/// Format a tree entry mode for `git cat-file -p` output (six-digit tree modes).
+#[must_use]
+pub fn tree_entry_mode_cat_file_p(mode: u32) -> String {
+    if mode == 0o040000 {
+        "040000".to_owned()
+    } else {
+        format!("{:o}", mode)
     }
 }
 
@@ -196,7 +218,7 @@ pub fn format_tree_cat_file_p(repo: &Repository, data: &[u8]) -> Result<Vec<u8>>
     let entries = parse_tree(data)?;
     let mut out = Vec::new();
     for e in &entries {
-        out.extend_from_slice(e.mode_str().as_bytes());
+        out.extend_from_slice(tree_entry_mode_cat_file_p(e.mode).as_bytes());
         out.push(b' ');
         out.extend_from_slice(tree_entry_cat_file_type(repo, e.mode, &e.oid).as_bytes());
         out.push(b' ');
@@ -262,5 +284,11 @@ mod tests {
             revision: "HEAD".into(),
         });
         assert!(matches!(err, ResolveError::PathNotInTree { .. }));
+    }
+
+    #[test]
+    fn tree_entry_mode_cat_file_p_uses_six_digit_tree_mode() {
+        assert_eq!(tree_entry_mode_cat_file_p(0o040000), "040000");
+        assert_eq!(tree_entry_mode_cat_file_p(0o100644), "100644");
     }
 }

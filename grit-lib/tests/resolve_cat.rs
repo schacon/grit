@@ -5,8 +5,11 @@ mod support;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use grit_lib::config::environment::Environment;
 use grit_lib::object_inspect::{format_tree_cat_file_p, ObjectContents, ResolveError};
 use grit_lib::objects::ObjectKind;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::repo::Repository;
 
 use support::{
     bare_repo_with_ambiguous_prefix, commit_file, git, git_rev_parse_verify, open_grit_repo,
@@ -157,7 +160,9 @@ fn cat_matches_git_cat_file() {
         assert_eq!(resolved.size, git_size, "size for {spec}");
 
         let git_body = git_cat_file_p(wt, spec).expect("git -p");
-        let obj = repo.odb().read(&resolved.oid).expect("read object");
+        let obj = repo
+            .read_object_raw_for_display(&resolved.oid)
+            .expect("read object");
         let _parsed = repo
             .read_object_for_display(&resolved.oid)
             .expect("read_object_for_display");
@@ -205,7 +210,7 @@ fn cat_commit_non_utf8_payload_matches_git_cat_file_p() {
     let git_body = git_cat_file_p(wt, &oid_hex).expect("git -p");
     let repo = open_grit_repo(wt);
     let oid = ObjectId::from_hex(&oid_hex).expect("hex");
-    let obj = repo.odb().read(&oid).expect("read");
+    let obj = repo.read_object_raw_for_display(&oid).expect("read");
     assert_eq!(obj.data, git_body, "commit payload bytes");
     assert_eq!(
         obj.data.len(),
@@ -255,9 +260,131 @@ fn cat_tree_missing_gitlink_matches_git_cat_file_p() {
     );
     let repo = open_grit_repo(wt);
     let oid = grit_lib::objects::ObjectId::from_hex(&tree_oid).expect("hex");
-    let obj = repo.odb().read(&oid).expect("read tree");
+    let obj = repo.read_object_raw_for_display(&oid).expect("read tree");
     let grit_body = format_tree_cat_file_p(&repo, &obj.data).expect("format tree");
     assert_eq!(grit_body, git_body, "tree with absent gitlink");
+}
+
+#[test]
+fn cat_nested_tree_directory_mode_matches_git() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    std::fs::create_dir_all(wt.join("dir")).expect("mkdir");
+    commit_file(wt, "dir/file", "nested\n", "nested dir");
+    let spec = "HEAD^{tree}";
+    let git_body = git_cat_file_p(wt, spec).expect("git -p");
+    assert!(
+        git_body.windows(6).any(|w| w == b"040000"),
+        "git should print six-digit tree mode: {}",
+        String::from_utf8_lossy(&git_body)
+    );
+    let repo = open_grit_repo(wt);
+    let resolved = repo.resolve(spec).expect("resolve");
+    let obj = repo
+        .read_object_raw_for_display(&resolved.oid)
+        .expect("read");
+    let grit_body = format_tree_cat_file_p(&repo, &obj.data).expect("format tree");
+    assert_eq!(grit_body, git_body, "nested tree cat-file -p");
+}
+
+#[test]
+fn resolve_and_cat_follow_replace_refs() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "x\n", "init");
+    let head = git_rev_parse_verify(wt, "HEAD").expect("HEAD");
+    let blob_body = b"replacement";
+    let mut child = Command::new("git")
+        .current_dir(wt)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(blob_body)
+        .expect("write blob");
+    let out = child.wait_with_output().expect("hash-object wait");
+    assert!(out.status.success());
+    let blob_hex = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let replace_dir = wt.join(".git/refs/replace");
+    std::fs::create_dir_all(&replace_dir).expect("mkdir replace");
+    std::fs::write(replace_dir.join(head.to_hex()), format!("{blob_hex}\n")).expect("replace ref");
+
+    let repo = open_grit_repo(wt);
+    let resolved = repo.resolve("HEAD").expect("resolve HEAD");
+    assert_eq!(resolved.oid, head);
+    assert_eq!(resolved.kind, ObjectKind::Blob);
+    assert_eq!(resolved.size, blob_body.len() as u64);
+    assert_eq!(
+        git_cat_file_type(wt, "HEAD").as_deref(),
+        Some("blob"),
+        "git -t HEAD"
+    );
+    let git_body = git_cat_file_p(wt, "HEAD").expect("git -p");
+    let obj = repo
+        .read_object_raw_for_display(&resolved.oid)
+        .expect("read replaced");
+    assert_eq!(obj.data, git_body);
+    assert_eq!(obj.data, blob_body);
+}
+
+#[test]
+fn resolve_and_cat_respect_git_no_replace_objects() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_file(wt, "f.txt", "x\n", "init");
+    let head = git_rev_parse_verify(wt, "HEAD").expect("HEAD");
+    let blob_body = b"replacement";
+    let mut child = Command::new("git")
+        .current_dir(wt)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(blob_body)
+        .expect("write blob");
+    let out = child.wait_with_output().expect("hash-object wait");
+    assert!(out.status.success());
+    let blob_hex = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    std::fs::create_dir_all(wt.join(".git/refs/replace")).expect("mkdir replace");
+    std::fs::write(
+        wt.join(".git/refs/replace").join(head.to_hex()),
+        format!("{blob_hex}\n"),
+    )
+    .expect("write replace ref");
+
+    let mut env = Environment::empty();
+    env.git_no_replace_objects = true;
+    let repo = Repository::discover(Some(wt), &RepositoryOptions::with_environment(env))
+        .expect("discover");
+    let resolved = repo.resolve("HEAD").expect("resolve HEAD");
+    assert_eq!(resolved.kind, ObjectKind::Commit);
+    assert_eq!(
+        git_cat_file_type(wt, "HEAD").as_deref(),
+        Some("blob"),
+        "git still follows replace for HEAD spec"
+    );
+    let git_no_replace = Command::new("git")
+        .current_dir(wt)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["cat-file", "-t", "HEAD"])
+        .output()
+        .expect("git -t");
+    assert!(git_no_replace.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&git_no_replace.stdout).trim(),
+        "commit"
+    );
+    assert_eq!(kind_str(resolved.kind), "commit");
 }
 
 #[test]

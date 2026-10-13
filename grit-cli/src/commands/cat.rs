@@ -4,7 +4,7 @@ use std::io::Write;
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use grit_lib::object_inspect::{format_tree_cat_file_p, ResolveError};
+use grit_lib::object_inspect::{format_tree_cat_file_p, tree_entry_mode_cat_file_p, ResolveError};
 use grit_lib::objects::{Object, ObjectKind};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -135,8 +135,7 @@ pub fn run(spec: String) -> Result<CatOutcome> {
         .resolve(&spec)
         .map_err(|e| map_resolve_error(&spec, e))?;
     let obj = repo
-        .odb()
-        .read(&resolved.oid)
+        .read_object_raw_for_display(&resolved.oid)
         .with_context(|| format!("read object {}", resolved.oid.to_hex()))?;
     let (content, human_raw) = build_content(&repo, &obj)?;
     Ok(CatOutcome {
@@ -165,7 +164,7 @@ fn build_content(
             let entries = parsed
                 .iter()
                 .map(|e| TreeLineJson {
-                    mode: e.mode_str(),
+                    mode: tree_entry_mode_cat_file_p(e.mode),
                     object_type: grit_lib::object_inspect::tree_entry_cat_file_type(
                         repo, e.mode, &e.oid,
                     )

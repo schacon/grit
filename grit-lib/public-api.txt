@@ -4948,6 +4948,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::object_inspect::Resolved
 pub fn grit_lib::object_inspect::abbreviate_for_display(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, bool) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::object_inspect::format_tree_cat_file_p(&grit_lib::repo::Repository, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::object_inspect::tree_entry_cat_file_type(&grit_lib::repo::Repository, u32, &grit_lib::objects::ObjectId) -> &'static str
+pub fn grit_lib::object_inspect::tree_entry_mode_cat_file_p(u32) -> alloc::string::String
 pub mod grit_lib::objects
 pub mod grit_lib::objects::bitmap
 #[non_exhaustive] pub enum grit_lib::objects::bitmap::BitmapError
@@ -9659,6 +9660,7 @@ impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::read_object_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::object_inspect::ObjectContents>
+pub fn grit_lib::repo::Repository::read_object_raw_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
 pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
@@ -12799,6 +12801,7 @@ impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::read_object_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::object_inspect::ObjectContents>
+pub fn grit_lib::repo::Repository::read_object_raw_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::objects::Object>
 pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::write_commit_graph(&self, &grit_lib::maintenance::CommitGraphOptions) -> grit_lib::error::Result<grit_lib::maintenance::CommitGraphWriteReport>
@@ -13511,6 +13514,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::object_inspect::Resolved
 pub fn grit_lib::revwalk::object_inspect::abbreviate_for_display(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, bool) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::revwalk::object_inspect::format_tree_cat_file_p(&grit_lib::repo::Repository, &[u8]) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::revwalk::object_inspect::tree_entry_cat_file_type(&grit_lib::repo::Repository, u32, &grit_lib::objects::ObjectId) -> &'static str
+pub fn grit_lib::revwalk::object_inspect::tree_entry_mode_cat_file_p(u32) -> alloc::string::String
 pub mod grit_lib::revwalk::queries
 pub struct grit_lib::revwalk::queries::RevWalkListOptions
 pub grit_lib::revwalk::queries::RevWalkListOptions::first_parent: bool

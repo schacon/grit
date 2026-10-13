@@ -16,10 +16,10 @@ grit cat <SPEC>
 Shows the contents of the object named by a revision spec:
 
 - **Blob** — raw bytes written to stdout (no extra framing).
-- **Tree** — one line per entry in `ls-tree` form: `MODE TYPE OID<TAB>PATH`.
+- **Tree** — one line per entry like `git cat-file -p` (six-digit directory modes such as `040000`, then type, oid, tab, path).
 - **Commit** or **tag** — the canonical object payload (same bytes as `git cat-file -p`).
 
-Supported specs are the same as [`grit resolve`](resolve.md): peeled tips, `rev:path`, short oids, and reflog selectors.
+Object bytes and metadata honor `refs/replace` the same way as Git (unless `GIT_NO_REPLACE_OBJECTS` is set). Supported specs are the same as [`grit resolve`](resolve.md): peeled tips, `rev:path`, short oids, and reflog selectors.
 
 ## Options
 
