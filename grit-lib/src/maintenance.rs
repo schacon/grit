@@ -22,7 +22,7 @@ use std::time::SystemTime;
 
 use crate::config::ConfigSet;
 use crate::environment::Environment;
-use crate::error::{Error, Result};
+use crate::error::{ConfigError, Error, Result};
 use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
@@ -396,9 +396,12 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let odb = repo.odb();
     odb.require_files_primary("gc")?;
 
+    let now = gc_now_unix(opts.now_unix);
+    let cfg = repo.config()?;
+    let prune_policy = gc_loose_prune_policy(&cfg, now)?;
+
     if opts.expire_reflog {
-        stats.reflog_entries_pruned =
-            expire_reflogs_for_gc(repo, opts.repack.dry_run, opts.now_unix)?;
+        stats.reflog_entries_pruned = expire_reflogs_for_gc(repo, opts.repack.dry_run, now)?;
     }
 
     stats.repack = repack_all(repo, &opts.repack)?;
@@ -408,9 +411,7 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     }
 
     let roots = collect_maintenance_object_roots(repo)?;
-    let cfg = repo.config()?;
-    let now = gc_now_unix(opts.now_unix);
-    stats.prune = match gc_loose_prune_policy(&cfg, now)? {
+    stats.prune = match prune_policy {
         GcLoosePrunePolicy::Disabled => PruneStats::default(),
         GcLoosePrunePolicy::Enabled { keep_newer_than } => {
             prune_loose_unreachable(odb, &roots, keep_newer_than)?
@@ -441,6 +442,11 @@ fn gc_loose_prune_policy(config: &ConfigSet, now_unix: i64) -> Result<GcLoosePru
     }
     let mut err = 0;
     let cutoff_sec = approxidate_careful_at(&spec, now_unix, Some(&mut err)) as i64;
+    if err != 0 {
+        return Err(Error::Config(ConfigError::Other(format!(
+            "bad config value '{spec}' for 'gc.pruneExpire'"
+        ))));
+    }
     let keep_newer_than = SystemTime::UNIX_EPOCH
         .checked_add(std::time::Duration::from_secs(cutoff_sec.max(0) as u64));
     Ok(GcLoosePrunePolicy::Enabled { keep_newer_than })
