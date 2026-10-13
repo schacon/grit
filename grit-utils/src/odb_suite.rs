@@ -292,6 +292,32 @@ pub fn run_odb_suite(
         &hot,
     )?);
 
+    scenarios.push(run_odb_scenario(
+        hyperfine,
+        bench_exe,
+        git,
+        cfg,
+        &Scenario {
+            id: "commit-graph-write-hot-path-100k".into(),
+            group: "maintenance".into(),
+            fixture: "hot-path-100k".into(),
+            description: "reachable commit-graph write with changed paths (git commit-graph write)"
+                .into(),
+            grit_argv: drive_argv("commit-graph-write", &hot, &[]),
+            git_argv: vec![
+                "commit-graph".into(),
+                "write".into(),
+                "--reachable".into(),
+                "--changed-paths".into(),
+            ],
+            driver: Driver::Lib,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &hot,
+    )?);
+
     Ok(BenchReport {
         schema_version: SCHEMA_VERSION,
         timestamp: format_timestamp(timestamp),

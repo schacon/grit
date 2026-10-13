@@ -225,7 +225,7 @@ fn resolve_parent_edge(
 }
 
 /// Counters emitted as `GIT_TRACE2_EVENT` for Bloom generation (`commit-graph.c`).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BloomWriteStats {
     /// Filter computed for this item.
     pub filter_computed: u32,
@@ -559,6 +559,79 @@ pub fn collect_reachable_commit_oids(
     }
 
     Ok(commits)
+}
+
+/// Replace `objects/info/commit-graph` atomically (lock + tempfile + rename).
+///
+/// Does not remove a split `commit-graphs/` chain; callers use
+/// [`remove_commit_graph_chain_dir`] after a successful monolithic write.
+///
+/// # Errors
+///
+/// Propagates I/O failures or when the lock file is already held.
+pub fn atomic_replace_commit_graph(
+    objects_dir: &std::path::Path,
+    bytes: &[u8],
+) -> crate::error::Result<std::path::PathBuf> {
+    use std::fs;
+    use std::io::Write as _;
+
+    let info = objects_dir.join("info");
+    fs::create_dir_all(&info).map_err(crate::error::Error::Io)?;
+    let graph_path = info.join("commit-graph");
+    let lock_path = info.join("commit-graph.lock");
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(crate::error::Error::from(
+                crate::error::RefLockError::PackedRefsLockHeld {
+                    lock_path: lock_path.display().to_string(),
+                },
+            ));
+        }
+        Err(e) => return Err(crate::error::Error::Io(e)),
+    }
+
+    let tmp = info.join("commit-graph.new");
+    let mut created_tmp = false;
+    let write_result = (|| -> crate::error::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(crate::error::Error::Io)?;
+        created_tmp = true;
+        file.write_all(bytes).map_err(crate::error::Error::Io)?;
+        drop(file);
+        if graph_path.is_file() {
+            fs::remove_file(&graph_path).map_err(crate::error::Error::Io)?;
+        }
+        fs::rename(&tmp, &graph_path).map_err(crate::error::Error::Io)?;
+        created_tmp = false;
+        Ok(())
+    })();
+    let _ = fs::remove_file(&lock_path);
+    if write_result.is_err() && created_tmp {
+        let _ = fs::remove_file(&tmp);
+    }
+    write_result?;
+    Ok(graph_path)
+}
+
+/// Remove `objects/info/commit-graphs` when replacing a split chain with a single graph file.
+///
+/// Returns `true` when a chain directory was removed.
+pub fn remove_commit_graph_chain_dir(objects_dir: &std::path::Path) -> bool {
+    let graphs = objects_dir.join("info").join("commit-graphs");
+    if graphs.is_dir() {
+        std::fs::remove_dir_all(&graphs).is_ok()
+    } else {
+        false
+    }
 }
 
 /// Count unique commit OIDs that refs point to directly (peeling annotated tags), matching Git's

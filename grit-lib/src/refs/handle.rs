@@ -130,4 +130,16 @@ impl<'repo> References<'repo> {
             })?;
         Ok(entries)
     }
+
+    /// Pack loose refs into `packed-refs` (files backend) or compact reftable tables.
+    ///
+    /// # Errors
+    ///
+    /// Propagates ref-store, locking, and I/O failures.
+    pub fn pack(
+        &self,
+        opts: &crate::maintenance::PackRefsOptions,
+    ) -> Result<crate::maintenance::PackRefsReport> {
+        crate::maintenance::pack_refs(self.repo, opts)
+    }
 }

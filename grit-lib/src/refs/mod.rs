@@ -2141,6 +2141,201 @@ pub fn append_reflog_with_config(
     Ok(())
 }
 
+fn pack_ref_include_pattern(all: bool) -> &'static [u8] {
+    if all {
+        b"*"
+    } else {
+        b"refs/tags/*"
+    }
+}
+
+fn ref_matches_pack_include(refname: &str, all: bool) -> bool {
+    crate::wildmatch::wildmatch(pack_ref_include_pattern(all), refname.as_bytes(), 0)
+}
+
+fn collect_loose_ref_files(
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<(String, PathBuf)>,
+) -> Result<()> {
+    let read = match fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::NotADirectory
+                || e.raw_os_error() == Some(libc::ENOTDIR) =>
+        {
+            return Ok(());
+        }
+        Err(e) => return Err(Error::Io(e)),
+    };
+    for entry in read {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let refname = format!("{prefix}{name}");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_loose_ref_files(&path, &format!("{refname}/"), out)?;
+        } else if path.is_file() {
+            out.push((refname, path));
+        }
+    }
+    Ok(())
+}
+
+fn load_packed_refs_with_peel(
+    packed_path: &Path,
+    merged: &mut HashMap<String, (ObjectId, Option<ObjectId>)>,
+) -> Result<()> {
+    if !packed_path.is_file() {
+        return Ok(());
+    }
+    let data = fs::read(packed_path)?;
+    parse_packed_refs_to_map(packed_path, &data)?;
+    let content = String::from_utf8(data)
+        .map_err(|_| packed_refs_unexpected_line(packed_path, "<invalid utf-8>"))?;
+    let mut last_name: Option<String> = None;
+    for line in content.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(hex) = line.strip_prefix('^') {
+            let Ok(peel_oid) = ObjectId::from_hex(hex.trim()) else {
+                continue;
+            };
+            if let Some(name) = &last_name {
+                if let Some(entry) = merged.get_mut(name) {
+                    entry.1 = Some(peel_oid);
+                }
+            }
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let Some(hex) = parts.next() else {
+            continue;
+        };
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let name = name.trim();
+        let Ok(oid) = ObjectId::from_hex(hex) else {
+            continue;
+        };
+        merged.insert(name.to_owned(), (oid, None));
+        last_name = Some(name.to_owned());
+    }
+    Ok(())
+}
+
+/// Pack loose refs for `repo` (files `packed-refs` or reftable compaction).
+pub(crate) fn pack_refs_for_repository(
+    repo: &crate::repo::Repository,
+    all: bool,
+) -> Result<(PathBuf, usize, usize)> {
+    let git_dir = repo.git_dir();
+    if open_ref_store(git_dir)?.format() != RefStorageFormat::Files {
+        return pack_refs_reftable(git_dir);
+    }
+    pack_refs_files(git_dir, repo.odb(), all)
+}
+
+fn pack_refs_reftable(git_dir: &Path) -> Result<(PathBuf, usize, usize)> {
+    use crate::reftable::ReftableStack;
+    let store_git_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let rt_dir = store_git_dir.join("reftable");
+    let tables_before = fs::read_to_string(rt_dir.join("tables.list"))
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+    let mut stack = ReftableStack::open(&store_git_dir)?;
+    stack.compact()?;
+    let tables_after = fs::read_to_string(rt_dir.join("tables.list"))
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+    Ok((rt_dir, 0, tables_before.saturating_sub(tables_after)))
+}
+
+fn pack_refs_files(
+    git_dir: &Path,
+    odb: &crate::odb::Odb,
+    all: bool,
+) -> Result<(PathBuf, usize, usize)> {
+    let storage_git_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let packed_path = store::paths::packed_refs_path(&storage_git_dir);
+
+    let mut merged: HashMap<String, (ObjectId, Option<ObjectId>)> = HashMap::new();
+    load_packed_refs_with_peel(&packed_path, &mut merged)?;
+
+    let mut loose_files = Vec::new();
+    collect_loose_ref_files(&storage_git_dir.join("refs"), "refs/", &mut loose_files)?;
+
+    let mut packed_loose = 0usize;
+    let mut to_prune: Vec<PathBuf> = Vec::new();
+
+    for (refname, path) in loose_files {
+        if refname.starts_with("refs/bisect/") {
+            continue;
+        }
+        if !ref_matches_pack_include(&refname, all) {
+            continue;
+        }
+        let Ok(Ref::Direct(oid)) = read_ref_file(&path) else {
+            continue;
+        };
+        if odb.read(&oid).is_err() {
+            continue;
+        }
+        let mut peel = None;
+        if refname.starts_with("refs/tags/") {
+            if let Ok(obj) = odb.read(&oid) {
+                if obj.kind == crate::objects::ObjectKind::Tag {
+                    if let Ok(tag) = crate::objects::parse_tag(&obj.data) {
+                        peel = Some(tag.object);
+                    }
+                }
+            }
+        }
+        merged.insert(refname, (oid, peel));
+        to_prune.push(path);
+        packed_loose += 1;
+    }
+
+    if packed_loose == 0 && merged.is_empty() {
+        return Ok((packed_path, 0, 0));
+    }
+
+    let mut names: Vec<String> = merged.keys().cloned().collect();
+    names.sort();
+
+    let mut body = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+    for name in &names {
+        let Some((oid, peel)) = merged.get(name) else {
+            continue;
+        };
+        body.push_str(&oid.to_hex());
+        body.push(' ');
+        body.push_str(name);
+        body.push('\n');
+        if let Some(p) = peel {
+            body.push('^');
+            body.push_str(&p.to_hex());
+            body.push('\n');
+        }
+    }
+
+    atomic_rewrite_packed_refs(&storage_git_dir, &body)?;
+
+    for path in &to_prune {
+        if path.is_file() {
+            let _ = fs::remove_file(path);
+            if let Some(parent) = path.parent() {
+                remove_empty_ref_directory(parent);
+            }
+        }
+    }
+
+    Ok((packed_path, packed_loose, to_prune.len()))
+}
+
 /// Test hook: when set to a ref name, the next [`append_reflog`] for that ref fails.
 ///
 /// Only active in debug builds; used by regression tests for commit ref/reflog atomicity.

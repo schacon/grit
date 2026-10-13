@@ -371,6 +371,9 @@ enum DriveCmd {
         repo: PathBuf,
         branch: String,
     },
+    CommitGraphWrite {
+        repo: PathBuf,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -493,6 +496,10 @@ fn run_drive(workload: &DriveCmd) -> Result<()> {
         DriveCmd::CheckoutBranch { repo, branch } => {
             let repo = open_repo(repo)?;
             odb_driver::checkout_branch_force(&repo, branch.as_str())?;
+        }
+        DriveCmd::CommitGraphWrite { repo } => {
+            let repo = open_repo(repo)?;
+            odb_driver::commit_graph_write(&repo)?;
         }
     }
     Ok(())

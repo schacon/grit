@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_trees, unified_diff_with_prefix, DiffStatus};
 use grit_lib::error::Error;
+use grit_lib::maintenance::{write_commit_graph, CommitGraphOptions};
 use grit_lib::objects::pack::{read_object_from_pack_at_offset, read_pack_index_cached, PackIndex};
 use grit_lib::objects::{parse_commit, Object, ObjectId, ObjectKind};
 use grit_lib::remote::serve::{upload_pack, ProtocolVersion, ServeOptions};
@@ -662,6 +663,12 @@ fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
         );
     }
     ObjectId::from_hex(String::from_utf8_lossy(&out.stdout).trim()).context("parse rev-parse oid")
+}
+
+/// Write a reachable commit-graph with changed-path Bloom filters (maintenance API).
+pub fn commit_graph_write(repo: &Repository) -> Result<()> {
+    write_commit_graph(repo, &CommitGraphOptions::with_changed_paths(true))?;
+    Ok(())
 }
 
 /// Open a bare or normal repo at `path` for driver subcommands.

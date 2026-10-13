@@ -21,10 +21,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::bloom::BloomFilterSettings;
+use crate::commit_graph_file::CommitGraphChain;
 use crate::commit_graph_write::{
     build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
 };
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable};
 use crate::objects::ObjectId;
@@ -173,6 +174,14 @@ impl Odb {
                 operation: "commit-graph write",
             });
         };
+        let config = ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(git_dir),
+            true,
+        )
+        .unwrap_or_default();
+        let bloom = crate::maintenance::bloom_settings_for_commit_graph_write(&config, true);
+        let write_generation = crate::maintenance::commit_graph_writes_generation_data(&config);
         let commits = collect_reachable_commit_oids(git_dir, self)?;
         let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
         sorted.sort();
@@ -180,7 +189,18 @@ impl Odb {
         for oid in &sorted {
             infos.insert(*oid, load_commit_graph_commit_info(self, *oid)?);
         }
-        let bloom = BloomFilterSettings::default();
+        let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
+        let mut existing_filters = std::collections::HashMap::new();
+        let mut upgraded_filters = std::collections::HashMap::new();
+        if let Some(ref chain) = chain {
+            for oid in &sorted {
+                if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
+                    existing_filters.insert(*oid, bytes);
+                } else if let Some(bytes) = chain.upgradable_filter_bytes(oid, &bloom) {
+                    upgraded_filters.insert(*oid, bytes);
+                }
+            }
+        }
         let (bytes, _) = build_commit_graph_bytes(
             &sorted,
             &infos,
@@ -190,13 +210,12 @@ impl Odb {
             None,
             &[],
             None,
-            &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
-            true,
+            &existing_filters,
+            &upgraded_filters,
+            write_generation,
         )?;
-        let info_dir = objects_dir.join("info");
-        std::fs::create_dir_all(&info_dir)?;
-        std::fs::write(info_dir.join("commit-graph"), bytes)?;
+        crate::commit_graph_write::atomic_replace_commit_graph(objects_dir, &bytes)?;
+        let _ = crate::commit_graph_write::remove_commit_graph_chain_dir(objects_dir);
         Ok(())
     }
 

@@ -14,13 +14,19 @@
 //! # }
 //! ```
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::commit_graph_file::CommitGraphChain;
+use crate::commit_graph_write::{
+    atomic_replace_commit_graph, build_commit_graph_bytes, collect_reachable_commit_oids,
+    load_commit_graph_commit_info, remove_commit_graph_chain_dir, BloomWriteStats,
+};
 use crate::config::ConfigSet;
+use crate::diff::bloom::BloomFilterSettings;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
 use crate::fsck as repo_fsck;
@@ -28,7 +34,10 @@ use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
-use crate::midx::clear_pack_midx_state;
+use crate::midx::{
+    clear_pack_midx_state, verify_midx, write_multi_pack_index_with_options,
+    MidxBitmapWriteOutcome, WriteMultiPackIndexOptions, WriteMultiPackIndexResult,
+};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
@@ -102,6 +111,101 @@ pub struct RepackStats {
     pub removed_pack_files: usize,
     /// Loose objects removed because they were redundant with the new pack.
     pub pruned_loose: usize,
+}
+
+/// Options for [`Repository::write_commit_graph`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CommitGraphOptions {
+    /// When true, emit Bloom filter chunks for changed-path queries.
+    pub changed_paths: bool,
+}
+
+impl CommitGraphOptions {
+    /// Build options with an explicit changed-paths Bloom setting.
+    #[must_use]
+    pub fn with_changed_paths(changed_paths: bool) -> Self {
+        Self {
+            changed_paths,
+            ..Self::default()
+        }
+    }
+}
+
+/// Result of writing `objects/info/commit-graph`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CommitGraphWriteReport {
+    /// Path to the monolithic commit-graph file.
+    pub path: PathBuf,
+    /// Commits encoded in the graph.
+    pub commit_count: usize,
+    /// Whether a split `commit-graphs/` chain was removed.
+    pub removed_chain: bool,
+    /// Bloom generation counters when [`CommitGraphOptions::changed_paths`] was set.
+    pub bloom_stats: Option<BloomWriteStats>,
+}
+
+/// Options for [`Repository::write_midx`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MidxOptions {
+    /// Write a reachability `.bitmap` sidecar when the MIDX is a root file.
+    pub bitmap: bool,
+}
+
+impl MidxOptions {
+    /// Build MIDX write options with an explicit bitmap sidecar flag.
+    #[must_use]
+    pub fn with_bitmap(bitmap: bool) -> Self {
+        Self {
+            bitmap,
+            ..Self::default()
+        }
+    }
+}
+
+/// Result of writing `objects/pack/multi-pack-index`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MidxWriteReport {
+    /// Path to the tip MIDX file.
+    pub path: PathBuf,
+    /// Pack indexes covered by the MIDX.
+    pub pack_count: usize,
+    /// Whether a reachability bitmap was written or skipped.
+    pub bitmap: MidxBitmapWriteOutcome,
+}
+
+/// Options for [`References::pack`](crate::refs::References::pack).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PackRefsOptions {
+    /// When true, pack every packable ref (`git pack-refs --all`); otherwise only tags.
+    pub all: bool,
+}
+
+impl PackRefsOptions {
+    /// Build pack-refs options matching `git pack-refs` / `--all`.
+    #[must_use]
+    pub fn with_all(all: bool) -> Self {
+        Self {
+            all,
+            ..Self::default()
+        }
+    }
+}
+
+/// Result of packing refs (files `packed-refs` or reftable compaction).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PackRefsReport {
+    /// `packed-refs` path or the `reftable/` directory.
+    pub path: PathBuf,
+    /// Loose refs merged into the packed store.
+    pub refs_packed: usize,
+    /// Loose ref files removed (files backend) or tables merged (reftable).
+    pub refs_pruned: usize,
 }
 
 /// Options for [`fsck()`].
@@ -229,6 +333,17 @@ impl FsckOptions {
             check_midx: false,
         }
     }
+
+    /// Validate only the multi-pack-index when present.
+    #[must_use]
+    pub fn midx_only(strict: bool) -> Self {
+        Self {
+            strict,
+            check_objects: false,
+            check_refs: false,
+            check_midx: true,
+        }
+    }
 }
 
 /// Object ids that must stay reachable during repack, prune, and fsck walks.
@@ -241,6 +356,147 @@ impl FsckOptions {
 /// Propagates ref, reflog, or index load failures.
 pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
     repo_fsck::reachability_roots(repo)
+}
+
+pub(crate) fn bloom_settings_for_commit_graph_write(
+    config: &ConfigSet,
+    changed_paths: bool,
+) -> BloomFilterSettings {
+    let mut bloom = BloomFilterSettings::default();
+    if !changed_paths {
+        return bloom;
+    }
+    if let Some(v) = config
+        .get("commitgraph.changedpathsversion")
+        .and_then(|s| s.trim().parse::<i32>().ok())
+    {
+        if v == 2 {
+            bloom.hash_version = 2;
+        } else if v == 1 {
+            bloom.hash_version = 1;
+        }
+    }
+    bloom
+}
+
+pub(crate) fn commit_graph_writes_generation_data(config: &ConfigSet) -> bool {
+    config
+        .get("commitgraph.generationversion")
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .map(|v| v >= 2)
+        .unwrap_or(true)
+}
+
+/// Write a monolithic reachable commit-graph under `objects/info/commit-graph`.
+///
+/// # Errors
+///
+/// Returns [`Error::UnsupportedObjectStore`] for non-files ODB backends, or errors from graph
+/// generation and atomic I/O.
+pub fn write_commit_graph(
+    repo: &Repository,
+    opts: &CommitGraphOptions,
+) -> Result<CommitGraphWriteReport> {
+    let odb = repo.odb();
+    odb.require_files_primary("commit-graph write")?;
+    let objects_dir = odb
+        .files_objects_dir()
+        .ok_or(Error::UnsupportedObjectStore {
+            operation: "commit-graph write",
+        })?;
+    let git_dir = odb.config_git_dir().ok_or(Error::UnsupportedObjectStore {
+        operation: "commit-graph write",
+    })?;
+    let config = repo.config()?;
+    let bloom = bloom_settings_for_commit_graph_write(&config, opts.changed_paths);
+    let write_generation = commit_graph_writes_generation_data(&config);
+
+    let chain = CommitGraphChain::try_load(objects_dir).ok().flatten();
+
+    let commits = collect_reachable_commit_oids(git_dir, odb)?;
+    let mut sorted: Vec<ObjectId> = commits.into_iter().collect();
+    sorted.sort();
+    let commit_count = sorted.len();
+
+    let mut infos = HashMap::new();
+    for oid in &sorted {
+        infos.insert(*oid, load_commit_graph_commit_info(odb, *oid)?);
+    }
+
+    let mut existing_filters = HashMap::new();
+    let mut upgraded_filters = HashMap::new();
+    if opts.changed_paths {
+        if let Some(ref chain) = chain {
+            for oid in &sorted {
+                if let Some(bytes) = chain.existing_filter_bytes(oid, &bloom) {
+                    existing_filters.insert(*oid, bytes);
+                } else if let Some(bytes) = chain.upgradable_filter_bytes(oid, &bloom) {
+                    upgraded_filters.insert(*oid, bytes);
+                }
+            }
+        }
+    }
+
+    let (bytes, bloom_stats) = build_commit_graph_bytes(
+        &sorted,
+        &infos,
+        odb,
+        opts.changed_paths,
+        &bloom,
+        None,
+        &[],
+        None,
+        &existing_filters,
+        &upgraded_filters,
+        write_generation,
+    )?;
+
+    let path = atomic_replace_commit_graph(objects_dir, &bytes)?;
+    let removed_chain = remove_commit_graph_chain_dir(objects_dir);
+
+    Ok(CommitGraphWriteReport {
+        path,
+        commit_count,
+        removed_chain,
+        bloom_stats: opts.changed_paths.then_some(bloom_stats),
+    })
+}
+
+/// Write or refresh `objects/pack/multi-pack-index` for the repository.
+///
+/// # Errors
+///
+/// Returns [`Error::UnsupportedObjectStore`] for non-files backends, or MIDX write failures.
+pub fn write_midx(repo: &Repository, opts: &MidxOptions) -> Result<MidxWriteReport> {
+    let odb = repo.odb();
+    odb.require_files_primary("midx write")?;
+    let objects_dir = odb
+        .files_objects_dir()
+        .ok_or(Error::UnsupportedObjectStore {
+            operation: "midx write",
+        })?;
+    let pack_dir = objects_dir.join("pack");
+    let pack_count = fs::read_dir(&pack_dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|x| x == "idx"))
+                .filter(|e| e.path().with_extension("pack").is_file())
+                .count()
+        })
+        .unwrap_or(0);
+
+    let write_opts = WriteMultiPackIndexOptions {
+        write_bitmap: opts.bitmap,
+        ..WriteMultiPackIndexOptions::default()
+    };
+    let WriteMultiPackIndexResult { bitmap } =
+        write_multi_pack_index_with_options(&pack_dir, &write_opts)?;
+    let path = pack_dir.join("multi-pack-index");
+    Ok(MidxWriteReport {
+        path,
+        pack_count,
+        bitmap,
+    })
 }
 
 /// Result of [`gc`].
@@ -323,7 +579,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     odb.invalidate_packs();
 
     if opts.write_commit_graph {
-        odb.write_commit_graph()?;
+        write_commit_graph(repo, &CommitGraphOptions::with_changed_paths(true))?;
     }
     if opts.write_bitmap {
         let idx_path = ingested.pack_path.with_extension("idx");
@@ -626,6 +882,40 @@ fn pack_has_keep_marker(pack_dir: &Path, path: &Path) -> bool {
         return false;
     };
     pack_dir.join(format!("{stem}.keep")).is_file()
+}
+
+/// Pack loose refs into `packed-refs` (files backend) or compact reftable stacks.
+///
+/// # Errors
+///
+/// Propagates ref-store, locking, and I/O failures.
+pub fn pack_refs(repo: &Repository, opts: &PackRefsOptions) -> Result<PackRefsReport> {
+    let (path, refs_packed, refs_pruned) = crate::refs::pack_refs_for_repository(repo, opts.all)?;
+    Ok(PackRefsReport {
+        path,
+        refs_packed,
+        refs_pruned,
+    })
+}
+
+impl Repository {
+    /// Write a reachable commit-graph file for this repository.
+    ///
+    /// # Errors
+    ///
+    /// See [`write_commit_graph`].
+    pub fn write_commit_graph(&self, opts: &CommitGraphOptions) -> Result<CommitGraphWriteReport> {
+        write_commit_graph(self, opts)
+    }
+
+    /// Write or refresh the multi-pack index for this repository's pack directory.
+    ///
+    /// # Errors
+    ///
+    /// See [`write_midx`].
+    pub fn write_midx(&self, opts: &MidxOptions) -> Result<MidxWriteReport> {
+        write_midx(self, opts)
+    }
 }
 
 /// Standalone object fsck helpers.
