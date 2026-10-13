@@ -154,9 +154,10 @@ fn combined_paths_and_formatters() {
         7,
     );
     assert!(conflict_patch.contains("diff --cc"));
+    let extra_blob = odb.write(ObjectKind::Blob, b"nested\n").expect("blob");
     let renamed_tree = write_tree(
         &odb,
-        &[("renamed.txt", merge_blob), ("nested/deep.txt", base_blob)],
+        &[("renamed.txt", result_oid), ("nested/deep.txt", extra_blob)],
     );
     let renamed_merge = write_commit(&odb, renamed_tree, &parents, "rename merge");
     let _renamed_paths = combined_diff_paths(&odb, &renamed_tree, &parents);
