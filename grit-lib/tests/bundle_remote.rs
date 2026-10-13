@@ -23,8 +23,14 @@ fn git_in(dir: &Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn git_configure_user(dir: &Path) {
+    assert!(git_in(dir, &["config", "user.email", "test@example.com"]));
+    assert!(git_in(dir, &["config", "user.name", "Test"]));
+}
+
 fn init_with_commits(dir: &Path, messages: &[&str]) {
     assert!(git_in(dir, &["init", "-q", "-b", "main", "."]));
+    git_configure_user(dir);
     for msg in messages {
         std::fs::write(dir.join("file.txt"), format!("{msg}\n")).unwrap();
         assert!(git_in(dir, &["add", "file.txt"]));
@@ -55,6 +61,7 @@ fn fetch_from_git_bundle_matches_git_fetch() {
             .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
+    git_configure_user(dest.path());
     assert!(git_in(
         dest.path(),
         &["commit", "--allow-empty", "-qm", "seed"],
@@ -106,6 +113,7 @@ fn fetch_from_git_bundle_matches_git_fetch() {
 fn clone_from_bundle_matches_git_default_branch_when_head_not_first() {
     let upstream = tempfile::tempdir().expect("upstream");
     assert!(git_in(upstream.path(), &["init", "-q", "-b", "main", "."]));
+    git_configure_user(upstream.path());
     std::fs::write(upstream.path().join("file.txt"), "base\n").unwrap();
     assert!(git_in(upstream.path(), &["add", "file.txt"]));
     assert!(git_in(upstream.path(), &["commit", "-qm", "base"]));

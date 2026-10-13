@@ -14,6 +14,15 @@ fn git_available() -> bool {
         .unwrap_or(false)
 }
 
+fn hermetic_git(cmd: &mut Command) -> &mut Command {
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+}
+
 #[test]
 fn empty_prefix_list_refs_matches_git_for_each_ref_with_resolvable_head() {
     if !git_available() {
@@ -21,22 +30,16 @@ fn empty_prefix_list_refs_matches_git_for_each_ref_with_resolvable_head() {
     }
     let dir = tempdir().expect("tempdir");
     let git_dir = dir.path();
-    let init = Command::new("git")
-        .args(["init"])
-        .current_dir(git_dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .status()
-        .expect("git init");
+    let mut init_cmd = Command::new("git");
+    init_cmd.args(["init"]).current_dir(git_dir);
+    let init = hermetic_git(&mut init_cmd).status().expect("git init");
     assert!(init.success());
 
-    let oid = Command::new("git")
+    let mut commit_cmd = Command::new("git");
+    commit_cmd
         .args(["commit", "--allow-empty", "-m", "seed"])
-        .current_dir(git_dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git commit");
+        .current_dir(git_dir);
+    let oid = hermetic_git(&mut commit_cmd).output().expect("git commit");
     assert!(oid.status.success(), "git commit failed");
 
     let dot_git = git_dir.join(".git");

@@ -102,6 +102,14 @@ fn git_checkout_worktree_bytes(
         .envs(git_env())
         .status()
         .expect("git init");
+    for (key, value) in [("user.email", "test@example.com"), ("user.name", "Test")] {
+        Command::new("git")
+            .current_dir(root)
+            .args(["config", key, value])
+            .envs(git_env())
+            .status()
+            .expect("git config user");
+    }
     Command::new("git")
         .current_dir(root)
         .args(["add", ".gitattributes"])
