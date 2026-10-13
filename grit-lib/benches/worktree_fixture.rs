@@ -14,7 +14,7 @@ use grit_lib::config::{ConfigSet, LoadConfigOptions};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::ObjectId;
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::worktree::attributes::{load_gitattributes_stack, ParsedGitAttributes};
 use tempfile::TempDir;
 

@@ -11,6 +11,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::bitmap::ReachabilityQuery;
 use grit_lib::objects::bitmap::{BitmapIndex, PackBitmapWriteOptions, PackBitmapWriter};
 use grit_lib::objects::odb::Odb;

@@ -29,6 +29,8 @@ bare_urls = "deny"
 # (`transport::http::ureq_client`). Off by default so embedders can bring their
 # own HTTP stack.
 http-ureq = ["dep:ureq", "dep:base64"]
+# Internal helpers for Criterion benches (EWAH); omitted from the public API snapshot.
+unstable-bench-helpers = []
 
 [dependencies]
 thiserror.workspace = true
@@ -122,6 +124,7 @@ harness = false
 [[bench]]
 name = "ewah"
 harness = false
+required-features = ["unstable-bench-helpers"]
 
 [[bench]]
 name = "pack_bitmap"

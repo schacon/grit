@@ -60,7 +60,9 @@ write_snapshot() {
 	ensure_toolchain
 	ensure_cargo_public_api
 	cd "${REPO}"
-	cargo "+${PUBLIC_API_TOOLCHAIN}" public-api -p grit-lib --all-features --simplified >"${dest}"
+	# Document the supported embedder surface only (`http-ureq` optional). Internal
+	# bench helpers (`unstable-bench-helpers`) stay out of the committed snapshot.
+	cargo "+${PUBLIC_API_TOOLCHAIN}" public-api -p grit-lib --features http-ureq --simplified >"${dest}"
 }
 
 write_step_summary() {

@@ -24,7 +24,7 @@ use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::refs;
 use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
 const GIT_ENV: &[(&str, &str)] = &[
@@ -279,7 +279,8 @@ fn build_delta_chain_pack(depth: usize) -> (Vec<u8>, ObjectId, u64) {
         );
     }
     let tip = parent.expect("delta chain must have at least one commit");
-    let odb = repo.odb().with_config_git_dir(repo.git_dir().to_path_buf());
+    let odb =
+        Odb::new(&repo.git_dir().join("objects")).with_config_git_dir(repo.git_dir().to_path_buf());
     let pack = build_pack(
         &odb,
         &[tip],

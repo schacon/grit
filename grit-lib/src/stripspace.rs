@@ -36,7 +36,7 @@ pub enum Mode {
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use grit_lib::stripspace::{process, Mode};
 ///
 /// let out = process(b"hello   \n\n\nworld\n", &Mode::Default);

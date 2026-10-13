@@ -9123,4 +9123,32 @@ mod line_coverage_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn commit_graph_count_skips_commit_parse() -> Result<()> {
+        use crate::hot_path_test_metrics::HotPathMetricsScope;
+        use std::sync::Arc;
+
+        let (_dir, repo, _tip) = seed_repo(32, false);
+        repo.odb().write_commit_graph()?;
+        let metrics = repo.odb().hot_path_metrics_arc();
+        metrics.reset_commit_parse_calls();
+        metrics.set_commit_parse_counting(true);
+        let _scope = HotPathMetricsScope::install(metrics);
+        let opts = RevListOptions {
+            all_refs: true,
+            count: true,
+            use_commit_graph: true,
+            use_bitmap_index: false,
+            ..Default::default()
+        };
+        let listed = rev_list(&repo, &[], &[], &opts)?;
+        assert!(listed.reachable_commit_count.is_some());
+        assert_eq!(
+            repo.odb().hot_path_metrics().commit_parse_calls(),
+            0,
+            "commit-graph count path must not parse commit objects"
+        );
+        Ok(())
+    }
 }

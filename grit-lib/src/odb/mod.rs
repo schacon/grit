@@ -14,7 +14,7 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use grit_lib::odb::Odb;
+//! use grit_lib::objects::odb::Odb;
 //!
 //! let odb = Odb::new(Path::new(".git/objects"));
 //! ```
@@ -23,11 +23,6 @@
 
 pub mod builder;
 pub mod store;
-
-/// Test-only hot-path counters wired through [`Odb::hot_path_metrics`].
-pub mod hot_path_test_metrics {
-    pub use crate::hot_path_test_metrics::{HotPathMetricsScope, HotPathTestMetrics};
-}
 
 #[doc(inline)]
 pub use builder::OdbBuilder;
@@ -338,14 +333,16 @@ impl Odb {
         }
     }
 
-    /// Hot-path regression counters for this object database (integration tests only).
+    /// Hot-path regression counters (crate-internal tests and benchmarks).
     #[must_use]
-    pub fn hot_path_metrics(&self) -> &crate::hot_path_test_metrics::HotPathTestMetrics {
+    pub(crate) fn hot_path_metrics(&self) -> &crate::hot_path_test_metrics::HotPathTestMetrics {
         &self.hot_path_test_metrics
     }
 
     #[must_use]
-    pub fn hot_path_metrics_arc(&self) -> Arc<crate::hot_path_test_metrics::HotPathTestMetrics> {
+    pub(crate) fn hot_path_metrics_arc(
+        &self,
+    ) -> Arc<crate::hot_path_test_metrics::HotPathTestMetrics> {
         Arc::clone(&self.hot_path_test_metrics)
     }
 

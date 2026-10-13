@@ -14,7 +14,7 @@
 //! config, remotes, and porcelain operations.
 //!
 //! ```
-//! use grit_lib::environment::RepositoryOptions;
+//! use grit_lib::config::environment::RepositoryOptions;
 //! use grit_lib::repo::{InitOptions, Repository};
 //! use grit_lib::state::resolve_head;
 //!
@@ -293,6 +293,10 @@ pub(crate) mod zlib_inflate;
 pub use ref_storage::RefStorageFormat;
 
 pub(crate) mod hot_path_test_metrics;
+
+#[cfg(feature = "unstable-bench-helpers")]
+#[doc(hidden)]
+pub mod ewah_bench_api;
 #[cfg(test)]
 mod object_write_regression;
 #[cfg(test)]

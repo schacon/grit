@@ -25,7 +25,7 @@ use grit_lib::objects::{
 };
 use grit_lib::refs::write_ref;
 use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
 const GIT_ENV: &[(&str, &str)] = &[

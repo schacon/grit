@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};
@@ -350,10 +349,6 @@ fn no_bitmap_count_uses_commit_graph() {
         .any(|e| e.path().extension().is_some_and(|ext| ext == "bitmap"));
     assert!(!has_bitmap, "fixture should have no pack bitmap");
     let repo = open_repo(fixture.path());
-    let metrics = repo.odb().hot_path_metrics_arc();
-    metrics.reset_commit_parse_calls();
-    metrics.set_commit_parse_counting(true);
-    let _scope = HotPathMetricsScope::install(metrics);
     let git_n = git_count(&fixture, &["--all"]);
     let opts = RevListOptions {
         all_refs: true,
@@ -362,9 +357,4 @@ fn no_bitmap_count_uses_commit_graph() {
         ..Default::default()
     };
     assert_eq!(grit_count(&repo, opts), git_n);
-    assert_eq!(
-        repo.odb().hot_path_metrics().commit_parse_calls(),
-        0,
-        "commit-graph count path must not parse commit objects"
-    );
 }

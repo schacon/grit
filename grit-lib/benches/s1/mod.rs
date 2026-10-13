@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 

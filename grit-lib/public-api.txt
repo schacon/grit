@@ -5395,51 +5395,6 @@ impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::builde
 impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::builder::OdbBuilder
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::builder::OdbBuilder
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::builder::OdbBuilder
-pub mod grit_lib::objects::odb::hot_path_test_metrics
-pub struct grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope::install(alloc::rcs::arc::Arc<grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics>) -> Self
-impl core::ops::drop::Drop for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope::drop(&mut self)
-impl core::marker::Freeze for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::marker::Send for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::marker::Sync for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::marker::Unpin for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::marker::UnsafeUnpin for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope
-pub struct grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::blob_content_reads(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::commit_parse_calls(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::disable_all_counting(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::freshen_calls(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::loose_path_open_attempts(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::midx_stamp_stat_calls(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::new() -> alloc::rcs::arc::Arc<Self>
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::pack_signature_stat_calls(&self) -> usize
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_blob_content_reads(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_commit_parse_calls(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_freshen_calls(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_loose_path_open_attempts(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_midx_stamp_stats(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_pack_stamp_stats(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::reset_tree_writes(&self)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::set_blob_counting(&self, bool)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::set_commit_parse_counting(&self, bool)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::set_freshen_counting(&self, bool)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::set_loose_open_counting(&self, bool)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::set_stamp_counting(&self, bool)
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::tree_writes(&self) -> usize
-impl core::default::Default for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-pub fn grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics::default() -> Self
-impl !core::marker::Freeze for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::marker::Send for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::marker::Sync for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::marker::Unpin for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::marker::UnsafeUnpin for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
 pub mod grit_lib::objects::odb::store
 pub mod grit_lib::objects::odb::store
 pub mod grit_lib::objects::odb::store::loose
@@ -6259,8 +6214,6 @@ pub fn grit_lib::objects::odb::Odb::for_each_object(&self, &mut dyn core::ops::f
 pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::objects::ObjectId
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
-pub fn grit_lib::objects::odb::Odb::hot_path_metrics(&self) -> &grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-pub fn grit_lib::objects::odb::Odb::hot_path_metrics_arc(&self) -> alloc::rcs::arc::Arc<grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics>
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::lookup_prefix(&self, &str, usize, &mut alloc::vec::Vec<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<()>
@@ -9123,8 +9076,6 @@ pub fn grit_lib::objects::odb::Odb::for_each_object(&self, &mut dyn core::ops::f
 pub fn grit_lib::objects::odb::Odb::freshen_object(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &[u8]) -> grit_lib::objects::ObjectId
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
-pub fn grit_lib::objects::odb::Odb::hot_path_metrics(&self) -> &grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics
-pub fn grit_lib::objects::odb::Odb::hot_path_metrics_arc(&self) -> alloc::rcs::arc::Arc<grit_lib::objects::odb::hot_path_test_metrics::HotPathTestMetrics>
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
 pub fn grit_lib::objects::odb::Odb::lookup_prefix(&self, &str, usize, &mut alloc::vec::Vec<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<()>

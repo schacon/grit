@@ -6,8 +6,8 @@
 //! use std::sync::Arc;
 //!
 //! use grit_lib::objects::{HashAlgo, ObjectKind};
-//! use grit_lib::odb::store::{MemoryStore, WritableObjectStore};
-//! use grit_lib::odb::{Odb, OdbBuilder, WriteOptions};
+//! use grit_lib::objects::odb::store::{MemoryStore, WritableObjectStore};
+//! use grit_lib::objects::odb::{Odb, OdbBuilder, WriteOptions};
 //!
 //! let store = Arc::new(MemoryStore::new(HashAlgo::Sha1));
 //! let odb = OdbBuilder::files("/tmp/repo/.git/objects")

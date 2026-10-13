@@ -51,15 +51,15 @@ fn parse_fixture(bytes: &[u8]) -> EwahView<'_> {
     }
 }
 
-pub(crate) fn git_sized_sample() -> Vec<u8> {
+pub fn git_sized_sample() -> Vec<u8> {
     fixture().0.clone()
 }
 
-pub(crate) fn git_sized_bytes() -> &'static [u8] {
+pub fn git_sized_bytes() -> &'static [u8] {
     &fixture().0
 }
 
-pub(crate) fn expand_fixture(bytes: &[u8]) -> usize {
+pub fn expand_fixture(bytes: &[u8]) -> usize {
     let view = parse_fixture(bytes);
     let mut out = Bitmap::new();
     match view.expand_into(&mut out) {
@@ -68,7 +68,7 @@ pub(crate) fn expand_fixture(bytes: &[u8]) -> usize {
     }
 }
 
-pub(crate) fn or_into_fixture() -> usize {
+pub fn or_into_fixture() -> usize {
     let (bytes, base) = fixture();
     let view = parse_fixture(bytes);
     let mut acc = base.clone();
@@ -78,7 +78,7 @@ pub(crate) fn or_into_fixture() -> usize {
     }
 }
 
-pub(crate) fn popcount_fixture(bytes: &[u8]) -> usize {
+pub fn popcount_fixture(bytes: &[u8]) -> usize {
     let view = parse_fixture(bytes);
     match view.count_ones() {
         Ok(n) => n,

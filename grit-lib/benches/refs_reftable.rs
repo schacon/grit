@@ -9,7 +9,7 @@ use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::list_refs;
-use grit_lib::repo::init_repository;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
 
 const REF_COUNT: usize = 100_000;

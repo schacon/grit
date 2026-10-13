@@ -6,8 +6,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-#[path = "../src/ewah_bench_api.rs"]
-mod ewah_bench_api;
+use grit_lib::ewah_bench_api;
 
 fn bench_ewah(c: &mut Criterion) {
     let bytes = ewah_bench_api::git_sized_bytes();

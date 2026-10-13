@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fixture::ObjectBenchFixtures;
+use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::objects::hash::{hash_object, hash_objects_parallel};
@@ -17,7 +18,6 @@ use grit_lib::objects::odb::Odb;
 use grit_lib::objects::pack::{clear_pack_cache, read_object_from_pack, PackIndex};
 use grit_lib::objects::unpack_objects::apply_delta;
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::zlib_inflate::ZlibInflateScratch;
 
 fn bench_sha1_throughput(c: &mut Criterion) {
     let fx = ObjectBenchFixtures::global();
@@ -113,14 +113,11 @@ fn bench_zlib(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             &(compressed, plain_len),
             |b, (input, len)| {
-                let mut scratch = ZlibInflateScratch::default();
                 b.iter(|| {
-                    let mut pos = 0usize;
-                    black_box(
-                        scratch
-                            .decompress_fixed(black_box(input), &mut pos, *len as u64)
-                            .expect("inflate"),
-                    )
+                    let mut decoder = ZlibDecoder::new(black_box(&**input));
+                    let mut out = vec![0u8; *len];
+                    decoder.read_exact(&mut out).expect("inflate");
+                    black_box(out)
                 });
             },
         );
