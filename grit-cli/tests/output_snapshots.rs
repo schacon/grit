@@ -479,6 +479,27 @@ fn snapshot_restore_worktree() {
 fn snapshot_restore_staged() {
     snapshot_all_modes("restore_staged", &["restore", "--staged", "staged.txt"]);
 }
+
+#[test]
+fn snapshot_resolve_head() {
+    snapshot_all_modes("resolve_head", &["resolve", "HEAD", "HEAD^{tree}"]);
+}
+
+#[test]
+fn snapshot_resolve_short() {
+    snapshot_all_modes("resolve_short", &["resolve", "--short", "HEAD"]);
+}
+
+#[test]
+fn snapshot_cat_blob() {
+    snapshot_all_modes("cat_blob", &["cat", "HEAD:tracked.txt"]);
+}
+
+#[test]
+fn snapshot_cat_commit() {
+    snapshot_all_modes("cat_commit", &["cat", "HEAD^{commit}"]);
+}
+
 fn prepare_merge_conflict(fixture: &CliFixture) {
     write_file(fixture.path(), "f.txt", "base\n");
     fixture.run(&["add", "f.txt"]).expect_success("add");

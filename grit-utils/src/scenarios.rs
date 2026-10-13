@@ -594,7 +594,7 @@ pub fn run_stash_suite(
     Ok(build_report(git, grit, timestamp, scenarios))
 }
 
-fn build_report(
+pub(crate) fn build_report(
     git: &Path,
     grit: &Path,
     timestamp: time::OffsetDateTime,

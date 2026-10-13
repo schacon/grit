@@ -401,6 +401,20 @@ enum Command {
         #[arg(long)]
         unstable: bool,
     },
+    /// Resolve revision specs to object ids and types.
+    Resolve {
+        /// Revision specs to resolve (same forms as history commands).
+        #[arg(value_name = "SPEC", required = true)]
+        specs: Vec<String>,
+        /// Print abbreviated object ids.
+        #[arg(long)]
+        short: bool,
+    },
+    /// Show blob, tree, commit, or tag contents for a revision spec.
+    Cat {
+        /// Object or revision spec (`HEAD`, `main:path`, `v1^{commit}`, …).
+        spec: String,
+    },
     /// Stage every change and record a new commit.
     Commit {
         /// Commit message (you can also pass it with -m).
@@ -884,6 +898,10 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::PatchId { revs, unstable } => {
             emit(&commands::patch_id::run(&revs, unstable)?, opts, ctx)
         }
+        Command::Resolve { specs, short } => {
+            emit(&commands::resolve::run(specs, short)?, opts, ctx)
+        }
+        Command::Cat { spec } => emit(&commands::cat::run(spec)?, opts, ctx),
         Command::Commit {
             message,
             message_flag,
