@@ -7288,6 +7288,7 @@ pub fn grit_lib::objects::pack_rev::try_rev_positions_in_pack_order(&[u8], usize
 pub fn grit_lib::objects::pack_rev::verify_pack_rev_file(&std::path::Path, &grit_lib::objects::pack::PackIndex) -> core::result::Result<(), alloc::string::String>
 pub fn grit_lib::objects::pack_rev::verify_pack_rev_file_contents(&[u8], &grit_lib::objects::pack::PackIndex, &str) -> core::result::Result<(), alloc::string::String>
 pub fn grit_lib::objects::pack_rev::write_pack_rev_sidecar(&grit_lib::objects::pack::PackIndex) -> grit_lib::error::Result<()>
+pub fn grit_lib::objects::pack_rev::write_pack_rev_sidecar_for_index_path(&std::path::Path) -> grit_lib::error::Result<()>
 pub mod grit_lib::objects::pack_store
 pub mod grit_lib::objects::pack_store::test_hooks
 pub fn grit_lib::objects::pack_store::test_hooks::implicit_stores_created() -> usize

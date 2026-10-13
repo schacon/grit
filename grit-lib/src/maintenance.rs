@@ -40,10 +40,9 @@ use crate::midx::{
 };
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
-use crate::pack::read_pack_index;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_objects::{build_pack, PackBuildOptions};
-use crate::pack_rev::write_pack_rev_sidecar;
+use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::progress::{NeverCancel, NullProgress};
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use crate::reflog::{
@@ -66,9 +65,9 @@ pub struct RepackOptions {
     pub write_bitmap: bool,
     /// When set, prune unreachable loose objects not newer than this instant after repack.
     pub prune_older_than: Option<OffsetDateTime>,
-    /// Wall clock for maintenance policy; `None` uses the current UTC time at run time.
+    /// Wall clock passed to maintenance helpers that require an explicit time (e.g. bitmap writes).
     pub now: Option<OffsetDateTime>,
-    /// When true, skip unreachable loose-object pruning even when [`Self::prune_older_than`] is set.
+    /// When true (the default), do not delete unreachable loose objects after repack (matches `git repack -ad`).
     pub keep_unreachable: bool,
     /// Worker threads for pack indexing (`None` reads `pack.threads` / CPU count).
     pub threads: Option<usize>,
@@ -88,7 +87,7 @@ impl Default for RepackOptions {
             write_bitmap: false,
             prune_older_than: None,
             now: None,
-            keep_unreachable: false,
+            keep_unreachable: true,
             threads: None,
             pack_build: None,
             merged_config: None,
@@ -623,17 +622,19 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     report.objects = ingested.object_ids.len();
 
     let idx_path = ingested.pack_path.with_extension("idx");
-    let pack_index = read_pack_index(&idx_path)?;
     if cfg
         .as_ref()
         .is_none_or(|c| c.pack_write_reverse_index_default(&opts.environment))
     {
-        write_pack_rev_sidecar(&pack_index)?;
+        write_pack_rev_sidecar_for_index_path(&idx_path)?;
     }
 
     if opts.write_bitmap {
         let bitmap_opts = PackBitmapWriteOptions::default();
-        let now = repack_now(opts);
+        let now = opts
+            .now
+            .map(offset_to_system_time)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
             .map_err(|e| Error::CorruptObject(e.to_string()))?;
     }
@@ -678,7 +679,8 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
         ..RepackStats::default()
     };
     if opts.dry_run {
-        stats.objects_packed = Some(repack_detail(repo, opts)?.report.objects);
+        let count = repack_detail(repo, opts)?.report.objects;
+        stats.objects_packed = (count > 0).then_some(count);
         return Ok(stats);
     }
     let detail = repack_detail(repo, opts)?;
@@ -702,12 +704,6 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
         }
     }
     Ok(stats)
-}
-
-fn repack_now(opts: &RepackOptions) -> SystemTime {
-    opts.now
-        .map(offset_to_system_time)
-        .unwrap_or_else(SystemTime::now)
 }
 
 fn offset_to_system_time(odt: OffsetDateTime) -> SystemTime {

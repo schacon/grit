@@ -229,6 +229,55 @@ fn repack_git_written_repo() {
 }
 
 #[test]
+fn default_repack_preserves_unreachable_loose_like_git_repack_ad() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "seed"]);
+
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["hash-object", "-w", "--stdin"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn hash-object");
+    use std::io::Write;
+    let mut child = out;
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"orphan payload\n")
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("hash-object");
+    assert!(out.status.success());
+    let orphan_hex = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let orphan = ObjectId::from_hex(&orphan_hex).expect("oid");
+
+    let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open");
+    repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    assert!(
+        repo.odb().read(&orphan).is_ok(),
+        "default grit repack must preserve unreachable loose objects"
+    );
+
+    git(dir.path(), &["repack", "-ad"]);
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["cat-file", "-e", &orphan_hex])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("cat-file");
+    assert!(
+        out.status.success(),
+        "system git repack -ad must preserve unreachable loose object"
+    );
+}
+
+#[test]
 fn prune_respects_cutoff() {
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");

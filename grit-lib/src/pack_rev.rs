@@ -106,6 +106,16 @@ pub fn build_pack_rev_bytes_from_index_order_offsets_and_checksum(
     out
 }
 
+/// Write a valid `.rev` sidecar for the pack index at `idx_path` when missing or corrupt.
+///
+/// # Errors
+///
+/// Propagates index read, pack read, or I/O failures while building or publishing the sidecar.
+pub fn write_pack_rev_sidecar_for_index_path(idx_path: &Path) -> Result<()> {
+    let index = crate::pack::read_pack_index(idx_path)?;
+    write_pack_rev_sidecar(&index)
+}
+
 /// Write a valid `.rev` sidecar for `index` when missing or corrupt.
 ///
 /// # Errors
