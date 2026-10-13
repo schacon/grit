@@ -350,7 +350,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
             if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
                 repo.odb(),
                 repo.git_dir(),
-                &work_tree,
+                work_tree,
                 &index,
                 existing,
                 &te.oid,

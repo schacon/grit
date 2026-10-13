@@ -9,8 +9,7 @@ use crate::error::{Error, Result};
 const READ_CHUNK: usize = 64 * 1024;
 
 /// Scratch space for one zlib stream decode; reset before each object.
-#[doc(hidden)]
-pub struct ZlibInflateScratch {
+pub(crate) struct ZlibInflateScratch {
     dec: Decompress,
 }
 

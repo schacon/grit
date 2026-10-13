@@ -1,5 +1,5 @@
 //! Object-level fsck scenarios from upstream `t1450-fsck.sh`, cross-checked against
-//! system `git fsck` msg-ids and [`grit_lib::fsck_standalone::fsck_object`].
+//! system `git fsck` msg-ids and [`grit_lib::maintenance::fsck::fsck_object`].
 
 use std::collections::HashSet;
 use std::process::Command;
@@ -8,7 +8,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::gitmodules::{
     fsck_dot_special_object, fsck_dot_special_tree_pass, DotFsckTracker,
 };
-use grit_lib::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
+use grit_lib::maintenance::fsck::{fsck_object, FsckError, FsckObjectOptions};
 use grit_lib::objects::{HashAlgo, ObjectId, ObjectKind};
 use grit_test_support::{
     git_fsck, git_hash_object_literally, git_supports_sha256, write_loose_object,

@@ -56,11 +56,9 @@ fn autocompaction_after_many_appends_and_manual_compact() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -116,11 +114,9 @@ fn compact_unlocked_suffix_when_middle_table_locked() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -180,11 +176,9 @@ fn read_write_options_manual_config_fallback() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -206,11 +200,9 @@ fn compact_prefix_after_deletion_with_multiple_tables() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -262,11 +254,9 @@ fn stack_write_ref_deletion_value() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -287,11 +277,9 @@ fn geometric_partial_compaction_ref_indices_within_table_headers() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

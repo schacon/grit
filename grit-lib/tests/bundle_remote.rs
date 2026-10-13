@@ -50,11 +50,9 @@ fn fetch_from_git_bundle_matches_git_fetch() {
     let dest = tempfile::tempdir().expect("dest");
     Repository::init(
         dest.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     assert!(git_in(

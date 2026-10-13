@@ -8,8 +8,8 @@ use anyhow::Result;
 
 use crate::output::outln;
 
+use grit_lib::config::git_path::relative_path_for_display;
 use grit_lib::diff::{DiffEntry, DiffStatus};
-use grit_lib::git_path::relative_path_for_display;
 use grit_lib::worktree::pathspec::pathdiff;
 
 use crate::context::{self, CommitSummary};
@@ -72,7 +72,7 @@ const FG_AUTHOR: &str = "38;5;110";
 /// (the de-facto standard for opting out — <https://no-color.org>).
 fn use_color() -> bool {
     std::io::stdout().is_terminal()
-        && grit_lib::terminal::ansi_supported()
+        && grit_lib::porcelain::terminal::ansi_supported()
         && std::env::var_os("NO_COLOR").is_none()
 }
 

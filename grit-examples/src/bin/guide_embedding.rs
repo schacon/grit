@@ -18,11 +18,9 @@ fn main() -> Result<(), Error> {
             let root = base.path().join(name);
             Repository::init(
                 &root,
-                &InitOptions {
-                    initial_branch: "main".to_owned(),
-                    ref_storage: grit_lib::RefStorageFormat::Files,
-                    ..InitOptions::default()
-                },
+                &InitOptions::new()
+                    .with_initial_branch("main")
+                    .with_ref_storage(grit_lib::RefStorageFormat::Files),
             )?;
 
             let home = base.path().join(format!("home-{name}"));

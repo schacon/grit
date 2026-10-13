@@ -103,6 +103,6 @@ impl ProgressSink for TerminalProgress {
 #[must_use]
 pub fn stderr_progress_enabled() -> bool {
     std::io::stderr().is_terminal()
-        && grit_lib::terminal::stderr_supports_color()
+        && grit_lib::porcelain::terminal::stderr_supports_color()
         && std::env::var_os("NO_COLOR").is_none()
 }

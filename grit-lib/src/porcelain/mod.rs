@@ -42,3 +42,8 @@ pub mod status;
 pub mod switch;
 pub mod tag;
 pub mod worktree_guard;
+
+/// Terminal capability probes for porcelain output.
+pub mod terminal {
+    pub use crate::terminal::*;
+}

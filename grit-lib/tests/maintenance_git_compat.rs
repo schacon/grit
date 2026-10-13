@@ -91,16 +91,7 @@ fn repack_after_many_commits_single_pack_and_git_fsck_clean() {
         git_outcome.msg_ids
     );
 
-    let report = repo_fsck(
-        &repo,
-        &FsckOptions {
-            strict: true,
-            check_objects: true,
-            check_refs: true,
-            check_midx: true,
-        },
-    )
-    .expect("grit fsck");
+    let report = repo_fsck(&repo, &FsckOptions::full_repository(true)).expect("grit fsck");
     assert!(report.ok, "{:?}", report.issues);
 }
 
@@ -110,15 +101,7 @@ fn gc_matches_repack_plus_prune_and_git_fsck() {
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     many_grit_commits(&repo, 20);
 
-    let stats = gc(
-        &repo,
-        &GcOptions {
-            repack: RepackOptions::default(),
-            expire_reflog: false,
-            now_unix: 1_700_000_000,
-        },
-    )
-    .expect("gc");
+    let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
     assert!(stats.repack.pack_path.is_some());
 
     git(dir.path(), &["fsck", "--strict"]);
@@ -144,31 +127,14 @@ fn gc_preserves_staged_only_blob() {
         .expect("staged entry")
         .oid;
 
-    gc(
-        &repo,
-        &GcOptions {
-            repack: RepackOptions::default(),
-            expire_reflog: false,
-            now_unix: 1_700_000_000,
-        },
-    )
-    .expect("gc");
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
 
     assert!(
         repo.odb().read(&staged_oid).is_ok(),
         "gc must not delete index-only blob"
     );
     git_fsck(dir.path(), true);
-    let report = repo_fsck(
-        &repo,
-        &FsckOptions {
-            strict: true,
-            check_objects: true,
-            check_refs: true,
-            check_midx: true,
-        },
-    )
-    .expect("fsck");
+    let report = repo_fsck(&repo, &FsckOptions::full_repository(true)).expect("fsck");
     assert!(report.ok, "{:?}", report.issues);
 }
 
@@ -196,16 +162,7 @@ fn fsck_reports_missing_index_blob_after_corruption() {
         .expect("loose path");
     std::fs::remove_file(loose.1).expect("remove blob");
 
-    let report = repo_fsck(
-        &repo,
-        &FsckOptions {
-            strict: true,
-            check_objects: true,
-            check_refs: true,
-            check_midx: false,
-        },
-    )
-    .expect("fsck");
+    let report = repo_fsck(&repo, &FsckOptions::objects_and_refs(true)).expect("fsck");
     assert!(
         !report.ok,
         "fsck must not report clean when index references a missing blob"
@@ -271,15 +228,7 @@ fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
 
     git(dir.path(), &["config", "gc.pruneExpire", "never"]);
 
-    let stats = gc(
-        &repo,
-        &GcOptions {
-            repack: RepackOptions::default(),
-            expire_reflog: false,
-            now_unix: 1_700_000_000,
-        },
-    )
-    .expect("grit gc");
+    let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
     assert_eq!(
         stats.prune.pruned, 0,
         "gc.pruneExpire=never must disable loose prune"
@@ -324,16 +273,7 @@ fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
     git(dir.path(), &["gc"]);
     git(dir.path(), &["fsck", "--strict"]);
 
-    let report = repo_fsck(
-        &repo,
-        &FsckOptions {
-            strict: true,
-            check_objects: true,
-            check_refs: true,
-            check_midx: false,
-        },
-    )
-    .expect("grit fsck");
+    let report = repo_fsck(&repo, &FsckOptions::objects_and_refs(true)).expect("grit fsck");
     assert!(
         report.ok,
         "gitlink to absent submodule commit must not fail fsck: {:?}",

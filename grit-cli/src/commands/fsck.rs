@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use anyhow::Result;
-use grit_lib::maintenance::{format_fsck_line, fsck, FsckOptions, FsckReport, FsckSeverity};
+use grit_lib::maintenance::{fsck, FsckOptions, FsckReport, FsckSeverity};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -98,16 +98,8 @@ impl MarkdownRender for FsckOutcome {
 
 pub fn run(strict: bool) -> Result<FsckOutcome> {
     let repo = context::discover()?;
-    let report = fsck(
-        &repo,
-        &FsckOptions {
-            strict,
-            check_objects: true,
-            check_refs: true,
-            check_midx: true,
-        },
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let report =
+        fsck(&repo, &FsckOptions::full_repository(strict)).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(report.into())
 }
 
@@ -132,7 +124,7 @@ mod tests {
             msg_id: "missingObject".into(),
             detail: "gone".into(),
         };
-        let line = format_fsck_line(&issue);
+        let line = grit_lib::maintenance::format_fsck_line(&issue);
         assert!(line.contains("missingObject"));
     }
 }

@@ -35,11 +35,12 @@ pub fn write_v0_serve_clone_request(repo: &Repository, out: &mut impl Write) -> 
         } else {
             format!("want {}", oid.to_hex())
         };
-        grit_lib::pkt_line::write_line_to_vec(&mut buf, &line).context("write want line")?;
+        grit_lib::remote::pkt_line::write_line_to_vec(&mut buf, &line)
+            .context("write want line")?;
     }
-    buf.extend_from_slice(grit_lib::pkt_line::FLUSH.as_bytes());
-    grit_lib::pkt_line::write_line_to_vec(&mut buf, "done").context("write done")?;
-    buf.extend_from_slice(grit_lib::pkt_line::FLUSH.as_bytes());
+    buf.extend_from_slice(grit_lib::remote::pkt_line::FLUSH.as_bytes());
+    grit_lib::remote::pkt_line::write_line_to_vec(&mut buf, "done").context("write done")?;
+    buf.extend_from_slice(grit_lib::remote::pkt_line::FLUSH.as_bytes());
     out.write_all(&buf).context("write serve-clone request")?;
     Ok(())
 }

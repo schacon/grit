@@ -32,11 +32,9 @@ fn large_index_v2_v4_write_read_and_mutations() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         tmp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     let blob = repo.odb().write(ObjectKind::Blob, b"data").expect("blob");

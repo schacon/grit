@@ -3,7 +3,7 @@
 //! Mirrors Git's `git_config_perm`, `calc_shared_perm`, and `adjust_shared_perm` in `setup.c` /
 //! `path.c`.
 
-use crate::config::{parse_bool, ConfigSet};
+use crate::config::parse_bool;
 use crate::diagnostics::{self, DiagnosticSink};
 #[cfg(unix)]
 use std::fs;
@@ -93,24 +93,6 @@ fn split_octal_prefix(s: &str) -> (&str, &str) {
     (&s[..i], &s[i..])
 }
 
-/// Value to persist in `core.sharedRepository` for explicit sharing modes (matches Git `init_db`).
-#[must_use]
-pub fn shared_repository_config_stored_value(perm: i32) -> Option<String> {
-    if perm == 0 {
-        return None;
-    }
-    if perm < 0 {
-        Some(format!("0{:o}", (-perm) as u32))
-    } else if perm == PERM_GROUP {
-        Some(OLD_PERM_GROUP.to_string())
-    } else if perm == PERM_EVERYBODY {
-        // Git stores numeric `2` for world/all modes (`init_db` / t1301-shared-repo).
-        Some(OLD_PERM_EVERYBODY.to_string())
-    } else {
-        None
-    }
-}
-
 /// Git's `calc_shared_perm` (`path.c`).
 #[must_use]
 pub fn calc_shared_perm(shared_repo: i32, mode: u32) -> u32 {
@@ -134,47 +116,6 @@ pub fn calc_shared_perm(shared_repo: i32, mode: u32) -> u32 {
     }
 
     new_mode
-}
-
-/// Recursively apply [`adjust_shared_perm_path`] under `git_dir` (Git `adjust_shared_perm` on init).
-#[cfg(unix)]
-pub fn adjust_shared_repo_tree(git_dir: &Path, shared_repo: i32) -> std::io::Result<()> {
-    fn visit(path: &Path, shared_repo: i32) -> std::io::Result<()> {
-        adjust_shared_perm_path(shared_repo, path)?;
-        if path.is_dir() {
-            for entry in fs::read_dir(path)? {
-                let entry = entry?;
-                let name = entry.file_name();
-                if name == "." || name == ".." {
-                    continue;
-                }
-                visit(&entry.path(), shared_repo)?;
-            }
-        }
-        Ok(())
-    }
-    visit(git_dir, shared_repo)
-}
-
-#[cfg(not(unix))]
-pub fn adjust_shared_repo_tree(_git_dir: &Path, _shared_repo: i32) -> std::io::Result<()> {
-    Ok(())
-}
-
-/// Re-run [`adjust_shared_repo_tree`] when `core.sharedRepository` is set (e.g. after commit/repack
-/// created new paths under `.git/`).
-pub fn refresh_repository_shared_tree(git_dir: &Path) -> std::io::Result<()> {
-    let env = crate::environment::Environment::empty();
-    let cfg = ConfigSet::load(&env, Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
-    let shared =
-        match shared_repository_from_config_value(cfg.get("core.sharedRepository").as_deref()) {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
-        };
-    if shared == 0 {
-        return Ok(());
-    }
-    adjust_shared_repo_tree(git_dir, shared)
 }
 
 /// Git's `adjust_shared_perm` for a single path (`path.c`), using an explicit `shared_repo` value.

@@ -1,7 +1,5 @@
 //! Per-[`crate::odb::Odb`] hot-path counters for regression tests (test builds only).
 
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;

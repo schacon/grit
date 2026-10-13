@@ -71,10 +71,7 @@ fn open_discover_and_init_roundtrip_fsck() {
     let normal = td.path().join("normal");
     let repo = Repository::init(
         &normal,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ..InitOptions::default()
-        },
+        &InitOptions::new().with_initial_branch("main".to_owned()),
     )
     .expect("init normal");
     git_fsck_ok(repo.git_dir());
@@ -82,11 +79,9 @@ fn open_discover_and_init_roundtrip_fsck() {
     let bare = td.path().join("bare.git");
     let bare_repo = Repository::init(
         &bare,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned()),
     )
     .expect("init bare");
     git_fsck_ok(bare_repo.git_dir());
@@ -95,11 +90,9 @@ fn open_discover_and_init_roundtrip_fsck() {
     let sep_git = td.path().join("sep.git");
     let sep_repo = Repository::init(
         &sep_wt,
-        &InitOptions {
-            separate_git_dir: Some(sep_git.clone()),
-            initial_branch: "main".to_owned(),
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_separate_git_dir(Some(sep_git.clone())),
     )
     .expect("init separate");
     git_fsck_ok(sep_repo.git_dir());
@@ -107,11 +100,9 @@ fn open_discover_and_init_roundtrip_fsck() {
     let bare_wt = td.path().join("bare-wt-layout");
     let bare_wt_repo = Repository::init(
         &bare_wt,
-        &InitOptions {
-            bare_with_worktree_at_path: true,
-            initial_branch: "main".to_owned(),
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_bare_with_worktree_at_path(true),
     )
     .expect("init bare-with-worktree-at-path");
     git_fsck_ok(bare_wt_repo.git_dir());
@@ -119,11 +110,9 @@ fn open_discover_and_init_roundtrip_fsck() {
     let reftable = td.path().join("reftable");
     let rt_repo = Repository::init(
         &reftable,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Reftable),
     )
     .expect("init reftable");
     git_fsck_reftable_repo(rt_repo.git_dir());
@@ -152,10 +141,9 @@ fn open_discover_and_init_roundtrip_fsck() {
 
     let skip_fmt = Repository::open(
         repo.git_dir(),
-        &RepositoryOptions {
-            validate_repository_format: false,
-            ..RepositoryOptions::empty().with_work_tree(normal.clone())
-        },
+        &RepositoryOptions::empty()
+            .with_work_tree(normal.clone())
+            .without_format_validation(),
     )
     .expect("open skipping format validation");
     assert_eq!(skip_fmt.git_dir(), repo.git_dir());

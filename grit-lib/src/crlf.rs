@@ -30,7 +30,7 @@ use encoding_rs::UTF_8;
 /// Working-tree encoding conversion failure (Git `reencode_string_len` returning NULL).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WorkTreeEncodingError {
-    /// The encoding label is not supported by `encoding_rs` / [`crate::commit_encoding`].
+    /// The encoding label is not supported by `encoding_rs` / the commit encoding helpers.
     #[error("unsupported encoding '{label}'")]
     UnsupportedEncoding {
         /// Config or attribute encoding name.
@@ -1089,7 +1089,7 @@ pub struct ConvertToGitOpts<'a> {
     pub renormalize: bool,
     /// When false, skip `core.safecrlf` simulation (used for internal diff/hashing — must not spam stderr).
     pub check_safecrlf: bool,
-    /// Long-running filter registry for this repository handle (see [`FilterProcessState`]).
+    /// Long-running filter registry for this repository handle.
     pub filter_process: Option<&'a FilterProcessState>,
     /// Subprocess runner for clean/smudge shell filters (defaults to [`ConversionConfig::command_runner`]).
     pub command_runner: Option<&'a dyn CommandRunner>,
@@ -1830,7 +1830,7 @@ pub fn lf_to_crlf(data: &[u8]) -> Vec<u8> {
 /// 4. Smudge filter execution
 ///
 /// Returns `Ok(None)` when the process filter returned `status=delayed` and `delayed_checkout` was
-/// provided (Git `delayed_checkout`); the path is queued for [`crate::filter_process::DelayedProcessCheckout::finish`].
+/// provided (Git `delayed_checkout`); the path is queued for delayed checkout finish.
 #[allow(clippy::too_many_arguments)]
 pub fn convert_to_worktree(
     data: &[u8],

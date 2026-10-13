@@ -21,11 +21,9 @@ fn relative_gitdir_include_from_disk_file() {
     let repo = dir.path().join("repo");
     Repository::init(
         &repo,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = repo.join(".git");

@@ -6,8 +6,8 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use grit_lib::gc::{update_refs, RefTransactionItem};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::list_refs;
 use grit_lib::repo::init_repository;
 use tempfile::TempDir;
@@ -28,11 +28,9 @@ impl ReftableBenchFixture {
         let dir = tempfile::tempdir().expect("tempdir");
         Repository::init(
             dir.path(),
-            &InitOptions {
-                bare: true,
-                initial_branch: "main".to_owned(),
-                ..InitOptions::default()
-            },
+            &InitOptions::new()
+                .with_bare(true)
+                .with_initial_branch("main".to_owned()),
         )
         .expect("init reftable");
         let git_dir = dir.path().to_path_buf();
@@ -87,11 +85,9 @@ fn bench_transaction_create_10k(c: &mut Criterion) {
                 std::fs::create_dir_all(work.path()).expect("mkdir");
                 Repository::init(
                     work.path(),
-                    &InitOptions {
-                        bare: true,
-                        initial_branch: "main".to_owned(),
-                        ..InitOptions::default()
-                    },
+                    &InitOptions::new()
+                        .with_bare(true)
+                        .with_initial_branch("main".to_owned()),
                 )
                 .expect("init");
                 work

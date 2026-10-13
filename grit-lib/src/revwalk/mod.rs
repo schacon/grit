@@ -4,15 +4,15 @@ pub mod handle;
 pub use handle::RevWalk;
 
 pub mod rev_list {
-    //! Canonical re-export of [`crate::rev_list`].
+    //! rev_list API (re-exported at this path).
     pub use crate::rev_list::*;
 }
 pub mod rev_parse {
-    //! Canonical re-export of [`crate::rev_parse`].
+    //! rev_parse API (re-exported at this path).
     pub use crate::rev_parse::*;
 }
 pub mod merge_base {
-    //! Canonical re-export of [`crate::merge_base`].
+    //! merge_base API (re-exported at this path).
     pub use crate::merge_base::*;
 }
 pub mod log_walk {
@@ -20,7 +20,15 @@ pub mod log_walk {
     pub use crate::log_walk::*;
 }
 pub mod commit_graph {
-    //! Commit-graph read/write ([`crate::commit_graph_file`], [`crate::commit_graph_write`]).
+    //! Commit-graph read and write helpers.
     pub use crate::commit_graph_file::*;
     pub use crate::commit_graph_write::*;
+}
+pub mod rev_list_error {
+    //! rev_list_error API (re-exported at this path).
+    pub use crate::rev_list_error::*;
+}
+pub mod rev_parse_error {
+    //! rev_parse_error API (re-exported at this path).
+    pub use crate::rev_parse_error::*;
 }

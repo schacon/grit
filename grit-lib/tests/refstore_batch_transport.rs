@@ -28,11 +28,9 @@ fn fetch_updates_refs_in_one_transaction_reftable() {
         let local_root = tempfile::tempdir().expect("local tempdir");
         let local = Repository::init(
             local_root.path(),
-            &InitOptions {
-                initial_branch: "main".to_owned(),
-                ref_storage: RefStorageFormat::Reftable,
-                ..InitOptions::default()
-            },
+            &InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(RefStorageFormat::Reftable),
         )
         .expect("local init");
         let local_git = local.git_dir();
@@ -142,11 +140,9 @@ fn atomic_push_over_grit_http(ref_format: RefStorageFormat) {
     std::fs::create_dir_all(&bare).expect("bare dir");
     Repository::init(
         &bare,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned()),
     )
     .expect("bare init");
     run_git(&bare, &["config", "receive.denyNonFastForwards", "true"]);

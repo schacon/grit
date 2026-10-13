@@ -1,6 +1,6 @@
 # grit-lib API layout
 
-Grit’s public crate surface stays **flat** for compatibility: every existing `grit_lib::<module>` path from before the domain tree still resolves. New code should prefer the **canonical domain paths** below — grouped modules with rustdoc tables of contents, not a second copy of the implementation.
+Grit’s stable surface is the **canonical domain tree** (≤25 root modules plus [`prelude`](rustdoc:grit_lib::prelude)). Flat implementation modules such as `grit_lib::odb` or `grit_lib::fetch` are **private**; use `grit_lib::objects::odb` and `grit_lib::remote::fetch` instead. The map in [`grit-lib/canonical-modules.toml`](https://github.com/gitbutlerapp/grit/blob/main/grit-lib/canonical-modules.toml) lists every previously flat path and its canonical replacement.
 
 ## Domain roots
 
@@ -42,4 +42,4 @@ Removed **view modules** (use domains above instead): `object_store`, `reference
 
 ## Nested implementation modules
 
-Some canonical paths re-export **submodules** of the flat implementation (for example `grit_lib::objects::odb::store` mirrors `grit_lib::odb::store`). Prefer the canonical prefix in new code; flat paths remain until a later plan step makes internal modules private.
+Some canonical paths re-export **submodules** of the flat implementation (for example `grit_lib::objects::odb::store` is the public path for the object-store backend). Prefer the canonical prefix in all new code.

@@ -278,6 +278,7 @@ pub fn switch_repository(repo: &Repository, opts: &SwitchOptions) -> Result<Swit
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn switch_to_target(
     repo: &Repository,
     branch_ref: &str,

@@ -2,7 +2,7 @@
 
 use anyhow::Error;
 use grit_lib::error::Error as LibError;
-use grit_lib::rev_parse_error::RevParseError;
+use grit_lib::revwalk::rev_parse_error::RevParseError;
 
 use crate::json_error::StructuredCliError;
 

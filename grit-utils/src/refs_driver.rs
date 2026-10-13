@@ -5,8 +5,8 @@ use std::io::{self, BufRead, Write};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::error::Error;
-use grit_lib::gc::{update_refs, RefTransactionItem};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::{list_refs_for_repository, list_refs_glob_for_repository};
 use grit_lib::repo::Repository;
 

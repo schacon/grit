@@ -150,6 +150,25 @@ pub fn assemble_identity(
     format!("{name} <{email}> {timestamp}")
 }
 
+/// Commit encoding helpers for non-UTF-8 commit messages.
+pub mod encoding {
+    pub use crate::commit_encoding::*;
+}
+
+/// Commit trailers and interpretation helpers.
+pub mod trailers {
+    pub use crate::commit_trailers::*;
+    /// Parse and apply trailer commands.
+    pub mod interpret {
+        pub use crate::interpret_trailers::*;
+    }
+}
+
+/// OpenPGP / SSH signature verification.
+pub mod signing {
+    pub use crate::signing::*;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

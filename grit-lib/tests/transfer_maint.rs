@@ -1,5 +1,5 @@
 //! Integration tests for the in-process maintenance primitives in
-//! `grit_lib::gc` — the remaining non-transport "replaced paths" from the jj
+//! `grit_lib::refs::gc` — the remaining non-transport "replaced paths" from the jj
 //! spike (PR #9632):
 //!
 //! * [`prune_loose_unreachable`] (the `jj util gc` core)
@@ -12,11 +12,11 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::gc::{
-    prune_loose_unreachable, remote_default_branch_local, update_refs, RefTransactionItem,
-};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::gc::{
+    prune_loose_unreachable, remote_default_branch_local, update_refs, RefTransactionItem,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

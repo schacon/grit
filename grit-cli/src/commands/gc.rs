@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use anyhow::Result;
-use grit_lib::maintenance::{gc, GcOptions, GcStats, RepackOptions};
+use grit_lib::maintenance::{gc, GcOptions, GcStats};
 use schemars::JsonSchema;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -125,17 +125,7 @@ impl MarkdownRender for GcOutcome {
 pub fn run(dry_run: bool, quiet: bool) -> Result<GcOutcome> {
     let repo = context::discover()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let stats = gc(
-        &repo,
-        &GcOptions {
-            repack: RepackOptions {
-                dry_run,
-                ..RepackOptions::default()
-            },
-            expire_reflog: true,
-            now_unix: now,
-        },
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stats = gc(&repo, &GcOptions::with_repack_dry_run(dry_run, now))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok((stats, dry_run, quiet).into())
 }

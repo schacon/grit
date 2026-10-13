@@ -6,46 +6,50 @@ pub use core::*;
 pub use handle::Diff;
 
 pub mod bloom {
-    //! Canonical re-export of [`crate::bloom`].
+    //! bloom API (re-exported at this path).
     pub use crate::bloom::*;
 }
 pub mod combined_diff_patch {
-    //! Canonical re-export of [`crate::combined_diff_patch`].
+    //! combined_diff_patch API (re-exported at this path).
     pub use crate::combined_diff_patch::*;
 }
 pub mod combined_tree_diff {
-    //! Canonical re-export of [`crate::combined_tree_diff`].
+    //! combined_tree_diff API (re-exported at this path).
     pub use crate::combined_tree_diff::*;
 }
 pub mod diffstat {
-    //! Canonical re-export of [`crate::diffstat`].
+    //! diffstat API (re-exported at this path).
     pub use crate::diffstat::*;
 }
 pub mod patch_ids {
-    //! Canonical re-export of [`crate::patch_ids`].
+    //! patch_ids API (re-exported at this path).
     pub use crate::patch_ids::*;
 }
 pub mod userdiff {
-    //! Canonical re-export of [`crate::userdiff`].
+    //! userdiff API (re-exported at this path).
     pub use crate::userdiff::*;
 }
 pub mod merge_diff {
-    //! Canonical re-export of [`crate::merge_diff`].
+    //! merge_diff API (re-exported at this path).
     pub use crate::merge_diff::*;
 }
 pub mod merge_file {
-    //! Canonical re-export of [`crate::merge_file`].
+    //! merge_file API (re-exported at this path).
     pub use crate::merge_file::*;
 }
 pub mod merge_trees {
-    //! Canonical re-export of [`crate::merge_trees`].
+    //! merge_trees API (re-exported at this path).
     pub use crate::merge_trees::*;
 }
 pub mod rerere {
-    //! Canonical re-export of [`crate::rerere`].
+    //! rerere API (re-exported at this path).
     pub use crate::rerere::*;
 }
 pub mod fmt_merge_msg {
-    //! Canonical re-export of [`crate::fmt_merge_msg`].
+    //! fmt_merge_msg API (re-exported at this path).
     pub use crate::fmt_merge_msg::*;
+}
+pub mod ws {
+    //! Whitespace helpers for diff and apply.
+    pub use crate::ws::*;
 }

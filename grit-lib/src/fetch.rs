@@ -1,32 +1,10 @@
-//! Wire-protocol fetch orchestration over a [`crate::transport::Connection`].
+//! Wire-protocol fetch orchestration over a live transport connection.
 //!
-//! [`fetch_remote`] is the wire counterpart to [`crate::transfer::fetch_local`]:
-//! instead of copying objects between two on-disk repositories, it drives a
-//! `git-upload-pack` negotiation over a live [`crate::transport::Connection`] —
-//! resolving wanted oids from the connection's advertised refs (via the same
-//! refspec matching `fetch_local` uses), running the
-//! [`crate::fetch_negotiator::SkippingNegotiator`] `want`/`have`/`done`
-//! exchange, demultiplexing the side-band pack, ingesting it with
-//! [`crate::index_pack::ingest_received_pack`], and classifying ref updates into the shared
-//! [`crate::transfer::FetchOutcome`].
-//!
-//! This is the protocol-v0/v1 negotiation loop lifted from the CLI's
-//! `fetch_transport::fetch_upload_pack_negotiate_pack_bytes_with_streams`,
-//! generalized to run over the [`crate::transport::Connection`] reader/writer
-//! rather than subprocess pipes.
-//!
-//! Protocol v2 over the streaming transports (`git://`, ssh) is also handled
-//! here: a v2 [`crate::transport::Connection`] advertises no refs on connect, so
-//! [`fetch_remote`] first issues a `command=ls-refs` (deriving ref-prefixes from
-//! the fetch refspecs) to recover the ref map, then runs a `command=fetch`
-//! negotiation — multi-round `want`/`have`/`done` with the same
-//! [`crate::fetch_negotiator::SkippingNegotiator`] — and demuxes the
-//! side-band-64k pack from the `packfile` section. Both paths share the refspec
-//! matching, tag-mode, prune, classification, and pack-ingest plumbing. The v2
-//! request fragments are lifted from the CLI's `file_upload_pack_v2` /
-//! `fetch_transport` (`write_v2_fetch_request`, `read_v2_acknowledgments`,
-//! `read_v2_fetch_pack_response`, `v2_ls_refs_for_fetch`). Smart-HTTP stays on
-//! v0/v1 (its stateless multi-POST v2 flow is out of scope for this pass).
+//! [`fetch_remote`] drives `git-upload-pack` negotiation: match refspecs against
+//! advertised refs, run `want`/`have`/`done`, demultiplex the side-band pack,
+//! ingest it, and classify ref updates into a shared fetch outcome. Protocol v2
+//! over streaming transports runs `ls-refs` before `fetch` when the connection
+//! advertises no refs on connect.
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -1162,11 +1140,10 @@ fn skip_v2_section_until_boundary(reader: &mut dyn Read, sideband_all: bool) -> 
 /// negotiation and writing the resulting tracking-ref updates into
 /// `local_git_dir`.
 ///
-/// The flow mirrors [`crate::transfer::fetch_local`], but the remote ref list
-/// comes from the connection's advertisement, the objects arrive over the wire
-/// (negotiated pack -> [`crate::index_pack::ingest_received_pack`]), and the local repo is opened
-/// to classify ancestry. Reuses the refspec matching, tag-mode, prune, and
-/// classification helpers from [`crate::transfer`].
+/// The flow mirrors local fetch, but the remote ref list comes from the
+/// connection's advertisement, objects arrive over the wire as a negotiated pack,
+/// and the local repo is opened to classify ancestry. Reuses refspec matching,
+/// tag-mode, prune, and classification helpers shared with other fetch paths.
 ///
 /// Handles protocol v0, v1, and v2. For a v2 connection the ref map is recovered
 /// via a `command=ls-refs` round (no refs are advertised on connect) and the

@@ -14,12 +14,10 @@ fn init_preserves_template_file_at_probe_nfc_name() {
     let root = TempDir::new().expect("worktree");
     Repository::init(
         root.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            template_dir: Some(tmpl.path().to_path_buf()),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files)
+            .with_template_dir(Some(tmpl.path().to_path_buf())),
     )
     .expect("init");
 

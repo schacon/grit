@@ -34,11 +34,9 @@ fn packed_refs_load_and_namespace_conflict() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -69,11 +67,9 @@ fn write_ref_cas_and_delete_cas_error_paths() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -98,11 +94,9 @@ fn reflog_policy_and_append() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -129,11 +123,9 @@ fn list_refs_resolve_dwim_and_symbolic() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -160,11 +152,9 @@ fn pack_remote_tracking_refs_for_clone_smoke() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");

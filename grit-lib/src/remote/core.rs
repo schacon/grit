@@ -33,7 +33,7 @@ use crate::url_rewrite;
 #[cfg(feature = "http-ureq")]
 use crate::transport::http::ureq_client::UreqHttpClient;
 
-/// HTTP client types for non-git HTTP (e.g. OAuth) without importing [`crate::transport`] from binaries.
+/// HTTP client types for non-git HTTP (e.g. OAuth) without pulling transport internals into binaries.
 #[cfg(feature = "http-ureq")]
 pub mod http_client {
     pub use crate::transport::http::ureq_client::UreqHttpClient;

@@ -14,18 +14,16 @@ use grit_lib::objects::commit_graph::{
     BloomWalkStats, CommitGraphChain, CommitGraphLayer,
 };
 use grit_lib::objects::{serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind};
+use grit_lib::repo::caches::RepoCaches;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::repo_caches::RepoCaches;
 
 fn one_commit_repo() -> (tempfile::TempDir, Repository, ObjectId) {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let mut index = Index::new();
@@ -99,11 +97,9 @@ fn octopus_merge_graph() -> (tempfile::TempDir, Repository, ObjectId, Vec<Object
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let mk = |parents: Vec<ObjectId>, t: i64| -> ObjectId {
@@ -227,11 +223,9 @@ fn commit_tree_high_bit_and_parse_graph_dump() {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let mut index = Index::new();
@@ -383,11 +377,9 @@ fn two_parent_graph_commit_matches_object() {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
@@ -459,11 +451,9 @@ fn two_commit_repo() -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");

@@ -4,6 +4,6 @@ mod core;
 pub use core::*;
 
 pub mod bundle_remote {
-    //! Canonical re-export of [`crate::bundle_remote`].
+    //! bundle_remote API (re-exported at this path).
     pub use crate::bundle_remote::*;
 }

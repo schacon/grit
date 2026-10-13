@@ -31,8 +31,9 @@ use crate::reflog::{
 use crate::refs_fsck::{refs_fsck, RefsFsckIssue, RefsFsckSeverity};
 use crate::repo::Repository;
 
-/// Options for [`repack_all`].
+/// Options for [`repack_all()`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RepackOptions {
     /// Report actions without writing packs or deleting files.
     pub dry_run: bool,
@@ -60,8 +61,20 @@ impl Default for RepackOptions {
     }
 }
 
+impl RepackOptions {
+    /// Start from [`Default::default`] with [`Self::dry_run`] set.
+    #[must_use]
+    pub fn with_dry_run(dry_run: bool) -> Self {
+        Self {
+            dry_run,
+            ..Self::default()
+        }
+    }
+}
+
 /// Counters and paths produced by [`repack_all`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RepackStats {
     /// Loose object files before repack.
     pub loose_before: usize,
@@ -79,8 +92,9 @@ pub struct RepackStats {
     pub pruned_loose: usize,
 }
 
-/// Options for [`fsck`].
+/// Options for [`fsck()`].
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct FsckOptions {
     /// Treat ref-fsck warnings as errors (Git `--strict` for references).
     pub strict: bool,
@@ -114,6 +128,7 @@ pub struct FsckIssue {
 
 /// Aggregate fsck result.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FsckReport {
     /// True when no [`FsckSeverity::Error`] issues were recorded.
     pub ok: bool,
@@ -133,8 +148,9 @@ pub fn format_fsck_line(issue: &FsckIssue) -> String {
     )
 }
 
-/// Options for [`gc`].
+/// Options for [`gc()`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GcOptions {
     pub repack: RepackOptions,
     /// Expire reflogs using `gc.reflogExpire*` before repack/prune.
@@ -149,6 +165,52 @@ impl Default for GcOptions {
             repack: RepackOptions::default(),
             expire_reflog: true,
             now_unix: 0,
+        }
+    }
+}
+
+impl GcOptions {
+    /// Run gc with repack dry-run control and an explicit wall-clock for reflog expiry.
+    #[must_use]
+    pub fn with_repack_dry_run(dry_run: bool, now_unix: i64) -> Self {
+        Self {
+            repack: RepackOptions::with_dry_run(dry_run),
+            expire_reflog: true,
+            now_unix,
+        }
+    }
+
+    /// Default repack with explicit reflog expiry policy and wall-clock.
+    #[must_use]
+    pub fn with_reflog_policy(now_unix: i64, expire_reflog: bool) -> Self {
+        Self {
+            repack: RepackOptions::default(),
+            expire_reflog,
+            now_unix,
+        }
+    }
+}
+
+impl FsckOptions {
+    /// Check objects, refs, and MIDX with optional strict ref policy.
+    #[must_use]
+    pub fn full_repository(strict: bool) -> Self {
+        Self {
+            strict,
+            check_objects: true,
+            check_refs: true,
+            check_midx: true,
+        }
+    }
+
+    /// Check objects and refs without validating MIDX.
+    #[must_use]
+    pub fn objects_and_refs(strict: bool) -> Self {
+        Self {
+            strict,
+            check_objects: true,
+            check_refs: true,
+            check_midx: false,
         }
     }
 }
@@ -697,6 +759,11 @@ fn pack_has_keep_marker(pack_dir: &Path, path: &Path) -> bool {
         return false;
     };
     pack_dir.join(format!("{stem}.keep")).is_file()
+}
+
+/// Standalone object fsck helpers.
+pub mod fsck {
+    pub use crate::fsck_standalone::*;
 }
 
 #[cfg(test)]

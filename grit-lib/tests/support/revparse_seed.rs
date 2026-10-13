@@ -34,12 +34,10 @@ pub fn bare_repo_with_ambiguous_prefix(
     let dir = tempfile::tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".into(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main")
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     let repo = Repository::open(dir.path(), &RepositoryOptions::empty()).expect("open");

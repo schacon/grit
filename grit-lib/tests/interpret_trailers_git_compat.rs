@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use grit_lib::interpret_trailers::{
+use grit_lib::commit::trailers::interpret::{
     process_trailers, NewTrailerArg, ProcessTrailerOptions, TrailerIfExists, TrailerIfMissing,
     TrailerWhere,
 };

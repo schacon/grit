@@ -108,6 +108,7 @@ fn restore_head(repo: &Repository, head_before: &HeadState) -> Result<()> {
 }
 
 /// Create branch (if needed), move `HEAD`, append checkout reflog; roll back branch on failure.
+#[allow(clippy::too_many_arguments)]
 pub fn finish_switch_ref_updates(
     repo: &Repository,
     head_before: &HeadState,
@@ -120,9 +121,7 @@ pub fn finish_switch_ref_updates(
 ) -> Result<()> {
     let created_branch = branch_create.as_ref().map(|(name, _, _)| name.clone());
     if let Some((refname, oid, source)) = branch_create {
-        if let Err(err) = create_branch_ref_with_reflog(repo, &refname, oid, &source) {
-            return Err(err);
-        }
+        create_branch_ref_with_reflog(repo, &refname, oid, &source)?;
     }
 
     let head_result = if detached {

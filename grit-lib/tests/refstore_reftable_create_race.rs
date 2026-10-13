@@ -21,11 +21,9 @@ fn empty_reftable_git_dir() -> (tempfile::TempDir, std::path::PathBuf) {
     let root = tempfile::tempdir().expect("tempdir");
     Repository::init(
         root.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = root.path().join(".git");

@@ -7,12 +7,12 @@ use std::path::Path;
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse_error::RevParseError;
 use grit_lib::revwalk::rev_parse::{
     abbreviate_object_id, peel_to_tree, resolve_revision, resolve_revision_as_commit,
     resolve_revision_for_verify, resolve_treeish_blob_at_path, split_double_dot_range,
     split_triple_dot_range,
 };
+use grit_lib::revwalk::rev_parse_error::RevParseError;
 
 use super::history_harness::git_rev_parse_verify;
 

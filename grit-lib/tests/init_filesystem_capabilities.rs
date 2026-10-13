@@ -14,11 +14,9 @@ fn init_writes_probed_filemode() {
     let root = TempDir::new().expect("tempdir");
     Repository::init(
         root.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = root.path().join(".git");
@@ -97,11 +95,9 @@ fn init_local_filemode_follows_probe_not_global() {
     );
     Repository::init(
         root.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     std::env::remove_var("GIT_CONFIG_GLOBAL");
@@ -130,12 +126,10 @@ fn separate_git_dir_honors_filemode_false_in_external_config() {
     let git_dir = TempDir::new().expect("git dir");
     Repository::init(
         work.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            separate_git_dir: Some(git_dir.path().to_path_buf()),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files)
+            .with_separate_git_dir(Some(git_dir.path().to_path_buf())),
     )
     .expect("init");
 

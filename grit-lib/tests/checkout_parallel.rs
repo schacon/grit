@@ -281,11 +281,9 @@ fn parallel_matches_serial_crlf_and_ident() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     fs::write(
@@ -312,11 +310,9 @@ fn parallel_matches_serial_gitlink_and_replacements() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let wt = repo.work_tree().expect("wt");
@@ -465,11 +461,9 @@ fn ignorecase_collision_uses_serial_path_and_matches() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     fs::write(
@@ -504,11 +498,9 @@ fn parallel_pool_error_does_not_write_jobs_after_failure() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     enable_parallel_checkout_config(root);
@@ -589,11 +581,9 @@ fn missing_blob_errors_after_earlier_write() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let wt = repo.work_tree().expect("wt");

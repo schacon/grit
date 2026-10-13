@@ -16,10 +16,10 @@ combined_diff_patch = "diff::combined_diff_patch"
 combined_tree_diff = "diff::combined_tree_diff"
 command_runner = "command_runner"
 commit = "commit"
-commit_encoding = "commit_encoding"
+commit_encoding = "commit::encoding"
 commit_graph_file = "objects::commit_graph"
 commit_graph_write = "objects::commit_graph"
-commit_trailers = "commit_trailers"
+commit_trailers = "commit::trailers"
 config = "config"
 credentials = "remote::credentials"
 crlf = "worktree::crlf"
@@ -29,23 +29,22 @@ diff = "diff"
 diffstat = "diff::diffstat"
 environment = "config::environment"
 error = "error"
-ewah_bench = "ewah_bench"
 fetch = "remote::fetch"
 fetch_negotiator = "remote::fetch_negotiator"
 fmt_merge_msg = "diff::fmt_merge_msg"
-fsck_standalone = "fsck_standalone"
-gc = "gc"
-git_date = "git_date"
+fsck_standalone = "maintenance::fsck"
+gc = "refs::gc"
+git_date = "config::git_date"
 gitmodules = "config::gitmodules"
-git_path = "git_path"
+git_path = "config::git_path"
 hash = "objects::hash"
 hide_refs = "refs::hide_refs"
-hooks = "hooks"
-hot_path_test_metrics = "hot_path_test_metrics"
+hooks = "command_runner::hooks"
+hot_path_test_metrics = "objects::odb::hot_path_test_metrics"
 ident_resolve = "config::ident_resolve"
 ignore = "worktree::ignore"
 index = "index"
-interpret_trailers = "interpret_trailers"
+interpret_trailers = "commit::trailers::interpret"
 index_name_hash_lazy = "index::index_name_hash_lazy"
 index_pack = "objects::index_pack"
 init_filesystem = "config::init_filesystem"
@@ -56,7 +55,7 @@ merge_file = "diff::merge_file"
 merge_trees = "diff::merge_trees"
 midx = "objects::midx"
 midx_error = "objects::midx"
-mailmap = "mailmap"
+mailmap = "config::mailmap"
 maintenance = "maintenance"
 notes = "notes"
 objects = "objects"
@@ -71,7 +70,7 @@ pack_store = "objects::pack_store"
 parallel = "parallel"
 patch_ids = "diff::patch_ids"
 pathspec = "worktree::pathspec"
-pkt_line = "pkt_line"
+pkt_line = "remote::pkt_line"
 porcelain = "porcelain"
 progress = "progress"
 promisor = "objects::promisor"
@@ -88,25 +87,24 @@ ref_storage = "refs::ref_storage"
 reftable = "refs::reftable"
 remote = "remote"
 repo = "repo"
-repo_caches = "repo_caches"
+repo_caches = "repo::caches"
 repo_handles = "repo_handles"
 rerere = "diff::rerere"
 resolve_undo = "index::resolve_undo"
 rev_list = "revwalk::rev_list"
-rev_list_error = "rev_list_error"
+rev_list_error = "revwalk::rev_list_error"
 revwalk = "revwalk"
 rev_parse = "revwalk::rev_parse"
-rev_parse_error = "rev_parse_error"
-revwalk = "revwalk"
+rev_parse_error = "revwalk::rev_parse_error"
 serve = "remote::serve"
 shallow = "remote::shallow"
-sideband_lines = "sideband_lines"
-signing = "signing"
+sideband_lines = "remote::sideband_lines"
+signing = "commit::signing"
 sparse_checkout = "index::sparse_checkout"
 split_index = "index::split_index"
 state = "state"
-submodule_gitdir = "submodule_gitdir"
-terminal = "terminal"
+submodule_gitdir = "config::gitmodules::gitdir"
+terminal = "porcelain::terminal"
 transfer = "remote::transfer"
 transport = "remote::transport"
 transport_path = "remote::transport_path"
@@ -118,5 +116,34 @@ worktree = "worktree"
 worktree_ref = "worktree::worktree_ref"
 worktree_rules = "worktree::worktree_rules"
 write_tree = "index::write_tree"
-ws = "ws"
+ws = "diff::ws"
 zlib_inflate = "zlib_inflate"
+
+[root_public]
+# Allowed root `pub mod` names in grit-lib/src/lib.rs (prelude is separate).
+modules = [
+  "apply",
+  "blame",
+  "bundle",
+  "command_runner",
+  "commit",
+  "config",
+  "diagnostics",
+  "diff",
+  "error",
+  "index",
+  "maintenance",
+  "notes",
+  "objects",
+  "parallel",
+  "porcelain",
+  "progress",
+  "refs",
+  "remote",
+  "repo",
+  "repo_handles",
+  "revwalk",
+  "stash",
+  "state",
+  "worktree",
+]

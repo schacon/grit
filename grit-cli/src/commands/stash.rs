@@ -111,7 +111,7 @@ impl HumanRender for StashShowOutcome {
         }
         if let Some(stat) = &self.stat {
             let color = std::io::stdout().is_terminal()
-                && grit_lib::terminal::ansi_supported()
+                && grit_lib::porcelain::terminal::ansi_supported()
                 && std::env::var_os("NO_COLOR").is_none();
             show::render_stat(w, stat, color)?;
         }

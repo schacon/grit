@@ -28,11 +28,9 @@ fn git_eol(repo: &std::path::Path, path: &str) -> String {
 fn init_autocrlf_repo(root: &std::path::Path) -> Repository {
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     fs::write(

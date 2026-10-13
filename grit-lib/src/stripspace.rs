@@ -20,12 +20,6 @@ pub enum Mode {
     /// A comment line is any line whose first bytes match `comment_prefix`
     /// (e.g. `"#"`).
     StripComments(String),
-    /// Prefix every input line with the comment character.
-    ///
-    /// Non-empty lines that do not start with a tab get `comment_prefix + " "`;
-    /// empty lines and tab-starting lines get just `comment_prefix`.  This
-    /// avoids the `SP-HT` sequence (`# \t…`) that Git also avoids.
-    CommentLines(String),
 }
 
 /// Process `input` bytes according to `mode` and return the result.
@@ -50,16 +44,12 @@ pub enum Mode {
 ///
 /// let out = process(b"# comment\ntext\n", &Mode::StripComments("#".into()));
 /// assert_eq!(out, b"text\n");
-///
-/// let out = process(b"foo\n\nbar\n", &Mode::CommentLines("#".into()));
-/// assert_eq!(out, b"# foo\n#\n# bar\n");
 /// ```
 #[must_use]
 pub fn process(input: &[u8], mode: &Mode) -> Vec<u8> {
     match mode {
         Mode::Default => strip(input, None),
         Mode::StripComments(prefix) => strip(input, Some(prefix.as_str())),
-        Mode::CommentLines(prefix) => comment_lines(input, prefix.as_str()),
     }
 }
 
@@ -153,62 +143,6 @@ fn strip(input: &[u8], comment_prefix: Option<&str>) -> Vec<u8> {
     result
 }
 
-/// Prefix every line of `input` with the comment string.
-///
-/// - Non-empty lines that do not start with `\t` get `comment_prefix + " "`.
-/// - Empty lines and lines starting with `\t` get just `comment_prefix`.
-///
-/// This mirrors `strbuf_add_commented_lines` in Git, which avoids the
-/// `SP-HT` sequence `"# \t…"`.
-fn comment_lines(input: &[u8], comment_prefix: &str) -> Vec<u8> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    // Ensure the data ends with a newline.
-    let owned;
-    let data: &[u8] = if input.last() != Some(&b'\n') {
-        owned = {
-            let mut v = input.to_vec();
-            v.push(b'\n');
-            v
-        };
-        &owned
-    } else {
-        input
-    };
-
-    let prefix_bytes = comment_prefix.as_bytes();
-    let mut result: Vec<u8> = Vec::new();
-
-    let mut pos = 0;
-    while pos < data.len() {
-        let next = data[pos..]
-            .iter()
-            .position(|&b| b == b'\n')
-            .map(|p| pos + p + 1)
-            .unwrap_or(data.len());
-        let raw_line = &data[pos..next];
-        pos = next;
-
-        // Separate content from the terminating newline.
-        let nl_pos = raw_line.iter().rposition(|&b| b == b'\n');
-        let content_end = nl_pos.unwrap_or(raw_line.len());
-        let content = &raw_line[..content_end];
-
-        // Prepend comment prefix; add a space unless the content is empty or
-        // starts with a tab (to avoid the SP-HT sequence).
-        result.extend_from_slice(prefix_bytes);
-        if !content.is_empty() && content[0] != b'\t' {
-            result.push(b' ');
-        }
-        result.extend_from_slice(content);
-        result.push(b'\n');
-    }
-
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,44 +221,5 @@ mod tests {
             &Mode::StripComments("//".into()),
         );
         assert_eq!(out, b"normal line\n");
-    }
-
-    // ── Mode::CommentLines ───────────────────────────────────────────────────
-
-    #[test]
-    fn comment_lines_prefixes_non_empty() {
-        let out = process(b"foo\n", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"# foo\n");
-    }
-
-    #[test]
-    fn comment_lines_empty_line_gets_bare_prefix() {
-        let out = process(b"\n", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"#\n");
-    }
-
-    #[test]
-    fn comment_lines_tab_line_avoids_sp_ht() {
-        // "\tone" → "#\tone", not "# \tone"
-        let out = process(b"\tone\n", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"#\tone\n");
-    }
-
-    #[test]
-    fn comment_lines_adds_trailing_newline() {
-        let out = process(b"foo", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"# foo\n");
-    }
-
-    #[test]
-    fn comment_lines_empty_input_yields_empty() {
-        let out = process(b"", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"");
-    }
-
-    #[test]
-    fn comment_lines_multiple_lines() {
-        let out = process(b"\tone\n\ntwo\n", &Mode::CommentLines("#".into()));
-        assert_eq!(out, b"#\tone\n#\n# two\n");
     }
 }

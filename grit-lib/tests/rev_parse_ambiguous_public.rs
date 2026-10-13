@@ -55,10 +55,7 @@ fn reflog_walk_ref_at_minus_branch_form() {
     let mut env = Environment::empty();
     env.cwd = wt.to_path_buf();
     env.pwd = Some(wt.to_string_lossy().into_owned());
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     let repo = Repository::discover(Some(wt), &options).expect("discover");
     let name = resolve_reflog_walk_log_ref(&repo, "@{-1}").expect("walk ref");
     assert!(name.contains("first") || name.starts_with("refs/"));

@@ -39,12 +39,12 @@
 //!   notes, and bundles.
 //! - [`prelude`] re-exports the types most call sites need.
 //! - [`porcelain`] holds user-facing operations that return structured result
-//!   *models* (the CLI renders them). The flat module list below remains the
-//!   low-level escape hatch and keeps every existing path valid.
+//!   *models* (the CLI renders them).
 //! - Browse the engine by domain: [`objects`], [`refs`], [`index`], [`revwalk`],
 //!   [`diff`], [`config`], [`remote`], [`worktree`], [`stash`], [`notes`], and
-//!   [`bundle`]. The mapping table on [grit-scm.com/docs/library/api-layout](https://grit-scm.com/docs/library/api-layout)
-//!   lists every flat path.
+//!   [`bundle`]. Legacy flat paths (`grit_lib::odb`, `grit_lib::fetch`, …) are
+//!   private; [grit-scm.com/docs/library/api-layout](https://grit-scm.com/docs/library/api-layout)
+//!   maps each old path to its canonical replacement.
 //! - [`progress`] defines how long-running operations report progress and
 //!   observe cancellation without touching the terminal.
 //!
@@ -74,19 +74,18 @@
 //!
 //! # Storage and refs
 //!
-//! - **Object database ([`odb`])** — loose objects plus pack files, pack indexes,
+//! - **Object database ([`objects`])** — loose objects plus pack files, pack indexes,
 //!   multi-pack-index (MIDX), delta chains, and promisor/partial clone hooks.
-//!   Backends are pluggable via the ODB abstraction (see [`odb`] and [`pack_store`]).
-//! - **References ([`refs`], [`reftable`], [`ref_storage`])** — loose files,
-//!   `packed-refs`, and reftable stacks; reflog read/write in [`reflog`].
+//!   Backends are pluggable via the ODB abstraction on [`objects::Objects`].
+//! - **References ([`refs`])** — loose files, `packed-refs`, and reftable stacks;
+//!   reflog read/write and ref storage format selection live in the same module.
 //!   [`RefStorageFormat`] selects the on-disk ref layout at init.
 //!
 //! # Network and bundles
 //!
-//! [`remote`], [`fetch`], [`push`], and [`transport`] implement fetch, push, and
-//! ls-remote over local paths, git/ssh URLs, and (with the optional HTTP client)
-//! smart HTTP. [`bundle`] and [`bundle_remote`] read and write Git bundle files.
-//! Wire protocol helpers live under [`protocol`] and [`serve`].
+//! [`remote`] implements fetch, push, and ls-remote over local paths, git/ssh URLs,
+//! and (with the optional HTTP client) smart HTTP. [`bundle`] reads and writes Git
+//! bundle files and bundle-related transport helpers.
 //!
 //! # Features
 //!
@@ -112,8 +111,8 @@
 //! `docs/v1-scope.md`. Compatibility means **formats and protocols**, validated in
 //! tests against the system `git` binary — not argv or message strings.
 
-// --- Curated public API (additive; the flat `pub mod` list below is unchanged
-// so every existing `grit_lib::<module>::…` path keeps resolving) ---
+// --- Curated public API: domain roots and cross-cutting modules only.
+// Flat implementation modules are `pub(crate)`; use canonical domain paths. ---
 pub mod porcelain;
 pub mod progress;
 
@@ -127,8 +126,8 @@ pub mod prelude {
     pub use crate::environment::{Environment, RepositoryOptions};
     pub use crate::error::{Error, MidxError, Result};
     pub use crate::index::Index;
+    pub use crate::objects::odb::Odb;
     pub use crate::objects::{Object, ObjectId, ObjectInfo, ObjectKind};
-    pub use crate::odb::Odb;
     pub use crate::repo::{DiscoveryInfo, InitOptions, Repository, RepositoryBuilder};
 }
 
@@ -136,176 +135,164 @@ pub mod revwalk;
 pub mod stash;
 
 pub mod apply;
-pub mod attributes;
+pub(crate) mod attributes;
 pub mod blame;
-pub mod bloom;
-pub mod branch_tracking;
+pub(crate) mod bloom;
+pub(crate) mod branch_tracking;
 pub mod bundle;
-pub mod bundle_remote;
-pub mod check_ref_format;
-pub mod clone;
-pub mod combined_diff_patch;
-pub mod combined_tree_diff;
+pub(crate) mod bundle_remote;
+pub(crate) mod check_ref_format;
+pub(crate) mod clone;
+pub(crate) mod combined_diff_patch;
+pub(crate) mod combined_tree_diff;
 pub mod command_runner;
 pub mod commit;
-pub mod commit_encoding;
-pub mod commit_graph_file;
-pub mod commit_graph_write;
-pub mod commit_pretty;
-pub mod commit_trailers;
+pub(crate) mod commit_encoding;
+pub(crate) mod commit_graph_file;
+pub(crate) mod commit_graph_write;
+pub(crate) mod commit_pretty;
+pub(crate) mod commit_trailers;
 pub mod config;
-pub mod connectivity;
-pub mod credentials;
-pub mod crlf;
-pub mod delta_encode;
-pub mod delta_islands;
+pub(crate) mod connectivity;
+pub(crate) mod credentials;
+pub(crate) mod crlf;
+pub(crate) mod delta_encode;
+pub(crate) mod delta_islands;
 pub mod diagnostics;
 pub mod diff;
-pub mod diff_indent_heuristic;
+pub(crate) mod diff_indent_heuristic;
 mod diff_rename_parallel;
-pub mod diffstat;
-pub mod dotfile;
-pub mod environment;
+pub(crate) mod diffstat;
+pub(crate) mod dotfile;
+pub(crate) mod environment;
 pub mod error;
 mod ewah_bitmap;
 
-#[doc(hidden)]
-pub mod ewah_bench {
-    include!("ewah_bench_api.rs");
-}
-pub mod bitmap_walk;
-pub mod fetch;
-pub mod fetch_head;
-pub mod fetch_negotiator;
-pub mod filter_process;
-pub mod fmt_merge_msg;
-pub mod fsck_standalone;
-pub mod gc;
-pub mod git_binary_base85;
-pub mod git_date;
-pub mod git_path;
-pub mod gitmodules;
-pub mod hash;
-pub mod hide_refs;
-pub mod hooks;
-pub mod ident;
-pub mod ident_config;
-pub mod ident_resolve;
-pub mod ignore;
+pub(crate) mod bitmap_walk;
+pub(crate) mod fetch;
+pub(crate) mod fetch_head;
+pub(crate) mod fetch_negotiator;
+pub(crate) mod filter_process;
+pub(crate) mod fmt_merge_msg;
+pub(crate) mod fsck_standalone;
+pub(crate) mod gc;
+pub(crate) mod git_binary_base85;
+pub(crate) mod git_date;
+pub(crate) mod git_path;
+pub(crate) mod gitmodules;
+pub(crate) mod hash;
+pub(crate) mod hide_refs;
+pub(crate) mod hooks;
+pub(crate) mod ident;
+pub(crate) mod ident_config;
+pub(crate) mod ident_resolve;
+pub(crate) mod ignore;
 pub mod index;
 mod index_eoie_ieot;
-pub mod index_name_hash_lazy;
-pub mod index_pack;
-pub mod init_filesystem;
-pub mod interpret_trailers;
+pub(crate) mod index_name_hash_lazy;
+pub(crate) mod index_pack;
+pub(crate) mod init_filesystem;
+pub(crate) mod interpret_trailers;
 pub(crate) mod local_object_copy;
-pub mod log_walk;
-pub mod mailmap;
+pub(crate) mod log_walk;
+pub(crate) mod mailmap;
 pub mod maintenance;
-pub mod merge_base;
-pub mod merge_diff;
-pub mod merge_file;
-pub mod merge_trees;
-pub mod midx;
-pub mod midx_error;
-pub mod net_trace;
+pub(crate) mod merge_base;
+pub(crate) mod merge_diff;
+pub(crate) mod merge_file;
+pub(crate) mod merge_trees;
+pub(crate) mod midx;
+pub(crate) mod midx_error;
+pub(crate) mod net_trace;
 pub mod notes;
 pub mod objects;
-pub mod odb;
-pub mod pack;
-pub mod pack_bitmap;
+pub(crate) mod odb;
+pub(crate) mod pack;
+pub(crate) mod pack_bitmap;
 mod pack_delta;
 mod pack_index;
 pub(crate) mod pack_index_build;
 mod pack_map;
-pub mod pack_name_hash;
-pub mod pack_object_select;
-pub mod pack_objects;
-pub mod pack_receive;
-pub mod pack_rev;
-pub mod pack_store;
+pub(crate) mod pack_name_hash;
+pub(crate) mod pack_object_select;
+pub(crate) mod pack_objects;
+pub(crate) mod pack_receive;
+pub(crate) mod pack_rev;
+pub(crate) mod pack_store;
 pub(crate) mod pack_zlib;
 pub mod parallel;
-pub mod patch_ids;
-pub mod path;
-pub mod path_icase;
-pub mod pathspec;
-pub mod pkt_line;
-pub mod precompose_config;
-pub mod promisor;
-pub mod promisor_remote;
-pub mod protocol;
-pub mod protocol_v2;
-pub mod prune_packed;
-pub mod push;
-pub mod push_cert;
-pub mod push_report;
-pub mod quote_path;
-pub mod receive_pack;
-pub mod receive_quarantine;
-pub mod ref_exclusions;
-pub mod ref_namespace;
-pub mod ref_storage;
-pub mod reflog;
+pub(crate) mod patch_ids;
+pub(crate) mod path_icase;
+pub(crate) mod pathspec;
+pub(crate) mod pkt_line;
+pub(crate) mod precompose_config;
+pub(crate) mod promisor;
+pub(crate) mod promisor_remote;
+pub(crate) mod protocol;
+pub(crate) mod protocol_v2;
+pub(crate) mod prune_packed;
+pub(crate) mod push;
+pub(crate) mod push_cert;
+pub(crate) mod push_report;
+pub(crate) mod quote_path;
+pub(crate) mod receive_pack;
+pub(crate) mod receive_quarantine;
+pub(crate) mod ref_exclusions;
+pub(crate) mod ref_namespace;
+pub(crate) mod ref_storage;
+pub(crate) mod reflog;
 pub mod refs;
-pub mod refs_fsck;
-pub mod refspec;
-pub mod reftable;
+pub(crate) mod refs_fsck;
+pub(crate) mod refspec;
+pub(crate) mod reftable;
 pub mod remote;
 pub mod repo;
-pub mod repo_caches;
+pub(crate) mod repo_caches;
 pub mod repo_handles;
-pub mod rerere;
-pub mod resolve_undo;
-pub mod rev_list;
-pub mod rev_list_error;
-pub mod rev_parse;
-pub mod rev_parse_error;
-pub mod serve;
-pub mod shallow;
-pub mod shared_repo;
-pub mod sideband_lines;
-pub mod signing;
-pub mod sparse_checkout;
-pub mod split_index;
+pub(crate) mod rerere;
+pub(crate) mod resolve_undo;
+pub(crate) mod rev_list;
+pub(crate) mod rev_list_error;
+pub(crate) mod rev_parse;
+pub(crate) mod rev_parse_error;
+pub(crate) mod serve;
+pub(crate) mod shallow;
+pub(crate) mod shared_repo;
+pub(crate) mod sideband_lines;
+pub(crate) mod signing;
+pub(crate) mod sparse_checkout;
+pub(crate) mod split_index;
 pub mod state;
-pub mod stripspace;
-pub mod submodule_active;
-pub mod submodule_config;
-pub mod submodule_gitdir;
-pub mod terminal;
-pub mod textconv_cache;
-pub mod trace;
+pub(crate) mod stripspace;
+pub(crate) mod submodule_gitdir;
+pub(crate) mod terminal;
+pub(crate) mod textconv_cache;
 mod tracked_path_tree;
-pub mod transfer;
-pub mod transport;
-pub mod transport_path;
-pub mod tree_path_follow;
-pub mod unicode_normalization;
-pub mod unpack_objects;
-pub mod untracked_cache;
-pub mod upload_filter;
-pub mod url_rewrite;
-pub mod userdiff;
-pub mod whitespace_rule;
-pub mod wildmatch;
+pub(crate) mod transfer;
+pub(crate) mod transport;
+pub(crate) mod transport_path;
+pub(crate) mod unicode_normalization;
+pub(crate) mod unpack_objects;
+pub(crate) mod untracked_cache;
+pub(crate) mod upload_filter;
+pub(crate) mod url_rewrite;
+pub(crate) mod userdiff;
+pub(crate) mod wildmatch;
 pub mod worktree;
 mod worktree_batch;
-pub mod worktree_cwd;
-pub mod worktree_ref;
-pub mod worktree_rules;
+pub(crate) mod worktree_cwd;
+pub(crate) mod worktree_ref;
+pub(crate) mod worktree_rules;
 mod worktree_rules_tests;
 mod worktree_scan;
 pub use worktree_scan::PARALLEL_STAT_MIN_ENTRIES;
-pub mod write_tree;
-pub mod ws;
-#[doc(hidden)]
-pub mod zlib_inflate;
+pub(crate) mod write_tree;
+pub(crate) mod ws;
+pub(crate) mod zlib_inflate;
 
 pub use ref_storage::RefStorageFormat;
 
-#[doc(hidden)]
-pub mod hot_path_test_metrics;
+pub(crate) mod hot_path_test_metrics;
 #[cfg(test)]
 mod object_write_regression;
 #[cfg(test)]

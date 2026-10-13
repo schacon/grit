@@ -59,11 +59,9 @@ fn ignores_global_config() {
     let root = tmp.path().join("repo");
     Repository::init(
         &root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .unwrap();
     let git_dir = root.join(".git");
@@ -124,11 +122,9 @@ fn detect_reads_local_reftable_config() {
     let tmp = TempDir::new().unwrap();
     Repository::init(
         tmp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Reftable),
     )
     .unwrap();
     let git_dir = tmp.path().join(".git");

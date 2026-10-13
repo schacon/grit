@@ -29,64 +29,6 @@ pub struct FilterSmudgeMeta {
     pub blob_hex: Option<String>,
 }
 
-/// Smudge metadata for path-only checkouts (`git checkout -- <paths>`): `blob=` only.
-#[must_use]
-pub fn smudge_meta_blob_only(blob_hex: &str) -> FilterSmudgeMeta {
-    FilterSmudgeMeta {
-        blob_hex: Some(blob_hex.to_string()),
-        ..Default::default()
-    }
-}
-
-/// Smudge metadata with `treeish=` only (e.g. `git reset --hard <commit>` / `git merge` checkout).
-#[must_use]
-pub fn smudge_meta_treeish_only(treeish_hex: &str, blob_hex: &str) -> FilterSmudgeMeta {
-    FilterSmudgeMeta {
-        treeish_hex: Some(treeish_hex.to_string()),
-        blob_hex: Some(blob_hex.to_string()),
-        ..Default::default()
-    }
-}
-
-/// Process-smudge metadata for `git reset --hard <ref>` (t0021): `ref=` when the spec names a ref.
-#[must_use]
-pub fn smudge_meta_for_reset(
-    repo: &Repository,
-    commit_spec: &str,
-    resolved_commit: &ObjectId,
-    blob_hex: &str,
-) -> FilterSmudgeMeta {
-    let tip_hex = resolved_commit.to_string();
-    let mut meta = FilterSmudgeMeta {
-        treeish_hex: Some(tip_hex.clone()),
-        blob_hex: Some(blob_hex.to_string()),
-        ..Default::default()
-    };
-    let arg_lower = commit_spec.to_ascii_lowercase();
-    let is_full_hex = arg_lower.len() == 40 && arg_lower.chars().all(|c| c.is_ascii_hexdigit());
-    if is_full_hex && arg_lower == tip_hex.to_ascii_lowercase() {
-        meta.ref_name = None;
-        return meta;
-    }
-    let mut candidates: Vec<String> = Vec::new();
-    if commit_spec == "HEAD" || commit_spec.starts_with("refs/") {
-        candidates.push(commit_spec.to_string());
-    } else {
-        candidates.push(format!("refs/heads/{commit_spec}"));
-        candidates.push(format!("refs/tags/{commit_spec}"));
-        candidates.push(commit_spec.to_string());
-    }
-    for name in candidates {
-        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &name) {
-            if oid == *resolved_commit {
-                meta.ref_name = Some(name);
-                break;
-            }
-        }
-    }
-    meta
-}
-
 pub fn smudge_meta_for_checkout(repo: &Repository, blob_hex: &str) -> FilterSmudgeMeta {
     let mut meta = FilterSmudgeMeta {
         blob_hex: Some(blob_hex.to_string()),
@@ -183,11 +125,6 @@ impl FilterProcessState {
     pub(crate) fn registry(&self) -> &Mutex<HashMap<String, Arc<Mutex<RunningFilter>>>> {
         &self.registry
     }
-}
-
-/// Stop using a process filter for the rest of this repository handle.
-pub fn disable_process_filter(state: &FilterProcessState, cmd: &str) {
-    state.disable_process_filter(cmd);
 }
 
 fn terminate_shared_filter(arc: &Arc<Mutex<RunningFilter>>) {

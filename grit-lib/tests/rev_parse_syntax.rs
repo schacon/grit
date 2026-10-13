@@ -9,11 +9,11 @@ use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse_error::RevParseError;
 use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_for_verify, resolve_upstream_symbolic_name,
     split_double_dot_range, split_triple_dot_range,
 };
+use grit_lib::revwalk::rev_parse_error::RevParseError;
 
 use support::{
     build_commit_dag, commit_file, git, git_ls_files_stage, git_merge_expect_conflict,
@@ -25,10 +25,7 @@ fn open_grit(wt: &Path) -> Repository {
     let mut env = Environment::empty();
     env.cwd = wt.to_path_buf();
     env.pwd = Some(wt.to_string_lossy().into_owned());
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     Repository::discover(Some(wt), &options).expect("discover grit repo")
 }
 
@@ -351,10 +348,7 @@ fn t1512_disambiguation_matches_git() {
     let mut env = Environment::empty();
     env.cwd = bare.clone();
     env.pwd = Some(bare.to_string_lossy().into_owned());
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     let bare_repo = Repository::discover(Some(&bare), &options).expect("bare repo");
     for prefix in ["dead", "beef"] {
         assert!(

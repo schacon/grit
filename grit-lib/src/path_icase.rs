@@ -26,12 +26,6 @@ pub struct Stage0TrackedPaths {
 }
 
 impl Stage0TrackedPaths {
-    /// Build a lookup table from stage-0 index entries once per worktree walk.
-    #[must_use]
-    pub fn from_index(index: &Index, ignorecase: bool) -> Self {
-        Self::from_index_with_stage_filter(index, ignorecase, |stage| stage == 0)
-    }
-
     /// Build a lookup table for untracked scanning: every indexed path counts as
     /// tracked, including unmerged conflict stages (1–3).
     #[must_use]
@@ -196,7 +190,7 @@ mod tests {
         assert_eq!(memihash(b"f02398b.txt"), memihash(b"f0688b8.txt"));
         let mut index = Index::new();
         index.push_entry_unsorted(dummy_entry("f02398b.txt"));
-        let tracked = Stage0TrackedPaths::from_index(&index, true);
+        let tracked = Stage0TrackedPaths::from_index_for_untracked_scan(&index, true);
         assert!(tracked.contains("f02398b.txt"));
         assert!(
             !tracked.contains("f0688b8.txt"),

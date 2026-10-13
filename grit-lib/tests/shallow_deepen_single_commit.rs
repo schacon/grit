@@ -11,12 +11,10 @@ use grit_lib::revwalk::rev_list::shallow_grafts_for_upload_pack_deepen;
 fn init_single_commit_bare(dir: &Path) -> (Repository, ObjectId) {
     Repository::init(
         dir,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::refs::ref_storage::RefStorageFormat::Files),
     )
     .expect("init");
     let repo = Repository::open(dir, &RepositoryOptions::empty()).expect("open");

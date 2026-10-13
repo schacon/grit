@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::hot_path_test_metrics::HotPathMetricsScope;
+use grit_lib::objects::odb::hot_path_test_metrics::HotPathMetricsScope;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_list::{rev_list, ObjectFilter, OrderingMode, RevListOptions};

@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use grit_lib::git_path::user_display_path;
+use grit_lib::config::git_path::user_display_path;
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
 use schemars::JsonSchema;
@@ -86,16 +86,12 @@ pub fn run(path: Option<String>, bare: bool, ref_format: RefStorageFormat) -> Re
     };
     let reinitialized = git_dir.join("config").is_file();
 
-    let repo = Repository::init(
-        &path,
-        &InitOptions {
-            bare,
-            initial_branch: "main".to_owned(),
-            ref_storage: ref_format,
-            ..InitOptions::default()
-        },
-    )
-    .with_context(|| format!("could not initialize a repository at {}", path.display()))?;
+    let init_options = InitOptions::new()
+        .with_bare(bare)
+        .with_initial_branch("main")
+        .with_ref_storage(ref_format);
+    let repo = Repository::init(&path, &init_options)
+        .with_context(|| format!("could not initialize a repository at {}", path.display()))?;
 
     Ok(InitOutcome {
         initialized: !reinitialized,

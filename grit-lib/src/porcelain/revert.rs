@@ -88,7 +88,7 @@ pub fn committer_timestamp(ident: &str) -> i64 {
 /// when reverting a prior `Revert "..."`). The `--reference` form
 /// (`use_reference`) emits the `*** SAY WHY ... ***` placeholder title and a
 /// `This reverts commit <short> (<subject>, <date>).` body using
-/// [`crate::commit_pretty::format_reference_line`]; `comment_char` is the
+/// `format_reference_line` in the commit helper module; `comment_char` is the
 /// configured comment character used to prefix the placeholder title.
 #[must_use]
 pub fn merge_commit_message_for_revert(

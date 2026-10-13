@@ -83,6 +83,7 @@ pub struct DiscoveryInfo {
 
 /// Options for [`Repository::init`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InitOptions {
     /// Create a bare repository at `path` instead of `path/.git`.
     pub bare: bool,
@@ -108,6 +109,56 @@ impl Default for InitOptions {
             separate_git_dir: None,
             bare_with_worktree_at_path: false,
         }
+    }
+}
+
+impl InitOptions {
+    /// Same as [`Default::default`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set [`Self::bare`].
+    #[must_use]
+    pub fn with_bare(mut self, bare: bool) -> Self {
+        self.bare = bare;
+        self
+    }
+
+    /// Set [`Self::initial_branch`].
+    #[must_use]
+    pub fn with_initial_branch(mut self, initial_branch: impl Into<String>) -> Self {
+        self.initial_branch = initial_branch.into();
+        self
+    }
+
+    /// Set [`Self::ref_storage`].
+    #[must_use]
+    pub fn with_ref_storage(mut self, ref_storage: crate::ref_storage::RefStorageFormat) -> Self {
+        self.ref_storage = ref_storage;
+        self
+    }
+
+    /// Set [`Self::template_dir`].
+    #[must_use]
+    pub fn with_template_dir(mut self, template_dir: Option<PathBuf>) -> Self {
+        self.template_dir = template_dir;
+        self
+    }
+
+    /// Set [`Self::separate_git_dir`].
+    #[must_use]
+    pub fn with_separate_git_dir(mut self, separate_git_dir: Option<PathBuf>) -> Self {
+        self.separate_git_dir = separate_git_dir;
+        self
+    }
+
+    /// Set [`Self::bare_with_worktree_at_path`].
+    #[must_use]
+    pub fn with_bare_with_worktree_at_path(mut self, bare_with_worktree_at_path: bool) -> Self {
+        self.bare_with_worktree_at_path = bare_with_worktree_at_path;
+        self
     }
 }
 
@@ -3394,6 +3445,11 @@ pub fn validate_repo_config(config_text: &str) -> std::result::Result<(), String
         return Err(format!("unknown repository format version: {version}"));
     }
     Ok(())
+}
+
+/// Per-repository caches shared across open handles.
+pub mod caches {
+    pub use crate::repo_caches::*;
 }
 
 #[cfg(test)]

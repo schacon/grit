@@ -2,10 +2,10 @@
 
 #![cfg(unix)]
 
+use grit_lib::command_runner::hooks::{run_hook_opts, HookError, RunHookOptions};
 use grit_lib::command_runner::{RecordedResponse, RecordingRunner};
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::FilterError;
-use grit_lib::hooks::{run_hook_opts, HookError, RunHookOptions};
 use grit_lib::porcelain::add::{stage, StageOptions};
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;

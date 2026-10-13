@@ -10,7 +10,7 @@ use crate::objects::ObjectId;
 ///
 /// Lines containing `not-for-merge` after the first tab are skipped.
 ///
-/// This matches the rules used by [`crate::fmt_merge_msg`] and fixes incorrect handling where
+/// This matches the rules used by merge-message formatting and fixes incorrect handling where
 /// splitting on tab treated the empty middle field as a separate token.
 #[must_use]
 pub fn merge_object_ids_hex(input: &str) -> Vec<String> {

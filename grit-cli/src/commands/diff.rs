@@ -737,7 +737,7 @@ impl MarkdownRender for DiffOutcome {
 /// when the console can render ANSI (always on Unix; VT-capable on Windows).
 fn use_color() -> bool {
     std::io::stdout().is_terminal()
-        && grit_lib::terminal::ansi_supported()
+        && grit_lib::porcelain::terminal::ansi_supported()
         && std::env::var_os("NO_COLOR").is_none()
 }
 

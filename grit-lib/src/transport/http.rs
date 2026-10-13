@@ -12,10 +12,9 @@
 //!   discovery on [`Transport::connect`] and exposes the parsed advertisement
 //!   through a [`Connection`].
 //! * [`http_fetch`] — drives the stateless-RPC negotiation (`want`/`have`/`done`
-//!   over repeated POSTs), demultiplexes the side-band pack, ingests it with
-//!   [`crate::unpack_objects`], and returns a [`crate::transfer::FetchOutcome`]
-//!   — reusing the same refspec/tag/prune/classification helpers as the
-//!   in-process and `git://` fetch paths.
+//!   over repeated POSTs), demultiplexes the side-band pack, ingests it, and
+//!   returns a fetch outcome using the same refspec/tag/prune helpers as other
+//!   fetch paths.
 //!
 //! A default `ureq`-backed [`HttpClient`] lives in the `transport::http::ureq_client`
 //! module behind the `http-ureq` cargo feature; it wires a
@@ -27,8 +26,7 @@
 //! with the `Git-Protocol: version=2` header); [`http_fetch`] then runs the v2
 //! `command=ls-refs` + `command=fetch` rounds as separate POSTs — each round
 //! resends the capability echo, all `want`s, and the accumulated `have`s —
-//! reusing the shared v2 request framing and side-band demuxer from
-//! [`crate::fetch`].
+//! reusing the shared v2 request framing and side-band demuxer from the fetch module.
 
 use std::collections::HashSet;
 use std::io::{Cursor, Read};

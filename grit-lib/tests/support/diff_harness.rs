@@ -10,6 +10,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::diff::merge_file;
+use grit_lib::diff::ws::ws_blank_line;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes_with_algorithm, count_git_lines, diff_commits,
     diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
@@ -25,7 +26,6 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
-use grit_lib::ws::ws_blank_line;
 use similar::Algorithm;
 
 use super::history_harness::git;

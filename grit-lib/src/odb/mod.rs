@@ -24,6 +24,11 @@
 pub mod builder;
 pub mod store;
 
+/// Test-only hot-path counters wired through [`Odb::hot_path_metrics`].
+pub mod hot_path_test_metrics {
+    pub use crate::hot_path_test_metrics::{HotPathMetricsScope, HotPathTestMetrics};
+}
+
 #[doc(inline)]
 pub use builder::OdbBuilder;
 
@@ -334,13 +339,11 @@ impl Odb {
     }
 
     /// Hot-path regression counters for this object database (integration tests only).
-    #[doc(hidden)]
     #[must_use]
     pub fn hot_path_metrics(&self) -> &crate::hot_path_test_metrics::HotPathTestMetrics {
         &self.hot_path_test_metrics
     }
 
-    #[doc(hidden)]
     #[must_use]
     pub fn hot_path_metrics_arc(&self) -> Arc<crate::hot_path_test_metrics::HotPathTestMetrics> {
         Arc::clone(&self.hot_path_test_metrics)
@@ -1828,7 +1831,6 @@ impl Odb {
 
     /// Update `path`'s mtime to "now" (Git `utime(path, NULL)`), returning whether it succeeded.
     fn touch_object_mtime(&self, path: &Path) -> Option<std::time::SystemTime> {
-        #[cfg(test)]
         self.hot_path_test_metrics.record_freshen();
         // `utime(path, NULL)` sets both atime and mtime to the current time.
         let now = filetime::FileTime::now();

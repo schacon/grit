@@ -37,11 +37,9 @@ fn simple_bins_cover_a_tiny_commit_workflow() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = Repository::init(
         temp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main")
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )?;
     fs::write(temp.path().join("hello.txt"), "hello\n")?;
 

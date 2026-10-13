@@ -26,10 +26,7 @@ fn git_rev_parse(worktree: &Path, env_pairs: &[(&str, &str)], spec: &str) -> Str
 }
 
 fn grit_open(start: &Path, env: Environment) -> Repository {
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     Repository::discover(Some(start), &options).expect("discover")
 }
 
@@ -102,14 +99,8 @@ fn t1504_ceiling_directories_blocks_walk_above_ceiling() {
     let mut env = Environment::empty();
     env.cwd = below.clone();
     env.git_ceiling_directories = Some(ceiling_s);
-    let err = Repository::discover(
-        Some(&below),
-        &RepositoryOptions {
-            environment: env,
-            ..RepositoryOptions::empty()
-        },
-    )
-    .expect_err("no repository under ceiling-only tree");
+    let err = Repository::discover(Some(&below), &RepositoryOptions::with_environment(env))
+        .expect_err("no repository under ceiling-only tree");
     let msg = format!("{err}");
     assert!(
         msg.contains("Not a git repository") || msg.contains("repository"),

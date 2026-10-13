@@ -12,11 +12,9 @@ fn main() -> grit_lib::error::Result<()> {
 
     let repo = Repository::init(
         path,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )?;
     println!("opened after init: git_dir = {}", repo.git_dir().display());
     println!("work tree: {}", repo.work_tree().unwrap().display());

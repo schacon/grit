@@ -95,13 +95,7 @@ impl MarkdownRender for RepackOutcome {
 
 pub fn run(dry_run: bool, quiet: bool) -> Result<RepackOutcome> {
     let repo = context::discover()?;
-    let stats = repack_all(
-        &repo,
-        &RepackOptions {
-            dry_run,
-            ..RepackOptions::default()
-        },
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stats = repack_all(&repo, &RepackOptions::with_dry_run(dry_run))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok((stats, dry_run, quiet).into())
 }

@@ -38,11 +38,9 @@ fn load_cascade_system_global_xdg_local_and_git_config_override() {
     let repo = dir.path().join("repo");
     Repository::init(
         &repo,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = repo.join(".git");
@@ -129,11 +127,9 @@ fn worktree_config_layer_when_extension_enabled() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -193,11 +189,9 @@ fn read_early_config_and_load_repo_local_only() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -261,11 +255,9 @@ fn load_errors_on_invalid_repository_config() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -291,11 +283,9 @@ fn worktree_config_not_loaded_without_extension() {
     let dir = tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -344,11 +334,9 @@ fn kitchen_sink_config_load_exercises_cascade_branches() {
     let repo = dir.path().join("repo");
     Repository::init(
         &repo,
-        &InitOptions {
-            initial_branch: "feature/x".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("feature/x".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = repo.join(".git");

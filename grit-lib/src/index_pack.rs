@@ -23,7 +23,6 @@ static INGEST_THREAD_RECORDING: AtomicBool = AtomicBool::new(false);
 static LAST_RESOLVED_INGEST_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 /// Enable recording of resolved index-pack worker counts (integration tests only).
-#[doc(hidden)]
 pub fn set_ingest_thread_recording_for_tests(enabled: bool) {
     INGEST_THREAD_RECORDING.store(enabled, Ordering::SeqCst);
     if !enabled {
@@ -32,7 +31,6 @@ pub fn set_ingest_thread_recording_for_tests(enabled: bool) {
 }
 
 /// Last resolved worker count from pack ingest while recording is enabled.
-#[doc(hidden)]
 pub fn last_resolved_ingest_threads_for_tests() -> Option<usize> {
     if !INGEST_THREAD_RECORDING.load(Ordering::SeqCst) {
         return None;

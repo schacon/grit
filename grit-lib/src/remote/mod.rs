@@ -4,72 +4,80 @@ mod core;
 pub use core::*;
 
 pub mod fetch {
-    //! Canonical re-export of [`crate::fetch`].
+    //! fetch API (re-exported at this path).
     pub use crate::fetch::*;
 }
 pub mod push {
-    //! Canonical re-export of [`crate::push`].
+    //! push API (re-exported at this path).
     pub use crate::push::*;
 }
 pub mod credentials {
-    //! Canonical re-export of [`crate::credentials`].
+    //! credentials API (re-exported at this path).
     pub use crate::credentials::*;
 }
 pub mod url_rewrite {
-    //! Canonical re-export of [`crate::url_rewrite`].
+    //! url_rewrite API (re-exported at this path).
     pub use crate::url_rewrite::*;
 }
 pub mod transfer {
-    //! Canonical re-export of [`crate::transfer`].
+    //! transfer API (re-exported at this path).
     pub use crate::transfer::*;
 }
 pub mod transport {
-    //! Canonical re-export of [`crate::transport`].
+    //! transport API (re-exported at this path).
     pub use crate::transport::*;
 }
 pub mod transport_path {
-    //! Canonical re-export of [`crate::transport_path`].
+    //! transport_path API (re-exported at this path).
     pub use crate::transport_path::*;
 }
 pub mod protocol {
-    //! Canonical re-export of [`crate::protocol`].
+    //! protocol API (re-exported at this path).
     pub use crate::protocol::*;
 }
 pub mod protocol_v2 {
-    //! Canonical re-export of [`crate::protocol_v2`].
+    //! protocol_v2 API (re-exported at this path).
     pub use crate::protocol_v2::*;
 }
 pub mod shallow {
-    //! Canonical re-export of [`crate::shallow`].
+    //! shallow API (re-exported at this path).
     pub use crate::shallow::*;
 }
 pub mod fetch_head {
-    //! Canonical re-export of [`crate::fetch_head`].
+    //! fetch_head API (re-exported at this path).
     pub use crate::fetch_head::*;
 }
 pub mod fetch_negotiator {
-    //! Canonical re-export of [`crate::fetch_negotiator`].
+    //! fetch_negotiator API (re-exported at this path).
     pub use crate::fetch_negotiator::*;
 }
 pub mod receive_pack {
-    //! Canonical re-export of [`crate::receive_pack`].
+    //! receive_pack API (re-exported at this path).
     pub use crate::receive_pack::*;
 }
 pub mod push_cert {
-    //! Canonical re-export of [`crate::push_cert`].
+    //! push_cert API (re-exported at this path).
     pub use crate::push_cert::*;
 }
 pub mod push_report {
-    //! Canonical re-export of [`crate::push_report`].
+    //! push_report API (re-exported at this path).
     pub use crate::push_report::*;
 }
 pub mod clone {
-    //! Canonical re-export of [`crate::clone`].
+    //! clone API (re-exported at this path).
     pub use crate::clone::*;
 }
 pub mod serve {
-    //! Canonical re-export of [`crate::serve`].
+    //! serve API (re-exported at this path).
     pub use crate::serve::receive_pack;
     pub use crate::serve::upload_pack;
     pub use crate::serve::*;
+}
+pub mod pkt_line {
+    //! pkt_line API (re-exported at this path).
+    pub use crate::pkt_line::*;
+}
+pub mod sideband_lines {
+    //! sideband_lines API (re-exported at this path).
+    pub use crate::sideband_lines::*;
 }

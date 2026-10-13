@@ -523,7 +523,7 @@ pub(crate) fn render_markdown_stat(w: &mut dyn Write, stat: &DiffStat) -> Result
 
 fn use_color() -> bool {
     std::io::stdout().is_terminal()
-        && grit_lib::terminal::ansi_supported()
+        && grit_lib::porcelain::terminal::ansi_supported()
         && std::env::var_os("NO_COLOR").is_none()
 }
 

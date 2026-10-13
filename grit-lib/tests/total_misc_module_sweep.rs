@@ -2,22 +2,22 @@
 
 #![allow(clippy::unwrap_used)]
 
+use grit_lib::commit::signing::{verify_commit, GpgConfig};
+use grit_lib::config::git_path::{
+    cleanup_path, git_path_relative_component, is_common_git_path, normalize_path_copy,
+};
 use grit_lib::config::gitmodules::{
     check_submodule_name, check_submodule_url, looks_like_command_line_option,
     tree_entry_is_gitattributes_blob, tree_entry_is_gitmodules_blob, validate_gitmodules_blob_line,
     write_gitmodules_cli_option_warnings,
 };
-use grit_lib::config::ConfigSet;
-use grit_lib::git_path::{
-    cleanup_path, git_path_relative_component, is_common_git_path, normalize_path_copy,
-};
-use grit_lib::mailmap::{
+use grit_lib::config::mailmap::{
     load_mailmap, map_contact_table, parse_contact, parse_mailmap, render_contact,
     table_from_entries,
 };
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::signing::{verify_commit, GpgConfig};
 use std::io::Cursor;
 use tempfile::tempdir;
 

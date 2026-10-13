@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use grit_lib::gc::{update_refs, RefTransactionItem};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::list_refs;
 
 fn refs_cache_root() -> PathBuf {

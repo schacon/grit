@@ -53,11 +53,9 @@ fn append_repo_config(repo: &Repository, section: &str, key: &str, value: &str) 
 fn seed_repo(root: &Path, preload_index: bool) -> Repository {
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     if !preload_index {

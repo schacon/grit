@@ -1778,10 +1778,10 @@ fn fetch_over_git_http_backend_cgi() {
     let upload_url = format!("{url}/git-upload-pack");
     let want = format!("want {main_oid} multi_ack thin-pack side-band side-band-64k");
     let mut req_body = Vec::new();
-    grit_lib::pkt_line::write_line_to_vec(&mut req_body, &want).unwrap();
-    grit_lib::pkt_line::write_flush(&mut req_body).unwrap();
-    grit_lib::pkt_line::write_line_to_vec(&mut req_body, "done").unwrap();
-    grit_lib::pkt_line::write_flush(&mut req_body).unwrap();
+    grit_lib::remote::pkt_line::write_line_to_vec(&mut req_body, &want).unwrap();
+    grit_lib::remote::pkt_line::write_flush(&mut req_body).unwrap();
+    grit_lib::remote::pkt_line::write_line_to_vec(&mut req_body, "done").unwrap();
+    grit_lib::remote::pkt_line::write_flush(&mut req_body).unwrap();
     let post_body = client
         .post(
             &upload_url,

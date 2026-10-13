@@ -255,11 +255,9 @@ fn build_delta_chain_pack(depth: usize) -> (Vec<u8>, ObjectId, u64) {
     let tmp = tempfile::tempdir().expect("delta chain tempdir");
     let repo = Repository::init(
         tmp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init bench repo for delta chain");
     let mut parent = None;
@@ -368,11 +366,9 @@ fn build_large_pack_index(objects_dir: &Path, object_count: usize) -> (PackIndex
     let tmp = tempfile::tempdir().expect("large pack tempdir");
     let repo = Repository::init(
         tmp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init repo");
     let mut parent = None;

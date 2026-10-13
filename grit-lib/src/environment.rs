@@ -690,6 +690,7 @@ fn subprocess_push_os(out: &mut Vec<(OsString, OsString)>, key: &str, val: Optio
 
 /// Options passed to repository open/discover with an explicit [`Environment`].
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct RepositoryOptions {
     /// Discovery and configuration environment.
     pub environment: Environment,
@@ -784,6 +785,20 @@ impl RepositoryOptions {
     #[must_use]
     pub fn for_serving(mut self) -> Self {
         self.open_for_serving = true;
+        self
+    }
+
+    /// Override the diagnostic sink for warnings and trace events.
+    #[must_use]
+    pub fn with_diagnostics(mut self, diagnostics: DiagnosticsHandle) -> Self {
+        self.diagnostics = diagnostics;
+        self
+    }
+
+    /// Enable or disable network trace events.
+    #[must_use]
+    pub fn with_network_trace(mut self, network_trace: bool) -> Self {
+        self.network_trace = network_trace;
         self
     }
 }

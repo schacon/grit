@@ -1,7 +1,7 @@
 //! `grit worktree` — list, add, and remove linked worktrees.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::git_path::path_for_disk_compare;
+use grit_lib::config::git_path::path_for_disk_compare;
 use grit_lib::refs::check_ref_format::validate_branch_short_name;
 use grit_lib::state::HeadState;
 use grit_lib::worktree::{

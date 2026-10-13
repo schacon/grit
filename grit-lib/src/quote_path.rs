@@ -103,14 +103,6 @@ pub fn quote_c_style(path: &str, quote_fully: bool) -> String {
     quote_c_style_inner(path, quote_fully, false)
 }
 
-/// Quote for `ls-tree` default output: same as [`quote_c_style`], but paths containing `,`
-/// are always wrapped in quotes (Git `quote_path` with `ls_tree` mode).
-#[must_use]
-pub fn quote_path_for_tree_listing(path: &str, quote_fully: bool) -> String {
-    let force = path.as_bytes().contains(&b',');
-    quote_c_style_inner(path, quote_fully, force)
-}
-
 /// Format one side of a `diff --git` / `---` / `+++` line: either `prefix/path` or
 /// `"prefix<escaped-path>"` when Git would C-quote the path (see `t3300-funny-names`).
 #[must_use]
@@ -153,12 +145,6 @@ mod tests {
         assert_eq!(quote_c_style(s, false), "\"濱野\\t純\"");
         let s2 = "濱野 純";
         assert_eq!(quote_c_style(s2, false), "濱野 純");
-    }
-
-    #[test]
-    fn comma_forces_ls_tree_style_quotes() {
-        assert_eq!(quote_path_for_tree_listing("a,b", true), "\"a,b\"");
-        assert_eq!(quote_c_style("a,b", true), "a,b");
     }
 
     #[test]

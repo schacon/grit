@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-#[doc(hidden)]
+/// Counters and hooks for pack-store integration tests.
 pub mod test_hooks {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -1,7 +1,7 @@
 //! Git objects: ids, kinds, in-memory representations, and the object database stack.
 //!
 //! Canonical layout groups loose/packed storage, hashing, deltas, and reachability
-//! bitmaps under this module. Flat [`crate::odb`] paths remain valid.
+//! bitmaps under this module.
 
 mod core;
 pub mod handle;
@@ -79,7 +79,7 @@ pub mod prune_packed {
     pub use crate::prune_packed::*;
 }
 pub mod promisor {
-    //! Canonical re-export of [`crate::promisor`].
+    //! promisor API (re-exported at this path).
     pub use crate::promisor::*;
 }
 pub mod promisor_remote {

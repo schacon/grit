@@ -36,11 +36,9 @@ fn main() -> Result<(), grit_lib::error::Error> {
         let temp = tempfile::tempdir().map_err(grit_lib::error::Error::Io)?;
         Repository::init(
             temp.path(),
-            &InitOptions {
-                initial_branch: "main".to_owned(),
-                ref_storage: grit_lib::RefStorageFormat::Files,
-                ..InitOptions::default()
-            },
+            &InitOptions::new()
+                .with_initial_branch("main")
+                .with_ref_storage(grit_lib::RefStorageFormat::Files),
         )?;
         let path = temp.path().join("hello.txt");
         fs::write(&path, b"staged from the library guide\n").map_err(grit_lib::error::Error::Io)?;

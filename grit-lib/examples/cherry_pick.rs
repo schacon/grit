@@ -6,7 +6,7 @@
 //!
 //! Run: `cargo run -p grit-lib --example cherry_pick`
 
-use grit_lib::commit_trailers;
+use grit_lib::commit::trailers;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
@@ -50,11 +50,9 @@ fn main() -> grit_lib::error::Result<()> {
     let root = tempfile::tempdir()?;
     let repo = Repository::init(
         root.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )?;
 
     use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
@@ -169,7 +167,7 @@ fn main() -> grit_lib::error::Result<()> {
 
     let new_tree = write_tree_from_index(repo.odb(), &merged.index, "")?;
     let config = ConfigSet::load_repo_local_only(repo.git_dir())?;
-    let msg = commit_trailers::finalize_cherry_pick_message(
+    let msg = trailers::finalize_cherry_pick_message(
         &picked_data.message,
         true,
         false,

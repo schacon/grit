@@ -45,12 +45,10 @@ fn open_repo() -> grit_lib::error::Result<(tempfile::TempDir, Repository)> {
     let path = dir.path().to_path_buf();
     Repository::init(
         &path,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".into(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main")
+            .with_ref_storage(RefStorageFormat::Files),
     )?;
     Ok((dir, Repository::open(&path, &RepositoryOptions::empty())?))
 }

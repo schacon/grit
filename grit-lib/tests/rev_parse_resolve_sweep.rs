@@ -26,10 +26,7 @@ fn open_grit(wt: &std::path::Path) -> Repository {
     let mut env = Environment::empty();
     env.cwd = wt.to_path_buf();
     env.pwd = Some(wt.to_string_lossy().into_owned());
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     Repository::discover(Some(wt), &options).expect("discover")
 }
 

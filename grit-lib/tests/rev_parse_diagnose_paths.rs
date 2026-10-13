@@ -7,10 +7,10 @@ use std::path::Path;
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse_error::RevParseError;
 use grit_lib::revwalk::rev_parse::{
     resolve_at_minus_to_oid, resolve_revision_for_verify, resolve_treeish_blob_at_path,
 };
+use grit_lib::revwalk::rev_parse_error::RevParseError;
 
 use support::{commit_file, git, HistoryRepo};
 
@@ -18,10 +18,7 @@ fn open_grit_at(wt: &Path, cwd: &Path) -> Repository {
     let mut env = Environment::empty();
     env.cwd = cwd.to_path_buf();
     env.pwd = Some(cwd.to_string_lossy().into_owned());
-    let options = RepositoryOptions {
-        environment: env,
-        ..RepositoryOptions::empty()
-    };
+    let options = RepositoryOptions::with_environment(env);
     Repository::discover(Some(wt), &options).expect("discover")
 }
 

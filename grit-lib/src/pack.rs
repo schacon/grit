@@ -727,7 +727,6 @@ pub(crate) mod pack_cache {
     }
 
     fn file_signature(path: &Path) -> Option<(SystemTime, u64)> {
-        #[cfg(test)]
         crate::hot_path_test_metrics::record_pack_signature_stat_for_active_scope();
         let m = fs::metadata(path).ok()?;
         let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -1311,6 +1310,8 @@ pub(crate) mod pack_cache {
         });
     }
 }
+
+pub use pack_cache::revalidate_stale_pack_bytes;
 
 /// Read all pack indexes under `<objects_dir>/pack/` from the process-wide cache.
 ///
@@ -3807,15 +3808,8 @@ pub(crate) fn pack_cache_test_guard() -> pack_cache_test_sync::PackCacheTestGuar
 }
 
 /// Serializes tests that mutate the process-global pack cache (integration tests).
-#[doc(hidden)]
 pub fn test_pack_cache_guard() -> pack_cache_test_sync::PackCacheTestGuard {
     pack_cache_test_sync::acquire()
-}
-
-/// Re-read pack bytes when the on-disk file changed but the path is unchanged.
-#[doc(hidden)]
-pub fn revalidate_stale_pack_bytes(pack_path: &Path) -> Result<bool> {
-    pack_cache::revalidate_stale_pack_bytes(pack_path)
 }
 
 #[cfg(test)]

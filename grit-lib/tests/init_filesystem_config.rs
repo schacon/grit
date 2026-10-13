@@ -14,11 +14,9 @@ fn init_sets_precomposeunicode_when_options_force_probe() {
     let td = TempDir::new().expect("tempdir");
     Repository::init(
         td.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     apply_init_filesystem_config(
@@ -42,11 +40,9 @@ fn second_init_does_not_overwrite_local_config() {
     let td = TempDir::new().expect("tempdir");
     Repository::init(
         td.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let config_path = td.path().join(".git/config");
@@ -56,11 +52,9 @@ fn second_init_does_not_overwrite_local_config() {
 
     Repository::init(
         td.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("reinit");
 

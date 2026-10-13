@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-use grit_lib::commit_encoding;
+use grit_lib::commit::encoding;
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -52,7 +52,7 @@ fn grit_write_encoded_commit(
     tree: ObjectId,
 ) -> ObjectId {
     let (message, enc_label, raw_body) =
-        commit_encoding::finalize_stored_commit_message(message_unicode.to_owned(), Some(encoding));
+        encoding::finalize_stored_commit_message(message_unicode.to_owned(), Some(encoding));
     assert!(
         enc_label.is_some(),
         "encoding {encoding} should produce header"

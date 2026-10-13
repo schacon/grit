@@ -683,6 +683,11 @@ pub fn run_program(
     runner.spawn(&spec)?.wait_with_output()
 }
 
+/// Git hook execution helpers.
+pub mod hooks {
+    pub use crate::hooks::*;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

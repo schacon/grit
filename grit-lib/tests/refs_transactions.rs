@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use grit_lib::gc::{update_refs, RefTransactionItem};
 use grit_lib::objects::ObjectId;
+use grit_lib::refs::gc::{update_refs, RefTransactionItem};
 use grit_lib::refs::reftable::{ReftableReader, ReftableStack};
 use grit_lib::refs::{
     delete_ref, delete_ref_cas, lock_path_for_ref, resolve_ref, update_branch_for_commit,
@@ -397,11 +397,9 @@ fn concurrent_reftable_cas_single_winner() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         tmp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Reftable,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Reftable),
     )
     .expect("init");
     let git_dir = repo.git_dir().to_path_buf();

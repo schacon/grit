@@ -467,11 +467,9 @@ pub fn run_custom_object_store_demo(repo_root: &Path) -> Result<Vec<String>> {
 
     Repository::init(
         repo_root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main")
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )?;
     let git_dir = repo_root.join(".git");
     let objects_dir = git_dir.join("objects");

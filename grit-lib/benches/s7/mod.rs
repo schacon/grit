@@ -167,11 +167,9 @@ fn index_entry(path: &[u8], oid: ObjectId, size: usize, mode: u32) -> IndexEntry
 fn build_history_repo(dir: &Path, commit_count: usize) -> Repository {
     let repo = Repository::init(
         dir,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init history repo");
     let mut index = Index::new();

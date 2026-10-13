@@ -95,11 +95,9 @@ fn nested_ignores_and_negation_match_serial() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     fs::create_dir_all(root.join("src/deep")).expect("mkdir");
@@ -127,11 +125,9 @@ fn untracked_directory_markers_match_serial() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     fs::create_dir_all(root.join("new/pkg")).expect("mkdir");
@@ -162,11 +158,9 @@ fn symlinked_directory_untracked_match_serial() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     fs::create_dir_all(root.join("target/dir")).expect("mkdir");
@@ -316,11 +310,9 @@ fn large_index_stat_refresh_parallel_matches_serial() {
     let root = tmp.path();
     let repo = Repository::init(
         root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(RefStorageFormat::Files),
     )
     .expect("init");
     fs::create_dir_all(root.join("mix")).expect("mkdir");

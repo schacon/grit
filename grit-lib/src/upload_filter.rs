@@ -27,16 +27,6 @@ pub enum UploadFilterError {
 }
 
 /// Validate upload-pack filter-related config that must be well-formed even
-/// before a client asks for a filter.
-///
-/// # Errors
-///
-/// Returns [`UploadFilterError::InvalidTreeMaxDepth`] when
-/// `uploadpackfilter.tree.maxDepth` is set to a non-integer value.
-pub fn validate_upload_filter_config(config: &ConfigSet) -> Result<(), UploadFilterError> {
-    tree_max_depth(config).map(|_| ())
-}
-
 /// Validate a requested upload-pack object filter against repository config.
 ///
 /// # Errors

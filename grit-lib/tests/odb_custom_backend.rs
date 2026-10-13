@@ -7,11 +7,11 @@ use std::sync::Arc;
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::diff_trees;
 use grit_lib::error::Error;
-use grit_lib::gc::prune_loose_unreachable;
 use grit_lib::objects::odb::store::{MemoryStore, ObjectStore};
 use grit_lib::objects::odb::OdbBuilder;
 use grit_lib::objects::{serialize_tag, TagData};
 use grit_lib::objects::{serialize_tree, ObjectKind, TreeEntry};
+use grit_lib::refs::gc::prune_loose_unreachable;
 use grit_lib::refs::write_ref;
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
@@ -69,11 +69,9 @@ fn memory_repo() -> (tempfile::TempDir, Repository, Arc<MemoryStore>) {
     let dir = tempfile::tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -162,11 +160,9 @@ fn memory_primary_write_raw_ignores_seeded_loose_on_disk() {
     let dir = tempfile::tempdir().expect("tempdir");
     Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let git_dir = dir.path().join(".git");
@@ -202,11 +198,9 @@ fn files_primary_gc_prunes_unreachable_loose() {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     let kept_blob = repo.odb().write(ObjectKind::Blob, b"keep\n").expect("keep");
@@ -286,11 +280,9 @@ fn gc_keeps_blob_tree_and_annotated_tag_ref_targets() {
     let dir = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
 

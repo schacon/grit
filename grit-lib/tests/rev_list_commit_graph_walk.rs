@@ -77,11 +77,9 @@ fn rev_list_commit_graph_walk_matches_object_walk() {
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(
         dir.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
     write_linear_commits(&repo, 80);

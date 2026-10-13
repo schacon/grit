@@ -5,12 +5,12 @@ use grit_lib::error::Error;
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_lib::rev_list_error::RevListError;
-use grit_lib::rev_parse_error::RevParseError;
 use grit_lib::revwalk::rev_list::{rev_list, ObjectFilter, RevListOptions};
+use grit_lib::revwalk::rev_list_error::RevListError;
 use grit_lib::revwalk::rev_parse::{
     resolve_push_full_ref_for_branch, resolve_revision, resolve_upstream_symbolic_name,
 };
+use grit_lib::revwalk::rev_parse_error::RevParseError;
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -30,12 +30,10 @@ fn write_commit(odb: &Odb, msg: &str) -> grit_lib::error::Result<ObjectId> {
 fn open_bare_with_main(dir: &Path) -> grit_lib::error::Result<(Repository, ObjectId)> {
     Repository::init(
         dir,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::refs::ref_storage::RefStorageFormat::Files),
     )?;
     let repo = Repository::open(dir, &RepositoryOptions::empty())?;
     let tip = write_commit(repo.odb(), "init")?;

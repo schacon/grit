@@ -6,26 +6,26 @@ pub use core::*;
 pub use handle::IndexHandle;
 
 pub mod sparse_checkout {
-    //! Canonical re-export of [`crate::sparse_checkout`].
+    //! sparse_checkout API (re-exported at this path).
     pub use crate::sparse_checkout::*;
 }
 pub mod split_index {
-    //! Canonical re-export of [`crate::split_index`].
+    //! split_index API (re-exported at this path).
     pub use crate::split_index::*;
 }
 pub mod untracked_cache {
-    //! Canonical re-export of [`crate::untracked_cache`].
+    //! untracked_cache API (re-exported at this path).
     pub use crate::untracked_cache::*;
 }
 pub mod resolve_undo {
-    //! Canonical re-export of [`crate::resolve_undo`].
+    //! resolve_undo API (re-exported at this path).
     pub use crate::resolve_undo::*;
 }
 pub mod index_name_hash_lazy {
-    //! Canonical re-export of [`crate::index_name_hash_lazy`].
+    //! index_name_hash_lazy API (re-exported at this path).
     pub use crate::index_name_hash_lazy::*;
 }
 pub mod write_tree {
-    //! Canonical re-export of [`crate::write_tree`].
+    //! write_tree API (re-exported at this path).
     pub use crate::write_tree::*;
 }

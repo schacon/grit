@@ -4334,7 +4334,6 @@ fn read_regular_worktree_blob_bytes(
         None
     };
     let raw = fs::read(path)?;
-    #[cfg(test)]
     odb.hot_path_metrics().record_blob_content_read();
     let opts = crate::crlf::ConvertToGitOpts {
         index_blob: prior_blob.as_deref(),
@@ -4377,7 +4376,6 @@ pub(crate) fn worktree_blob_bytes(
         return Ok(Vec::new());
     }
     let raw = fs::read(path)?;
-    #[cfg(test)]
     odb.hot_path_metrics().record_blob_content_read();
     let opts = crate::crlf::ConvertToGitOpts {
         index_blob: prior_blob.as_deref(),

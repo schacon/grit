@@ -431,7 +431,7 @@ pub fn matcher_for_path(
     matcher_for_driver(config, driver)
 }
 
-/// Like [`matcher_for_path`] but uses parsed `.gitattributes` rules from [`crate::attributes`].
+/// Like [`matcher_for_path`] but uses parsed `.gitattributes` rules.
 pub fn matcher_for_path_parsed(
     config: &ConfigSet,
     rules: &[crate::attributes::AttrRule],

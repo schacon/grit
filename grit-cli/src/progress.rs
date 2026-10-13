@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use grit_lib::progress::{ProgressPhase, ProgressSink};
 use grit_lib::remote::fetch::Progress;
-use grit_lib::sideband_lines::{RemoteLine, SidebandLines};
+use grit_lib::remote::sideband_lines::{RemoteLine, SidebandLines};
 use terminal_size::{terminal_size, Width};
 
 use crate::output::OutputMode;

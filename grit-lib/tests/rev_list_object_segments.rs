@@ -43,12 +43,10 @@ fn write_commit(
 fn open_bare(dir: &Path) -> grit_lib::error::Result<Repository> {
     Repository::init(
         dir,
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::refs::ref_storage::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::refs::ref_storage::RefStorageFormat::Files),
     )?;
     Repository::open(dir, &RepositoryOptions::empty())
 }

@@ -10,11 +10,9 @@ fn hash_object_writes_file_contents_as_blob() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let repo = Repository::init(
         temp.path(),
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main")
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )?;
     let input_path = temp.path().join("hello.txt");
     let contents = b"hello from grit examples\n";

@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
-use crate::objects::HashAlgo;
 use crate::odb::Odb;
 
 static QUARANTINE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -22,7 +21,6 @@ pub struct ReceiveQuarantine {
     path: PathBuf,
     main_objects: PathBuf,
     config_git_dir: Option<PathBuf>,
-    hash_algo: HashAlgo,
     migrated: bool,
 }
 
@@ -54,15 +52,8 @@ impl ReceiveQuarantine {
             path,
             main_objects,
             config_git_dir: Some(git_dir.to_path_buf()),
-            hash_algo: source.hash_algo(),
             migrated: false,
         })
-    }
-
-    /// Quarantine `objects/` path (also `GIT_QUARANTINE_PATH`).
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// Object database that reads/writes the quarantine and falls back to alternates.
@@ -73,12 +64,6 @@ impl ReceiveQuarantine {
             odb = odb.with_config_git_dir(git_dir.clone());
         }
         odb
-    }
-
-    /// Hash algorithm of the receiving repository.
-    #[must_use]
-    pub fn hash_algo(&self) -> HashAlgo {
-        self.hash_algo
     }
 
     /// Environment pairs for hook subprocesses (absolute paths when possible).
@@ -103,16 +88,6 @@ impl ReceiveQuarantine {
         self.migrated = true;
         remove_quarantine_dir(&self.path)?;
         Ok(())
-    }
-
-    /// Remove the quarantine directory without migrating.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Io`] when removal fails.
-    pub fn discard(mut self) -> Result<()> {
-        self.migrated = true;
-        remove_quarantine_dir(&self.path)
     }
 }
 
@@ -245,7 +220,6 @@ mod tests {
         assert!(!Odb::new(&main).exists(&oid));
         q.migrate().expect("migrate");
         assert!(Odb::new(&main).exists(&oid));
-        assert!(!q.path().exists());
     }
 
     #[test]
@@ -289,18 +263,27 @@ mod tests {
     }
 
     #[test]
-    fn discard_removes_quarantine_without_migrating() {
+    fn drop_removes_quarantine_without_migrating() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("objects");
         fs::create_dir_all(&main).unwrap();
         let main_odb = Odb::new(&main);
         let git_dir = tmp.path().join(".git");
         std::fs::create_dir_all(&git_dir).unwrap();
-        let q = ReceiveQuarantine::create(&main_odb, &git_dir).expect("quarantine");
-        let oid = q.odb().write(ObjectKind::Blob, b"x").expect("write");
-        let path = q.path().to_path_buf();
-        q.discard().expect("discard");
-        assert!(!path.exists());
-        assert!(!Odb::new(&main).exists(&oid));
+        let quarantine_path = {
+            let q = ReceiveQuarantine::create(&main_odb, &git_dir).expect("quarantine");
+            let oid = q.odb().write(ObjectKind::Blob, b"x").expect("write");
+            let path = q
+                .hook_env()
+                .into_iter()
+                .find(|(k, _)| k == "GIT_QUARANTINE_PATH")
+                .map(|(_, v)| PathBuf::from(v))
+                .expect("quarantine path");
+            drop(q);
+            assert!(!path.exists());
+            assert!(!Odb::new(&main).exists(&oid));
+            path
+        };
+        let _ = quarantine_path;
     }
 }

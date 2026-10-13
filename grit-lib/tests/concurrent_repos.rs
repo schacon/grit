@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
+use grit_lib::command_runner::hooks::{run_hook_opts, RunHookOptions};
 use grit_lib::command_runner::{RecordingRunner, ShellInvocation};
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::diagnostics::{CollectingDiagnostics, Warning};
@@ -16,7 +17,6 @@ use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use grit_lib::diff::rerere::{repo_rerere, RerereAutoupdate, RerereEventKind};
-use grit_lib::hooks::{run_hook_opts, RunHookOptions};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::notes::{write_notes_commit, NotesTreeEntry};
 use grit_lib::objects::{parse_commit, ObjectId};
@@ -55,11 +55,9 @@ fn prepare_repo(
     fs::create_dir_all(&root).expect("repo root");
     Repository::init(
         &root,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
 
@@ -340,11 +338,9 @@ fn run_fetch_merge_notes_no_crosstalk_once(iter: usize) {
         fs::create_dir_all(&root).expect("root");
         Repository::init(
             &root,
-            &InitOptions {
-                initial_branch: "main".to_owned(),
-                ref_storage: grit_lib::RefStorageFormat::Files,
-                ..InitOptions::default()
-            },
+            &InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(grit_lib::RefStorageFormat::Files),
         )
         .expect("init");
         let home = base.path().join(format!("home-{name}-{iter}"));

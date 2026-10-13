@@ -7,15 +7,15 @@ use grit_lib::apply::{
     parse_patch, write_git_binary_patch,
 };
 use grit_lib::blame::{blame_file, BlameOptions};
+use grit_lib::commit::trailers::interpret::{
+    complete_line, process_trailers, trailer_if_exists_from_str, trailer_if_missing_from_str,
+    trailer_where_from_str, ProcessTrailerOptions,
+};
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::rerere::{
     repo_rerere, rerere_clear, rerere_conflict_id, rerere_diff_for_path, rerere_enabled, rerere_gc,
     rerere_post_commit, rerere_remaining_lines, rerere_status_lines, RerereAutoupdate,
-};
-use grit_lib::interpret_trailers::{
-    complete_line, process_trailers, trailer_if_exists_from_str, trailer_if_missing_from_str,
-    trailer_where_from_str, ProcessTrailerOptions,
 };
 use grit_lib::objects::ObjectKind;
 use grit_lib::refs::ref_storage::RefStorageFormat;

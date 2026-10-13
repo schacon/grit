@@ -90,12 +90,10 @@ fn repo_init_and_crlf_helpers() -> grit_lib::error::Result<()> {
     let bare = tempdir().map_err(Error::Io)?;
     Repository::init(
         bare.path(),
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".into(),
-            ref_storage: RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main")
+            .with_ref_storage(RefStorageFormat::Files),
     )?;
 
     let rules = parse_gitattributes_content("* text=auto\n*.bin binary\n");

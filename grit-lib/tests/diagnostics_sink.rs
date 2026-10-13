@@ -51,17 +51,11 @@ fn ambiguous_refname_reaches_collecting_sink() {
     git(&tmp, &["branch", "-f", &prefix, &first_hex]);
 
     let sink = Arc::new(CollectingDiagnostics::new());
-    let options = RepositoryOptions {
-        environment: Environment::empty(),
-        diagnostics: sink.clone(),
-        network_trace: false,
-        ..Default::default()
-    };
-    let repo = Repository::open(
-        &tmp.path().join(".git"),
-        &options.with_work_tree(tmp.path().to_path_buf()),
-    )
-    .expect("open");
+    let options = RepositoryOptions::empty()
+        .with_diagnostics(sink.clone())
+        .with_network_trace(false)
+        .with_work_tree(tmp.path().to_path_buf());
+    let repo = Repository::open(&tmp.path().join(".git"), &options).expect("open");
 
     let _ = resolve_revision(&repo, &prefix).expect("resolve");
     assert!(
@@ -103,12 +97,9 @@ fn core_bare_with_worktree_reaches_each_fresh_sink() {
     );
 
     let open = |sink: Arc<CollectingDiagnostics>| {
-        let options = RepositoryOptions {
-            environment: Environment::empty(),
-            diagnostics: sink.clone(),
-            network_trace: false,
-            ..Default::default()
-        };
+        let options = RepositoryOptions::empty()
+            .with_diagnostics(sink.clone())
+            .with_network_trace(false);
         Repository::open(&bare, &options).expect("open");
         sink
     };

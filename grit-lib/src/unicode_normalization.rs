@@ -5,7 +5,6 @@
 
 use icu_normalizer::ComposingNormalizerBorrowed;
 use std::borrow::Cow;
-use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,20 +47,6 @@ pub fn precompose_utf8_path(path: &str) -> Cow<'_, str> {
         Cow::Borrowed(path)
     } else {
         Cow::Owned(buf)
-    }
-}
-
-/// Update `s` in place when it is valid UTF-8 and NFC differs from the current spelling.
-pub fn precompose_os_string_utf8_path(s: &mut OsString, enabled: bool) {
-    if !enabled {
-        return;
-    }
-    let Some(utf8) = s.to_str() else {
-        return;
-    };
-    let normalized = precompose_utf8_path(utf8).into_owned();
-    if normalized != utf8 {
-        *s = OsString::from(normalized);
     }
 }
 

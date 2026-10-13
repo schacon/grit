@@ -23,12 +23,10 @@ fn add_tip_accepts_annotated_tag() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = Repository::init(
         tmp.path(),
-        &InitOptions {
-            bare: true,
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init");
 

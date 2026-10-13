@@ -54,6 +54,22 @@ fn canonical_layout_script_covers_workspace_imports() {
 }
 
 #[test]
+fn root_public_module_count_within_budget() {
+    let lib_rs = include_str!("../src/lib.rs");
+    let count = lib_rs
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            t.starts_with("pub mod ") && !t.starts_with("pub mod prelude")
+        })
+        .count();
+    assert!(
+        count <= 25,
+        "expected at most 25 root pub mod declarations, found {count}"
+    );
+}
+
+#[test]
 fn no_noncanonical_grit_lib_imports() {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

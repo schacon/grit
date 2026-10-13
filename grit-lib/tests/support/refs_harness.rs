@@ -173,11 +173,9 @@ pub fn each_backend(f: impl Fn(Backend, &TestRepo)) {
         let worktree = root.path().to_path_buf();
         Repository::init(
             &worktree,
-            &InitOptions {
-                initial_branch: "main".to_owned(),
-                ref_storage: ref_storage_format(backend),
-                ..InitOptions::default()
-            },
+            &InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(ref_storage_format(backend)),
         )
         .expect("init");
         let repo = TestRepo {
@@ -338,11 +336,9 @@ pub fn files_repo() -> TestRepo {
     let worktree = root.path().to_path_buf();
     Repository::init(
         &worktree,
-        &InitOptions {
-            initial_branch: "main".to_owned(),
-            ref_storage: grit_lib::RefStorageFormat::Files,
-            ..InitOptions::default()
-        },
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
     )
     .expect("init_repository");
     TestRepo {
