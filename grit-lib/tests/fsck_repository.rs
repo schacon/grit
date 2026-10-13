@@ -45,10 +45,7 @@ fn pack_loose_object_and_remove_loose(dir: &std::path::Path, oid: ObjectId) {
     let stem = pack_dir.join("pack-fsck-test");
     let mut pack_cmd = Command::new("git")
         .current_dir(dir)
-        .args([
-            "pack-objects",
-            stem.to_str().expect("utf8 stem"),
-        ])
+        .args(["pack-objects", stem.to_str().expect("utf8 stem")])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -65,9 +62,7 @@ fn pack_loose_object_and_remove_loose(dir: &std::path::Path, oid: ObjectId) {
         "pack-objects failed: {}",
         String::from_utf8_lossy(&pack_out.stderr)
     );
-    let pack_hash = String::from_utf8_lossy(&pack_out.stdout)
-        .trim()
-        .to_string();
+    let pack_hash = String::from_utf8_lossy(&pack_out.stdout).trim().to_string();
     let pack_file = pack_dir.join(format!("pack-fsck-test-{pack_hash}.pack"));
     assert!(pack_file.is_file(), "missing pack file {pack_file:?}");
     let index_out = Command::new("git")
@@ -82,11 +77,9 @@ fn pack_loose_object_and_remove_loose(dir: &std::path::Path, oid: ObjectId) {
         "index-pack failed: {}",
         String::from_utf8_lossy(&index_out.stderr)
     );
-    let loose = dir.join(".git/objects").join(format!(
-        "{}/{}",
-        &oid.to_hex()[..2],
-        &oid.to_hex()[2..]
-    ));
+    let loose =
+        dir.join(".git/objects")
+            .join(format!("{}/{}", &oid.to_hex()[..2], &oid.to_hex()[2..]));
     if loose.is_file() {
         std::fs::remove_file(loose).expect("remove loose after pack");
     }
@@ -345,7 +338,7 @@ fn dangling_commit_and_blob() {
     let tree = git(dir.path(), &["rev-parse", "HEAD^{tree}"])
         .trim()
         .to_string();
-    let mut commit_cmd = Command::new("git")
+    let commit_cmd = Command::new("git")
         .current_dir(dir.path())
         .args(["commit-tree", &tree, "-m", "dangling"])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -441,8 +434,9 @@ fn malformed_reachable_tree_is_bad_object_not_error() {
 fn malformed_reachable_tag_is_bad_object_not_error() {
     let (dir, repo) = init_repo();
     one_commit(&repo);
-    let bad_hex = git_hash_object_literally(dir.path(), FixtureAlgo::Sha1, "tag", b"not a tag object\n")
-        .expect("literally write tag");
+    let bad_hex =
+        git_hash_object_literally(dir.path(), FixtureAlgo::Sha1, "tag", b"not a tag object\n")
+            .expect("literally write tag");
     let bad_tag = ObjectId::from_hex(bad_hex.trim()).expect("parse oid");
     write_ref_loose(dir.path(), "refs/tags/bad-tag", bad_tag);
     let git_text = git(dir.path(), &["fsck"]);
@@ -682,6 +676,73 @@ fn reflog_and_index_roots_are_not_dangling() {
     }
     let grit_set = grit_dangling_set(&report);
     assert_eq!(grit_set, git_set);
+}
+
+#[test]
+fn linked_worktree_head_reflog_roots_match_git_fsck() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+    let main = root.join("main");
+    std::fs::create_dir_all(&main).expect("main dir");
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("f.txt"), b"seed\n").expect("write");
+    git(&main, &["add", "f.txt"]);
+    git(&main, &["commit", "-qm", "seed"]);
+    let base = git(&main, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let linked = root.join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().expect("linked path"),
+            "HEAD",
+        ],
+    );
+    std::fs::write(linked.join("only-linked.txt"), b"x\n").expect("write");
+    git(&linked, &["add", "only-linked.txt"]);
+    git(&linked, &["commit", "-qm", "linked-only"]);
+    let detached_commit = git(&linked, &["rev-parse", "HEAD"]).trim().to_string();
+    git(&linked, &["checkout", "--detach", &base]);
+
+    let git_set = git_dangling_set(&main);
+    assert!(
+        !git_set
+            .iter()
+            .any(|(_, oid)| oid.to_hex() == detached_commit),
+        "system git must retain linked-worktree reflog commit: {git_set:?}"
+    );
+    let git_no_reflog = parse_dangling_lines(&git(&main, &["fsck", "--no-reflogs"]));
+    assert!(
+        git_no_reflog
+            .iter()
+            .any(|(_, oid)| oid.to_hex() == detached_commit),
+        "git --no-reflogs should report detached commit as dangling"
+    );
+
+    let repo = Repository::discover(
+        Some(main.as_path()),
+        &grit_lib::config::environment::RepositoryOptions::empty(),
+    )
+    .expect("discover");
+    let report = grit_fsck(
+        &repo,
+        &FsckOptions::full_repository(false).with_check_dangling(true),
+    );
+    assert!(
+        !report
+            .dangling
+            .iter()
+            .any(|(_, oid)| oid.to_hex() == detached_commit),
+        "linked worktree HEAD reflog must anchor reachability"
+    );
+    let grit_set = grit_dangling_set(&report);
+    assert_eq!(
+        grit_set, git_set,
+        "dangling mismatch git={git_set:?} grit={grit_set:?}"
+    );
 }
 
 use std::fs;

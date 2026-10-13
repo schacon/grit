@@ -13,8 +13,8 @@ use std::collections::HashSet;
 /// Object ids that anchor connectivity and dangling-object classification.
 ///
 /// Includes every ref tip, detached `HEAD` oids (repository and linked worktrees),
-/// all reflog `old`/`new` oids, index entries (all stages), cache-tree oids, and
-/// the stash ref when present.
+/// all reflog `old`/`new` oids (main git dir and each linked worktree admin dir),
+/// index entries (all stages), cache-tree oids, and the stash ref when present.
 ///
 /// # Errors
 ///
@@ -38,7 +38,8 @@ pub fn reachability_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
         roots.insert(oid);
     }
 
-    for wt in list_worktrees(repo)? {
+    let worktrees = list_worktrees(repo)?;
+    for wt in &worktrees {
         match &wt.head {
             HeadState::Detached { oid } => {
                 roots.insert(*oid);
@@ -51,6 +52,11 @@ pub fn reachability_roots(repo: &Repository) -> Result<Vec<ObjectId>> {
     }
 
     roots.extend(all_reflog_oids(git_dir)?);
+    for wt in &worktrees {
+        if wt.admin_dir != git_dir {
+            roots.extend(all_reflog_oids(&wt.admin_dir)?);
+        }
+    }
 
     let index = repo.load_index()?;
     for entry in index.entries() {
