@@ -10,6 +10,7 @@ use std::io::Write;
 
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use schemars::JsonSchema;
 
 /// CLI outcome for `grit rm`.
 #[derive(Serialize, JsonSchema)]

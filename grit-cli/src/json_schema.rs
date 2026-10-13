@@ -497,8 +497,6 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "worktree_remove",
             &["worktree", "remove", "linked-wt", "-f"],
         ),
-        ("auth_render", &[]),
-        ("update_render", &[]),
     ]
 }
 

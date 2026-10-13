@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::context;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use schemars::JsonSchema;
 
 /// Result of `grit branch`, tagged by `action` (`list` / `create` / `delete`).
 #[derive(Serialize, JsonSchema)]

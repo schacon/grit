@@ -114,6 +114,14 @@ Empty remote (no branch tips yet):
 }
 ```
 
+## Markdown output
+
+Pass [`--markdown`](../global-options/) for agent-friendly output.
+
+Schema: [v1](/schemas/clone/v1.json)
+
+Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
+
 ## See also
 
 [grit init](../init/), [grit remote](../remote/), [grit fetch](../fetch/), [grit auth](../auth/)

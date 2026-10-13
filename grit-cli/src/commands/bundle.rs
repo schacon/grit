@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use schemars::JsonSchema;
 
 /// Outcome of `grit bundle create`.
 #[derive(Serialize, JsonSchema)]

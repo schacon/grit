@@ -63,6 +63,7 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
+| `warnings` | array | Non-fatal diagnostics emitted while resolving the object; omitted when empty. |
 | `kind` | string | `commit`, `branch`, `tag`, or `annotated_tag`. |
 | `ref_name` | string | Branch or tag name when you named a ref; omitted for a raw commit id. |
 | `tag` | object | For an annotated tag: `name`, `tagger`, and `message`. |

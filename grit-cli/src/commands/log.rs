@@ -13,6 +13,7 @@ use crate::context::{self, subject_line, CommitSummary};
 use crate::markdown;
 use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
 use crate::ui;
+use schemars::JsonSchema;
 
 /// How many commits to show per page.
 const PAGE: usize = 10;

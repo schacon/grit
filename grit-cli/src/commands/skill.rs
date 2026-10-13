@@ -7,6 +7,7 @@ use std::io::Write;
 
 use crate::output::{HumanRender, MarkdownRender, RenderContext};
 use crate::stdio;
+use schemars::JsonSchema;
 
 /// The skill text, with `{version}` replaced by the running grit's version.
 const SKILL: &str = include_str!("skill.md");

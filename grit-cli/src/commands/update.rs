@@ -19,6 +19,7 @@ use serde::Serialize;
 
 use crate::markdown;
 use crate::output::{progress, HumanRender, MarkdownRender, OutputMode, RenderContext};
+use schemars::JsonSchema;
 
 /// URL of the POSIX-sh installer (used on Unix).
 #[cfg(not(windows))]

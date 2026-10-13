@@ -15,6 +15,7 @@ use crate::context::{self, subject_line};
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use grit_lib::porcelain::add::stage_for_commit;
+use schemars::JsonSchema;
 
 /// Result of `grit commit`.
 #[derive(Serialize, JsonSchema)]

@@ -11,6 +11,7 @@ use std::io::Write;
 
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use schemars::JsonSchema;
 
 /// Reset mode in JSON (`soft`, `mixed`, or `hard`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]

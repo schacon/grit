@@ -14,6 +14,7 @@ use crate::commands::auth;
 use crate::context;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use schemars::JsonSchema;
 
 /// Result of `grit fetch`: the refs that changed.
 #[derive(Serialize, JsonSchema)]

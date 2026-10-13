@@ -16,6 +16,7 @@ use crate::output::{
     change_json, outln, ChangeJson, CommitJson, HumanRender, MarkdownRender, RenderContext,
 };
 use crate::ui::{self, PathDisplayContext};
+use schemars::JsonSchema;
 
 /// Maximum number of commits to list in the status shortlog before summarizing.
 const SHORTLOG_LIMIT: usize = 10;
