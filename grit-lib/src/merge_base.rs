@@ -57,6 +57,14 @@ pub fn merge_bases_first_vs_rest(
     first: ObjectId,
     others: &[ObjectId],
 ) -> Result<Vec<ObjectId>> {
+    if others.is_empty() {
+        return Ok(vec![first]);
+    }
+    for &other in others {
+        if first == other {
+            return Ok(vec![first]);
+        }
+    }
     let mut cache = CommitGraphCache::new(repo);
     let first_anc = cache.ancestor_closure(first)?;
     let mut others_union = HashSet::new();
@@ -64,7 +72,20 @@ pub fn merge_bases_first_vs_rest(
         others_union.extend(cache.ancestor_closure(other)?);
     }
     let candidates: HashSet<ObjectId> = first_anc.intersection(&others_union).copied().collect();
-    reduce_to_best(candidates, &mut cache)
+    let all_minimal = reduce_to_best(candidates, &mut cache)?;
+    if all_minimal.len() <= 1 {
+        return Ok(all_minimal);
+    }
+
+    let mut selected = merge_bases_paint_down(&mut cache, first, others, false)?;
+    if selected.is_empty() {
+        selected = all_minimal;
+    }
+    sort_merge_bases_by_committer_date(&mut cache, &mut selected)?;
+    if selected.len() > 1 {
+        selected.truncate(1);
+    }
+    Ok(selected)
 }
 
 /// Merge base of `HEAD` and one other commit, matching `git diff --merge-base <commit>`.
@@ -707,6 +728,203 @@ fn ensure_is_commit(repo: &Repository, oid: ObjectId) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+const GENERATION_NUMBER_INFINITY: u64 = (1u64 << 63) - 1;
+const GENERATION_NUMBER_V1_MAX: u64 = 0x3FFF_FFFF;
+
+const PAINT_PARENT1: u8 = 1 << 0;
+const PAINT_PARENT2: u8 = 1 << 1;
+const PAINT_STALE: u8 = 1 << 2;
+const PAINT_RESULT: u8 = 1 << 3;
+const PAINT_ENQUEUED: u8 = 1 << 4;
+
+struct PaintWalkState {
+    parent1_count: isize,
+    parent2_count: isize,
+    mb_candidate_count: isize,
+    last_gen: u64,
+    min_generation: u64,
+    topo_ceiling: u64,
+}
+
+#[derive(Eq, PartialEq)]
+struct PaintHeapEntry {
+    generation: u64,
+    commit_time: i64,
+    oid: ObjectId,
+}
+
+impl Ord for PaintHeapEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.generation.cmp(&other.generation) {
+            std::cmp::Ordering::Equal => self.commit_time.cmp(&other.commit_time),
+            ord => ord,
+        }
+    }
+}
+
+impl PartialOrd for PaintHeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn paint_count_update(state: &mut PaintWalkState, flags: u8, delta: isize) {
+    let side = flags & (PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE);
+    if side == PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE {
+        return;
+    }
+    if side == PAINT_PARENT1 | PAINT_PARENT2 {
+        state.mb_candidate_count += delta;
+    } else if side == PAINT_PARENT1 {
+        state.parent1_count += delta;
+    } else if side == PAINT_PARENT2 {
+        state.parent2_count += delta;
+    }
+}
+
+fn paint_queue_put(
+    cache: &mut CommitGraphCache<'_>,
+    heap: &mut BinaryHeap<PaintHeapEntry>,
+    state: &mut PaintWalkState,
+    flags: &mut HashMap<ObjectId, u8>,
+    oid: ObjectId,
+    add_flags: u8,
+) -> Result<()> {
+    let entry = flags.entry(oid).or_insert(0);
+    let old = *entry;
+    let new = old | add_flags;
+    *entry = new;
+    if old & PAINT_ENQUEUED != 0 {
+        paint_count_update(state, old, -1);
+        paint_count_update(state, new, 1);
+        return Ok(());
+    }
+    *entry = new | PAINT_ENQUEUED;
+    let generation = paint_commit_generation(cache, oid);
+    let commit_time = cache.commit_time(oid)?;
+    heap.push(PaintHeapEntry {
+        generation,
+        commit_time,
+        oid,
+    });
+    paint_count_update(state, new | PAINT_ENQUEUED, 1);
+    Ok(())
+}
+
+fn paint_queue_get(
+    heap: &mut BinaryHeap<PaintHeapEntry>,
+    state: &mut PaintWalkState,
+    flags: &mut HashMap<ObjectId, u8>,
+) -> Option<ObjectId> {
+    let entry = heap.pop()?;
+    let generation = entry.generation;
+    state.last_gen = generation;
+    if state.min_generation != 0 && generation < state.min_generation {
+        return None;
+    }
+    let old = flags.get(&entry.oid).copied().unwrap_or(0);
+    flags.insert(entry.oid, old & !PAINT_ENQUEUED);
+    if state.mb_candidate_count == 0 {
+        if state.parent1_count == 0 && state.parent2_count == 0 {
+            return None;
+        }
+        if (state.parent1_count == 0 || state.parent2_count == 0) && generation < state.topo_ceiling
+        {
+            return None;
+        }
+    }
+    paint_count_update(state, old, -1);
+    Some(entry.oid)
+}
+
+fn paint_commit_generation(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 {
+    if let Some(graph) = &cache.graph {
+        let gen = graph.commit_paint_generation(&oid);
+        if gen != GENERATION_NUMBER_INFINITY {
+            return gen;
+        }
+    }
+    GENERATION_NUMBER_INFINITY
+}
+
+fn sort_merge_bases_by_committer_date(
+    cache: &mut CommitGraphCache<'_>,
+    bases: &mut [ObjectId],
+) -> Result<()> {
+    let mut times = Vec::with_capacity(bases.len());
+    for &oid in bases.iter() {
+        times.push((oid, cache.commit_time(oid)?));
+    }
+    times.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+    });
+    for (i, (oid, _)) in times.into_iter().enumerate() {
+        bases[i] = oid;
+    }
+    Ok(())
+}
+
+/// Git `paint_down_to_common` / default `merge-base` (without `--all`).
+fn merge_bases_paint_down(
+    cache: &mut CommitGraphCache<'_>,
+    one: ObjectId,
+    twos: &[ObjectId],
+    find_all: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut heap = BinaryHeap::new();
+    let mut flags: HashMap<ObjectId, u8> = HashMap::new();
+    let mut state = PaintWalkState {
+        parent1_count: 0,
+        parent2_count: 0,
+        mb_candidate_count: 0,
+        last_gen: GENERATION_NUMBER_INFINITY,
+        min_generation: 0,
+        topo_ceiling: GENERATION_NUMBER_V1_MAX,
+    };
+    let mut painted_results: Vec<ObjectId> = Vec::new();
+
+    flags.insert(one, PAINT_PARENT1);
+    paint_queue_put(cache, &mut heap, &mut state, &mut flags, one, 0)?;
+
+    for &two in twos {
+        paint_queue_put(cache, &mut heap, &mut state, &mut flags, two, PAINT_PARENT2)?;
+    }
+
+    while let Some(oid) = paint_queue_get(&mut heap, &mut state, &mut flags) {
+        let mut walk_flags =
+            flags.get(&oid).copied().unwrap_or(0) & (PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE);
+        if walk_flags == PAINT_PARENT1 | PAINT_PARENT2 {
+            let entry = flags.entry(oid).or_insert(0);
+            if *entry & PAINT_RESULT == 0 {
+                *entry |= PAINT_RESULT;
+                painted_results.push(oid);
+                if !find_all && state.last_gen < state.topo_ceiling {
+                    break;
+                }
+            }
+            walk_flags |= PAINT_STALE;
+        }
+        for parent in cache.parents_of(oid)? {
+            let cur = flags.get(&parent).copied().unwrap_or(0);
+            if (cur & walk_flags) == walk_flags {
+                continue;
+            }
+            paint_queue_put(cache, &mut heap, &mut state, &mut flags, parent, walk_flags)?;
+        }
+    }
+
+    let mut out = Vec::new();
+    for oid in painted_results {
+        let f = flags.get(&oid).copied().unwrap_or(0);
+        if f & PAINT_STALE == 0 {
+            out.push(oid);
+        }
+    }
+    sort_merge_bases_by_committer_date(cache, &mut out)?;
+    Ok(out)
 }
 
 fn reduce_to_best(

@@ -152,6 +152,54 @@ fn merge_bases_match_git_merge_base_all() {
 }
 
 #[test]
+fn merge_bases_default_one_base_when_two_minimal_bases_exist() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let oids = build_commit_dag(
+        wt,
+        &[
+            ("o", "base"),
+            ("a1", "o"),
+            ("b1", "o"),
+            ("a2", "a1"),
+            ("b2", "b1"),
+            ("m1", "a2"),
+            ("m1", "b2"),
+            ("a3", "a2"),
+            ("b3", "b2"),
+            ("m2", "a3"),
+            ("m2", "b3"),
+            ("tip", "m1"),
+            ("tip", "m2"),
+        ],
+        &[("tip", "refs/heads/main")],
+    );
+    let repo = open_grit(wt);
+    let walk = repo.rev_walk();
+
+    let m1 = oids["m1"].to_hex();
+    let m2 = oids["m2"].to_hex();
+    let git_default = git_merge_base(wt, &[m1.as_str(), m2.as_str()]);
+    assert_eq!(git_default.len(), 1, "fixture must expose two --all bases");
+    let git_all = git_merge_base(wt, &["--all", m1.as_str(), m2.as_str()]);
+    assert!(
+        git_all.len() >= 2,
+        "expected at least two minimal merge bases, got {git_all:?}"
+    );
+
+    let grit_default = walk
+        .merge_bases(m1.as_str(), m2.as_str(), false)
+        .expect("default");
+    assert_eq!(grit_default, git_default);
+    assert_eq!(grit_default.len(), 1);
+
+    let grit_all = walk
+        .merge_bases(m1.as_str(), m2.as_str(), true)
+        .expect("all");
+    assert_eq!(grit_all, git_all);
+}
+
+#[test]
 fn merge_bases_criss_cross_side_exhaustion_matches_git() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();

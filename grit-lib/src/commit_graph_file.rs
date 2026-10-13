@@ -726,6 +726,23 @@ impl CommitGraphLayer {
         Some((p1, p2, commit_time))
     }
 
+    /// Topological generation from the GDA2 chunk when present (for merge-base paint walks).
+    fn paint_generation(&self, lex_index: u32) -> Option<u64> {
+        if !self.read_generation_data {
+            return None;
+        }
+        let gda_off = self.chunk_generation_data?;
+        if lex_index >= self.num_commits {
+            return None;
+        }
+        let start = gda_off + lex_index as usize * 4;
+        let v = u32::from_be_bytes(self.body.get(start..start + 4)?.try_into().ok()?);
+        if v & CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW != 0 {
+            return None;
+        }
+        Some(u64::from(v))
+    }
+
     fn bsearch_oid(&self, oid: &ObjectId) -> Option<u32> {
         let mut lo = 0u32;
         let mut hi = self.num_commits;
@@ -1278,6 +1295,18 @@ impl CommitGraphChain {
             .filter_map(|pos| self.oid_at_global_position(pos))
             .collect();
         Some((oids, commit_time))
+    }
+
+    /// Generation number for merge-base paint-down ordering (`2^63-1` when unknown).
+    #[must_use]
+    pub fn commit_paint_generation(&self, oid: &ObjectId) -> u64 {
+        const GENERATION_NUMBER_INFINITY: u64 = (1u64 << 63) - 1;
+        let Some((layer_idx, lex)) = self.find_commit(oid) else {
+            return GENERATION_NUMBER_INFINITY;
+        };
+        self.layers[layer_idx]
+            .paint_generation(lex)
+            .unwrap_or(GENERATION_NUMBER_INFINITY)
     }
 
     /// Parent commit positions in global graph order (CDAT + EXTRA_EDGES), or `None` if `oid`
