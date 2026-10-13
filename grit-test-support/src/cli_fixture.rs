@@ -292,14 +292,7 @@ impl CliFixture {
             "markdown exit for {snapshot_name} {args:?}"
         );
 
-        Self::assert_all_modes_snapshot(
-            snapshot_name,
-            snapshot_dir,
-            self,
-            human,
-            json,
-            markdown,
-        );
+        Self::assert_all_modes_snapshot(snapshot_name, snapshot_dir, self, human, json, markdown);
     }
 
     fn save_repo_baseline(&self) -> tempfile::TempDir {
@@ -690,7 +683,33 @@ pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixture
         "[TIME_AGO]",
     );
     settings.add_filter(r"(?i)\bjust now\b", "[TIME_AGO]");
-    settings.add_filter(r"\b\d+(?:\.\d+)?(?:ms|s|m)\b", "[DURATION]");
+    settings.add_filter(r"\b\d+(?:\.\d+)?\s*(?:ms|s|m)\b", "[DURATION]");
+    settings.add_filter(r#""duration_ms": \d+"#, r#""duration_ms": "[DURATION]""#);
+    settings.add_filter(
+        r#"\\"duration_ms\\": ?\d+"#,
+        r#"\\"duration_ms\\": [DURATION]"#,
+    );
+    settings.add_filter(r"pack-[0-9a-f]{20,}\.pack", "pack-[HASH].pack");
+    settings.add_filter(r#""objects_packed": \d+"#, r#""objects_packed": "[N]""#);
+    settings.add_filter(r#""loose_before": \d+"#, r#""loose_before": "[N]""#);
+    settings.add_filter(r#""packs_before": \d+"#, r#""packs_before": "[N]""#);
+    settings.add_filter(r#""pruned_loose": \d+"#, r#""pruned_loose": "[N]""#);
+    settings.add_filter(r#""pack_bytes": \d+"#, r#""pack_bytes": "[N]""#);
+    settings.add_filter(r#""entries_pruned": \d+"#, r#""entries_pruned": "[N]""#);
+    settings.add_filter(r#""commit_count": \d+"#, r#""commit_count": "[N]""#);
+    settings.add_filter(
+        r#""removed_pack_files": \d+"#,
+        r#""removed_pack_files": "[N]""#,
+    );
+    settings.add_filter(
+        r#""unreachable_loose_pruned": \d+"#,
+        r#""unreachable_loose_pruned": "[N]""#,
+    );
+    settings.add_filter(r#""kept": \d+"#, r#""kept": "[N]""#);
+    settings.add_filter(r#""pruned": \d+"#, r#""pruned": "[N]""#);
+    settings.add_filter(r#""refs_packed": \d+"#, r#""refs_packed": "[N]""#);
+    settings.add_filter(r#""refs_pruned": \d+"#, r#""refs_pruned": "[N]""#);
+    settings.add_filter(r#""pack_count": \d+"#, r#""pack_count": "[N]""#);
 
     for fixture in fixtures {
         redact_path(settings, fixture.path(), "[REPO]");

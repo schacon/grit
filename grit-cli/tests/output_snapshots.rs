@@ -72,7 +72,11 @@ fn snapshot_gc_dry_run() {
 
 #[test]
 fn snapshot_gc_repack() {
-    snapshot_all_modes("gc_repack", &["gc", "repack"]);
+    snapshot_fresh("gc_repack", &["gc", "repack"], |fixture| {
+        fixture.write_repo_file("repack-extra.txt", "extra payload\n");
+        fixture.run_ok(&["add", "repack-extra.txt"]);
+        fixture.run_ok(&["commit", "-m", "repack extra"]);
+    });
 }
 
 #[test]
