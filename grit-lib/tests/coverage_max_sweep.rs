@@ -14,7 +14,6 @@ use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::revwalk::rev_list::{
     merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions,
@@ -77,8 +76,8 @@ fn seed_long_history(
 fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
     let repo = Repository::init(dir.path(), &InitOptions::default())?;
-    let tip = seed_long_history(dir.path(), &repo, 180)?;
-    for n in 0..120 {
+    let tip = seed_long_history(dir.path(), &repo, 320)?;
+    for n in 0..200 {
         for spec in [format!("HEAD~{n}"), format!("main~{n}"), format!(":/c{n}")] {
             let _ = resolve_revision_for_verify(&repo, &spec).ok();
             let _ = resolve_revision(&repo, &spec).ok();
@@ -204,5 +203,48 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
     for path in ["f.txt", "g.txt", "dir/b.txt", "missing"] {
         let _ = matches_pathspec_list(path, &specs);
     }
+    Ok(())
+}
+
+#[test]
+fn supporting_and_submodule_gitdir_sweep() -> grit_lib::error::Result<()> {
+    use grit_lib::config::gitmodules::gitdir::{
+        ensure_submodule_gitdir_config, submodule_gitdir_filesystem_path,
+        submodule_path_config_enabled,
+    };
+    use grit_lib::config::gitmodules::{check_submodule_name, validate_gitmodules_blob_line};
+    use grit_lib::config::{ConfigFile, ConfigScope};
+    use grit_lib::worktree::crlf::{
+        convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs,
+    };
+
+    let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
+    let repo = Repository::init(dir.path(), &InitOptions::default())?;
+    let git_dir = repo.git_dir();
+    fs::write(
+        git_dir.join("config"),
+        "[extensions]\n\tsubmodulePathConfig = true\n[core]\n\tautocrlf = true\n",
+    )
+    .map_err(grit_lib::error::Error::Io)?;
+    assert!(submodule_path_config_enabled(git_dir));
+    assert!(check_submodule_name("lib/foo"));
+    assert!(validate_gitmodules_blob_line(b"[submodule \"x\"]\n").is_none());
+    let cfg = ConfigFile::parse(
+        git_dir.join("config").as_path(),
+        "[submodule \"lib/foo\"]\n\tpath = lib/foo\n\turl = https://example.com/r.git\n",
+        ConfigScope::Local,
+    )?;
+    let mut cfg_mut = cfg.clone();
+    let gitdir_rel =
+        ensure_submodule_gitdir_config(dir.path(), git_dir, &mut cfg_mut, "lib/foo")?;
+    assert!(!gitdir_rel.is_empty());
+    let fs_path = submodule_gitdir_filesystem_path(dir.path(), git_dir, &cfg_mut, "lib/foo")?;
+    assert!(fs_path.exists() || fs_path.starts_with(dir.path()));
+    let mut set = ConfigSet::new();
+    set.merge(&cfg_mut);
+    let crlf = ConversionConfig::from_config(&set);
+    let attrs = FileAttrs::default();
+    let git_bytes = convert_to_git(b"a\r\n", "x.txt", &crlf, &attrs)?;
+    let _ = convert_to_worktree_eager(&git_bytes, "x.txt", &crlf, &attrs, None, None, None)?;
     Ok(())
 }

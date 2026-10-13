@@ -47,6 +47,37 @@ class CoverageScriptTests(unittest.TestCase):
         self.assertEqual(stats["odb/mod.rs"].count, 100)
         self.assertEqual(stats["odb/mod.rs"].covered, 85)
 
+    def test_parse_coverage_json_normalizes_parent_path_segments(self) -> None:
+        payload = {
+            "data": [
+                {
+                    "files": [
+                        {
+                            "filename": str(
+                                ROOT
+                                / "grit-lib"
+                                / "src"
+                                / "diff"
+                                / ".."
+                                / "structured_diff.rs"
+                            ),
+                            "summary": {
+                                "lines": {
+                                    "count": 100,
+                                    "covered": 80,
+                                    "percent": 80.0,
+                                }
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+        stats = cov.parse_coverage_json(json.dumps(payload))
+        self.assertIn("structured_diff.rs", stats)
+        self.assertEqual(stats["structured_diff.rs"].count, 100)
+        self.assertEqual(stats["structured_diff.rs"].covered, 80)
+
     def test_aggregate_weighted_by_lines(self) -> None:
         stats = cov.parse_coverage_json(_sample_json())
         pack = cov.aggregate(["pack.rs", "pack_index.rs"], stats)
@@ -174,6 +205,20 @@ minimum = 50.0
                 )
             )
 
+    def test_referenced_module_omitted_from_json_not_zero_filled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "grit-lib" / "src"
+            src.mkdir(parents=True)
+            (src / "lib.rs").write_text("mod shim;\nmod included;\n", encoding="utf-8")
+            (src / "shim.rs").write_text("pub fn shim_only() {}\n", encoding="utf-8")
+            (src / "included.rs").write_text("pub fn covered() {}\n", encoding="utf-8")
+            stats = {"included.rs": cov.LineStats(count=10, covered=8)}
+            complete = cov.complete_library_stats(stats, src_root=src)
+            self.assertNotIn("shim.rs", complete)
+            total = cov.library_total_stats(stats, src_root=src)
+            self.assertEqual(total.count, 10)
+            self.assertEqual(total.covered, 8)
+
     def test_total_includes_omitted_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "grit-lib" / "src"
@@ -189,11 +234,78 @@ minimum = 50.0
             full_total = cov.library_total_stats(stats, src_root=src)
             self.assertLess(full_total.percent, keys_only.percent)
 
+    def test_committed_coverage_gate_minimums(self) -> None:
+        floors = cov.load_floors(ROOT / "grit-lib" / "coverage-floors.toml")
+        self.assertEqual(floors.total_minimum, 80.0)
+        self.assertIn("history", floors.aggregates)
+        self.assertEqual(floors.aggregates["history"][1], 85.0)
+        for name in ("diff", "revwalk", "revparse", "index", "index-ext", "merge", "stash-notes-worktree"):
+            self.assertIn(name, floors.groups)
+            minimum = floors.groups[name][1]
+            self.assertIsNotNone(minimum)
+            assert minimum is not None
+            self.assertGreaterEqual(minimum, 85.0)
+
     def test_total_floor_fails_at_79_9_percent(self) -> None:
-        total_stats = cov.LineStats(count=10_000, covered=7_990)
-        self.assertAlmostEqual(total_stats.percent, 79.9, places=1)
-        minimum = 80.0
-        self.assertFalse(total_stats.percent + 1e-9 >= minimum)
+        """79.9% total must fail against the committed 80% floor via check()."""
+        floors_path = ROOT / "grit-lib" / "coverage-floors.toml"
+        floors = cov.load_floors(floors_path)
+        self.assertIsNotNone(floors.total_minimum)
+        assert floors.total_minimum is not None
+        self.assertEqual(floors.total_minimum, 80.0)
+
+        src = ROOT / "grit-lib" / "src"
+        payload_files = []
+        for rel in cov.grit_lib_src_rs_files(src_root=src):
+            line_count = cov.count_source_lines_for_coverage(src / rel)
+            if line_count == 0:
+                continue
+            payload_files.append(
+                {
+                    "filename": str(src / rel),
+                    "summary": {
+                        "lines": {
+                            "count": line_count,
+                            "covered": 0,
+                            "percent": 0.0,
+                        }
+                    },
+                }
+            )
+        total_lines = sum(
+            int(item["summary"]["lines"]["count"]) for item in payload_files
+        )
+        covered_target = int(round(total_lines * 0.799))
+        remaining = covered_target
+        for item in payload_files:
+            count = int(item["summary"]["lines"]["count"])
+            take = min(count, remaining)
+            item["summary"]["lines"]["covered"] = take
+            remaining -= take
+            if remaining <= 0:
+                break
+        stats = cov.parse_coverage_json(json.dumps({"data": [{"files": payload_files}]}))
+        total_stats = cov.library_total_stats(stats, src_root=src)
+        self.assertAlmostEqual(total_stats.percent, 79.9, delta=0.15)
+
+        _table, failures = cov.check(floors, stats, validate_src_tree=True)
+        self.assertTrue(any("total:" in f for f in failures))
+
+    def test_history_aggregate_floor_fails_below_85(self) -> None:
+        floors = cov.load_floors(ROOT / "grit-lib" / "coverage-floors.toml")
+        history_groups, history_minimum = floors.aggregates["history"]
+        self.assertEqual(history_minimum, 85.0)
+        stats = cov.parse_coverage_json(_sample_json())
+        agg_files: list[str] = []
+        for group_name in history_groups:
+            agg_files.extend(floors.groups[group_name][0])
+        for name in agg_files:
+            if name not in stats:
+                stats[name] = cov.LineStats(count=100, covered=80)
+        st = cov.aggregate(agg_files, stats)
+        self.assertLess(st.percent, 85.0)
+        _table, failures = cov.check(floors, stats)
+        self.assertTrue(any("aggregate history" in f for f in failures))
 
     def test_total_floor_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

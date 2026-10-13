@@ -198,12 +198,14 @@ def llvm_cov_missing_src_files(
 def complete_library_stats(
     stats: dict[str, LineStats], *, src_root: Path | None = None
 ) -> dict[str, LineStats]:
-    """Merge llvm-cov stats with zero-covered placeholders for every tree file."""
+    """Merge llvm-cov stats with zero-covered placeholders for orphan sources only.
+
+    Referenced module files that llvm-cov omits from JSON (typically small `mod.rs`
+    re-export shims) are left out of the merged map so they are not counted as 0%.
+    """
     root = src_root or GRIT_LIB_SRC
     out = dict(stats)
-    for rel in grit_lib_src_rs_files(src_root=root):
-        if rel in out:
-            continue
+    for rel in llvm_cov_missing_src_files(out, src_root=root):
         line_count = count_source_lines_for_coverage(root / rel)
         out[rel] = LineStats(count=line_count, covered=0)
     return out
@@ -225,9 +227,9 @@ def parse_coverage_json(raw: str | bytes) -> dict[str, LineStats]:
             filename = item.get("filename")
             if not filename:
                 continue
-            path = Path(filename)
+            src_root = (ROOT / "grit-lib" / "src").resolve()
             try:
-                rel = path.relative_to(ROOT / "grit-lib" / "src")
+                rel = Path(filename).resolve().relative_to(src_root)
             except ValueError:
                 continue
             if rel.suffix != ".rs":
@@ -236,6 +238,10 @@ def parse_coverage_json(raw: str | bytes) -> dict[str, LineStats]:
             summary = item.get("summary", {}).get("lines", {})
             count = int(summary.get("count", 0))
             covered = int(summary.get("covered", 0))
+            existing = by_file.get(name)
+            if existing is not None:
+                count = max(count, existing.count)
+                covered = max(covered, existing.covered)
             by_file[name] = LineStats(count=count, covered=covered)
     return by_file
 

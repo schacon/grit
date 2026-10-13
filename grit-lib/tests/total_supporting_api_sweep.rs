@@ -59,7 +59,7 @@ fn linear_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::object
 
 #[test]
 fn blame_apply_binary_and_trailer_sweep() -> grit_lib::error::Result<()> {
-    let (_dir, repo, tip) = linear_repo(48);
+    let (_dir, repo, tip) = linear_repo(160);
     let blame = blame_file(
         &repo,
         "track.txt",

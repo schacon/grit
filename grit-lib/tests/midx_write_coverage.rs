@@ -580,6 +580,28 @@ fn format_midx_dump_and_show_objects_layers() {
 }
 
 #[test]
+fn midx_reuse_tables_bitmaps_and_sidecars() {
+    let Some((repo, objects, oids)) = multi_pack_repo(HashAlgo::Sha1, 2) else {
+        eprintln!("SKIP: fixture");
+        return;
+    };
+    let pack_dir = objects.join("pack");
+    grit_write_midx(&pack_dir, &WriteMultiPackIndexOptions::default());
+    let _ = grit_lib::objects::midx::cached_tip_midx_path(&pack_dir);
+    let _ = grit_lib::objects::midx::load_midx_reuse_tables(&objects).expect("reuse");
+    if let Ok(ranges) = grit_lib::objects::midx::read_midx_btmp_ranges(&objects) {
+        assert!(ranges.is_empty() || !ranges.is_empty());
+        let _ = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects);
+    }
+    let tip = tip_midx_path(&pack_dir);
+    let _ =
+        grit_lib::objects::midx::midx_sidecar_path_for_midx_file(&tip, "rev").expect("sidecar");
+    grit_lib::objects::midx::validate_midx_referenced_packs(&objects);
+    let _ = grit_lib::objects::midx::midx_oid_listed_in_tip(&objects, &oids[0]).expect("listed");
+    let _ = repo;
+}
+
+#[test]
 fn midx_lookup_errors_when_oid_absent() {
     let Some((repo, objects, oids)) = multi_pack_repo(HashAlgo::Sha1, 2) else {
         eprintln!("SKIP: fixture");

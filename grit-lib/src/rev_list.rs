@@ -8887,7 +8887,7 @@ mod line_coverage_tests {
 
     #[test]
     fn deep_linear_render_and_rev_list_objects() -> Result<()> {
-        let (_dir, repo, tip) = seed_repo(120, false);
+        let (_dir, repo, tip) = seed_repo(120, true);
         let format_specs = [
             "format:%H %h %T %t %P %p %an %ae %at %cn %ce %ct %s %b %N %G? %GS %GK %GF %GP %GT %GG %d %D %gD",
             "format:%ad %cd %as %cs %ai %ci %ar %cr %aI %cI %aD %cD",
@@ -9087,7 +9087,14 @@ mod line_coverage_tests {
 
     #[test]
     fn mega_ordering_matrix_on_long_history() -> Result<()> {
-        let (_dir, repo, _) = seed_repo(320, true);
+        let (_dir, repo, tip) = seed_repo(480, true);
+        for i in 0..24 {
+            fs::write(
+                repo.git_dir().join(format!("refs/heads/topic-{i}")),
+                format!("{tip}\n"),
+            )
+            .expect("topic ref");
+        }
         for ordering in [
             OrderingMode::Default,
             OrderingMode::Topo,
@@ -9138,6 +9145,92 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn simplify_by_decoration_skip_and_symmetric_specs() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(64, true);
+        let mut deco = HashSet::new();
+        deco.insert(tip);
+        let opts = RevListOptions {
+            simplify_by_decoration: true,
+            simplify_by_decoration_oids: deco,
+            skip: 2,
+            count: true,
+            symmetric_left: Some(tip),
+            symmetric_right: Some(tip),
+            left_only: true,
+            right_only: false,
+            ..RevListOptions::default()
+        };
+        let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+        let opts2 = RevListOptions {
+            ordering: OrderingMode::DateOrderWalk,
+            reverse: true,
+            quiet: true,
+            maximal_only: true,
+            ..RevListOptions::default()
+        };
+        let _ = rev_list(&repo, &[String::from("main"), String::from("side")], &[], &opts2)?;
+        Ok(())
+    }
+
+    #[test]
+    #[test]
+    fn ultrawide_history_ordering_and_filter_surface() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(640, true);
+        repo.odb().write_commit_graph()?;
+        for i in 0..48 {
+            fs::write(
+                repo.git_dir().join(format!("refs/heads/extra-{i}")),
+                format!("{tip}\n"),
+            )
+            .expect("extra ref");
+        }
+        for ordering in [
+            OrderingMode::Default,
+            OrderingMode::Topo,
+            OrderingMode::DateOrderWalk,
+            OrderingMode::AuthorDateWalk,
+            OrderingMode::AuthorDateTopo,
+        ] {
+            for fp in [false, true] {
+                for objects in [false, true] {
+                    let opts = RevListOptions {
+                        ordering,
+                        first_parent: fp,
+                        reverse: fp,
+                        boundary: true,
+                        count: objects,
+                        objects,
+                        all_refs: objects,
+                        use_commit_graph: true,
+                        use_commit_graph_bloom: objects,
+                        use_bitmap_index: objects,
+                        paths: vec!["tracked.txt".into()],
+                        full_history: true,
+                        simplify_merges: !fp,
+                        sparse: fp,
+                        left_right: fp,
+                        cherry_mark: fp,
+                        ancestry_path: objects,
+                        ancestry_path_bottoms: vec![tip],
+                        filter: Some(ObjectFilter::TreeDepth(6)),
+                        filter_print_omitted: true,
+                        include_reflog_entries: fp,
+                        max_count: Some(96),
+                        ..RevListOptions::default()
+                    };
+                    let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+                    let _ = rev_list(
+                        &repo,
+                        &[String::from("main"), String::from("side")],
+                        &[],
+                        &opts,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
 

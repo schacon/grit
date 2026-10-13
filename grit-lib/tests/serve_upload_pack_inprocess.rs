@@ -155,5 +155,26 @@ fn upload_pack_v1_and_v2_entry_points() {
     )
     .expect("v2 capability ad");
     assert!(v2_ad.windows(9).any(|w| w == b"version 2"));
-    let _ = tip;
+
+    let mut v2_fetch = Vec::new();
+    let mut fetch_body = pkt_line("command=fetch\n");
+    fetch_body.extend_from_slice(&pkt_line(&format!("agent=grit-cov\n")));
+    fetch_body.extend_from_slice(&pkt_line(&format!("want {0}\n", tip.to_hex())));
+    fetch_body.extend_from_slice(b"0000");
+    fetch_body.extend_from_slice(&pkt_line("done"));
+    fetch_body.extend_from_slice(b"0000");
+    upload_pack(
+        &repo,
+        &mut Cursor::new(fetch_body),
+        &mut v2_fetch,
+        &ServeOptions {
+            protocol: ProtocolVersion::V2,
+            advertise_refs: false,
+            stateless_rpc: true,
+            agent: "grit-cov".to_owned(),
+            hidden_refs: Vec::new(),
+        },
+    )
+    .expect("v2 fetch");
+    assert!(v2_fetch.len() > 20);
 }
