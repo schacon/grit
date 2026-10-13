@@ -32,11 +32,12 @@ use std::path::Path;
 
 use crate::commit::{assemble_identity, identity_now_from_epoch};
 use crate::config::ConfigSet;
-use crate::diff::diff_trees;
+use crate::diff::{diff_trees, refresh_index_stat_content_verified_with_rules};
 use crate::error::{Error, Result};
 use crate::ident_resolve::{
     resolve_email_with, resolve_loose_committer_parts_with, resolve_name_with, IdentRole,
 };
+use crate::index::index_file_mtime;
 use crate::index::{Index, IndexEntry};
 use crate::merge_base::{is_ancestor, merge_bases_first_vs_rest};
 use crate::merge_file::MergeFavor;
@@ -50,6 +51,7 @@ use crate::porcelain::worktree_guard::{ensure_worktree_clean_for_merge, prepare_
 use crate::refs;
 use crate::repo::Repository;
 use crate::state::{clear_merge_state, read_merge_heads, read_orig_head};
+use crate::worktree_rules::WorktreeRules;
 use crate::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
 
 /// Flatten a tree object into a recursive list of [`IndexEntry`] values.
@@ -209,6 +211,29 @@ pub fn reduce_octopus_merge_heads(
     Ok((out_oids, out_names))
 }
 
+/// How a merge conflict should be presented to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeConflictKind {
+    /// Both sides edited the same tracked file (textual or binary).
+    Content,
+    /// Both sides added the same path with different content.
+    AddAdd,
+    /// One side deleted the path and the other modified it.
+    ModifyDelete {
+        /// When true, the deletion is on the current branch (HEAD); the incoming branch modified the file.
+        deleted_in_current: bool,
+    },
+}
+
+/// One conflicted path reported from [`integrate_branch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeConflictDetail {
+    /// Repository-relative path.
+    pub path: String,
+    /// Conflict shape derived from unmerged index stages.
+    pub kind: MergeConflictKind,
+}
+
 /// Result of integrating another branch into the current one ([`integrate_branch`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntegrateBranchOutcome {
@@ -228,6 +253,8 @@ pub enum IntegrateBranchOutcome {
     Conflicts {
         /// Conflicted paths in repository-relative form, sorted and deduplicated.
         paths: Vec<String>,
+        /// Per-path conflict classification (same order as `paths` after sorting).
+        details: Vec<MergeConflictDetail>,
     },
 }
 
@@ -299,6 +326,7 @@ pub fn integrate_branch(
 
     if has_tree_merge_conflicts(&merged) {
         let paths = tree_merge_conflict_paths(&merged);
+        let details = classify_merge_conflicts(&merged.index, &paths);
         prepare_tree_checkout(
             repo,
             Some(&into_tree),
@@ -306,7 +334,7 @@ pub fn integrate_branch(
         )?;
         apply_conflict_merge_worktree(repo, &into_tree, &merged)?;
         record_merge_in_progress(repo.git_dir(), into_oid, other_oid, label)?;
-        return Ok(IntegrateBranchOutcome::Conflicts { paths });
+        return Ok(IntegrateBranchOutcome::Conflicts { paths, details });
     }
 
     let mut index = merged.index;
@@ -392,6 +420,33 @@ fn has_tree_merge_conflicts(merged: &TreeMergeOutput) -> bool {
     !merged.conflict_content.is_empty() || merged.index.entries().iter().any(|e| e.stage() != 0)
 }
 
+fn classify_merge_conflicts(index: &Index, paths: &[String]) -> Vec<MergeConflictDetail> {
+    paths
+        .iter()
+        .map(|path| {
+            let path_bytes = path.as_bytes();
+            let stage1 = index.get(path_bytes, 1).is_some();
+            let stage2 = index.get(path_bytes, 2).is_some();
+            let stage3 = index.get(path_bytes, 3).is_some();
+            let kind = match (stage1, stage2, stage3) {
+                (false, true, true) => MergeConflictKind::AddAdd,
+                (true, true, true) => MergeConflictKind::Content,
+                (true, false, true) => MergeConflictKind::ModifyDelete {
+                    deleted_in_current: true,
+                },
+                (true, true, false) => MergeConflictKind::ModifyDelete {
+                    deleted_in_current: false,
+                },
+                _ => MergeConflictKind::Content,
+            };
+            MergeConflictDetail {
+                path: path.clone(),
+                kind,
+            }
+        })
+        .collect()
+}
+
 fn tree_merge_conflict_paths(merged: &TreeMergeOutput) -> Vec<String> {
     let mut paths: Vec<String> = merged
         .conflict_content
@@ -462,6 +517,32 @@ fn apply_conflict_merge_worktree(
         let rel = String::from_utf8_lossy(path);
         checkout::write_to_worktree(work_tree, rel.as_ref(), &blob.data, mode)?;
     }
+    refresh_stage0_index_stats_from_worktree(repo, work_tree, &mut index)?;
+    repo.write_index(&mut index)?;
+    Ok(())
+}
+
+fn refresh_stage0_index_stats_from_worktree(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+) -> Result<()> {
+    if !index.entries.iter().any(|e| e.stage() == 0) {
+        return Ok(());
+    }
+    let index_mtime = index_file_mtime(&repo.index_path());
+    let rules = WorktreeRules::from_repository(repo, index).ok();
+    let rules_arc = rules.map(|r| std::sync::Arc::new(std::sync::Mutex::new(r)));
+    let _ = refresh_index_stat_content_verified_with_rules(
+        repo.odb(),
+        repo.git_dir(),
+        index,
+        work_tree,
+        index_mtime,
+        repo.config().ok().as_deref(),
+        None,
+        rules_arc.as_ref(),
+    )?;
     Ok(())
 }
 
@@ -759,7 +840,7 @@ mod integrate_tests {
             .expect("main");
         let outcome =
             integrate_branch(&repo, "refs/heads/main", main, topic, "topic").expect("merge");
-        let IntegrateBranchOutcome::Conflicts { paths } = outcome else {
+        let IntegrateBranchOutcome::Conflicts { paths, .. } = outcome else {
             panic!("expected conflicts, got {outcome:?}");
         };
         assert!(paths.iter().any(|p| p == "f.txt"));

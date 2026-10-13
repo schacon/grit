@@ -9,7 +9,10 @@ use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::porcelain::merge::{abort_branch_merge, integrate_branch, IntegrateBranchOutcome};
+use grit_lib::porcelain::merge::{
+    abort_branch_merge, integrate_branch, IntegrateBranchOutcome, MergeConflictDetail,
+    MergeConflictKind,
+};
 use grit_lib::porcelain::worktree_guard::ensure_worktree_clean_for_merge;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -48,6 +51,20 @@ pub struct MergeOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub conflicts: Option<Vec<String>>,
+    /// Structured conflict metadata when `result` is `conflicts`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub conflict_details: Option<Vec<MergeConflictJson>>,
+}
+
+/// One conflicted path in `--json` merge output.
+#[derive(Serialize, JsonSchema)]
+pub struct MergeConflictJson {
+    pub path: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 impl MergeOutcome {
@@ -58,6 +75,7 @@ impl MergeOutcome {
             oid: None,
             upstream: None,
             conflicts: None,
+            conflict_details: None,
         }
     }
 
@@ -68,6 +86,7 @@ impl MergeOutcome {
             oid: Some(oid.to_hex()),
             upstream: None,
             conflicts: None,
+            conflict_details: None,
         }
     }
 
@@ -78,16 +97,25 @@ impl MergeOutcome {
             oid: Some(oid.to_hex()),
             upstream: None,
             conflicts: None,
+            conflict_details: None,
         }
     }
 
-    fn conflicts(label: &str, paths: Vec<String>) -> Self {
+    fn conflicts(label: &str, details: Vec<MergeConflictDetail>) -> Self {
+        let paths: Vec<String> = details.iter().map(|d| d.path.clone()).collect();
+        let conflict_details = Some(
+            details
+                .iter()
+                .map(|d| merge_conflict_json(d, label))
+                .collect(),
+        );
         Self {
             result: MergeResult::Conflicts,
             branch: label.to_owned(),
             oid: None,
             upstream: None,
             conflicts: Some(paths),
+            conflict_details,
         }
     }
 
@@ -98,6 +126,7 @@ impl MergeOutcome {
             oid: None,
             upstream: None,
             conflicts: None,
+            conflict_details: None,
         }
     }
 
@@ -109,7 +138,34 @@ impl MergeOutcome {
             oid: Some(oid.to_hex()),
             upstream: Some(upstream.to_owned()),
             conflicts: None,
+            conflict_details: None,
         }
+    }
+}
+
+fn merge_conflict_json(detail: &MergeConflictDetail, merge_label: &str) -> MergeConflictJson {
+    let (kind, summary) = match detail.kind {
+        MergeConflictKind::Content => ("content".to_owned(), None),
+        MergeConflictKind::AddAdd => ("add_add".to_owned(), None),
+        MergeConflictKind::ModifyDelete { deleted_in_current } => {
+            let summary = if deleted_in_current {
+                Some(format!(
+                    "{} deleted on the current branch and modified in {merge_label}; {merge_label}'s version is in the work tree",
+                    detail.path
+                ))
+            } else {
+                Some(format!(
+                    "{} modified on the current branch and deleted in {merge_label}; the current branch's version is in the work tree",
+                    detail.path
+                ))
+            };
+            ("modify_delete".to_owned(), summary)
+        }
+    };
+    MergeConflictJson {
+        path: detail.path.clone(),
+        kind,
+        summary,
     }
 }
 
@@ -125,9 +181,19 @@ impl HumanRender for MergeOutcome {
                 self.branch
             ),
             MergeResult::Conflicts => {
-                eprintln!("Merge has conflicts in:");
-                for path in self.conflicts.as_deref().unwrap_or(&[]) {
-                    eprintln!("  {path}");
+                if let Some(details) = &self.conflict_details {
+                    for item in details {
+                        if let Some(summary) = &item.summary {
+                            eprintln!("CONFLICT ({kind}): {summary}", kind = item.kind);
+                        } else {
+                            eprintln!("CONFLICT ({kind}): {}", item.path, kind = item.kind);
+                        }
+                    }
+                } else {
+                    eprintln!("Merge has conflicts in:");
+                    for path in self.conflicts.as_deref().unwrap_or(&[]) {
+                        eprintln!("  {path}");
+                    }
                 }
                 eprintln!(
                     "\nAutomatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`."
@@ -198,7 +264,9 @@ pub fn integrate(
         IntegrateBranchOutcome::UpToDate => Ok(MergeOutcome::up_to_date(label)),
         IntegrateBranchOutcome::FastForward { oid } => Ok(MergeOutcome::fast_forward(label, oid)),
         IntegrateBranchOutcome::Merged { oid } => Ok(MergeOutcome::merged(label, oid)),
-        IntegrateBranchOutcome::Conflicts { paths } => Ok(MergeOutcome::conflicts(label, paths)),
+        IntegrateBranchOutcome::Conflicts { details, .. } => {
+            Ok(MergeOutcome::conflicts(label, details))
+        }
     }
 }
 
@@ -229,7 +297,13 @@ mod tests {
             (MergeOutcome::fast_forward("topic", oid), "fast_forward"),
             (MergeOutcome::merged("topic", oid), "merged"),
             (
-                MergeOutcome::conflicts("topic", vec!["a.txt".into()]),
+                MergeOutcome::conflicts(
+                    "topic",
+                    vec![MergeConflictDetail {
+                        path: "a.txt".into(),
+                        kind: MergeConflictKind::Content,
+                    }],
+                ),
                 "conflicts",
             ),
             (MergeOutcome::aborted(), "aborted"),

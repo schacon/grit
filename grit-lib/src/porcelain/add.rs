@@ -258,6 +258,17 @@ fn stage_inner(
 
     let mut outcome = StageOutcome::default();
     let has_unmerged = index.has_unmerged_entries();
+    let unmerged_only_paths: HashSet<Vec<u8>> = if has_unmerged {
+        index
+            .entries
+            .iter()
+            .filter(|e| e.stage() != 0)
+            .map(|e| e.path.clone())
+            .filter(|path| index.get(path, 0).is_none())
+            .collect()
+    } else {
+        HashSet::new()
+    };
 
     if let Some(summary) = tracked_scan_summary {
         outcome.modified = summary.modified.len();
@@ -265,6 +276,9 @@ fn stage_inner(
     } else {
         let worktree_updates = collect_tracked_stage_plans(&unstaged, &matches);
         for (path, plan) in worktree_updates {
+            if has_unmerged && unmerged_only_paths.contains(path.as_bytes()) {
+                continue;
+            }
             if plan.remove {
                 if index.remove(path.as_bytes()) {
                     outcome.removed += 1;
@@ -303,12 +317,70 @@ fn stage_inner(
         &mut outcome,
     )?;
 
+    if has_unmerged && !opts.pathspecs.is_empty() {
+        outcome.modified +=
+            stage_unmerged_paths_matching_pathspecs(repo, work_tree, &matches, &mut index, &rules)?;
+    }
+
     if outcome.total() > 0 {
         index.sort();
         repo.write_index(&mut index)?;
     }
 
     Ok(outcome)
+}
+
+/// Stage worktree content for explicit pathspecs that match unmerged index entries.
+///
+/// Index-vs-worktree diffs skip paths with no stage-0 entry, so modify/delete conflicts
+/// need an explicit pass when the user runs `grit add <path>`.
+fn stage_unmerged_paths_matching_pathspecs(
+    repo: &Repository,
+    work_tree: &Path,
+    matches: &impl Fn(&str) -> bool,
+    index: &mut Index,
+    rules: &WorktreeRules,
+) -> Result<usize> {
+    let mut unmerged: BTreeMap<Vec<u8>, ()> = BTreeMap::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            unmerged.insert(entry.path.clone(), ());
+        }
+    }
+    let mut updated = 0usize;
+    for raw_path in unmerged.keys() {
+        let rel = match std::str::from_utf8(raw_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if !matches(rel) {
+            continue;
+        }
+        let abs = work_tree.join(rel);
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let file_attrs = rules.file_attrs(rel, false);
+        let mode = mode_from_metadata(&meta);
+        let oid = materialize_worktree_blob(
+            repo.odb(),
+            &abs,
+            &meta,
+            rules.conversion(),
+            &file_attrs,
+            rel,
+            None,
+            Some(rules.filter_process()),
+        )
+        .map_err(|e| Error::Message(format!("could not store {rel}: {e}")))?;
+        let mut entry = entry_from_metadata(&meta, raw_path, oid, mode);
+        entry.mode = mode;
+        index.stage_file(entry);
+        mark_fsmonitor_staged(index, rel);
+        updated += 1;
+    }
+    Ok(updated)
 }
 
 struct TrackedStagePlan {
@@ -699,9 +771,7 @@ fn known_paths(
 ) -> Result<Vec<String>> {
     let mut set = HashSet::<String>::new();
     for entry in &index.entries {
-        if entry.stage() == 0 {
-            set.insert(String::from_utf8_lossy(&entry.path).into_owned());
-        }
+        set.insert(String::from_utf8_lossy(&entry.path).into_owned());
     }
     for entry in unstaged {
         set.insert(entry.path().to_owned());
@@ -1068,6 +1138,41 @@ mod tests {
             path: path_bytes,
             base_index_pos: 0,
         }
+    }
+
+    #[test]
+    fn stage_resolved_modify_delete_conflict_without_markers() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let base = repo.odb().write(ObjectKind::Blob, b"base\n").unwrap();
+        let theirs = repo.odb().write(ObjectKind::Blob, b"base\nfeat\n").unwrap();
+
+        let mut index = Index::new();
+        index
+            .entries
+            .push(conflict_index_entry("f", 1, base, MODE_REGULAR));
+        index
+            .entries
+            .push(conflict_index_entry("f", 3, theirs, MODE_REGULAR));
+        write_index(&repo, &mut index);
+
+        fs::write(root.join("f"), b"base\nfeat\n").unwrap();
+        let outcome = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["f".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+        assert_eq!(outcome.modified, 1);
+
+        let index = repo.load_index().unwrap();
+        assert!(!index.has_unmerged_entries());
+        let staged = index.get(b"f", 0).expect("stage 0");
+        assert_eq!(repo.odb().read(&staged.oid).unwrap().data, b"base\nfeat\n");
     }
 
     #[test]

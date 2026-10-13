@@ -70,7 +70,7 @@ pub fn remove_paths(repo: &Repository, opts: &RemoveOptions) -> Result<RemoveOut
     let mut lock = repo.begin_index_update()?;
     let mut index = repo.load_index()?;
     let head_tree = resolve_head_tree(repo)?;
-    let tracked_paths = tracked_stage0_paths(&index);
+    let tracked_paths = tracked_index_paths(&index);
 
     let to_remove = collect_removal_paths(&tracked_paths, work_tree, opts)?;
 
@@ -240,11 +240,11 @@ fn resolve_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
     }
 }
 
-fn tracked_stage0_paths(index: &Index) -> BTreeSet<String> {
+/// Stage-0 paths plus any path that appears in the index at any merge stage.
+fn tracked_index_paths(index: &Index) -> BTreeSet<String> {
     index
         .entries
         .iter()
-        .filter(|e| e.stage() == 0)
         .map(|e| String::from_utf8_lossy(&e.path).into_owned())
         .collect()
 }

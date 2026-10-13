@@ -611,10 +611,14 @@ fn merge_one_path(
         (Some(be), Some(oe), None) => {
             stage_entry(index, out_path, be, 1);
             stage_entry(index, out_path, oe, 2);
+            // Modify/delete: deleted on the other side; leave our version in the worktree.
+            conflict_content.insert(out_path.to_vec(), oe.oid);
         }
         (Some(be), None, Some(te)) => {
             stage_entry(index, out_path, be, 1);
             stage_entry(index, out_path, te, 3);
+            // Modify/delete: deleted on ours; leave their version in the worktree.
+            conflict_content.insert(out_path.to_vec(), te.oid);
         }
         (None, None, None) => {}
     }

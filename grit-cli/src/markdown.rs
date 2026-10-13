@@ -388,8 +388,18 @@ pub fn print_merge_outcome(w: &mut dyn Write, outcome: &MergeOutcome) -> anyhow:
         MergeResult::Conflicts => {
             outln!(w, "- Merge **`{}`** stopped with conflicts", outcome.branch);
             outln!(w);
-            for path in outcome.conflicts.as_deref().unwrap_or(&[]) {
-                outln!(w, "- `{path}`");
+            if let Some(details) = &outcome.conflict_details {
+                for item in details {
+                    if let Some(summary) = &item.summary {
+                        outln!(w, "- **{}** — {summary}", item.kind);
+                    } else {
+                        outln!(w, "- **{}** — `{path}`", item.kind, path = item.path);
+                    }
+                }
+            } else {
+                for path in outcome.conflicts.as_deref().unwrap_or(&[]) {
+                    outln!(w, "- `{path}`");
+                }
             }
             outln!(w);
             outln!(

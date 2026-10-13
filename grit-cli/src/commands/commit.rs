@@ -127,7 +127,7 @@ fn map_commit_error(err: Error) -> anyhow::Error {
         Error::NothingToCommit => anyhow::anyhow!("nothing to commit — working tree clean"),
         Error::DetachedHead => anyhow::anyhow!("HEAD is detached; grit commit needs a branch"),
         Error::IndexUnmerged => anyhow::anyhow!(
-            "cannot commit: merge conflicts are not fully resolved — fix conflict markers in your files and try again"
+            "cannot commit: unresolved merge conflicts remain — resolve each conflicted path (grit add or grit rm), then try again"
         ),
         Error::AmendUnborn => anyhow::anyhow!("cannot amend: no commits on this branch yet"),
         other => anyhow::anyhow!("{other}"),

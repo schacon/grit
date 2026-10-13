@@ -46,8 +46,16 @@ When both branches change the same lines:
 
 ```console
 $ grit merge topic
-Merge has conflicts in:
-  README.md
+CONFLICT (content): README.md
+
+Automatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`.
+```
+
+When one branch deleted a file and the other modified it, grit leaves the modified side's content in the work tree (like Git) so you can run `grit add <path>` to keep it or `grit rm <path>` to accept the deletion:
+
+```console
+$ grit merge feat
+CONFLICT (modify_delete): f deleted on the current branch and modified in feat; feat's version is in the work tree
 
 Automatic merge failed; fix conflicts and run `grit commit`, or run `grit merge --abort`.
 ```
@@ -86,6 +94,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `oid` | string or null | Commit the current branch points at after the merge, when applicable. |
 | `upstream` | string or null | For `set_upstream`, the remote-tracking branch that was adopted. |
 | `conflicts` | array or null | Sorted paths with unresolved conflicts when `result` is `conflicts`. |
+| `conflict_details` | array or null | When `result` is `conflicts`, each item has `path`, `kind` (`content`, `add_add`, or `modify_delete`), and optional `summary` text. |
 
 Example:
 
@@ -102,7 +111,13 @@ When the merge stops on conflicts (exit code 1), stdout is still a single JSON o
 {
   "result": "conflicts",
   "branch": "topic",
-  "conflicts": ["src/lib.rs"]
+  "conflicts": ["src/lib.rs"],
+  "conflict_details": [
+    {
+      "path": "src/lib.rs",
+      "kind": "content"
+    }
+  ]
 }
 ```
 

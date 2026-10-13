@@ -311,8 +311,8 @@ fn refresh_unmerged_tracked_path(
             }
         }
         None => {
-            index.remove(raw_path);
-            summary.removed.push(raw_path.to_vec());
+            // A missing worktree file for an unmerged path is expected for modify/delete
+            // conflicts and while the user is resolving; do not drop merge stages.
         }
     }
     Ok(())
