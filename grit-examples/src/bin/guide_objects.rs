@@ -20,7 +20,7 @@ fn write_demo_objects(
     grit_lib::error::Error,
 > {
     let blob_data = b"hello from the library guide\n";
-    let blob_oid = repo.odb().write(ObjectKind::Blob, blob_data)?;
+    let blob_oid = repo.objects().write(ObjectKind::Blob, blob_data)?;
 
     let tree_entries = vec![TreeEntry {
         mode: 0o100644,
@@ -28,7 +28,7 @@ fn write_demo_objects(
         oid: blob_oid,
     }];
     let tree_oid = repo
-        .odb()
+        .objects()
         .write(ObjectKind::Tree, &serialize_tree(&tree_entries))?;
 
     let commit = CommitData {
@@ -44,14 +44,14 @@ fn write_demo_objects(
         extra_headers: Vec::new(),
     };
     let commit_oid = repo
-        .odb()
+        .objects()
         .write(ObjectKind::Commit, &serialize_commit(&commit))?;
 
-    let tree_obj = repo.odb().read(&tree_oid)?;
+    let tree_obj = repo.objects().read(&tree_oid)?;
     let entries = parse_tree(&tree_obj.data)?;
     assert_eq!(entries[0].oid, blob_oid);
 
-    let commit_obj = repo.odb().read(&commit_oid)?;
+    let commit_obj = repo.objects().read(&commit_oid)?;
     let parsed = parse_commit(&commit_obj.data)?;
     assert_eq!(parsed.tree, tree_oid);
 

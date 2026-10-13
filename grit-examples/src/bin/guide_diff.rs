@@ -3,7 +3,7 @@
 //! Source for the library guide "Diff" page (included in the docs site).
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::diff::{diff_index_to_worktree, diff_trees, unified_diff, DiffEntry, DiffStatus};
+use grit_lib::diff::{diff_index_to_worktree, unified_diff, DiffEntry, DiffStatus};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -70,7 +70,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
     let old_tree = tree_oid(&repo, &parent)?;
     let new_tree = new_commit_data.tree;
 
-    let tree_changes = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "")?;
+    let tree_changes = repo.diff().tree_to_tree(Some(&old_tree), Some(&new_tree))?;
     println!("tree_diff_begin");
     print_name_status(&tree_changes);
     println!("tree_diff_end");

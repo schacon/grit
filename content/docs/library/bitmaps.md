@@ -11,7 +11,7 @@ Git stores optional **reachability bitmaps** alongside pack and multi-pack-index
 
 ## Reachability queries
 
-[`BitmapIndex::reachability`](rustdoc:grit_lib::pack_bitmap::BitmapIndex) (see [`bitmap_walk`](rustdoc:grit_lib::bitmap_walk)) takes a repository handle, a [`ReachabilityQuery`](rustdoc:grit_lib::bitmap_walk::ReachabilityQuery) (wants, haves, optional [`ObjectFilter`](rustdoc:grit_lib::rev_list::ObjectFilter)), and [`MissingAction`](rustdoc:grit_lib::rev_list::MissingAction) for missing links. It returns [`ReachableSet`](rustdoc:grit_lib::bitmap_walk::ReachableSet) or [`BitmapWalkUnsupported`](rustdoc:grit_lib::bitmap_walk::BitmapWalkUnsupported) when the repository is shallow or the filter needs a non-bitmap walk (`sparse:oid`, `tree:<n>` with `n > 0`).
+[`BitmapIndex::reachability`](rustdoc:grit_lib::pack_bitmap::BitmapIndex) (see the [`objects::bitmap`](rustdoc:grit_lib::objects::bitmap) domain module) takes a repository handle, a [`ReachabilityQuery`](rustdoc:grit_lib::bitmap_walk::ReachabilityQuery) (wants, haves, optional [`ObjectFilter`](rustdoc:grit_lib::rev_list::ObjectFilter)), and [`MissingAction`](rustdoc:grit_lib::rev_list::MissingAction) for missing links. It returns [`ReachableSet`](rustdoc:grit_lib::bitmap_walk::ReachableSet) or [`BitmapWalkUnsupported`](rustdoc:grit_lib::bitmap_walk::BitmapWalkUnsupported) when the repository is shallow or the filter needs a non-bitmap walk (`sparse:oid`, `tree:<n>` with `n > 0`).
 
 [`ReachableSet`](rustdoc:grit_lib::bitmap_walk::ReachableSet) exposes `object_ids` for indexed and **extended** (out-of-namespace) objects, and `iter_grouped_by_kind` for oids in Git’s bitmap order (commits, trees, blobs, tags).
 

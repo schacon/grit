@@ -3,7 +3,6 @@
 //! Source for the library guide "Repository" page (included in the docs site).
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
-use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
 use grit_lib::repo::Repository;
 
@@ -28,8 +27,7 @@ fn main() -> Result<(), Error> {
         println!("work_tree=<bare>");
     }
 
-    let cfg = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)?;
-    let name = cfg.get("user.name").unwrap_or_default();
+    let name = repo.config_handle().get("user.name")?.unwrap_or_default();
     if !name.is_empty() {
         println!("user.name={name}");
     }

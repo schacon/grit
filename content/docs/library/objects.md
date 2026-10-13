@@ -3,11 +3,11 @@ title: Objects
 summary: ObjectId, ObjectKind, and reading or writing blobs, trees, and commits through Odb.
 ---
 
-Git stores four object kinds grit-lib exposes as [`ObjectKind`](rustdoc:grit_lib::objects::ObjectKind). Every object is named by an [`ObjectId`](rustdoc:grit_lib::objects::ObjectId) (SHA-1 by default). The [`Odb`](rustdoc:grit_lib::odb::Odb) on [`Repository`](rustdoc:grit_lib::repo::Repository) reads loose objects and packed storage transparently.
+Git stores four object kinds grit-lib exposes as [`ObjectKind`](rustdoc:grit_lib::objects::ObjectKind). Every object is named by an [`ObjectId`](rustdoc:grit_lib::objects::ObjectId) (SHA-1 by default). Prefer [`Repository::objects`](rustdoc:grit_lib::repo::Repository) ([`Objects`](rustdoc:grit_lib::objects::handle::Objects)) for read/write/contains; it delegates to the pluggable [`Odb`](rustdoc:grit_lib::odb::Odb) on the same [`Repository`](rustdoc:grit_lib::repo::Repository).
 
 ## Writing
 
-[`Odb::write`](rustdoc:grit_lib::odb::Odb) takes a kind and payload bytes, stores a loose object under `objects/`, and returns the id. Tree and commit bodies must already be in Git’s text format; use [`parse_tree`](rustdoc:grit_lib::objects::parse_tree) and [`parse_commit`](rustdoc:grit_lib::objects::parse_commit) when reading them back.
+[`Objects::write`](rustdoc:grit_lib::objects::handle::Objects) (or [`Odb::write`](rustdoc:grit_lib::odb::Odb)) takes a kind and payload bytes, stores a loose object under `objects/`, and returns the id. Tree and commit bodies must already be in Git’s text format; use [`parse_tree`](rustdoc:grit_lib::objects::parse_tree) and [`parse_commit`](rustdoc:grit_lib::objects::parse_commit) when reading them back.
 
 [`Odb::hash`](rustdoc:grit_lib::odb::Odb) (or [`HashAlgo::hash_object`](rustdoc:grit_lib::objects::HashAlgo)) computes an id without writing—useful for dry runs and tests. The algorithm follows the repository’s configured object format (SHA-1 or SHA-256).
 

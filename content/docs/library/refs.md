@@ -3,7 +3,7 @@ title: Refs
 summary: Repository ref handles, transactions, backend selection, and path-based helpers.
 ---
 
-References name commits and other objects. Prefer an open [`Repository`](rustdoc:grit_lib::repo::Repository): call `refs()` to borrow the cached [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) selected for that repository, or `with_ref_store` to inject a custom backend (for example [`MemoryRefStore`](rustdoc:grit_lib::refs::store::MemoryRefStore) or the `custom_ref_store` example below).
+References name commits and other objects. Prefer [`Repository::references`](rustdoc:grit_lib::repo::Repository) ([`References`](rustdoc:grit_lib::refs::handle::References)) for resolve/list/update on the repository’s ref backend. Call [`Repository::refs`](rustdoc:grit_lib::repo::Repository) to borrow the cached [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) trait object, or `with_ref_store` to inject a custom backend (for example [`MemoryRefStore`](rustdoc:grit_lib::refs::store::MemoryRefStore) or the `custom_ref_store` example below).
 
 Path-based helpers in [`refs`](rustdoc:grit_lib::refs) (`resolve_ref`, `list_refs`, `write_ref`, …) still work on a git directory; they open the same backend via [`open_ref_store`](rustdoc:grit_lib::refs::store::open_ref_store). Rev-parse and porcelain on a `Repository` always go through the handle's store.
 
@@ -23,7 +23,7 @@ Batch ref updates use [`RefTransaction`](rustdoc:grit_lib::refs::store::RefTrans
 
 [`list_refs`](rustdoc:grit_lib::refs::list_refs) and [`list_refs_for_repository`](rustdoc:grit_lib::refs::list_refs_for_repository) iterate with a prefix. [`write_ref`](rustdoc:grit_lib::refs::write_ref) and [`write_symbolic_ref`](rustdoc:grit_lib::refs::write_symbolic_ref) update single refs; use transactions when updating many refs atomically.
 
-Reflog helpers live in [`reflog`](rustdoc:grit_lib::reflog) and on [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) (`for_each_reflog_entry`, `replace_reflog`, …). [`append_reflog`](rustdoc:grit_lib::refs::append_reflog) records an update; [`read_reflog`](rustdoc:grit_lib::reflog::read_reflog) reads entries back.
+Reflog helpers live in [`reflog`](rustdoc:grit_lib::refs::reflog) and on [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) (`for_each_reflog_entry`, `replace_reflog`, …). [`append_reflog`](rustdoc:grit_lib::refs::append_reflog) records an update; [`read_reflog`](rustdoc:grit_lib::reflog::read_reflog) reads entries back.
 
 ## Examples
 

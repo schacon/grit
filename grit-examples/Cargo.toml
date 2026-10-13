@@ -59,6 +59,34 @@ path = "src/bin/guide_index.rs"
 name = "guide_diff"
 path = "src/bin/guide_diff.rs"
 
+[[bin]]
+name = "guide_config"
+path = "src/bin/guide_config.rs"
+
+[[bin]]
+name = "guide_worktree"
+path = "src/bin/guide_worktree.rs"
+
+[[bin]]
+name = "guide_stash"
+path = "src/bin/guide_stash.rs"
+
+[[bin]]
+name = "guide_notes"
+path = "src/bin/guide_notes.rs"
+
+[[bin]]
+name = "guide_bundle"
+path = "src/bin/guide_bundle.rs"
+
+[[bin]]
+name = "guide_merge"
+path = "src/bin/guide_merge.rs"
+
+[[bin]]
+name = "guide_maintenance"
+path = "src/bin/guide_maintenance.rs"
+
 [lints]
 workspace = true
 

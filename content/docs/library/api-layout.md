@@ -42,4 +42,4 @@ Removed **view modules** (use domains above instead): `object_store`, `reference
 
 ## Nested implementation modules
 
-Some canonical paths re-export **submodules** of the flat implementation (for example `grit_lib::objects::odb::store` mirrors `grit_lib::odb::store`). Prefer the canonical prefix in new code; flat paths remain until a later plan step makes internal modules private.
+Some canonical paths re-export **submodules** of the flat implementation (for example `grit_lib::odb::store` mirrors `grit_lib::odb::store`). Prefer the canonical prefix in new code; flat paths remain until a later plan step makes internal modules private.
