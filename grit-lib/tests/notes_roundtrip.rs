@@ -168,6 +168,20 @@ fn fanout_notes_tree_read_and_update() {
         !listed.contains(&remove_target.to_hex()),
         "git notes list must not include removed note"
     );
+
+    let note_lines: Vec<_> = listed.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        note_lines.len(),
+        319,
+        "expected 319 notes after removing one from 320"
+    );
+
+    let untouched = sample_commits[2];
+    assert_eq!(
+        git_cmd(dir.path(), &["notes", "show", &untouched.to_hex()]).trim(),
+        "note-319",
+        "unaffected fanout note body must match git"
+    );
 }
 
 #[test]
@@ -198,16 +212,58 @@ fn add_existing_without_force_is_typed_error() {
 }
 
 #[test]
+fn padded_git_notes_ref_is_invalid() {
+    let err = NotesRef::from_full(" refs/notes/spaced ").expect_err("padded ref");
+    assert!(matches!(err, Error::InvalidNotesRef(_)));
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    let commit = seed_commit(dir.path(), "f", "x\n", "init");
+    let git_out = std::process::Command::new("git")
+        .current_dir(dir.path())
+        .env("GIT_NOTES_REF", " refs/notes/spaced ")
+        .args(["notes", "add", "-m", "test", &commit.to_hex()])
+        .output()
+        .expect("git notes");
+    assert!(
+        !git_out.status.success(),
+        "system git must reject padded GIT_NOTES_REF"
+    );
+}
+
+#[test]
+fn trailing_space_notes_ref_is_invalid() {
+    let err = NotesRef::from_full("refs/notes/spaced ").expect_err("trailing space");
+    assert!(matches!(err, Error::InvalidNotesRef(_)));
+}
+
+#[test]
+fn padded_core_notes_ref_is_invalid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    git_cmd(
+        dir.path(),
+        &["config", "core.notesRef", " refs/notes/spaced "],
+    );
+    let repo = open_grit(dir.path());
+    let err =
+        resolve_configured_notes_ref(repo.environment(), repo.config().expect("config").as_ref())
+            .expect_err("padded core.notesRef");
+    assert!(
+        matches!(err, Error::InvalidNotesRef(_)),
+        "expected InvalidNotesRef, got {err:?}"
+    );
+}
+
+#[test]
 fn empty_core_notes_ref_is_invalid() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());
     git_cmd(dir.path(), &["config", "core.notesRef", ""]);
     let repo = open_grit(dir.path());
-    let err = resolve_configured_notes_ref(
-        repo.environment(),
-        repo.config().expect("config").as_ref(),
-    )
-    .expect_err("empty config ref");
+    let err =
+        resolve_configured_notes_ref(repo.environment(), repo.config().expect("config").as_ref())
+            .expect_err("empty config ref");
     assert!(
         matches!(err, Error::InvalidNotesRef(_)),
         "expected InvalidNotesRef, got {err:?}"
