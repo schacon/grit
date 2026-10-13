@@ -505,15 +505,15 @@ impl std::fmt::Display for NotesRef {
 /// # Errors
 ///
 /// Returns [`Error::InvalidNotesRef`](crate::error::Error::InvalidNotesRef) when a
-/// configured value is outside `refs/notes/`.
+/// configured value is empty or outside `refs/notes/`.
 pub fn resolve_configured_notes_ref<E: IdentityEnv>(
     env: &E,
     config: &ConfigSet,
 ) -> Result<NotesRef> {
-    if let Some(value) = env.var("GIT_NOTES_REF").filter(|v| !v.trim().is_empty()) {
+    if let Some(value) = env.var("GIT_NOTES_REF") {
         return NotesRef::from_full(&value);
     }
-    if let Some(value) = config.get("core.notesRef").filter(|v| !v.trim().is_empty()) {
+    if let Some(value) = config.get("core.notesRef") {
         return NotesRef::from_full(&value);
     }
     Ok(NotesRef::commits())
@@ -1206,6 +1206,28 @@ mod tests {
             oid: zero_oid(),
         };
         assert_eq!(display_note_path(&entry), full);
+    }
+
+    #[test]
+    fn resolve_configured_notes_ref_rejects_empty_git_notes_ref() {
+        use crate::config::ConfigSet;
+        use std::collections::HashMap;
+        use std::ffi::OsString;
+
+        struct MapEnv(HashMap<String, String>);
+        impl crate::ident_resolve::IdentityEnv for MapEnv {
+            fn var(&self, key: &str) -> Option<String> {
+                self.0.get(key).cloned()
+            }
+            fn var_os(&self, key: &str) -> Option<OsString> {
+                self.var(key).map(OsString::from)
+            }
+        }
+
+        let env = MapEnv(HashMap::from([("GIT_NOTES_REF".to_owned(), String::new())]));
+        let err = resolve_configured_notes_ref(&env, &ConfigSet::default())
+            .expect_err("empty GIT_NOTES_REF");
+        assert!(matches!(err, Error::InvalidNotesRef(_)));
     }
 
     #[test]

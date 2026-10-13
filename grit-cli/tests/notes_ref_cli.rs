@@ -1,7 +1,11 @@
 //! Regression: `--ref` must work after the notes subcommand (documented synopsis).
 
+use std::process::Command;
+
 use grit_test_support::CliFixture;
 use grit_test_support::git;
+
+const GRIT: &str = env!("CARGO_BIN_EXE_grit");
 
 fn seed_commit(fixture: &CliFixture) {
     git(fixture.path(), &["commit", "--allow-empty", "-m", "seed"]);
@@ -58,6 +62,32 @@ fn notes_add_ref_after_subcommand() {
         "refs/notes/custom",
     ]);
     assert!(out.ok(), "{}", out.dump("notes add --ref"));
+}
+
+#[test]
+fn empty_git_notes_ref_rejects_add() {
+    let fixture = CliFixture::empty();
+    seed_commit(&fixture);
+    fixture.run_ok(&["config", "user.name", "Test"]);
+    fixture.run_ok(&["config", "user.email", "t@example.com"]);
+    let mut cmd = Command::new(GRIT);
+    cmd.current_dir(fixture.path())
+        .args(["notes", "add", "HEAD", "-m", "must fail"])
+        .env("GIT_NOTES_REF", "");
+    grit_test_support::configure_git_env(&mut cmd);
+    cmd.env("TZ", "UTC").env("NO_COLOR", "1");
+    let out = cmd.output().expect("spawn grit");
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "grit must reject empty GIT_NOTES_REF (stderr: {})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let notes_ref = fixture.path().join(".git/refs/notes/commits");
+    assert!(
+        !notes_ref.exists(),
+        "must not fall back to refs/notes/commits"
+    );
 }
 
 #[test]

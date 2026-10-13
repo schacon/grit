@@ -198,6 +198,23 @@ fn add_existing_without_force_is_typed_error() {
 }
 
 #[test]
+fn empty_core_notes_ref_is_invalid() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    git_cmd(dir.path(), &["config", "core.notesRef", ""]);
+    let repo = open_grit(dir.path());
+    let err = resolve_configured_notes_ref(
+        repo.environment(),
+        repo.config().expect("config").as_ref(),
+    )
+    .expect_err("empty config ref");
+    assert!(
+        matches!(err, Error::InvalidNotesRef(_)),
+        "expected InvalidNotesRef, got {err:?}"
+    );
+}
+
+#[test]
 fn custom_notes_ref() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());
