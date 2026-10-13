@@ -1,5 +1,6 @@
 //! Repository-scoped revision parsing and walking via [`RevWalk`].
 use crate::error::Result;
+use crate::object_inspect::{ResolveError, ResolvedObject};
 use crate::objects::ObjectId;
 use crate::repo::Repository;
 use crate::rev_list::{rev_list, split_revision_token, RevListOptions, RevListResult};
@@ -57,6 +58,16 @@ impl<'repo> RevWalk<'repo> {
     #[inline]
     pub fn resolve(&self, spec: &str) -> Result<ObjectId> {
         resolve_revision(self.repo, spec)
+    }
+
+    /// Resolve `spec` to oid, kind, size, and optional ref name ([`ResolvedObject`]).
+    ///
+    /// # Errors
+    ///
+    /// See [`Repository::resolve`].
+    #[inline]
+    pub fn resolve_object(&self, spec: &str) -> std::result::Result<ResolvedObject, ResolveError> {
+        self.repo.resolve(spec)
     }
 
     /// Walk commits matching `spec` (supports `A..B`, `^tip`, and plain tips).

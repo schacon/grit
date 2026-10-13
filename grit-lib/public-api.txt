@@ -4572,6 +4572,24 @@ pub fn grit_lib::maintenance::fsck(&grit_lib::repo::Repository, &grit_lib::maint
 pub fn grit_lib::maintenance::gc(&grit_lib::repo::Repository, &grit_lib::maintenance::GcOptions) -> grit_lib::error::Result<grit_lib::maintenance::GcStats>
 pub fn grit_lib::maintenance::remove_superseded_pack_files(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<usize>
 pub fn grit_lib::maintenance::repack_all(&grit_lib::repo::Repository, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackStats>
+pub mod grit_lib::object_inspect
+pub fn grit_lib::object_inspect::abbreviate_for_display(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, bool) -> grit_lib::error::Result<alloc::string::String>
+#[non_exhaustive] pub enum grit_lib::object_inspect::ObjectContents
+pub grit_lib::object_inspect::ObjectContents::Blob(alloc::vec::Vec<u8>)
+pub grit_lib::object_inspect::ObjectContents::Commit(grit_lib::objects::CommitData)
+pub grit_lib::object_inspect::ObjectContents::Tag(grit_lib::objects::TagData)
+pub grit_lib::object_inspect::ObjectContents::Tree(alloc::vec::Vec<grit_lib::objects::TreeEntry>)
+#[non_exhaustive] pub enum grit_lib::object_inspect::ResolveError
+pub grit_lib::object_inspect::ResolveError::AmbiguousShortObject::candidates: alloc::vec::Vec<grit_lib::revwalk::rev_parse_error::AmbiguousObjectHint>
+pub grit_lib::object_inspect::ResolveError::AmbiguousShortObject::spec: alloc::string::String
+pub grit_lib::object_inspect::ResolveError::PathNotInTree::path: alloc::string::String
+pub grit_lib::object_inspect::ResolveError::PathNotInTree::revision: alloc::string::String
+pub grit_lib::object_inspect::ResolveError::UnknownRevision::spec: alloc::string::String
+pub struct grit_lib::object_inspect::ResolvedObject
+pub grit_lib::object_inspect::ResolvedObject::kind: grit_lib::objects::ObjectKind
+pub grit_lib::object_inspect::ResolvedObject::oid: grit_lib::objects::ObjectId
+pub grit_lib::object_inspect::ResolvedObject::ref_name: core::option::Option<alloc::string::String>
+pub grit_lib::object_inspect::ResolvedObject::size: u64
 pub mod grit_lib::notes
 pub enum grit_lib::notes::NotesMergeStrategy
 pub grit_lib::notes::NotesMergeStrategy::CatSortUniq
@@ -9337,6 +9355,8 @@ pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::Rep
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
+pub fn grit_lib::repo::Repository::read_object_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::object_inspect::ObjectContents>
+pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
@@ -12467,6 +12487,8 @@ pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::Rep
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
+pub fn grit_lib::repo::Repository::read_object_for_display(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<grit_lib::object_inspect::ObjectContents>
+pub fn grit_lib::repo::Repository::resolve(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
@@ -12965,6 +12987,7 @@ impl<'repo> grit_lib::revwalk::handle::RevWalk<'repo>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::new(&'repo grit_lib::repo::Repository) -> Self
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve(&self, &str) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve_object(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::walk(&self, &str, &grit_lib::revwalk::rev_list::RevListOptions) -> grit_lib::error::Result<grit_lib::revwalk::rev_list::RevListResult>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::parse_tokens(&self, &[&str]) -> grit_lib::error::Result<grit_lib::revwalk::RevWalkParsedSpecs>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::commits(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
@@ -13639,6 +13662,7 @@ impl<'repo> grit_lib::revwalk::handle::RevWalk<'repo>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::new(&'repo grit_lib::repo::Repository) -> Self
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve(&self, &str) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
+pub fn grit_lib::revwalk::handle::RevWalk<'repo>::resolve_object(&self, &str) -> core::result::Result<grit_lib::object_inspect::ResolvedObject, grit_lib::object_inspect::ResolveError>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::walk(&self, &str, &grit_lib::revwalk::rev_list::RevListOptions) -> grit_lib::error::Result<grit_lib::revwalk::rev_list::RevListResult>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::parse_tokens(&self, &[&str]) -> grit_lib::error::Result<grit_lib::revwalk::RevWalkParsedSpecs>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::commits(&self, &[&str], &grit_lib::revwalk::RevWalkListOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>

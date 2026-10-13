@@ -112,6 +112,8 @@ enum Cmd {
         #[arg(long, value_delimiter = ',', default_values_t = vec![10_000, 100_000])]
         sizes: Vec<usize>,
     },
+    /// `grit resolve` / `grit cat` vs `git rev-parse` / `git cat-file -p`
+    ResolveCat,
     /// Switch / pick / merge hot-path scenarios (L/H sizes by default)
     HotPaths {
         #[arg(long, value_delimiter = ',', default_values_t = vec![10_000, 100_000])]
@@ -684,6 +686,13 @@ fn main() -> Result<()> {
             eprintln!("Running stash benchmarks...");
             let cfg = run_config(&cli, true);
             run_stash_suite(&hyperfine, &git, &grit, &cfg, sizes, timestamp)?
+        }
+        Cmd::ResolveCat => {
+            eprintln!("Running resolve/cat benchmarks...");
+            let cfg = run_config(&cli, true);
+            grit_utils::resolve_cat_suite::run_resolve_cat_suite(
+                &hyperfine, &git, &grit, &cfg, timestamp,
+            )?
         }
         Cmd::Odb => {
             eprintln!("Running ODB read benchmarks...");

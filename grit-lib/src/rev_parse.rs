@@ -1975,9 +1975,10 @@ fn disambiguate_hex_by_peel(
         return Ok(filtered[0]);
     }
     if filtered.is_empty() {
-        return Err(Error::InvalidRef(format!(
-            "short object ID {spec} is ambiguous"
-        )));
+        return Err(RevParseError::AmbiguousShortObject {
+            spec: spec.to_owned(),
+        }
+        .into());
     }
     let mut peeled_targets: HashSet<ObjectId> = HashSet::new();
     for oid in &filtered {
@@ -2009,9 +2010,10 @@ fn disambiguate_hex_by_peel(
             }
         }
     }
-    Err(Error::InvalidRef(format!(
-        "short object ID {spec} is ambiguous"
-    )))
+    Err(RevParseError::AmbiguousShortObject {
+        spec: spec.to_owned(),
+    }
+    .into())
 }
 
 fn commit_reachable_closure(repo: &Repository, start: ObjectId) -> Result<HashSet<ObjectId>> {
@@ -2093,18 +2095,20 @@ fn try_resolve_describe_name(repo: &Repository, spec: &str) -> Result<Option<Obj
             return Ok(Some(strict_candidates[0]));
         }
         if strict_candidates.len() > 1 {
-            return Err(Error::InvalidRef(format!(
-                "short object ID {hex_abbrev} is ambiguous"
-            )));
+            return Err(RevParseError::AmbiguousShortObject {
+                spec: hex_abbrev.to_owned(),
+            }
+            .into());
         }
     }
 
     match commit_candidates.len() {
         0 => Err(Error::ObjectNotFound(spec.to_owned())),
         1 => Ok(Some(commit_candidates[0])),
-        _ => Err(Error::InvalidRef(format!(
-            "short object ID {hex_abbrev} is ambiguous"
-        ))),
+        _ => Err(RevParseError::AmbiguousShortObject {
+            spec: hex_abbrev.to_owned(),
+        }
+        .into()),
     }
 }
 
@@ -2350,10 +2354,10 @@ fn resolve_base(
                     }
                 }
             }
-            return Err(Error::InvalidRef(format!(
-                "short object ID {} is ambiguous",
-                spec
-            )));
+            return Err(RevParseError::AmbiguousShortObject {
+                spec: spec.to_owned(),
+            }
+            .into());
         }
     }
 

@@ -96,6 +96,13 @@ pub enum RevParseError {
         spec: String,
     },
 
+    /// A short hex prefix matches more than one object.
+    #[error("short object id '{spec}' is ambiguous")]
+    AmbiguousShortObject {
+        /// Abbreviated object id from the user spec.
+        spec: String,
+    },
+
     /// Reflog selector used but the reflog has no entries.
     #[error("log for '{ref_display}' is empty")]
     ReflogEmpty {

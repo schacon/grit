@@ -792,6 +792,7 @@ name = "grit-cli"
 version = "0.5.7"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "clap_complete",
  "grit-lib",

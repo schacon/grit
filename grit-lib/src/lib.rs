@@ -223,6 +223,7 @@ pub(crate) mod midx;
 pub(crate) mod midx_error;
 pub(crate) mod net_trace;
 pub mod notes;
+pub mod object_inspect;
 pub mod objects;
 pub(crate) mod odb;
 pub(crate) mod pack;

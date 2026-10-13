@@ -23,6 +23,7 @@ pub mod refs_driver;
 pub mod refs_fixture;
 pub mod refs_suite;
 pub mod render;
+pub mod resolve_cat_suite;
 pub mod resource;
 pub mod revwalk_suite;
 pub mod scenarios;

@@ -47,3 +47,7 @@ pub mod rev_parse_error {
     //! rev_parse_error API (re-exported at this path).
     pub use crate::rev_parse_error::*;
 }
+pub mod object_inspect {
+    //! Typed revision resolution and object display payloads.
+    pub use crate::object_inspect::*;
+}
