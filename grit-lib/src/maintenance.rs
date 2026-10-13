@@ -728,6 +728,7 @@ pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
     let config = repo.config()?;
     let inner_opts = repo_fsck::FsckOptions {
         connectivity_only: !opts.check_objects,
+        check_connectivity: opts.check_objects,
         check_dangling: false,
         strict: opts.strict,
     };

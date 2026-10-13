@@ -54,6 +54,8 @@ pub use roots::{index_object_roots, reachability_roots};
 pub struct FsckOptions {
     /// When true, skip full object-store validation and only check connectivity from roots.
     pub connectivity_only: bool,
+    /// When false, skip reachability walks and index blob checks (refs/MIDX may still run).
+    pub check_connectivity: bool,
     /// When true, compute [`FsckReport::dangling`] after the reachability walk.
     pub check_dangling: bool,
     /// Treat ref-fsck warnings as errors (Git `--strict` for references).
@@ -64,6 +66,7 @@ impl Default for FsckOptions {
     fn default() -> Self {
         Self {
             connectivity_only: false,
+            check_connectivity: true,
             check_dangling: true,
             strict: false,
         }
@@ -76,6 +79,7 @@ impl FsckOptions {
     pub fn full_repository(strict: bool) -> Self {
         Self {
             connectivity_only: false,
+            check_connectivity: true,
             check_dangling: true,
             strict,
         }
@@ -86,6 +90,7 @@ impl FsckOptions {
     pub fn connectivity_and_refs(strict: bool) -> Self {
         Self {
             connectivity_only: true,
+            check_connectivity: true,
             check_dangling: false,
             strict,
         }
@@ -374,20 +379,24 @@ pub fn fsck(
         }
     }
 
-    let index_roots = index_object_roots(repo)?;
-    let roots = reachability_roots(repo)?;
-    let (reachable, connectivity_issues) = walk_connectivity(
-        repo,
-        &roots,
-        &index_roots,
-        &config,
-        options.strict,
-        progress,
-        cancel,
-    )?;
-    issues.extend(connectivity_issues);
+    let mut reachable = HashSet::new();
+    if options.check_connectivity {
+        let index_roots = index_object_roots(repo)?;
+        let roots = reachability_roots(repo)?;
+        let (walked, connectivity_issues) = walk_connectivity(
+            repo,
+            &roots,
+            &index_roots,
+            &config,
+            options.strict,
+            progress,
+            cancel,
+        )?;
+        reachable = walked;
+        issues.extend(connectivity_issues);
 
-    fsck_index_missing_blobs(repo, &config, options.strict, &mut issues)?;
+        fsck_index_missing_blobs(repo, &config, options.strict, &mut issues)?;
+    }
     dedupe_issues(&mut issues);
 
     let mut dangling = Vec::new();
@@ -415,10 +424,10 @@ pub fn fsck(
     })
 }
 
-fn should_emit(config: &ConfigSet, strict: bool, msg_id: &str) -> bool {
+fn should_emit(config: &ConfigSet, _strict: bool, msg_id: &str) -> bool {
     let key = format!("fsck.{msg_id}");
     let level = config.get(&key).map(|s| s.to_ascii_lowercase());
-    !matches!(level.as_deref(), Some("ignore") if !strict)
+    !matches!(level.as_deref(), Some("ignore"))
 }
 
 fn push_bad_object(

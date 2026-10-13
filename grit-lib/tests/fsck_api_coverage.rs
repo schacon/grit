@@ -15,11 +15,13 @@ use std::path::PathBuf;
 fn fsck_options_constructors_and_defaults() {
     let d = FsckOptions::default();
     assert!(d.check_dangling);
+    assert!(d.check_connectivity);
     assert!(!d.connectivity_only);
     let full = FsckOptions::full_repository(true);
     assert!(full.strict);
     let conn = FsckOptions::connectivity_and_refs(false);
     assert!(conn.connectivity_only);
+    assert!(conn.check_connectivity);
     assert!(!conn.check_dangling);
     assert!(
         !FsckOptions::full_repository(false)

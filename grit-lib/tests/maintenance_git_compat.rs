@@ -178,6 +178,44 @@ fn gc_preserves_staged_only_blob() {
 }
 
 #[test]
+fn fsck_skips_object_checks_when_check_objects_disabled() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    one_commit(&repo);
+    let wt = repo.work_tree().expect("wt");
+    std::fs::write(wt.join("orphan-index.txt"), b"x").expect("write");
+    stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    let index = Index::load(&repo.git_dir().join("index")).expect("index");
+    let staged_oid = index
+        .entries()
+        .iter()
+        .find(|e| e.path.ends_with(b"orphan-index.txt"))
+        .expect("entry")
+        .oid;
+    let loose = repo
+        .odb()
+        .enumerate_local_loose_objects()
+        .expect("loose")
+        .into_iter()
+        .find(|(oid, _)| *oid == staged_oid)
+        .expect("loose path");
+    std::fs::remove_file(loose.1).expect("remove blob");
+
+    let mut opts = FsckOptions::default();
+    opts.strict = false;
+    opts.check_objects = false;
+    opts.check_refs = false;
+    opts.check_midx = false;
+    let report = repo_fsck(&repo, &opts).expect("fsck");
+    assert!(report.ok, "{:?}", report.issues);
+    assert!(
+        !report.issues.iter().any(|i| i.msg_id == "missingObject"),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn fsck_reports_missing_index_blob_after_corruption() {
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");

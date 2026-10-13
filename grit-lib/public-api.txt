@@ -4352,6 +4352,7 @@ impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckS
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
 #[non_exhaustive] pub struct grit_lib::maintenance::repository_fsck::FsckOptions
+pub grit_lib::maintenance::repository_fsck::FsckOptions::check_connectivity: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::check_dangling: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::connectivity_only: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::strict: bool

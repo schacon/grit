@@ -523,6 +523,44 @@ fn malformed_reachable_tree_is_bad_object_not_error() {
 }
 
 #[test]
+fn strict_fsck_honors_ignore_config_for_object_diagnostics() {
+    use std::io::Write;
+    let (dir, repo) = init_repo();
+    let head = one_commit(&repo);
+    let tag_body = format!(
+        "object {}\ntype commit\ntag missing-tagger\n\n",
+        head.to_hex()
+    );
+    let tag_oid = repo
+        .odb()
+        .write(ObjectKind::Tag, tag_body.as_bytes())
+        .expect("tag");
+    write_ref_loose(dir.path(), "refs/tags/missing-tagger", tag_oid);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.path().join(".git/config"))
+        .expect("open config")
+        .write_all(b"\n[fsck]\n\tmissingTaggerEntry = ignore\n")
+        .expect("config");
+
+    let git_text = git(
+        dir.path(),
+        &["-c", "fsck.missingTaggerEntry=ignore", "fsck", "--strict"],
+    );
+    assert!(
+        !git_text.contains("missingTaggerEntry"),
+        "git must suppress ignored msg-id even in strict mode: {git_text}"
+    );
+
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(true));
+    assert!(
+        !has_msg_id(&report, "missingTaggerEntry"),
+        "ignored msg-id must not appear: {:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn malformed_reachable_tag_is_bad_object_not_error() {
     let (dir, repo) = init_repo();
     one_commit(&repo);
