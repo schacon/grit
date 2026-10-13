@@ -77,6 +77,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         patch_id::PatchIdOutcome,
         pick::PickOutcome,
         push::PushOutcome,
+        reflog::{ReflogDeleteOutcome, ReflogExpireOutcome, ReflogListOutcome},
         remote::RemoteOutcome,
         repack::RepackOutcome,
         reset::ResetCliOutcome,
@@ -108,6 +109,9 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<LogOutcome>("log"),
         entry::<RevsOutcome>("revs"),
         entry::<MergeBaseOutcome>("merge-base"),
+        entry::<ReflogListOutcome>("reflog"),
+        entry::<ReflogDeleteOutcome>("reflog.delete"),
+        entry::<ReflogExpireOutcome>("reflog.expire"),
         entry::<BlameOutcome>("blame"),
         entry::<DiffOutcome>("diff"),
         entry::<ShowOutcome>("show"),
@@ -198,6 +202,12 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("add") => "remote.add",
             Some("refs") => "remote.refs",
             _ => "remote",
+        },
+        "reflog" => match positional.get(1).copied() {
+            None => "reflog",
+            Some("delete") => "reflog.delete",
+            Some("expire") => "reflog.expire",
+            _ => return None,
         },
         "stash" => match positional.get(1).copied() {
             None | Some("push") => {
@@ -429,6 +439,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("repack", &["repack", "--dry-run"]),
         ("status", &["status"]),
         ("log", &["log"]),
+        ("reflog", &["reflog"]),
         ("diff", &["diff"]),
         ("diff_staged", &["diff", "--staged"]),
         ("show_head", &["show", "HEAD"]),

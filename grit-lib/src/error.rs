@@ -651,6 +651,22 @@ pub enum Error {
         n: usize,
     },
 
+    /// Ref does not exist and has no reflog entries.
+    #[error("unknown ref '{refname}'")]
+    ReflogUnknownRef {
+        /// User-supplied or DWIM ref name.
+        refname: String,
+    },
+
+    /// `ref@{{n}}` is out of range for the current reflog.
+    #[error("reflog entry {refname}@{{{index}}} not found")]
+    ReflogIndexOutOfRange {
+        /// Ref whose reflog was read.
+        refname: String,
+        /// Requested newest-first index.
+        index: usize,
+    },
+
     /// [`create_stash`](crate::porcelain::stash::create_stash) requires at least one commit.
     #[error("cannot stash without a commit")]
     StashNoInitialCommit,

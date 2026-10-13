@@ -38,7 +38,7 @@
 //!   [`refs::References`], [`index::IndexHandle`],
 //!   [`config::ConfigHandle`], [`revwalk::RevWalk`],
 //!   [`diff::Diff`]), plus [`repo_handles`] for remotes, worktrees, stash,
-//!   notes, and bundles.
+//!   notes, reflogs, and bundles.
 //! - [`prelude`] re-exports the types most call sites need.
 //! - [`porcelain`] holds user-facing operations that return structured result
 //!   *models* (the CLI renders them).

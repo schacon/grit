@@ -55,6 +55,11 @@ fn snapshot_log() {
 }
 
 #[test]
+fn snapshot_reflog() {
+    snapshot_all_modes("reflog", &["reflog"]);
+}
+
+#[test]
 fn snapshot_log_json_filter_commits_oid() {
     let fixture = CliFixture::new();
     fixture.snapshot_all_modes_exits(

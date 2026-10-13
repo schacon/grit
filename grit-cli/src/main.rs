@@ -76,6 +76,29 @@ enum RemoteAction {
     },
 }
 
+/// Subcommands of `grit reflog`.
+#[derive(Debug, Subcommand)]
+enum ReflogAction {
+    /// Remove one or more reflog entries (`ref@{n}`).
+    Delete {
+        /// Reflog selectors (`main@{1}`, `HEAD@{0}`, …).
+        #[arg(required = true, value_name = "REF@{N}")]
+        specs: Vec<String>,
+    },
+    /// Drop reflog entries older than configured or explicit cutoffs.
+    Expire {
+        /// Process every ref under `refs/`, not only refs that already have log files.
+        #[arg(long)]
+        all: bool,
+        /// Expire reachable entries older than this (Git `--expire` syntax).
+        #[arg(long = "expire", value_name = "DATE")]
+        expire: Option<String>,
+        /// Expire unreachable entries older than this.
+        #[arg(long = "expire-unreachable", value_name = "DATE")]
+        expire_unreachable: Option<String>,
+    },
+}
+
 /// Subcommands of `grit stash`.
 #[derive(Debug, Subcommand)]
 enum StashAction {
@@ -286,6 +309,17 @@ enum Command {
         /// Exit 0 when `a` is an ancestor of `b`, 1 otherwise; prints nothing in human mode.
         #[arg(long = "is-ancestor")]
         is_ancestor: bool,
+    },
+    /// Show, delete, or expire reflog entries.
+    Reflog {
+        /// Ref to show (defaults to `HEAD`).
+        #[arg(value_name = "REF")]
+        reference: Option<String>,
+        /// Show at most this many entries (newest first).
+        #[arg(long)]
+        limit: Option<usize>,
+        #[command(subcommand)]
+        action: Option<ReflogAction>,
     },
     /// Show who last modified each line of a file.
     Blame {
@@ -817,6 +851,25 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             }
             Ok(())
         }
+        Command::Reflog {
+            reference,
+            limit,
+            action,
+        } => match action {
+            None => emit(&commands::reflog::run_show(reference, limit)?, opts, ctx),
+            Some(ReflogAction::Delete { specs }) => {
+                emit(&commands::reflog::run_delete(specs)?, opts, ctx)
+            }
+            Some(ReflogAction::Expire {
+                all,
+                expire,
+                expire_unreachable,
+            }) => emit(
+                &commands::reflog::run_expire(all, expire, expire_unreachable)?,
+                opts,
+                ctx,
+            ),
+        },
         Command::Blame {
             file,
             rev,

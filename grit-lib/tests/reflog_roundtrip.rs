@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::config::ConfigSet;
+use grit_lib::error::Error;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::reflog::{
     all_reflog_oids, all_reflog_oids_ordered, delete_reflog_entries, expire_reflog,
@@ -19,11 +20,13 @@ use grit_lib::refs::reflog::{
     reflog_exists, truncate_last_reflog_line, ReflogEntry, ReflogExpireParams,
 };
 use grit_lib::refs::reftable::{reftable_create_reflog, reftable_replace_reflog};
+use grit_lib::refs::store::RefName;
 use grit_lib::refs::{
     append_reflog, append_reflog_with_config, effective_log_refs_config, read_log_refs_config,
     reflog_file_path, write_ref, write_symbolic_ref,
 };
 use grit_lib::repo::{InitOptions, Repository};
+use grit_lib::repo_handles::ExpireOptions;
 
 use support::{
     append_repo_config, assert_reflog_tree_matches, copy_worktree, each_backend, empty_commit_oid,
@@ -1108,5 +1111,105 @@ fn all_reflog_oids_and_ordered_match_git_walk() {
         let mut manual_set = BTreeSet::new();
         manual_set.extend(ordered.iter().copied());
         assert_eq!(grit_set, manual_set.into_iter().collect());
+    });
+}
+
+#[test]
+fn git_written_reflog_read_by_grit_both_backends() {
+    each_backend_git_oracle(|_, repo| {
+        let refname = "refs/heads/main";
+        seed_three_entry_reflog(repo, refname);
+        let grit_repo = open_repo(repo.worktree());
+        let name = RefName::try_from(refname).expect("valid");
+        let listed = grit_repo.reflogs().entries(&name).expect("entries");
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[0].index, 0);
+        let show = git(
+            repo.worktree(),
+            &["reflog", "show", "--format=%gs", "-1", "main"],
+        );
+        assert!(show.contains("third"), "git tip message: {show:?}");
+    });
+}
+
+#[test]
+fn grit_reflog_delete_then_git_reflog_show_and_fsck() {
+    each_backend_git_oracle(|backend, repo| {
+        let refname = "refs/heads/main";
+        seed_three_entry_reflog(repo, refname);
+        let grit_repo = open_repo(repo.worktree());
+        let name = RefName::try_from(refname).expect("valid");
+        grit_repo
+            .reflogs()
+            .delete(&name, &[1], false)
+            .expect("delete middle entry");
+        let show = git(repo.worktree(), &["reflog", "show", "--format=%gs", "main"]);
+        assert!(
+            !show.contains("second"),
+            "deleted entry must be gone: {show:?}"
+        );
+        assert!(show.contains("third"));
+        assert!(git_fsck_strict(repo.worktree()));
+        if backend == Backend::Reftable {
+            let listed = grit_repo.reflogs().entries(&name).expect("re-read");
+            assert_eq!(listed.len(), 2);
+        }
+    });
+}
+
+#[test]
+fn grit_expire_matches_git_expire_byte_for_byte_via_handle() {
+    let refname = "refs/heads/main";
+    each_backend_git_oracle(|backend, repo| {
+        seed_three_entry_reflog(repo, refname);
+        let grit_copy = tempfile::tempdir().expect("grit copy");
+        let git_copy = tempfile::tempdir().expect("git copy");
+        copy_worktree(repo.worktree(), grit_copy.path());
+        copy_worktree(repo.worktree(), git_copy.path());
+
+        let grit_repo = open_repo(grit_copy.path());
+        grit_repo
+            .reflogs()
+            .expire(&ExpireOptions {
+                now: NOW,
+                expire: Some("1600000000".into()),
+                expire_unreachable: Some("never".into()),
+                all: false,
+            })
+            .expect("handle expire");
+        git_expire(
+            git_copy.path(),
+            &[
+                "reflog",
+                "expire",
+                "--expire=1600000000",
+                "--expire-unreachable=never",
+                refname,
+            ],
+        );
+
+        if backend == Backend::Files {
+            assert_reflog_tree_matches(
+                &git_copy.path().join(".git"),
+                &grit_copy.path().join(".git"),
+            );
+        }
+        assert!(git_fsck_strict(grit_copy.path()));
+    });
+}
+
+#[test]
+fn delete_out_of_range_is_typed_error() {
+    each_backend(|backend, repo| {
+        let refname = "refs/heads/main";
+        seed_three_entry_reflog(repo, refname);
+        let grit_repo = open_repo(repo.worktree());
+        let name = RefName::try_from(refname).expect("valid");
+        let err = grit_repo
+            .reflogs()
+            .delete(&name, &[9], false)
+            .expect_err("out of range");
+        assert!(matches!(err, Error::ReflogIndexOutOfRange { .. }));
+        let _ = backend;
     });
 }

@@ -26,6 +26,7 @@ pub mod patch_id;
 pub mod pick;
 pub mod pull;
 pub mod push;
+pub mod reflog;
 pub mod remote;
 pub mod repack;
 pub mod reset;

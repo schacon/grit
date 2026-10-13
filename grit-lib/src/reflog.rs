@@ -495,6 +495,11 @@ fn format_reflog_entry(entry: &ReflogEntry) -> String {
 /// Extract the Unix timestamp from an identity string.
 ///
 /// Identity format: `Name <email> <timestamp> <tz>`
+/// Unix timestamp from a reflog identity line (`Name <email> <ts> <tz>`).
+pub fn reflog_identity_timestamp(identity: &str) -> Option<i64> {
+    parse_timestamp_from_identity(identity)
+}
+
 fn parse_timestamp_from_identity(identity: &str) -> Option<i64> {
     // Walk backwards: last token is tz (+0000), second-to-last is timestamp
     let parts: Vec<&str> = identity.rsplitn(3, ' ').collect();
@@ -688,7 +693,7 @@ fn collect_gc_reflog_patterns(config: &ConfigSet, now: i64) -> Vec<GcReflogPatte
         let Some(val) = e.value.as_deref() else {
             continue;
         };
-        let Ok(ts) = parse_gc_reflog_expiry(val, now) else {
+        let Ok(ts) = parse_reflog_expire_spec(val, now) else {
             continue;
         };
         let pat_owned = pat.to_string();
@@ -715,15 +720,15 @@ fn collect_gc_reflog_patterns(config: &ConfigSet, now: i64) -> Vec<GcReflogPatte
 fn global_gc_reflog_expiry(config: &ConfigSet, now: i64) -> (Option<i64>, Option<i64>) {
     let total = config
         .get("gc.reflogExpire")
-        .and_then(|v| parse_gc_reflog_expiry(&v, now).ok());
+        .and_then(|v| parse_reflog_expire_spec(&v, now).ok());
     let unreach = config
         .get("gc.reflogExpireUnreachable")
-        .and_then(|v| parse_gc_reflog_expiry(&v, now).ok());
+        .and_then(|v| parse_reflog_expire_spec(&v, now).ok());
     (total, unreach)
 }
 
-/// Parse `gc.reflogExpire` values: `never` / `false` → keep forever (`0`), else days or epoch.
-fn parse_gc_reflog_expiry(raw: &str, now: i64) -> Result<i64> {
+/// Parse `gc.reflogExpire` / `--expire` values: `never` / `false` → keep forever (`0`), else days or epoch.
+pub fn parse_reflog_expire_spec(raw: &str, now: i64) -> Result<i64> {
     let s = raw.trim();
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
         return Ok(0);
@@ -1148,7 +1153,7 @@ mod default_expire_tests {
         load_gc_reflog_expire_config, mark_stalefix_reachable, read_reflog, read_reflog_dwim,
         truncate_last_reflog_line, ReflogExpireActionKind, ReflogExpireParams,
     };
-    use super::{parse_gc_reflog_expiry, parse_reflog_line};
+    use super::{parse_reflog_expire_spec, parse_reflog_line};
 
     #[test]
     fn gc_main_suffix_pattern_does_not_match_main_ref() {
@@ -1183,15 +1188,18 @@ mod default_expire_tests {
     #[test]
     fn gc_reflog_expiry_uses_git_approxidate_threshold() {
         let now = 1_700_000_000_i64;
-        assert_eq!(parse_gc_reflog_expiry("never", now).expect("never"), 0);
-        assert_eq!(parse_gc_reflog_expiry("now", now).expect("now"), i64::MAX);
+        assert_eq!(parse_reflog_expire_spec("never", now).expect("never"), 0);
+        assert_eq!(parse_reflog_expire_spec("now", now).expect("now"), i64::MAX);
         // Git `match_digit`: bare integers >= 100_000_000 are Unix timestamps.
         assert_eq!(
-            parse_gc_reflog_expiry("100000000", now).expect("100M"),
+            parse_reflog_expire_spec("100000000", now).expect("100M"),
             100_000_000
         );
         // 86_401..99_999_999 are not literal epoch seconds (e.g. 90000 → approxidate, not 90000).
-        assert_ne!(parse_gc_reflog_expiry("90000", now).expect("90000"), 90_000);
+        assert_ne!(
+            parse_reflog_expire_spec("90000", now).expect("90000"),
+            90_000
+        );
     }
 
     #[test]

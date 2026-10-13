@@ -645,6 +645,12 @@ impl Repository {
         crate::patch_ids::compute_patch_id(self.odb().hash_algo(), self.odb(), commit, mode)
     }
 
+    /// Reflog listing, deletion, and expiry for this repository.
+    #[must_use]
+    pub fn reflogs(&self) -> crate::repo_handles::RepositoryReflogs<'_> {
+        crate::repo_handles::RepositoryReflogs::new(self)
+    }
+
     /// Bundle create, verify, list-heads, and unbundle for this repository.
     #[must_use]
     pub fn bundles(&self) -> crate::repo_handles::RepositoryBundles<'_> {
