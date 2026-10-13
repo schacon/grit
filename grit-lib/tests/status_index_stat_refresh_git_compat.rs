@@ -246,6 +246,10 @@ fn status_succeeds_when_index_lock_held_after_touch() {
 /// (all racily clean) — grit must verify content once, not again in the parallel diff pass.
 #[test]
 fn status_on_racy_git_index_verifies_content_once() {
+    if cfg!(coverage) || std::env::var_os("CARGO_LLVM_COV").is_some() {
+        eprintln!("SKIP: timing oracle under llvm-cov instrumentation");
+        return;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path();
     git(repo_root, &["init", "-q", "-b", "main", "."]);
