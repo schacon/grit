@@ -801,7 +801,10 @@ mod tests {
     fn is_fetch_options_default_matches_empty() {
         assert!(Environment::empty().is_fetch_options_default());
         let mut env = Environment::from_vars(
-            [(OsString::from("GIT_SSH_COMMAND"), OsString::from("/bin/wrap"))],
+            [(
+                OsString::from("GIT_SSH_COMMAND"),
+                OsString::from("/bin/wrap"),
+            )],
             PathBuf::from("."),
         );
         assert!(!env.is_fetch_options_default());
