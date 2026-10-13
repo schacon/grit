@@ -206,3 +206,42 @@ fn diff_index_worktree_and_patch_parse_sweep() -> grit_lib::error::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn supporting_and_submodule_gitdir_sweep() -> grit_lib::error::Result<()> {
+    use grit_lib::config::gitmodules::gitdir::{
+        compute_default_submodule_gitdir, submodule_gitdir_filesystem_path,
+        submodule_path_config_enabled,
+    };
+    use grit_lib::config::gitmodules::{check_submodule_name, validate_gitmodules_blob_line};
+    use grit_lib::config::{ConfigFile, ConfigScope};
+    use grit_lib::worktree::crlf::{
+        convert_to_git, convert_to_worktree_eager, ConversionConfig, FileAttrs,
+    };
+
+    let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
+    let repo = Repository::init(dir.path(), &InitOptions::default())?;
+    let git_dir = repo.git_dir();
+    fs::write(
+        git_dir.join("config"),
+        "[extensions]\n\tsubmodulePathConfig = true\n[core]\n\tautocrlf = true\n",
+    )
+    .map_err(grit_lib::error::Error::Io)?;
+    assert!(submodule_path_config_enabled(git_dir));
+    assert!(check_submodule_name("lib/foo"));
+    assert!(validate_gitmodules_blob_line(b"[submodule \"x\"]\n").is_none());
+    let cfg = ConfigFile::parse(
+        git_dir.join("config").as_path(),
+        "[submodule \"lib/foo\"]\n\tpath = lib/foo\n\turl = https://example.com/r.git\n",
+        ConfigScope::Local,
+    )?;
+    let _ = compute_default_submodule_gitdir(dir.path(), git_dir, &cfg, "lib/foo")?;
+    let _ = submodule_gitdir_filesystem_path(dir.path(), git_dir, &cfg, "lib/foo")?;
+    let mut set = ConfigSet::new();
+    set.merge(&cfg);
+    let crlf = ConversionConfig::from_config(&set);
+    let attrs = FileAttrs::default();
+    let git_bytes = convert_to_git(b"a\r\n", "x.txt", &crlf, &attrs)?;
+    let _ = convert_to_worktree_eager(&git_bytes, "x.txt", &crlf, &attrs, None, None, None)?;
+    Ok(())
+}

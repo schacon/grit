@@ -9138,6 +9138,34 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn simplify_by_decoration_skip_and_symmetric_specs() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(64, true);
+        let mut deco = HashSet::new();
+        deco.insert(tip);
+        let opts = RevListOptions {
+            simplify_by_decoration: true,
+            simplify_by_decoration_oids: deco,
+            skip: 2,
+            count: true,
+            symmetric_left: Some(tip),
+            symmetric_right: Some(tip),
+            left_only: true,
+            right_only: false,
+            ..RevListOptions::default()
+        };
+        let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+        let opts2 = RevListOptions {
+            ordering: OrderingMode::DateOrderWalk,
+            reverse: true,
+            quiet: true,
+            maximal_only: true,
+            ..RevListOptions::default()
+        };
+        let _ = rev_list(&repo, &[String::from("main"), String::from("side")], &[], &opts2)?;
+        Ok(())
+    }
+
+    #[test]
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
 
