@@ -17,7 +17,6 @@ use serde::Serialize;
 use crate::context;
 use crate::output::{outln, progress, HumanRender, MarkdownRender, OutputMode, RenderContext};
 use crate::progress::{format_bytes, TerminalProgress};
-use schemars::JsonSchema;
 
 /// Result of `grit clone`.
 #[derive(Serialize, JsonSchema)]

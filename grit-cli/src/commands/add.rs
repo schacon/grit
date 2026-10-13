@@ -15,7 +15,6 @@ use std::io::Write;
 use crate::context;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use schemars::JsonSchema;
 
 /// Result of `grit add`: how many changes were staged.
 #[derive(Serialize, JsonSchema)]

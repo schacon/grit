@@ -11,7 +11,6 @@ use std::io::Write;
 
 use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use schemars::JsonSchema;
 
 /// Result of `grit clean`.
 #[derive(Serialize, JsonSchema)]

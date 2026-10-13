@@ -11,7 +11,6 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use schemars::JsonSchema;
 
 fn is_false(value: &bool) -> bool {
     !*value

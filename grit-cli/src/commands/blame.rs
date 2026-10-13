@@ -14,7 +14,6 @@ use serde::Serialize;
 use crate::context::{self, relative_date_from};
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
-use schemars::JsonSchema;
 
 /// Result of `grit blame`.
 #[derive(Serialize, JsonSchema)]

@@ -14,7 +14,6 @@ const SHORTLOG_LIST_LIMIT: usize = 100;
 use crate::markdown;
 use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
 use crate::ui;
-use schemars::JsonSchema;
 
 /// Result of `grit shortlog`.
 #[derive(Serialize, JsonSchema)]
