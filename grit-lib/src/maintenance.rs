@@ -216,7 +216,7 @@ pub struct FsckOptions {
     pub strict: bool,
     /// Validate reachable object graph and object headers.
     pub check_objects: bool,
-    /// Run [`refs_fsck`].
+    /// Run [`refs_fsck()`](crate::refs_fsck::refs_fsck).
     pub check_refs: bool,
     /// Run [`verify_midx`] when a multi-pack-index is present.
     pub check_midx: bool,
