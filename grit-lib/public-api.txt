@@ -9656,6 +9656,7 @@ pub fn grit_lib::repo::Repository::diff(&self) -> grit_lib::diff::handle::Diff<'
 pub fn grit_lib::repo::Repository::discover(core::option::Option<&std::path::Path>, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::discovery_info(&self) -> grit_lib::repo::DiscoveryInfo
 pub fn grit_lib::repo::Repository::environment(&self) -> &grit_lib::config::environment::Environment
+pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
 pub fn grit_lib::repo::Repository::git_dir(&self) -> &std::path::Path
 pub fn grit_lib::repo::Repository::hooks(&self) -> grit_lib::repo_handles::RepositoryHooks<'_>
 pub fn grit_lib::repo::Repository::index_handle(&self) -> grit_lib::index::handle::IndexHandle<'_>
@@ -12798,6 +12799,7 @@ pub fn grit_lib::repo::Repository::diff(&self) -> grit_lib::diff::handle::Diff<'
 pub fn grit_lib::repo::Repository::discover(core::option::Option<&std::path::Path>, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::discovery_info(&self) -> grit_lib::repo::DiscoveryInfo
 pub fn grit_lib::repo::Repository::environment(&self) -> &grit_lib::config::environment::Environment
+pub fn grit_lib::repo::Repository::fsck(&self, &grit_lib::fsck::FsckOptions, &mut dyn grit_lib::progress::ProgressSink, &dyn grit_lib::progress::Cancel) -> grit_lib::error::Result<grit_lib::fsck::FsckReport>
 pub fn grit_lib::repo::Repository::git_dir(&self) -> &std::path::Path
 pub fn grit_lib::repo::Repository::hooks(&self) -> grit_lib::repo_handles::RepositoryHooks<'_>
 pub fn grit_lib::repo::Repository::index_handle(&self) -> grit_lib::index::handle::IndexHandle<'_>

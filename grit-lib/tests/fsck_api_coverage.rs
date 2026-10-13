@@ -58,10 +58,37 @@ fn issue_msg_id_and_severity_and_format() {
         oid,
         path: PathBuf::from("/tmp/x"),
     };
-    let _ = FsckIssue::BadObject {
+    let bad_tree = FsckIssue::BadObject {
         oid,
         error: FsckError::new("badTree", "x"),
     };
+    assert_eq!(
+        issue_severity(&bad_tree, &config, false),
+        FsckSeverity::Error
+    );
+
+    let missing_tagger = FsckIssue::BadObject {
+        oid,
+        error: FsckError::new("missingTaggerEntry", "expected tagger line"),
+    };
+    assert_eq!(
+        issue_severity(&missing_tagger, &config, false),
+        FsckSeverity::Warning
+    );
+    assert_eq!(
+        issue_severity(&missing_tagger, &config, true),
+        FsckSeverity::Warning
+    );
+
+    let has_dot = FsckIssue::BadObject {
+        oid,
+        error: FsckError::new("hasDot", "dot entry"),
+    };
+    assert_eq!(
+        issue_severity(&has_dot, &config, false),
+        FsckSeverity::Warning
+    );
+    assert_eq!(issue_severity(&has_dot, &config, true), FsckSeverity::Error);
     let _ = FsckIssue::PackChecksum {
         pack: PathBuf::from("pack.pack"),
     };

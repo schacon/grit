@@ -632,6 +632,22 @@ impl Repository {
         crate::repo_handles::RepositoryHooks::new(self)
     }
 
+    /// Check object store connectivity, refs, and optional pack indexes.
+    ///
+    /// Progress is reported through `progress`; the library never prints.
+    ///
+    /// # Errors
+    ///
+    /// Propagates object-store, ref, or index failures that abort the run.
+    pub fn fsck(
+        &self,
+        options: &crate::fsck::FsckOptions,
+        progress: &mut dyn crate::progress::ProgressSink,
+        cancel: &dyn crate::progress::Cancel,
+    ) -> crate::error::Result<crate::fsck::FsckReport> {
+        crate::fsck::fsck(self, options, progress, cancel)
+    }
+
     /// Patch-ID for a single commit (merge commits and empty diffs return `None`).
     ///
     /// # Errors
