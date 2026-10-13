@@ -7770,6 +7770,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::paths::Rem
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::paths::RemoveOutcome
 pub fn grit_lib::porcelain::paths::move_path(&grit_lib::repo::Repository, &str, &str, bool) -> grit_lib::error::Result<grit_lib::porcelain::paths::MoveOutcome>
 pub fn grit_lib::porcelain::paths::remove_paths(&grit_lib::repo::Repository, &grit_lib::porcelain::paths::RemoveOptions) -> grit_lib::error::Result<grit_lib::porcelain::paths::RemoveOutcome>
+pub mod grit_lib::porcelain::pathspec_match
+pub fn grit_lib::porcelain::pathspec_match::ensure_pathspec_matches_known_in_repository(&grit_lib::repo::Repository, &str, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::porcelain::pathspec_match::pathspec_matches_known_in_repository(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<bool>
 pub mod grit_lib::porcelain::rebase
 pub enum grit_lib::porcelain::rebase::FixupMessageMode
 pub grit_lib::porcelain::rebase::FixupMessageMode::EditCommit
@@ -12714,6 +12717,46 @@ impl<'repo> core::marker::Unpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> core::marker::UnsafeUnpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
+pub mod grit_lib::revwalk::log_walk
+pub struct grit_lib::revwalk::log_walk::LogWalkCursor
+pub grit_lib::revwalk::log_walk::LogWalkCursor::anchor_head: grit_lib::objects::ObjectId
+impl grit_lib::revwalk::log_walk::LogWalkCursor
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::decode(&str) -> grit_lib::error::Result<Self>
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::encode(&self) -> grit_lib::error::Result<alloc::string::String>
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::step(&grit_lib::repo::Repository, core::option::Option<&grit_lib::revwalk::log_walk::LogWalkCursor>, usize) -> grit_lib::error::Result<grit_lib::revwalk::log_walk::LogWalkPage>
+impl core::clone::Clone for grit_lib::revwalk::log_walk::LogWalkCursor
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::cmp::PartialEq for grit_lib::revwalk::log_walk::LogWalkCursor
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::log_walk::LogWalkCursor
+pub fn grit_lib::revwalk::log_walk::LogWalkCursor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::marker::Freeze for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::marker::Send for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::marker::Sync for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::marker::Unpin for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::log_walk::LogWalkCursor
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::log_walk::LogWalkCursor
+pub struct grit_lib::revwalk::log_walk::LogWalkPage
+pub grit_lib::revwalk::log_walk::LogWalkPage::commits: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::log_walk::LogWalkPage::next: core::option::Option<grit_lib::revwalk::log_walk::LogWalkCursor>
+impl core::clone::Clone for grit_lib::revwalk::log_walk::LogWalkPage
+pub fn grit_lib::revwalk::log_walk::LogWalkPage::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::cmp::PartialEq for grit_lib::revwalk::log_walk::LogWalkPage
+pub fn grit_lib::revwalk::log_walk::LogWalkPage::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::log_walk::LogWalkPage
+pub fn grit_lib::revwalk::log_walk::LogWalkPage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::marker::Freeze for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::marker::Send for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::marker::Sync for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::marker::Unpin for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::log_walk::LogWalkPage
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::log_walk::LogWalkPage
 pub mod grit_lib::revwalk::merge_base
 pub enum grit_lib::revwalk::merge_base::MergeBaseForDiffError
 pub grit_lib::revwalk::merge_base::MergeBaseForDiffError::Multiple
@@ -12750,6 +12793,45 @@ impl core::marker::Unpin for grit_lib::revwalk::merge_base::ReachableWalkLimit
 impl core::marker::UnsafeUnpin for grit_lib::revwalk::merge_base::ReachableWalkLimit
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkLimit
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkLimit
+pub struct grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+pub grit_lib::revwalk::merge_base::ReachableWalkSnapshot::done: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::merge_base::ReachableWalkSnapshot::heap: alloc::vec::Vec<(i64, u64, grit_lib::objects::ObjectId)>
+pub grit_lib::revwalk::merge_base::ReachableWalkSnapshot::hide: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::merge_base::ReachableWalkSnapshot::queued: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::merge_base::ReachableWalkSnapshot::seq: u64
+impl core::clone::Clone for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+pub fn grit_lib::revwalk::merge_base::ReachableWalkSnapshot::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::cmp::PartialEq for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+pub fn grit_lib::revwalk::merge_base::ReachableWalkSnapshot::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+pub fn grit_lib::revwalk::merge_base::ReachableWalkSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::marker::Freeze for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::marker::Send for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::marker::Sync for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::marker::Unpin for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+pub struct grit_lib::revwalk::merge_base::ReachableWalkState
+impl grit_lib::revwalk::merge_base::ReachableWalkState
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::emit_until(&mut self, &grit_lib::repo::Repository, core::option::Option<usize>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::from_snapshot(grit_lib::revwalk::merge_base::ReachableWalkSnapshot) -> Self
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::has_pending(&self) -> bool
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::new(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId]) -> grit_lib::error::Result<Self>
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::snapshot(&self) -> grit_lib::revwalk::merge_base::ReachableWalkSnapshot
+impl core::clone::Clone for grit_lib::revwalk::merge_base::ReachableWalkState
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::revwalk::merge_base::ReachableWalkState
+pub fn grit_lib::revwalk::merge_base::ReachableWalkState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::marker::Send for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::marker::Sync for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::marker::Unpin for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkState
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::merge_base::ReachableWalkState
 pub fn grit_lib::revwalk::merge_base::ahead_of_target_commits(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, usize) -> grit_lib::error::Result<(usize, alloc::vec::Vec<grit_lib::objects::ObjectId>)>
 pub fn grit_lib::revwalk::merge_base::ancestor_closure(&grit_lib::repo::Repository, grit_lib::objects::ObjectId) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>
 pub fn grit_lib::revwalk::merge_base::branch_base_for_tip(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, &[grit_lib::objects::ObjectId]) -> grit_lib::error::Result<core::option::Option<usize>>
@@ -14000,6 +14082,7 @@ impl core::marker::Unpin for grit_lib::worktree::pathspec::PathspecMatchContext
 impl core::marker::UnsafeUnpin for grit_lib::worktree::pathspec::PathspecMatchContext
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::pathspec::PathspecMatchContext
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::pathspec::PathspecMatchContext
+pub fn grit_lib::worktree::pathspec::argv_pathspec_preserves_spelling(&str) -> bool
 pub fn grit_lib::worktree::pathspec::bloom_lookup_prefix(&str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::worktree::pathspec::bloom_lookup_prefix_with_cwd(&str, core::option::Option<&str>) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::worktree::pathspec::context_from_mode_bits(u32) -> grit_lib::worktree::pathspec::PathspecMatchContext
@@ -14012,11 +14095,13 @@ pub fn grit_lib::worktree::pathspec::matches_pathspec(&str, &str) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_for_object(&str, &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list(&str, &[alloc::string::String]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list_for_object(&str, u32, &[grit_lib::worktree::crlf::AttrRule], &[alloc::string::String]) -> bool
+pub fn grit_lib::worktree::pathspec::matches_pathspec_list_precompose(&str, &[alloc::string::String], bool) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_list_with_context(&str, &[alloc::string::String], grit_lib::worktree::pathspec::PathspecMatchContext) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_set_for_object_ls_tree(&[alloc::string::String], &str, u32, &[grit_lib::worktree::crlf::AttrRule]) -> bool
 pub fn grit_lib::worktree::pathspec::matches_pathspec_with_context(&str, &str, grit_lib::worktree::pathspec::PathspecMatchContext) -> bool
 pub fn grit_lib::worktree::pathspec::normalize_worktree_file_path(&str, &std::path::Path, core::option::Option<&str>) -> alloc::string::String
+pub fn grit_lib::worktree::pathspec::normalize_worktree_file_path_with_git_dir(&str, &std::path::Path, core::option::Option<&str>, core::option::Option<&std::path::Path>) -> alloc::string::String
 pub fn grit_lib::worktree::pathspec::parse_pathspecs_from_source(&[u8], bool) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::worktree::pathspec::path_allowed_by_pathspec_list(&[alloc::string::String], &str) -> bool
 pub fn grit_lib::worktree::pathspec::pathdiff(&std::path::Path, &std::path::Path) -> core::option::Option<alloc::string::String>
@@ -14024,12 +14109,16 @@ pub fn grit_lib::worktree::pathspec::pathspec_contributes_match(&str, &str) -> b
 pub fn grit_lib::worktree::pathspec::pathspec_exclude_matches(&str, &str) -> bool
 pub fn grit_lib::worktree::pathspec::pathspec_has_top(&str) -> bool
 pub fn grit_lib::worktree::pathspec::pathspec_is_exclude(&str) -> bool
+pub fn grit_lib::worktree::pathspec::pathspec_match_context_with_precompose(bool) -> grit_lib::worktree::pathspec::PathspecMatchContext
 pub fn grit_lib::worktree::pathspec::pathspec_matches(&str, &str) -> bool
 pub fn grit_lib::worktree::pathspec::pathspec_wants_descent_into_tree(&str, &str) -> bool
 pub fn grit_lib::worktree::pathspec::pathspecs_allow_bloom(&[alloc::string::String]) -> bool
+pub fn grit_lib::worktree::pathspec::precompose_argv_pathspec(&str) -> alloc::borrow::Cow<'_, str>
 pub fn grit_lib::worktree::pathspec::resolve_magic_pathspec(&str, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::worktree::pathspec::resolve_pathspec(&str, &std::path::Path, core::option::Option<&str>) -> alloc::string::String
 pub fn grit_lib::worktree::pathspec::resolve_pathspec_in_worktree(&str, &str, &std::path::Path, core::option::Option<&str>) -> core::result::Result<alloc::string::String, grit_lib::worktree::pathspec::PathOutsideRepository>
+pub fn grit_lib::worktree::pathspec::resolve_pathspec_in_worktree_with_git_dir(&str, &str, &std::path::Path, core::option::Option<&str>, core::option::Option<&std::path::Path>) -> core::result::Result<alloc::string::String, grit_lib::worktree::pathspec::PathOutsideRepository>
+pub fn grit_lib::worktree::pathspec::resolve_pathspec_with_argv_precompose(&str, &std::path::Path, core::option::Option<&str>, bool) -> alloc::string::String
 pub fn grit_lib::worktree::pathspec::simple_length(&str) -> usize
 pub fn grit_lib::worktree::pathspec::validate_attr_pathspecs(&[alloc::string::String]) -> core::result::Result<(), alloc::string::String>
 pub fn grit_lib::worktree::pathspec::validate_global_pathspec_flags() -> core::result::Result<(), alloc::string::String>
