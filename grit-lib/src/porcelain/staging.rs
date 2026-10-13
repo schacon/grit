@@ -14,7 +14,6 @@ use crate::diff::{
 use crate::error::Result;
 use crate::index::{entry_from_metadata, index_file_mtime, Index, MODE_GITLINK, MODE_TREE};
 use crate::objects::ObjectKind;
-use crate::pathspec::matches_pathspec_list;
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedScan,
@@ -43,7 +42,7 @@ pub fn stage_worktree_changes(repo: &Repository, pathspecs: &[String]) -> Result
     let precompose_unicode =
         effective_core_precomposeunicode_with_config(Some(repo.git_dir()), Some(&config_arc));
 
-    let matches = |path: &str| pathspecs.is_empty() || matches_pathspec_list(path, pathspecs);
+    let matches = |path: &str| pathspecs.is_empty() || repo.paths_match_pathspecs(path, pathspecs);
 
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(worktree_rules));
     let diff_opts = DiffIndexToWorktreeOptions {

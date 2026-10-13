@@ -9202,6 +9202,7 @@ pub fn grit_lib::repo::Repository::notes(&self) -> grit_lib::repo_handles::Repos
 pub fn grit_lib::repo::Repository::objects(&self) -> grit_lib::objects::handle::Objects<'_>
 pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
+pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> bool
 pub fn grit_lib::repo::Repository::reference_unix_time(&self) -> i64
 pub fn grit_lib::repo::Repository::references(&self) -> grit_lib::refs::handle::References<'_>
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore
@@ -12322,6 +12323,7 @@ pub fn grit_lib::repo::Repository::notes(&self) -> grit_lib::repo_handles::Repos
 pub fn grit_lib::repo::Repository::objects(&self) -> grit_lib::objects::handle::Objects<'_>
 pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
+pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> bool
 pub fn grit_lib::repo::Repository::reference_unix_time(&self) -> i64
 pub fn grit_lib::repo::Repository::references(&self) -> grit_lib::refs::handle::References<'_>
 pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::RefStore

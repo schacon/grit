@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::index::{index_file_mtime, Index, IndexEntry, MODE_TREE};
 use crate::objects::{parse_commit, ObjectId};
 use crate::path_icase::paths_equal;
-use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
+use crate::pathspec::pathspec_is_exclude;
 use crate::porcelain::checkout::remove_empty_parent_dirs;
 use crate::repo::Repository;
 use crate::state::{resolve_head, HeadState};
@@ -72,7 +72,7 @@ pub fn remove_paths(repo: &Repository, opts: &RemoveOptions) -> Result<RemoveOut
     let head_tree = resolve_head_tree(repo)?;
     let tracked_paths = tracked_index_paths(&index);
 
-    let to_remove = collect_removal_paths(&tracked_paths, work_tree, opts)?;
+    let to_remove = collect_removal_paths(repo, &tracked_paths, work_tree, opts)?;
 
     if !opts.force {
         let modified =
@@ -250,10 +250,12 @@ fn tracked_index_paths(index: &Index) -> BTreeSet<String> {
 }
 
 fn collect_removal_paths(
+    repo: &Repository,
     tracked: &BTreeSet<String>,
     _work_tree: &Path,
     opts: &RemoveOptions,
 ) -> Result<Vec<String>> {
+    let pathspec_ctx = repo.pathspec_match_context();
     let sources = if opts.pathspec_sources.is_empty() {
         &opts.pathspecs
     } else {
@@ -268,7 +270,13 @@ fn collect_removal_paths(
         let spec = resolved.trim_end_matches('/');
         let matches: Vec<String> = tracked
             .iter()
-            .filter(|path| matches_pathspec_list(path, std::slice::from_ref(resolved)))
+            .filter(|path| {
+                crate::pathspec::matches_pathspec_list_with_context(
+                    path,
+                    std::slice::from_ref(resolved),
+                    pathspec_ctx,
+                )
+            })
             .cloned()
             .collect();
 

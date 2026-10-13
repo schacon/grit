@@ -33,6 +33,7 @@ use grit_lib::revwalk::rev_parse::{
     split_double_dot_range, split_triple_dot_range,
 };
 use grit_lib::state::resolve_head;
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree_with_git_dir};
 use grit_lib::worktree::worktree_rules::WorktreeRules;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -197,9 +198,10 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             let spec = &opts.commits[0];
             if let Some((base, tip)) = parse_commit_range(&repo, spec)? {
                 tree_commit_changes(&repo, &base, &tip)?
-            } else {
-                let oid = resolve_diff_commit(&repo, spec)?;
+            } else if let Ok(oid) = resolve_diff_commit(&repo, spec) {
                 commit_changes(&repo, &oid)?
+            } else {
+                path_filter_unstaged_changes(&repo, spec)?
             }
         }
         2 => {
@@ -258,6 +260,30 @@ struct FileChange {
     new_bytes: SideBytes,
     binary: bool,
     content_changed: bool,
+}
+
+/// Unstaged changes for one resolved pathspec (same as `git diff -- <path>`).
+fn path_filter_unstaged_changes(
+    repo: &grit_lib::repo::Repository,
+    pathspec: &str,
+) -> Result<Vec<FileChange>> {
+    let work_tree = repo.work_tree().context("grit diff needs a working tree")?;
+    let cwd = std::env::current_dir().context("could not read the current directory")?;
+    let prefix = pathdiff(&cwd, work_tree);
+    let resolved = resolve_pathspec_in_worktree_with_git_dir(
+        pathspec,
+        pathspec,
+        work_tree,
+        prefix.as_deref(),
+        Some(repo.git_dir()),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let specs = vec![resolved];
+    let all = unstaged_changes(repo)?;
+    Ok(all
+        .into_iter()
+        .filter(|c| repo.paths_match_pathspecs(&c.path, &specs))
+        .collect())
 }
 
 /// Unstaged changes: worktree vs index (what changed on disk since `git add`).

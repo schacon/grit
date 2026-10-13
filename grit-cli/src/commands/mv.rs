@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::porcelain::paths::move_path;
 use grit_lib::repo::Repository;
-use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree_with_git_dir};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -80,6 +80,12 @@ fn resolve_one(repo: &Repository, sel: &str) -> Result<String> {
     let work_tree = repo.work_tree().context("grit mv needs a working tree")?;
     let cwd = std::env::current_dir().context("could not read the current directory")?;
     let prefix = pathdiff(&cwd, work_tree);
-    resolve_pathspec_in_worktree(sel, sel, work_tree, prefix.as_deref())
-        .map_err(|e| anyhow::anyhow!("{e}"))
+    resolve_pathspec_in_worktree_with_git_dir(
+        sel,
+        sel,
+        work_tree,
+        prefix.as_deref(),
+        Some(repo.git_dir()),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))
 }

@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreOutcome, RestoreSource};
 use grit_lib::revwalk::rev_parse::resolve_revision;
-use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree_with_git_dir};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -78,8 +78,14 @@ pub fn run(
 
     let mut pathspecs = Vec::with_capacity(paths.len());
     for sel in &paths {
-        let resolved = resolve_pathspec_in_worktree(sel, sel, work_tree, prefix.as_deref())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resolved = resolve_pathspec_in_worktree_with_git_dir(
+            sel,
+            sel,
+            work_tree,
+            prefix.as_deref(),
+            Some(repo.git_dir()),
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         pathspecs.push(resolved);
     }
 

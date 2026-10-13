@@ -662,6 +662,21 @@ impl Repository {
             .pathspec_precompose_enabled(self.environment.as_ref(), &self.git_dir)
     }
 
+    #[must_use]
+    pub(crate) fn pathspec_match_context(&self) -> crate::pathspec::PathspecMatchContext {
+        crate::pathspec::pathspec_match_context_with_precompose(self.pathspec_precompose_enabled())
+    }
+
+    /// Whether `path` matches any of the resolved `specs`, honoring `core.precomposeunicode` pathspec rules.
+    #[must_use]
+    pub fn paths_match_pathspecs(&self, path: &str, specs: &[String]) -> bool {
+        crate::pathspec::matches_pathspec_list_with_context(
+            path,
+            specs,
+            self.pathspec_match_context(),
+        )
+    }
+
     /// Absolute path to the git directory (`.git/` or bare repository root).
     #[must_use]
     pub fn git_dir(&self) -> &Path {

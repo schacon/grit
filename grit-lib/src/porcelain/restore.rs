@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::index::index_file_mtime;
 use crate::index::{entry_from_metadata, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK};
 use crate::objects::{parse_commit, ObjectId};
-use crate::pathspec::{matches_pathspec_list, pathspec_is_exclude};
+use crate::pathspec::{pathspec_is_exclude, PathspecMatchContext};
 use crate::porcelain::checkout::{
     remove_empty_parent_dirs, worktree_bytes_from_index_blob, write_to_worktree_cached,
     LeadingDirCache,
@@ -99,6 +99,7 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
     };
 
     let select_all_tracked = pathspecs_select_all_tracked(&opts.pathspecs);
+    let pathspec_ctx = repo.pathspec_match_context();
     let matched = collect_matched_paths(
         &index,
         head_entries.as_slice(),
@@ -108,8 +109,9 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
         worktree_from_tree,
         opts.source,
         select_all_tracked,
+        pathspec_ctx,
     );
-    validate_pathspecs(opts, &matched, &index, select_all_tracked)?;
+    validate_pathspecs(opts, &matched, &index, select_all_tracked, pathspec_ctx)?;
 
     let index_source_entries = index_source_tree(
         opts,
@@ -209,6 +211,7 @@ fn collect_matched_paths(
     worktree_from_tree: bool,
     source: RestoreSource,
     select_all_tracked: bool,
+    pathspec_ctx: PathspecMatchContext,
 ) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     let skip_index_union = select_all_tracked && !restore_staged && !worktree_from_tree;
@@ -218,7 +221,7 @@ fn collect_matched_paths(
                 continue;
             }
             let path = String::from_utf8_lossy(&entry.path);
-            if matches_pathspec_list(&path, pathspecs) {
+            if crate::pathspec::matches_pathspec_list_with_context(&path, pathspecs, pathspec_ctx) {
                 paths.insert(path.into_owned());
             }
         }
@@ -229,7 +232,11 @@ fn collect_matched_paths(
             RestoreSource::Tree(_) => source_entries.unwrap_or(&[]),
         };
         for entry in staged_source {
-            if matches_pathspec_list(&entry.path, pathspecs) {
+            if crate::pathspec::matches_pathspec_list_with_context(
+                &entry.path,
+                pathspecs,
+                pathspec_ctx,
+            ) {
                 paths.insert(entry.path.clone());
             }
         }
@@ -237,7 +244,11 @@ fn collect_matched_paths(
     if worktree_from_tree {
         if let Some(src) = source_entries {
             for entry in src {
-                if matches_pathspec_list(&entry.path, pathspecs) {
+                if crate::pathspec::matches_pathspec_list_with_context(
+                    &entry.path,
+                    pathspecs,
+                    pathspec_ctx,
+                ) {
                     paths.insert(entry.path.clone());
                 }
             }
@@ -251,6 +262,7 @@ fn validate_pathspecs(
     matched: &BTreeSet<String>,
     index: &Index,
     select_all_tracked: bool,
+    pathspec_ctx: PathspecMatchContext,
 ) -> Result<()> {
     let sources = if opts.pathspec_sources.is_empty() {
         &opts.pathspecs
@@ -264,9 +276,13 @@ fn validate_pathspecs(
         let hits = if select_all_tracked && matches!(resolved.as_str(), "." | ":/.") {
             index.entries.iter().any(|e| e.stage() == 0)
         } else {
-            matched
-                .iter()
-                .any(|p| matches_pathspec_list(p, std::slice::from_ref(resolved)))
+            matched.iter().any(|p| {
+                crate::pathspec::matches_pathspec_list_with_context(
+                    p,
+                    std::slice::from_ref(resolved),
+                    pathspec_ctx,
+                )
+            })
         };
         if !hits {
             return Err(Error::PathspecNoMatch {
@@ -364,7 +380,7 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            if !matches_pathspec_list(path, pathspecs) {
+            if !repo.paths_match_pathspecs(path, pathspecs) {
                 continue;
             }
             if entry.mode == MODE_GITLINK {

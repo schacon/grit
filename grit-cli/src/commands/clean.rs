@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use grit_lib::porcelain::clean::{clean_untracked, CleanOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
-use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree};
+use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree_with_git_dir};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -97,8 +97,14 @@ fn resolve_clean_pathspecs(repo: &Repository, selectors: &[String]) -> Result<Ve
         if sel.is_empty() {
             bail!("invalid path ''");
         }
-        let resolved = resolve_pathspec_in_worktree(sel, sel, work_tree, prefix.as_deref())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resolved = resolve_pathspec_in_worktree_with_git_dir(
+            sel,
+            sel,
+            work_tree,
+            prefix.as_deref(),
+            Some(repo.git_dir()),
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         specs.push(resolved);
     }
     Ok(specs)

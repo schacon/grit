@@ -2189,7 +2189,12 @@ fn resolve_blame_start(repo: &Repository, start: Option<ObjectId>) -> Result<Obj
 
 fn normalize_blame_path(repo: &Repository, path: &str) -> String {
     if let Some(work_tree) = repo.work_tree() {
-        crate::pathspec::normalize_worktree_file_path(path, work_tree, None)
+        crate::pathspec::normalize_worktree_file_path_with_git_dir(
+            path,
+            work_tree,
+            None,
+            Some(repo.git_dir()),
+        )
     } else {
         path.to_string()
     }

@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::crlf::path_gitattribute_value;
 use crate::crlf::AttrRule;
 use crate::error::{Error, Result as LibResult};
+use crate::precompose_config::argv_precompose_enabled;
 use crate::unicode_normalization::precompose_utf8_path;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 
@@ -1581,12 +1582,74 @@ fn prepend_cwd_to_short_exclude_pathspec(spec: &str, cwd: &str) -> Option<String
     Some(format!("{}{}/{pattern}", &spec[..i], cwd))
 }
 
+/// Build [`PathspecMatchContext`] with optional NFC path normalization for comparisons.
+#[must_use]
+pub fn pathspec_match_context_with_precompose(precompose_paths: bool) -> PathspecMatchContext {
+    PathspecMatchContext {
+        precompose_paths,
+        ..PathspecMatchContext::default()
+    }
+}
+
+/// Like [`matches_pathspec_list`], with an explicit `precompose_paths` flag.
+#[must_use]
+pub fn matches_pathspec_list_precompose(
+    path: &str,
+    specs: &[String],
+    precompose_paths: bool,
+) -> bool {
+    matches_pathspec_list_with_context(
+        path,
+        specs,
+        pathspec_match_context_with_precompose(precompose_paths),
+    )
+}
+
+/// True when argv pathspec strings must not be NFC-normalized (magic syntax).
+#[must_use]
+pub fn argv_pathspec_preserves_spelling(pathspec: &str) -> bool {
+    pathspec.starts_with(":(")
+        || pathspec.starts_with(":/")
+        || pathspec.starts_with(":!")
+        || pathspec.starts_with(":^")
+}
+
+/// NFC-normalize a literal command-line pathspec (Git `precompose_argv_prefix`).
+#[must_use]
+pub fn precompose_argv_pathspec(pathspec: &str) -> Cow<'_, str> {
+    if argv_pathspec_preserves_spelling(pathspec) {
+        Cow::Borrowed(pathspec)
+    } else {
+        precompose_utf8_path(pathspec)
+    }
+}
+
 /// Resolve a pathspec string to a path relative to the repository work tree.
 ///
 /// `prefix` is the current directory relative to the work tree (no trailing slash),
 /// or `None` when cwd is the work tree root.
 #[must_use]
 pub fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
+    resolve_pathspec_with_argv_precompose(pathspec, work_tree, prefix, false)
+}
+
+/// Like [`resolve_pathspec`], but NFC-normalizes literal argv path segments when requested.
+#[must_use]
+pub fn resolve_pathspec_with_argv_precompose(
+    pathspec: &str,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    argv_precompose: bool,
+) -> String {
+    let pathspec = if argv_precompose {
+        precompose_argv_pathspec(pathspec)
+    } else {
+        Cow::Borrowed(pathspec)
+    };
+    resolve_pathspec_impl(pathspec.as_ref(), work_tree, prefix)
+}
+
+fn resolve_pathspec_impl(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
     let pathspec = normalize_pathspec_separators(pathspec);
     let pathspec = pathspec.as_ref();
     // Git: `.` at repo root means "match the whole tree" (not an empty pathspec).
@@ -1677,7 +1740,36 @@ pub fn resolve_pathspec_in_worktree(
     work_tree: &Path,
     prefix: Option<&str>,
 ) -> Result<String, PathOutsideRepository> {
-    let resolved = resolve_pathspec(pathspec, work_tree, prefix);
+    resolve_pathspec_in_worktree_with_argv_precompose(elt, pathspec, work_tree, prefix, false)
+}
+
+/// Like [`resolve_pathspec_in_worktree`], applying Git argv NFC normalization when enabled for `git_dir`.
+pub fn resolve_pathspec_in_worktree_with_git_dir(
+    elt: &str,
+    pathspec: &str,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    git_dir: Option<&Path>,
+) -> Result<String, PathOutsideRepository> {
+    let argv_precompose = argv_precompose_enabled(git_dir);
+    resolve_pathspec_in_worktree_with_argv_precompose(
+        elt,
+        pathspec,
+        work_tree,
+        prefix,
+        argv_precompose,
+    )
+}
+
+fn resolve_pathspec_in_worktree_with_argv_precompose(
+    elt: &str,
+    pathspec: &str,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    argv_precompose: bool,
+) -> Result<String, PathOutsideRepository> {
+    let resolved =
+        resolve_pathspec_with_argv_precompose(pathspec, work_tree, prefix, argv_precompose);
     if Path::new(&resolved).is_absolute() {
         let wt = work_tree
             .canonicalize()
@@ -1700,7 +1792,20 @@ pub fn normalize_worktree_file_path(
     work_tree: &Path,
     prefix: Option<&str>,
 ) -> String {
-    let resolved = resolve_pathspec(file_path, work_tree, prefix);
+    normalize_worktree_file_path_with_git_dir(file_path, work_tree, prefix, None)
+}
+
+/// Like [`normalize_worktree_file_path`], honoring `core.precomposeunicode` argv normalization for `git_dir`.
+#[must_use]
+pub fn normalize_worktree_file_path_with_git_dir(
+    file_path: &str,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    git_dir: Option<&Path>,
+) -> String {
+    let argv_precompose = argv_precompose_enabled(git_dir);
+    let resolved =
+        resolve_pathspec_with_argv_precompose(file_path, work_tree, prefix, argv_precompose);
     if Path::new(&resolved).is_absolute() {
         file_path.to_string()
     } else {
@@ -1933,5 +2038,29 @@ mod resolve_pathspec_tests {
                 "absolute forward-slash pathspec (issue #915 C)"
             );
         }
+    }
+
+    #[test]
+    fn nfd_pathspec_matches_nfc_index_path_when_precompose_enabled() {
+        let nfc_path = "caf\u{00e9}.txt";
+        let nfd_spec = format!("cafe\u{0301}.txt");
+        assert!(!matches_pathspec_list(&nfc_path, &[nfd_spec.clone()]));
+        assert!(matches_pathspec_list_precompose(
+            nfc_path,
+            &[nfd_spec.clone()],
+            true
+        ));
+    }
+
+    #[test]
+    fn argv_precompose_normalizes_nfd_literal_pathspec() {
+        let nfd = format!("cafe\u{0301}.txt");
+        let nfc = precompose_argv_pathspec(&nfd);
+        assert_eq!(nfc.as_ref(), "caf\u{00e9}.txt");
+        assert!(argv_pathspec_preserves_spelling(":(glob)*.rs"));
+        assert_eq!(
+            precompose_argv_pathspec(":(glob)*.rs").as_ref(),
+            ":(glob)*.rs"
+        );
     }
 }
