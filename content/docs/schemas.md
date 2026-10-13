@@ -29,6 +29,11 @@ Plain command failures with `--json` validate against the shared [error schema](
 | `log` | [v1](/schemas/log/v1.json) |
 | `merge` | [v1](/schemas/merge/v1.json) |
 | `mv` | [v1](/schemas/mv/v1.json) |
+| `notes` | [v1](/schemas/notes/v1.json) |
+| `notes.add` | [v1](/schemas/notes.add/v1.json) |
+| `notes.list` | [v1](/schemas/notes.list/v1.json) |
+| `notes.remove` | [v1](/schemas/notes.remove/v1.json) |
+| `notes.show` | [v1](/schemas/notes.show/v1.json) |
 | `pick` | [v1](/schemas/pick/v1.json) |
 | `pull` | [v1](/schemas/pull/v1.json) |
 | `push` | [v1](/schemas/push/v1.json) |

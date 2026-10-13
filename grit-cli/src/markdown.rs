@@ -278,6 +278,25 @@ pub fn print_remote_list(
     Ok(())
 }
 
+/// Notes attached to commits under one ref.
+pub fn print_notes_list(
+    w: &mut dyn Write,
+    notes_ref: &str,
+    notes: &[crate::commands::notes::NoteEntry],
+) -> anyhow::Result<()> {
+    outln!(w, "## Notes (`{notes_ref}`)");
+    if notes.is_empty() {
+        outln!(w, "- _(no notes)_");
+        return Ok(());
+    }
+    for entry in notes {
+        let short = entry.object.get(..7).unwrap_or(&entry.object);
+        let preview = entry.body.trim_end().replace('\n', " ");
+        outln!(w, "- `{short}` — {preview}");
+    }
+    Ok(())
+}
+
 /// Tag names with short oids.
 pub fn print_tag_list(
     w: &mut dyn Write,

@@ -115,6 +115,35 @@ enum StashAction {
     },
 }
 
+/// Subcommands of `grit notes`.
+#[derive(Debug, Subcommand)]
+enum NotesAction {
+    /// List notes attached to commits.
+    List,
+    /// Show the note for a revision.
+    Show {
+        /// Commit (or other object) to show the note for.
+        rev: String,
+    },
+    /// Add or replace a note on a revision.
+    Add {
+        /// Revision to attach the note to.
+        rev: String,
+        /// Note text.
+        #[arg(short = 'm', long = "message")]
+        message: String,
+        /// Replace an existing note.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove notes from one or more revisions.
+    Remove {
+        /// Revisions whose notes should be removed.
+        #[arg(value_name = "REV")]
+        revs: Vec<String>,
+    },
+}
+
 /// Subcommands of `grit worktree`.
 #[derive(Debug, Subcommand)]
 enum WorktreeAction {
@@ -440,6 +469,14 @@ enum Command {
     Bundle {
         #[command(subcommand)]
         action: BundleAction,
+    },
+    /// List, show, add, or remove Git notes on commits.
+    Notes {
+        /// Notes ref (default: `core.notesRef` or `refs/notes/commits`).
+        #[arg(long = "ref", value_name = "REF")]
+        notes_ref: Option<String>,
+        #[command(subcommand)]
+        action: Option<NotesAction>,
     },
     /// List tags, or create / delete one.
     Tag {
@@ -780,6 +817,28 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 emit(&commands::bundle::run_list(file.into())?, opts, ctx)
             }
         },
+        Command::Notes { notes_ref, action } => {
+            use commands::notes::NotesRunAction::*;
+            let run_action = match action {
+                None | Some(NotesAction::List) => List,
+                Some(NotesAction::Show { rev }) => Show { rev },
+                Some(NotesAction::Add {
+                    rev,
+                    message,
+                    force,
+                }) => Add {
+                    rev,
+                    message,
+                    force,
+                },
+                Some(NotesAction::Remove { revs }) => Remove { revs },
+            };
+            emit(
+                &commands::notes::run(notes_ref, run_action, ctx.now)?,
+                opts,
+                ctx,
+            )
+        }
         Command::Tag {
             name,
             delete,

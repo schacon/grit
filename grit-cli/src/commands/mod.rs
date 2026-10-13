@@ -19,6 +19,7 @@ pub mod log;
 pub mod manager;
 pub mod merge;
 pub mod mv;
+pub mod notes;
 pub mod pick;
 pub mod pull;
 pub mod push;
