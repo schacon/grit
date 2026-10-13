@@ -88,6 +88,80 @@ pub fn is_git_directory(path: &Path) -> bool {
     path.join("HEAD").is_file() && path.join("objects").is_dir()
 }
 
+/// Stricter check aligned with Git `setup.c` `is_git_directory` for embedded-repo detection.
+///
+/// Validates `HEAD` in the resolved gitdir (including linked-worktree admin dirs) and
+/// `objects/` + `refs/` in the common git directory (`commondir` when present).
+#[must_use]
+pub(crate) fn git_directory_for_embedded_repo(git_dir: &Path) -> bool {
+    if !git_head_ref_valid(&git_dir.join("HEAD")) {
+        return false;
+    }
+    let object_store = crate::repo::common_git_dir_for_config(git_dir);
+    object_store.join("objects").is_dir() && object_store.join("refs").is_dir()
+}
+
+#[cfg(test)]
+mod embedded_git_dir_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn placeholder_dot_git_dir_is_not_a_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = tmp.path().join(".git");
+        fs::create_dir_all(&git).unwrap();
+        assert!(!git_directory_for_embedded_repo(&git));
+    }
+
+    #[test]
+    fn minimal_init_layout_is_a_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = tmp.path().join(".git");
+        fs::create_dir_all(git.join("objects")).unwrap();
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert!(git_directory_for_embedded_repo(&git));
+    }
+
+    #[test]
+    fn linked_worktree_admin_dir_uses_commondir_for_stores() {
+        let tmp = tempfile::tempdir().unwrap();
+        let common = tmp.path().join("repo.git");
+        fs::create_dir_all(common.join("objects")).unwrap();
+        fs::create_dir_all(common.join("refs/heads")).unwrap();
+        let admin = common.join("worktrees/linked");
+        fs::create_dir_all(&admin).unwrap();
+        fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(admin.join("commondir"), "../..\n").unwrap();
+        assert!(git_directory_for_embedded_repo(&admin));
+        assert!(
+            !admin.join("objects").is_dir(),
+            "admin dir must not need local objects/"
+        );
+    }
+}
+
+fn git_head_ref_valid(head_path: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(head_path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        if let Ok(target) = fs::read_link(head_path) {
+            return target.to_string_lossy().starts_with("refs/");
+        }
+        return false;
+    }
+    let Ok(content) = fs::read_to_string(head_path) else {
+        return false;
+    };
+    let trimmed = content.trim();
+    if let Some(rest) = trimmed.strip_prefix("ref:") {
+        return rest.trim().starts_with("refs/");
+    }
+    ObjectId::from_hex(trimmed).is_ok()
+}
+
 /// Rejects submodule paths that traverse symlinks (Git `validate_submodule_path`).
 ///
 /// Path components follow Git `is_dir_sep`: on Unix only `/` separates; on Windows both `/`

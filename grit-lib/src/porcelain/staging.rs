@@ -7,11 +7,12 @@ use std::path::Path;
 
 use crate::crlf;
 use crate::diff::{
-    classify_worktree_entry_for_add, mode_from_metadata, DiffIndexToWorktreeOptions, DiffStatus,
-    WorktreeAddRefresh, WorktreeAddRefreshParams,
+    classify_worktree_entry_for_add, is_unregistered_embedded_git_repo, mode_from_metadata,
+    read_submodule_head_oid, DiffIndexToWorktreeOptions, DiffStatus, WorktreeAddRefresh,
+    WorktreeAddRefreshParams,
 };
 use crate::error::Result;
-use crate::index::{index_file_mtime, Index, MODE_TREE};
+use crate::index::{entry_from_metadata, index_file_mtime, Index, MODE_GITLINK, MODE_TREE};
 use crate::objects::ObjectKind;
 use crate::pathspec::matches_pathspec_list;
 use crate::porcelain::status::{
@@ -205,14 +206,22 @@ fn stage_new_worktree_path(
     precompose_unicode: bool,
     rules: &crate::worktree_rules::WorktreeRules,
 ) -> Result<()> {
-    if rel_path.ends_with('/') {
-        return Ok(());
-    }
     let resolved = resolve_worktree_path_for_staging(work_tree, rel_path, precompose_unicode);
     let abs = resolved.abs;
-    let index_relpath = resolved.index_relpath;
+    let index_relpath = resolved.index_relpath.trim_end_matches('/').to_owned();
     let meta = std::fs::symlink_metadata(&abs).map_err(crate::error::Error::Io)?;
-    if meta.is_dir() {
+    if meta.is_dir() && !meta.file_type().is_symlink() {
+        if is_unregistered_embedded_git_repo(index, &index_relpath, &abs) {
+            let head_oid = read_submodule_head_oid(&abs).ok_or_else(|| {
+                crate::error::Error::Message(format!(
+                    "could not resolve submodule HEAD for '{index_relpath}'"
+                ))
+            })?;
+            let mut entry =
+                entry_from_metadata(&meta, index_relpath.as_bytes(), head_oid, MODE_GITLINK);
+            entry.size = 0;
+            index.add_or_replace(entry);
+        }
         return Ok(());
     }
     let mode = mode_from_metadata(&meta);
