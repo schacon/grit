@@ -429,6 +429,12 @@ enum Command {
     /// Check refs, objects, and pack indexes for problems.
     #[command(alias = "verify")]
     Fsck {
+        /// Check connectivity from refs only (skip store-wide object validation).
+        #[arg(long = "connectivity-only")]
+        connectivity_only: bool,
+        /// Report unreachable objects (with `--connectivity-only`, off unless this flag is set).
+        #[arg(long)]
+        dangling: bool,
         /// Treat ref warnings as errors.
         #[arg(long)]
         strict: bool,
@@ -945,8 +951,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             emit(&commands::repack::run(dry_run, quiet)?, opts, ctx)
         }
         Command::Gc { dry_run, quiet } => emit(&commands::gc::run(dry_run, quiet)?, opts, ctx),
-        Command::Fsck { strict } => {
-            let outcome = commands::fsck::run(strict)?;
+        Command::Fsck {
+            connectivity_only,
+            dangling,
+            strict,
+        } => {
+            let outcome = commands::fsck::run(commands::fsck::FsckRunOptions {
+                connectivity_only,
+                dangling,
+                strict,
+                mode: opts.mode,
+            })?;
             let code = commands::fsck::exit_code(&outcome);
             emit(&outcome, opts, ctx)?;
             if code != 0 {

@@ -40,6 +40,32 @@ fn snapshot_fsck() {
 }
 
 #[test]
+fn snapshot_fsck_missing_blob() {
+    snapshot_fresh("fsck_missing_blob", &["fsck"], |fixture| {
+        use grit_lib::index::Index;
+        use grit_lib::porcelain::add::stage_for_commit;
+        use grit_lib::progress::NullProgress;
+        use grit_lib::repo::{InitOptions, Repository};
+        use std::fs;
+
+        let repo = Repository::init(fixture.path(), &InitOptions::default()).expect("init");
+        fs::write(repo.work_tree().unwrap().join("orphan.txt"), b"data\n").unwrap();
+        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        let index = Index::load(&repo.git_dir().join("index")).expect("index");
+        let oid = index.entries()[0].oid;
+        let loose = repo
+            .odb()
+            .enumerate_local_loose_objects()
+            .expect("loose")
+            .into_iter()
+            .find(|(o, _)| *o == oid)
+            .expect("path")
+            .1;
+        fs::remove_file(loose).expect("remove");
+    });
+}
+
+#[test]
 fn snapshot_gc_dry_run() {
     snapshot_all_modes("gc", &["gc", "--dry-run"]);
 }

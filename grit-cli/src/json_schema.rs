@@ -448,6 +448,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
     &[
         ("skill", &["skill"]),
         ("fsck", &["fsck"]),
+        ("fsck_missing_blob", &["fsck"]),
         ("gc", &["gc", "--dry-run"]),
         ("repack", &["repack", "--dry-run"]),
         ("status", &["status"]),
@@ -472,10 +473,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("shortlog", &["shortlog"]),
         ("revs_head", &["revs", "HEAD"]),
         ("revs_count", &["revs", "--count", "HEAD"]),
-        (
-            "merge_base",
-            &["merge-base", "HEAD~1", "HEAD"],
-        ),
+        ("merge_base", &["merge-base", "HEAD~1", "HEAD"]),
         (
             "merge_base_is_ancestor",
             &["merge-base", "--is-ancestor", "HEAD~1", "HEAD"],

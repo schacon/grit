@@ -9,6 +9,8 @@ order: 4
 
 ```text
 grit fsck
+grit fsck --connectivity-only
+grit fsck --dangling
 grit fsck --strict
 grit verify
 ```
@@ -17,16 +19,20 @@ grit verify
 
 Verifies repository integrity without invoking the system `git` binary:
 
-- Reference database checks ([`refs_fsck`](../../library/repository.md) parity).
-- Reachability walk from ref roots with object header validation.
-- Multi-pack-index verification when `objects/pack/multi-pack-index` exists.
+- Full run: loose and packed object validation, connectivity from ref roots, refs, multi-pack-index, and commit-graph checks when present.
+- With `--connectivity-only`: walk reachability from refs and validate linked objects only (faster; skips store-wide object scans).
+- With `--dangling` (or by default on a full run): list objects present in the object database but not reachable from refs.
 
-`grit verify` is an alias for `grit fsck`. The command exits with status **1** when any error-severity issue is found (warnings alone still exit 0 unless `--strict` promotes them for refs).
+Progress during long checks is written to **stderr** in human mode (suppressed for `--json` / `--markdown`).
+
+`grit verify` is an alias for `grit fsck`. Exit status **1** when any **error-severity** issue is reported. Warnings alone exit **0** unless `--strict` promotes ref warnings. Unreachable (**dangling**) objects alone do not fail the command.
 
 ## Options
 
 | Option | Description |
 | --- | --- |
+| `--connectivity-only` | Skip full object-store validation; check connectivity from ref roots only. |
+| `--dangling` | With `--connectivity-only`, also compute and list unreachable objects (full fsck always includes dangling). |
 | `--strict` | Treat ref-fsck warnings as errors. |
 
 ## Examples
@@ -35,14 +41,20 @@ Clean repository:
 
 ```console
 $ grit fsck
-Repository integrity check passed.
+Checked 12 objects.
+No integrity problems found.
 ```
 
 Report problems:
 
 ```console
 $ grit fsck
-error: abcd1234…: missingObject: object abcd1234… is missing
+Checked 8 objects.
+
+Issues:
+  missingObject (1):
+    deadbeef…: object deadbeef… referenced by abcd1234…
+
 Integrity check failed.
 ```
 
@@ -54,15 +66,17 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `ok` | boolean | `true` when no error-severity issues were found. |
-| `issues` | array | Each entry has `severity` (`error` or `warning`), `path`, `msg_id`, and `detail`. |
+| `objects_checked` | integer | Loose and packed objects examined during store validation (0 with `--connectivity-only`). |
+| `issues` | array | Each entry has `kind` (camelCase msg-id), optional `oid` and `path`, and `detail`. |
+| `dangling` | array | Unreachable objects as `{kind, oid}` (`kind` is `commit`, `tree`, `blob`, or `tag`). |
 
 Example:
 
 ```json
 {
-  "ok": true,
-  "issues": []
+  "objects_checked": 12,
+  "issues": [],
+  "dangling": []
 }
 ```
 
@@ -70,21 +84,21 @@ Example with a problem:
 
 ```json
 {
-  "ok": false,
+  "objects_checked": 8,
   "issues": [
     {
-      "severity": "error",
-      "path": "deadbeef…",
-      "msg_id": "missingObject",
-      "detail": "object deadbeef… is missing"
+      "kind": "missingObject",
+      "oid": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "detail": "object deadbeefdeadbeefdeadbeefdeadbeefdeadbeef referenced by abcd1234abcd1234abcd1234abcd1234abcd1234"
     }
-  ]
+  ],
+  "dangling": []
 }
 ```
 
 ## Markdown output
 
-Pass `--markdown` for a table of issues plus the `ok` flag.
+Pass `--markdown` for a summary table of issues and dangling objects.
 
 Schema: [v1](/schemas/fsck/v1.json)
 
