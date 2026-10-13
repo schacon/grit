@@ -460,6 +460,23 @@ impl NotesRef {
         Self("refs/notes/commits".to_owned())
     }
 
+    /// Parse a full ref name that must live under `refs/notes/`.
+    ///
+    /// Used for `GIT_NOTES_REF`, `core.notesRef`, and other configured refs (not
+    /// `--ref`, which uses [`Self::parse`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidNotesRef`](crate::error::Error::InvalidNotesRef) when
+    /// `full` is not prefixed with `refs/notes/`.
+    pub fn from_full(full: &str) -> Result<Self> {
+        let trimmed = full.trim();
+        if !trimmed.starts_with("refs/notes/") {
+            return Err(Error::InvalidNotesRef(full.to_owned()));
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
     /// Parse a short or full notes ref the same way Git's `--ref` flag does.
     #[must_use]
     pub fn parse(short_or_full: &str) -> Self {
@@ -477,6 +494,29 @@ impl std::fmt::Display for NotesRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Resolve the default notes ref from `GIT_NOTES_REF`, then `core.notesRef`, then
+/// [`NotesRef::commits`].
+///
+/// Config and environment values must be full refs under `refs/notes/` (same rules
+/// as Git's `init_notes_ref`).
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidNotesRef`](crate::error::Error::InvalidNotesRef) when a
+/// configured value is outside `refs/notes/`.
+pub fn resolve_configured_notes_ref<E: IdentityEnv>(
+    env: &E,
+    config: &ConfigSet,
+) -> Result<NotesRef> {
+    if let Some(value) = env.var("GIT_NOTES_REF").filter(|v| !v.trim().is_empty()) {
+        return NotesRef::from_full(&value);
+    }
+    if let Some(value) = config.get("core.notesRef").filter(|v| !v.trim().is_empty()) {
+        return NotesRef::from_full(&value);
+    }
+    Ok(NotesRef::commits())
 }
 
 /// Match Git's `expand_notes_ref` (`notes.c`): only `--ref` uses this; env/config refs are verbatim.

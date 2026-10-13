@@ -98,6 +98,9 @@ impl<'repo> RepositoryNotes<'repo> {
 
     /// Add or replace the note on `object`.
     ///
+    /// When `force` is false and a note already exists, returns
+    /// [`Error::NoteAlreadyExists`](crate::error::Error::NoteAlreadyExists).
+    ///
     /// # Errors
     ///
     /// Propagates notes tree read errors (invalid existing notes ref), blob write,
@@ -118,7 +121,7 @@ impl<'repo> RepositoryNotes<'repo> {
     ///     committer: "User <u@example.com> 1000000000 +0000".into(),
     ///     author: None,
     /// };
-    /// repo.notes().add(&NotesRef::commits(), &object, b"text\n", &opts)?;
+    /// repo.notes().add(&NotesRef::commits(), &object, b"text\n", &opts, false)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -128,10 +131,18 @@ impl<'repo> RepositoryNotes<'repo> {
         object: &ObjectId,
         content: &[u8],
         options: &NotesWriteOptions,
+        force: bool,
     ) -> Result<()> {
-        let blob = self.repo.odb().write(ObjectKind::Blob, content)?;
+        let hex = object.to_hex();
         let mut entries = read_notes_tree(self.repo, notes_ref.as_str())?;
-        upsert_note_entry(&mut entries, &object.to_hex(), blob);
+        let exists = entries
+            .iter()
+            .any(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()));
+        if exists && !force {
+            return Err(crate::error::Error::NoteAlreadyExists { object: *object });
+        }
+        let blob = self.repo.odb().write(ObjectKind::Blob, content)?;
+        upsert_note_entry(&mut entries, &hex, blob);
         write_notes_commit_idents(
             self.repo,
             notes_ref.as_str(),
@@ -153,9 +164,32 @@ impl<'repo> RepositoryNotes<'repo> {
         object: &ObjectId,
         options: &NotesWriteOptions,
     ) -> Result<()> {
+        self.remove_many(notes_ref, std::slice::from_ref(object), options)?;
+        Ok(())
+    }
+
+    /// Remove notes on each object in `objects`, writing at most one notes commit.
+    ///
+    /// Returns the object ids whose notes were removed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates notes tree read and commit failures.
+    pub fn remove_many(
+        &self,
+        notes_ref: &NotesRef,
+        objects: &[ObjectId],
+        options: &NotesWriteOptions,
+    ) -> Result<Vec<ObjectId>> {
         let mut entries = read_notes_tree(self.repo, notes_ref.as_str())?;
-        if !remove_note_entry(&mut entries, &object.to_hex()) {
-            return Ok(());
+        let mut removed = Vec::new();
+        for object in objects {
+            if remove_note_entry(&mut entries, &object.to_hex()) {
+                removed.push(*object);
+            }
+        }
+        if removed.is_empty() {
+            return Ok(removed);
         }
         write_notes_commit_idents(
             self.repo,
@@ -164,6 +198,7 @@ impl<'repo> RepositoryNotes<'repo> {
             &options.message,
             options.author.as_deref().unwrap_or(&options.committer),
             &options.committer,
-        )
+        )?;
+        Ok(removed)
     }
 }
