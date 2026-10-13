@@ -68,7 +68,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `entries[].path` | string | Repository-relative path. |
 | `entries[].ignored` | boolean | Whether the path is ignored. |
 | `entries[].matched` | object or omitted | Verbose match metadata when present. |
-| `entries[].matched.source` | object | Typed source (`per_directory`, `info_exclude`, or `core_excludesfile`). |
+| `entries[].matched.source` | object | Typed source (`per_directory`, `info_exclude`, or `core_excludes_file`). |
 | `entries[].matched.line_number` | number | 1-based line in the source file. |
 | `entries[].matched.pattern_text` | string | Pattern text as written in the file. |
 | `entries[].matched.negative` | boolean | Whether the rule is negated (`!pattern`). |

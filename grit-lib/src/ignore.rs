@@ -406,6 +406,11 @@ impl IgnoreMatcher {
                             cur.push('/');
                         }
                         cur.push_str(segment);
+                        if worktree_path_is_existing_file(repo, &cur) {
+                            // Git does not treat a file path as a directory for EXC_DIRS
+                            // loading (`tracked.txt/.gitignore` must not be probed).
+                            break;
+                        }
                         dirs.push(cur.clone());
                     }
                 }
@@ -783,7 +788,21 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
     let Some(index) = index else {
         return false;
     };
+    // Trailing `/` is a directory query; Git does not apply the index tracked exemption
+    // (`tracked.txt/` can match exclude rules even when `tracked.txt` is staged).
+    if repo_rel_path.ends_with('/') {
+        return false;
+    }
     index.get(repo_rel_path.as_bytes(), 0).is_some()
+}
+
+/// True when `repo_rel_path` exists in the work tree as a regular file (not a directory).
+fn worktree_path_is_existing_file(repo: &Repository, repo_rel_path: &str) -> bool {
+    let Some(work_tree) = repo.work_tree() else {
+        return false;
+    };
+    let path = work_tree.join(repo_rel_path);
+    path.metadata().map(|m| m.is_file()).unwrap_or(false)
 }
 
 fn path_query_is_dir(repo: &Repository, repo_rel_path: &str) -> bool {

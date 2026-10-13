@@ -53,6 +53,59 @@ fn tracked_paths_never_ignored() {
 }
 
 #[test]
+fn trailing_slash_on_existing_file_matches_git() {
+    use std::fs;
+
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_test_support::unique_tmp;
+
+    let home = unique_tmp("ignore", "file-slash-home");
+    let root = unique_tmp("ignore", "file-slash");
+    fs::create_dir_all(&home).expect("home");
+    assert!(
+        t0008::hermetic_git(&home, &root, &["init"])
+            .status
+            .success(),
+        "git init"
+    );
+    assert!(
+        t0008::hermetic_git(&home, &root, &["config", "user.email", "ignore@test"])
+            .status
+            .success()
+            && t0008::hermetic_git(&home, &root, &["config", "user.name", "Ignore Test"])
+                .status
+                .success(),
+        "git identity"
+    );
+    fs::write(root.join(".gitignore"), "*.txt\n").expect("gitignore");
+    fs::write(root.join("untracked.txt"), b"x").expect("untracked");
+    fs::write(root.join("tracked.txt"), b"y").expect("tracked");
+    assert!(
+        t0008::hermetic_git(&home, &root, &["add", "-f", "tracked.txt"])
+            .status
+            .success(),
+        "git add -f"
+    );
+
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(&root),
+    )
+    .expect("open");
+    let index = repo.index_handle().load().expect("index");
+
+    for path in ["untracked.txt/", "tracked.txt/"] {
+        let git_map = git_check_ignore_verbose_batch(&home, &root, &[path]);
+        let git = git_map
+            .get(path)
+            .unwrap_or_else(|| panic!("git missing {path}"));
+        let results = grit_ignore_check(&repo, &index, &[path.to_owned()]);
+        assert_eq!(results.len(), 1, "one result for {path}");
+        assert_match_eq(path, git, results[0].ignored, &results[0].matched);
+    }
+}
+
+#[test]
 fn trailing_slash_directory_hint_matches_git() {
     use std::fs;
 
