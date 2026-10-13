@@ -1,6 +1,9 @@
 //! Linked worktree add/remove matches Git layout and interoperates with `git worktree list`.
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::porcelain::add::{stage, StageOptions};
+use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, remove_linked_worktree, AddLinkedWorktreeOptions,
@@ -113,4 +116,74 @@ fn grit_add_and_remove_linked_worktree_git_list() {
         !linked.exists(),
         "clean non-force removal must delete the worktree directory and tracked files"
     );
+}
+
+/// After a grit commit in a linked worktree, removal must succeed without a prior status run
+/// (issue #1001: stale index stat must not make `git diff-files` or remove think the tree is dirty).
+#[test]
+fn linked_worktree_remove_after_grit_commit_without_prior_status() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let main = root.join("main");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    git(&main, &["config", "user.email", "t@example.com"]);
+    git(&main, &["config", "user.name", "Test"]);
+    git(&main, &["config", "core.autocrlf", "true"]);
+    std::fs::write(main.join("tracked.txt"), "1\n").unwrap();
+    git(&main, &["add", "tracked.txt"]);
+    git(&main, &["commit", "-qm", "seed"]);
+
+    let main_repo =
+        Repository::discover(Some(main.as_path()), &RepositoryOptions::empty()).expect("discover");
+    let linked = root.join("linked");
+    add_linked_worktree(
+        &main_repo,
+        &AddLinkedWorktreeOptions {
+            path: linked.clone(),
+            branch: Some("linked".to_owned()),
+            new_branch: true,
+            detach: false,
+            start_point: Some("HEAD".to_owned()),
+            force: false,
+        },
+    )
+    .expect("add worktree");
+
+    let linked_repo =
+        Repository::discover(Some(linked.as_path()), &RepositoryOptions::empty()).expect("linked");
+    std::fs::write(linked.join("new.txt"), "new\n").unwrap();
+    stage(&linked_repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    create_commit(
+        &linked_repo,
+        &CommitRequest {
+            message: "commit in linked wt".into(),
+            author: "Test <t@example.com> 1000000000 +0000".into(),
+            committer: "Test <t@example.com> 1000000000 +0000".into(),
+            allow_empty: false,
+            sign_override: None,
+            amend: false,
+        },
+        &mut NullProgress,
+    )
+    .expect("commit");
+
+    let diff_out = Command::new("git")
+        .args(["diff-files"])
+        .current_dir(&linked)
+        .output()
+        .expect("git diff-files");
+    assert!(
+        diff_out.status.success(),
+        "git diff-files failed: {}",
+        String::from_utf8_lossy(&diff_out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&diff_out.stdout).trim().is_empty(),
+        "git diff-files must be clean after grit commit"
+    );
+
+    remove_linked_worktree(&main_repo, &linked, false).expect("remove after commit");
+    assert_eq!(list_worktrees(&main_repo).unwrap().len(), 1);
+    assert!(!linked.exists());
 }
