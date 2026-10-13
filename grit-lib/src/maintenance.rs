@@ -35,8 +35,8 @@ use crate::gc::{prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{
-    clear_pack_midx_state, write_multi_pack_index_with_options,
-    MidxBitmapWriteOutcome, WriteMultiPackIndexOptions, WriteMultiPackIndexResult,
+    clear_pack_midx_state, write_multi_pack_index_with_options, MidxBitmapWriteOutcome,
+    WriteMultiPackIndexOptions, WriteMultiPackIndexResult,
 };
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -313,6 +313,10 @@ pub struct GcOptions {
     pub expire_reflog: bool,
     /// Unix seconds for reflog expiry rules.
     pub now_unix: i64,
+    /// When true, pack loose refs before other gc steps.
+    pub pack_refs: bool,
+    /// When true, write `objects/info/commit-graph` with changed paths after repack/prune.
+    pub write_commit_graph: bool,
 }
 
 impl Default for GcOptions {
@@ -321,6 +325,8 @@ impl Default for GcOptions {
             repack: RepackOptions::default(),
             expire_reflog: true,
             now_unix: 0,
+            pack_refs: true,
+            write_commit_graph: true,
         }
     }
 }
@@ -333,6 +339,7 @@ impl GcOptions {
             repack: RepackOptions::with_dry_run(dry_run),
             expire_reflog: true,
             now_unix,
+            ..Self::default()
         }
     }
 
@@ -343,6 +350,31 @@ impl GcOptions {
             repack: RepackOptions::default(),
             expire_reflog,
             now_unix,
+            ..Self::default()
+        }
+    }
+
+    /// Full maintenance run: pack-refs, reflog expiry, repack, prune, commit-graph.
+    #[must_use]
+    pub fn full_run(dry_run: bool, now_unix: i64) -> Self {
+        Self {
+            repack: RepackOptions::with_dry_run(dry_run),
+            expire_reflog: true,
+            now_unix,
+            pack_refs: true,
+            write_commit_graph: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl PruneOptions {
+    /// Prune with an optional explicit cutoff (`None` uses `gc.pruneExpire`).
+    #[must_use]
+    pub fn with_older_than(older_than: Option<SystemTime>) -> Self {
+        Self {
+            older_than,
+            ..Self::default()
         }
     }
 }
@@ -535,13 +567,29 @@ pub fn write_midx(repo: &Repository, opts: &MidxOptions) -> Result<MidxWriteRepo
     })
 }
 
+/// Options for [`prune_loose_objects`].
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct PruneOptions {
+    /// When set, only delete unreachable loose objects strictly older than this time.
+    ///
+    /// When `None`, uses `gc.pruneExpire` from repository config (default `2.weeks.ago`).
+    pub older_than: Option<SystemTime>,
+    /// Report without deleting objects.
+    pub dry_run: bool,
+}
+
 /// Result of [`gc`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcStats {
+    /// Loose refs packed during gc (`None` when skipped).
+    pub pack_refs: Option<PackRefsReport>,
     /// Counters from the repack phase.
     pub repack: RepackStats,
     /// Counters from loose-object pruning after repack.
     pub prune: PruneStats,
+    /// Monolithic commit-graph written after repack/prune (`None` when skipped).
+    pub commit_graph: Option<CommitGraphWriteReport>,
     /// Reflog lines removed by expiry during gc.
     pub reflog_entries_pruned: usize,
 }
@@ -746,7 +794,38 @@ pub fn fsck(repo: &Repository, opts: &FsckOptions) -> Result<FsckReport> {
     Ok(FsckReport { ok, issues })
 }
 
-/// Run reflog expiry (optional), repack, and unreachable loose-object prune.
+fn gc_repack_writes_bitmap(repo: &Repository, config: &ConfigSet) -> bool {
+    if let Some(Ok(v)) = config.get_bool("repack.writeBitmaps") {
+        return v;
+    }
+    repo.work_tree().is_none()
+}
+
+/// Delete unreachable loose objects using `gc.pruneExpire` or an explicit cutoff.
+///
+/// # Errors
+///
+/// Propagates config parse failures, unsupported ODB backends, and I/O errors.
+pub fn prune_loose_objects(repo: &Repository, opts: &PruneOptions) -> Result<PruneStats> {
+    let odb = repo.odb();
+    odb.require_files_primary("prune")?;
+    if opts.dry_run {
+        return Ok(PruneStats::default());
+    }
+    let cfg = repo.config()?;
+    let now = gc_now_unix(0);
+    let keep_newer_than = match opts.older_than {
+        Some(t) => Some(t),
+        None => match gc_loose_prune_policy(&cfg, now)? {
+            GcLoosePrunePolicy::Disabled => return Ok(PruneStats::default()),
+            GcLoosePrunePolicy::Enabled { keep_newer_than } => keep_newer_than,
+        },
+    };
+    let roots = collect_maintenance_object_roots(repo)?;
+    prune_loose_unreachable(odb, &roots, keep_newer_than)
+}
+
+/// Run pack-refs, reflog expiry, repack, prune, and commit-graph maintenance.
 pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let mut stats = GcStats::default();
     let odb = repo.odb();
@@ -755,19 +834,28 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let now = gc_now_unix(opts.now_unix);
     let cfg = repo.config()?;
     let prune_policy = gc_loose_prune_policy(&cfg, now)?;
+    let dry_run = opts.repack.dry_run;
+
+    if opts.pack_refs && !dry_run {
+        stats.pack_refs = Some(pack_refs(repo, &PackRefsOptions::default())?);
+    }
 
     if opts.expire_reflog {
-        stats.reflog_entries_pruned = expire_reflogs_for_gc(repo, opts.repack.dry_run, now)?;
+        stats.reflog_entries_pruned = expire_reflogs_for_gc(repo, dry_run, now)?;
     }
 
     let mut repack_opts = opts.repack.clone();
     apply_gc_prune_policy_to_repack(&mut repack_opts, &prune_policy);
-    if repack_opts.now.is_none() && now != 0 {
-        repack_opts.now = OffsetDateTime::from_unix_timestamp(now).ok();
+    if repack_opts.now.is_none() {
+        repack_opts.now =
+            Some(OffsetDateTime::from_unix_timestamp(now).unwrap_or(OffsetDateTime::UNIX_EPOCH));
+    }
+    if !repack_opts.write_bitmap {
+        repack_opts.write_bitmap = gc_repack_writes_bitmap(repo, &cfg);
     }
     stats.repack = repack_all(repo, &repack_opts)?;
 
-    if opts.repack.dry_run {
+    if dry_run {
         return Ok(stats);
     }
 
@@ -779,6 +867,14 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
             kept: 0,
         }
     };
+
+    if opts.write_commit_graph {
+        stats.commit_graph = Some(write_commit_graph(
+            repo,
+            &CommitGraphOptions::with_changed_paths(true),
+        )?);
+    }
+    let _ = odb;
     Ok(stats)
 }
 
