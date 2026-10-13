@@ -4248,6 +4248,56 @@ pub fn read_worktree_bytes_for_mode(path: &Path, mode: u32) -> std::io::Result<V
     fs::read(path)
 }
 
+/// Read worktree file bytes in Git (repository) form for line diffs against index or tree blobs.
+///
+/// Applies the same `.gitattributes`, filter, and line-ending rules as
+/// [`diff_index_to_worktree`]. Pass the stage-0 [`IndexEntry`] when available so
+/// `autocrlf` index-guard normalization matches status and raw diff collection.
+///
+/// # Errors
+///
+/// Returns I/O errors from the worktree path or [`Error`] from filter conversion.
+pub fn read_worktree_side_bytes_for_diff(
+    odb: &Odb,
+    work_tree: &Path,
+    rel_path: &str,
+    mode: u32,
+    config: &crate::config::ConfigSet,
+    index_entry: Option<&IndexEntry>,
+    worktree_rules: Option<&crate::worktree_rules::WorktreeRules>,
+) -> Result<Vec<u8>> {
+    let file_path = work_tree.join(rel_path);
+    if mode == MODE_SYMLINK {
+        return read_worktree_bytes_for_mode(&file_path, mode).map_err(Error::Io);
+    }
+    let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
+    if let Some(rules) = worktree_rules {
+        return worktree_blob_bytes(
+            odb,
+            &file_path,
+            &meta,
+            rules.conversion(),
+            &rules.file_attrs(rel_path, meta.is_dir()),
+            rel_path,
+            index_entry,
+            Some(rules.filter_process()),
+        );
+    }
+    let conv = crate::crlf::ConversionConfig::from_config(config);
+    let attrs = crate::crlf::load_gitattributes(work_tree);
+    let file_attrs = crate::crlf::get_file_attrs(&attrs, rel_path, meta.is_dir(), config);
+    worktree_blob_bytes(
+        odb,
+        &file_path,
+        &meta,
+        &conv,
+        &file_attrs,
+        rel_path,
+        index_entry,
+        None,
+    )
+}
+
 /// Symlink target as the byte string Git hashes for the blob OID.
 ///
 /// On Unix the raw `OsStr` bytes are used verbatim. On Windows `OsStr` is WTF-8
@@ -5615,79 +5665,6 @@ fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<Vec<u8>> {
     Ok(odb.read(oid)?.data)
 }
 
-fn read_worktree_side_bytes_normalized(
-    odb: &Odb,
-    entry: &DiffEntry,
-    work_root: &Path,
-    worktree: &DiffPostprocessWorktree<'_>,
-    rules: Option<&crate::worktree_rules::WorktreeRules>,
-    config: &ConfigSet,
-    filter_process: Option<&crate::filter_process::FilterProcessState>,
-) -> Result<Vec<u8>> {
-    let path = entry.new_path.as_deref().ok_or_else(|| {
-        Error::ObjectNotFound("modified entry missing new_path for worktree read".into())
-    })?;
-    let file_path = work_root.join(path);
-    let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
-    let index_entry = worktree.index.get(path.as_bytes(), 0);
-    if let Some(rules) = rules {
-        let file_attrs = rules.file_attrs(path, false);
-        return worktree_blob_bytes(
-            odb,
-            &file_path,
-            &meta,
-            rules.conversion(),
-            &file_attrs,
-            path,
-            index_entry,
-            Some(rules.filter_process()),
-        );
-    }
-    let conv = crate::crlf::ConversionConfig::from_config(config);
-    let attrs = crate::crlf::load_gitattributes(work_root);
-    let file_attrs = crate::crlf::get_file_attrs(&attrs, path, false, config);
-    worktree_blob_bytes(
-        odb,
-        &file_path,
-        &meta,
-        &conv,
-        &file_attrs,
-        path,
-        index_entry,
-        filter_process,
-    )
-}
-
-/// Bytes on the worktree side of a [`DiffEntry`] for display diffs.
-///
-/// When [`DiffEntry::new_oid`] is the null OID, reads the path from `work_root` and runs the same
-/// clean/attribute normalization as [`diff_tree_to_worktree`] and [`diff_index_to_worktree`].
-/// Otherwise returns the blob stored at `new_oid`.
-///
-/// # Errors
-///
-/// Returns I/O, object read, or filter errors while resolving worktree content.
-pub fn diff_entry_worktree_side_bytes(
-    odb: &Odb,
-    entry: &DiffEntry,
-    work_root: &Path,
-    worktree: &DiffPostprocessWorktree<'_>,
-    rules: &crate::worktree_rules::WorktreeRules,
-) -> Result<Vec<u8>> {
-    if entry.new_oid != zero_oid() {
-        return blob_bytes(odb, &entry.new_oid);
-    }
-    read_worktree_side_bytes_normalized(
-        odb,
-        entry,
-        work_root,
-        worktree,
-        Some(rules),
-        rules.config(),
-        None,
-    )
-}
-
 /// Bytes on the "new" side of a diff entry (ODB blob, or worktree file when `new_oid` is null).
 ///
 /// When `worktree` is set, worktree paths are normalized with the same attribute/filter rules as
@@ -5698,7 +5675,6 @@ fn read_new_side_bytes(
     work_root: Option<&Path>,
     worktree: Option<&DiffPostprocessWorktree<'_>>,
     config: &ConfigSet,
-    filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<Vec<u8>> {
     if entry.new_oid != zero_oid() {
         return blob_bytes(odb, &entry.new_oid);
@@ -5713,15 +5689,9 @@ fn read_new_side_bytes(
         ))
     })?;
     if let Some(wctx) = worktree {
-        return read_worktree_side_bytes_normalized(
-            odb,
-            entry,
-            root,
-            wctx,
-            None,
-            config,
-            filter_process,
-        );
+        let mode = u32::from_str_radix(&entry.new_mode, 8).unwrap_or(crate::index::MODE_REGULAR);
+        let index_entry = wctx.index.get(path.as_bytes(), 0);
+        return read_worktree_side_bytes_for_diff(odb, root, path, mode, config, index_entry, None);
     }
     fs::read(root.join(path)).map_err(Error::Io)
 }
@@ -5738,7 +5708,7 @@ fn worktree_side_differs_after_normalize(
         Error::ObjectNotFound("modified entry missing new_path for worktree read".into())
     })?;
     let raw = fs::read(work_root.join(path)).map_err(Error::Io)?;
-    let canonical = read_new_side_bytes(odb, entry, Some(work_root), Some(worktree), config, None)?;
+    let canonical = read_new_side_bytes(odb, entry, Some(work_root), Some(worktree), config)?;
     Ok(raw != canonical)
 }
 
@@ -5757,7 +5727,7 @@ fn split_broken_modifications(
             continue;
         }
         let old = blob_bytes(odb, &e.old_oid)?;
-        let new = read_new_side_bytes(odb, &e, work_root, worktree, config, None)?;
+        let new = read_new_side_bytes(odb, &e, work_root, worktree, config)?;
         if should_break_rewrite_pair(&old, &new, break_score) {
             let path = e.path().to_owned();
             out.push(DiffEntry {
@@ -5800,7 +5770,7 @@ fn annotate_broken_modifications(
     for mut e in entries {
         if e.status == DiffStatus::Modified {
             let old = blob_bytes(odb, &e.old_oid)?;
-            let new = read_new_side_bytes(odb, &e, work_root, worktree, config, None)?;
+            let new = read_new_side_bytes(odb, &e, work_root, worktree, config)?;
             if should_break_rewrite_pair(&old, &new, break_score) {
                 // `git diff-files -B` keeps plain `M` when the worktree side is still null.
                 // `git diff <tree> -B` materializes the clean OID; `M###` appears only when
@@ -5841,7 +5811,7 @@ fn materialize_break_worktree_new_oids(
         if !matches!(e.status, DiffStatus::Modified | DiffStatus::Added) {
             continue;
         }
-        let bytes = read_new_side_bytes(odb, e, work_root, worktree, config, None)?;
+        let bytes = read_new_side_bytes(odb, e, work_root, worktree, config)?;
         e.new_oid = odb.hash(ObjectKind::Blob, &bytes);
     }
     Ok(())
