@@ -473,7 +473,7 @@ enum Command {
     /// List, show, add, or remove Git notes on commits.
     Notes {
         /// Notes ref (default: `core.notesRef` or `refs/notes/commits`).
-        #[arg(long = "ref", value_name = "REF")]
+        #[arg(long = "ref", value_name = "REF", global = true)]
         notes_ref: Option<String>,
         #[command(subcommand)]
         action: Option<NotesAction>,
