@@ -1,0 +1,21 @@
+---
+source: grit-test-support/src/cli_fixture.rs
+expression: payload
+---
+{
+  "human": {
+    "exit": 0,
+    "stdout": "repack: packed 8 objects into [REPO]/.git/objects/pack/pack-a9c9c9a71ea21c88c70306fdf2b8f664d19ee7f5.pack (7 ms).\n",
+    "stderr": "Repacking objects…\n"
+  },
+  "json": {
+    "exit": 0,
+    "stdout": "{\n  \"dry_run\": false,\n  \"tasks\": [\n    {\n      \"task\": \"repack\",\n      \"duration_ms\": 6,\n      \"loose_before\": 9,\n      \"packs_before\": 0,\n      \"objects_packed\": 8,\n      \"pack_bytes\": 501,\n      \"pack_path\": \"[REPO]/.git/objects/pack/pack-58c6041d2f738676f05ce06c57757d36b45ae15f.pack\",\n      \"removed_pack_files\": 0,\n      \"pruned_loose\": 8,\n      \"unreachable_loose_pruned\": 0\n    }\n  ]\n}\n",
+    "stderr": ""
+  },
+  "markdown": {
+    "exit": 0,
+    "stdout": "## Garbage collection\n\n- **dry_run:** false\n\n### Tasks\n\n- `{\"duration_ms\":7,\"loose_before\":9,\"objects_packed\":8,\"pack_bytes\":501,\"pack_path\":\"[REPO]/.git/objects/pack/pack-bf57c5e41c53921c7208029dbdb4d5e87adda30b.pack\",\"packs_before\":0,\"pruned_loose\":8,\"removed_pack_files\":0,\"task\":\"repack\",\"unreachable_loose_pruned\":0}`\n",
+    "stderr": ""
+  }
+}

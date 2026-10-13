@@ -99,6 +99,31 @@ enum ReflogAction {
     },
 }
 
+/// Subcommands of `grit gc`.
+#[derive(Debug, Subcommand)]
+enum GcAction {
+    /// Repack reachable objects into one pack.
+    Repack {
+        /// Write a reachability `.bitmap` sidecar for the new pack.
+        #[arg(long)]
+        bitmaps: bool,
+    },
+    /// Write a reachable commit-graph with changed-path Bloom filters.
+    #[command(name = "commit-graph")]
+    CommitGraph,
+    /// Write or refresh the multi-pack-index.
+    Midx,
+    /// Pack loose refs into `packed-refs` (or compact reftable).
+    #[command(name = "pack-refs")]
+    PackRefs,
+    /// Delete unreachable loose objects.
+    Prune {
+        /// Only remove objects older than this date (Git approxidate syntax).
+        #[arg(long = "older-than", value_name = "DATE")]
+        older_than: Option<String>,
+    },
+}
+
 /// Subcommands of `grit ignore`.
 #[derive(Debug, Subcommand)]
 enum IgnoreAction {
@@ -417,7 +442,7 @@ enum Command {
         #[arg(short, long)]
         quiet: bool,
     },
-    /// Repack, expire reflogs, and prune unreachable loose objects.
+    /// Pack refs, expire reflogs, repack, prune, and refresh commit-graph.
     Gc {
         /// Show what would run without writing.
         #[arg(long = "dry-run")]
@@ -425,6 +450,8 @@ enum Command {
         /// Suppress progress summary on stderr.
         #[arg(short, long)]
         quiet: bool,
+        #[command(subcommand)]
+        action: Option<GcAction>,
     },
     /// Check refs, objects, and pack indexes for problems.
     #[command(alias = "verify")]
@@ -953,7 +980,26 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Repack { dry_run, quiet } => {
             emit(&commands::repack::run(dry_run, quiet)?, opts, ctx)
         }
-        Command::Gc { dry_run, quiet } => emit(&commands::gc::run(dry_run, quiet)?, opts, ctx),
+        Command::Gc {
+            dry_run,
+            quiet,
+            action,
+        } => {
+            let mode = opts.mode;
+            let outcome = match action {
+                None => commands::gc::run(dry_run, quiet, mode)?,
+                Some(GcAction::Repack { bitmaps }) => {
+                    commands::gc::run_repack(bitmaps, dry_run, quiet, mode)?
+                }
+                Some(GcAction::CommitGraph) => commands::gc::run_commit_graph(quiet, mode)?,
+                Some(GcAction::Midx) => commands::gc::run_midx(quiet, mode)?,
+                Some(GcAction::PackRefs) => commands::gc::run_pack_refs(quiet, mode)?,
+                Some(GcAction::Prune { older_than }) => {
+                    commands::gc::run_prune(older_than.as_deref(), quiet, mode)?
+                }
+            };
+            emit(&outcome, opts, ctx)
+        }
         Command::Fsck {
             connectivity_only,
             dangling,

@@ -2,102 +2,96 @@
   "$id": "https://grit-scm.com/schemas/gc/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "definitions": {
-    "PruneSummary": {
-      "properties": {
-        "kept": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
+    "GcTaskReport": {
+      "oneOf": [
+        {
+          "properties": {
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "path": { "type": "string" },
+            "refs_packed": { "format": "uint", "minimum": 0, "type": "integer" },
+            "refs_pruned": { "format": "uint", "minimum": 0, "type": "integer" },
+            "task": { "const": "pack-refs" }
+          },
+          "required": ["task", "duration_ms", "refs_packed", "refs_pruned", "path"],
+          "type": "object"
         },
-        "pruned": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
+        {
+          "properties": {
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "entries_pruned": { "format": "uint", "minimum": 0, "type": "integer" },
+            "task": { "const": "reflog-expire" }
+          },
+          "required": ["task", "duration_ms", "entries_pruned"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "loose_before": { "format": "uint", "minimum": 0, "type": "integer" },
+            "objects_packed": { "format": "uint", "minimum": 0, "type": ["integer", "null"] },
+            "pack_bytes": { "format": "uint64", "minimum": 0, "type": ["integer", "null"] },
+            "pack_path": { "type": ["string", "null"] },
+            "packs_before": { "format": "uint", "minimum": 0, "type": "integer" },
+            "pruned_loose": { "format": "uint", "minimum": 0, "type": "integer" },
+            "removed_pack_files": { "format": "uint", "minimum": 0, "type": "integer" },
+            "task": { "const": "repack" },
+            "unreachable_loose_pruned": { "format": "uint", "minimum": 0, "type": "integer" }
+          },
+          "required": [
+            "task",
+            "duration_ms",
+            "loose_before",
+            "packs_before",
+            "pruned_loose",
+            "removed_pack_files",
+            "unreachable_loose_pruned"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "kept": { "format": "uint", "minimum": 0, "type": "integer" },
+            "pruned": { "format": "uint", "minimum": 0, "type": "integer" },
+            "task": { "const": "prune" }
+          },
+          "required": ["task", "duration_ms", "pruned", "kept"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "commit_count": { "format": "uint", "minimum": 0, "type": "integer" },
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "path": { "type": "string" },
+            "removed_chain": { "type": "boolean" },
+            "task": { "const": "commit-graph" }
+          },
+          "required": ["task", "duration_ms", "commit_count", "path", "removed_chain"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bitmap": { "type": "string" },
+            "duration_ms": { "format": "uint64", "minimum": 0, "type": "integer" },
+            "pack_count": { "format": "uint", "minimum": 0, "type": "integer" },
+            "path": { "type": "string" },
+            "task": { "const": "midx" }
+          },
+          "required": ["task", "duration_ms", "pack_count", "path", "bitmap"],
+          "type": "object"
         }
-      },
-      "required": [
-        "kept",
-        "pruned"
-      ],
-      "type": "object"
-    },
-    "RepackSummary": {
-      "properties": {
-        "loose_before": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "objects_packed": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "pack_bytes": {
-          "format": "uint64",
-          "minimum": 0.0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "pack_path": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "packs_before": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "pruned_loose": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "removed_pack_files": {
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "loose_before",
-        "packs_before",
-        "pruned_loose",
-        "removed_pack_files"
-      ],
-      "type": "object"
+      ]
     }
   },
-  "description": "Result of `grit gc`.",
+  "description": "Result of `grit gc` and its task subcommands.",
   "properties": {
-    "dry_run": {
-      "type": "boolean"
-    },
-    "prune": {
-      "$ref": "#/definitions/PruneSummary"
-    },
-    "reflog_entries_pruned": {
-      "format": "uint",
-      "minimum": 0.0,
-      "type": "integer"
-    },
-    "repack": {
-      "$ref": "#/definitions/RepackSummary"
+    "dry_run": { "type": "boolean" },
+    "tasks": {
+      "items": { "$ref": "#/definitions/GcTaskReport" },
+      "type": "array"
     }
   },
-  "required": [
-    "dry_run",
-    "prune",
-    "reflog_entries_pruned",
-    "repack"
-  ],
+  "required": ["dry_run", "tasks"],
   "title": "GcOutcome",
   "type": "object"
 }

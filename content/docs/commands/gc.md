@@ -1,6 +1,6 @@
 ---
 title: grit gc
-summary: Repack the object database and prune unreachable loose objects.
+summary: Run repository maintenance — pack refs, expire reflogs, repack, prune, and refresh commit-graph.
 group: Maintenance
 order: 3
 ---
@@ -11,39 +11,63 @@ order: 3
 grit gc
 grit gc --dry-run
 grit gc --quiet
+grit gc repack [--bitmaps]
+grit gc commit-graph
+grit gc midx
+grit gc pack-refs
+grit gc prune [--older-than DATE]
 ```
 
 ## Description
 
-Runs repository garbage collection in-process:
+Runs Git-compatible maintenance in-process (never shells out to the system `git` binary).
 
-1. Expire reflogs using `gc.reflogExpire*` rules (same layering as Git).
-2. Repack all reachable objects into one pack ([`grit repack`](repack.md)).
-3. Delete loose objects that are not reachable from any ref.
+Bare **`grit gc`** runs, in order:
 
-This is the usual way to shrink a `.git` directory after many local commits. It does not shell out to the system `git` binary.
+1. **pack-refs** — merge loose refs into `packed-refs` (or compact reftable).
+2. **reflog-expire** — apply `gc.reflogExpire*` rules using the current time.
+3. **repack** — one pack for all reachable objects; writes a `.bitmap` when `repack.writeBitmaps` is true or the repository is bare.
+4. **prune** — delete unreachable loose objects older than `gc.pruneExpire` (default `2.weeks.ago`).
+5. **commit-graph** — write `objects/info/commit-graph` with changed-path Bloom filters.
+
+Task subcommands run a single step and return the same JSON shape with one entry in `tasks`.
+
+Progress lines go to **stderr**. The human summary lists each task, key counters, and elapsed milliseconds.
 
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `--dry-run` | Run reflog expiry and repack in dry-run mode; no objects or refs are modified. |
-| `-q`, `--quiet` | Suppress the human summary. |
+| `--dry-run` | Reflog expiry and repack estimate only; no refs or objects are modified (full `grit gc` only). |
+| `-q`, `--quiet` | Suppress the human task summary. |
+
+### `grit gc repack`
+
+| Option | Description |
+| --- | --- |
+| `--bitmaps` | Write a reachability `.bitmap` sidecar for the new pack. |
+| `--dry-run` | Inherited from the parent `grit gc` flags when invoked as `grit gc --dry-run repack` is not supported; use `grit gc repack` without `--dry-run` or run bare `grit gc --dry-run`. |
+
+### `grit gc prune`
+
+| Option | Description |
+| --- | --- |
+| `--older-than DATE` | Git approxidate cutoff; default is `gc.pruneExpire` from config. |
 
 ## Examples
 
 ```console
 $ grit gc
-Packed 412 objects into .git/objects/pack/pack-….pack.
-Pruned 0 unreachable loose objects (0 kept).
+reflog-expire: removed 0 entries (12 ms).
+repack: packed 412 objects into .git/objects/pack/pack-….pack (842 ms).
+commit-graph: wrote 87 commits to .git/objects/info/commit-graph (120 ms).
 ```
 
-Dry run:
+Single task:
 
 ```console
-$ grit gc --dry-run
-Dry run: no changes written.
-Would pack 412 reachable objects.
+$ grit gc repack --bitmaps
+repack: packed 412 objects into .git/objects/pack/pack-….pack (800 ms).
 ```
 
 ## JSON output
@@ -54,36 +78,46 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `dry_run` | boolean | Whether this run only estimated work. |
-| `reflog_entries_pruned` | number | Reflog entries removed (or that would be removed on dry run). |
-| `repack` | object | Same fields as [`grit repack`](repack.md) JSON (`loose_before`, `packs_before`, `objects_packed`, `pack_bytes`, `pack_path`, `removed_pack_files`, `pruned_loose`). |
-| `prune` | object | `{ "pruned": number, "kept": number }` unreachable loose-object counts. |
+| `dry_run` | boolean | Whether this run only estimated work (full gc). |
+| `tasks` | array | One object per maintenance task; each value includes `task` (`pack-refs`, `reflog-expire`, `repack`, `prune`, `commit-graph`, `midx`) and task-specific counters plus `duration_ms`. |
 
-Example:
+Example (abbreviated):
 
 ```json
 {
   "dry_run": false,
-  "reflog_entries_pruned": 0,
-  "repack": {
-    "loose_before": 380,
-    "packs_before": 0,
-    "objects_packed": 412,
-    "pack_bytes": 88234,
-    "pack_path": ".git/objects/pack/pack-abc123….pack",
-    "removed_pack_files": 0,
-    "pruned_loose": 380
-  },
-  "prune": {
-    "pruned": 0,
-    "kept": 0
-  }
+  "tasks": [
+    {
+      "task": "reflog-expire",
+      "duration_ms": 12,
+      "entries_pruned": 0
+    },
+    {
+      "task": "repack",
+      "duration_ms": 842,
+      "loose_before": 380,
+      "packs_before": 0,
+      "objects_packed": 412,
+      "pack_bytes": 88234,
+      "pack_path": ".git/objects/pack/pack-abc123….pack",
+      "removed_pack_files": 0,
+      "pruned_loose": 380,
+      "unreachable_loose_pruned": 0
+    },
+    {
+      "task": "commit-graph",
+      "duration_ms": 120,
+      "commit_count": 87,
+      "path": ".git/objects/info/commit-graph",
+      "removed_chain": false
+    }
+  ]
 }
 ```
 
 ## Markdown output
 
-Pass `--markdown` for an agent-friendly report with repack and prune sections.
+Pass `--markdown` for an agent-friendly report listing each task as a bullet.
 
 Schema: [v1](/schemas/gc/v1.json)
 
@@ -91,3 +125,4 @@ Schema: [v1](/schemas/gc/v1.json)
 
 - [`grit repack`](repack.md)
 - [`grit fsck`](fsck.md)
+- [`grit reflog expire`](reflog.md)

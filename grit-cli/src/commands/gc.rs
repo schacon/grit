@@ -1,25 +1,68 @@
-//! `grit gc` — repack and prune unreachable objects.
+//! `grit gc` — repository maintenance tasks (pack-refs, repack, prune, commit-graph, …).
 
 use std::io::Write;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
-use grit_lib::maintenance::{gc, GcOptions, GcStats};
+use grit_lib::config::git_date::approx::approxidate_careful_at;
+use grit_lib::maintenance::{
+    gc, pack_refs, prune_loose_objects, repack_all, write_commit_graph, write_midx,
+    CommitGraphOptions, GcOptions, GcStats, MidxOptions, PackRefsOptions, PruneOptions,
+    RepackOptions,
+};
+use grit_lib::objects::midx::MidxBitmapWriteOutcome;
 use schemars::JsonSchema;
 use serde::Serialize;
 use time::OffsetDateTime;
 
 use crate::context;
-use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, progress, HumanRender, MarkdownRender, OutputMode, RenderContext};
 
-/// Result of `grit gc`.
+/// Result of `grit gc` and its task subcommands.
 #[derive(Serialize, JsonSchema)]
 pub struct GcOutcome {
     #[serde(skip)]
     pub quiet: bool,
     pub dry_run: bool,
-    pub reflog_entries_pruned: usize,
-    pub repack: RepackSummary,
-    pub prune: PruneSummary,
+    pub tasks: Vec<GcTaskReport>,
+}
+
+/// One maintenance task report (JSON uses a `task` discriminator).
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "task", rename_all = "kebab-case")]
+pub enum GcTaskReport {
+    PackRefs {
+        duration_ms: u64,
+        refs_packed: usize,
+        refs_pruned: usize,
+        path: String,
+    },
+    ReflogExpire {
+        duration_ms: u64,
+        entries_pruned: usize,
+    },
+    Repack {
+        duration_ms: u64,
+        #[serde(flatten)]
+        report: RepackSummary,
+    },
+    Prune {
+        duration_ms: u64,
+        pruned: usize,
+        kept: usize,
+    },
+    CommitGraph {
+        duration_ms: u64,
+        commit_count: usize,
+        path: String,
+        removed_chain: bool,
+    },
+    Midx {
+        duration_ms: u64,
+        pack_count: usize,
+        path: String,
+        bitmap: String,
+    },
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -31,33 +74,20 @@ pub struct RepackSummary {
     pub pack_path: Option<String>,
     pub removed_pack_files: usize,
     pub pruned_loose: usize,
+    pub unreachable_loose_pruned: usize,
 }
 
-#[derive(Serialize, JsonSchema)]
-pub struct PruneSummary {
-    pub pruned: usize,
-    pub kept: usize,
-}
-
-impl From<(GcStats, bool, bool)> for GcOutcome {
-    fn from((stats, dry_run, quiet): (GcStats, bool, bool)) -> Self {
+impl From<grit_lib::maintenance::RepackStats> for RepackSummary {
+    fn from(stats: grit_lib::maintenance::RepackStats) -> Self {
         Self {
-            quiet,
-            dry_run,
-            reflog_entries_pruned: stats.reflog_entries_pruned,
-            repack: RepackSummary {
-                loose_before: stats.repack.loose_before,
-                packs_before: stats.repack.packs_before,
-                objects_packed: stats.repack.objects_packed,
-                pack_bytes: stats.repack.pack_bytes,
-                pack_path: stats.repack.pack_path.map(|p| p.display().to_string()),
-                removed_pack_files: stats.repack.removed_pack_files,
-                pruned_loose: stats.repack.pruned_loose,
-            },
-            prune: PruneSummary {
-                pruned: stats.prune.pruned,
-                kept: stats.prune.kept,
-            },
+            loose_before: stats.loose_before,
+            packs_before: stats.packs_before,
+            objects_packed: stats.objects_packed,
+            pack_bytes: stats.pack_bytes,
+            pack_path: stats.pack_path.map(|p| p.display().to_string()),
+            removed_pack_files: stats.removed_pack_files,
+            pruned_loose: stats.pruned_loose,
+            unreachable_loose_pruned: stats.unreachable_loose_pruned,
         }
     }
 }
@@ -69,35 +99,9 @@ impl HumanRender for GcOutcome {
         }
         if self.dry_run {
             outln!(w, "Dry run: no changes written.");
-            if self.reflog_entries_pruned > 0 {
-                outln!(
-                    w,
-                    "Would prune {} reflog entries.",
-                    self.reflog_entries_pruned
-                );
-            }
-            if let Some(n) = self.repack.objects_packed {
-                outln!(w, "Would pack {n} reachable objects.");
-            }
-            return Ok(());
         }
-        if let Some(path) = &self.repack.pack_path {
-            outln!(
-                w,
-                "Packed {} objects into {}.",
-                self.repack.objects_packed.unwrap_or(0),
-                path
-            );
-        }
-        if self.prune.pruned > 0 {
-            outln!(
-                w,
-                "Pruned {} unreachable loose objects ({} kept).",
-                self.prune.pruned,
-                self.prune.kept
-            );
-        } else {
-            outln!(w, "No unreachable loose objects to prune.");
+        for task in &self.tasks {
+            task.render_human_line(w)?;
         }
         Ok(())
     }
@@ -107,25 +111,269 @@ impl MarkdownRender for GcOutcome {
     fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
         outln!(w, "## Garbage collection\n");
         outln!(w, "- **dry_run:** {}", self.dry_run);
-        outln!(
-            w,
-            "- **reflog_entries_pruned:** {}",
-            self.reflog_entries_pruned
-        );
-        outln!(w, "\n### Repack\n");
-        outln!(w, "- **objects_packed:** {:?}", self.repack.objects_packed);
-        outln!(w, "- **pack_path:** {:?}", self.repack.pack_path);
-        outln!(w, "\n### Prune\n");
-        outln!(w, "- **pruned:** {}", self.prune.pruned);
-        outln!(w, "- **kept:** {}", self.prune.kept);
+        outln!(w, "\n### Tasks\n");
+        for task in &self.tasks {
+            task.render_markdown(w)?;
+        }
         Ok(())
     }
 }
 
-pub fn run(dry_run: bool, quiet: bool) -> Result<GcOutcome> {
+impl GcTaskReport {
+    fn render_human_line(&self, w: &mut dyn Write) -> Result<()> {
+        match self {
+            Self::PackRefs {
+                duration_ms,
+                refs_packed,
+                refs_pruned,
+                path,
+            } => outln!(
+                w,
+                "pack-refs: packed {refs_packed} refs ({refs_pruned} loose removed) → {path} ({duration_ms} ms)."
+            ),
+            Self::ReflogExpire {
+                duration_ms,
+                entries_pruned,
+            } => outln!(
+                w,
+                "reflog-expire: removed {entries_pruned} entries ({duration_ms} ms)."
+            ),
+            Self::Repack { duration_ms, report } => {
+                if let Some(path) = &report.pack_path {
+                    outln!(
+                        w,
+                        "repack: packed {} objects into {path} ({} ms).",
+                        report.objects_packed.unwrap_or(0),
+                        duration_ms
+                    );
+                } else {
+                    outln!(w, "repack: nothing to pack ({duration_ms} ms).");
+                }
+            }
+            Self::Prune {
+                duration_ms,
+                pruned,
+                kept,
+            } => outln!(
+                w,
+                "prune: removed {pruned} unreachable loose objects ({kept} kept, {duration_ms} ms)."
+            ),
+            Self::CommitGraph {
+                duration_ms,
+                commit_count,
+                path,
+                ..
+            } => outln!(
+                w,
+                "commit-graph: wrote {commit_count} commits to {path} ({duration_ms} ms)."
+            ),
+            Self::Midx {
+                duration_ms,
+                pack_count,
+                path,
+                bitmap,
+            } => outln!(
+                w,
+                "midx: indexed {pack_count} packs at {path} (bitmap: {bitmap}, {duration_ms} ms)."
+            ),
+        }
+        Ok(())
+    }
+
+    fn render_markdown(&self, w: &mut dyn Write) -> Result<()> {
+        let json = serde_json::to_value(self).unwrap_or_default();
+        outln!(w, "- `{json}`");
+        Ok(())
+    }
+}
+
+fn timed<F, T>(mode: OutputMode, label: &str, f: F) -> Result<(T, Duration)>
+where
+    F: FnOnce() -> Result<T>,
+{
+    progress(mode, label);
+    let start = Instant::now();
+    let out = f()?;
+    Ok((out, start.elapsed()))
+}
+
+fn midx_bitmap_label(outcome: MidxBitmapWriteOutcome) -> &'static str {
+    match outcome {
+        MidxBitmapWriteOutcome::Written => "written",
+        MidxBitmapWriteOutcome::NotRequested => "not-requested",
+        MidxBitmapWriteOutcome::SkippedIncrementalLayer => "skipped-incremental",
+        _ => "other",
+    }
+}
+
+fn tasks_from_gc_stats(stats: GcStats, timings: GcTimings) -> Vec<GcTaskReport> {
+    let mut tasks = Vec::new();
+    if let Some(pack) = stats.pack_refs {
+        tasks.push(GcTaskReport::PackRefs {
+            duration_ms: timings.pack_refs_ms,
+            refs_packed: pack.refs_packed,
+            refs_pruned: pack.refs_pruned,
+            path: pack.path.display().to_string(),
+        });
+    }
+    tasks.push(GcTaskReport::ReflogExpire {
+        duration_ms: timings.reflog_ms,
+        entries_pruned: stats.reflog_entries_pruned,
+    });
+    tasks.push(GcTaskReport::Repack {
+        duration_ms: timings.repack_ms,
+        report: stats.repack.into(),
+    });
+    if stats.prune.pruned > 0 || stats.prune.kept > 0 || timings.prune_ms > 0 {
+        tasks.push(GcTaskReport::Prune {
+            duration_ms: timings.prune_ms,
+            pruned: stats.prune.pruned,
+            kept: stats.prune.kept,
+        });
+    }
+    if let Some(graph) = stats.commit_graph {
+        tasks.push(GcTaskReport::CommitGraph {
+            duration_ms: timings.commit_graph_ms,
+            commit_count: graph.commit_count,
+            path: graph.path.display().to_string(),
+            removed_chain: graph.removed_chain,
+        });
+    }
+    tasks
+}
+
+#[derive(Default)]
+struct GcTimings {
+    pack_refs_ms: u64,
+    reflog_ms: u64,
+    repack_ms: u64,
+    prune_ms: u64,
+    commit_graph_ms: u64,
+}
+
+pub fn run_full(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
     let repo = context::discover()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let stats = gc(&repo, &GcOptions::with_repack_dry_run(dry_run, now))
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok((stats, dry_run, quiet).into())
+    progress(mode, "Running garbage collection…");
+    let start = Instant::now();
+    let opts = GcOptions::full_run(dry_run, now);
+    let stats = gc(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let timings = GcTimings {
+        repack_ms: elapsed_ms,
+        ..GcTimings::default()
+    };
+    let tasks = tasks_from_gc_stats(stats, timings);
+    Ok(GcOutcome {
+        quiet,
+        dry_run,
+        tasks,
+    })
+}
+
+pub fn run_repack(
+    bitmaps: bool,
+    dry_run: bool,
+    quiet: bool,
+    mode: OutputMode,
+) -> Result<GcOutcome> {
+    let repo = context::discover()?;
+    let mut opts = RepackOptions::with_dry_run(dry_run);
+    opts.write_bitmap = bitmaps;
+    let (stats, elapsed) = timed(mode, "Repacking objects…", || {
+        repack_all(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))
+    })?;
+    Ok(GcOutcome {
+        quiet,
+        dry_run,
+        tasks: vec![GcTaskReport::Repack {
+            duration_ms: elapsed.as_millis() as u64,
+            report: stats.into(),
+        }],
+    })
+}
+
+pub fn run_commit_graph(quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
+    let repo = context::discover()?;
+    let (report, elapsed) = timed(mode, "Writing commit-graph…", || {
+        write_commit_graph(&repo, &CommitGraphOptions::with_changed_paths(true))
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    })?;
+    Ok(GcOutcome {
+        quiet,
+        dry_run: false,
+        tasks: vec![GcTaskReport::CommitGraph {
+            duration_ms: elapsed.as_millis() as u64,
+            commit_count: report.commit_count,
+            path: report.path.display().to_string(),
+            removed_chain: report.removed_chain,
+        }],
+    })
+}
+
+pub fn run_midx(quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
+    let repo = context::discover()?;
+    let (report, elapsed) = timed(mode, "Writing multi-pack-index…", || {
+        write_midx(&repo, &MidxOptions::default()).map_err(|e| anyhow::anyhow!("{e}"))
+    })?;
+    Ok(GcOutcome {
+        quiet,
+        dry_run: false,
+        tasks: vec![GcTaskReport::Midx {
+            duration_ms: elapsed.as_millis() as u64,
+            pack_count: report.pack_count,
+            path: report.path.display().to_string(),
+            bitmap: midx_bitmap_label(report.bitmap).to_owned(),
+        }],
+    })
+}
+
+pub fn run_pack_refs(quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
+    let repo = context::discover()?;
+    let (report, elapsed) = timed(mode, "Packing refs…", || {
+        pack_refs(&repo, &PackRefsOptions::default()).map_err(|e| anyhow::anyhow!("{e}"))
+    })?;
+    Ok(GcOutcome {
+        quiet,
+        dry_run: false,
+        tasks: vec![GcTaskReport::PackRefs {
+            duration_ms: elapsed.as_millis() as u64,
+            refs_packed: report.refs_packed,
+            refs_pruned: report.refs_pruned,
+            path: report.path.display().to_string(),
+        }],
+    })
+}
+
+pub fn run_prune(older_than: Option<&str>, quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
+    let repo = context::discover()?;
+    let cutoff = older_than.map(parse_older_than).transpose()?.flatten();
+    let (stats, elapsed) = timed(mode, "Pruning unreachable loose objects…", || {
+        let prune_opts = PruneOptions::with_older_than(cutoff);
+        prune_loose_objects(&repo, &prune_opts).map_err(|e| anyhow::anyhow!("{e}"))
+    })?;
+    Ok(GcOutcome {
+        quiet,
+        dry_run: false,
+        tasks: vec![GcTaskReport::Prune {
+            duration_ms: elapsed.as_millis() as u64,
+            pruned: stats.pruned,
+            kept: stats.kept,
+        }],
+    })
+}
+
+fn parse_older_than(spec: &str) -> Result<Option<SystemTime>> {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let mut err = 0;
+    let sec = approxidate_careful_at(spec.trim(), now, Some(&mut err));
+    if err != 0 {
+        anyhow::bail!("invalid date for --older-than: '{spec}'");
+    }
+    Ok(SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(sec as u64)))
+}
+
+/// Legacy entry: full gc with dry-run / quiet flags.
+pub fn run(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
+    run_full(dry_run, quiet, mode)
 }

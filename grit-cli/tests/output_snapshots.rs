@@ -71,6 +71,33 @@ fn snapshot_gc_dry_run() {
 }
 
 #[test]
+fn snapshot_gc_repack() {
+    snapshot_all_modes("gc_repack", &["gc", "repack"]);
+}
+
+#[test]
+fn snapshot_gc_commit_graph() {
+    snapshot_all_modes("gc_commit_graph", &["gc", "commit-graph"]);
+}
+
+#[test]
+fn snapshot_gc_pack_refs() {
+    snapshot_all_modes("gc_pack_refs", &["gc", "pack-refs"]);
+}
+
+#[test]
+fn snapshot_gc_prune() {
+    snapshot_all_modes("gc_prune", &["gc", "prune"]);
+}
+
+#[test]
+fn snapshot_gc_midx() {
+    snapshot_fresh("gc_midx", &["gc", "midx"], |fixture| {
+        fixture.run_ok(&["gc", "repack"]);
+    });
+}
+
+#[test]
 fn snapshot_repack_dry_run() {
     snapshot_all_modes("repack", &["repack", "--dry-run"]);
 }
