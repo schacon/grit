@@ -1,7 +1,11 @@
 //! Repack/gc compatibility: grit maintenance vs system `git fsck`.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use filetime::FileTime;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::maintenance::{
     fsck as repo_fsck, gc, repack_all, FsckOptions, GcOptions, RepackOptions,
@@ -13,6 +17,41 @@ use grit_lib::progress::NullProgress;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::git_fsck;
 use tempfile::TempDir;
+use time::OffsetDateTime;
+
+fn duplicate_repo_tree(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("create dst");
+    let status = Command::new("cp")
+        .args([
+            "-a",
+            &format!("{}/.", src.display()),
+            &dst.to_string_lossy(),
+        ])
+        .status()
+        .expect("spawn cp");
+    assert!(status.success(), "cp -a failed");
+}
+
+fn git_commit_dated(dir: &Path, when: &str, message: &str) {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(["commit", "--allow-empty", "-m", message])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .env("GIT_AUTHOR_DATE", when)
+        .env("GIT_COMMITTER_DATE", when)
+        .output()
+        .expect("git commit");
+    assert!(
+        out.status.success(),
+        "git commit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
 
 fn git(dir: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")
@@ -213,6 +252,161 @@ fn repack_keeps_reflog_only_commit_and_kept_pack() {
     );
     assert!(old_pack.is_file(), "pack with .keep must not be deleted");
     git(dir.path(), &["fsck", "--strict"]);
+}
+
+#[test]
+fn gc_default_options_uses_wall_clock_for_reflog_expiry() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "gc.auto", "0"]);
+    git_commit_dated(dir.path(), "2000-01-01T00:00:00 +0000", "old");
+    git_commit_dated(dir.path(), "2026-01-01T12:00:00 +0000", "new");
+    git(dir.path(), &["reset", "--hard", "HEAD~1"]);
+
+    let grit_copy = TempDir::new().expect("grit copy");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let explicit_copy = TempDir::new().expect("explicit copy");
+    duplicate_repo_tree(dir.path(), explicit_copy.path());
+    let git_copy = TempDir::new().expect("git copy");
+    duplicate_repo_tree(dir.path(), git_copy.path());
+
+    let repo_default =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    let repo_explicit =
+        Repository::discover(Some(explicit_copy.path()), &RepositoryOptions::empty())
+            .expect("open");
+
+    let wall = OffsetDateTime::now_utc().unix_timestamp();
+    let default_stats = gc(&repo_default, &GcOptions::default()).expect("default gc");
+    let explicit_stats =
+        gc(&repo_explicit, &GcOptions::with_reflog_policy(wall, true)).expect("explicit-now gc");
+
+    assert_eq!(
+        default_stats.reflog_entries_pruned, explicit_stats.reflog_entries_pruned,
+        "GcOptions::default() must normalize now_unix before reflog expiry"
+    );
+    assert!(
+        default_stats.reflog_entries_pruned > 0,
+        "expected aged reflog entries to be pruned"
+    );
+
+    let grit_reflog = grit_copy.path().join(".git/logs/HEAD");
+    let grit_body = std::fs::read_to_string(&grit_reflog).expect("grit HEAD reflog");
+    assert!(
+        !grit_body.contains("old"),
+        "grit gc must expire aged reflog entries with default options"
+    );
+
+    let git_gc = Command::new("git")
+        .current_dir(git_copy.path())
+        .args(["gc", "--quiet"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git gc");
+    assert!(
+        git_gc.status.success(),
+        "git gc: {}",
+        String::from_utf8_lossy(&git_gc.stderr)
+    );
+    let git_reflog = git_copy.path().join(".git/logs/HEAD");
+    let git_body = std::fs::read_to_string(&git_reflog).expect("git HEAD reflog");
+    assert!(
+        !git_body.contains("old"),
+        "system git gc must expire the same aged reflog entries"
+    );
+    assert!(
+        default_stats.reflog_entries_pruned >= 1,
+        "grit must report pruned reflog entries when git gc also expires them"
+    );
+}
+
+#[test]
+fn gc_invalid_prune_expire_rejects_before_deleting_loose() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "gc.auto", "0"]);
+    git_commit_dated(dir.path(), "2000-01-01T00:00:00 +0000", "old");
+    git_commit_dated(dir.path(), "2026-01-01T12:00:00 +0000", "new");
+    git(dir.path(), &["reset", "--hard", "HEAD~1"]);
+
+    let repo =
+        Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open repo");
+
+    let orphan = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"unreachable orphan payload\n")
+        .expect("write loose");
+    let loose_path: PathBuf = repo
+        .odb()
+        .enumerate_local_loose_objects()
+        .expect("loose")
+        .into_iter()
+        .find(|(oid, _)| *oid == orphan)
+        .map(|(_, path)| path)
+        .expect("orphan loose path");
+    filetime::set_file_mtime(&loose_path, FileTime::from_unix_time(978_307_200, 0))
+        .expect("mtime 2001");
+
+    git(dir.path(), &["config", "gc.pruneExpire", "bogus-value"]);
+
+    let head_reflog = dir.path().join(".git/logs/HEAD");
+    let reflog_before = std::fs::read(&head_reflog).expect("read HEAD reflog");
+    assert_eq!(
+        std::str::from_utf8(&reflog_before)
+            .expect("utf8 reflog")
+            .lines()
+            .filter(|l| !l.is_empty())
+            .count(),
+        3,
+        "fixture must start with a three-entry HEAD reflog"
+    );
+
+    let err = gc(&repo, &GcOptions::default())
+        .expect_err("invalid gc.pruneExpire must fail before mutating");
+    assert!(
+        matches!(err, Error::Config(_)),
+        "expected config error, got {err:?}"
+    );
+    let reflog_after = std::fs::read(&head_reflog).expect("read HEAD reflog after failed gc");
+    assert_eq!(
+        reflog_before, reflog_after,
+        "failed grit gc must not mutate HEAD reflog"
+    );
+    assert!(
+        repo.odb().read(&orphan).is_ok(),
+        "invalid config must not delete unreachable loose objects"
+    );
+
+    let git_reflog_before = reflog_before.clone();
+    let git_gc = Command::new("git")
+        .current_dir(dir.path())
+        .args(["gc", "--quiet"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git gc");
+    assert!(
+        !git_gc.status.success(),
+        "system git gc must reject bogus gc.pruneExpire"
+    );
+    assert_eq!(git_gc.status.code(), Some(128));
+    let git_reflog_after = std::fs::read(&head_reflog).expect("read HEAD reflog after git gc");
+    assert_eq!(
+        git_reflog_before, git_reflog_after,
+        "system git gc must not mutate HEAD reflog on invalid gc.pruneExpire"
+    );
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["cat-file", "-e", &orphan.to_hex()])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("cat-file");
+    assert!(
+        out.status.success(),
+        "system git gc must preserve orphan when config is invalid"
+    );
 }
 
 #[test]
