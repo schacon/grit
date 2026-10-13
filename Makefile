@@ -83,7 +83,7 @@ coverage:
 	./scripts/public-api.sh ensure-toolchain
 	RUSTDOCFLAGS= python3 -c "import sys; from pathlib import Path; sys.path.insert(0,'scripts'); from public_api import parse_pins; from public_fn_coverage import ensure_rustdoc_json; ensure_rustdoc_json(nightly=parse_pins()['nightly_date'], output=Path('target/doc/grit_lib.json'))"
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --lib --tests --json --output-path target/llvm-cov/summary.json -- --test-threads=1
-	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --doc --json --output-path target/llvm-cov/functions-doc.json -- --test-threads=1
+	GRIT_BIN=$(GRIT_COV_BIN) cargo +nightly-2026-10-01 llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) --doc --json --output-path target/llvm-cov/functions-doc.json -- --test-threads=1
 	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/coverage.py --input target/llvm-cov/summary.json
 	GRIT_BIN=$(GRIT_COV_BIN) python3 scripts/public_fn_coverage.py --cov-json target/llvm-cov/summary.json --cov-json target/llvm-cov/functions-doc.json
 	GRIT_BIN=$(GRIT_COV_BIN) $(CARGO) llvm-cov -p grit-lib --features $(LLVM_COV_FEATURES) report --html --output-dir target/llvm-cov/html

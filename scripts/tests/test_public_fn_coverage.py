@@ -81,6 +81,23 @@ class PublicFnCoverageTests(unittest.TestCase):
             "grit_lib::foo::bar::baz",
         )
 
+    def test_normalize_inherent_impl_angle_brackets(self) -> None:
+        raw = "<grit_lib::porcelain::rebase::RebaseTodoCmd>::as_str"
+        self.assertEqual(
+            pfc.normalize_rust_path(raw),
+            "grit_lib::porcelain::rebase::RebaseTodoCmd::as_str",
+        )
+
+    def test_normalize_strips_monomorphized_impl_generics(self) -> None:
+        raw = (
+            "grit_lib::pkt_line::read_until_flush_or_delim::"
+            "<core::io::cursor::Cursor<alloc::vec::Vec<u8>>>"
+        )
+        self.assertEqual(
+            pfc.normalize_rust_path(raw),
+            "grit_lib::pkt_line::read_until_flush_or_delim",
+        )
+
     def test_check_fails_on_missing_and_stale_allowlist(self) -> None:
         public = [pfc.PublicFn(path="grit_lib::demo::alpha")]
         executions = {"grit_lib::demo::alpha": 0}

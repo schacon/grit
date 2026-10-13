@@ -9,7 +9,9 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from public_api import parse_pins
@@ -23,6 +25,27 @@ DEFAULT_GRIT_BIN = LLVM_COV_TARGET / "debug" / ("grit.exe" if os.name == "nt" el
 
 _GENERIC_RE = re.compile(r"<[^<>]*(?:<[^<>]*>[^<>]*)*>")
 _CLOSURE_RE = re.compile(r"\{closure#\d+\}(?:::\{closure#\d+\})*")
+CANONICAL_MAP_PATH = GRIT_LIB / "canonical-modules.toml"
+
+
+@lru_cache(maxsize=1)
+def canonical_to_rustdoc_prefixes() -> tuple[tuple[str, str], ...]:
+    """Map llvm-cov canonical paths back to flat rustdoc path prefixes."""
+    if not CANONICAL_MAP_PATH.is_file():
+        return ()
+    data = tomllib.loads(CANONICAL_MAP_PATH.read_text(encoding="utf-8"))
+    mapping = data.get("map", {})
+    aliases: list[tuple[str, str]] = []
+    for flat, canonical in mapping.items():
+        flat = str(flat)
+        canonical = str(canonical)
+        if canonical in {flat, "internal"}:
+            continue
+        canon_prefix = "grit_lib::" + canonical.replace(".", "::") + "::"
+        flat_prefix = f"grit_lib::{flat}::"
+        aliases.append((canon_prefix, flat_prefix))
+    aliases.sort(key=lambda pair: len(pair[0]), reverse=True)
+    return tuple(aliases)
 
 
 @dataclass(frozen=True)
@@ -113,6 +136,15 @@ def normalize_rust_path(name: str) -> str:
     trimmed = name.strip()
     if trimmed.startswith("(") and trimmed.endswith(")"):
         trimmed = trimmed[1:-1]
+    if trimmed.startswith("<") and ">::" in trimmed:
+        type_part, rest = trimmed.split(">::", 1)
+        trimmed = f"{type_part[1:]}::{rest}"
+    for canon_prefix, flat_prefix in canonical_to_rustdoc_prefixes():
+        if trimmed.startswith(canon_prefix):
+            trimmed = flat_prefix + trimmed[len(canon_prefix) :]
+            break
+    if "::<" in trimmed:
+        trimmed = trimmed.split("::<", 1)[0]
     trimmed = _CLOSURE_RE.sub("", trimmed)
     trimmed = _GENERIC_RE.sub("", trimmed)
     while ":::" in trimmed:
@@ -164,9 +196,9 @@ def function_execution_counts(cov_paths: list[Path]) -> dict[str, int]:
     demangled = demangle_names(list(counts))
     by_path: dict[str, int] = {}
     for mangled, path in zip(counts, demangled, strict=True):
-        if not path.startswith("grit_lib::"):
-            continue
         norm = normalize_rust_path(path)
+        if not norm.startswith("grit_lib::"):
+            continue
         by_path[norm] = max(by_path.get(norm, 0), counts[mangled])
     return by_path
 
@@ -302,6 +334,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Write all currently-unexecuted public paths to the allowlist file",
     )
     parser.add_argument(
+        "--print-missing",
+        action="store_true",
+        help="Print unexecuted public paths (respecting allowlist) to stdout",
+    )
+    parser.add_argument(
         "--run-coverage",
         action="store_true",
         help="Run llvm-cov (lib+tests and doc) before checking",
@@ -365,6 +402,16 @@ def main(argv: list[str] | None = None) -> int:
     table, failures = check(public_fns, executions, allowlist)
     for line in table:
         print(line)
+
+    if args.print_missing:
+        allow = set(allowlist)
+        missing = sorted(
+            f.path
+            for f in public_fns
+            if executions.get(f.path, 0) <= 0 and f.path not in allow
+        )
+        for path in missing:
+            print(path)
 
     if failures:
         sys.stderr.write("\npublic-fn coverage gate failed:\n")
