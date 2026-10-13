@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::config::{ConfigFile, ConfigScope, ConfigSet};
 use crate::environment::Environment;
+use crate::environment::RepositoryOptions;
 use crate::error::{Error, Result};
 use crate::fetch::{fetch_operation_identity, Progress};
 use crate::objects::ObjectId;
@@ -176,7 +177,7 @@ pub fn clone(
         return Err(CloneError::DestNotEmpty(dir.to_owned()));
     }
 
-    let repo = init_repository(
+    init_repository(
         &opts.dest,
         false,
         &opts.initial_branch,
@@ -186,6 +187,13 @@ pub fn clone(
     .map_err(|e| {
         CloneError::Library(Error::Message(format!("could not initialize '{dir}': {e}")))
     })?;
+    let git_dir = opts.dest.join(".git");
+    let repo = Repository::open(
+        &git_dir,
+        &RepositoryOptions::with_environment(opts.environment.clone())
+            .with_work_tree(opts.dest.clone()),
+    )
+    .map_err(CloneError::Library)?;
 
     let origin_url = stored_clone_remote_url(&opts.url);
     set_local_config(

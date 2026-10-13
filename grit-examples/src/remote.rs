@@ -150,15 +150,12 @@ fn http_credential_helpers(config: &ConfigSet, url: &str) -> Vec<String> {
 
 /// The SSH command an `ssh` remote would use, for display only.
 fn ssh_command() -> String {
-    std::env::var("GIT_SSH_COMMAND")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("GIT_SSH")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
-        .unwrap_or_else(|| "ssh".to_owned())
+    let env = grit_lib::environment::Environment::capture_process();
+    match grit_lib::transport::resolve_effective_ssh_command(&env, None) {
+        grit_lib::transport::SshCommand::ShellCommand(cmd) => cmd.to_string_lossy().into_owned(),
+        grit_lib::transport::SshCommand::Program(prog) => prog.to_string_lossy().into_owned(),
+        grit_lib::transport::SshCommand::Auto => "ssh".to_owned(),
+    }
 }
 
 /// Run a fetch from `remote` into `repo` via [`Remote::fetch`].
