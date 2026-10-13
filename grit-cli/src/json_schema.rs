@@ -348,7 +348,10 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
     }
 
     // Parent commands that run with no subcommand still emit JSON (remote list, stash push, auth login).
-    if matches!(full.as_str(), "remote" | "stash" | "auth" | "hooks") {
+    if matches!(
+        full.as_str(),
+        "remote" | "stash" | "auth" | "hooks" | "reflog"
+    ) {
         out.push(full.clone());
     }
 

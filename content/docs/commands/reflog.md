@@ -98,7 +98,11 @@ Expire (`grit reflog expire`):
 
 ## Markdown output
 
-List mode emits a bullet per entry with the same `REF@{n} oid relative-date message` fields. Expire mode reports how many entries were pruned.
+Pass [`--markdown`](../global-options/) for agent-friendly output.
+
+Schema: [v1](/schemas/reflog/v1.json) (list); subcommands use [delete v1](/schemas/reflog.delete/v1.json) and [expire v1](/schemas/reflog.expire/v1.json).
+
+List mode emits a bullet per entry with the same `REF@{n} oid relative-date message` fields. Delete and expire print short confirmation lines.
 
 ## See also
 
