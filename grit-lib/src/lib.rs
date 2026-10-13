@@ -191,6 +191,7 @@ pub(crate) mod fetch_head;
 pub(crate) mod fetch_negotiator;
 pub(crate) mod filter_process;
 pub(crate) mod fmt_merge_msg;
+pub mod fsck;
 pub(crate) mod fsck_standalone;
 pub(crate) mod gc;
 pub(crate) mod git_binary_base85;
