@@ -75,6 +75,8 @@ Example:
 
 ## Markdown output
 
+Schema: [v1](/schemas/resolve/v1.json)
+
 Pass `--markdown` for a table of resolved specs, oids, kinds, and sizes.
 
 ## See also

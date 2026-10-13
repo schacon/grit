@@ -86,6 +86,8 @@ Example (blob):
 
 ## Markdown output
 
+Schema: [v1](/schemas/cat/v1.json)
+
 Pass `--markdown` for a short summary and a fenced block (or table for trees) of the object contents. Binary blobs are summarized in Markdown; use `--json` for base64 payload.
 
 ## See also
