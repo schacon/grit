@@ -76,6 +76,7 @@ pub struct CommitGraphLayer {
     chunk_commit_data_off: usize,
     #[allow(dead_code)]
     chunk_generation_data: Option<usize>,
+    chunk_generation_overflow: Option<usize>,
     read_generation_data: bool,
     chunk_bloom_indexes: Option<usize>,
     chunk_bloom_data: Option<(usize, usize)>,
@@ -637,6 +638,7 @@ impl CommitGraphLayer {
             oid_lookup_off,
             chunk_commit_data_off: commit_data_off,
             chunk_generation_data: generation_off,
+            chunk_generation_overflow: generation_overflow_off,
             read_generation_data,
             chunk_bloom_indexes,
             chunk_bloom_data,
@@ -726,21 +728,29 @@ impl CommitGraphLayer {
         Some((p1, p2, commit_time))
     }
 
-    /// Topological generation from the GDA2 chunk when present (for merge-base paint walks).
-    fn paint_generation(&self, lex_index: u32) -> Option<u64> {
+    /// Corrected commit date (generation v2) from GDA2/GDO2, when the layer stores generation data.
+    fn corrected_commit_generation(&self, lex_index: u32) -> Option<u64> {
         if !self.read_generation_data {
             return None;
         }
+        let (_, _, commit_time) = self.cdat_record(lex_index)?;
         let gda_off = self.chunk_generation_data?;
         if lex_index >= self.num_commits {
             return None;
         }
         let start = gda_off + lex_index as usize * 4;
-        let v = u32::from_be_bytes(self.body.get(start..start + 4)?.try_into().ok()?);
-        if v & CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW != 0 {
-            return None;
-        }
-        Some(u64::from(v))
+        let word = u32::from_be_bytes(self.body.get(start..start + 4)?.try_into().ok()?);
+        let offset = if word & CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW != 0 {
+            let slot = (word ^ CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW) as usize;
+            let gdo_off = self.chunk_generation_overflow?;
+            let off = gdo_off + slot * 8;
+            let hi = u32::from_be_bytes(self.body.get(off..off + 4)?.try_into().ok()?);
+            let lo = u32::from_be_bytes(self.body.get(off + 4..off + 8)?.try_into().ok()?);
+            (u64::from(hi) << 32) | u64::from(lo)
+        } else {
+            u64::from(word)
+        };
+        Some((commit_time as u64).saturating_add(offset))
     }
 
     fn bsearch_oid(&self, oid: &ObjectId) -> Option<u32> {
@@ -1297,16 +1307,16 @@ impl CommitGraphChain {
         Some((oids, commit_time))
     }
 
-    /// Generation number for merge-base paint-down ordering (`2^63-1` when unknown).
+    /// Generation number for ordering merge-base walks (`2^63-1` when unknown).
     #[must_use]
-    pub fn commit_paint_generation(&self, oid: &ObjectId) -> u64 {
-        const GENERATION_NUMBER_INFINITY: u64 = (1u64 << 63) - 1;
+    pub fn commit_generation_for_walk(&self, oid: &ObjectId) -> u64 {
+        const UNRANKED: u64 = (1u64 << 63) - 1;
         let Some((layer_idx, lex)) = self.find_commit(oid) else {
-            return GENERATION_NUMBER_INFINITY;
+            return UNRANKED;
         };
         self.layers[layer_idx]
-            .paint_generation(lex)
-            .unwrap_or(GENERATION_NUMBER_INFINITY)
+            .corrected_commit_generation(lex)
+            .unwrap_or(UNRANKED)
     }
 
     /// Parent commit positions in global graph order (CDAT + EXTRA_EDGES), or `None` if `oid`
@@ -1328,41 +1338,34 @@ impl CommitGraphChain {
         first_parent_only: bool,
         shallow: &std::collections::HashSet<ObjectId>,
     ) -> Option<usize> {
-        let total = self.total_commits() as usize;
-        if total == 0 {
+        if self.total_commits() == 0 {
             return None;
         }
-        let mut marked = vec![false; total];
-        self.mark_reachable_commits(tips, first_parent_only, shallow, &mut marked)?;
-        if !hide.is_empty() {
-            let mut hide_mark = vec![false; total];
-            self.mark_reachable_commits(hide, first_parent_only, shallow, &mut hide_mark)?;
-            for (seen, hidden) in marked.iter_mut().zip(hide_mark) {
-                if hidden {
-                    *seen = false;
-                }
-            }
+        let mut seen = self.reachable_positions(tips, first_parent_only, shallow)?;
+        if hide.is_empty() {
+            return Some(seen.len());
         }
-        Some(marked.iter().filter(|&&b| b).count())
+        let hidden = self.reachable_positions(hide, first_parent_only, shallow)?;
+        seen.retain(|pos| !hidden.contains(pos));
+        Some(seen.len())
     }
 
-    fn mark_reachable_commits(
+    fn reachable_positions(
         &self,
         tips: &[ObjectId],
         first_parent_only: bool,
         shallow: &std::collections::HashSet<ObjectId>,
-        marked: &mut [bool],
-    ) -> Option<()> {
+    ) -> Option<std::collections::HashSet<u32>> {
+        let total = self.total_commits();
         let mut stack: Vec<u32> = Vec::new();
         for tip in tips {
             stack.push(self.global_position(tip)?);
         }
+        let mut seen = std::collections::HashSet::new();
         while let Some(pos) = stack.pop() {
-            let idx = pos as usize;
-            if idx >= marked.len() || marked[idx] {
+            if pos >= total || !seen.insert(pos) {
                 continue;
             }
-            marked[idx] = true;
             let oid = self.oid_at_global_position(pos)?;
             let parents = if shallow.contains(&oid) {
                 Vec::new()
@@ -1375,13 +1378,13 @@ impl CommitGraphChain {
                 parents
             };
             for p in parents {
-                if (p as usize) >= marked.len() {
+                if p >= total {
                     return None;
                 }
                 stack.push(p);
             }
         }
-        Some(())
+        Some(seen)
     }
 
     /// All commit OIDs in the chain (oldest base first, then newer layers).

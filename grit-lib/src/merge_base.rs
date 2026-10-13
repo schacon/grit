@@ -77,11 +77,11 @@ pub fn merge_bases_first_vs_rest(
         return Ok(all_minimal);
     }
 
-    let mut selected = merge_bases_paint_down(&mut cache, first, others, false)?;
+    let mut selected = walk_intersecting_histories(&mut cache, first, others, false)?;
     if selected.is_empty() {
         selected = all_minimal;
     }
-    sort_merge_bases_by_committer_date(&mut cache, &mut selected)?;
+    sort_merge_bases_for_git_output(&mut cache, &mut selected)?;
     if selected.len() > 1 {
         selected.truncate(1);
     }
@@ -154,7 +154,9 @@ pub fn merge_bases_octopus(repo: &Repository, commits: &[ObjectId]) -> Result<Ve
         let set = cache.ancestor_closure(oid)?;
         common.retain(|item| set.contains(item));
     }
-    reduce_to_best(common, &mut cache)
+    let mut bases = reduce_to_best(common, &mut cache)?;
+    sort_merge_bases_for_git_output(&mut cache, &mut bases)?;
+    Ok(bases)
 }
 
 /// All merge bases common to every supplied commit (intersection of ancestor sets,
@@ -163,6 +165,18 @@ pub fn merge_bases_octopus(repo: &Repository, commits: &[ObjectId]) -> Result<Ve
 /// This is the same intersection-and-reduction as [`merge_bases_octopus`]; the name
 /// documents the `git merge-base A B C ...` calling convention.
 pub fn merge_bases_all(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+    if commits.len() == 1 {
+        return Ok(vec![commits[0]]);
+    }
+    let mut cache = CommitGraphCache::new(repo);
+    if commits.len() == 2 {
+        let mut bases = walk_intersecting_histories(&mut cache, commits[0], &[commits[1]], true)?;
+        sort_merge_bases_for_git_output(&mut cache, &mut bases)?;
+        return Ok(bases);
+    }
     merge_bases_octopus(repo, commits)
 }
 
@@ -730,201 +744,206 @@ fn ensure_is_commit(repo: &Repository, oid: ObjectId) -> Result<()> {
     Ok(())
 }
 
-const GENERATION_NUMBER_INFINITY: u64 = (1u64 << 63) - 1;
-const GENERATION_NUMBER_V1_MAX: u64 = 0x3FFF_FFFF;
+const UNRANKED_COMMIT: u64 = (1u64 << 63) - 1;
+const LEGACY_RANK_CAP: u64 = 0x3FFF_FFFF;
 
-const PAINT_PARENT1: u8 = 1 << 0;
-const PAINT_PARENT2: u8 = 1 << 1;
-const PAINT_STALE: u8 = 1 << 2;
-const PAINT_RESULT: u8 = 1 << 3;
-const PAINT_ENQUEUED: u8 = 1 << 4;
-
-struct PaintWalkState {
-    parent1_count: isize,
-    parent2_count: isize,
-    mb_candidate_count: isize,
-    last_gen: u64,
-    min_generation: u64,
-    topo_ceiling: u64,
-}
+const MARK_TIP_A: u8 = 1 << 0;
+const MARK_TIP_B: u8 = 1 << 1;
+const MARK_PRUNED: u8 = 1 << 2;
+const MARK_BASE: u8 = 1 << 3;
+const MARK_QUEUED: u8 = 1 << 4;
 
 #[derive(Eq, PartialEq)]
-struct PaintHeapEntry {
-    generation: u64,
-    commit_time: i64,
+struct RankedCommit {
+    rank: u64,
+    committed_at: i64,
     oid: ObjectId,
 }
 
-impl Ord for PaintHeapEntry {
+impl Ord for RankedCommit {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.generation.cmp(&other.generation) {
-            std::cmp::Ordering::Equal => self.commit_time.cmp(&other.commit_time),
+        match self.rank.cmp(&other.rank) {
+            std::cmp::Ordering::Equal => self.committed_at.cmp(&other.committed_at),
             ord => ord,
         }
     }
 }
 
-impl PartialOrd for PaintHeapEntry {
+impl PartialOrd for RankedCommit {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-fn paint_count_update(state: &mut PaintWalkState, flags: u8, delta: isize) {
-    let side = flags & (PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE);
-    if side == PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE {
-        return;
-    }
-    if side == PAINT_PARENT1 | PAINT_PARENT2 {
-        state.mb_candidate_count += delta;
-    } else if side == PAINT_PARENT1 {
-        state.parent1_count += delta;
-    } else if side == PAINT_PARENT2 {
-        state.parent2_count += delta;
-    }
+struct OpenQueueTally {
+    open_on_a: isize,
+    open_on_b: isize,
+    open_on_both: isize,
+    newest_rank_seen: u64,
+    rank_stop: u64,
 }
 
-fn paint_queue_put(
-    cache: &mut CommitGraphCache<'_>,
-    heap: &mut BinaryHeap<PaintHeapEntry>,
-    state: &mut PaintWalkState,
-    flags: &mut HashMap<ObjectId, u8>,
-    oid: ObjectId,
-    add_flags: u8,
-) -> Result<()> {
-    let entry = flags.entry(oid).or_insert(0);
-    let old = *entry;
-    let new = old | add_flags;
-    *entry = new;
-    if old & PAINT_ENQUEUED != 0 {
-        paint_count_update(state, old, -1);
-        paint_count_update(state, new, 1);
-        return Ok(());
-    }
-    *entry = new | PAINT_ENQUEUED;
-    let generation = paint_commit_generation(cache, oid);
-    let commit_time = cache.commit_time(oid)?;
-    heap.push(PaintHeapEntry {
-        generation,
-        commit_time,
-        oid,
-    });
-    paint_count_update(state, new | PAINT_ENQUEUED, 1);
-    Ok(())
-}
-
-fn paint_queue_get(
-    heap: &mut BinaryHeap<PaintHeapEntry>,
-    state: &mut PaintWalkState,
-    flags: &mut HashMap<ObjectId, u8>,
-) -> Option<ObjectId> {
-    let entry = heap.pop()?;
-    let generation = entry.generation;
-    state.last_gen = generation;
-    if state.min_generation != 0 && generation < state.min_generation {
-        return None;
-    }
-    let old = flags.get(&entry.oid).copied().unwrap_or(0);
-    flags.insert(entry.oid, old & !PAINT_ENQUEUED);
-    if state.mb_candidate_count == 0 {
-        if state.parent1_count == 0 && state.parent2_count == 0 {
-            return None;
+impl OpenQueueTally {
+    fn apply_label(&mut self, label: u8, delta: isize) {
+        let side = label & (MARK_TIP_A | MARK_TIP_B | MARK_PRUNED);
+        if side == MARK_TIP_A | MARK_TIP_B | MARK_PRUNED {
+            return;
         }
-        if (state.parent1_count == 0 || state.parent2_count == 0) && generation < state.topo_ceiling
-        {
-            return None;
+        if side == MARK_TIP_A | MARK_TIP_B {
+            self.open_on_both += delta;
+        } else if side == MARK_TIP_A {
+            self.open_on_a += delta;
+        } else if side == MARK_TIP_B {
+            self.open_on_b += delta;
         }
     }
-    paint_count_update(state, old, -1);
-    Some(entry.oid)
 }
 
-fn paint_commit_generation(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 {
+fn commit_rank_for_walk(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 {
     if let Some(graph) = &cache.graph {
-        let gen = graph.commit_paint_generation(&oid);
-        if gen != GENERATION_NUMBER_INFINITY {
-            return gen;
+        let rank = graph.commit_generation_for_walk(&oid);
+        if rank != UNRANKED_COMMIT {
+            return rank;
         }
     }
-    GENERATION_NUMBER_INFINITY
+    UNRANKED_COMMIT
 }
 
-fn sort_merge_bases_by_committer_date(
+/// Newest committer timestamp first, matching `git merge-base` stdout ordering.
+fn sort_merge_bases_for_git_output(
     cache: &mut CommitGraphCache<'_>,
     bases: &mut [ObjectId],
 ) -> Result<()> {
-    let mut times = Vec::with_capacity(bases.len());
+    let mut keyed = Vec::with_capacity(bases.len());
     for &oid in bases.iter() {
-        times.push((oid, cache.commit_time(oid)?));
+        keyed.push((cache.commit_time(oid)?, oid));
     }
-    times.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
-    });
-    for (i, (oid, _)) in times.into_iter().enumerate() {
-        bases[i] = oid;
+    keyed.sort_by_key(|a| std::cmp::Reverse(a.0));
+    for (slot, (_, oid)) in keyed.into_iter().enumerate() {
+        bases[slot] = oid;
     }
     Ok(())
 }
 
-/// Git `paint_down_to_common` / default `merge-base` (without `--all`).
-fn merge_bases_paint_down(
+fn enqueue_commit_for_intersect_walk(
     cache: &mut CommitGraphCache<'_>,
-    one: ObjectId,
-    twos: &[ObjectId],
-    find_all: bool,
+    pending: &mut BinaryHeap<RankedCommit>,
+    tally: &mut OpenQueueTally,
+    labels: &mut HashMap<ObjectId, u8>,
+    oid: ObjectId,
+    extra: u8,
+) -> Result<()> {
+    let slot = labels.entry(oid).or_insert(0);
+    let before = *slot;
+    let merged = before | extra;
+    *slot = merged;
+    if before & MARK_QUEUED != 0 {
+        tally.apply_label(before, -1);
+        tally.apply_label(merged, 1);
+        return Ok(());
+    }
+    *slot = merged | MARK_QUEUED;
+    let rank = commit_rank_for_walk(cache, oid);
+    let committed_at = cache.commit_time(oid)?;
+    pending.push(RankedCommit {
+        rank,
+        committed_at,
+        oid,
+    });
+    tally.apply_label(merged | MARK_QUEUED, 1);
+    Ok(())
+}
+
+fn dequeue_commit_for_intersect_walk(
+    pending: &mut BinaryHeap<RankedCommit>,
+    tally: &mut OpenQueueTally,
+    labels: &mut HashMap<ObjectId, u8>,
+) -> Option<ObjectId> {
+    let node = pending.pop()?;
+    tally.newest_rank_seen = node.rank;
+    let before = labels.get(&node.oid).copied().unwrap_or(0);
+    labels.insert(node.oid, before & !MARK_QUEUED);
+    if tally.open_on_both == 0 {
+        if tally.open_on_a == 0 && tally.open_on_b == 0 {
+            return None;
+        }
+        if (tally.open_on_a == 0 || tally.open_on_b == 0) && node.rank < tally.rank_stop {
+            return None;
+        }
+    }
+    tally.apply_label(before, -1);
+    Some(node.oid)
+}
+
+/// Walk two histories toward their intersection; optionally collect every minimal base.
+fn walk_intersecting_histories(
+    cache: &mut CommitGraphCache<'_>,
+    tip_a: ObjectId,
+    tips_b: &[ObjectId],
+    collect_every_base: bool,
 ) -> Result<Vec<ObjectId>> {
-    let mut heap = BinaryHeap::new();
-    let mut flags: HashMap<ObjectId, u8> = HashMap::new();
-    let mut state = PaintWalkState {
-        parent1_count: 0,
-        parent2_count: 0,
-        mb_candidate_count: 0,
-        last_gen: GENERATION_NUMBER_INFINITY,
-        min_generation: 0,
-        topo_ceiling: GENERATION_NUMBER_V1_MAX,
+    let mut pending = BinaryHeap::new();
+    let mut labels: HashMap<ObjectId, u8> = HashMap::new();
+    let mut tally = OpenQueueTally {
+        open_on_a: 0,
+        open_on_b: 0,
+        open_on_both: 0,
+        newest_rank_seen: UNRANKED_COMMIT,
+        rank_stop: LEGACY_RANK_CAP,
     };
-    let mut painted_results: Vec<ObjectId> = Vec::new();
+    let mut discovered: Vec<ObjectId> = Vec::new();
 
-    flags.insert(one, PAINT_PARENT1);
-    paint_queue_put(cache, &mut heap, &mut state, &mut flags, one, 0)?;
-
-    for &two in twos {
-        paint_queue_put(cache, &mut heap, &mut state, &mut flags, two, PAINT_PARENT2)?;
+    labels.insert(tip_a, MARK_TIP_A);
+    enqueue_commit_for_intersect_walk(cache, &mut pending, &mut tally, &mut labels, tip_a, 0)?;
+    for &tip_b in tips_b {
+        enqueue_commit_for_intersect_walk(
+            cache,
+            &mut pending,
+            &mut tally,
+            &mut labels,
+            tip_b,
+            MARK_TIP_B,
+        )?;
     }
 
-    while let Some(oid) = paint_queue_get(&mut heap, &mut state, &mut flags) {
-        let mut walk_flags =
-            flags.get(&oid).copied().unwrap_or(0) & (PAINT_PARENT1 | PAINT_PARENT2 | PAINT_STALE);
-        if walk_flags == PAINT_PARENT1 | PAINT_PARENT2 {
-            let entry = flags.entry(oid).or_insert(0);
-            if *entry & PAINT_RESULT == 0 {
-                *entry |= PAINT_RESULT;
-                painted_results.push(oid);
-                if !find_all && state.last_gen < state.topo_ceiling {
+    while let Some(oid) = dequeue_commit_for_intersect_walk(&mut pending, &mut tally, &mut labels) {
+        let mut propagate =
+            labels.get(&oid).copied().unwrap_or(0) & (MARK_TIP_A | MARK_TIP_B | MARK_PRUNED);
+        if propagate == MARK_TIP_A | MARK_TIP_B {
+            let slot = labels.entry(oid).or_insert(0);
+            if *slot & MARK_BASE == 0 {
+                *slot |= MARK_BASE;
+                discovered.push(oid);
+                if !collect_every_base && tally.newest_rank_seen < tally.rank_stop {
                     break;
                 }
             }
-            walk_flags |= PAINT_STALE;
+            propagate |= MARK_PRUNED;
         }
         for parent in cache.parents_of(oid)? {
-            let cur = flags.get(&parent).copied().unwrap_or(0);
-            if (cur & walk_flags) == walk_flags {
+            let have = labels.get(&parent).copied().unwrap_or(0);
+            if (have & propagate) == propagate {
                 continue;
             }
-            paint_queue_put(cache, &mut heap, &mut state, &mut flags, parent, walk_flags)?;
+            enqueue_commit_for_intersect_walk(
+                cache,
+                &mut pending,
+                &mut tally,
+                &mut labels,
+                parent,
+                propagate,
+            )?;
         }
     }
 
-    let mut out = Vec::new();
-    for oid in painted_results {
-        let f = flags.get(&oid).copied().unwrap_or(0);
-        if f & PAINT_STALE == 0 {
-            out.push(oid);
+    let mut bases = Vec::new();
+    for oid in discovered {
+        if labels.get(&oid).copied().unwrap_or(0) & MARK_PRUNED == 0 {
+            bases.push(oid);
         }
     }
-    sort_merge_bases_by_committer_date(cache, &mut out)?;
-    Ok(out)
+    sort_merge_bases_for_git_output(cache, &mut bases)?;
+    Ok(bases)
 }
 
 fn reduce_to_best(
