@@ -468,13 +468,17 @@ impl NotesRef {
     /// # Errors
     ///
     /// Returns [`Error::InvalidNotesRef`](crate::error::Error::InvalidNotesRef) when
-    /// `full` is not prefixed with `refs/notes/`.
+    /// `full` is not prefixed with `refs/notes/` or is not a valid ref name (env/config
+    /// values are not trimmed or otherwise normalized).
     pub fn from_full(full: &str) -> Result<Self> {
-        let trimmed = full.trim();
-        if !trimmed.starts_with("refs/notes/") {
+        if !full.starts_with("refs/notes/") {
             return Err(Error::InvalidNotesRef(full.to_owned()));
         }
-        Ok(Self(trimmed.to_owned()))
+        use crate::check_ref_format::{check_refname_format, RefNameOptions};
+        if check_refname_format(full, &RefNameOptions::default()).is_err() {
+            return Err(Error::InvalidNotesRef(full.to_owned()));
+        }
+        Ok(Self(full.to_owned()))
     }
 
     /// Parse a short or full notes ref the same way Git's `--ref` flag does.
@@ -1206,6 +1210,16 @@ mod tests {
             oid: zero_oid(),
         };
         assert_eq!(display_note_path(&entry), full);
+    }
+
+    #[test]
+    fn from_full_rejects_whitespace_padded_ref() {
+        let err = NotesRef::from_full(" refs/notes/spaced ").expect_err("padded");
+        assert!(matches!(err, Error::InvalidNotesRef(_)));
+        let err = NotesRef::from_full("refs/notes/spaced ").expect_err("trailing");
+        assert!(matches!(err, Error::InvalidNotesRef(_)));
+        let ok = NotesRef::from_full("refs/notes/spaced").expect("valid");
+        assert_eq!(ok.as_str(), "refs/notes/spaced");
     }
 
     #[test]
