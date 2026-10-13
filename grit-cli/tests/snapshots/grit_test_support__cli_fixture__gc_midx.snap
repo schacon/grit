@@ -10,12 +10,12 @@ expression: payload
   },
   "json": {
     "exit": 0,
-    "stdout": "{\n  \"dry_run\": false,\n  \"tasks\": [\n    {\n      \"task\": \"midx\",\n      \\"duration_ms\\": [DURATION],\n      \"pack_count\": 1,\n      \"path\": \"[REPO]/.git/objects/pack/multi-pack-index\",\n      \"bitmap\": \"not-requested\"\n    }\n  ]\n}\n",
+    "stdout": "{\n  \"dry_run\": false,\n  \"tasks\": [\n    {\n      \"task\": \"midx\",\n      \"duration_ms\": 0,\n      \"pack_count\": 1,\n      \"path\": \"[REPO]/.git/objects/pack/multi-pack-index\",\n      \"bitmap\": \"not-requested\"\n    }\n  ]\n}\n",
     "stderr": ""
   },
   "markdown": {
     "exit": 0,
-    "stdout": "## Garbage collection\n\n- **dry_run:** false\n\n### Tasks\n\n- `{\"bitmap\":\"not-requested\",\\"duration_ms\\": [DURATION],\"pack_count\":1,\"path\":\"[REPO]/.git/objects/pack/multi-pack-index\",\"task\":\"midx\"}`\n",
+    "stdout": "## Garbage collection\n\n- **dry_run:** false\n\n### Tasks\n\n- `{\"bitmap\":\"not-requested\",\"duration_ms\": 0,\"pack_count\":1,\"path\":\"[REPO]/.git/objects/pack/multi-pack-index\",\"task\":\"midx\"}`\n",
     "stderr": ""
   }
 }

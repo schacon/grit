@@ -125,6 +125,11 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<CleanOutcome>("clean"),
         entry::<RepackOutcome>("repack"),
         entry::<GcOutcome>("gc"),
+        entry::<GcOutcome>("gc.repack"),
+        entry::<GcOutcome>("gc.commit-graph"),
+        entry::<GcOutcome>("gc.midx"),
+        entry::<GcOutcome>("gc.pack-refs"),
+        entry::<GcOutcome>("gc.prune"),
         entry::<FsckOutcome>("fsck"),
         entry::<HooksOutcome>("hooks"),
         entry::<HooksOutcome>("hooks.list"),
@@ -252,6 +257,15 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("check") => "ignore.check",
             _ => return None,
         },
+        "gc" => match positional.get(1).copied() {
+            None => "gc",
+            Some("repack") => "gc.repack",
+            Some("commit-graph") => "gc.commit-graph",
+            Some("midx") => "gc.midx",
+            Some("pack-refs") => "gc.pack-refs",
+            Some("prune") => "gc.prune",
+            _ => return None,
+        },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
         cmd => cmd,
     };
@@ -360,7 +374,7 @@ fn collect_json_commands(cmd: &clap::Command, prefix: Option<&str>, out: &mut Ve
     // Parent commands that run with no subcommand still emit JSON (remote list, stash push, auth login).
     if matches!(
         full.as_str(),
-        "remote" | "stash" | "auth" | "hooks" | "reflog"
+        "remote" | "stash" | "auth" | "hooks" | "reflog" | "gc"
     ) {
         out.push(full.clone());
     }
@@ -450,6 +464,11 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
         ("fsck", &["fsck"]),
         ("fsck_missing_blob", &["fsck"]),
         ("gc", &["gc", "--dry-run"]),
+        ("gc_repack", &["gc", "repack"]),
+        ("gc_commit_graph", &["gc", "commit-graph"]),
+        ("gc_midx", &["gc", "midx"]),
+        ("gc_pack_refs", &["gc", "pack-refs"]),
+        ("gc_prune", &["gc", "prune"]),
         ("repack", &["repack", "--dry-run"]),
         ("status", &["status"]),
         ("log", &["log"]),
