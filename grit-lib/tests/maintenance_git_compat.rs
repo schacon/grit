@@ -6,7 +6,7 @@ use grit_lib::index::Index;
 use grit_lib::maintenance::{
     fsck as repo_fsck, gc, repack_all, FsckOptions, GcOptions, RepackOptions,
 };
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::NullProgress;
@@ -256,4 +256,87 @@ fn repack_keeps_reflog_only_commit_and_kept_pack() {
     );
     assert!(old_pack.is_file(), "pack with .keep must not be deleted");
     git(dir.path(), &["fsck", "--strict"]);
+}
+
+#[test]
+fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    one_commit(&repo);
+
+    let orphan = repo
+        .odb()
+        .write_loose_materialize(ObjectKind::Blob, b"unreachable orphan payload\n")
+        .expect("write loose");
+
+    git(dir.path(), &["config", "gc.pruneExpire", "never"]);
+
+    let stats = gc(
+        &repo,
+        &GcOptions {
+            repack: RepackOptions::default(),
+            expire_reflog: false,
+            now_unix: 1_700_000_000,
+        },
+    )
+    .expect("grit gc");
+    assert_eq!(
+        stats.prune.pruned, 0,
+        "gc.pruneExpire=never must disable loose prune"
+    );
+    assert!(
+        repo.odb().read(&orphan).is_ok(),
+        "unreachable loose blob must remain after grit gc"
+    );
+
+    git(dir.path(), &["gc"]);
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["cat-file", "-e", &orphan.to_hex()])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("cat-file");
+    assert!(
+        out.status.success(),
+        "system git gc with pruneExpire=never must preserve orphan blob"
+    );
+}
+
+#[test]
+fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    one_commit(&repo);
+
+    let absent = "aabbccddeeff00112233445566778899aabbccdd";
+    git(
+        dir.path(),
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{absent},submodule"),
+        ],
+    );
+
+    repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    git(dir.path(), &["gc"]);
+    git(dir.path(), &["fsck", "--strict"]);
+
+    let report = repo_fsck(
+        &repo,
+        &FsckOptions {
+            strict: true,
+            check_objects: true,
+            check_refs: true,
+            check_midx: false,
+        },
+    )
+    .expect("grit fsck");
+    assert!(
+        report.ok,
+        "gitlink to absent submodule commit must not fail fsck: {:?}",
+        report.issues
+    );
 }

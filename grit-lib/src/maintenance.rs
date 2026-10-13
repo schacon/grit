@@ -16,6 +16,7 @@ use crate::fsck_standalone::{fsck_object, FsckError, FsckObjectOptions};
 use crate::gc::{collect_referenced_object_roots, prune_loose_unreachable, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
+use crate::index::MODE_GITLINK;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{clear_pack_midx_state, verify_midx};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -155,7 +156,7 @@ impl Default for GcOptions {
 /// Object ids that must stay reachable during repack, prune, and fsck walks.
 ///
 /// Includes ref tips, symbolic `HEAD`, every reflog `old`/`new` oid, and every
-/// blob/tree oid recorded in the index (including unmerged stages).
+/// blob/tree oid recorded in the index (including unmerged stages; gitlinks are excluded).
 ///
 /// # Errors
 ///
@@ -168,9 +169,10 @@ pub fn collect_maintenance_object_roots(repo: &Repository) -> Result<Vec<ObjectI
     roots.extend(all_reflog_oids(git_dir)?);
     let index = repo.load_index()?;
     for entry in index.entries() {
-        if !entry.oid.is_zero() {
-            roots.insert(entry.oid);
+        if entry.mode == MODE_GITLINK || entry.oid.is_zero() {
+            continue;
         }
+        roots.insert(entry.oid);
     }
     Ok(roots.into_iter().collect())
 }
@@ -248,7 +250,6 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
 
     let pruned = prune_packed_objects(objects_dir, PrunePackedOptions::default())?;
     stats.pruned_loose = pruned.len();
-    stats.loose_before = count_loose_objects(odb)?;
 
     if opts.write_commit_graph {
         odb.write_commit_graph()?;
@@ -321,9 +322,40 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let roots = collect_maintenance_object_roots(repo)?;
     let cfg = repo.config()?;
     let now = gc_now_unix(opts.now_unix);
-    let keep_newer_than = gc_prune_expire_cutoff(&cfg, now);
-    stats.prune = prune_loose_unreachable(odb, &roots, keep_newer_than)?;
+    stats.prune = match gc_loose_prune_policy(&cfg, now)? {
+        GcLoosePrunePolicy::Disabled => PruneStats::default(),
+        GcLoosePrunePolicy::Enabled { keep_newer_than } => {
+            prune_loose_unreachable(odb, &roots, keep_newer_than)?
+        }
+    };
     Ok(stats)
+}
+
+/// How [`gc`] applies loose-object pruning for `gc.pruneExpire`.
+enum GcLoosePrunePolicy {
+    /// `gc.pruneExpire=never` — do not delete unreachable loose objects.
+    Disabled,
+    /// Prune unreachable loose objects not protected by the grace cutoff.
+    Enabled {
+        /// When `Some(t)`, only delete loose objects strictly older than `t` (Git grace window).
+        keep_newer_than: Option<SystemTime>,
+    },
+}
+
+fn gc_loose_prune_policy(config: &ConfigSet, now_unix: i64) -> Result<GcLoosePrunePolicy> {
+    let spec = config
+        .get("gc.pruneExpire")
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "2.weeks.ago".to_owned());
+    if spec.eq_ignore_ascii_case("never") {
+        return Ok(GcLoosePrunePolicy::Disabled);
+    }
+    let mut err = 0;
+    let cutoff_sec = approxidate_careful_at(&spec, now_unix, Some(&mut err)) as i64;
+    let keep_newer_than = SystemTime::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(cutoff_sec.max(0) as u64));
+    Ok(GcLoosePrunePolicy::Enabled { keep_newer_than })
 }
 
 fn gc_now_unix(now_unix: i64) -> i64 {
@@ -331,20 +363,6 @@ fn gc_now_unix(now_unix: i64) -> i64 {
         return now_unix;
     }
     time::OffsetDateTime::now_utc().unix_timestamp()
-}
-
-fn gc_prune_expire_cutoff(config: &ConfigSet, now_unix: i64) -> Option<SystemTime> {
-    let spec = config
-        .get("gc.pruneExpire")
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "2.weeks.ago".to_owned());
-    if spec.eq_ignore_ascii_case("never") {
-        return None;
-    }
-    let mut err = 0;
-    let cutoff_sec = approxidate_careful_at(&spec, now_unix, Some(&mut err)) as i64;
-    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(cutoff_sec.max(0) as u64))
 }
 
 fn expire_reflogs_for_gc(repo: &Repository, dry_run: bool, now: i64) -> Result<usize> {
@@ -474,7 +492,7 @@ fn fsck_index_entries(
     let index = repo.load_index()?;
     let odb = repo.odb();
     for entry in index.entries() {
-        if entry.oid.is_zero() {
+        if entry.mode == MODE_GITLINK || entry.oid.is_zero() {
             continue;
         }
         let oid_hex = entry.oid.to_hex();
@@ -589,11 +607,7 @@ fn count_pack_files(pack_dir: &Path) -> usize {
         .ok()
         .map(|rd| {
             rd.filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "pack" || ext == "idx")
-                })
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "pack"))
                 .count()
         })
         .unwrap_or(0)
