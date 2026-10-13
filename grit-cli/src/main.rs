@@ -240,6 +240,38 @@ enum Command {
         #[arg(long)]
         before: Option<String>,
     },
+    /// List or count commits matching revision ranges.
+    Revs {
+        /// Revision ranges (`A..B`, `A...B`, `^tip`, plain tips).
+        #[arg(value_name = "RANGE", required = true)]
+        ranges: Vec<String>,
+        /// Print only the number of reachable commits.
+        #[arg(long)]
+        count: bool,
+        /// Stop after this many commits (listing mode only).
+        #[arg(long = "limit", value_name = "N")]
+        limit: Option<usize>,
+        /// Follow only the first parent at merges.
+        #[arg(long = "first-parent")]
+        first_parent: bool,
+        /// Limit to commits that touch these paths.
+        #[arg(value_name = "PATH", last = true)]
+        paths: Vec<String>,
+    },
+    /// Find merge bases or test whether one commit is an ancestor of another.
+    #[command(name = "merge-base")]
+    MergeBase {
+        /// First commit or ref.
+        a: String,
+        /// Second commit or ref.
+        b: String,
+        /// List every minimal merge base (criss-cross histories).
+        #[arg(long)]
+        all: bool,
+        /// Exit 0 when `a` is an ancestor of `b`, 1 otherwise; prints nothing in human mode.
+        #[arg(long = "is-ancestor")]
+        is_ancestor: bool,
+    },
     /// Show who last modified each line of a file.
     Blame {
         /// Path to the file (repository-relative).
@@ -730,6 +762,31 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             ),
         },
         Command::Log { before } => emit(&commands::log::run(before)?, opts, ctx),
+        Command::Revs {
+            ranges,
+            count,
+            limit,
+            first_parent,
+            paths,
+        } => emit(
+            &commands::revs::run(&ranges, count, limit, first_parent, &paths)?,
+            opts,
+            ctx,
+        ),
+        Command::MergeBase {
+            a,
+            b,
+            all,
+            is_ancestor,
+        } => {
+            let outcome = commands::merge_base_cmd::run(&a, &b, all, is_ancestor)?;
+            let code = commands::merge_base_cmd::exit_code(&outcome);
+            emit(&outcome, opts, ctx)?;
+            if is_ancestor && code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         Command::Blame {
             file,
             rev,

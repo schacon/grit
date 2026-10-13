@@ -186,6 +186,36 @@ fn snapshot_shortlog() {
 }
 
 #[test]
+fn snapshot_revs_head() {
+    snapshot_all_modes("revs_head", &["revs", "HEAD"]);
+}
+
+#[test]
+fn snapshot_revs_count() {
+    snapshot_all_modes("revs_count", &["revs", "--count", "HEAD"]);
+}
+
+#[test]
+fn snapshot_merge_base() {
+    snapshot_all_modes("merge_base", &["merge-base", "HEAD~1", "HEAD"]);
+}
+
+#[test]
+fn snapshot_merge_base_is_ancestor() {
+    let fixture = CliFixture::new();
+    fixture.snapshot_all_modes_exits(
+        "merge_base_is_ancestor",
+        &["merge-base", "--is-ancestor", "HEAD~1", "HEAD"],
+        snapshot_dir(),
+        grit_test_support::SnapshotExitCodes {
+            human: 0,
+            json: 0,
+            markdown: 0,
+        },
+    );
+}
+
+#[test]
 fn snapshot_blame_tracked() {
     snapshot_all_modes("blame_tracked", &["blame", "tracked.txt"]);
 }
