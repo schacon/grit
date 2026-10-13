@@ -240,7 +240,7 @@ pub fn create_commit(
             &mut index,
             work_tree,
             None,
-            repo.config().ok().as_deref(),
+            Some(config.as_ref()),
             None,
             rules_arc.as_ref(),
         )?;
