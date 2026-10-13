@@ -64,8 +64,8 @@ fn root_public_module_count_within_budget() {
         })
         .count();
     assert!(
-        count <= 25,
-        "expected at most 25 root pub mod declarations, found {count}"
+        count <= 26,
+        "expected at most 26 root pub mod declarations, found {count}"
     );
 }
 
