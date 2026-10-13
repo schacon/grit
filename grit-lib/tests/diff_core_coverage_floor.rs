@@ -4,14 +4,16 @@
 
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    diff_commits_with_renames, diff_index_to_tree, diff_trees, diff_trees_with_renames,
-    postprocess_diff_entries, DiffPostprocessOptions,
+    diff_commits_with_renames, diff_index_to_tree, diff_index_to_worktree_with_options,
+    diff_tree_to_worktree_with_git_dir, diff_trees, diff_trees_with_renames,
+    postprocess_diff_entries, DiffIndexToWorktreeOptions, DiffPostprocessOptions,
 };
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
+use grit_lib::repo::{InitOptions, Repository};
 use tempfile::tempdir;
 
 fn blob(odb: &Odb, tag: &[u8]) -> ObjectId {
@@ -116,5 +118,35 @@ fn diff_core_many_tree_and_index_paths() -> grit_lib::error::Result<()> {
         prev_tree = Some(new_tree);
         prev_commit = Some(commit(&odb, new_tree, prev_commit, i));
     }
+
+    let wt = tempdir().map_err(grit_lib::error::Error::Io)?;
+    let repo = Repository::init(wt.path(), &InitOptions::default())?;
+    std::fs::write(wt.path().join("wt.txt"), b"worktree\n").map_err(grit_lib::error::Error::Io)?;
+    let mut index = Index::new();
+    let wt_blob = blob(&repo.odb(), b"worktree\n");
+    index.entries_mut().push(index_entry("wt.txt", wt_blob));
+    let head_tree = write_tree_from_index(repo.odb(), &index, "")?;
+    for simplify in [false, true] {
+        let _ = diff_index_to_worktree_with_options(
+            repo.odb(),
+            &mut index.clone(),
+            wt.path(),
+            DiffIndexToWorktreeOptions {
+                repository_git_dir: Some(repo.git_dir().to_path_buf()),
+                simplify_gitlinks: simplify,
+                refresh_index_stat_in_pass: simplify,
+                ..DiffIndexToWorktreeOptions::default()
+            },
+        )?;
+        let _ = diff_tree_to_worktree_with_git_dir(
+            repo.odb(),
+            Some(&head_tree),
+            wt.path(),
+            repo.git_dir(),
+            &index,
+            Some(&cfg),
+        )?;
+    }
+
     Ok(())
 }

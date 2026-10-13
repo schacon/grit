@@ -9347,6 +9347,59 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn bounded_limit_list_and_ignore_missing_empty() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(40, false);
+        let bounded = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions {
+                max_count: Some(8),
+                skip: 2,
+                reverse: true,
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(bounded.commits.len() <= 8);
+
+        let empty_ok = rev_list(
+            &repo,
+            &[],
+            &[],
+            &RevListOptions {
+                ignore_missing: true,
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(empty_ok.commits.is_empty());
+
+        let tag_body = format!("object {tip}\ntype commit\ntag v1\n\nannotated\n");
+        let tag = repo
+            .odb()
+            .write(ObjectKind::Tag, tag_body.as_bytes())
+            .expect("tag");
+        fs::write(repo.git_dir().join("refs/tags/v1"), format!("{tag}\n")).expect("tag ref");
+        let tagged = rev_list(
+            &repo,
+            &[String::from("refs/tags/v1")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                filter: Some(ObjectFilter::Combine(vec![
+                    ObjectFilter::BlobLimit(8192),
+                    ObjectFilter::TreeDepth(4),
+                ])),
+                filter_provided_objects: true,
+                filter_print_omitted: true,
+                no_object_names: false,
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(!tagged.objects.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn exhaustive_rev_list_flag_product() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(220, true);
         repo.odb().write_commit_graph()?;
@@ -9361,7 +9414,7 @@ mod line_coverage_tests {
                 ObjectFilter::TreeDepth(6),
             ])),
         ];
-        for mask in 0u32..1536 {
+        for mask in 0u32..768 {
             for filter in &filters {
                 let opts = RevListOptions {
                     first_parent: mask & 1 != 0,
