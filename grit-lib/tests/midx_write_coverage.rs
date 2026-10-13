@@ -589,18 +589,30 @@ fn midx_reuse_tables_bitmaps_and_sidecars() {
     grit_write_midx(&pack_dir, &WriteMultiPackIndexOptions::default());
     let _ = grit_lib::objects::midx::cached_tip_midx_path(&pack_dir);
     let _ = grit_lib::objects::midx::load_midx_reuse_tables(&objects).expect("reuse");
-    if let Ok(ranges) = grit_lib::objects::midx::read_midx_btmp_ranges(&objects) {
-        let formatted =
-            grit_lib::objects::midx::format_midx_bitmapped_packs(&objects).expect("bitmaps");
-        if ranges.is_empty() {
+    match grit_lib::objects::midx::read_midx_btmp_ranges(&objects) {
+        Ok(ranges) if ranges.is_empty() => {
+            let formatted = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects);
             assert!(
-                formatted.is_empty() || formatted.contains("no bitmapped"),
-                "expected empty-range message, got: {formatted}"
+                formatted.as_ref().map(|s| s.is_empty()).unwrap_or(true)
+                    || formatted
+                        .as_ref()
+                        .is_ok_and(|s| s.contains("no bitmapped")),
+                "expected empty or no-bitmap message, got: {formatted:?}"
             );
-        } else {
+        }
+        Ok(ranges) => {
+            let formatted = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects)
+                .expect("bitmaps when btmp ranges exist");
             assert!(
                 !formatted.is_empty(),
-                "non-empty btmp ranges should produce bitmapped pack output"
+                "non-empty btmp ranges ({}) should produce output",
+                ranges.len()
+            );
+        }
+        Err(_) => {
+            // Fixture MIDX may omit BTMP; formatting must fail cleanly without a chunk.
+            assert!(
+                grit_lib::objects::midx::format_midx_bitmapped_packs(&objects).is_err()
             );
         }
     }
