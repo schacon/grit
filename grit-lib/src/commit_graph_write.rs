@@ -607,9 +607,13 @@ pub fn atomic_replace_commit_graph(
         created_tmp = true;
         file.write_all(bytes).map_err(crate::error::Error::Io)?;
         drop(file);
-        if graph_path.is_file() {
-            fs::remove_file(&graph_path).map_err(crate::error::Error::Io)?;
+        #[cfg(test)]
+        if test_inject::FAIL_RENAME.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::error::Error::Message(
+                "injected commit-graph rename failure".into(),
+            ));
         }
+        // Same-directory rename over an existing file is atomic on POSIX; do not unlink first.
         fs::rename(&tmp, &graph_path).map_err(crate::error::Error::Io)?;
         created_tmp = false;
         Ok(())
@@ -697,7 +701,7 @@ pub fn count_referenced_commit_tips(
 
 /// Peel `oid` through annotated tags until a commit is reached. Returns `None` if it does not
 /// resolve to a commit.
-fn peel_to_commit(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
+pub(crate) fn peel_to_commit(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
     let mut current = oid;
     for _ in 0..16 {
         let obj = odb.read(&current).ok()?;
@@ -715,6 +719,17 @@ fn peel_to_commit(odb: &Odb, oid: ObjectId) -> Option<ObjectId> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod test_inject {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    pub static FAIL_RENAME: AtomicBool = AtomicBool::new(false);
+
+    pub fn set_fail_rename(fail: bool) {
+        FAIL_RENAME.store(fail, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -877,6 +892,60 @@ mod tests {
     }
 
     #[test]
+    fn atomic_replace_preserves_existing_graph_when_rename_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let objects_dir = repo.odb().objects_dir();
+        let prior = b"CGPH\x01\x00\x00\x00prior-graph-bytes";
+        let graph_path = objects_dir.join("info").join("commit-graph");
+        std::fs::create_dir_all(graph_path.parent().unwrap()).expect("info");
+        std::fs::write(&graph_path, prior).expect("seed graph");
+
+        super::test_inject::set_fail_rename(true);
+        let err = super::atomic_replace_commit_graph(objects_dir, b"replacement")
+            .expect_err("injected rename failure");
+        super::test_inject::set_fail_rename(false);
+        assert!(err.to_string().contains("injected commit-graph rename"));
+
+        let on_disk = std::fs::read(&graph_path).expect("graph still present");
+        assert_eq!(
+            on_disk, prior,
+            "existing commit-graph must survive failed replace"
+        );
+        assert!(
+            !objects_dir.join("info").join("commit-graph.new").exists(),
+            "temp file must be removed on failure"
+        );
+    }
+
+    fn atomic_replace_renames_over_existing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let objects_dir = repo.odb().objects_dir();
+        let graph_path = objects_dir.join("info").join("commit-graph");
+        std::fs::create_dir_all(graph_path.parent().unwrap()).expect("info");
+        std::fs::write(&graph_path, b"old").expect("seed");
+
+        let replacement = b"CGPH\x01\x00\x00\x00new-graph";
+        super::atomic_replace_commit_graph(objects_dir, replacement).expect("replace");
+        let on_disk = std::fs::read(&graph_path).expect("graph");
+        assert_eq!(on_disk, replacement);
+    }
+
     fn collect_reachable_follows_annotated_tag_to_commit() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = init_repository(

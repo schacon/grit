@@ -307,6 +307,95 @@ fn pack_refs_peeled_tags() {
 }
 
 #[test]
+fn pack_refs_nested_annotated_tags_match_git_dereference() {
+    if !git_available() {
+        eprintln!("SKIP: git unavailable");
+        return;
+    }
+    let grit_dir = tempfile::tempdir().expect("tempdir");
+    let git_dir = tempfile::tempdir().expect("tempdir");
+    for root in [grit_dir.path(), git_dir.path()] {
+        git_cmd(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join("a.txt"), b"a\n").unwrap();
+        git_cmd(root, &["add", "a.txt"]);
+        git_cmd(root, &["commit", "-q", "-m", "init"]);
+        git_cmd(root, &["tag", "-a", "inner", "-m", "inner"]);
+        let inner_oid = git_out(root, &["rev-parse", "refs/tags/inner"])
+            .trim()
+            .to_owned();
+        git_cmd(
+            root,
+            &["tag", "-a", "outer", "-m", "outer", inner_oid.as_str()],
+        );
+    }
+
+    let grit_repo =
+        Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty()).expect("open");
+    grit_repo
+        .references()
+        .pack(&PackRefsOptions::with_all(false))
+        .expect("pack");
+
+    git_cmd(git_dir.path(), &["pack-refs"]);
+    assert_eq!(
+        git_out(grit_dir.path(), &["show-ref", "--dereference", "--tags"]).trim(),
+        git_out(git_dir.path(), &["show-ref", "--dereference", "--tags"]).trim()
+    );
+}
+
+fn write_loose_ref(root: &Path, refname: &str, oid_hex: &str) {
+    let rel = refname.strip_prefix("refs/").expect("refs prefix");
+    let path = root.join(".git").join("refs").join(rel);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("parent");
+    }
+    fs::write(path, format!("{oid_hex}\n")).expect("ref");
+}
+
+#[test]
+fn pack_refs_all_leaves_per_worktree_namespaces_loose_like_git() {
+    if !git_available() {
+        eprintln!("SKIP: git unavailable");
+        return;
+    }
+    let grit_dir = tempfile::tempdir().expect("tempdir");
+    let git_dir = tempfile::tempdir().expect("tempdir");
+    for root in [grit_dir.path(), git_dir.path()] {
+        git_cmd(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join("a.txt"), b"a\n").unwrap();
+        git_cmd(root, &["add", "a.txt"]);
+        git_cmd(root, &["commit", "-q", "-m", "init"]);
+        let head = git_out(root, &["rev-parse", "HEAD"]).trim().to_owned();
+        write_loose_ref(root, "refs/rewritten/topic", &head);
+        write_loose_ref(root, "refs/worktree/mark", &head);
+        git_cmd(root, &["branch", "shared"]);
+    }
+
+    let grit_repo =
+        Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty()).expect("open");
+    grit_repo
+        .references()
+        .pack(&PackRefsOptions::with_all(true))
+        .expect("pack");
+    git_cmd(git_dir.path(), &["pack-refs", "--all"]);
+
+    for root in [grit_dir.path(), git_dir.path()] {
+        assert!(
+            root.join(".git/refs/rewritten/topic").is_file(),
+            "refs/rewritten must stay loose"
+        );
+        assert!(
+            root.join(".git/refs/worktree/mark").is_file(),
+            "refs/worktree must stay loose"
+        );
+    }
+    assert_eq!(
+        git_out(grit_dir.path(), &["show-ref"]).trim(),
+        git_out(git_dir.path(), &["show-ref"]).trim()
+    );
+}
+
+#[test]
 fn reftable_compaction_git_refs_verify() {
     if !git_available() {
         eprintln!("SKIP: git unavailable");

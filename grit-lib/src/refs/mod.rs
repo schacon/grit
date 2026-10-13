@@ -1422,6 +1422,57 @@ pub fn delete_ref_cas(git_dir: &Path, refname: &str, expected_old: ObjectId) -> 
     store_write_value(git_dir, refname, None, Expected::Oid(expected_old), None)
 }
 
+/// Unlink a loose ref file after `packed-refs` was updated, when the file still contains
+/// `expected`. Does not modify `packed-refs` (unlike [`delete_ref`] / [`delete_ref_cas`]).
+///
+/// Returns `Ok(true)` when the loose file was removed, `Ok(false)` when the OID differed or the
+/// file was already absent.
+///
+/// # Errors
+///
+/// Propagates I/O failures and when the ref lock is already held.
+pub(crate) fn prune_loose_ref_cas(
+    git_dir: &Path,
+    refname: &str,
+    expected: ObjectId,
+) -> Result<bool> {
+    ensure_refname_safe_for_storage(refname)?;
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let stor = crate::ref_namespace::storage_ref_name(refname);
+    let path = storage_dir.join(&stor);
+    let lock = lock_path_for_ref(&path);
+    if fs::symlink_metadata(&lock).is_ok() {
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("ref lock present: {}", lock.display()),
+        )));
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .map_err(Error::Io)?;
+    let outcome = (|| -> Result<bool> {
+        if !path.is_file() {
+            return Ok(true);
+        }
+        let Ok(Ref::Direct(oid)) = read_ref_file(&path) else {
+            return Ok(false);
+        };
+        if oid != expected {
+            return Ok(false);
+        }
+        remove_empty_ref_directory(&path);
+        fs::remove_file(&path).map_err(Error::Io)?;
+        if let Some(parent) = path.parent() {
+            remove_empty_ref_directory(parent);
+        }
+        Ok(true)
+    })();
+    let _ = fs::remove_file(&lock);
+    outcome
+}
+
 /// A one-time, in-memory snapshot of a ref store's `packed-refs` file.
 ///
 /// Bulk ref operations — notably `fetch`'s apply phase — resolve and write
@@ -2269,10 +2320,10 @@ fn pack_refs_files(
     collect_loose_ref_files(&storage_git_dir.join("refs"), "refs/", &mut loose_files)?;
 
     let mut packed_loose = 0usize;
-    let mut to_prune: Vec<PathBuf> = Vec::new();
+    let mut to_prune: Vec<(String, ObjectId)> = Vec::new();
 
     for (refname, path) in loose_files {
-        if refname.starts_with("refs/bisect/") {
+        if crate::worktree_ref::is_per_worktree_ref(&refname) {
             continue;
         }
         if !ref_matches_pack_include(&refname, all) {
@@ -2284,18 +2335,14 @@ fn pack_refs_files(
         if odb.read(&oid).is_err() {
             continue;
         }
-        let mut peel = None;
-        if refname.starts_with("refs/tags/") {
-            if let Ok(obj) = odb.read(&oid) {
-                if obj.kind == crate::objects::ObjectKind::Tag {
-                    if let Ok(tag) = crate::objects::parse_tag(&obj.data) {
-                        peel = Some(tag.object);
-                    }
-                }
-            }
-        }
-        merged.insert(refname, (oid, peel));
-        to_prune.push(path);
+        let peel = if refname.starts_with("refs/tags/") {
+            crate::commit_graph_write::peel_to_commit(odb, oid)
+        } else {
+            None
+        };
+        merged.insert(refname.clone(), (oid, peel));
+        to_prune.push((refname, oid));
+        let _ = path;
         packed_loose += 1;
     }
 
@@ -2324,16 +2371,43 @@ fn pack_refs_files(
 
     atomic_rewrite_packed_refs(&storage_git_dir, &body)?;
 
-    for path in &to_prune {
-        if path.is_file() {
-            let _ = fs::remove_file(path);
-            if let Some(parent) = path.parent() {
-                remove_empty_ref_directory(parent);
+    #[cfg(test)]
+    pack_refs_test_hooks::run_before_prune();
+
+    let mut pruned = 0usize;
+    for (refname, expected) in &to_prune {
+        match prune_loose_ref_cas(git_dir, refname, *expected) {
+            Ok(true) => pruned += 1,
+            Ok(false) => {
+                remove_packed_ref(git_dir, refname)?;
             }
+            Err(e) => return Err(e),
         }
     }
 
-    Ok((packed_path, packed_loose, to_prune.len()))
+    Ok((packed_path, packed_loose, pruned))
+}
+
+/// Test hook: runs once after `packed-refs` is rewritten and before loose refs are pruned.
+#[cfg(test)]
+mod pack_refs_test_hooks {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static BEFORE_PRUNE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    pub fn set_before_prune(f: Option<Box<dyn Fn()>>) {
+        BEFORE_PRUNE.with(|c| *c.borrow_mut() = f);
+    }
+
+    pub fn run_before_prune() {
+        BEFORE_PRUNE.with(|c| {
+            if let Some(f) = c.borrow_mut().take() {
+                f();
+            }
+        });
+    }
 }
 
 /// Test hook: when set to a ref name, the next [`append_reflog`] for that ref fails.
@@ -4038,5 +4112,115 @@ mod packed_refs_parse_tests {
             parse_packed_refs_to_map(&path, &data),
             Err(Error::PackedRefsUnexpectedLine { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod pack_refs_tests {
+    use super::*;
+    use crate::objects::{serialize_commit, CommitData, ObjectKind};
+    use crate::repo::{init_repository, Repository};
+    use std::fs;
+    use std::sync::Arc;
+
+    fn write_commit(repo: &Repository, parents: Vec<ObjectId>) -> ObjectId {
+        let tree = repo.odb().write(ObjectKind::Tree, b"").expect("tree");
+        let raw = serialize_commit(&CommitData {
+            tree,
+            parents,
+            author: "T <t@example.com> 1 +0000".into(),
+            committer: "T <t@example.com> 1 +0000".into(),
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            encoding: None,
+            message: "m\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        });
+        repo.odb().write(ObjectKind::Commit, &raw).expect("commit")
+    }
+
+    #[test]
+    fn pack_refs_skips_concurrent_loose_update() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let git_dir = repo.git_dir().to_path_buf();
+        let c1 = write_commit(&repo, vec![]);
+        let c2 = write_commit(&repo, vec![c1]);
+        write_ref(&git_dir, "refs/heads/race", &c1).expect("seed loose");
+
+        let git_dir_hook = git_dir.clone();
+        let c2 = Arc::new(c2);
+        let c2_hook = Arc::clone(&c2);
+        pack_refs_test_hooks::set_before_prune(Some(Box::new(move || {
+            write_ref(&git_dir_hook, "refs/heads/race", &c2_hook).expect("concurrent update");
+        })));
+
+        let (_path, packed, pruned) =
+            pack_refs_files(&git_dir, repo.odb(), true).expect("pack");
+        pack_refs_test_hooks::set_before_prune(None);
+        assert!(packed >= 1);
+        assert_eq!(pruned, 0, "stale CAS must not delete the updated loose ref");
+
+        let resolved = resolve_ref(&git_dir, "refs/heads/race").expect("resolve");
+        assert_eq!(resolved, *c2);
+        let packed_body = fs::read_to_string(store::paths::packed_refs_path(&git_dir))
+            .unwrap_or_default();
+        assert!(
+            !packed_body.contains("refs/heads/race"),
+            "packed entry for concurrently updated ref must be removed"
+        );
+    }
+
+    #[test]
+    fn pack_refs_nested_tag_peel_line_points_at_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(
+            dir.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let commit = write_commit(&repo, vec![]);
+        let inner_tag_body = format!(
+            "object {}\ntype commit\ntagger T <t@example.com> 1 +0000\n\ninner\n",
+            commit.to_hex()
+        );
+        let inner = repo
+            .odb()
+            .write(ObjectKind::Tag, inner_tag_body.as_bytes())
+            .expect("inner tag");
+        let outer_tag_body = format!(
+            "object {}\ntype tag\ntagger T <t@example.com> 2 +0000\n\nouter\n",
+            inner.to_hex()
+        );
+        let outer = repo
+            .odb()
+            .write(ObjectKind::Tag, outer_tag_body.as_bytes())
+            .expect("outer tag");
+        write_ref(repo.git_dir(), "refs/tags/outer", &outer).expect("tag ref");
+
+        pack_refs_files(repo.git_dir(), repo.odb(), false).expect("pack");
+        let body =
+            fs::read_to_string(store::paths::packed_refs_path(repo.git_dir())).expect("packed");
+        let mut lines = body.lines();
+        let tag_line = lines
+            .find(|l| l.contains("refs/tags/outer"))
+            .expect("tag line");
+        assert!(tag_line.starts_with(&outer.to_hex()));
+        let peel_line = lines.find(|l| l.starts_with('^')).expect("peel line");
+        assert!(
+            peel_line.contains(&commit.to_hex()),
+            "peel must reach commit through nested tags, got {peel_line}"
+        );
     }
 }
