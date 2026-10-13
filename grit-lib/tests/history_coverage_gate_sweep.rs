@@ -78,7 +78,7 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
         .odb()
         .write_loose_materialize(ObjectKind::Blob, b"v0\n")?;
     let mut parent: Option<ObjectId> = None;
-    for i in 0..40 {
+    for i in 0..120 {
         let blob = repo
             .odb()
             .write_loose_materialize(ObjectKind::Blob, format!("v{i}\n").as_bytes())?;
@@ -102,7 +102,7 @@ fn history_walk_diff_and_resolve_sweep() -> grit_lib::error::Result<()> {
     fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
         .map_err(grit_lib::error::Error::Io)?;
 
-    for n in 0..40 {
+    for n in 0..80 {
         for spec in [
             format!("HEAD~{n}"),
             format!("main~{n}"),

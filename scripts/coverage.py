@@ -225,9 +225,9 @@ def parse_coverage_json(raw: str | bytes) -> dict[str, LineStats]:
             filename = item.get("filename")
             if not filename:
                 continue
-            path = Path(filename)
+            src_root = (ROOT / "grit-lib" / "src").resolve()
             try:
-                rel = path.relative_to(ROOT / "grit-lib" / "src")
+                rel = Path(filename).resolve().relative_to(src_root)
             except ValueError:
                 continue
             if rel.suffix != ".rs":
@@ -236,6 +236,10 @@ def parse_coverage_json(raw: str | bytes) -> dict[str, LineStats]:
             summary = item.get("summary", {}).get("lines", {})
             count = int(summary.get("count", 0))
             covered = int(summary.get("covered", 0))
+            existing = by_file.get(name)
+            if existing is not None:
+                count = max(count, existing.count)
+                covered = max(covered, existing.covered)
             by_file[name] = LineStats(count=count, covered=covered)
     return by_file
 

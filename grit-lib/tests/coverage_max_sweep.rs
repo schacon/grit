@@ -14,7 +14,6 @@ use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_lib::revwalk::rev_list::{
     merge_bases, rev_list, OrderingMode, OutputMode, RevListOptions,
@@ -77,8 +76,8 @@ fn seed_long_history(
 fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
     let repo = Repository::init(dir.path(), &InitOptions::default())?;
-    let tip = seed_long_history(dir.path(), &repo, 180)?;
-    for n in 0..120 {
+    let tip = seed_long_history(dir.path(), &repo, 320)?;
+    for n in 0..200 {
         for spec in [format!("HEAD~{n}"), format!("main~{n}"), format!(":/c{n}")] {
             let _ = resolve_revision_for_verify(&repo, &spec).ok();
             let _ = resolve_revision(&repo, &spec).ok();

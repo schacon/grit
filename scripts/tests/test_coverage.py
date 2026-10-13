@@ -47,6 +47,37 @@ class CoverageScriptTests(unittest.TestCase):
         self.assertEqual(stats["odb/mod.rs"].count, 100)
         self.assertEqual(stats["odb/mod.rs"].covered, 85)
 
+    def test_parse_coverage_json_normalizes_parent_path_segments(self) -> None:
+        payload = {
+            "data": [
+                {
+                    "files": [
+                        {
+                            "filename": str(
+                                ROOT
+                                / "grit-lib"
+                                / "src"
+                                / "diff"
+                                / ".."
+                                / "structured_diff.rs"
+                            ),
+                            "summary": {
+                                "lines": {
+                                    "count": 100,
+                                    "covered": 80,
+                                    "percent": 80.0,
+                                }
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+        stats = cov.parse_coverage_json(json.dumps(payload))
+        self.assertIn("structured_diff.rs", stats)
+        self.assertEqual(stats["structured_diff.rs"].count, 100)
+        self.assertEqual(stats["structured_diff.rs"].covered, 80)
+
     def test_aggregate_weighted_by_lines(self) -> None:
         stats = cov.parse_coverage_json(_sample_json())
         pack = cov.aggregate(["pack.rs", "pack_index.rs"], stats)

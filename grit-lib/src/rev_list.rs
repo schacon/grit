@@ -9087,7 +9087,14 @@ mod line_coverage_tests {
 
     #[test]
     fn mega_ordering_matrix_on_long_history() -> Result<()> {
-        let (_dir, repo, _) = seed_repo(320, true);
+        let (_dir, repo, tip) = seed_repo(480, true);
+        for i in 0..24 {
+            fs::write(
+                repo.git_dir().join(format!("refs/heads/topic-{i}")),
+                format!("{tip}\n"),
+            )
+            .expect("topic ref");
+        }
         for ordering in [
             OrderingMode::Default,
             OrderingMode::Topo,
