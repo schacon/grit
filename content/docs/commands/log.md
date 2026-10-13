@@ -88,6 +88,7 @@ Example:
 
 ## Markdown output
 
+Schema: [v1](/schemas/log/v1.json)
 Pass [`--markdown`](../global-options/) for a bullet list of commits (short oid, subject, author, relative date):
 
 ```text

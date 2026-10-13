@@ -44,6 +44,8 @@ Would pack 412 reachable objects (380 loose, 0 pack files now).
 
 ## JSON output
 
+Schema: [v1](/schemas/repack/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
@@ -75,6 +77,8 @@ Example:
 ## Markdown output
 
 Pass `--markdown` for an agent-friendly summary with the same fields as JSON in bullet and table form.
+
+Schema: [v1](/schemas/repack/v1.json)
 
 ## See also
 

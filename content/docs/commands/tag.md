@@ -94,6 +94,14 @@ Creating an annotated tag:
 }
 ```
 
+## Markdown output
+
+Pass [`--markdown`](../global-options/) for agent-friendly output.
+
+Schema: [v1](/schemas/tag/v1.json)
+
+Markdown uses headings, bullet lists, and fenced blocks; pipe characters inside table cells are escaped. See the JSON output section for the stable field contract.
+
 ## See also
 
 [grit push](../push/)

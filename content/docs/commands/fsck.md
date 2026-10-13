@@ -48,6 +48,8 @@ Integrity check failed.
 
 ## JSON output
 
+Schema: [v1](/schemas/fsck/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
@@ -83,6 +85,8 @@ Example with a problem:
 ## Markdown output
 
 Pass `--markdown` for a table of issues plus the `ok` flag.
+
+Schema: [v1](/schemas/fsck/v1.json)
 
 ## See also
 
