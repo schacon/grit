@@ -6,7 +6,7 @@
       "description": "One tag in a `list` outcome.",
       "properties": {
         "kind": {
-          "type": "string"
+          "$ref": "#/definitions/TagRefKind"
         },
         "name": {
           "type": "string"
@@ -28,6 +28,14 @@
         "oid"
       ],
       "type": "object"
+    },
+    "TagRefKind": {
+      "description": "Tag ref kind in JSON (`lightweight` or `annotated`).",
+      "enum": [
+        "lightweight",
+        "annotated"
+      ],
+      "type": "string"
     }
   },
   "description": "Result of `grit tag`, tagged by `action` (`list` / `create` / `delete`).",
@@ -64,7 +72,7 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "$ref": "#/definitions/TagRefKind"
         },
         "name": {
           "type": "string"

@@ -48,6 +48,8 @@ Would pack 412 reachable objects.
 
 ## JSON output
 
+Schema: [v1](/schemas/gc/v1.json)
+
 Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
@@ -82,6 +84,8 @@ Example:
 ## Markdown output
 
 Pass `--markdown` for an agent-friendly report with repack and prune sections.
+
+Schema: [v1](/schemas/gc/v1.json)
 
 ## See also
 

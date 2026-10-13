@@ -407,6 +407,10 @@ fn snapshot_args_lookup(name: &str) -> Option<&'static [&'static str]> {
 /// Map snapshot stem to grit argv used to produce it (for schema validation).
 pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static str])] {
     &[
+        ("skill", &["skill"]),
+        ("fsck", &["fsck"]),
+        ("gc", &["gc", "--dry-run"]),
+        ("repack", &["repack", "--dry-run"]),
         ("status", &["status"]),
         ("log", &["log"]),
         ("diff", &["diff"]),

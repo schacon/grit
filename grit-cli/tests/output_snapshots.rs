@@ -35,6 +35,21 @@ fn snapshot_skill() {
 }
 
 #[test]
+fn snapshot_fsck() {
+    snapshot_all_modes("fsck", &["fsck"]);
+}
+
+#[test]
+fn snapshot_gc_dry_run() {
+    snapshot_all_modes("gc", &["gc", "--dry-run"]);
+}
+
+#[test]
+fn snapshot_repack_dry_run() {
+    snapshot_all_modes("repack", &["repack", "--dry-run"]);
+}
+
+#[test]
 fn snapshot_log() {
     snapshot_all_modes("log", &["log"]);
 }

@@ -102,16 +102,11 @@ List:
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `action` | string | `list`, `add`, `remove`, or `prune`. |
+| `worktrees` | array | For `list`, one row per worktree (each item includes `path`, `head`, `branch`, and related flags). |
+| `path` | string | For `add` / `remove`, absolute path to the working tree. |
+| `head` | string | For `add`, current commit oid checked out in the new worktree. |
+| `branch` | string or null | For `add`, branch checked out when not detached. |
 | `pruned` | array | For `prune`, absolute paths whose registrations were removed. |
-| `worktrees` | array | For `list`, one row per worktree. |
-| `path` | string | Absolute path to the working tree. |
-| `head` | string | Current commit oid for that worktree. |
-| `branch` | string | Short branch name when not detached. |
-| `detached` | boolean | True when `HEAD` is detached. |
-| `bare` | boolean | True only for the main entry of a bare repository. |
-| `locked` | boolean | True when the worktree admin dir has a `locked` file. |
-| `lock_reason` | string | Optional reason from the `locked` file. |
-| `prunable` | boolean | True when the working tree directory is missing (list rows only). |
 
 Add:
 
@@ -145,6 +140,8 @@ Prune:
 ## Markdown output
 
 Pass [`--markdown`](../global-options/) for structured output.
+
+Schema: [worktree.list v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json)
 
 List shows a table of path, branch, and HEAD:
 

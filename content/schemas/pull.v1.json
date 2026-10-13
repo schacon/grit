@@ -1,6 +1,20 @@
 {
   "$id": "https://grit-scm.com/schemas/pull/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "MergeResult": {
+      "description": "Merge / pull integration result (`--json` contract).",
+      "enum": [
+        "up_to_date",
+        "fast_forward",
+        "merged",
+        "conflicts",
+        "aborted",
+        "set_upstream"
+      ],
+      "type": "string"
+    }
+  },
   "description": "Result of `grit merge` (and the merge half of `grit pull`).",
   "properties": {
     "branch": {
@@ -25,8 +39,7 @@
       ]
     },
     "result": {
-      "description": "`up_to_date` | `fast_forward` | `merged` | `conflicts` | `aborted` | `set_upstream`.",
-      "type": "string"
+      "$ref": "#/definitions/MergeResult"
     },
     "upstream": {
       "description": "For `set_upstream` (unborn `grit pull`): the upstream the branch was set to.",
