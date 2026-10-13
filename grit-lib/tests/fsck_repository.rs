@@ -4,14 +4,16 @@
 
 use std::process::Command;
 
-use grit_lib::maintenance::repository_fsck::{self as fsck, FsckIssue, FsckOptions};
 use grit_lib::index::Index;
+use grit_lib::maintenance::repository_fsck::{self as fsck, FsckIssue, FsckOptions};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
 use grit_lib::progress::{NeverCancel, NullProgress};
 use grit_lib::repo::{InitOptions, Repository};
-use grit_test_support::{git_fsck, write_loose_object, HashAlgo as FixtureAlgo};
+use grit_test_support::{
+    git_fsck, git_hash_object_literally, write_loose_object, HashAlgo as FixtureAlgo,
+};
 use tempfile::TempDir;
 
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
@@ -35,6 +37,67 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
         panic!("git {args:?} failed: {combined}");
     }
     combined
+}
+
+fn pack_loose_object_and_remove_loose(dir: &std::path::Path, oid: ObjectId) {
+    let pack_dir = dir.join(".git/objects/pack");
+    std::fs::create_dir_all(&pack_dir).expect("pack dir");
+    let stem = pack_dir.join("pack-fsck-test");
+    let mut pack_cmd = Command::new("git")
+        .current_dir(dir)
+        .args([
+            "pack-objects",
+            stem.to_str().expect("utf8 stem"),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .spawn()
+        .expect("pack-objects");
+    if let Some(mut stdin) = pack_cmd.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(format!("{}\n", oid.to_hex()).as_bytes());
+    }
+    let pack_out = pack_cmd.wait_with_output().expect("pack wait");
+    assert!(
+        pack_out.status.success(),
+        "pack-objects failed: {}",
+        String::from_utf8_lossy(&pack_out.stderr)
+    );
+    let pack_hash = String::from_utf8_lossy(&pack_out.stdout)
+        .trim()
+        .to_string();
+    let pack_file = pack_dir.join(format!("pack-fsck-test-{pack_hash}.pack"));
+    assert!(pack_file.is_file(), "missing pack file {pack_file:?}");
+    let index_out = Command::new("git")
+        .current_dir(dir)
+        .args(["index-pack", pack_file.to_str().expect("pack path")])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("index-pack");
+    assert!(
+        index_out.status.success(),
+        "index-pack failed: {}",
+        String::from_utf8_lossy(&index_out.stderr)
+    );
+    let loose = dir.join(".git/objects").join(format!(
+        "{}/{}",
+        &oid.to_hex()[..2],
+        &oid.to_hex()[2..]
+    ));
+    if loose.is_file() {
+        std::fs::remove_file(loose).expect("remove loose after pack");
+    }
+}
+
+fn write_ref_loose(dir: &std::path::Path, ref_name: &str, oid: ObjectId) {
+    let path = dir.join(".git").join(ref_name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("ref parent");
+    }
+    std::fs::write(path, format!("{}\n", oid.to_hex())).expect("write ref");
 }
 
 fn init_repo() -> (TempDir, Repository) {
@@ -301,6 +364,143 @@ fn dangling_commit_and_blob() {
     assert_eq!(
         grit_set, git_set,
         "dangling mismatch git={git_set:?} grit={grit_set:?}"
+    );
+}
+
+#[test]
+fn malformed_reachable_commit_is_bad_object_not_error() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    let bad_hex = git_hash_object_literally(
+        dir.path(),
+        FixtureAlgo::Sha1,
+        "commit",
+        b"this is not a commit\n",
+    )
+    .expect("literally write commit");
+    let bad = ObjectId::from_hex(bad_hex.trim()).expect("parse oid");
+    write_ref_loose(dir.path(), "refs/heads/main", bad);
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.to_lowercase().contains("could not be parsed")
+            || git_text.contains("bogus")
+            || git_text.contains("badObject"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| matches!(i, FsckIssue::BadObject { oid, .. } if oid == &bad)),
+        "malformed commit must surface as BadObject: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn malformed_reachable_tree_is_bad_object_not_error() {
+    let (dir, repo) = init_repo();
+    let head = one_commit(&repo);
+    let bad_tree = repo
+        .odb()
+        .write(ObjectKind::Tree, b"not a valid tree")
+        .expect("tree");
+    let commit_body = format!(
+        "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\n",
+        bad_tree.to_hex()
+    );
+    let bad_commit = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())
+        .expect("commit");
+    let _ = head;
+    git(
+        dir.path(),
+        &["update-ref", "refs/heads/main", &bad_commit.to_hex()],
+    );
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.to_lowercase().contains("could not be parsed")
+            || git_text.contains("badTree")
+            || git_text.contains("bogus"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| { matches!(i, FsckIssue::BadObject { oid, .. } if oid == &bad_tree) }),
+        "malformed tree must surface as BadObject: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn malformed_reachable_tag_is_bad_object_not_error() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    let bad_hex = git_hash_object_literally(dir.path(), FixtureAlgo::Sha1, "tag", b"not a tag object\n")
+        .expect("literally write tag");
+    let bad_tag = ObjectId::from_hex(bad_hex.trim()).expect("parse oid");
+    write_ref_loose(dir.path(), "refs/tags/bad-tag", bad_tag);
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.to_lowercase().contains("could not be parsed")
+            || git_text.contains("badTag")
+            || git_text.contains("bogus"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| matches!(i, FsckIssue::BadObject { oid, .. } if oid == &bad_tag)),
+        "malformed tag must surface as BadObject: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn malformed_unreachable_commit_in_pack_is_bad_object() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    let bad_hex = git_hash_object_literally(
+        dir.path(),
+        FixtureAlgo::Sha1,
+        "commit",
+        b"this is not a commit\n",
+    )
+    .expect("literally write commit");
+    let bad = ObjectId::from_hex(bad_hex.trim()).expect("parse oid");
+    pack_loose_object_and_remove_loose(dir.path(), bad);
+    repo.odb().invalidate_packs();
+    assert!(
+        !repo
+            .odb()
+            .enumerate_local_loose_objects()
+            .expect("loose")
+            .iter()
+            .any(|(oid, _)| *oid == bad),
+        "malformed commit should exist only in pack"
+    );
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.to_lowercase().contains("could not be parsed")
+            || git_text.contains("bogus")
+            || git_text.contains("badObject"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| matches!(i, FsckIssue::BadObject { oid, .. } if oid == &bad)),
+        "packed unreachable malformed commit must be reported: {:?}",
+        report.issues
     );
 }
 

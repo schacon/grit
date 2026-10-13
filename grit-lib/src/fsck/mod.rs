@@ -312,7 +312,8 @@ pub fn fsck(
     if !options.connectivity_only {
         objects_checked +=
             verify_loose_objects(repo, &config, options.strict, &mut issues, progress, cancel)?;
-        objects_checked += verify_pack_objects(repo, &mut issues, progress, cancel)?;
+        objects_checked +=
+            verify_pack_objects(repo, &config, options.strict, &mut issues, progress, cancel)?;
     }
 
     verify_midx_and_commit_graph(repo, &mut issues)?;
@@ -371,6 +372,23 @@ fn push_bad_object(
     if should_emit(config, strict, err.id) {
         issues.push(FsckIssue::BadObject { oid, error: err });
     }
+}
+
+fn push_corrupt_parse(
+    issues: &mut Vec<FsckIssue>,
+    config: &ConfigSet,
+    strict: bool,
+    oid: ObjectId,
+    err: Error,
+) {
+    let detail = err.to_string();
+    push_bad_object(
+        issues,
+        config,
+        strict,
+        oid,
+        FsckError::new("corruptObject", detail),
+    );
 }
 
 enum LooseCheckOutcome {
@@ -497,11 +515,15 @@ fn push_dot_issue(
 
 fn verify_pack_objects(
     repo: &Repository,
+    config: &ConfigSet,
+    strict: bool,
     issues: &mut Vec<FsckIssue>,
     progress: &mut dyn ProgressSink,
     cancel: &dyn Cancel,
 ) -> Result<usize> {
-    let Some(objects_dir) = repo.odb().files_objects_dir() else {
+    let odb = repo.odb();
+    let fsck_opts = FsckObjectOptions::new(odb.hash_algo());
+    let Some(objects_dir) = odb.files_objects_dir() else {
         return Ok(0);
     };
     let pack_dir = objects_dir.join("pack");
@@ -524,6 +546,16 @@ fn verify_pack_objects(
         match verify_pack_and_collect(idx_path) {
             Ok(records) => {
                 checked += records.len();
+                for record in records {
+                    if cancel.is_cancelled() {
+                        return Err(Error::Message("cancelled".into()));
+                    }
+                    let oid = ObjectId::from_bytes(&record.oid)?;
+                    let obj = odb.read(&oid)?;
+                    if let Err(err) = fsck_object(obj.kind, &obj.data, fsck_opts) {
+                        push_bad_object(issues, config, strict, oid, err);
+                    }
+                }
             }
             Err(Error::CorruptObject(msg)) => {
                 let issue = if msg.contains("checksum") && msg.contains("index") {
@@ -603,10 +635,17 @@ fn walk_connectivity(
         };
         if let Err(err) = fsck_object(obj.kind, &obj.data, fsck_opts) {
             push_bad_object(&mut issues, config, strict, oid, err);
+            continue;
         }
         match obj.kind {
             ObjectKind::Commit => {
-                let commit = parse_commit(&obj.data)?;
+                let commit = match parse_commit(&obj.data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        push_corrupt_parse(&mut issues, config, strict, oid, e);
+                        continue;
+                    }
+                };
                 for p in commit.parents {
                     follow_typed_link(
                         odb,
@@ -635,7 +674,14 @@ fn walk_connectivity(
                 );
             }
             ObjectKind::Tree => {
-                for entry in parse_tree(&obj.data)? {
+                let entries = match parse_tree(&obj.data) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        push_corrupt_parse(&mut issues, config, strict, oid, e);
+                        continue;
+                    }
+                };
+                for entry in entries {
                     if entry.mode == MODE_GITLINK {
                         continue;
                     }
@@ -672,7 +718,13 @@ fn walk_connectivity(
                 }
             }
             ObjectKind::Tag => {
-                let tag = parse_tag(&obj.data)?;
+                let tag = match parse_tag(&obj.data) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        push_corrupt_parse(&mut issues, config, strict, oid, e);
+                        continue;
+                    }
+                };
                 let Some(expected) = ObjectKind::from_tag_type_field(tag.object_type.as_bytes())
                 else {
                     continue;
@@ -708,6 +760,7 @@ fn enqueue(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn follow_typed_link(
     odb: &Odb,
     config: &ConfigSet,
