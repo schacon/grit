@@ -84,6 +84,14 @@ Listing:
 }
 ```
 
+## Markdown output
+
+Pass [`--markdown`](../global-options/) for agent-friendly output.
+
+Schema: [v1](/schemas/notes/v1.json)
+
+List actions render a heading with the notes ref and one bullet per note (short object id and body preview). Show wraps the note body in a fenced `text` block. Add and remove print a short confirmation line per action.
+
 ## See also
 
 [Library: Notes](../library/notes/), [`grit show`](show.md)
