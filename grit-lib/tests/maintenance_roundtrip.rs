@@ -11,6 +11,7 @@ use grit_lib::maintenance::{
     fsck, write_commit_graph, CommitGraphOptions, FsckOptions, MidxOptions, PackRefsOptions,
 };
 use grit_lib::objects::commit_graph::CommitGraphChain;
+use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
 use support::{git_init_reftable_repo, git_refs_verify, require_reftable_git};
