@@ -74,7 +74,14 @@ impl HumanRender for ReflogDeleteOutcome {
     }
 }
 
-impl MarkdownRender for ReflogDeleteOutcome {}
+impl MarkdownRender for ReflogDeleteOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        for spec in &self.deleted {
+            outln!(w, "- Deleted `{spec}`");
+        }
+        Ok(())
+    }
+}
 
 /// Result of `grit reflog expire`.
 #[derive(Serialize, JsonSchema)]
@@ -98,7 +105,21 @@ impl HumanRender for ReflogExpireOutcome {
     }
 }
 
-impl MarkdownRender for ReflogExpireOutcome {}
+impl MarkdownRender for ReflogExpireOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        outln!(
+            w,
+            "Pruned **{}** reflog {}.",
+            self.entries_pruned,
+            if self.entries_pruned == 1 {
+                "entry"
+            } else {
+                "entries"
+            }
+        );
+        Ok(())
+    }
+}
 
 pub fn run_show(r#ref: Option<String>, limit: Option<usize>) -> Result<ReflogListOutcome> {
     let repo = context::discover()?;
