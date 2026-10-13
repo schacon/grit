@@ -2,8 +2,8 @@
 
 use std::process::Command;
 
-use grit_lib::clone::{clone, CloneOptions};
-use grit_lib::fetch::NoProgress;
+use grit_lib::remote::clone::{clone, CloneOptions};
+use grit_lib::remote::fetch::NoProgress;
 
 fn git(cwd: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")

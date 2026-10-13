@@ -20,8 +20,8 @@ use grit_lib::progress::NullProgress;
 use grit_lib::refs::{update_branch_for_commit_with_config, BranchCommitRefUpdate};
 use grit_lib::repo::Repository;
 use grit_lib::worktree::{add_linked_worktree, remove_linked_worktree, AddLinkedWorktreeOptions};
-use grit_lib::worktree_rules::WorktreeRules;
-use grit_lib::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
+use grit_lib::worktree::worktree_rules::WorktreeRules;
 use grit_test_support::git;
 
 fn commit_request(message: &str) -> CommitRequest {
