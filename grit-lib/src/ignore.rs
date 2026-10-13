@@ -5,6 +5,7 @@
 //! with "last matching pattern wins" precedence.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -15,11 +16,32 @@ use crate::objects::ObjectKind;
 use crate::repo::Repository;
 use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
+/// Where an ignore pattern was loaded from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IgnoreSource {
+    /// A per-directory exclude file (typically `.gitignore`).
+    PerDirectory(String),
+    /// Patterns from `.git/info/exclude`.
+    InfoExclude,
+    /// Patterns from `core.excludesfile` (or the XDG default).
+    CoreExcludesFile(String),
+}
+
+impl fmt::Display for IgnoreSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PerDirectory(path) => f.write_str(path),
+            Self::InfoExclude => f.write_str(".git/info/exclude"),
+            Self::CoreExcludesFile(path) => f.write_str(path),
+        }
+    }
+}
+
 /// Metadata for a matching rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IgnoreMatch {
-    /// The source file shown in verbose output.
-    pub source_display: String,
+    /// Typed source of the matching pattern (see [`IgnoreSource`]).
+    pub source: IgnoreSource,
     /// Line number in the source file (1-based).
     pub line_number: usize,
     /// Pattern text as written (excluding comments/blank lines).
@@ -28,9 +50,20 @@ pub struct IgnoreMatch {
     pub negative: bool,
 }
 
+/// Result of checking one path against repository ignore rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoreCheck {
+    /// Repository-relative path that was queried.
+    pub path: String,
+    /// Whether the path is ignored (always `false` for tracked paths).
+    pub ignored: bool,
+    /// Last matching pattern metadata, when Git would attribute one (`check-ignore -v`).
+    pub matched: Option<IgnoreMatch>,
+}
+
 #[derive(Debug, Clone)]
 struct IgnoreRule {
-    source_display: String,
+    source: IgnoreSource,
     line_number: usize,
     pattern_text: String,
     negative: bool,
@@ -95,8 +128,13 @@ impl IgnoreMatcher {
                 cwd.join(path)
             };
             let display = path.display().to_string();
-            let mut more =
-                load_rules_from_file(&resolved, display, String::new(), false, &mut self.warnings)?;
+            let mut more = load_rules_from_file(
+                &resolved,
+                IgnoreSource::CoreExcludesFile(display),
+                String::new(),
+                false,
+                &mut self.warnings,
+            )?;
             self.exclude_from_rules.append(&mut more);
         }
         Ok(())
@@ -116,7 +154,12 @@ impl IgnoreMatcher {
     /// Append patterns from `ls-files --exclude` / `-x` (Git command-line exclude list).
     pub fn add_cli_excludes(&mut self, patterns: &[String]) {
         for pat in patterns {
-            if let Some(rule) = parse_rule_line(pat, 1, "--exclude option", "") {
+            if let Some(rule) = parse_rule_line(
+                pat,
+                1,
+                IgnoreSource::PerDirectory("--exclude option".into()),
+                "",
+            ) {
                 self.cli_rules.push(rule);
             }
         }
@@ -251,7 +294,7 @@ impl IgnoreMatcher {
                 return (
                     !rule.negative,
                     Some(IgnoreMatch {
-                        source_display: rule.source_display.clone(),
+                        source: rule.source.clone(),
                         line_number: rule.line_number,
                         pattern_text: rule.pattern_text.clone(),
                         negative: rule.negative,
@@ -419,7 +462,13 @@ fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
     };
 
     let mut sink = Vec::new();
-    load_rules_from_file(&resolved, display_path, String::new(), false, &mut sink)
+    load_rules_from_file(
+        &resolved,
+        IgnoreSource::CoreExcludesFile(display_path),
+        String::new(),
+        false,
+        &mut sink,
+    )
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
@@ -427,7 +476,7 @@ fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
     let mut sink = Vec::new();
     load_rules_from_file(
         &path,
-        ".git/info/exclude".to_owned(),
+        IgnoreSource::InfoExclude,
         String::new(),
         false,
         &mut sink,
@@ -455,6 +504,7 @@ fn load_gitignore_for_dir(
     } else {
         format!("{dir}/{file_name}")
     };
+    let source = IgnoreSource::PerDirectory(source_display.clone());
     let rel_key = if dir.is_empty() {
         file_name.to_owned()
     } else {
@@ -475,7 +525,7 @@ fn load_gitignore_for_dir(
     }
 
     if let Some(content) = read_optional_text(&path)? {
-        return parse_gitignore_content(&content, &source_display, dir, warnings);
+        return parse_gitignore_content(&content, source, dir, warnings);
     }
 
     if let Some(ix) = index {
@@ -483,7 +533,7 @@ fn load_gitignore_for_dir(
             if let Ok(obj) = repo.odb().read(&entry.oid) {
                 if obj.kind == ObjectKind::Blob {
                     if let Ok(text) = std::str::from_utf8(&obj.data) {
-                        return parse_gitignore_content(text, &source_display, dir, warnings);
+                        return parse_gitignore_content(text, source, dir, warnings);
                     }
                 }
             }
@@ -495,7 +545,7 @@ fn load_gitignore_for_dir(
 
 fn parse_gitignore_content(
     content: &str,
-    source_display: &str,
+    source: IgnoreSource,
     base_dir: &str,
     _warnings: &mut Vec<String>,
 ) -> Result<Vec<IgnoreRule>> {
@@ -506,7 +556,7 @@ fn parse_gitignore_content(
         } else {
             line
         };
-        if let Some(rule) = parse_rule_line(line, idx + 1, source_display, base_dir) {
+        if let Some(rule) = parse_rule_line(line, idx + 1, source.clone(), base_dir) {
             rules.push(rule);
         }
     }
@@ -515,7 +565,7 @@ fn parse_gitignore_content(
 
 fn load_rules_from_file(
     path: &Path,
-    source_display: String,
+    source: IgnoreSource,
     base_dir: String,
     deny_symlink_gitignore: bool,
     warnings: &mut Vec<String>,
@@ -524,7 +574,8 @@ fn load_rules_from_file(
         if let Ok(meta) = fs::symlink_metadata(path) {
             if meta.file_type().is_symlink() {
                 warnings.push(crate::diagnostics::warning_line(&format!(
-                    "unable to access '{source_display}': Too many levels of symbolic links"
+                    "unable to access '{}': Too many levels of symbolic links",
+                    source
                 )));
                 return Ok(Vec::new());
             }
@@ -536,7 +587,7 @@ fn load_rules_from_file(
     let Some(content) = read_optional_text(path)? else {
         return Ok(Vec::new());
     };
-    parse_gitignore_content(&content, &source_display, &base_dir, warnings)
+    parse_gitignore_content(&content, source, &base_dir, warnings)
 }
 
 /// Trims only *unescaped* trailing spaces, matching Git's `trim_trailing_spaces` in `dir.c`.
@@ -580,7 +631,7 @@ fn trim_trailing_spaces_git(buf: &mut String) {
 fn parse_rule_line(
     line: &str,
     line_number: usize,
-    source_display: &str,
+    source: IgnoreSource,
     base_dir: &str,
 ) -> Option<IgnoreRule> {
     let mut raw_line = line.trim_end_matches('\r').to_owned();
@@ -622,7 +673,7 @@ fn parse_rule_line(
     let has_slash = raw.contains('/');
     let body = raw;
     Some(IgnoreRule {
-        source_display: source_display.to_owned(),
+        source,
         line_number,
         pattern_text,
         negative,
@@ -681,7 +732,7 @@ fn refine_match_for_check_ignore_verbose(
     }
     Some(
         best.map(|r| IgnoreMatch {
-            source_display: r.source_display.clone(),
+            source: r.source.clone(),
             line_number: r.line_number,
             pattern_text: r.pattern_text.clone(),
             negative: r.negative,
@@ -733,6 +784,48 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
         return false;
     };
     index.get(repo_rel_path.as_bytes(), 0).is_some()
+}
+
+fn path_query_is_dir(repo: &Repository, repo_rel_path: &str) -> bool {
+    if repo_rel_path.ends_with('/') {
+        return true;
+    }
+    let Some(work_tree) = repo.work_tree() else {
+        return false;
+    };
+    let path = work_tree.join(repo_rel_path);
+    path.metadata().map(|m| m.is_dir()).unwrap_or(false)
+}
+
+impl Repository {
+    /// Check whether paths are ignored, reusing one [`IgnoreMatcher`] for the whole batch.
+    ///
+    /// Tracked index entries are never reported as ignored. Each result includes verbose-style
+    /// match metadata compatible with `git check-ignore -v`.
+    ///
+    /// # Parameters
+    ///
+    /// - `paths` - repository-relative paths with `/` separators (as returned by
+    ///   [`normalize_repo_relative`]).
+    /// - `index` - current index; tracked paths are treated as not ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Io`] when loading exclude files fails.
+    pub fn ignore_check(&self, paths: &[String], index: &Index) -> Result<Vec<IgnoreCheck>> {
+        let mut matcher = IgnoreMatcher::from_repository(self)?;
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            let is_dir = path_query_is_dir(self, path);
+            let (ignored, matched) = matcher.check_path(self, Some(index), path, is_dir)?;
+            out.push(IgnoreCheck {
+                path: path.clone(),
+                ignored,
+                matched,
+            });
+        }
+        Ok(out)
+    }
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>> {

@@ -144,12 +144,12 @@ fn assert_match_eq(
     if git.ignored {
         let m = grit_match.as_ref().expect("grit match metadata");
         let gsrc = git.source.as_ref().expect("git source");
+        let grit_src = m.source.to_string();
         assert!(
-            m.source_display.ends_with(gsrc.trim_start_matches('/'))
-                || gsrc.ends_with(&m.source_display)
-                || m.source_display == *gsrc,
-            "source mismatch for {path}: grit={} git={gsrc}",
-            m.source_display
+            grit_src.ends_with(gsrc.trim_start_matches('/'))
+                || gsrc.ends_with(&grit_src)
+                || grit_src == *gsrc,
+            "source mismatch for {path}: grit={grit_src} git={gsrc}"
         );
         assert_eq!(Some(m.line_number), git.line, "line mismatch for {path}");
         assert_eq!(
@@ -167,12 +167,12 @@ fn assert_match_eq(
             .expect("grit match metadata for negated non-match");
         assert!(m.negative, "expected negated match metadata for {path}");
         let gsrc = git.source.as_ref().expect("git source for negated match");
+        let grit_src = m.source.to_string();
         assert!(
-            m.source_display.ends_with(gsrc.trim_start_matches('/'))
-                || gsrc.ends_with(&m.source_display)
-                || m.source_display == *gsrc,
-            "source mismatch for {path}: grit={} git={gsrc}",
-            m.source_display
+            grit_src.ends_with(gsrc.trim_start_matches('/'))
+                || gsrc.ends_with(&grit_src)
+                || grit_src == *gsrc,
+            "source mismatch for {path}: grit={grit_src} git={gsrc}"
         );
         assert_eq!(Some(m.line_number), git.line, "line mismatch for {path}");
         assert_eq!(

@@ -9370,6 +9370,8 @@ pub fn grit_lib::repo::Repository::worktrees(&self) -> grit_lib::repo_handles::R
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>
+impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl core::fmt::Debug for grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for grit_lib::repo::Repository
@@ -12502,6 +12504,8 @@ pub fn grit_lib::repo::Repository::worktrees(&self) -> grit_lib::repo_handles::R
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>
+impl grit_lib::repo::Repository
+pub fn grit_lib::repo::Repository::ignore_check(&self, &[alloc::string::String], &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::ignore::IgnoreCheck>>
 impl core::fmt::Debug for grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for grit_lib::repo::Repository
@@ -14292,11 +14296,51 @@ pub fn grit_lib::worktree::crlf::run_filter(&dyn grit_lib::command_runner::Comma
 pub fn grit_lib::worktree::crlf::should_convert_to_crlf(&grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &[u8]) -> bool
 pub type grit_lib::worktree::crlf::GitAttributes = alloc::vec::Vec<grit_lib::worktree::crlf::AttrRule>
 pub mod grit_lib::worktree::ignore
+pub enum grit_lib::worktree::ignore::IgnoreSource
+pub grit_lib::worktree::ignore::IgnoreSource::CoreExcludesFile(alloc::string::String)
+pub grit_lib::worktree::ignore::IgnoreSource::InfoExclude
+pub grit_lib::worktree::ignore::IgnoreSource::PerDirectory(alloc::string::String)
+impl core::clone::Clone for grit_lib::worktree::ignore::IgnoreSource
+pub fn grit_lib::worktree::ignore::IgnoreSource::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::worktree::ignore::IgnoreSource
+impl core::cmp::PartialEq for grit_lib::worktree::ignore::IgnoreSource
+pub fn grit_lib::worktree::ignore::IgnoreSource::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::worktree::ignore::IgnoreSource
+pub fn grit_lib::worktree::ignore::IgnoreSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::worktree::ignore::IgnoreSource
+pub fn grit_lib::worktree::ignore::IgnoreSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::worktree::ignore::IgnoreSource
+impl core::marker::Freeze for grit_lib::worktree::ignore::IgnoreSource
+impl core::marker::Send for grit_lib::worktree::ignore::IgnoreSource
+impl core::marker::Sync for grit_lib::worktree::ignore::IgnoreSource
+impl core::marker::Unpin for grit_lib::worktree::ignore::IgnoreSource
+impl core::marker::UnsafeUnpin for grit_lib::worktree::ignore::IgnoreSource
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::ignore::IgnoreSource
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::ignore::IgnoreSource
+pub struct grit_lib::worktree::ignore::IgnoreCheck
+pub grit_lib::worktree::ignore::IgnoreCheck::ignored: bool
+pub grit_lib::worktree::ignore::IgnoreCheck::matched: core::option::Option<grit_lib::worktree::ignore::IgnoreMatch>
+pub grit_lib::worktree::ignore::IgnoreCheck::path: alloc::string::String
+impl core::clone::Clone for grit_lib::worktree::ignore::IgnoreCheck
+pub fn grit_lib::worktree::ignore::IgnoreCheck::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::worktree::ignore::IgnoreCheck
+impl core::cmp::PartialEq for grit_lib::worktree::ignore::IgnoreCheck
+pub fn grit_lib::worktree::ignore::IgnoreCheck::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::worktree::ignore::IgnoreCheck
+pub fn grit_lib::worktree::ignore::IgnoreCheck::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::worktree::ignore::IgnoreCheck
+impl core::marker::Freeze for grit_lib::worktree::ignore::IgnoreCheck
+impl core::marker::Send for grit_lib::worktree::ignore::IgnoreCheck
+impl core::marker::Sync for grit_lib::worktree::ignore::IgnoreCheck
+impl core::marker::Unpin for grit_lib::worktree::ignore::IgnoreCheck
+impl core::marker::UnsafeUnpin for grit_lib::worktree::ignore::IgnoreCheck
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::ignore::IgnoreCheck
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::ignore::IgnoreCheck
 pub struct grit_lib::worktree::ignore::IgnoreMatch
 pub grit_lib::worktree::ignore::IgnoreMatch::line_number: usize
 pub grit_lib::worktree::ignore::IgnoreMatch::negative: bool
 pub grit_lib::worktree::ignore::IgnoreMatch::pattern_text: alloc::string::String
-pub grit_lib::worktree::ignore::IgnoreMatch::source_display: alloc::string::String
+pub grit_lib::worktree::ignore::IgnoreMatch::source: grit_lib::worktree::ignore::IgnoreSource
 impl core::clone::Clone for grit_lib::worktree::ignore::IgnoreMatch
 pub fn grit_lib::worktree::ignore::IgnoreMatch::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::worktree::ignore::IgnoreMatch
