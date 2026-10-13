@@ -51,6 +51,8 @@ $ echo $?
 
 ## JSON output
 
+Schema: [v1](/schemas/hooks/v1.json) (`hooks.list` and `hooks.run` subcommand schemas are also published under `/schemas/`).
+
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `action` | string | `list` or `run`. |
@@ -87,6 +89,8 @@ Example run:
 ```
 
 ## Markdown output
+
+Schema: [v1](/schemas/hooks/v1.json)
 
 `--markdown` renders a table of hooks for `list`, or a short summary for `run`.
 

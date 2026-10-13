@@ -36,6 +36,8 @@ Each argument is one commit (or other single object); revision ranges such as `H
 
 ## JSON output
 
+Schema: [v1](/schemas/patch-id/v1.json)
+
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `entries` | array | Each item has `patch_id` and `commit` (full hex object ids). |
@@ -54,6 +56,8 @@ Example:
 ```
 
 ## Markdown output
+
+Schema: [v1](/schemas/patch-id/v1.json)
 
 `--markdown` prints a table of patch IDs and commits.
 
