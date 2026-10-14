@@ -916,6 +916,14 @@ fn is_unreachable_oid(
     obj.kind == ObjectKind::Commit
 }
 
+fn reflog_entry_timestamp(entry: &ReflogEntry) -> i64 {
+    parse_timestamp_from_identity(&entry.identity).unwrap_or(i64::MAX)
+}
+
+fn reflog_entry_needs_stale_fix(repo: &Repository, entry: &ReflogEntry) -> bool {
+    !commit_chain_complete(repo, entry.old_oid, 0) || !commit_chain_complete(repo, entry.new_oid, 0)
+}
+
 fn should_drop_reflog_entry(
     repo: &Repository,
     entry: &ReflogEntry,
@@ -925,14 +933,11 @@ fn should_drop_reflog_entry(
     reachable: &HashSet<ObjectId>,
     stale_fix: bool,
 ) -> bool {
-    let ts = parse_timestamp_from_identity(&entry.identity).unwrap_or(i64::MAX);
+    let ts = reflog_entry_timestamp(entry);
     if expire_total > 0 && ts < expire_total {
         return true;
     }
-    if stale_fix
-        && (!commit_chain_complete(repo, entry.old_oid, 0)
-            || !commit_chain_complete(repo, entry.new_oid, 0))
-    {
+    if stale_fix && reflog_entry_needs_stale_fix(repo, entry) {
         return true;
     }
     if expire_unreachable > 0 && ts < expire_unreachable {
@@ -977,6 +982,41 @@ pub fn expire_reflog_git(
         base_unreachable,
     );
 
+    let entries = read_reflog(git_dir, refname)?;
+    if entries.is_empty() {
+        return Ok(ReflogExpireResult {
+            pruned: 0,
+            actions: Vec::new(),
+        });
+    }
+
+    let may_drop_total = expire_total > 0
+        && entries
+            .iter()
+            .any(|e| reflog_entry_timestamp(e) < expire_total);
+    let may_drop_stale = params.stale_fix
+        && entries
+            .iter()
+            .any(|e| reflog_entry_needs_stale_fix(repo, e));
+    let may_drop_unreachable = expire_unreachable > 0
+        && entries
+            .iter()
+            .any(|e| reflog_entry_timestamp(e) < expire_unreachable);
+
+    if !may_drop_total && !may_drop_stale && !may_drop_unreachable {
+        return Ok(ReflogExpireResult {
+            pruned: 0,
+            actions: entries
+                .iter()
+                .map(|entry| ReflogExpireAction {
+                    refname: refname.to_string(),
+                    entry: entry.clone(),
+                    action: ReflogExpireActionKind::Keep,
+                })
+                .collect(),
+        });
+    }
+
     let unreachable_kind = if expire_unreachable <= expire_total {
         UnreachableKind::Always
     } else if expire_unreachable == 0 || is_head_ref(refname) {
@@ -988,20 +1028,14 @@ pub fn expire_reflog_git(
         }
     };
 
-    let tips = tip_commits_for_reflog(repo, git_dir, refname);
-    let reachable = if matches!(unreachable_kind, UnreachableKind::Always) {
-        HashSet::new()
-    } else {
+    let need_reachable =
+        may_drop_unreachable && !matches!(unreachable_kind, UnreachableKind::Always);
+    let reachable = if need_reachable {
+        let tips = tip_commits_for_reflog(repo, git_dir, refname);
         reachable_commit_set(repo, &tips)
+    } else {
+        HashSet::new()
     };
-
-    let entries = read_reflog(git_dir, refname)?;
-    if entries.is_empty() {
-        return Ok(ReflogExpireResult {
-            pruned: 0,
-            actions: Vec::new(),
-        });
-    }
     let mut kept = Vec::new();
     let mut kept_entries = Vec::new();
     let mut pruned = 0usize;
