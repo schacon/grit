@@ -358,3 +358,117 @@ fn no_bitmap_count_uses_commit_graph() {
     };
     assert_eq!(grit_count(&repo, opts), git_n);
 }
+
+/// Upstream `t6113-rev-list-bitmap-filters.sh`: `--filter=blob:none` with `--use-bitmap-index`.
+#[test]
+fn t6113_blob_none_filter_with_bitmap_matches_git() {
+    let fixture = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    git_ok(&fixture, &["checkout", "-b", "main"]);
+    std::fs::write(fixture.path().join("one.t"), b"one").unwrap();
+    git_ok(&fixture, &["add", "one.t"]);
+    git_ok(&fixture, &["commit", "-m", "one"]);
+    std::fs::write(fixture.path().join("much-larger-blob-one.t"), vec![b'x'; 8192]).unwrap();
+    git_ok(&fixture, &["add", "much-larger-blob-one.t"]);
+    git_ok(&fixture, &["commit", "-m", "much-larger-blob-one"]);
+    repack_with_bitmap(&fixture);
+    std::fs::write(fixture.path().join("two.t"), b"two").unwrap();
+    git_ok(&fixture, &["add", "two.t"]);
+    git_ok(&fixture, &["commit", "-m", "two"]);
+    std::fs::write(fixture.path().join("much-larger-blob-two.t"), vec![b'y'; 8192]).unwrap();
+    git_ok(&fixture, &["add", "much-larger-blob-two.t"]);
+    git_ok(&fixture, &["commit", "-m", "much-larger-blob-two"]);
+    git_ok(&fixture, &["tag", "tag"]);
+
+    let repo = open_repo(fixture.path());
+    let git_filtered = git_rev_list_object_set_with_filter(
+        &fixture,
+        &["HEAD"],
+        &[],
+        ObjectFilter::BlobNone,
+        true,
+    );
+    let (grit_filtered, used_bitmap) = grit_rev_list_object_set_with_filter(
+        &repo,
+        &["HEAD"],
+        &[],
+        ObjectFilter::BlobNone,
+        true,
+    );
+    assert!(used_bitmap, "t6113 expected bitmap traversal");
+    assert_eq!(grit_filtered, git_filtered, "t6113 explicit blob:none filter");
+}
+
+fn git_rev_list_object_set_with_filter(
+    fixture: &RepoFixture,
+    positive: &[&str],
+    negative: &[&str],
+    filter: ObjectFilter,
+    use_bitmap: bool,
+) -> HashSet<ObjectId> {
+    let mut args: Vec<String> = vec!["rev-list".into(), "--objects".into()];
+    match &filter {
+        ObjectFilter::BlobNone => args.push("--filter=blob:none".into()),
+        _ => panic!("unexpected filter"),
+    }
+    if use_bitmap {
+        args.push("--use-bitmap-index".into());
+    }
+    for p in positive {
+        args.push((*p).to_string());
+    }
+    for n in negative {
+        args.push(if n.starts_with('^') {
+            (*n).to_string()
+        } else {
+            format!("^{n}")
+        });
+    }
+    let out = Command::new("git")
+        .current_dir(fixture.path())
+        .args(&args)
+        .output()
+        .expect("git rev-list");
+    assert!(
+        out.status.success(),
+        "git rev-list: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+        .split(|&b| b == b'\n')
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let token = std::str::from_utf8(l)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap();
+            ObjectId::from_hex(token).expect("oid")
+        })
+        .collect()
+}
+
+fn grit_rev_list_object_set_with_filter(
+    repo: &Repository,
+    positive: &[&str],
+    negative: &[&str],
+    filter: ObjectFilter,
+    use_bitmap: bool,
+) -> (HashSet<ObjectId>, bool) {
+    let pos: Vec<String> = positive.iter().map(|s| (*s).to_string()).collect();
+    let neg: Vec<String> = negative
+        .iter()
+        .map(|s| s.strip_prefix('^').unwrap_or(s).to_string())
+        .collect();
+    let opts = RevListOptions {
+        objects: true,
+        filter: Some(filter),
+        use_bitmap_index: use_bitmap,
+        use_commit_graph: true,
+        ..Default::default()
+    };
+    let result = rev_list(repo, &pos, &neg, &opts).expect("rev-list");
+    let mut set = HashSet::new();
+    set.extend(result.commits);
+    set.extend(result.objects.iter().map(|(o, _)| *o));
+    (set, result.bitmap_object_format)
+}

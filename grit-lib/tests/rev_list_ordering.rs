@@ -579,6 +579,19 @@ fn t6001_grafts_and_replace_refs_match_git() {
         "t6001 graft parents",
     );
 
+    assert_rev_list_commits_match_git(
+        wt,
+        &grit,
+        &["--parents", "main"],
+        &[String::from("main")],
+        &[],
+        RevListOptions {
+            output_mode: OutputMode::Parents,
+            ..RevListOptions::default()
+        },
+        "t6001 graft --parents",
+    );
+
     let replaced = commit_file(wt, "fileA", "graft-replace\n", "replace");
     git(wt, &["replace", "-f", &a2.to_hex(), &replaced.to_hex()]);
     assert_rev_list_commits_match_git(

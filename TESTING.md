@@ -389,10 +389,10 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | t6013-rev-list-reverse-parents.sh | `--reverse --parents --full-history` on path-limited history; `--boundary` with `^root`; `--max-count=1 --boundary` with omitted merge | `rev_list_ordering.rs` (`t6013_reverse_matches_git`, `t6013_max_count_boundary_path_limited_parents_match_git`) | covered |
 | t6005-rev-list-count.sh | `--max-count`, `--skip`, `--count` | `rev_list_ordering.rs` (`t6005_max_count_skip_match_git`) | covered |
 | t6009-rev-list-parent.sh | `--first-parent`, `--min-parents`, `--max-parents`, `--no-merges` | `rev_list_ordering.rs` (`t6009_first_parent_min_max_parents_match_git`, `multiple_roots_and_octopus_merge_order_match_git`) | covered |
-| t6019-rev-list-ancestry-path.sh | `--ancestry-path` on criss-cross DAG | `rev_list_ordering.rs` (`t6019_ancestry_path_matches_git`) | partial (subset of upstream matrix) |
+| t6019-rev-list-ancestry-path.sh | `--ancestry-path` on criss-cross DAG | `rev_list_ordering.rs` (`t6019_ancestry_path_matches_git`); `rev_list_upstream_t6019_t6000.rs` (`t6019_ancestry_path_upstream_cases_match_git`, `t6019_criss_cross_ancestry_path_empty_matches_git`) | partial (`--ancestry-path=<commit>` and `G..M -- G.t` matrix deferred) |
 | t6100-rev-list-in-order.sh | `--in-commit-order --objects` interleaved OID sequence | `rev_list_ordering.rs` (`t6100_in_order_matches_git`) | covered |
 | t6001-rev-list-graft.sh | `.git/info/grafts` and `git replace` navigation | `rev_list_ordering.rs` (`t6001_grafts_and_replace_refs_match_git`) | partial (core read side; replace via `git replace -f`) |
-| t6000-rev-list-misc.sh | `A..B`, `^rev`, `--boundary` | `rev_list_ordering.rs` (`t6000_misc_ranges_and_boundary_match_git`) | covered |
+| t6000-rev-list-misc.sh | `A..B`, `^rev`, `--boundary`; `--unpacked --objects` | `rev_list_ordering.rs` (`t6000_misc_ranges_and_boundary_match_git`); `rev_list_upstream_t6019_t6000.rs` (`t6000_rev_list_unpacked_objects_matches_git`) | covered (core misc + unpacked object walk) |
 | t6014-rev-list-all.sh | `--all` over multiple root refs | `rev_list_ordering.rs` (`t6014_rev_list_all_match_git`) | covered |
 | t4217-log-limit.sh | `--since` / `--until` committer-date cutoffs; `--boundary` with date filters | `rev_list_ordering.rs` (`t4217_log_limit_since_until_match_git`, `t4217_boundary_since_until_match_git`) | covered |
 | — | Symmetric `A...B` with `--left-right` / `--cherry-mark` / `--cherry-pick` (patch-id equivalence) | `rev_list_ordering.rs` (`symmetric_diff_left_right_cherry_mark_match_git`) | covered |
@@ -415,6 +415,7 @@ Shared harness: [`grit-lib/tests/support/diff_harness.rs`](grit-lib/tests/suppor
 | `t6110-rev-list-sparse.sh` | `--first-parent --boundary` on `HEAD^..` | `rev_list_simplify_objects.rs` (`t6110_first_parent_boundary_matches_git`) | covered |
 | `t6111-rev-list-treesame.sh` | TREESAME / ancestry-path path walks | `rev_list_simplify_objects.rs` (`t6111_treesame_matches_git`) | covered |
 | `t6112-rev-list-filters-object.sh` | `--filter=` object walks | `rev_list_simplify_objects.rs` (`t6112_object_filters_match_git`) | covered |
+| `t6113-rev-list-bitmap-filters.sh` | `--use-bitmap-index` with `--filter=blob:none` | `rev_list_bitmaps.rs` (`t6113_blob_none_filter_with_bitmap_matches_git`) | covered (blob:none subset) |
 | `t4216-log-bloom.sh` | Bloom vs no-Bloom commit-graph walks | `rev_list_simplify_objects.rs` (`t4216_bloom_and_no_bloom_identical`) | covered |
 
 #### Rev-parse
