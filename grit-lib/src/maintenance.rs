@@ -270,7 +270,7 @@ pub struct FsckOptions {
     pub check_objects: bool,
     /// Run [`refs_fsck()`](crate::refs_fsck::refs_fsck).
     pub check_refs: bool,
-    /// Run [`verify_midx`] when a multi-pack-index is present.
+    /// Run [`verify_midx`](crate::midx::verify_midx) when a multi-pack-index is present.
     pub check_midx: bool,
 }
 
@@ -632,7 +632,7 @@ pub struct GcStats {
 
 /// Repack all reachable objects into a single pack and drop redundant storage.
 ///
-/// Mirrors a minimal `git repack -ad`: one pack for [`reachability_roots`], optional `.rev` /
+/// Mirrors a minimal `git repack -ad`: one pack for [`reachability_roots`](crate::fsck::reachability_roots), optional `.rev` /
 /// `.bitmap` sidecars, delete other packs, [`prune_packed_objects`], and optional unreachable
 /// loose-object pruning.
 ///
