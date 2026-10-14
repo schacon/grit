@@ -1,14 +1,15 @@
 //! Rename detection for index↔HEAD and index↔worktree diffs (issue #1012).
 
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::diff::tree_oid_of_commit;
 use grit_lib::diff::{
     apply_rename_detection_to_diff_entries, diff_index_to_tree_with_renames,
-    DiffStatus,
+    diff_tree_to_worktree_with_git_dir, DiffStatus,
 };
-use grit_lib::diff::tree_oid_of_commit;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
 
@@ -109,8 +110,7 @@ fn apply_rename_detection_matches_git_cached_name_status() {
     let index = repo.index_handle().load().expect("index");
     let config = repo.config().expect("config");
     let policy = repo.thread_policy();
-    let raw =
-        grit_lib::diff::diff_index_to_tree(repo.odb(), &index, Some(&head_tree), false)
+    let raw = grit_lib::diff::diff_index_to_tree(repo.odb(), &index, Some(&head_tree), false)
         .expect("raw");
     let entries =
         apply_rename_detection_to_diff_entries(repo.odb(), raw, None, 50, config.as_ref(), &policy)
@@ -118,5 +118,76 @@ fn apply_rename_detection_matches_git_cached_name_status() {
     assert!(
         entries.iter().any(|e| e.status == DiffStatus::Renamed),
         "grit should pair rename like git: {entries:?}"
+    );
+}
+
+#[test]
+fn worktree_rename_detection_with_small_unstaged_edit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_repo_with_large_file(root);
+    git_run(root, &["mv", "a.txt", "b.txt"]);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(root.join("b.txt"))
+        .expect("open b.txt")
+        .write_all(b"41\n")
+        .expect("append");
+
+    let git_out = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "HEAD", "--name-status", "-M"])
+        .output()
+        .expect("git diff");
+    assert!(git_out.status.success());
+    let git_line = String::from_utf8_lossy(&git_out.stdout);
+    assert!(
+        git_line.starts_with('R'),
+        "git should report inexact rename, got: {git_line}"
+    );
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let head = resolve_head(repo.git_dir()).expect("head");
+    let head_commit = head.oid().expect("commit");
+    let head_tree = tree_oid_of_commit(repo.odb(), head_commit).expect("tree");
+    let index = repo.index_handle().load().expect("index");
+    let config = repo.config().expect("config");
+    let policy = repo.thread_policy();
+    let work_tree = repo.work_tree().expect("worktree");
+
+    let raw = diff_tree_to_worktree_with_git_dir(
+        repo.odb(),
+        Some(&head_tree),
+        work_tree,
+        repo.git_dir(),
+        &index,
+        Some(config.as_ref()),
+    )
+    .expect("tree to worktree");
+    let entries = apply_rename_detection_to_diff_entries(
+        repo.odb(),
+        raw,
+        Some(work_tree),
+        50,
+        config.as_ref(),
+        &policy,
+    )
+    .expect("renames");
+
+    let renames: Vec<_> = entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Renamed)
+        .collect();
+    assert_eq!(
+        renames.len(),
+        1,
+        "expected one worktree rename, got: {entries:?}"
+    );
+    assert_eq!(renames[0].old_path.as_deref(), Some("a.txt"));
+    assert_eq!(renames[0].new_path.as_deref(), Some("b.txt"));
+    assert!(
+        renames[0].score.is_some_and(|s| s >= 50),
+        "rename score should meet -M50 threshold: {:?}",
+        renames[0].score
     );
 }

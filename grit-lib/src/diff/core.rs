@@ -5056,7 +5056,9 @@ fn read_added_entry_bytes(
     work_root: Option<&Path>,
 ) -> Option<Vec<u8>> {
     if entry.new_oid != zero_oid() {
-        return odb.read(&entry.new_oid).ok().map(|obj| obj.data);
+        if let Ok(obj) = odb.read(&entry.new_oid) {
+            return Some(obj.data);
+        }
     }
     let path = entry.new_path.as_deref()?;
     let root = work_root?;
