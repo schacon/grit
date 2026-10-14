@@ -135,6 +135,48 @@
         "pruned"
       ],
       "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "lock"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "path"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "action": {
+          "enum": [
+            "unlock"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "path"
+      ],
+      "type": "object"
     }
   ],
   "title": "WorktreeOutcome"

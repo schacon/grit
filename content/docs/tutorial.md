@@ -180,6 +180,10 @@ $ grit push --tags
 
 `grit` refuses to switch branches when your local edits would conflict with the destination branch, and refuses to merge or pull while you have uncommitted changes. Use [`grit reset --soft HEAD~1`](../reset/) to uncommit while keeping changes staged.
 
+## Offline bundles and linked worktrees
+
+To move commits without a network, [`grit bundle create`](../commands/bundle/) writes a single file; [`grit bundle unbundle`](../commands/bundle/) ingests it into another repository. For a second checkout of the same repository, [`grit worktree add`](../commands/worktree/) creates a linked working tree; [`grit worktree lock`](../commands/worktree/) marks one as locked when you need to prevent accidental removal.
+
 ## Scripting
 
 Every command takes `--json` and prints a single JSON object, which is handy for scripts and agents. `--filter` picks out the part you need:
