@@ -4551,11 +4551,36 @@ impl core::marker::Unpin for grit_lib::maintenance::GcOptions
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::GcOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::GcOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::GcOptions
+#[non_exhaustive] pub struct grit_lib::maintenance::GcPhaseTimings
+pub grit_lib::maintenance::GcPhaseTimings::commit_graph_ms: u64
+pub grit_lib::maintenance::GcPhaseTimings::pack_refs_ms: u64
+pub grit_lib::maintenance::GcPhaseTimings::prune_ms: u64
+pub grit_lib::maintenance::GcPhaseTimings::reflog_ms: u64
+pub grit_lib::maintenance::GcPhaseTimings::repack_ms: u64
+impl core::clone::Clone for grit_lib::maintenance::GcPhaseTimings
+pub fn grit_lib::maintenance::GcPhaseTimings::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::GcPhaseTimings
+impl core::cmp::PartialEq for grit_lib::maintenance::GcPhaseTimings
+pub fn grit_lib::maintenance::GcPhaseTimings::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::maintenance::GcPhaseTimings
+pub fn grit_lib::maintenance::GcPhaseTimings::default() -> Self
+impl core::fmt::Debug for grit_lib::maintenance::GcPhaseTimings
+pub fn grit_lib::maintenance::GcPhaseTimings::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::Copy for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::Freeze for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::Send for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::Sync for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::Unpin for grit_lib::maintenance::GcPhaseTimings
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::GcPhaseTimings
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::GcPhaseTimings
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::GcPhaseTimings
 pub struct grit_lib::maintenance::GcStats
 pub grit_lib::maintenance::GcStats::commit_graph: core::option::Option<grit_lib::maintenance::CommitGraphWriteReport>
 pub grit_lib::maintenance::GcStats::pack_refs: core::option::Option<grit_lib::maintenance::PackRefsReport>
 pub grit_lib::maintenance::GcStats::prune: grit_lib::refs::gc::PruneStats
 pub grit_lib::maintenance::GcStats::reflog_entries_pruned: usize
+pub grit_lib::maintenance::GcStats::phase_timings: grit_lib::maintenance::GcPhaseTimings
 pub grit_lib::maintenance::GcStats::repack: grit_lib::maintenance::RepackStats
 impl core::clone::Clone for grit_lib::maintenance::GcStats
 pub fn grit_lib::maintenance::GcStats::clone(&self) -> Self
@@ -4731,6 +4756,7 @@ pub grit_lib::maintenance::RepackStats::packs_before: usize
 pub grit_lib::maintenance::RepackStats::pruned_loose: usize
 pub grit_lib::maintenance::RepackStats::removed_pack_files: usize
 pub grit_lib::maintenance::RepackStats::unreachable_loose_pruned: usize
+pub grit_lib::maintenance::RepackStats::unreachable_prune_ms: u64
 impl core::clone::Clone for grit_lib::maintenance::RepackStats
 pub fn grit_lib::maintenance::RepackStats::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::RepackStats

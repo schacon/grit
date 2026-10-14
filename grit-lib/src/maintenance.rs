@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use crate::commit_graph_file::CommitGraphChain;
 use crate::commit_graph_write::{
@@ -113,6 +113,7 @@ struct RepackDetail {
     report: RepackReport,
     prune_packed_loose: usize,
     unreachable_loose: usize,
+    unreachable_prune_ms: u64,
 }
 
 /// Counters produced by [`repack`].
@@ -149,6 +150,8 @@ pub struct RepackStats {
     pub pruned_loose: usize,
     /// Unreachable loose objects removed after repack when pruning is enabled.
     pub unreachable_loose_pruned: usize,
+    /// Wall time spent in unreachable loose-object pruning during this repack.
+    pub unreachable_prune_ms: u64,
 }
 
 /// Options for [`Repository::write_commit_graph`].
@@ -581,6 +584,22 @@ pub struct PruneOptions {
     pub dry_run: bool,
 }
 
+/// Wall-clock milliseconds for each phase of [`gc`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GcPhaseTimings {
+    /// [`pack_refs`] when run as part of gc.
+    pub pack_refs_ms: u64,
+    /// Reflog expiry before repack.
+    pub reflog_ms: u64,
+    /// Repack work excluding embedded unreachable prune.
+    pub repack_ms: u64,
+    /// Unreachable loose-object prune (during repack or standalone).
+    pub prune_ms: u64,
+    /// Commit-graph write after repack.
+    pub commit_graph_ms: u64,
+}
+
 /// Result of [`gc`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GcStats {
@@ -594,6 +613,8 @@ pub struct GcStats {
     pub commit_graph: Option<CommitGraphWriteReport>,
     /// Reflog lines removed by expiry during gc.
     pub reflog_entries_pruned: usize,
+    /// Per-phase wall times for the gc orchestration.
+    pub phase_timings: GcPhaseTimings,
 }
 
 /// Repack all reachable objects into a single pack and drop redundant storage.
@@ -629,6 +650,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             report,
             prune_packed_loose: 0,
             unreachable_loose: 0,
+            unreachable_prune_ms: 0,
         });
     }
 
@@ -647,6 +669,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             report,
             prune_packed_loose: 0,
             unreachable_loose: 0,
+            unreachable_prune_ms: 0,
         });
     }
 
@@ -713,9 +736,12 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         }
     }
 
+    let mut unreachable_prune_ms = 0u64;
     if !opts.keep_unreachable {
         let keep_newer_than = opts.prune_older_than.map(offset_to_system_time);
+        let prune_start = Instant::now();
         unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?.pruned;
+        unreachable_prune_ms = prune_start.elapsed().as_millis() as u64;
     }
 
     report.loose_removed = prune_packed_loose + unreachable_loose;
@@ -723,6 +749,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         report,
         prune_packed_loose,
         unreachable_loose,
+        unreachable_prune_ms,
     })
 }
 
@@ -751,6 +778,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     stats.removed_pack_files = report.packs_removed;
     stats.pruned_loose = detail.prune_packed_loose;
     stats.unreachable_loose_pruned = detail.unreachable_loose;
+    stats.unreachable_prune_ms = detail.unreachable_prune_ms;
     if report.packs_written > 0 {
         let packs: Vec<_> = fs::read_dir(&pack_dir)
             .ok()
@@ -843,6 +871,10 @@ pub fn prune_loose_objects(repo: &Repository, opts: &PruneOptions) -> Result<Pru
     prune_loose_unreachable(odb, &roots, keep_newer_than)
 }
 
+fn duration_ms(d: std::time::Duration) -> u64 {
+    d.as_millis() as u64
+}
+
 /// Run pack-refs, reflog expiry, repack, prune, and commit-graph maintenance.
 pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let mut stats = GcStats::default();
@@ -855,11 +887,15 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let dry_run = opts.repack.dry_run;
 
     if opts.pack_refs && !dry_run {
+        let start = Instant::now();
         stats.pack_refs = Some(pack_refs(repo, &PackRefsOptions::with_all(true))?);
+        stats.phase_timings.pack_refs_ms = duration_ms(start.elapsed());
     }
 
     if opts.expire_reflog {
+        let start = Instant::now();
         stats.reflog_entries_pruned = expire_reflogs_for_gc(repo, dry_run, now)?;
+        stats.phase_timings.reflog_ms = duration_ms(start.elapsed());
     }
 
     let mut repack_opts = opts.repack.clone();
@@ -871,7 +907,11 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     if !repack_opts.write_bitmap {
         repack_opts.write_bitmap = gc_repack_writes_bitmap(repo, &cfg);
     }
+    let repack_start = Instant::now();
     stats.repack = repack_all(repo, &repack_opts)?;
+    let repack_total_ms = duration_ms(repack_start.elapsed());
+    stats.phase_timings.prune_ms = stats.repack.unreachable_prune_ms;
+    stats.phase_timings.repack_ms = repack_total_ms.saturating_sub(stats.phase_timings.prune_ms);
 
     if dry_run {
         return Ok(stats);
@@ -887,10 +927,12 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     };
 
     if opts.write_commit_graph {
+        let start = Instant::now();
         stats.commit_graph = Some(write_commit_graph(
             repo,
             &CommitGraphOptions::with_changed_paths(true),
         )?);
+        stats.phase_timings.commit_graph_ms = duration_ms(start.elapsed());
     }
     let _ = odb;
     Ok(stats)
@@ -1325,5 +1367,42 @@ mod tests {
             format_fsck_line(&issue),
             crate::refs_fsck::format_refs_fsck_line(&refs)
         );
+    }
+
+    #[test]
+    fn gc_full_run_records_per_phase_timings() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let wt = repo.work_tree().unwrap();
+        for i in 0..5 {
+            std::fs::write(wt.join(format!("f{i}.txt")), format!("{i}\n")).unwrap();
+            stage_for_commit(&repo, &mut NullProgress).expect("stage");
+            let ident = "Test <t@example.com> 1 +0000".to_string();
+            create_commit(
+                &repo,
+                &CommitRequest {
+                    message: format!("c{i}"),
+                    author: ident.clone(),
+                    committer: ident,
+                    allow_empty: false,
+                    sign_override: None,
+                    amend: false,
+                },
+                &mut NullProgress,
+            )
+            .expect("commit");
+        }
+        let stats = gc(
+            &repo,
+            &GcOptions::full_run(false, OffsetDateTime::now_utc().unix_timestamp()),
+        )
+        .expect("gc");
+        let t = stats.phase_timings;
+        assert!(t.repack_ms > 0 || stats.repack.objects_packed.is_some());
+        assert!(
+            t.repack_ms + t.prune_ms + t.reflog_ms + t.pack_refs_ms + t.commit_graph_ms > 0,
+            "expected at least one timed phase, got {t:?}"
+        );
+        assert!(stats.commit_graph.is_some());
     }
 }

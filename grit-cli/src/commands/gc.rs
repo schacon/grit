@@ -7,8 +7,8 @@ use anyhow::Result;
 use grit_lib::config::git_date::approx::approxidate_careful_at;
 use grit_lib::maintenance::{
     gc, pack_refs, prune_loose_objects, repack_all, write_commit_graph, write_midx,
-    CommitGraphOptions, GcOptions, GcStats, MidxOptions, PackRefsOptions, PruneOptions,
-    RepackOptions,
+    CommitGraphOptions, GcOptions, GcPhaseTimings, GcStats, MidxOptions, PackRefsOptions,
+    PruneOptions, RepackOptions,
 };
 use grit_lib::objects::midx::MidxBitmapWriteOutcome;
 use schemars::JsonSchema;
@@ -206,7 +206,7 @@ fn midx_bitmap_label(outcome: MidxBitmapWriteOutcome) -> &'static str {
     }
 }
 
-fn tasks_from_gc_stats(stats: GcStats, timings: GcTimings) -> Vec<GcTaskReport> {
+fn tasks_from_gc_stats(stats: GcStats, timings: GcPhaseTimings) -> Vec<GcTaskReport> {
     let mut tasks = Vec::new();
     if let Some(pack) = stats.pack_refs {
         tasks.push(GcTaskReport::PackRefs {
@@ -242,27 +242,13 @@ fn tasks_from_gc_stats(stats: GcStats, timings: GcTimings) -> Vec<GcTaskReport> 
     tasks
 }
 
-#[derive(Default)]
-struct GcTimings {
-    pack_refs_ms: u64,
-    reflog_ms: u64,
-    repack_ms: u64,
-    prune_ms: u64,
-    commit_graph_ms: u64,
-}
-
 pub fn run_full(dry_run: bool, quiet: bool, mode: OutputMode) -> Result<GcOutcome> {
     let repo = context::discover()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
     progress(mode, "Running garbage collection…");
-    let start = Instant::now();
     let opts = GcOptions::full_run(dry_run, now);
     let stats = gc(&repo, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let elapsed_ms = start.elapsed().as_millis() as u64;
-    let timings = GcTimings {
-        repack_ms: elapsed_ms,
-        ..GcTimings::default()
-    };
+    let timings = stats.phase_timings;
     let tasks = tasks_from_gc_stats(stats, timings);
     Ok(GcOutcome {
         quiet,
