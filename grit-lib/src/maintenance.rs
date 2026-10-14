@@ -79,6 +79,8 @@ pub struct RepackOptions {
     pub merged_config: Option<ConfigSet>,
     /// Process environment for config discovery and thread counts.
     pub environment: Environment,
+    /// Pack only loose objects into a new pack, keeping existing packs (Git cruft-style incremental repack).
+    pub incremental: bool,
 }
 
 impl Default for RepackOptions {
@@ -94,6 +96,7 @@ impl Default for RepackOptions {
             pack_build: None,
             merged_config: None,
             environment: Environment::empty(),
+            incremental: false,
         }
     }
 }

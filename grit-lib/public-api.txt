@@ -4703,6 +4703,7 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::PruneOption
 #[non_exhaustive] pub struct grit_lib::maintenance::RepackOptions
 pub grit_lib::maintenance::RepackOptions::dry_run: bool
 pub grit_lib::maintenance::RepackOptions::environment: grit_lib::config::environment::Environment
+pub grit_lib::maintenance::RepackOptions::incremental: bool
 pub grit_lib::maintenance::RepackOptions::keep_unreachable: bool
 pub grit_lib::maintenance::RepackOptions::merged_config: core::option::Option<grit_lib::config::ConfigSet>
 pub grit_lib::maintenance::RepackOptions::now: core::option::Option<time::offset_date_time::OffsetDateTime>
