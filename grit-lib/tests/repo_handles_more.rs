@@ -288,6 +288,38 @@ fn handle_worktree_lock_visible_to_git() {
 }
 
 #[test]
+fn handle_worktree_unlock_visible_to_git() {
+    let dir = tempfile::tempdir().expect("dir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f"), "1\n").unwrap();
+    git_cmd(dir.path(), &["add", "f"]);
+    git_cmd(dir.path(), &["commit", "-qm", "base"]);
+    let wt_path = dir.path().join("linked");
+    let repo = open_grit(dir.path());
+    repo.worktrees()
+        .add(&grit_lib::worktree::AddLinkedWorktreeOptions {
+            path: wt_path.clone(),
+            branch: Some("side".into()),
+            new_branch: true,
+            detach: false,
+            start_point: None,
+            force: false,
+        })
+        .expect("add");
+    repo.worktrees()
+        .lock(
+            &wt_path,
+            &LockWorktreeOptions {
+                reason: Some("hold".into()),
+            },
+        )
+        .expect("lock");
+    repo.worktrees().unlock(&wt_path).expect("unlock");
+    let porcelain = git_cmd(dir.path(), &["worktree", "list", "--porcelain"]);
+    assert!(!porcelain.contains("locked"), "porcelain:\n{porcelain}");
+}
+
+#[test]
 fn handle_fetch_push_local_bare_remote() {
     let consumer = tempfile::tempdir().expect("consumer");
     init_repo(consumer.path());

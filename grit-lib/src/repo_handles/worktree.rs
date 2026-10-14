@@ -118,6 +118,16 @@ impl<'repo> RepositoryWorktrees<'repo> {
     pub fn lock(&self, path: &Path, options: &LockWorktreeOptions) -> Result<()> {
         lock_linked_worktree(self.repo, path, options.reason.as_deref())
     }
+
+    /// Remove the `locked` file for the linked worktree at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `path` is not a registered worktree, is the main worktree, or is
+    /// not locked.
+    pub fn unlock(&self, path: &Path) -> Result<()> {
+        unlock_linked_worktree(self.repo, path)
+    }
 }
 
 /// Write `<admin>/locked` for the linked worktree at `path`.
@@ -153,5 +163,34 @@ pub fn lock_linked_worktree(repo: &Repository, path: &Path, reason: Option<&str>
     }
     let body = reason.unwrap_or("");
     fs::write(entry.admin_dir.join("locked"), body).map_err(crate::error::Error::Io)?;
+    Ok(())
+}
+
+/// Delete `<admin>/locked` for the linked worktree at `path`.
+///
+/// # Errors
+///
+/// Fails when `path` is unknown, is the main worktree, or is not locked.
+pub fn unlock_linked_worktree(repo: &Repository, path: &Path) -> Result<()> {
+    use crate::git_path::path_for_disk_compare;
+
+    let target = path_for_disk_compare(path);
+    let entry = list_worktrees(repo)?
+        .into_iter()
+        .find(|e| e.path == target)
+        .ok_or_else(|| {
+            crate::error::Error::Message(format!("'{target:?}' is not a registered worktree"))
+        })?;
+    if entry.admin_dir == crate::worktree::common_git_dir(repo.git_dir()) {
+        return Err(crate::error::Error::Message(
+            "cannot unlock the main working tree".into(),
+        ));
+    }
+    if !entry.is_locked {
+        return Err(crate::error::Error::Message(
+            "worktree is not locked".into(),
+        ));
+    }
+    std::fs::remove_file(entry.admin_dir.join("locked")).map_err(crate::error::Error::Io)?;
     Ok(())
 }
