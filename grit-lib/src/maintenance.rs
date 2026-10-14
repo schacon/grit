@@ -1398,11 +1398,17 @@ mod tests {
         )
         .expect("gc");
         let t = stats.phase_timings;
-        assert!(t.repack_ms > 0 || stats.repack.objects_packed.is_some());
-        assert!(
-            t.repack_ms + t.prune_ms + t.reflog_ms + t.pack_refs_ms + t.commit_graph_ms > 0,
-            "expected at least one timed phase, got {t:?}"
-        );
+        assert!(stats.repack.objects_packed.is_some_and(|n| n > 0));
+        assert!(t.repack_ms > 0, "repack phase must be timed separately from full gc");
+        assert!(stats.pack_refs.is_some());
         assert!(stats.commit_graph.is_some());
+        assert_eq!(
+            t.prune_ms, stats.repack.unreachable_prune_ms,
+            "prune_ms must track unreachable loose prune inside repack, not repack_ms"
+        );
+        assert!(
+            t.reflog_ms > 0 || t.pack_refs_ms > 0 || t.commit_graph_ms > 0,
+            "full gc must report more than one timed phase bucket, got {t:?}"
+        );
     }
 }
