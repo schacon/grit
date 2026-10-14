@@ -779,6 +779,8 @@ mod integrate_tests {
     fn integrate_branch_merged_without_conflicts() {
         let tmp = tempfile::tempdir().expect("tempdir");
         grit_test_support::git(tmp.path(), &["init", "-q", "-b", "main"]);
+        grit_test_support::git(tmp.path(), &["config", "user.name", "Test"]);
+        grit_test_support::git(tmp.path(), &["config", "user.email", "t@example.com"]);
         let repo =
             Repository::discover(Some(tmp.path()), &RepositoryOptions::empty()).expect("repo");
         std::fs::write(tmp.path().join("shared.txt"), "base\n").expect("write");

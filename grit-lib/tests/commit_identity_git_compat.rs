@@ -8,7 +8,8 @@ use std::process::Command;
 use grit_lib::commit::assemble_identity;
 use grit_lib::config::environment::{offset_from_epoch_and_tz, Environment, RepositoryOptions};
 use grit_lib::config::ident_resolve::{
-    resolve_email_lenient_with, resolve_name_with, IdentRole, IdentityError,
+    identity_email_is_configured_with, resolve_email_lenient_with, resolve_email_with,
+    resolve_name_with, IdentRole, IdentityError,
 };
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, ObjectKind};
@@ -39,6 +40,29 @@ fn identity_from_environment(
         date_override.as_deref(),
         now,
     ))
+}
+
+#[test]
+fn strict_identity_refuses_synthetic_email_without_config() {
+    let vars = [("USER", "alice"), ("HOSTNAME", "host.example")]
+        .into_iter()
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+    let env = Environment::from_vars(vars, PathBuf::new());
+    let config = ConfigSet::default();
+    assert!(!identity_email_is_configured_with(
+        &env,
+        &config,
+        IdentRole::Author
+    ));
+    let err = resolve_email_with(&env, &config, IdentRole::Author).expect_err("strict email");
+    assert_eq!(
+        err,
+        IdentityError::MissingConfiguredEmail {
+            role: IdentRole::Author
+        }
+    );
+    let lenient = resolve_email_lenient_with(&env, &config, IdentRole::Author);
+    assert_eq!(lenient, "alice@host.example");
 }
 
 #[test]

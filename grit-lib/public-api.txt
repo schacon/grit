@@ -1594,6 +1594,8 @@ pub grit_lib::config::ident_resolve::IdentityError::EmptyName::email: alloc::str
 pub grit_lib::config::ident_resolve::IdentityError::EmptyName::role: grit_lib::config::ident_resolve::IdentRole
 pub grit_lib::config::ident_resolve::IdentityError::InvalidName
 pub grit_lib::config::ident_resolve::IdentityError::InvalidName::name: alloc::string::String
+pub grit_lib::config::ident_resolve::IdentityError::MissingConfiguredEmail
+pub grit_lib::config::ident_resolve::IdentityError::MissingConfiguredEmail::role: grit_lib::config::ident_resolve::IdentRole
 impl core::clone::Clone for grit_lib::config::ident_resolve::IdentityError
 pub fn grit_lib::config::ident_resolve::IdentityError::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::config::ident_resolve::IdentityError
@@ -1623,6 +1625,7 @@ pub fn grit_lib::config::ident_resolve::read_git_identity_name_env_with<E: grit_
 pub fn grit_lib::config::ident_resolve::read_git_identity_name_from_env_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &str) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::config::ident_resolve::resolve_email_lenient_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet, grit_lib::config::ident_resolve::IdentRole) -> alloc::string::String
 pub fn grit_lib::config::ident_resolve::resolve_email_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet, grit_lib::config::ident_resolve::IdentRole) -> core::result::Result<alloc::string::String, grit_lib::config::ident_resolve::IdentityError>
+pub fn grit_lib::config::ident_resolve::identity_email_is_configured_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet, grit_lib::config::ident_resolve::IdentRole) -> bool
 pub fn grit_lib::config::ident_resolve::resolve_loose_committer_parts_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet) -> (alloc::string::String, alloc::string::String)
 pub fn grit_lib::config::ident_resolve::resolve_name_with<E: grit_lib::config::ident_resolve::IdentityEnv>(&E, &grit_lib::config::ConfigSet, grit_lib::config::ident_resolve::IdentRole) -> core::result::Result<alloc::string::String, grit_lib::config::ident_resolve::IdentityError>
 pub mod grit_lib::config::init_filesystem

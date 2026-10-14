@@ -50,6 +50,19 @@ fn pathless_add_and_commit_after_git_add_n() {
     let root = dir.path();
 
     assert!(run_grit(grit, root, &["init"], &null).status.success());
+    assert!(
+        run_grit(grit, root, &["config", "user.name", "Test"], &null)
+            .status
+            .success()
+    );
+    assert!(run_grit(
+        grit,
+        root,
+        &["config", "user.email", "t@example.com"],
+        &null
+    )
+    .status
+    .success());
     fs::write(root.join("f.txt"), b"hello\n").expect("write");
     assert!(run_git(root, &["add", "-N", "f.txt"]).status.success());
 

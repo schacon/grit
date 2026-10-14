@@ -45,7 +45,7 @@ fn grit_add_replaces_case_variant_without_duplicate_index_entries() {
         .success());
     fs::write(
         git_dir.join("config"),
-        "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tignorecase = true\n\tbare = false\n",
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tignorecase = true\n\tbare = false\n[user]\n\tname = Test\n\temail = t@example.com\n",
     )
     .expect("config");
 

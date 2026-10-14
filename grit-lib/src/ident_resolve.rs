@@ -94,6 +94,12 @@ pub enum IdentityError {
         /// Identity role being resolved.
         role: IdentRole,
     },
+    /// No configured or environment email is available and auto-detection is not allowed.
+    #[error("no configured email is available for auto-detection")]
+    MissingConfiguredEmail {
+        /// Identity role being resolved.
+        role: IdentRole,
+    },
     /// Git rejects empty ident names.
     #[error("empty ident name (for <{email}>) not allowed")]
     EmptyName {
@@ -229,7 +235,21 @@ fn resolve_email_inner_with<E: IdentityEnv>(
         }
     }
 
+    if honor_use_config_only {
+        return Err(IdentityError::MissingConfiguredEmail { role });
+    }
+
     Ok(synthetic_email_with(env))
+}
+
+/// Returns whether strict commit identity resolution can produce an email for `role`.
+#[must_use]
+pub fn identity_email_is_configured_with<E: IdentityEnv>(
+    env: &E,
+    config: &ConfigSet,
+    role: IdentRole,
+) -> bool {
+    resolve_email_inner_with(env, config, role, true).is_ok()
 }
 
 /// Resolve email for a role when creating commits (honors `user.useConfigOnly`).
@@ -385,4 +405,69 @@ pub fn resolve_loose_committer_parts_with<E: IdentityEnv>(
         .unwrap_or_else(|| synthetic_email_with(env));
 
     (name, email)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+
+    use super::*;
+
+    struct MapEnv(HashMap<String, String>);
+
+    impl IdentityEnv for MapEnv {
+        fn var(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn var_os(&self, key: &str) -> Option<OsString> {
+            self.var(key).map(OsString::from)
+        }
+    }
+
+    #[test]
+    fn strict_email_resolution_fails_without_configured_sources() {
+        let env = MapEnv(HashMap::from([("USER".to_owned(), "alice".to_owned())]));
+        let config = ConfigSet::default();
+        let err = resolve_email_with(&env, &config, IdentRole::Author).expect_err("strict");
+        assert_eq!(
+            err,
+            IdentityError::MissingConfiguredEmail {
+                role: IdentRole::Author
+            }
+        );
+        assert!(!identity_email_is_configured_with(
+            &env,
+            &config,
+            IdentRole::Author
+        ));
+    }
+
+    #[test]
+    fn lenient_email_resolution_still_synthesizes_without_config() {
+        let env = MapEnv(HashMap::from([
+            ("USER".to_owned(), "alice".to_owned()),
+            ("HOSTNAME".to_owned(), "host.example".to_owned()),
+        ]));
+        let config = ConfigSet::default();
+        let email = resolve_email_lenient_with(&env, &config, IdentRole::Author);
+        assert_eq!(email, "alice@host.example");
+    }
+
+    #[test]
+    fn strict_email_honors_user_email_config() {
+        let env = MapEnv(HashMap::new());
+        let mut config = ConfigSet::default();
+        config
+            .add_command_override("user.email", "me@example.com")
+            .expect("override");
+        let email = resolve_email_with(&env, &config, IdentRole::Committer).expect("configured");
+        assert_eq!(email, "me@example.com");
+        assert!(identity_email_is_configured_with(
+            &env,
+            &config,
+            IdentRole::Committer
+        ));
+    }
 }

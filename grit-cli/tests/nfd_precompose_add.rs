@@ -45,8 +45,11 @@ fn grit_init_add_nfd_untracked_stores_nfc_in_index() {
     let mut config = fs::read_to_string(&config_path).expect("read config");
     if !config.contains("precomposeunicode") {
         config.push_str("\n[core]\n\tprecomposeunicode = true\n");
-        fs::write(&config_path, config).expect("write precomposeunicode");
     }
+    if !config.contains("[user]") {
+        config.push_str("\n[user]\n\tname = Test\n\temail = t@example.com\n");
+    }
+    fs::write(&config_path, config).expect("write config");
 
     let nfd = format!("cafe\u{0301}.txt");
     fs::write(dir.path().join(&nfd), b"x\n").expect("write nfd file");

@@ -54,7 +54,7 @@ fn grit_mv_case_only_rename_updates_index() {
         .success());
     fs::write(
         git_dir.join("config"),
-        "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tignorecase = true\n\tbare = false\n",
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tignorecase = true\n\tbare = false\n[user]\n\tname = Test\n\temail = t@example.com\n",
     )
     .expect("config");
 

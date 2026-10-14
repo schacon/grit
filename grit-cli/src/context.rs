@@ -374,7 +374,13 @@ pub fn reflog_identity(env: &Environment, config: &ConfigSet, now: OffsetDateTim
 }
 
 fn identity_error(err: IdentityError) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{err}\n\nTell grit who you are:\n  grit config --global user.name \"Your Name\"\n  grit config --global user.email \"you@example.com\""
-    )
+    let setup = "\n\nTell grit who you are:\n  grit config --global user.name \"Your Name\"\n  grit config --global user.email \"you@example.com\"";
+    match err {
+        IdentityError::MissingConfiguredEmail { role }
+        | IdentityError::AutoDetectionDisabled { role } => anyhow::anyhow!(
+            "{}\n\nunable to auto-detect email address{setup}",
+            role.missing_email_hint()
+        ),
+        other => anyhow::anyhow!("{other}{setup}"),
+    }
 }
