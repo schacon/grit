@@ -2,9 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs;
 use std::process::Command;
 
 use grit_lib::index::Index;
+use grit_lib::objects::pack::{read_pack_index, write_v2_pack_index_with_trailer};
 use grit_lib::maintenance::repository_fsck::{self as fsck, FsckIssue, FsckOptions};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
@@ -179,6 +181,71 @@ fn clean_repo_has_no_issues_and_git_agrees() {
     let report = grit_fsck(&repo, &FsckOptions::full_repository(true));
     assert!(report.ok(&config, &FsckOptions::full_repository(true)));
     assert!(report.issues.is_empty());
+}
+
+#[test]
+fn nested_annotated_tags_pass_fsck_with_cached_links() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    git(dir.path(), &["tag", "-a", "inner", "-m", "inner"]);
+    git(dir.path(), &["tag", "-a", "outer", "inner", "-m", "outer"]);
+    let git_out = git_fsck(dir.path(), false);
+    assert!(git_out.msg_ids.is_empty(), "{:?}", git_out.msg_ids);
+    let opts = FsckOptions::full_repository(false).with_check_dangling(false);
+    let config = repo.config().expect("config");
+    let report = grit_fsck(&repo, &opts);
+    assert!(
+        report.ok(&config, &opts),
+        "nested tag chain must not produce brokenLink: {:?}",
+        report.issues
+    );
+    assert!(!has_msg_id(&report, "brokenLink"));
+}
+
+#[test]
+fn tree_blob_mode_pointing_at_tag_is_broken_link() {
+    let (dir, repo) = init_repo();
+    one_commit(&repo);
+    git(dir.path(), &["tag", "-a", "t", "-m", "t"]);
+    let tag_oid_hex = git(dir.path(), &["rev-parse", "refs/tags/t"]);
+    let tag_oid = ObjectId::from_hex(tag_oid_hex.trim()).expect("tag oid");
+    let objects = dir.path().join(".git/objects");
+    let mut tree_body = b"100644 wrong-name\0".to_vec();
+    tree_body.extend_from_slice(tag_oid.as_bytes());
+    let tree_hex =
+        write_loose_object(&objects, FixtureAlgo::Sha1, "tree", &tree_body).expect("tree");
+    let tree_oid: ObjectId = tree_hex.parse().expect("tree oid");
+    let parent_hex = git(dir.path(), &["rev-parse", "HEAD"]);
+    let parent = ObjectId::from_hex(parent_hex.trim()).expect("parent");
+    let commit_body = format!(
+        "tree {}\nparent {}\nauthor T <t@example.com> 2 +0000\ncommitter T <t@example.com> 2 +0000\n\nlink tag as blob\n",
+        tree_oid.to_hex(),
+        parent.to_hex()
+    );
+    let commit_hex = write_loose_object(
+        &objects,
+        FixtureAlgo::Sha1,
+        "commit",
+        commit_body.as_bytes(),
+    )
+    .expect("commit");
+    let bad_commit: ObjectId = commit_hex.parse().expect("bad commit");
+    write_ref_loose(dir.path(), "refs/heads/main", bad_commit);
+    pack_loose_object_and_remove_loose(dir.path(), tag_oid);
+    pack_loose_object_and_remove_loose(dir.path(), tree_oid);
+    pack_loose_object_and_remove_loose(dir.path(), bad_commit);
+    repo.odb().invalidate_packs();
+    let git_text = git(dir.path(), &["fsck"]);
+    assert!(
+        git_text.contains("brokenLink") || git_text.to_lowercase().contains("tag"),
+        "{git_text}"
+    );
+    let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
+    assert!(
+        has_msg_id(&report, "brokenLink"),
+        "blob mode for tag object via cached links: {:?}",
+        report.issues
+    );
 }
 
 #[test]
@@ -373,6 +440,74 @@ fn hash_mismatch() {
         .issues
         .iter()
         .any(|i| matches!(i, FsckIssue::HashMismatch { .. })));
+}
+
+#[test]
+fn idx_oid_content_mismatch_returns_fsck_report_not_error() {
+    let (dir, repo) = init_repo();
+    let head = one_commit(&repo);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    let pack_dir = dir.path().join(".git/objects/pack");
+    let idx_path = fs::read_dir(&pack_dir)
+        .expect("rd")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "idx"))
+        .expect("idx");
+    let pack_path = idx_path.with_extension("pack");
+    let idx = read_pack_index(&idx_path).expect("read idx");
+    let pack_bytes = fs::read(&pack_path).expect("read pack");
+    let trailer = &pack_bytes[pack_bytes.len().saturating_sub(20)..];
+    let mut rows: Vec<(ObjectId, u64, u32)> = idx
+        .iter()
+        .map(|e| {
+            (
+                ObjectId::from_bytes(e.oid()).expect("oid"),
+                e.offset(),
+                e.crc32().unwrap_or(0),
+            )
+        })
+        .collect();
+    let pos = rows
+        .iter()
+        .position(|(oid, _, _)| *oid == head)
+        .expect("head commit in pack index");
+    let mut bogus_bytes: [u8; 20] = head.as_bytes().try_into().expect("sha1 oid");
+    bogus_bytes[19] ^= 0x01;
+    let bogus_oid = ObjectId::from_bytes(&bogus_bytes).expect("bogus oid");
+    assert_eq!(bogus_bytes[0], head.as_bytes()[0]);
+    rows[pos].0 = bogus_oid;
+    rows.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    for path in [&idx_path, &pack_path] {
+        let mut perms = fs::metadata(path).expect("meta").permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(path, perms).expect("chmod");
+    }
+    write_v2_pack_index_with_trailer(&idx_path, &rows, trailer, 20, None).expect("rewrite idx");
+    repo.odb().invalidate_packs();
+
+    let git_text = git(dir.path(), &["fsck", "--no-dangling"]);
+    assert!(
+        git_text.to_lowercase().contains("corrupt")
+            || git_text.contains("badPack")
+            || git_text.contains("missing"),
+        "{git_text}"
+    );
+    let opts = FsckOptions::full_repository(false).with_check_dangling(false);
+    let report = grit_fsck(&repo, &opts);
+    assert!(
+        has_msg_id(&report, "badPackChecksum") || has_msg_id(&report, "missingObject"),
+        "expected pack or missing integrity issues: {:?}",
+        report.issues
+    );
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| matches!(i, FsckIssue::PackChecksum { .. } | FsckIssue::MissingObject { .. })),
+        "{:?}",
+        report.issues
+    );
 }
 
 #[test]
@@ -875,5 +1010,3 @@ fn linked_worktree_head_reflog_roots_match_git_fsck() {
         "dangling mismatch git={git_set:?} grit={grit_set:?}"
     );
 }
-
-use std::fs;
