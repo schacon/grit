@@ -904,8 +904,9 @@ fn write_checkout_entry(
         };
         file.write_all(data)
             .map_err(|e| Error::PathError(format!("writing '{rel_path}' during checkout: {e}")))?;
-        let meta = written_file_metadata(&file, &abs_path)?;
-        apply_in_place_git_mode_transition(&file, &meta, old_mode, mode)?;
+        drop(file);
+        apply_in_place_git_mode_transition_at_path(&abs_path, old_mode, mode)?;
+        let meta = written_file_symlink_metadata(&abs_path)?;
         return Ok(entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode));
     }
 
@@ -915,9 +916,8 @@ fn write_checkout_entry(
 
 /// Adjust only the executable bit for an in-place overwrite, preserving umask-driven permissions.
 #[cfg(unix)]
-fn apply_in_place_git_mode_transition(
-    file: &std::fs::File,
-    meta: &fs::Metadata,
+fn apply_in_place_git_mode_transition_at_path(
+    abs_path: &Path,
     old_mode: u32,
     new_mode: u32,
 ) -> Result<()> {
@@ -927,7 +927,7 @@ fn apply_in_place_git_mode_transition(
     if old_exec == new_exec {
         return Ok(());
     }
-    let mut perms = meta.permissions();
+    let mut perms = fs::metadata(abs_path)?.permissions();
     let mut bits = perms.mode();
     const ALL_EXEC: u32 = 0o111;
     if new_exec {
@@ -938,13 +938,12 @@ fn apply_in_place_git_mode_transition(
         bits &= !ALL_EXEC;
     }
     perms.set_mode(bits);
-    file.set_permissions(perms).map_err(Error::Io)
+    fs::set_permissions(abs_path, perms).map_err(Error::Io)
 }
 
 #[cfg(not(unix))]
-fn apply_in_place_git_mode_transition(
-    _file: &std::fs::File,
-    _meta: &fs::Metadata,
+fn apply_in_place_git_mode_transition_at_path(
+    _abs_path: &Path,
     _old_mode: u32,
     _new_mode: u32,
 ) -> Result<()> {
@@ -1013,14 +1012,15 @@ fn written_file_symlink_metadata(path: &Path) -> Result<fs::Metadata> {
     fs::symlink_metadata(path).map_err(Error::Io)
 }
 
-fn written_file_metadata(file: &std::fs::File, path: &Path) -> Result<fs::Metadata> {
-    #[cfg(test)]
-    {
-        syscall_probe::note_metadata(path, syscall_probe::MetadataKind::WrittenFile);
-    }
-    #[cfg(not(test))]
-    let _ = path;
-    file.metadata().map_err(Error::Io)
+/// Stat a path just written through `file`, after close (no durability fsync).
+///
+/// Status and refresh paths probe the worktree with `symlink_metadata` on the path. On Windows,
+/// `File::metadata()` on an open handle can disagree with that probe (Git `mingw_stat`), which
+/// forces a full re-hash on the first status after clone checkout. Closing the handle is enough
+/// for path stat to match status; per-file `sync_all` is not required and regresses clone checkout.
+fn written_file_metadata(file: std::fs::File, path: &Path) -> Result<fs::Metadata> {
+    drop(file);
+    written_file_symlink_metadata(path)
 }
 
 /// Grant execute bits wherever read is already present (Git index executable semantics).
@@ -1059,7 +1059,7 @@ fn write_fresh_worktree_blob(
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
         file.write_all(data)
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
-        written_file_metadata(&file, abs_path)
+        written_file_metadata(file, abs_path)
     }
     #[cfg(not(unix))]
     {
@@ -1071,7 +1071,7 @@ fn write_fresh_worktree_blob(
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
         file.write_all(data)
             .map_err(|e| Error::PathError(format!("writing '{rel_path}': {e}")))?;
-        written_file_metadata(&file, abs_path)
+        written_file_metadata(file, abs_path)
     }
 }
 
@@ -1171,7 +1171,7 @@ pub(crate) fn write_to_worktree_cached(
                 .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
             file.write_all(target.as_bytes())
                 .map_err(|e| Error::PathError(format!("writing symlink '{rel_path}': {e}")))?;
-            return written_file_metadata(&file, &abs_path);
+            return written_file_metadata(file, &abs_path);
         }
         #[cfg(unix)]
         return written_file_symlink_metadata(&abs_path);
