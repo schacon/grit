@@ -8,7 +8,7 @@ use grit_utils::compare::compare_files;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
 use grit_utils::fsck_suite::run_fsck_suite;
 use grit_utils::ignore_suite::run_ignore_suite;
-use grit_utils::maintenance_suite::run_maintenance_suite;
+use grit_utils::maintenance_suite::{run_maintenance_suite, run_prepare_maintenance};
 use grit_utils::network_fixture::NetworkProfile;
 use grit_utils::network_suite::{
     prepare_network_clone, prepare_network_fetch_incr, prepare_network_fetch_noop,
@@ -283,6 +283,11 @@ enum Cmd {
     PrepareRestore,
     #[command(hide = true)]
     PrepareStash {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareMaintenance {
         #[arg(long)]
         git: PathBuf,
     },
@@ -610,6 +615,10 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_stash(&git);
         }
+        Cmd::PrepareMaintenance { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return run_prepare_maintenance(&git);
+        }
         Cmd::PrepareParallelCheckout { git, url, dest } => {
             let git = resolve_binary("git", Some(git))?;
             return prepare_parallel_checkout(&git, url, dest.as_path());
@@ -857,6 +866,7 @@ fn main() -> Result<()> {
         | Cmd::ServeGitHttp { .. }
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
+        | Cmd::PrepareMaintenance { .. }
         | Cmd::PrepareParallelCheckout { .. }
         | Cmd::PrepareParallelClone { .. }
         | Cmd::PrepareParallelIndexPack { .. }

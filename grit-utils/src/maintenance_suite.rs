@@ -11,7 +11,7 @@ use crate::binary::{grit_source_commit, tool_version};
 use crate::fixture::{remove_dir_robust, scratch_dir};
 use crate::machine::{collect_machine_info, format_timestamp};
 use crate::network_fixture::{ensure_fixture, NetworkFixtureKind, NetworkProfile};
-use crate::scenarios::{run_scenario, Driver, RunConfig, Scenario};
+use crate::scenarios::{run_scenario, Driver, PrepareKind, RunConfig, Scenario};
 use crate::schema::{BenchReport, ToolVersions, SCHEMA_VERSION};
 
 fn git_env(cmd: &mut Command) {
@@ -66,6 +66,15 @@ fn prepare_gc_fixture(git: &Path, bare: &Path) -> Result<PathBuf> {
     Ok(work)
 }
 
+/// Hyperfine prepare hook: restore the deep-history worktree with fresh loose objects.
+pub fn run_prepare_maintenance(git: &Path) -> Result<()> {
+    let bare = std::env::var("GRIT_BENCH_MAINTENANCE_BARE")
+        .map(PathBuf::from)
+        .context("GRIT_BENCH_MAINTENANCE_BARE must be set for prepare-maintenance")?;
+    let _work = prepare_gc_fixture(git, &bare)?;
+    Ok(())
+}
+
 /// GC, repack, and commit-graph scenarios on the deep-history worktree.
 pub fn run_maintenance_suite(
     hyperfine: &Path,
@@ -84,6 +93,11 @@ pub fn run_maintenance_suite(
     let worktree = prepare_gc_fixture(git, &bare)?;
     let mut scenarios = Vec::new();
 
+    std::env::set_var(
+        "GRIT_BENCH_MAINTENANCE_BARE",
+        bare.to_str().context("bare path utf-8")?,
+    );
+
     let _ = cfg.isolated_config.then(isolated_env_prefix);
 
     scenarios.push(run_scenario(
@@ -100,7 +114,7 @@ pub fn run_maintenance_suite(
             grit_argv: vec!["gc".into()],
             git_argv: vec!["gc".into(), "--quiet".into()],
             driver: Driver::Cli,
-            prepare_kind: None,
+            prepare_kind: Some(PrepareKind::MaintenanceReset),
             grit_via_shell: false,
             git_via_shell: false,
         },
@@ -120,7 +134,7 @@ pub fn run_maintenance_suite(
             grit_argv: vec!["gc".into(), "repack".into(), "--bitmaps".into()],
             git_argv: vec!["repack".into(), "-adb".into()],
             driver: Driver::Cli,
-            prepare_kind: None,
+            prepare_kind: Some(PrepareKind::MaintenanceReset),
             grit_via_shell: false,
             git_via_shell: false,
         },
@@ -146,7 +160,7 @@ pub fn run_maintenance_suite(
                 "--changed-paths".into(),
             ],
             driver: Driver::Cli,
-            prepare_kind: None,
+            prepare_kind: Some(PrepareKind::MaintenanceReset),
             grit_via_shell: false,
             git_via_shell: false,
         },

@@ -66,6 +66,7 @@ pub enum PrepareKind {
     CommitIteration,
     RestoreReset,
     StashReset,
+    MaintenanceReset,
 }
 
 /// Hyperfine tuning for all scenarios in a run.
@@ -114,6 +115,7 @@ fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind) -> String {
         PrepareKind::CommitIteration => "prepare-commit",
         PrepareKind::RestoreReset => "prepare-restore",
         PrepareKind::StashReset => "prepare-stash",
+        PrepareKind::MaintenanceReset => "prepare-maintenance",
     };
     shell_command(
         &cfg.prepare_bin,
