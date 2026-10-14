@@ -146,6 +146,48 @@ fn gc_matches_repack_plus_prune_and_git_fsck() {
     git(dir.path(), &["fsck", "--strict"]);
 }
 
+fn count_loose_head_ref_files(git_dir: &Path) -> usize {
+    let heads = git_dir.join("refs/heads");
+    if !heads.is_dir() {
+        return 0;
+    }
+    std::fs::read_dir(heads)
+        .expect("refs/heads")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .count()
+}
+
+#[test]
+fn gc_pack_refs_packs_branch_refs() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    many_grit_commits(&repo, 5);
+    git(dir.path(), &["branch", "feature"]);
+
+    let git_dir = dir.path().join(".git");
+    let loose_before = count_loose_head_ref_files(&git_dir);
+    assert!(
+        loose_before >= 2,
+        "expected at least main and feature as loose refs/heads, got {loose_before}"
+    );
+
+    let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
+    let pack = stats.pack_refs.as_ref().expect("gc should run pack-refs");
+    assert!(
+        pack.refs_packed >= 2,
+        "expected branch refs packed, got {}",
+        pack.refs_packed
+    );
+    assert_eq!(
+        count_loose_head_ref_files(&git_dir),
+        0,
+        "expected no loose refs/heads after gc pack-refs --all"
+    );
+
+    git(dir.path(), &["fsck", "--strict"]);
+}
+
 fn one_commit(repo: &Repository) {
     many_grit_commits(repo, 1);
 }

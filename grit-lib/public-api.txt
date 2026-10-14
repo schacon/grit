@@ -4526,8 +4526,11 @@ impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::FsckReport
 #[non_exhaustive] pub struct grit_lib::maintenance::GcOptions
 pub grit_lib::maintenance::GcOptions::expire_reflog: bool
 pub grit_lib::maintenance::GcOptions::now_unix: i64
+pub grit_lib::maintenance::GcOptions::pack_refs: bool
 pub grit_lib::maintenance::GcOptions::repack: grit_lib::maintenance::RepackOptions
+pub grit_lib::maintenance::GcOptions::write_commit_graph: bool
 impl grit_lib::maintenance::GcOptions
+pub fn grit_lib::maintenance::GcOptions::full_run(bool, i64) -> Self
 pub fn grit_lib::maintenance::GcOptions::with_reflog_policy(i64, bool) -> Self
 pub fn grit_lib::maintenance::GcOptions::with_repack_dry_run(bool, i64) -> Self
 impl core::clone::Clone for grit_lib::maintenance::GcOptions
@@ -4544,6 +4547,8 @@ impl core::marker::UnsafeUnpin for grit_lib::maintenance::GcOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::GcOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::GcOptions
 pub struct grit_lib::maintenance::GcStats
+pub grit_lib::maintenance::GcStats::commit_graph: core::option::Option<grit_lib::maintenance::CommitGraphWriteReport>
+pub grit_lib::maintenance::GcStats::pack_refs: core::option::Option<grit_lib::maintenance::PackRefsReport>
 pub grit_lib::maintenance::GcStats::prune: grit_lib::refs::gc::PruneStats
 pub grit_lib::maintenance::GcStats::reflog_entries_pruned: usize
 pub grit_lib::maintenance::GcStats::repack: grit_lib::maintenance::RepackStats
@@ -4646,6 +4651,24 @@ impl core::marker::Unpin for grit_lib::maintenance::PackRefsReport
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::PackRefsReport
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::PackRefsReport
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::PackRefsReport
+#[non_exhaustive] pub struct grit_lib::maintenance::PruneOptions
+pub grit_lib::maintenance::PruneOptions::dry_run: bool
+pub grit_lib::maintenance::PruneOptions::older_than: core::option::Option<std::time::SystemTime>
+impl grit_lib::maintenance::PruneOptions
+pub fn grit_lib::maintenance::PruneOptions::with_older_than(core::option::Option<std::time::SystemTime>) -> Self
+impl core::clone::Clone for grit_lib::maintenance::PruneOptions
+pub fn grit_lib::maintenance::PruneOptions::clone(&self) -> Self
+impl core::default::Default for grit_lib::maintenance::PruneOptions
+pub fn grit_lib::maintenance::PruneOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::maintenance::PruneOptions
+pub fn grit_lib::maintenance::PruneOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::maintenance::PruneOptions
+impl core::marker::Send for grit_lib::maintenance::PruneOptions
+impl core::marker::Sync for grit_lib::maintenance::PruneOptions
+impl core::marker::Unpin for grit_lib::maintenance::PruneOptions
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::PruneOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::PruneOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::PruneOptions
 #[non_exhaustive] pub struct grit_lib::maintenance::RepackOptions
 pub grit_lib::maintenance::RepackOptions::dry_run: bool
 pub grit_lib::maintenance::RepackOptions::environment: grit_lib::config::environment::Environment
@@ -4725,6 +4748,7 @@ pub fn grit_lib::maintenance::format_fsck_line(&grit_lib::maintenance::FsckIssue
 pub fn grit_lib::maintenance::fsck(&grit_lib::repo::Repository, &grit_lib::maintenance::FsckOptions) -> grit_lib::error::Result<grit_lib::maintenance::FsckReport>
 pub fn grit_lib::maintenance::gc(&grit_lib::repo::Repository, &grit_lib::maintenance::GcOptions) -> grit_lib::error::Result<grit_lib::maintenance::GcStats>
 pub fn grit_lib::maintenance::pack_refs(&grit_lib::repo::Repository, &grit_lib::maintenance::PackRefsOptions) -> grit_lib::error::Result<grit_lib::maintenance::PackRefsReport>
+pub fn grit_lib::maintenance::prune_loose_objects(&grit_lib::repo::Repository, &grit_lib::maintenance::PruneOptions) -> grit_lib::error::Result<grit_lib::refs::gc::PruneStats>
 pub fn grit_lib::maintenance::remove_superseded_pack_files(&std::path::Path, &std::path::Path) -> grit_lib::error::Result<usize>
 pub fn grit_lib::maintenance::repack(&grit_lib::repo::Repository, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
 pub fn grit_lib::maintenance::repack_all(&grit_lib::repo::Repository, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackStats>

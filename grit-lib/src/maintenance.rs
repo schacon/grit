@@ -837,7 +837,7 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     let dry_run = opts.repack.dry_run;
 
     if opts.pack_refs && !dry_run {
-        stats.pack_refs = Some(pack_refs(repo, &PackRefsOptions::default())?);
+        stats.pack_refs = Some(pack_refs(repo, &PackRefsOptions::with_all(true))?);
     }
 
     if opts.expire_reflog {
