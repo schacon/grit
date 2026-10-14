@@ -342,6 +342,43 @@ fn amend_root_commit() {
 }
 
 #[test]
+fn grit_allow_empty_commit_round_trips_with_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "core.logAllRefUpdates", "true"]);
+
+    std::fs::write(root.join("a.txt"), b"1\n").unwrap();
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    stage(&repo, &StageOptions::default(), &mut NullProgress).expect("stage");
+    let first =
+        create_commit(&repo, &commit_req("first"), &mut NullProgress).expect("first commit");
+
+    let mut empty_req = commit_req("empty marker");
+    empty_req.allow_empty = true;
+    let empty = create_commit(&repo, &empty_req, &mut NullProgress).expect("allow-empty commit");
+
+    fsck(root);
+    assert_eq!(empty.changes, 0);
+    assert_eq!(empty.parent, Some(first.oid));
+
+    let git_head = ObjectId::from_hex(&git_out(root, &["rev-parse", "HEAD"])).expect("head");
+    assert_eq!(git_head, empty.oid);
+
+    let obj = repo.odb().read(&empty.oid).expect("read commit");
+    let parsed = parse_commit(&obj.data).expect("parse");
+    assert_eq!(parsed.parents.len(), 1);
+    assert_eq!(parsed.parents[0], first.oid);
+
+    let parent_obj = repo.odb().read(&first.oid).expect("read parent");
+    let parent_parsed = parse_commit(&parent_obj.data).expect("parse parent");
+    assert_eq!(parsed.tree, parent_parsed.tree);
+
+    let show = git_out(root, &["show", "-s", "--format=%s", "HEAD"]);
+    assert!(show.contains("empty marker"));
+}
+
+#[test]
 fn amend_unborn_errors() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

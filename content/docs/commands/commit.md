@@ -10,6 +10,7 @@ order: 2
 ```text
 grit commit [-a] <message>
 grit commit [-a] -m <message>
+grit commit --allow-empty -m <message>
 grit commit --amend [-m <message>]
 ```
 
@@ -25,7 +26,9 @@ The author and committer come from the `user.name` and `user.email` settings (se
 
 When `commit.gpgsign` is true (or `commit.gpgSign`), `grit commit` signs the new commit object the same way Git does: OpenPGP and X.509 via your configured `gpg`/`gpgsm` program, or SSH via `ssh-keygen -Y sign` when `gpg.format` is `ssh`. Signing uses `user.signingkey` and the same `gpg.*` settings Git reads. [`grit merge`](../merge/) and [`grit pick`](../pick/) honor the same policy when they create commits.
 
-`grit commit` fails when there's nothing to commit (except when amending with an unchanged tree), when HEAD is detached rather than on a branch, and when the index still has **unmerged** paths after staging (for example when a merge conflict is not fully resolved in the working tree). Fix conflicts in your files, then run `grit commit` again — staging runs automatically, the same as for other changes. Refusal for a detached HEAD does not stage your working tree (unlike a missing message, which intentionally stages first so you can add a message and run `grit commit` again).
+`grit commit` fails when there's nothing to commit (except when amending with an unchanged tree, or when you pass `--allow-empty`), when HEAD is detached rather than on a branch, and when the index still has **unmerged** paths after staging (for example when a merge conflict is not fully resolved in the working tree). Fix conflicts in your files, then run `grit commit` again — staging runs automatically, the same as for other changes. Refusal for a detached HEAD does not stage your working tree (unlike a missing message, which intentionally stages first so you can add a message and run `grit commit` again).
+
+With `--allow-empty`, grit records a new commit whose tree matches the parent even when the working tree is clean. Use this to mark a point in history (for example to trigger CI) without changing files. The resulting commit is valid for Git the same way as `git commit --allow-empty`.
 
 When a merge is in progress (`MERGE_HEAD` is present) and every conflict is resolved in the index, `grit commit` records a **merge commit** with two parents (your branch tip and the merged tip) and clears merge state the same way Git does after `git commit`.
 
@@ -37,6 +40,7 @@ When a merge is in progress (`MERGE_HEAD` is present) and every conflict is reso
 | `-m`, `--message <message>` | The commit message, as an option. Use either this or the argument, not both. Optional with `--amend` (keeps the previous message). |
 | `-a`, `--all` | Stage every change first. This is always what `grit commit` does; the option is accepted so that `git` habits like `-am` keep working. |
 | `--amend` | Replace the tip commit on the current branch. |
+| `--allow-empty` | Record a commit even when staged content matches the parent tree (empty tree change). |
 
 ## Examples
 
@@ -66,6 +70,14 @@ Amend the latest commit after fixing staged files:
 
 ```console
 $ grit commit --amend -m "Add the greeting (fixed typo)"
+```
+
+Record an empty commit on a clean tree:
+
+```console
+$ grit commit --allow-empty -m "Trigger CI"
+[main a1b2c3d] Trigger CI
+0 changes committed
 ```
 
 ## JSON output

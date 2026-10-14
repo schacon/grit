@@ -52,7 +52,7 @@ impl MarkdownRender for CommitOutcome {
     }
 }
 
-pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
+pub fn run(message: Option<String>, amend: bool, allow_empty: bool) -> Result<CommitOutcome> {
     let repo = context::discover()?;
 
     match resolve_head(repo.git_dir())? {
@@ -98,7 +98,7 @@ pub fn run(message: Option<String>, amend: bool) -> Result<CommitOutcome> {
             message: message_text.to_owned(),
             author,
             committer,
-            allow_empty: false,
+            allow_empty,
             sign_override: None,
             amend,
         },

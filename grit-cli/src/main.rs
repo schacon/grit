@@ -516,6 +516,9 @@ enum Command {
         /// Replace the tip commit instead of creating a new one.
         #[arg(long = "amend")]
         amend: bool,
+        /// Record a commit even when the tree matches the parent (same as `git commit --allow-empty`).
+        #[arg(long = "allow-empty")]
+        allow_empty: bool,
     },
     /// List branches, or create / delete one.
     Branch {
@@ -1055,8 +1058,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             message_flag,
             all: _,
             amend,
+            allow_empty,
         } => emit(
-            &commands::commit::run(message.or(message_flag), amend)?,
+            &commands::commit::run(message.or(message_flag), amend, allow_empty)?,
             opts,
             ctx,
         ),

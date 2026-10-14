@@ -47,7 +47,7 @@ $ grit commit -m "Explain what changed and why"
 
 `grit commit` stages **every** change first (modified, deleted and untracked files) and then commits. There is no way to commit only some files: if only part of the work belongs in this commit, finish or move the rest aside first. `grit add [<path>…]` stages files so you can review them in `grit status`, but it doesn't limit what `grit commit` records.
 
-`grit commit` fails with "nothing to commit" on a clean tree and refuses a detached HEAD.
+`grit commit` fails with "nothing to commit" on a clean tree unless you pass `--allow-empty`. It also refuses a detached HEAD.
 
 ## Branches
 
