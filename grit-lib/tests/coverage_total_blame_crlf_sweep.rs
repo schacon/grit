@@ -58,7 +58,7 @@ fn seed_blame_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::ob
 
 #[test]
 fn blame_crlf_apply_and_pathspec_deep_sweep() -> grit_lib::error::Result<()> {
-    let (_dir, repo, tip) = seed_blame_repo(520);
+    let (_dir, repo, tip) = seed_blame_repo(680);
     for start in [None, Some(tip)] {
         for range in [None, Some(1usize..=2usize)] {
             let blame = blame_file(

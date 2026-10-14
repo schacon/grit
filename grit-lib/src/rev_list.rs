@@ -9510,7 +9510,7 @@ mod line_coverage_tests {
                 ObjectFilter::TreeDepth(6),
             ])),
         ];
-        for mask in 0u32..768 {
+        for mask in 0u32..1024 {
             for filter in &filters {
                 let opts = RevListOptions {
                     first_parent: mask & 1 != 0,

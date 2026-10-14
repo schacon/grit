@@ -206,13 +206,21 @@ fn repo_setup_and_format_helpers() {
 fn rev_list_deep_history_and_ref_matrix() -> grit_lib::error::Result<()> {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
-    for i in 0..40 {
+    for i in 0..100 {
         commit_file(
             wt,
             &format!("files/f{i}.txt"),
             &format!("body {i}\n"),
             &format!("commit {i}"),
         );
+        if i % 11 == 0 {
+            commit_file(
+                wt,
+                &format!("docs/d{i}.md"),
+                &format!("# doc {i}\n"),
+                &format!("doc {i}"),
+            );
+        }
     }
     git(wt, &["checkout", "-b", "side", "main~10"]);
     commit_file(wt, "side.txt", "side\n", "side tip");
@@ -227,31 +235,45 @@ fn rev_list_deep_history_and_ref_matrix() -> grit_lib::error::Result<()> {
         OrderingMode::AuthorDateWalk,
         OrderingMode::AuthorDateTopo,
     ];
+    let tip: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().expect("tip");
+    let mid: ObjectId = git(wt, &["rev-parse", "main~10"])
+        .trim()
+        .parse()
+        .expect("mid");
     for ordering in orderings {
-        let opts = RevListOptions {
-            ordering,
-            output_mode: OutputMode::Format(String::from("format:%H %P %s %D %d")),
-            ancestry_path: false,
-            left_right: true,
-            cherry_mark: true,
-            boundary: true,
-            first_parent: true,
-            simplify_merges: true,
-            full_history: true,
-            objects: true,
-            in_commit_order: true,
-            include_reflog_entries: true,
-            all_refs: true,
-            max_count: Some(50),
-            missing_action: MissingAction::Allow,
-            filter: Some(ObjectFilter::TreeDepth(8)),
-            ..RevListOptions::default()
-        };
-        let out = rev_list(&repo, &[String::from("main")], &[], &opts)?;
-        assert!(!out.commits.is_empty());
-        if let Some(tip) = out.commits.first() {
-            let _ = render_commit(&repo, *tip, &opts.output_mode, 12)?;
-            let _ = render_commit_with_color(&repo, *tip, &opts.output_mode, 12, true)?;
+        for ancestry in [false, true] {
+            let opts = RevListOptions {
+                ordering,
+                output_mode: OutputMode::Format(String::from("format:%H %P %s %D %d")),
+                ancestry_path: ancestry,
+                ancestry_path_bottoms: vec![mid],
+                left_right: true,
+                cherry_mark: true,
+                boundary: true,
+                first_parent: true,
+                simplify_merges: true,
+                simplify_by_decoration: ancestry,
+                simplify_by_decoration_oids: [tip, mid].into_iter().collect(),
+                full_history: true,
+                objects: true,
+                in_commit_order: true,
+                include_reflog_entries: true,
+                all_refs: true,
+                max_count: Some(80),
+                missing_action: MissingAction::Allow,
+                filter: Some(ObjectFilter::Combine(vec![
+                    ObjectFilter::BlobLimit(65536),
+                    ObjectFilter::TreeDepth(8),
+                ])),
+                filter_print_omitted: true,
+                ..RevListOptions::default()
+            };
+            let out = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+            assert!(!out.commits.is_empty());
+            if let Some(head) = out.commits.first() {
+                let _ = render_commit(&repo, *head, &opts.output_mode, 12)?;
+                let _ = render_commit_with_color(&repo, *head, &opts.output_mode, 12, true)?;
+            }
         }
     }
 
@@ -262,16 +284,11 @@ fn rev_list_deep_history_and_ref_matrix() -> grit_lib::error::Result<()> {
     let _ = resolve_object_walk_roots(&repo, &["main".to_owned()])?;
     let _ = tag_targets(repo.git_dir())?;
     let _ = shallow_boundary_oids(repo.git_dir());
-    let tip: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().expect("tip");
     let _ = shallow_borders_reachable_from_wants(&repo, &[tip]);
     let filter = ObjectFilter::BlobLimit(4096);
     let _ = object_ids_for_cat_file_filtered(&repo, &filter)?;
     let _ = reachable_object_ids_for_cat_file(&repo, Some(&filter), false)?;
     let _ = commit_visible_for_dense_pathspecs(&repo, tip, &["files/f0.txt".to_owned()])?;
-    let mid: ObjectId = git(wt, &["rev-parse", "main~10"])
-        .trim()
-        .parse()
-        .expect("mid");
     let _ = merge_bases(&repo, tip, mid, false)?;
     Ok(())
 }
