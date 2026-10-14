@@ -972,7 +972,7 @@ impl Odb {
                             if loose_mtime >= cutoff {
                                 continue;
                             }
-                            let _ = set_file_mtime(&loose_path, pack_ft);
+                            set_file_mtime(&loose_path, pack_ft).map_err(Error::Io)?;
                             loosened += 1;
                             continue;
                         }
@@ -988,7 +988,7 @@ impl Odb {
                 self.write_loose_materialize(obj.kind, &obj.data)?;
                 let primary = self.primary()?;
                 let loose_path = primary.loose_store().object_path(&oid);
-                let _ = set_file_mtime(&loose_path, pack_ft);
+                set_file_mtime(&loose_path, pack_ft).map_err(Error::Io)?;
                 loosened += 1;
             }
         }

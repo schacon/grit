@@ -636,6 +636,57 @@ fn gc_preserves_grace_protected_packed_unreachable_with_stale_loose_dup_like_git
 }
 
 #[test]
+#[cfg(unix)]
+fn gc_aborts_before_pack_removal_when_stale_loose_mtime_update_fails() {
+    let fixture = build_grace_protected_packed_unreachable_fixture(true);
+    let grit_fixture = TempDir::new().expect("grit fixture");
+    duplicate_repo_tree(fixture._dir.path(), grit_fixture.path());
+
+    let grit_repo = Repository::discover(Some(grit_fixture.path()), &RepositoryOptions::empty())
+        .expect("open grit repo");
+    let loose_path = grit_repo.odb().object_path(&fixture.side_oid);
+    assert!(loose_path.is_file(), "stale loose duplicate must exist");
+
+    let chattr_plus = Command::new("sudo")
+        .args(["chattr", "+i", loose_path.to_str().expect("utf8 path")])
+        .status()
+        .expect("sudo chattr");
+    assert!(
+        chattr_plus.success(),
+        "sudo chattr +i must succeed so mtime update fails on immutable loose object"
+    );
+
+    let packs_before = pack_stems(&grit_fixture.path().join(".git"));
+    assert_eq!(packs_before.len(), 1);
+
+    let err = gc(
+        &grit_repo,
+        &GcOptions::with_reflog_policy(1_791_979_200, false),
+    )
+    .expect_err("gc must fail when grace mtime cannot be applied to stale loose copy");
+    assert!(
+        matches!(err, Error::Io(_)),
+        "expected I/O error from mtime update, got {err:?}"
+    );
+
+    let packs_after = pack_stems(&grit_fixture.path().join(".git"));
+    assert!(
+        packs_after.iter().any(|s| s == &fixture.old_pack_stem),
+        "superseded pack must remain when loosen aborts (packs after: {packs_after:?})"
+    );
+    assert!(
+        cat_file_exists(grit_fixture.path(), &fixture.side_hex),
+        "unreachable commit must remain readable from the original pack"
+    );
+
+    let chattr_minus = Command::new("sudo")
+        .args(["chattr", "-i", loose_path.to_str().expect("utf8 path")])
+        .status()
+        .expect("sudo chattr cleanup");
+    assert!(chattr_minus.success(), "sudo chattr -i cleanup");
+}
+
+#[test]
 fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
