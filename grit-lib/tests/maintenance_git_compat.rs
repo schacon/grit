@@ -490,6 +490,151 @@ fn gc_invalid_prune_expire_rejects_before_deleting_loose() {
     );
 }
 
+fn pack_stems(git_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(git_dir.join("objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+fn cat_file_exists(repo_root: &Path, oid_hex: &str) -> bool {
+    Command::new("git")
+        .current_dir(repo_root)
+        .args(["cat-file", "-e", oid_hex])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("cat-file")
+        .success()
+}
+
+struct GraceProtectedPackedFixture {
+    _dir: TempDir,
+    side_hex: String,
+    side_oid: ObjectId,
+    old_pack_stem: String,
+}
+
+fn build_grace_protected_packed_unreachable_fixture(
+    stale_loose_duplicate: bool,
+) -> GraceProtectedPackedFixture {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "gc.auto", "0"]);
+    git_commit_dated(dir.path(), "2020-01-01T00:00:00 +0000", "main seed");
+    git(dir.path(), &["checkout", "-b", "side"]);
+    git_commit_dated(dir.path(), "2026-10-10T12:00:00 +0000", "side tip");
+    let side_tip = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-parse", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("rev-parse");
+    assert!(side_tip.status.success());
+    let side_hex = String::from_utf8_lossy(&side_tip.stdout).trim().to_string();
+    let side_oid = ObjectId::from_hex(&side_hex).expect("oid");
+    git(dir.path(), &["checkout", "main"]);
+    git(dir.path(), &["repack", "-ad"]);
+
+    if stale_loose_duplicate {
+        let repo =
+            Repository::discover(Some(dir.path()), &RepositoryOptions::empty()).expect("open repo");
+        let obj = repo.odb().read(&side_oid).expect("read side commit");
+        repo.odb()
+            .write_loose_materialize(obj.kind, &obj.data)
+            .expect("loose dup");
+        let loose_path = repo.odb().object_path(&side_oid);
+        filetime::set_file_mtime(&loose_path, FileTime::from_unix_time(946_684_800, 0))
+            .expect("stale loose mtime");
+    }
+
+    git(dir.path(), &["branch", "-D", "side"]);
+    git(
+        dir.path(),
+        &[
+            "reflog",
+            "expire",
+            "--expire=now",
+            "--expire-unreachable=now",
+            "--all",
+        ],
+    );
+
+    let git_dir = dir.path().join(".git");
+    let pre_gc_packs = pack_stems(&git_dir);
+    assert_eq!(pre_gc_packs.len(), 1, "fixture must start with one pack");
+
+    GraceProtectedPackedFixture {
+        _dir: dir,
+        side_hex,
+        side_oid,
+        old_pack_stem: pre_gc_packs[0].clone(),
+    }
+}
+
+fn assert_grace_protected_packed_unreachable_gc_matches_git(fixture: &GraceProtectedPackedFixture) {
+    let grit_fixture = TempDir::new().expect("grit fixture");
+    let git_fixture = TempDir::new().expect("git fixture");
+    duplicate_repo_tree(fixture._dir.path(), grit_fixture.path());
+    duplicate_repo_tree(fixture._dir.path(), git_fixture.path());
+
+    let grit_repo = Repository::discover(Some(grit_fixture.path()), &RepositoryOptions::empty())
+        .expect("open grit repo");
+    let now_unix = 1_791_979_200_i64;
+    let stats = gc(&grit_repo, &GcOptions::with_reflog_policy(now_unix, false)).expect("grit gc");
+    assert!(
+        stats.repack.removed_pack_files >= 1,
+        "grit gc repack must remove the superseded pack"
+    );
+    assert!(
+        cat_file_exists(grit_fixture.path(), &fixture.side_hex),
+        "grit gc must retain recent unreachable commit under default gc.pruneExpire"
+    );
+    let grit_packs = pack_stems(&grit_fixture.path().join(".git"));
+    assert!(
+        !grit_packs.iter().any(|s| s == &fixture.old_pack_stem),
+        "superseded pack must be removed after grit gc"
+    );
+    assert!(
+        grit_repo.odb().object_path(&fixture.side_oid).is_file(),
+        "retained oid must be materialized as loose after grit gc, not only in removed pack"
+    );
+
+    git(
+        git_fixture.path(),
+        &["gc", "--prune=2.weeks.ago", "--quiet"],
+    );
+    assert!(
+        cat_file_exists(git_fixture.path(), &fixture.side_hex),
+        "system git gc --prune=2.weeks.ago must retain recent unreachable packed commit"
+    );
+    let git_packs = pack_stems(&git_fixture.path().join(".git"));
+    assert!(
+        !git_packs.iter().any(|s| s == &fixture.old_pack_stem),
+        "superseded pack must be removed after system git gc"
+    );
+}
+
+#[test]
+fn gc_preserves_grace_protected_packed_unreachable_like_git() {
+    let fixture = build_grace_protected_packed_unreachable_fixture(false);
+    assert_grace_protected_packed_unreachable_gc_matches_git(&fixture);
+}
+
+#[test]
+fn gc_preserves_grace_protected_packed_unreachable_with_stale_loose_dup_like_git() {
+    let fixture = build_grace_protected_packed_unreachable_fixture(true);
+    assert_grace_protected_packed_unreachable_gc_matches_git(&fixture);
+}
+
 #[test]
 fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
     let dir = TempDir::new().expect("tempdir");
