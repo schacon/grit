@@ -808,11 +808,7 @@ fn gc_packs_loose_objects_like_git() {
 
     let repo = Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty())
         .expect("open grit copy");
-    gc(
-        &repo,
-        &GcOptions::with_reflog_policy(1_700_000_000, false),
-    )
-    .expect("grit gc");
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
 
     git(git_dir.path(), &["gc", "--quiet"]);
 
@@ -877,11 +873,7 @@ fn gc_autopacklimit_consolidates_packs_like_git() {
 
     let repo =
         Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
-    gc(
-        &repo,
-        &GcOptions::with_reflog_policy(1_700_000_000, false),
-    )
-    .expect("grit gc");
+    gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
     git(git_copy.path(), &["gc", "--quiet"]);
 
     assert_eq!(
@@ -918,5 +910,76 @@ fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
         report.ok,
         "gitlink to absent submodule commit must not fail fsck: {:?}",
         report.issues
+    );
+}
+
+#[test]
+fn incremental_repack_with_bitmap_midx_readable_by_git() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    let wt = repo.work_tree().expect("worktree");
+    std::fs::write(wt.join("base"), b"v1").expect("write base");
+    stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    let ident = "Test <t@example.com> 1 +0000".to_string();
+    create_commit(
+        &repo,
+        &CommitRequest {
+            message: "base".into(),
+            author: ident.clone(),
+            committer: ident.clone(),
+            allow_empty: false,
+            sign_override: None,
+            amend: false,
+            assume_worktree_synced: false,
+        },
+        &mut NullProgress,
+    )
+    .expect("commit");
+    let mut base_repack = RepackOptions::default();
+    base_repack.keep_unreachable = false;
+    repack_all(&repo, &base_repack).expect("repack base");
+
+    std::fs::write(wt.join("child"), b"v2").expect("write child");
+    stage_for_commit(&repo, &mut NullProgress).expect("stage child");
+    create_commit(
+        &repo,
+        &CommitRequest {
+            message: "child".into(),
+            author: ident.clone(),
+            committer: ident.clone(),
+            allow_empty: false,
+            sign_override: None,
+            amend: false,
+            assume_worktree_synced: false,
+        },
+        &mut NullProgress,
+    )
+    .expect("child commit");
+
+    let mut incr_repack = RepackOptions::default();
+    incr_repack.incremental = true;
+    incr_repack.write_bitmap = true;
+    repack_all(&repo, &incr_repack).expect("incremental repack with bitmap");
+
+    let git_dir = repo.git_dir();
+    git(git_dir, &["multi-pack-index", "verify"]);
+    git_fsck(dir.path(), true);
+
+    let rev_list = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-list", "--all", "--objects"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git rev-list");
+    assert!(
+        rev_list.status.success(),
+        "git rev-list with MIDX bitmap: {}",
+        String::from_utf8_lossy(&rev_list.stderr)
+    );
+    let listed = String::from_utf8_lossy(&rev_list.stdout);
+    assert!(
+        listed.lines().count() >= 3,
+        "expected commits and tree/blob objects via bitmap-backed MIDX"
     );
 }

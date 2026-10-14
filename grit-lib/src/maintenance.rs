@@ -80,6 +80,9 @@ pub struct RepackOptions {
     /// Process environment for config discovery and thread counts.
     pub environment: Environment,
     /// Pack only loose objects into a new pack, keeping existing packs (Git cruft-style incremental repack).
+    ///
+    /// When [`Self::write_bitmap`] is true and the repository already has pack files, bitmaps are
+    /// written via a multi-pack-index sidecar instead of a per-pack `.bitmap` on the new pack alone.
     pub incremental: bool,
 }
 
@@ -728,13 +731,27 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         }
 
         if opts.write_bitmap {
-            let bitmap_opts = PackBitmapWriteOptions::default();
-            let now = opts
-                .now
-                .map(offset_to_system_time)
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
-                .map_err(|e| Error::CorruptObject(e.to_string()))?;
+            if opts.incremental && packs_before > 0 {
+                // Per-pack bitmaps require reachability closure within one pack; incremental
+                // repack keeps older packs and adds a new layer. Write a multi-pack-index
+                // bitmap covering all packs instead of a sidecar on the new pack alone.
+                let midx_opts = WriteMultiPackIndexOptions {
+                    write_bitmap: true,
+                    // On-disk v2 is not readable by Git 2.43; match grit_write_midx compat tests.
+                    version: Some(1),
+                    ..WriteMultiPackIndexOptions::default()
+                };
+                let WriteMultiPackIndexResult { bitmap: _ } =
+                    write_multi_pack_index_with_options(&pack_dir, &midx_opts)?;
+            } else {
+                let bitmap_opts = PackBitmapWriteOptions::default();
+                let now = opts
+                    .now
+                    .map(offset_to_system_time)
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
+                    .map_err(|e| Error::CorruptObject(e.to_string()))?;
+            }
         }
 
         let retention = if opts.keep_unreachable {
@@ -1400,6 +1417,107 @@ mod tests {
             &mut NullProgress,
         )
         .expect("commit");
+        let report = fsck(
+            &repo,
+            &FsckOptions {
+                strict: true,
+                check_objects: true,
+                check_refs: true,
+                check_midx: true,
+            },
+        )
+        .expect("fsck");
+        assert!(report.ok, "{:?}", report.issues);
+    }
+
+    #[test]
+    fn incremental_repack_with_bitmap_keeps_base_pack_and_writes_midx_bitmap() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let wt = repo.work_tree().unwrap();
+        std::fs::write(wt.join("base"), b"v1").unwrap();
+        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        let ident = "Test <t@example.com> 1 +0000".to_string();
+        create_commit(
+            &repo,
+            &CommitRequest {
+                message: "base".into(),
+                author: ident.clone(),
+                committer: ident.clone(),
+                allow_empty: false,
+                sign_override: None,
+                amend: false,
+                assume_worktree_synced: false,
+            },
+            &mut NullProgress,
+        )
+        .expect("commit");
+        repack_all(
+            &repo,
+            &RepackOptions {
+                keep_unreachable: false,
+                ..RepackOptions::default()
+            },
+        )
+        .expect("repack base");
+        let pack_dir = repo.git_dir().join("objects/pack");
+        assert_eq!(count_pack_files(&pack_dir), 1);
+
+        std::fs::write(wt.join("child"), b"v2").unwrap();
+        stage_for_commit(&repo, &mut NullProgress).expect("stage child");
+        create_commit(
+            &repo,
+            &CommitRequest {
+                message: "child".into(),
+                author: ident.clone(),
+                committer: ident.clone(),
+                allow_empty: false,
+                sign_override: None,
+                amend: false,
+                assume_worktree_synced: false,
+            },
+            &mut NullProgress,
+        )
+        .expect("child commit");
+        assert!(count_loose_objects(repo.odb()).expect("loose") >= 2);
+
+        let packs_before = count_pack_files(&pack_dir);
+        repack_all(
+            &repo,
+            &RepackOptions {
+                incremental: true,
+                write_bitmap: true,
+                ..RepackOptions::default()
+            },
+        )
+        .expect("incremental repack with bitmap must not fail after installing a pack");
+
+        assert!(
+            count_pack_files(&pack_dir) > packs_before,
+            "incremental repack should add a pack"
+        );
+        let midx = pack_dir.join("multi-pack-index");
+        assert!(
+            midx.is_file(),
+            "expected multi-pack-index after bitmap repack"
+        );
+        let midx_bytes = fs::read(&midx).expect("read midx");
+        assert_eq!(
+            midx_bytes.get(4),
+            Some(&1),
+            "MIDX on-disk version must be v1 for system git compatibility"
+        );
+        let bitmaps: Vec<_> = fs::read_dir(&pack_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "bitmap"))
+            .collect();
+        assert!(
+            !bitmaps.is_empty(),
+            "expected a MIDX or pack bitmap sidecar after incremental repack with write_bitmap"
+        );
+
         let report = fsck(
             &repo,
             &FsckOptions {
