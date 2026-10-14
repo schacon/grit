@@ -1,5 +1,6 @@
 //! `grit gc` maintenance benchmarks vs system `git`.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,15 +23,25 @@ fn git_env(cmd: &mut Command) {
         .env("GIT_CONFIG_VALUE_0", "0");
 }
 
+/// Remove every entry inside `dir` but keep `dir` itself so hyperfine's cwd stays valid.
+fn clear_dir_contents(dir: &Path) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir).context("read worktree dir")? {
+        let entry = entry.context("worktree dir entry")?;
+        remove_dir_robust(&entry.path());
+    }
+    Ok(())
+}
+
 fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
     let dest = scratch_dir().join("gc-medium-worktree");
-    remove_dir_robust(&dest);
+    fs::create_dir_all(&dest).context("create gc-medium-worktree parent")?;
+    clear_dir_contents(&dest)?;
     let mut cmd = Command::new(git);
-    cmd.args([
-        "clone",
-        bare.to_str().context("bare path utf-8")?,
-        dest.to_str().context("dest utf-8")?,
-    ]);
+    cmd.args(["clone", bare.to_str().context("bare path utf-8")?, "."])
+        .current_dir(&dest);
     git_env(&mut cmd);
     let out = cmd.output().context("git clone")?;
     if !out.status.success() {

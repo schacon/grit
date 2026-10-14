@@ -112,7 +112,7 @@ impl RepackOptions {
 struct RepackDetail {
     report: RepackReport,
     prune_packed_loose: usize,
-    unreachable_loose: usize,
+    unreachable_loose: PruneStats,
     unreachable_prune_ms: u64,
     unreachable_prune_ran: bool,
 }
@@ -151,6 +151,8 @@ pub struct RepackStats {
     pub pruned_loose: usize,
     /// Unreachable loose objects removed after repack when pruning is enabled.
     pub unreachable_loose_pruned: usize,
+    /// Unreachable loose objects kept (grace window or concurrent safety).
+    pub unreachable_loose_kept: usize,
     /// Wall time spent in unreachable loose-object pruning during this repack.
     pub unreachable_prune_ms: u64,
     /// True when unreachable loose-object pruning was executed (even if nothing was removed).
@@ -654,7 +656,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         return Ok(RepackDetail {
             report,
             prune_packed_loose: 0,
-            unreachable_loose: 0,
+            unreachable_loose: PruneStats::default(),
             unreachable_prune_ms: 0,
             unreachable_prune_ran: false,
         });
@@ -674,7 +676,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         return Ok(RepackDetail {
             report,
             prune_packed_loose: 0,
-            unreachable_loose: 0,
+            unreachable_loose: PruneStats::default(),
             unreachable_prune_ms: 0,
             unreachable_prune_ran: false,
         });
@@ -682,7 +684,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
 
     let pack_bytes = build_repack_pack(odb, &roots, opts.keep_unreachable, &pack_opts)?;
     let mut prune_packed_loose = 0usize;
-    let mut unreachable_loose = 0usize;
+    let mut unreachable_loose = PruneStats::default();
     let pack_trailer_len = 12 + odb.hash_algo().len();
     if pack_bytes.len() > pack_trailer_len {
         clear_pack_midx_state(&pack_dir)?;
@@ -748,12 +750,12 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     if !opts.keep_unreachable {
         let keep_newer_than = opts.prune_older_than.map(offset_to_system_time);
         let prune_start = Instant::now();
-        unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?.pruned;
+        unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?;
         unreachable_prune_ms = prune_start.elapsed().as_millis() as u64;
         unreachable_prune_ran = true;
     }
 
-    report.loose_removed = prune_packed_loose + unreachable_loose;
+    report.loose_removed = prune_packed_loose + unreachable_loose.pruned;
     Ok(RepackDetail {
         report,
         prune_packed_loose,
@@ -787,7 +789,8 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     stats.objects_packed = Some(report.objects);
     stats.removed_pack_files = report.packs_removed;
     stats.pruned_loose = detail.prune_packed_loose;
-    stats.unreachable_loose_pruned = detail.unreachable_loose;
+    stats.unreachable_loose_pruned = detail.unreachable_loose.pruned;
+    stats.unreachable_loose_kept = detail.unreachable_loose.kept;
     stats.unreachable_prune_ms = detail.unreachable_prune_ms;
     stats.unreachable_prune_ran = detail.unreachable_prune_ran;
     if report.packs_written > 0 {
@@ -933,7 +936,7 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
     } else {
         PruneStats {
             pruned: stats.repack.unreachable_loose_pruned,
-            kept: 0,
+            kept: stats.repack.unreachable_loose_kept,
         }
     };
     stats.prune_ran = stats.repack.unreachable_prune_ran;
@@ -1412,12 +1415,14 @@ mod tests {
         .expect("gc");
         let t = stats.phase_timings;
         assert!(stats.repack.objects_packed.is_some_and(|n| n > 0));
-        assert!(t.repack_ms > 0, "repack phase must be timed separately from full gc");
+        assert!(
+            t.repack_ms > 0,
+            "repack phase must be timed separately from full gc"
+        );
         assert!(stats.pack_refs.is_some());
         assert!(stats.commit_graph.is_some());
         assert_eq!(
-            t.prune_ms,
-            stats.repack.unreachable_prune_ms,
+            t.prune_ms, stats.repack.unreachable_prune_ms,
             "prune_ms must track unreachable loose prune inside repack, not repack_ms"
         );
         assert!(

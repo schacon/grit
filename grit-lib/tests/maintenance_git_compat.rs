@@ -8,7 +8,8 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::maintenance::{
-    fsck as repo_fsck, gc, repack_all, FsckOptions, GcOptions, RepackOptions,
+    fsck as repo_fsck, gc, prune_loose_objects, repack_all, FsckOptions, GcOptions, PruneOptions,
+    RepackOptions,
 };
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
@@ -684,6 +685,31 @@ fn gc_aborts_before_pack_removal_when_stale_loose_mtime_update_fails() {
         .status()
         .expect("sudo chattr cleanup");
     assert!(chattr_minus.success(), "sudo chattr -i cleanup");
+}
+
+#[test]
+fn gc_reports_kept_unreachable_loose_within_prune_grace() {
+    let dir = TempDir::new().expect("tempdir");
+    let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+    one_commit(&repo);
+
+    repo.odb()
+        .write_loose_materialize(ObjectKind::Blob, b"grace-protected orphan\n")
+        .expect("write unreachable loose blob");
+
+    let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("grit gc");
+    assert_eq!(
+        stats.prune.pruned, 0,
+        "recent orphan must survive grace window"
+    );
+    assert_eq!(
+        stats.prune.kept, 1,
+        "full gc must report kept count from unreachable loose prune"
+    );
+    assert!(stats.prune_ran);
+
+    let prune_only = prune_loose_objects(&repo, &PruneOptions::default()).expect("prune");
+    assert_eq!(prune_only.kept, stats.prune.kept);
 }
 
 #[test]

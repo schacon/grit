@@ -4757,6 +4757,7 @@ pub grit_lib::maintenance::RepackStats::packs_before: usize
 pub grit_lib::maintenance::RepackStats::pruned_loose: usize
 pub grit_lib::maintenance::RepackStats::removed_pack_files: usize
 pub grit_lib::maintenance::RepackStats::unreachable_loose_pruned: usize
+pub grit_lib::maintenance::RepackStats::unreachable_loose_kept: usize
 pub grit_lib::maintenance::RepackStats::unreachable_prune_ms: u64
 pub grit_lib::maintenance::RepackStats::unreachable_prune_ran: bool
 impl core::clone::Clone for grit_lib::maintenance::RepackStats
