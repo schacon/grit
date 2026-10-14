@@ -22,7 +22,8 @@ use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
 use crate::pathspec::pathspec_is_exclude;
 use crate::porcelain::index_mode::{
-    apply_executable_hint_to_index, is_chmod_eligible_mode, StageExecutableHint,
+    apply_executable_hint_to_index, is_chmod_eligible_mode, staged_mode_with_hint,
+    StageExecutableHint,
 };
 use crate::porcelain::pathspec_match::pathspec_matches_known_in_repository;
 use crate::porcelain::stage_tracked::stage_tracked_modifications_in_index;
@@ -299,6 +300,8 @@ fn stage_inner(
                 staging_stats.get(&path),
                 &mut index,
                 has_unmerged,
+                opts.executable_hint,
+                &matches,
             )?;
             outcome.modified += 1;
         }
@@ -319,6 +322,7 @@ fn stage_inner(
         &mut icase_map,
         &mut index,
         parallelism,
+        opts.executable_hint,
         &mut outcome,
     )?;
 
@@ -492,6 +496,18 @@ fn staged_mode_for_tracked_plan(
         .unwrap_or(plan_mode)
 }
 
+fn mode_with_executable_hint(
+    base_mode: u32,
+    rel_path: &str,
+    hint: StageExecutableHint,
+    matches: &impl Fn(&str) -> bool,
+) -> u32 {
+    if hint == StageExecutableHint::None || !matches(rel_path) {
+        return base_mode;
+    }
+    staged_mode_with_hint(base_mode, hint)
+}
+
 fn mode_from_diff_octal(mode: &str) -> Result<u32> {
     if mode.is_empty() || mode == "000000" {
         return Ok(0);
@@ -499,6 +515,7 @@ fn mode_from_diff_octal(mode: &str) -> Result<u32> {
     u32::from_str_radix(mode, 8).map_err(|e| Error::Message(format!("invalid mode '{mode}': {e}")))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_tracked_stage_plan(
     repo: &Repository,
     work_tree: &Path,
@@ -507,6 +524,8 @@ fn apply_tracked_stage_plan(
     cached_stat: Option<&crate::index::IndexStatFields>,
     index: &mut Index,
     has_unmerged: bool,
+    executable_hint: StageExecutableHint,
+    matches: &impl Fn(&str) -> bool,
 ) -> Result<()> {
     let trust_filemode = repo
         .config()
@@ -533,7 +552,12 @@ fn apply_tracked_stage_plan(
     }
 
     let oid = plan.oid;
-    let mode = staged_mode_for_tracked_plan(index, rel_path, plan.mode, trust_filemode);
+    let mode = mode_with_executable_hint(
+        staged_mode_for_tracked_plan(index, rel_path, plan.mode, trust_filemode),
+        rel_path,
+        executable_hint,
+        matches,
+    );
     let mut entry = if let Some(stat) = cached_stat {
         stat.index_entry(rel_path.as_bytes(), oid, mode)
     } else {
@@ -673,6 +697,7 @@ fn stage_untracked_paths_parallel(
     icase_map: &mut Stage0IcasePathMap,
     index: &mut Index,
     parallelism: Parallelism,
+    executable_hint: StageExecutableHint,
     outcome: &mut StageOutcome,
 ) -> Result<()> {
     let precompose_unicode = rules
@@ -744,13 +769,11 @@ fn stage_untracked_paths_parallel(
             continue;
         }
         icase_map.remove_alias_of(index, prep.index_relpath.as_bytes());
-        let mut entry = entry_from_metadata(
-            &prep.meta,
-            prep.index_relpath.as_bytes(),
-            prep.oid,
-            prep.mode,
-        );
-        entry.mode = prep.mode;
+        let mode =
+            mode_with_executable_hint(prep.mode, &prep.index_relpath, executable_hint, matches);
+        let mut entry =
+            entry_from_metadata(&prep.meta, prep.index_relpath.as_bytes(), prep.oid, mode);
+        entry.mode = mode;
         if !skip_per_path_cache_invalidate {
             index.invalidate_untracked_cache_for_path(&prep.index_relpath);
             index.invalidate_cache_tree_for_path(&entry.path);
@@ -772,7 +795,15 @@ fn stage_untracked_paths_parallel(
 
     for path in deferred {
         icase_map.remove_alias_of(index, path.as_bytes());
-        stage_untracked_path(repo, work_tree, &path, rules, index)?;
+        stage_untracked_path(
+            repo,
+            work_tree,
+            &path,
+            rules,
+            index,
+            executable_hint,
+            matches,
+        )?;
         outcome.added += 1;
     }
 
@@ -785,6 +816,8 @@ fn stage_untracked_path(
     rel_path: &str,
     rules: &WorktreeRules,
     index: &mut Index,
+    executable_hint: StageExecutableHint,
+    matches: &impl Fn(&str) -> bool,
 ) -> Result<()> {
     let rel_path = rel_path.trim_end_matches('/');
     let precompose_unicode = rules
@@ -812,7 +845,12 @@ fn stage_untracked_path(
     }
 
     let file_attrs = rules.file_attrs(&index_relpath, false);
-    let mode = mode_from_metadata(&meta);
+    let mode = mode_with_executable_hint(
+        mode_from_metadata(&meta),
+        &index_relpath,
+        executable_hint,
+        matches,
+    );
     let oid = materialize_worktree_blob(
         repo.odb(),
         &abs,
