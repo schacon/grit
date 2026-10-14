@@ -401,6 +401,8 @@ pub struct Index {
     pub source_mtime: Option<(u32, u32)>,
     /// When set, [`Self::invalidate_untracked_cache_for_path`] is a no-op (bulk staging defers invalidation).
     pub(crate) defer_untracked_cache_invalidation: bool,
+    /// In-memory only: Git `istate->fsmonitor_has_run_once`.
+    pub(crate) fsmonitor_refresh_ran: bool,
 }
 
 impl Default for Index {
@@ -769,6 +771,7 @@ impl Index {
             hash_algo: HashAlgo::Sha1,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            fsmonitor_refresh_ran: false,
         }
     }
 
@@ -817,6 +820,7 @@ impl Index {
             hash_algo: HashAlgo::Sha1,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            fsmonitor_refresh_ran: false,
         }
     }
 
@@ -845,6 +849,7 @@ impl Index {
                 hash_algo: HashAlgo::default(),
                 source_mtime: None,
                 defer_untracked_cache_invalidation: false,
+                fsmonitor_refresh_ran: false,
             };
         }
 
@@ -881,6 +886,7 @@ impl Index {
             hash_algo: HashAlgo::default(),
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            fsmonitor_refresh_ran: false,
         }
     }
 
@@ -907,6 +913,7 @@ impl Index {
                 hash_algo: HashAlgo::default(),
                 source_mtime: None,
                 defer_untracked_cache_invalidation: false,
+                fsmonitor_refresh_ran: false,
             };
         }
 
@@ -946,6 +953,7 @@ impl Index {
             hash_algo: HashAlgo::default(),
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            fsmonitor_refresh_ran: false,
         }
     }
 
@@ -1309,6 +1317,7 @@ impl Index {
             hash_algo,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            fsmonitor_refresh_ran: false,
         })
     }
 
