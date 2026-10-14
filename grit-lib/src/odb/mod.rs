@@ -56,7 +56,21 @@ use crate::midx::validate_midx_referenced_packs_with_diagnostics;
 use crate::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
 use crate::pack;
 use crate::pack_store::PackStore;
+use filetime::{set_file_mtime, FileTime};
 use flate2::Compression;
+
+use store::PackedObjects;
+
+/// How repack/gc retains unreachable objects stored only in packs about to be deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnreachablePackRetention {
+    /// Keep every unreachable object (matches `git repack -ad` with `-k` / `gc.pruneExpire=never`).
+    KeepAll,
+    /// Keep unreachable objects whose pack mtime is not strictly older than the cutoff.
+    KeepGraceProtected(std::time::SystemTime),
+    /// Drop unreachable objects when their pack is removed (immediate prune).
+    DropAll,
+}
 
 type MemOdbOverlayStore = Arc<RwLock<Option<Arc<MemoryStore>>>>;
 
@@ -901,6 +915,84 @@ impl Odb {
                 PackStore::invalidate_legacy_for_objects_dir(store.objects_dir());
             }
         }
+    }
+
+    /// Materialize unreachable objects from packfiles superseded by a new repack pack.
+    ///
+    /// Git gc stores grace-protected unreachable objects in cruft packs; grit writes them
+    /// loose (with preserved mtimes) so later loose pruning can apply `gc.pruneExpire`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates pack index read failures, object read/write errors, and I/O failures.
+    pub(crate) fn loosen_unreachable_from_superseded_packs(
+        &self,
+        pack_dir: &Path,
+        keep_pack: &Path,
+        reachable: &HashSet<ObjectId>,
+        retention: UnreachablePackRetention,
+    ) -> Result<usize> {
+        if matches!(retention, UnreachablePackRetention::DropAll) {
+            return Ok(0);
+        }
+        self.require_files_primary("repack")?;
+        let keep_idx = keep_pack.with_extension("idx");
+        let keep_pack_oids = if keep_idx.is_file() {
+            PackedObjects::object_ids_from_index_path(&keep_idx)?
+        } else {
+            HashSet::new()
+        };
+        let kept_pack_oids = oids_in_marker_kept_packs(pack_dir, keep_pack)?;
+        let mut loosened = 0usize;
+        for (idx_path, pack_mtime) in superseded_pack_indexes(pack_dir, keep_pack)? {
+            let oids = PackedObjects::object_ids_from_index_path(&idx_path)?;
+            for oid in oids {
+                if reachable.contains(&oid) {
+                    continue;
+                }
+                let keep = match retention {
+                    UnreachablePackRetention::KeepAll => true,
+                    UnreachablePackRetention::KeepGraceProtected(cutoff) => pack_mtime >= cutoff,
+                    UnreachablePackRetention::DropAll => false,
+                };
+                if !keep {
+                    continue;
+                }
+                if keep_pack_oids.contains(&oid) || kept_pack_oids.contains(&oid) {
+                    continue;
+                }
+                let loose_path = oid.loose_path_in(&self.objects_dir);
+                let pack_ft = system_time_to_file_time(pack_mtime);
+                match retention {
+                    UnreachablePackRetention::KeepGraceProtected(cutoff) => {
+                        if loose_path.is_file() {
+                            let loose_mtime = fs::metadata(&loose_path)
+                                .and_then(|m| m.modified())
+                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                            if loose_mtime >= cutoff {
+                                continue;
+                            }
+                            let _ = set_file_mtime(&loose_path, pack_ft);
+                            loosened += 1;
+                            continue;
+                        }
+                    }
+                    UnreachablePackRetention::KeepAll => {
+                        if loose_path.is_file() {
+                            continue;
+                        }
+                    }
+                    UnreachablePackRetention::DropAll => {}
+                }
+                let obj = self.read(&oid)?;
+                self.write_loose_materialize(obj.kind, &obj.data)?;
+                let primary = self.primary()?;
+                let loose_path = primary.loose_store().object_path(&oid);
+                let _ = set_file_mtime(&loose_path, pack_ft);
+                loosened += 1;
+            }
+        }
+        Ok(loosened)
     }
 
     fn core_multi_pack_index_enabled(&self) -> bool {
@@ -2018,6 +2110,95 @@ fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
         }
     }
     result
+}
+
+fn system_time_to_file_time(t: std::time::SystemTime) -> FileTime {
+    let dur = t
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    FileTime::from_unix_time(
+        i64::try_from(dur.as_secs()).unwrap_or(i64::MAX),
+        dur.subsec_nanos(),
+    )
+}
+
+fn superseded_pack_indexes(
+    pack_dir: &Path,
+    keep_pack: &Path,
+) -> Result<Vec<(PathBuf, std::time::SystemTime)>> {
+    let keep_stem = keep_pack
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "bad pack path",
+            ))
+        })?;
+    if !pack_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(pack_dir).map_err(Error::Io)? {
+        let entry = entry.map_err(Error::Io)?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str == keep_stem || name_str.starts_with(&format!("{keep_stem}.")) {
+            continue;
+        }
+        if !name_str.ends_with(".idx") {
+            continue;
+        }
+        let idx_path = entry.path();
+        let pack_path = idx_path.with_extension("pack");
+        if !pack_path.is_file() {
+            continue;
+        }
+        if superseded_pack_has_keep_marker(pack_dir, &pack_path) {
+            continue;
+        }
+        let pack_mtime = fs::metadata(&pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        out.push((idx_path, pack_mtime));
+    }
+    Ok(out)
+}
+
+fn superseded_pack_has_keep_marker(pack_dir: &Path, pack_path: &Path) -> bool {
+    let Some(stem) = pack_path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    pack_dir.join(format!("{stem}.keep")).is_file()
+}
+
+fn oids_in_marker_kept_packs(pack_dir: &Path, keep_pack: &Path) -> Result<HashSet<ObjectId>> {
+    let keep_stem = keep_pack.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let mut oids = HashSet::new();
+    if !pack_dir.is_dir() {
+        return Ok(oids);
+    }
+    for entry in fs::read_dir(pack_dir).map_err(Error::Io)? {
+        let entry = entry.map_err(Error::Io)?;
+        let pack_path = entry.path();
+        if pack_path.extension().is_none_or(|e| e != "pack") {
+            continue;
+        }
+        let Some(stem) = pack_path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if stem == keep_stem {
+            continue;
+        }
+        if !superseded_pack_has_keep_marker(pack_dir, &pack_path) {
+            continue;
+        }
+        let idx_path = pack_path.with_extension("idx");
+        if idx_path.is_file() {
+            oids.extend(PackedObjects::object_ids_from_index_path(&idx_path)?);
+        }
+    }
+    Ok(oids)
 }
 
 #[cfg(test)]

@@ -31,7 +31,7 @@ use crate::diff::bloom::BloomFilterSettings;
 use crate::environment::Environment;
 use crate::error::{ConfigError, Error, Result};
 use crate::fsck as repo_fsck;
-use crate::gc::{prune_loose_unreachable, PruneStats};
+use crate::gc::{prune_loose_unreachable, reachability_closure_for_roots, PruneStats};
 use crate::git_date::approx::approxidate_careful_at;
 use crate::index_pack::{install_pack_bytes, IngestPackOptions};
 use crate::midx::{
@@ -40,6 +40,7 @@ use crate::midx::{
 };
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::odb::UnreachablePackRetention;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
 use crate::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
 use crate::pack_objects::{build_pack, build_pack_from_send_list, PackBuildOptions};
@@ -684,6 +685,21 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             PackBitmapWriter::write(repo, &idx_path, &bitmap_opts, now)
                 .map_err(|e| Error::CorruptObject(e.to_string()))?;
         }
+
+        let retention = if opts.keep_unreachable {
+            UnreachablePackRetention::KeepAll
+        } else if let Some(cutoff) = opts.prune_older_than.map(offset_to_system_time) {
+            UnreachablePackRetention::KeepGraceProtected(cutoff)
+        } else {
+            UnreachablePackRetention::DropAll
+        };
+        let reachable = reachability_closure_for_roots(odb, &roots)?;
+        let _ = odb.loosen_unreachable_from_superseded_packs(
+            &pack_dir,
+            &ingested.pack_path,
+            &reachable,
+            retention,
+        )?;
 
         report.packs_removed = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
 

@@ -126,6 +126,14 @@ pub fn collect_referenced_object_roots(git_dir: &Path) -> Result<Vec<ObjectId>> 
     Ok(roots.into_iter().collect())
 }
 
+/// Full object closure reachable from maintenance roots (used before repack pack removal).
+pub(crate) fn reachability_closure_for_roots(
+    odb: &Odb,
+    roots: &[ObjectId],
+) -> Result<HashSet<ObjectId>> {
+    reachable_closure(odb, roots)
+}
+
 /// Compute the full object closure reachable from `roots` (commits → parents and
 /// tree, trees → entries, tags → target). Mirrors the reachability walk used by
 /// the transfer pack builder, but specialized for prune (no exclusion set).
