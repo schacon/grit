@@ -401,7 +401,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pack_path = dir.path().join("in.pack");
         std::fs::write(&pack_path, pack).expect("write");
-        let out = Command::new("git")
+        let out = Command::new("git") // hygiene: git index-pack cross-check in cfg(test) module
             .current_dir(dir.path())
             .args(["index-pack", "-v", &pack_path.to_string_lossy()])
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -566,7 +566,7 @@ mod tests {
     fn rss_mmap_index_records() {
         use crate::hash::Parallelism;
         use std::env;
-        let path = env::var("GRIT_CARGO_PACK").expect("GRIT_CARGO_PACK");
+        let path = env::var("GRIT_CARGO_PACK").expect("GRIT_CARGO_PACK"); // hygiene: manual RSS harness env in cfg(test)
         let mapped = PackData::open(Path::new(&path)).expect("mmap");
         let tmp = tempfile::tempdir().expect("tempdir");
         let odb = Odb::new(tmp.path());
@@ -617,7 +617,7 @@ mod tests {
     }
 
     fn run_git(cwd: &Path, args: &[&str]) {
-        let out = Command::new("/usr/bin/git")
+        let out = Command::new("/usr/bin/git") // hygiene: git fixture helper in cfg(test) module
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -665,7 +665,7 @@ mod tests {
         let local_odb = open_odb(&local_git);
         let remote_odb = open_odb(&bare);
 
-        let tip_out = Command::new("/usr/bin/git")
+        let tip_out = Command::new("/usr/bin/git") // hygiene: git fixture cross-check in cfg(test) module
             .args(["rev-parse", "refs/heads/main"])
             .current_dir(&bare)
             .output()
@@ -759,7 +759,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pack_path = dir.path().join("in.pack");
         std::fs::write(&pack_path, pack).expect("write pack");
-        let out = Command::new("/usr/bin/git")
+        let out = Command::new("/usr/bin/git") // hygiene: git index-pack strict cross-check in cfg(test) module
             .current_dir(dir.path())
             .args([
                 "index-pack",
