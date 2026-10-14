@@ -467,7 +467,7 @@ fn same_branch_switch_appends_head_checkout_reflog() {
 
 #[test]
 fn remote_dwim_create_uses_remote_ref_in_branch_reflog() {
-    let (_dir, repo) = init_repo();
+    let (dir, repo) = init_repo();
     let tip = grit_commit(&repo, "f", "1\n", None);
     refs::write_ref(repo.git_dir(), "refs/remotes/origin/topic", &tip).expect("remote");
 
@@ -487,6 +487,32 @@ fn remote_dwim_create_uses_remote_ref_in_branch_reflog() {
     assert_eq!(
         topic_log[0].message,
         "branch: Created from refs/remotes/origin/topic"
+    );
+
+    let config = repo.config().expect("config");
+    assert_eq!(config.get("branch.topic.remote").as_deref(), Some("origin"));
+    assert_eq!(
+        config.get("branch.topic.merge").as_deref(),
+        Some("refs/heads/topic")
+    );
+
+    let git_remote = Command::new("git")
+        .current_dir(dir.path())
+        .args(["config", "--get", "branch.topic.remote"])
+        .output()
+        .expect("git config remote");
+    assert!(git_remote.status.success());
+    assert_eq!(String::from_utf8_lossy(&git_remote.stdout).trim(), "origin");
+
+    let git_merge = Command::new("git")
+        .current_dir(dir.path())
+        .args(["config", "--get", "branch.topic.merge"])
+        .output()
+        .expect("git config merge");
+    assert!(git_merge.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&git_merge.stdout).trim(),
+        "refs/heads/topic"
     );
 }
 

@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use grit_lib::diff::DiffEntry;
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
+use grit_lib::refs;
+use grit_lib::refs::branch_tracking::{shorten_tracking_ref, upstream_tracking_full_ref};
 use grit_lib::state::{detect_in_progress, HeadState, InProgressOperation};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -418,6 +420,18 @@ fn in_progress_label(op: InProgressOperation) -> String {
     }
 }
 
+fn resolve_status_target(
+    repo: &grit_lib::repo::Repository,
+    branch_short: &str,
+) -> Result<Option<(String, grit_lib::objects::ObjectId)>> {
+    if let Some(upstream_ref) = upstream_tracking_full_ref(repo, branch_short) {
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &upstream_ref) {
+            return Ok(Some((shorten_tracking_ref(&upstream_ref), oid)));
+        }
+    }
+    Ok(context::find_target_branch(repo)?.map(|target| (target.display_name, target.oid)))
+}
+
 fn header_for_in_progress(merging: bool, in_progress: &[String]) -> Option<HeaderKind> {
     if merging || in_progress.iter().any(|s| s == "merge") {
         return Some(HeaderKind::MergeInProgress);
@@ -441,7 +455,8 @@ fn resolve_header(
             ..
         } => {
             let in_progress_header = header_for_in_progress(merging, in_progress);
-            match context::find_target_branch(repo)? {
+            let target = resolve_status_target(repo, short_name)?;
+            match target {
                 None => (
                     Some(short_name.clone()),
                     false,
@@ -452,11 +467,11 @@ fn resolve_header(
                     Vec::new(),
                     in_progress_header.unwrap_or(HeaderKind::NoTarget),
                 ),
-                Some(target) => {
+                Some((display_name, target_oid)) => {
                     let tracking = context::commits_ahead_behind_of(
                         repo,
                         *head_oid,
-                        target.oid,
+                        target_oid,
                         SHORTLOG_LIMIT,
                     )?;
                     let header =
@@ -470,7 +485,7 @@ fn resolve_header(
                         Some(short_name.clone()),
                         false,
                         Some(head_oid.to_hex()),
-                        Some(target.display_name),
+                        Some(display_name),
                         tracking.ahead,
                         tracking.behind,
                         tracking.commits,

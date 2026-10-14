@@ -38,6 +38,8 @@ pub enum SwitchMode {
         start_oid: ObjectId,
         /// Label for `branch: Created from …` (e.g. `HEAD`, `main`, `refs/remotes/origin/topic`).
         create_source_label: String,
+        /// When set, write `branch.<branch>.remote` and `branch.<branch>.merge` after a successful create.
+        track_upstream: Option<(String, String)>,
     },
     /// Detached `HEAD` at `commit`.
     Detached {
@@ -97,6 +99,7 @@ pub fn resolve_create_branch(
         branch: branch.to_owned(),
         start_oid,
         create_source_label: switch_create_reflog_source_label(start_point),
+        track_upstream: None,
     })
 }
 
@@ -131,9 +134,10 @@ pub fn resolve_switch_target(repo: &Repository, spec: &str) -> Result<SwitchMode
                 });
             }
             return Ok(SwitchMode::Create {
-                branch: short,
+                branch: short.clone(),
                 start_oid: oid,
-                create_source_label: candidate,
+                create_source_label: candidate.clone(),
+                track_upstream: upstream_config_from_remote_tracking_ref(&candidate, &short),
             });
         }
     }
@@ -143,6 +147,31 @@ pub fn resolve_switch_target(repo: &Repository, spec: &str) -> Result<SwitchMode
     }
 
     Err(Error::Message(format!("no branch named '{spec}'")))
+}
+
+fn upstream_config_from_remote_tracking_ref(
+    tracking_ref: &str,
+    branch_short: &str,
+) -> Option<(String, String)> {
+    let rest = tracking_ref.strip_prefix("refs/remotes/")?;
+    let suffix = format!("/{branch_short}");
+    let remote = rest.strip_suffix(&suffix)?;
+    if remote.is_empty() {
+        return None;
+    }
+    Some((remote.to_owned(), format!("refs/heads/{branch_short}")))
+}
+
+fn write_branch_upstream_config(
+    repo: &Repository,
+    branch_short: &str,
+    remote: &str,
+    merge: &str,
+) -> Result<()> {
+    let handle = repo.config_handle();
+    handle.set_local(&format!("branch.{branch_short}.remote"), remote)?;
+    handle.set_local(&format!("branch.{branch_short}.merge"), merge)?;
+    Ok(())
 }
 
 fn normalize_switch_spec(spec: &str) -> &str {
@@ -201,47 +230,59 @@ pub fn resolve_revision_spec(repo: &Repository, spec: &str) -> Result<ObjectId> 
 
 /// Perform a branch switch or detached checkout.
 pub fn switch_repository(repo: &Repository, opts: &SwitchOptions) -> Result<SwitchOutcome> {
-    let (target_oid, branch_ref, created, detached, branch_label, pending_create, reflog_to) =
-        match &opts.mode {
-            SwitchMode::Existing { branch, oid } => (
-                *oid,
+    let (
+        target_oid,
+        branch_ref,
+        created,
+        detached,
+        branch_label,
+        pending_create,
+        track_upstream,
+        reflog_to,
+    ) = match &opts.mode {
+        SwitchMode::Existing { branch, oid } => (
+            *oid,
+            format!("refs/heads/{branch}"),
+            false,
+            false,
+            branch.clone(),
+            None,
+            None,
+            branch.clone(),
+        ),
+        SwitchMode::Create {
+            branch,
+            start_oid,
+            create_source_label,
+            track_upstream,
+        } => (
+            *start_oid,
+            format!("refs/heads/{branch}"),
+            true,
+            false,
+            branch.clone(),
+            Some((
                 format!("refs/heads/{branch}"),
-                false,
-                false,
-                branch.clone(),
-                None,
-                branch.clone(),
-            ),
-            SwitchMode::Create {
-                branch,
-                start_oid,
-                create_source_label,
-            } => (
                 *start_oid,
-                format!("refs/heads/{branch}"),
-                true,
-                false,
-                branch.clone(),
-                Some((
-                    format!("refs/heads/{branch}"),
-                    *start_oid,
-                    create_source_label.clone(),
-                )),
-                branch.clone(),
-            ),
-            SwitchMode::Detached {
-                commit,
-                reflog_to_label,
-            } => (
-                *commit,
-                String::new(),
-                false,
-                true,
-                String::new(),
-                None,
-                reflog_to_label.clone(),
-            ),
-        };
+                create_source_label.clone(),
+            )),
+            track_upstream.clone(),
+            branch.clone(),
+        ),
+        SwitchMode::Detached {
+            commit,
+            reflog_to_label,
+        } => (
+            *commit,
+            String::new(),
+            false,
+            true,
+            String::new(),
+            None,
+            None,
+            reflog_to_label.clone(),
+        ),
+    };
 
     if let SwitchMode::Existing { branch, .. } = &opts.mode {
         crate::worktree::ensure_branch_not_checked_out_elsewhere(repo, branch)?;
@@ -280,6 +321,7 @@ pub fn switch_repository(repo: &Repository, opts: &SwitchOptions) -> Result<Swit
         detached,
         &branch_label,
         pending_create,
+        track_upstream,
         &reflog_to,
     )
 }
@@ -293,6 +335,7 @@ fn switch_to_target(
     detached: bool,
     branch_label: &str,
     pending_create: Option<(String, ObjectId, String)>,
+    track_upstream: Option<(String, String)>,
     reflog_to_label: &str,
 ) -> Result<SwitchOutcome> {
     let head_before = resolve_head(repo.git_dir())?;
@@ -333,6 +376,12 @@ fn switch_to_target(
             refs::write_ref(repo.git_dir(), "HEAD", &target_oid)?;
         } else {
             refs::write_symbolic_ref(repo.git_dir(), "HEAD", branch_ref)?;
+        }
+    }
+
+    if created {
+        if let Some((remote, merge)) = track_upstream {
+            write_branch_upstream_config(repo, branch_label, &remote, &merge)?;
         }
     }
 
@@ -687,12 +736,44 @@ mod tests {
                     branch: "leaked".into(),
                     start_oid: refs::resolve_ref(repo.git_dir(), "refs/heads/other").expect("oid"),
                     create_source_label: "HEAD".into(),
+                    track_upstream: None,
                 },
             },
         )
         .expect_err("conflict");
         assert!(matches!(err, Error::Message(_)));
         assert!(refs::resolve_ref(repo.git_dir(), "refs/heads/leaked").is_err());
+    }
+
+    #[test]
+    fn remote_dwim_create_writes_upstream_branch_config() {
+        let (_dir, repo) = init_repo();
+        let tip = commit_on_branch(&repo, "main", "f", "1\n", None);
+        refs::write_ref(repo.git_dir(), "refs/remotes/origin/topic", &tip).expect("remote");
+
+        let mode = resolve_switch_target(&repo, "origin/topic").expect("resolve");
+        match &mode {
+            SwitchMode::Create {
+                branch,
+                track_upstream,
+                ..
+            } => {
+                assert_eq!(branch, "topic");
+                assert_eq!(
+                    track_upstream.as_ref(),
+                    Some(&("origin".to_owned(), "refs/heads/topic".to_owned()))
+                );
+            }
+            other => panic!("expected create from remote, got {other:?}"),
+        }
+
+        switch_repository(&repo, &SwitchOptions { mode }).expect("switch");
+        let config = repo.config().expect("config");
+        assert_eq!(config.get("branch.topic.remote").as_deref(), Some("origin"));
+        assert_eq!(
+            config.get("branch.topic.merge").as_deref(),
+            Some("refs/heads/topic")
+        );
     }
 
     #[test]

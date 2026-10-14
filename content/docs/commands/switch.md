@@ -27,7 +27,7 @@ A local branch can only be checked out in one worktree at a time (including link
 
 With `-c`, creates the branch at the current commit (or at `<start-point>` when you pass one), then switches to it.
 
-When `<branch>` names a remote-tracking branch (for example `origin/feature`), Grit creates `feature` at the same commit and switches to it if no local branch exists yet.
+When `<branch>` names a remote-tracking branch (for example `origin/feature`), Grit creates `feature` at the same commit and switches to it if no local branch exists yet. It also records upstream tracking in the repository config (`branch.feature.remote` and `branch.feature.merge`), the same keys `git switch` writes, so `grit status`, `grit pull`, and `grit push` use the matching remote branch.
 
 `--detach` checks out `<rev>` without moving a branch tip. Use another branch or `grit switch <branch>` to reattach.
 

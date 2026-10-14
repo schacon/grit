@@ -8686,6 +8686,7 @@ pub grit_lib::porcelain::switch::SwitchMode::Create
 pub grit_lib::porcelain::switch::SwitchMode::Create::branch: alloc::string::String
 pub grit_lib::porcelain::switch::SwitchMode::Create::create_source_label: alloc::string::String
 pub grit_lib::porcelain::switch::SwitchMode::Create::start_oid: grit_lib::objects::ObjectId
+pub grit_lib::porcelain::switch::SwitchMode::Create::track_upstream: core::option::Option<(alloc::string::String, alloc::string::String)>
 pub grit_lib::porcelain::switch::SwitchMode::Detached
 pub grit_lib::porcelain::switch::SwitchMode::Detached::commit: grit_lib::objects::ObjectId
 pub grit_lib::porcelain::switch::SwitchMode::Detached::reflog_to_label: alloc::string::String

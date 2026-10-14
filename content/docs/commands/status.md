@@ -29,7 +29,9 @@ Paths are shown relative to the directory you run `grit` from. Names that contai
 
 ### The target branch
 
-The target is the branch your work is headed for. `grit` uses the first of these that exists:
+The target is the branch your work is compared against in the header line. When the current branch has upstream tracking configured (`branch.<name>.remote` and `branch.<name>.merge`, including after `grit switch origin/<topic>` creates a local branch), `grit` compares against that upstream first.
+
+Otherwise it uses the first of these that exists:
 
 1. the branch named in the `target.branch` config setting
 2. `origin/master`

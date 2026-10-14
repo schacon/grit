@@ -320,6 +320,61 @@ fn git_symmetric_ahead_behind(repo: &Path) -> (usize, usize) {
 }
 
 #[test]
+fn status_json_uses_upstream_after_switch_from_remote_tracking() -> TestResult {
+    let scratch = Scratch::new("status-switch-upstream")?;
+    let remote = scratch.child("r.git");
+    let upstream = scratch.child("w");
+    let clone = scratch.child("c");
+    fs::create_dir_all(&upstream)?;
+    system_git_ok(
+        scratch.path(),
+        &["init", "-q", "--bare", &path_arg(&remote)],
+    );
+    system_git_ok(&upstream, &["clone", "-q", &path_arg(&remote), "."]);
+    system_git_ok(&upstream, &["config", "user.name", "T"]);
+    system_git_ok(&upstream, &["config", "user.email", "t@e.com"]);
+    write_file(&upstream.join("f"), "1\n");
+    system_git_ok(&upstream, &["add", "f"]);
+    system_git_ok(&upstream, &["commit", "-qm", "main"]);
+    system_git_ok(&upstream, &["push", "-u", "origin", "HEAD:main"]);
+    system_git_ok(&upstream, &["checkout", "-qb", "topic"]);
+    write_file(&upstream.join("g"), "2\n");
+    system_git_ok(&upstream, &["add", "g"]);
+    system_git_ok(&upstream, &["commit", "-qm", "topic"]);
+    system_git_ok(&upstream, &["push", "-u", "origin", "HEAD:topic"]);
+
+    system_git_ok(
+        scratch.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "main",
+            &path_arg(&remote),
+            &path_arg(&clone),
+        ],
+    );
+
+    gs_ok(&clone, &["switch", "topic"]);
+
+    let v = gs_json(&clone, &["status"]);
+    assert_eq!(v["branch"], "topic");
+    assert_eq!(v["target"], "origin/topic");
+    assert_eq!(v["ahead"], 0);
+    assert_eq!(v["behind"], 0);
+    assert_eq!(v["clean"], Value::Bool(true));
+
+    let git_remote = Command::new("git")
+        .args(["config", "--get", "branch.topic.remote"])
+        .current_dir(&clone)
+        .output()
+        .expect("git config");
+    assert!(git_remote.status.success());
+    assert_eq!(String::from_utf8_lossy(&git_remote.stdout).trim(), "origin");
+    Ok(())
+}
+
+#[test]
 fn status_json_behind_and_diverged_match_git() -> TestResult {
     let scratch = Scratch::new("status-behind")?;
     let remote = scratch.child("r.git");
