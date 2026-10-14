@@ -15,7 +15,7 @@ use crate::network_fixture::{ensure_fixture, NetworkFixtureKind, NetworkProfile}
 use crate::scenarios::{run_scenario, Driver, PrepareKind, RunConfig, Scenario};
 use crate::schema::{BenchReport, ToolVersions, SCHEMA_VERSION};
 
-fn git_env(cmd: &mut Command) {
+pub(crate) fn git_env(cmd: &mut Command) {
     cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_CONFIG_COUNT", "1")
@@ -50,7 +50,7 @@ fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
-fn seed_loose_objects(git: &Path, repo: &Path) -> Result<()> {
+pub(crate) fn seed_loose_objects(git: &Path, repo: &Path) -> Result<()> {
     for i in 0..40 {
         let mut cmd = Command::new(git);
         cmd.args(["commit", "--allow-empty", "-m", &format!("gc-bench-{i}")])
@@ -101,8 +101,14 @@ pub fn run_maintenance_suite(
         NetworkProfile::Production
     };
     let bare = ensure_fixture(git, profile, NetworkFixtureKind::DeepHistory)?;
+    let marker = crate::maintenance_prepare::maintenance_bare_marker_path();
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent).context("create scratch dir for maintenance marker")?;
+    }
+    std::fs::write(&marker, bare.display().to_string()).context("write maintenance bare marker")?;
     let worktree = prepare_gc_fixture(git, &bare)?;
     let mut scenarios = Vec::new();
+    let prepare_kind = Some(crate::scenarios::PrepareKind::MaintenanceReset);
 
     std::env::set_var(
         "GRIT_BENCH_MAINTENANCE_BARE",
@@ -125,7 +131,7 @@ pub fn run_maintenance_suite(
             grit_argv: vec!["gc".into()],
             git_argv: vec!["gc".into(), "--quiet".into()],
             driver: Driver::Cli,
-            prepare_kind: Some(PrepareKind::MaintenanceReset),
+            prepare_kind,
             grit_via_shell: false,
             git_via_shell: false,
         },
@@ -145,7 +151,7 @@ pub fn run_maintenance_suite(
             grit_argv: vec!["gc".into(), "repack".into(), "--bitmaps".into()],
             git_argv: vec!["repack".into(), "-adb".into()],
             driver: Driver::Cli,
-            prepare_kind: Some(PrepareKind::MaintenanceReset),
+            prepare_kind,
             grit_via_shell: false,
             git_via_shell: false,
         },
@@ -171,7 +177,7 @@ pub fn run_maintenance_suite(
                 "--changed-paths".into(),
             ],
             driver: Driver::Cli,
-            prepare_kind: Some(PrepareKind::MaintenanceReset),
+            prepare_kind,
             grit_via_shell: false,
             git_via_shell: false,
         },

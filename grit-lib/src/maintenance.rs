@@ -671,8 +671,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         .unwrap_or_else(|| PackBuildOptions::for_local_copy(cfg.as_ref()));
 
     if opts.dry_run {
-        report.objects =
-            estimate_repack_object_count(odb, &roots, opts.keep_unreachable, &pack_opts)?;
+        report.objects = if opts.incremental {
+            odb.enumerate_local_loose_objects()?.len()
+        } else {
+            estimate_repack_object_count(odb, &roots, opts.keep_unreachable, &pack_opts)?
+        };
         return Ok(RepackDetail {
             report,
             prune_packed_loose: 0,
@@ -682,7 +685,20 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         });
     }
 
-    let pack_bytes = build_repack_pack(odb, &roots, opts.keep_unreachable, &pack_opts)?;
+    let pack_bytes = if opts.incremental {
+        pack_loose_objects_incremental(odb, repo, &pack_opts, &cfg)?
+    } else {
+        build_repack_pack(odb, &roots, opts.keep_unreachable, &pack_opts)?
+    };
+    if pack_bytes.is_empty() {
+        return Ok(RepackDetail {
+            report,
+            prune_packed_loose: 0,
+            unreachable_loose: PruneStats::default(),
+            unreachable_prune_ms: 0,
+            unreachable_prune_ran: false,
+        });
+    }
     let mut prune_packed_loose = 0usize;
     let mut unreachable_loose = PruneStats::default();
     let pack_trailer_len = 12 + odb.hash_algo().len();
@@ -733,7 +749,11 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             retention,
         )?;
 
-        report.packs_removed = remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?;
+        report.packs_removed = if opts.incremental {
+            0
+        } else {
+            remove_superseded_pack_files(&pack_dir, &ingested.pack_path)?
+        };
 
         prune_packed_loose =
             prune_packed_objects(objects_dir, PrunePackedOptions::default())?.len();
@@ -859,6 +879,33 @@ fn gc_repack_writes_bitmap(repo: &Repository, config: &ConfigSet) -> bool {
         return v;
     }
     repo.work_tree().is_none()
+}
+
+fn pack_loose_objects_incremental(
+    odb: &Odb,
+    _repo: &Repository,
+    pack_opts: &PackBuildOptions,
+    _config: &Option<ConfigSet>,
+) -> Result<Vec<u8>> {
+    let loose: Vec<ObjectId> = odb
+        .enumerate_local_loose_objects()?
+        .into_iter()
+        .map(|(oid, _)| oid)
+        .collect();
+    if loose.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut incremental_opts = *pack_opts;
+    incremental_opts.delta = false;
+    incremental_opts.reuse_deltas = false;
+    incremental_opts.use_bitmaps = false;
+    build_pack_from_send_list(
+        odb,
+        &loose,
+        &HashSet::new(),
+        &incremental_opts,
+        &HashMap::new(),
+    )
 }
 
 /// Delete unreachable loose objects using `gc.pruneExpire` or an explicit cutoff.
@@ -1361,6 +1408,71 @@ mod tests {
         )
         .expect("fsck");
         assert!(report.ok, "{:?}", report.issues);
+    }
+
+    #[test]
+    fn incremental_repack_adds_pack_without_removing_base() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let wt = repo.work_tree().unwrap();
+        std::fs::write(wt.join("base"), b"v1").unwrap();
+        stage_for_commit(&repo, &mut NullProgress).expect("stage");
+        let ident = "Test <t@example.com> 1 +0000".to_string();
+        create_commit(
+            &repo,
+            &CommitRequest {
+                message: "base".into(),
+                author: ident.clone(),
+                committer: ident.clone(),
+                allow_empty: false,
+                sign_override: None,
+                amend: false,
+                assume_worktree_synced: false,
+            },
+            &mut NullProgress,
+        )
+        .expect("commit");
+        repack_all(
+            &repo,
+            &RepackOptions {
+                keep_unreachable: false,
+                ..RepackOptions::default()
+            },
+        )
+        .expect("repack");
+        let pack_dir = repo.git_dir().join("objects/pack");
+        let packs_before = count_pack_files(&pack_dir);
+        assert_eq!(packs_before, 1);
+        for i in 0..5 {
+            create_commit(
+                &repo,
+                &CommitRequest {
+                    message: format!("empty-{i}"),
+                    author: ident.clone(),
+                    committer: ident.clone(),
+                    allow_empty: true,
+                    sign_override: None,
+                    amend: false,
+                    assume_worktree_synced: false,
+                },
+                &mut NullProgress,
+            )
+            .expect("empty");
+        }
+        assert!(count_loose_objects(repo.odb()).expect("loose") >= 2);
+        repack_all(
+            &repo,
+            &RepackOptions {
+                incremental: true,
+                write_bitmap: false,
+                ..RepackOptions::default()
+            },
+        )
+        .expect("incremental repack");
+        assert!(
+            count_pack_files(&pack_dir) >= 2,
+            "incremental repack should add a pack, not replace the base"
+        );
     }
 
     #[test]

@@ -749,6 +749,149 @@ fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
     );
 }
 
+fn git_loose_object_count(dir: &Path) -> usize {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(["count-objects"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("count-objects");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .next()
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+fn git_pack_count(git_dir: &Path) -> usize {
+    std::fs::read_dir(git_dir.join("objects/pack"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        .count()
+}
+
+fn repo_with_one_pack_and_loose_commits(loose_commits: usize) -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    std::fs::write(dir.path().join("f"), b"x").expect("file");
+    git(dir.path(), &["add", "f"]);
+    git(dir.path(), &["commit", "-m", "base"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    for i in 0..loose_commits {
+        git(
+            dir.path(),
+            &["commit", "--allow-empty", "-m", &format!("loose-{i}")],
+        );
+    }
+    dir
+}
+
+#[test]
+fn gc_packs_loose_objects_like_git() {
+    let seed = repo_with_one_pack_and_loose_commits(3);
+    assert_eq!(
+        git_loose_object_count(seed.path()),
+        3,
+        "fixture must start with three loose objects"
+    );
+
+    let grit_dir = TempDir::new().expect("grit copy");
+    duplicate_repo_tree(seed.path(), grit_dir.path());
+    let git_dir = TempDir::new().expect("git copy");
+    duplicate_repo_tree(seed.path(), git_dir.path());
+
+    let repo = Repository::discover(Some(grit_dir.path()), &RepositoryOptions::empty())
+        .expect("open grit copy");
+    gc(
+        &repo,
+        &GcOptions::with_reflog_policy(1_700_000_000, false),
+    )
+    .expect("grit gc");
+
+    git(git_dir.path(), &["gc", "--quiet"]);
+
+    assert_eq!(
+        git_loose_object_count(grit_dir.path()),
+        git_loose_object_count(git_dir.path()),
+        "grit gc must pack loose objects like git gc"
+    );
+    assert_eq!(git_loose_object_count(grit_dir.path()), 0);
+    git_fsck(grit_dir.path(), true);
+}
+
+#[test]
+fn repack_consolidates_multiple_packs_like_git_repack_ad() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c1"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c2"]);
+    git(dir.path(), &["repack", "-d"]);
+    let git_dir = dir.path().join(".git");
+    assert_eq!(
+        git_pack_count(&git_dir),
+        2,
+        "fixture must have two pack files before consolidation"
+    );
+
+    let grit_copy = TempDir::new().expect("grit");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let git_copy = TempDir::new().expect("git");
+    duplicate_repo_tree(dir.path(), git_copy.path());
+
+    let repo =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    repack_all(&repo, &RepackOptions::default()).expect("grit repack");
+    git(git_copy.path(), &["repack", "-a", "-d"]);
+
+    assert_eq!(
+        git_pack_count(&grit_copy.path().join(".git")),
+        git_pack_count(&git_copy.path().join(".git")),
+        "grit repack must consolidate packs like git repack -ad"
+    );
+    assert_eq!(git_pack_count(&grit_copy.path().join(".git")), 1);
+}
+
+#[test]
+fn gc_autopacklimit_consolidates_packs_like_git() {
+    let dir = TempDir::new().expect("tempdir");
+    git(dir.path(), &["init", "-b", "main"]);
+    git(dir.path(), &["config", "gc.autoPackLimit", "1"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c1"]);
+    git(dir.path(), &["repack", "-a", "-d"]);
+    git(dir.path(), &["commit", "--allow-empty", "-m", "c2"]);
+    git(dir.path(), &["repack", "-d"]);
+    let git_dir = dir.path().join(".git");
+    assert_eq!(git_pack_count(&git_dir), 2);
+
+    let grit_copy = TempDir::new().expect("grit");
+    duplicate_repo_tree(dir.path(), grit_copy.path());
+    let git_copy = TempDir::new().expect("git");
+    duplicate_repo_tree(dir.path(), git_copy.path());
+
+    let repo =
+        Repository::discover(Some(grit_copy.path()), &RepositoryOptions::empty()).expect("open");
+    gc(
+        &repo,
+        &GcOptions::with_reflog_policy(1_700_000_000, false),
+    )
+    .expect("grit gc");
+    git(git_copy.path(), &["gc", "--quiet"]);
+
+    assert_eq!(
+        git_pack_count(&grit_copy.path().join(".git")),
+        git_pack_count(&git_copy.path().join(".git")),
+        "grit gc must consolidate packs when autopacklimit exceeded, like git gc"
+    );
+    assert_eq!(git_pack_count(&grit_copy.path().join(".git")), 1);
+}
+
 #[test]
 fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
     let dir = TempDir::new().expect("tempdir");

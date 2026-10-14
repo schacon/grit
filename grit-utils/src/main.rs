@@ -8,7 +8,8 @@ use grit_utils::compare::compare_files;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
 use grit_utils::fsck_suite::run_fsck_suite;
 use grit_utils::ignore_suite::run_ignore_suite;
-use grit_utils::maintenance_suite::{run_maintenance_suite, run_prepare_maintenance};
+use grit_utils::maintenance_prepare::run_prepare_maintenance;
+use grit_utils::maintenance_suite::run_maintenance_suite;
 use grit_utils::network_fixture::NetworkProfile;
 use grit_utils::network_suite::{
     prepare_network_clone, prepare_network_fetch_incr, prepare_network_fetch_noop,
@@ -230,6 +231,11 @@ enum Cmd {
     },
     #[command(hide = true)]
     PrepareCommit {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareMaintenance {
         #[arg(long)]
         git: PathBuf,
     },
@@ -575,6 +581,10 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_commit(&git);
         }
+        Cmd::PrepareMaintenance { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return run_prepare_maintenance(&git);
+        }
         Cmd::ServeGitHttp { root, bind } => {
             let git = resolve_binary("git", cli.git.as_deref())?;
             let listener = TcpListener::bind(bind).context("bind")?;
@@ -858,6 +868,7 @@ fn main() -> Result<()> {
         | Cmd::PreparePickSeries { .. }
         | Cmd::PrepareRevert { .. }
         | Cmd::PrepareCommit { .. }
+        | Cmd::PrepareMaintenance { .. }
         | Cmd::PrepareRefs { .. }
         | Cmd::PrepareNetworkClone { .. }
         | Cmd::PrepareNetworkFetchIncr { .. }
