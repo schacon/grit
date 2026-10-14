@@ -712,6 +712,12 @@ pub fn register_network_snapshot_filters(
     settings.add_filter(r" \([\d.]+ (?:KiB|MiB|B)\)", " ([SIZE])");
     settings.add_filter(r" in [\d.]+s\.", " in [ELAPSED].");
     settings.add_filter(r" \([\d.]+s\)", " ([ELAPSED])");
+    // Clone summary: throughput, per-phase timings and the time bar vary run to run.
+    settings.add_filter(r"[\d.]+ (?:B|KiB|MiB|GiB)/s", "[RATE]");
+    settings.add_filter(r#"\\"seconds\\": [\d.e-]+"#, r#"\"seconds\": 0"#);
+    settings.add_filter(r"\| [\d.]+ \|\\n", "| [SECONDS] |\\n");
+    settings.add_filter(r"(  time {6})[^\\]*", "$1[TIME BAR]");
+    settings.add_filter(r"(\\n {12})[^\\]*", "$1[TIMELINE]");
 }
 
 /// Run `callback` with [`register_cli_snapshot_filters`] applied.

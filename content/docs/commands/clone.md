@@ -21,7 +21,9 @@ Clone fetches every remote tag under `refs/tags/`, including tags on commits tha
 
 Without `<dir>`, the directory is named after the last part of the URL with any `.git` suffix removed, so `https://github.com/gitbutlerapp/grit.git` clones into `grit`. The destination must not exist or must be empty. If the path already exists and is not empty, grit refuses the clone and leaves the directory and its files unchanged.
 
-On an interactive terminal (human output, not `--json` or `--markdown`), grit prints a live **Checking out files** counter on stderr while the working tree is populated after the fetch completes.
+On an interactive terminal (human output, not `--json` or `--markdown`), each step of the clone gets one live line on stderr: **Receiving** (pack bytes), **Indexing** (objects), **Resolving** (deltas) and **Checkout** (files). Each line has a scrolling, colored graph of throughput over the last few seconds, a count, a completion bar when the total is known, the current rate and the elapsed time. When a step finishes, its line stays on screen with a graph of the whole step, the total and the average rate.
+
+After the clone, stdout gets a summary: total time with a bar showing where it went (including time spent connecting before any data arrives and finishing after the last step), bytes received with average and peak throughput, objects by type, branches and tags, and the files and bytes in the work tree. Colors follow the terminal and are turned off by `NO_COLOR`.
 
 For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/).
 
@@ -47,13 +49,28 @@ On failure, `grit clone` exits **1** for most errors (destination not empty, che
 Clone a repository from GitHub:
 
 ```console
-$ grit clone https://github.com/gitbutlerapp/grit.git
-Cloning into 'grit' ...
-Receiving objects: 4.12 MiB, 8.50 MiB/s, done.
-Cloned into 'grit' on branch main — 12543 objects (4.12 MiB), 12 branches, 48 tags, 842 files in 2.35s.
+$ grit clone https://github.com/BurntSushi/ripgrep.git
+Cloning https://github.com/BurntSushi/ripgrep.git → ripgrep
+  remote: Enumerating objects: 14062, done.
+  remote: Counting objects: 100% (83/83), done.
+  remote: Compressing objects: 100% (47/47), done.
+  remote: Total 14062 (delta 51), reused 36 (delta 36), pack-reused 13979 (from 2)
+✓ Receiving  ▃▃▃▃▆▆▆███▆▆▆▆▆▆▆▆▆▆▆▆▇▇▇▅▅▅          5.67 MiB         13.0 MiB/s   435ms
+✓ Indexing   ▆▆▆▆▆▆▆▆▆▆▆▆▆▆██████████████    14,062 objects   343.1k objects/s    40ms
+✓ Resolving  ████████████████████████████      9,840 deltas    370.3k deltas/s    26ms
+✓ Checkout   ████████████████████████████         237 files       4.6k files/s    51ms
+
+✓ Cloned into ripgrep on master in 1.6s
+
+  time      ················███████████·▓▒·········░  1.6s
+            · connect 651ms  █ receiving 435ms  ▓ indexing 40ms  ▒ resolving 26ms  · other 359ms  ░ checkout 51ms
+  data      5.67 MiB received · 13.0 MiB/s avg · 20.1 MiB/s peak
+  objects   14,062 · 2,327 commits · 6,351 trees · 5,112 blobs · 272 tags
+  refs      16 branches · 272 tags
+  files     237 files · 3.11 MiB in the work tree
 ```
 
-Progress lines are written to stderr and update in place on a terminal. When stderr is not a TTY (for example in a CI log or with stderr redirected), only the initial `Cloning into …` line is shown.
+Progress lines are written to stderr and update in place on a terminal; the time bar and legend are colored by step there. When stderr is not a TTY (for example in a CI log or with stderr redirected), only the initial `Cloning into …` line is written to stderr, and the summary still appears on stdout.
 
 Clone into a directory with a different name:
 
@@ -83,6 +100,10 @@ Pass `--json` for stable, scripting-friendly output:
 | `branches` | integer | Remote branches fetched. |
 | `tags` | integer | Remote tags fetched. |
 | `files` | integer | Working-tree files checked out. |
+| `object_types` | object or null | Objects received by type: `commits`, `trees`, `blobs` and `tags` (annotated tag objects). `null` when the pack was linked or copied from a local repository without being re-indexed. |
+| `worktree_bytes` | integer | Total size of the checked-out files. |
+| `seconds` | number | Wall-clock seconds for the whole clone. |
+| `phases` | array | Time spent in each step, in order: `phase` (`receiving`, `indexing`, `resolving_deltas`, `copying` or `checkout`), `unit` (`bytes`, `objects` or `files`), `count` and `seconds`. Steps that processed nothing are left out. |
 
 Example (repository with commits):
 
@@ -95,7 +116,19 @@ Example (repository with commits):
   "bytes": 8192,
   "branches": 1,
   "tags": 0,
-  "files": 3
+  "files": 3,
+  "object_types": {
+    "commits": 4,
+    "trees": 9,
+    "blobs": 29,
+    "tags": 0
+  },
+  "worktree_bytes": 6144,
+  "seconds": 0.21,
+  "phases": [
+    { "phase": "copying", "unit": "objects", "count": 42, "seconds": 0.004 },
+    { "phase": "checkout", "unit": "files", "count": 3, "seconds": 0.002 }
+  ]
 }
 ```
 
@@ -110,7 +143,11 @@ Empty remote (no branch tips yet):
   "bytes": 0,
   "branches": 0,
   "tags": 0,
-  "files": 0
+  "files": 0,
+  "object_types": null,
+  "worktree_bytes": 0,
+  "seconds": 0.05,
+  "phases": []
 }
 ```
 
