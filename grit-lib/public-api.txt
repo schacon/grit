@@ -6238,6 +6238,8 @@ pub fn grit_lib::objects::odb::store::PackedObjects::contains_filtered(&self, &g
 pub fn grit_lib::objects::odb::store::PackedObjects::contains_filtered(&self, &grit_lib::objects::ObjectId, grit_lib::objects::odb::store::PackFilter) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::store::PackedObjects::for_each_promisor_object(&self, &mut dyn core::ops::function::FnMut(&grit_lib::objects::ObjectId) -> core::ops::control_flow::ControlFlow<()>) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::store::PackedObjects::for_each_promisor_object(&self, &mut dyn core::ops::function::FnMut(&grit_lib::objects::ObjectId) -> core::ops::control_flow::ControlFlow<()>) -> grit_lib::error::Result<()>
+pub fn grit_lib::objects::odb::store::PackedObjects::for_each_removable_pack_object(&self, &mut dyn core::ops::function::FnMut(&grit_lib::objects::ObjectId) -> core::ops::control_flow::ControlFlow<()>) -> grit_lib::error::Result<()>
+pub fn grit_lib::objects::odb::store::PackedObjects::for_each_removable_pack_object(&self, &mut dyn core::ops::function::FnMut(&grit_lib::objects::ObjectId) -> core::ops::control_flow::ControlFlow<()>) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::store::PackedObjects::freshen_pack_containing(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::store::PackedObjects::freshen_pack_containing(&self, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::objects::odb::store::PackedObjects::kept_pack_object_ids(&self) -> grit_lib::error::Result<std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>>

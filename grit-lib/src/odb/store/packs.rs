@@ -150,6 +150,20 @@ impl PackedObjects {
         self.with_pack(collect_kept_pack_object_ids)
     }
 
+    /// Invoke `f` for each object id in a local pack index without a sibling `.keep` file.
+    ///
+    /// Used by repack when retaining unreachable storage from packs that will be removed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates pack index enumeration failures.
+    pub fn for_each_removable_pack_object(
+        &self,
+        f: &mut dyn FnMut(&ObjectId) -> ControlFlow<()>,
+    ) -> Result<()> {
+        self.with_pack(|objects_dir| for_each_removable_pack_object_ids(objects_dir, f))
+    }
+
     /// Touch the mtime of the pack file holding `oid` (Git pack freshen), when not cruft.
     ///
     /// # Errors
@@ -302,6 +316,43 @@ fn pack_dir_has_bitmap_extension(objects_dir: &Path) -> Result<bool> {
             .and_then(|s| s.to_str())
             .is_some_and(|ext| ext == "bitmap")
     }))
+}
+
+fn for_each_removable_pack_object_ids(
+    objects_dir: &Path,
+    f: &mut dyn FnMut(&ObjectId) -> ControlFlow<()>,
+) -> Result<()> {
+    let pack_dir = objects_dir.join("pack");
+    let indexes = read_local_pack_indexes_cached(objects_dir)?;
+    let mut seen = HashSet::new();
+    for idx in indexes {
+        if pack_index_has_keep_marker(&pack_dir, &idx.pack_path) {
+            continue;
+        }
+        let hash_bytes = idx.hash_bytes();
+        for entry in idx.iter() {
+            if entry.oid().len() != hash_bytes {
+                continue;
+            }
+            let Ok(oid) = ObjectId::from_bytes(entry.oid()) else {
+                continue;
+            };
+            if !seen.insert(oid) {
+                continue;
+            }
+            if f(&oid).is_break() {
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pack_index_has_keep_marker(pack_dir: &Path, pack_path: &Path) -> bool {
+    let Some(stem) = pack_path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    pack_dir.join(format!("{stem}.keep")).is_file()
 }
 
 fn collect_kept_pack_object_ids(objects_dir: &Path) -> Result<HashSet<ObjectId>> {

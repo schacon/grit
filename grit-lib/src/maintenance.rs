@@ -41,7 +41,8 @@ use crate::midx::{
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
-use crate::pack_objects::{build_pack, PackBuildOptions};
+use crate::pack_object_select::{enumerate_pack_objects, PackEnumerateOptions};
+use crate::pack_objects::{build_pack, build_pack_from_send_list, PackBuildOptions};
 use crate::pack_rev::write_pack_rev_sidecar_for_index_path;
 use crate::progress::{NeverCancel, NullProgress};
 use crate::prune_packed::{prune_packed_objects, PrunePackedOptions};
@@ -639,7 +640,8 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         .unwrap_or_else(|| PackBuildOptions::for_local_copy(cfg.as_ref()));
 
     if opts.dry_run {
-        report.objects = estimate_reachable_count(odb, &roots)?;
+        report.objects =
+            estimate_repack_object_count(odb, &roots, opts.keep_unreachable, &pack_opts)?;
         return Ok(RepackDetail {
             report,
             prune_packed_loose: 0,
@@ -647,7 +649,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         });
     }
 
-    let pack_bytes = build_pack(odb, &roots, &[], &pack_opts)?;
+    let pack_bytes = build_repack_pack(odb, &roots, opts.keep_unreachable, &pack_opts)?;
     let mut prune_packed_loose = 0usize;
     let mut unreachable_loose = 0usize;
     let pack_trailer_len = 12 + odb.hash_algo().len();
@@ -1018,6 +1020,85 @@ fn fsck_issue_from_repo(issue: RepoFsckIssue, config: &ConfigSet, strict: bool) 
 
 fn count_loose_objects(odb: &Odb) -> Result<usize> {
     Ok(odb.enumerate_local_loose_objects()?.len())
+}
+
+fn build_repack_pack(
+    odb: &Odb,
+    roots: &[ObjectId],
+    keep_unreachable: bool,
+    opts: &PackBuildOptions,
+) -> Result<Vec<u8>> {
+    if !keep_unreachable {
+        return build_pack(odb, roots, &[], opts);
+    }
+    let empty_shallow = HashSet::new();
+    let selection = enumerate_pack_objects(
+        odb,
+        roots,
+        &[],
+        &PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty_shallow,
+            have_shallow_grafts: Some(&empty_shallow),
+            use_bitmaps: opts.use_bitmaps,
+            exclude_objects: None,
+        },
+    )?;
+    let mut send = selection.send;
+    append_repack_unreachable_retention(odb, &mut send)?;
+    build_pack_from_send_list(
+        odb,
+        &send,
+        &selection.have_closure,
+        opts,
+        &selection.blob_name_hashes,
+    )
+}
+
+/// Append packed and loose objects not already selected for the repack send list.
+fn append_repack_unreachable_retention(odb: &Odb, send: &mut Vec<ObjectId>) -> Result<()> {
+    let mut in_send: HashSet<ObjectId> = send.iter().copied().collect();
+    odb.primary()?
+        .packed_objects()
+        .for_each_removable_pack_object(&mut |oid| {
+            if in_send.insert(*oid) {
+                send.push(*oid);
+            }
+            std::ops::ControlFlow::Continue(())
+        })?;
+    for (oid, _) in odb.enumerate_local_loose_objects()? {
+        if in_send.insert(oid) {
+            send.push(oid);
+        }
+    }
+    Ok(())
+}
+
+fn estimate_repack_object_count(
+    odb: &Odb,
+    roots: &[ObjectId],
+    keep_unreachable: bool,
+    pack_opts: &PackBuildOptions,
+) -> Result<usize> {
+    if !keep_unreachable {
+        return estimate_reachable_count(odb, roots);
+    }
+    let empty_shallow = HashSet::new();
+    let selection = enumerate_pack_objects(
+        odb,
+        roots,
+        &[],
+        &PackEnumerateOptions {
+            filter: None,
+            shallow_grafts: &empty_shallow,
+            have_shallow_grafts: Some(&empty_shallow),
+            use_bitmaps: pack_opts.use_bitmaps,
+            exclude_objects: None,
+        },
+    )?;
+    let mut send = selection.send;
+    append_repack_unreachable_retention(odb, &mut send)?;
+    Ok(send.len())
 }
 
 fn count_pack_files(pack_dir: &Path) -> usize {
