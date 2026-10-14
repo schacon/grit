@@ -211,3 +211,53 @@ fn setup_trace_and_replace_ref_read_paths() -> crate::error::Result<()> {
     let _oid: ObjectId = tip;
     Ok(())
 }
+
+#[test]
+fn discover_honors_git_dir_and_ceiling_env() -> crate::error::Result<()> {
+    let dir = tempdir().map_err(crate::error::Error::Io)?;
+    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    let git_dir = dir.path().join(".git");
+    let blob = repo.odb().write(ObjectKind::Blob, b"x\n")?;
+    let tree_body = format!("100644 x.txt\0").into_bytes();
+    let mut tree_bytes = tree_body;
+    tree_bytes.extend_from_slice(blob.as_bytes());
+    let tree = repo.odb().write(ObjectKind::Tree, &tree_bytes)?;
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
+    let tip = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())?;
+    std::fs::write(git_dir.join("refs/heads/main"), format!("{tip}\n"))
+        .map_err(crate::error::Error::Io)?;
+
+    let mut env = Environment::empty();
+    env.cwd = dir.path().to_path_buf();
+    env.git_dir = Some(
+        git_dir
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let mut opts = RepositoryOptions::empty();
+    opts.environment = env.clone();
+    let explicit = Repository::discover(None, &opts)?;
+    assert_eq!(explicit.git_dir(), git_dir);
+
+    let mut env_wt = env.clone();
+    env_wt.git_work_tree = Some(dir.path().to_string_lossy().into_owned());
+    opts.environment = env_wt;
+    let with_wt = Repository::discover(None, &opts)?;
+    assert!(with_wt.work_tree().is_some());
+
+    let parent = dir
+        .path()
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_owned());
+    let mut env_ceil = Environment::empty();
+    env_ceil.cwd = dir.path().to_path_buf();
+    env_ceil.git_ceiling_directories = Some(format!(":{parent}"));
+    opts.environment = env_ceil;
+    let from_sub = Repository::discover(Some(dir.path()), &opts)?;
+    assert!(from_sub.work_tree().is_some());
+    Ok(())
+}
