@@ -123,6 +123,36 @@ fn object_walk_combine_filter_provided_objects_match_git() {
 }
 
 #[test]
+fn object_walk_annotated_tag_on_blob_peels_like_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "data.bin", "payload\n", "blob target");
+    let blob = git(wt, &["rev-parse", "HEAD:data.bin"]).trim().to_string();
+    git(wt, &["tag", "-a", "blob-tag", "-m", "tag on blob", &blob]);
+    let git_set = git_rev_list_object_set(wt, &["blob-tag"]);
+    let grit_repo = support::open_grit_repo(wt);
+    let result = rev_list(
+        &grit_repo,
+        &[String::from("blob-tag")],
+        &[],
+        &RevListOptions {
+            objects: true,
+            ..RevListOptions::default()
+        },
+    )
+    .expect("tagged blob walk");
+    let mut grit_set = HashSet::new();
+    grit_set.extend(result.commits);
+    grit_set.extend(result.objects.iter().map(|(o, _)| *o));
+    let blob_oid: grit_lib::objects::ObjectId = blob.parse().expect("blob oid");
+    assert!(git_set.contains(&blob_oid));
+    assert!(
+        grit_set.contains(&blob_oid),
+        "grit walk should include tagged blob; grit={grit_set:?} git={git_set:?}"
+    );
+}
+
+#[test]
 fn object_walk_sparse_pathspec_limits_objects_match_git() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();

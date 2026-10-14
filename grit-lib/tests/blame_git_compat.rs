@@ -211,6 +211,38 @@ fn build_blame_fixture() -> (tempfile::TempDir, Repository, String) {
 }
 
 #[test]
+fn blame_merge_commit_matches_git_porcelain() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    let file = "merge.txt";
+    std::fs::write(root.join(file), "base line\nshared\n").unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "base"]);
+
+    git_run(root, &["branch", "side"]);
+    git_run(root, &["checkout", "side"]);
+    std::fs::write(root.join("side-only.txt"), "side file\n").unwrap();
+    git_run(root, &["add", "side-only.txt"]);
+    git_run(root, &["commit", "-m", "side file"]);
+
+    git_run(root, &["checkout", "main"]);
+    std::fs::write(root.join(file), "base line\nshared\nmain tail\n").unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "main tail"]);
+
+    git_run(root, &["merge", "--no-ff", "side", "-m", "merge side"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    assert_blame_matches(&repo, dir, file, None, None);
+    assert_blame_matches(&repo, dir, file, Some("HEAD"), Some((1, 3)));
+}
+
+#[test]
 fn blame_matches_git_porcelain_after_adcb_permutation() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

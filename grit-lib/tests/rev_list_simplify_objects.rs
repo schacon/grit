@@ -57,6 +57,7 @@ fn rev_list_opts_from_git_flags(flags: &[&str]) -> (RevListOptions, Vec<String>,
         ancestry_path: flags.iter().any(|a| *a == "--ancestry-path"),
         first_parent: flags.iter().any(|a| *a == "--first-parent"),
         sparse: flags.iter().any(|a| *a == "--sparse"),
+        show_pulls: flags.iter().any(|a| *a == "--show-pulls"),
         ordering: ordering_from_git_args(flags),
         paths,
         ..RevListOptions::default()
@@ -151,6 +152,33 @@ fn t6111_treesame_matches_git() {
     .expect("ancestry")
     .commits;
     assert_eq!(grit_range, git_range, "ancestry-path range");
+}
+
+#[test]
+fn treesame_show_pulls_exercises_simplify_merge_paths() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    setup_treesame_history(wt);
+
+    let grit_repo = Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover");
+    for (full_history, preserve) in [(true, true), (false, true), (true, false)] {
+        let out = rev_list(
+            &grit_repo,
+            &[String::from("rw6111-m")],
+            &[],
+            &RevListOptions {
+                full_history,
+                simplify_merges: true,
+                show_pulls: true,
+                preserve_simplify_merges_graph_merges: preserve,
+                sparse: false,
+                paths: vec!["content.txt".to_owned()],
+                ..RevListOptions::default()
+            },
+        )
+        .expect("show-pulls walk");
+        assert!(!out.commits.is_empty());
+    }
 }
 
 #[test]

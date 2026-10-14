@@ -9668,6 +9668,176 @@ mod line_coverage_tests {
     }
 
     #[test]
+    #[test]
+    fn mode_only_path_treesame_and_kept_pack_exclusion() -> Result<()> {
+        use crate::maintenance::{repack_all, RepackOptions};
+
+        let dir = tempdir().expect("tempdir");
+        Repository::init(
+            dir.path(),
+            &InitOptions {
+                bare: true,
+                initial_branch: "main".into(),
+                ref_storage: RefStorageFormat::Files,
+                ..InitOptions::default()
+            },
+        )
+        .expect("init");
+        let repo = Repository::open(dir.path(), &crate::environment::RepositoryOptions::empty())
+            .expect("open");
+        let blob = repo.odb().write(ObjectKind::Blob, b"mode line\n")?;
+        let tree644 = write_tree_entry(&repo.odb(), 0o100644, "tracked.txt", blob);
+        let ident = "T <t@e.com> 100 +0000";
+        let c1_body = format!("tree {tree644}\nauthor {ident}\ncommitter {ident}\n\nc1\n");
+        let c1 = repo.odb().write(ObjectKind::Commit, c1_body.as_bytes())?;
+        let tree755 = write_tree_entry(&repo.odb(), 0o100755, "tracked.txt", blob);
+        let c2_body =
+            format!("tree {tree755}\nparent {c1}\nauthor {ident}\ncommitter {ident}\n\nc2\n");
+        let c2 = repo.odb().write(ObjectKind::Commit, c2_body.as_bytes())?;
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{c2}\n"))?;
+
+        for opts in [
+            RevListOptions {
+                paths: vec!["tracked.txt".into()],
+                simplify_merges: true,
+                full_history: true,
+                show_pulls: true,
+                preserve_simplify_merges_graph_merges: true,
+                sparse: false,
+                ..RevListOptions::default()
+            },
+            RevListOptions {
+                paths: vec!["tracked.txt".into()],
+                simplify_merges: true,
+                ancestry_path: true,
+                ancestry_path_bottoms: vec![c1],
+                first_parent: true,
+                ..RevListOptions::default()
+            },
+        ] {
+            let _ = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+        }
+
+        repack_all(&repo, &RepackOptions::default())?;
+        let pack_dir = repo.git_dir().join("objects/pack");
+        if let Ok(read) = fs::read_dir(&pack_dir) {
+            for entry in read.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "pack") {
+                    fs::write(path.with_extension("keep"), b"1")?;
+                }
+            }
+        }
+        let _ = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                in_commit_order: true,
+                no_kept_objects: true,
+                filter: Some(ObjectFilter::BlobLimit(8192)),
+                ..RevListOptions::default()
+            },
+        )?;
+        let _c2 = c2;
+        Ok(())
+    }
+
+    #[test]
+    fn in_commit_order_missing_commits_and_object_roots() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(16, true);
+        let tag_body = format!("object {tip}\ntype commit\ntag anno\n\nannotated tip\n");
+        let tag = repo.odb().write(ObjectKind::Tag, tag_body.as_bytes())?;
+        fs::write(repo.git_dir().join("refs/tags/anno"), format!("{tag}\n"))?;
+        let ordered = rev_list(
+            &repo,
+            &[String::from("anno"), String::from("main^{tree}")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                in_commit_order: true,
+                no_object_names: false,
+                filter: Some(ObjectFilter::Combine(vec![
+                    ObjectFilter::TreeDepth(12),
+                    ObjectFilter::BlobLimit(4096),
+                ])),
+                filter_provided_objects: true,
+                filter_print_omitted: true,
+                paths: vec!["tracked.txt".into()],
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(!ordered.commits.is_empty());
+        let _tag = tag;
+        let blob = repo.odb().write(ObjectKind::Blob, b"extra root\n")?;
+        let blob_tag_body = format!("object {blob}\ntype blob\ntag blob-root\n\nmsg\n");
+        let blob_tag = repo
+            .odb()
+            .write(ObjectKind::Tag, blob_tag_body.as_bytes())?;
+        fs::write(
+            repo.git_dir().join("refs/tags/blob-root"),
+            format!("{blob_tag}\n"),
+        )?;
+        let with_root = rev_list(
+            &repo,
+            &[String::from("main"), String::from("refs/tags/blob-root")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                in_commit_order: true,
+                filter: Some(ObjectFilter::ObjectType(FilterObjectKind::Blob)),
+                filter_provided_objects: true,
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(!with_root.objects.is_empty());
+        let _blob = blob;
+        Ok(())
+    }
+
+    #[test]
+    fn object_walk_tag_peel_and_invalid_tag_type() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(4, false);
+        let blob = repo.odb().write(ObjectKind::Blob, b"tagged blob\n")?;
+        let tag_on_blob = format!("object {blob}\ntype blob\ntag blob-tag\n\nmsg\n");
+        let tag_oid = repo.odb().write(ObjectKind::Tag, tag_on_blob.as_bytes())?;
+        fs::write(
+            repo.git_dir().join("refs/tags/blob-tag"),
+            format!("{tag_oid}\n"),
+        )?;
+        let walked = rev_list(
+            &repo,
+            &[String::from("refs/tags/blob-tag")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                paths: vec!["tracked.txt".into()],
+                filter: Some(ObjectFilter::TreeDepth(20)),
+                filter_print_omitted: true,
+                ..RevListOptions::default()
+            },
+        )?;
+        assert!(walked.objects.iter().any(|(o, _)| *o == blob));
+
+        let bad_tag = format!("object {tip}\ntype not-a-kind\ntag bad\n\nmsg\n");
+        let bad_oid = repo.odb().write(ObjectKind::Tag, bad_tag.as_bytes())?;
+        let err = rev_list(
+            &repo,
+            &[format!("{bad_oid}")],
+            &[],
+            &RevListOptions {
+                objects: true,
+                ..RevListOptions::default()
+            },
+        )
+        .expect_err("unsupported tag type");
+        assert!(matches!(err, Error::CorruptObject(_)));
+
+        Ok(())
+    }
+
+    #[test]
     fn commit_graph_count_skips_commit_parse() -> Result<()> {
         use crate::hot_path_test_metrics::HotPathMetricsScope;
 
