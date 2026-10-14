@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::error::{Error, Result};
 use crate::hash::{verify_trailer, Parallelism};
-use crate::objects::ObjectId;
+use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::pack::{verify_pack_and_collect, write_v2_pack_index_with_trailer};
 use crate::pack_map::PackData;
@@ -45,6 +45,47 @@ fn record_resolved_ingest_threads(threads: usize) {
     }
 }
 
+/// Per-type object counts for a pack, tallied while it is indexed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ObjectKindCounts {
+    /// Commit objects.
+    pub commits: u64,
+    /// Tree objects.
+    pub trees: u64,
+    /// Blob objects.
+    pub blobs: u64,
+    /// Annotated tag objects.
+    pub tags: u64,
+}
+
+impl ObjectKindCounts {
+    /// Count one object of `kind`.
+    pub fn add(&mut self, kind: ObjectKind) {
+        match kind {
+            ObjectKind::Commit => self.commits += 1,
+            ObjectKind::Tree => self.trees += 1,
+            ObjectKind::Blob => self.blobs += 1,
+            ObjectKind::Tag => self.tags += 1,
+        }
+    }
+
+    /// Sum of every type.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.commits + self.trees + self.blobs + self.tags
+    }
+}
+
+impl FromIterator<ObjectKind> for ObjectKindCounts {
+    fn from_iter<I: IntoIterator<Item = ObjectKind>>(iter: I) -> Self {
+        let mut counts = Self::default();
+        for kind in iter {
+            counts.add(kind);
+        }
+        counts
+    }
+}
+
 /// Result of installing a pack under `objects/pack/`.
 #[derive(Debug, Clone)]
 pub struct IngestedPack {
@@ -52,6 +93,8 @@ pub struct IngestedPack {
     pub object_ids: HashSet<ObjectId>,
     /// Absolute path to the published `pack-*.pack` file.
     pub pack_path: PathBuf,
+    /// How many objects of each type the pack holds.
+    pub object_counts: ObjectKindCounts,
 }
 
 /// Options controlling how a received pack is ingested.
@@ -127,6 +170,7 @@ pub fn ingest_received_pack_with_progress(
         return Ok(IngestedPack {
             object_ids: HashSet::new(),
             pack_path: PathBuf::new(),
+            object_counts: ObjectKindCounts::default(),
         });
     }
     if pack.len() < 12 || &pack[0..4] != b"PACK" {
@@ -295,9 +339,14 @@ pub fn install_pack_path_with_progress(
         };
         drop(indexed);
         let oids: HashSet<ObjectId> = records.iter().map(|r| r.oid).collect();
+        let object_counts: ObjectKindCounts = records.iter().map(|r| r.kind).collect();
         let entries: Vec<(ObjectId, u64, u32)> = records
             .into_iter()
-            .map(|PackIndexRecord { oid, offset, crc32 }| (oid, offset, crc32))
+            .map(
+                |PackIndexRecord {
+                     oid, offset, crc32, ..
+                 }| (oid, offset, crc32),
+            )
             .collect();
         write_v2_pack_index_with_trailer(&stage_idx, &entries, &trailer, hb, Some(sort_threads))?;
         if !opts.skip_post_index_verify {
@@ -312,6 +361,7 @@ pub fn install_pack_path_with_progress(
         Ok(IngestedPack {
             object_ids: oids,
             pack_path: final_pack.clone(),
+            object_counts,
         })
     })();
 
@@ -384,6 +434,73 @@ mod tests {
             },
         )
         .expect("build pack")
+    }
+
+    #[test]
+    fn object_kind_counts_tally_and_total() {
+        let counts: ObjectKindCounts = [
+            ObjectKind::Commit,
+            ObjectKind::Blob,
+            ObjectKind::Blob,
+            ObjectKind::Tree,
+            ObjectKind::Tag,
+            ObjectKind::Commit,
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            counts,
+            ObjectKindCounts {
+                commits: 2,
+                trees: 1,
+                blobs: 2,
+                tags: 1,
+            }
+        );
+        assert_eq!(counts.total(), 6);
+        assert_eq!(ObjectKindCounts::default().total(), 0);
+    }
+
+    #[test]
+    fn ingest_counts_objects_by_resolved_kind() {
+        use grit_test_support::objects::{HashAlgo, ObjectKind as PK, PackBuilder};
+        let mut pb = PackBuilder::new(HashAlgo::Sha1);
+        pb.add_full(
+            PK::Commit,
+            b"tree 0000000000000000000000000000000000000000\n\nc\n",
+        );
+        pb.add_full(PK::Tree, b"");
+        let base = b"blob base contents\n";
+        let base_idx = pb.add_full(PK::Blob, base);
+        let target = b"blob base contents, edited\n";
+        let delta = crate::delta_encode::encode_lcp_delta(base, target).expect("delta");
+        // A delta resolves to its base's type, so it counts as a blob.
+        pb.add_ofs_delta(base_idx, &delta, delta.len());
+        pb.add_full(
+            PK::Tag,
+            b"object 0000000000000000000000000000000000000000\n",
+        );
+        let pack = pb.build().bytes;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let objects = tmp.path().join("objects");
+        std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
+        let odb = Odb::new(&objects);
+        let ingested =
+            ingest_received_pack(pack, &odb, &IngestPackOptions::default()).expect("ingest");
+        assert_eq!(
+            ingested.object_counts,
+            ObjectKindCounts {
+                commits: 1,
+                trees: 1,
+                blobs: 2,
+                tags: 1,
+            }
+        );
+        assert_eq!(
+            ingested.object_counts.total(),
+            u64::try_from(ingested.object_ids.len()).expect("count")
+        );
     }
 
     /// Regression for large-clone failures (#889): parallel index-pack must skip

@@ -270,6 +270,9 @@ pub struct TransferStats {
     pub objects: u64,
     /// Size in bytes of the received pack file (zero when nothing was transferred).
     pub bytes: u64,
+    /// Objects by type, when the pack was indexed locally (`None` when packs were
+    /// linked or copied from a local repository without being re-indexed).
+    pub kinds: Option<crate::index_pack::ObjectKindCounts>,
 }
 
 impl TransferStats {
@@ -329,6 +332,7 @@ fn transfer_stats_from_ingested(
     Ok(TransferStats {
         objects: u64::try_from(ingested.object_ids.len()).unwrap_or(u64::MAX),
         bytes,
+        kinds: Some(ingested.object_counts),
     })
 }
 

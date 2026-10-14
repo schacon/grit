@@ -1405,6 +1405,7 @@ pub fn fetch_remote(
             transfer = crate::transfer::TransferStats {
                 objects: u64::try_from(pack_oids.len()).unwrap_or(u64::MAX),
                 bytes,
+                kinds: Some(ingested.object_counts),
             };
         }
     }

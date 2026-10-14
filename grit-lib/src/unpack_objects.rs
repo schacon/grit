@@ -631,6 +631,8 @@ pub struct PackIndexRecord {
     pub offset: u64,
     /// CRC32 of the packed object slice (header + zlib payload).
     pub crc32: u32,
+    /// Object type after delta resolution.
+    pub kind: ObjectKind,
 }
 
 /// Build index records by walking `data` once with bounded retention for delta bases.

@@ -5575,6 +5575,7 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::index_pack::IngestPackOpti
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::index_pack::IngestPackOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::index_pack::IngestPackOptions
 pub struct grit_lib::objects::index_pack::IngestedPack
+pub grit_lib::objects::index_pack::IngestedPack::object_counts: grit_lib::objects::index_pack::ObjectKindCounts
 pub grit_lib::objects::index_pack::IngestedPack::object_ids: std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
 pub grit_lib::objects::index_pack::IngestedPack::pack_path: std::path::PathBuf
 impl core::clone::Clone for grit_lib::objects::index_pack::IngestedPack
@@ -5588,6 +5589,34 @@ impl core::marker::Unpin for grit_lib::objects::index_pack::IngestedPack
 impl core::marker::UnsafeUnpin for grit_lib::objects::index_pack::IngestedPack
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::index_pack::IngestedPack
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::index_pack::IngestedPack
+pub struct grit_lib::objects::index_pack::ObjectKindCounts
+pub grit_lib::objects::index_pack::ObjectKindCounts::blobs: u64
+pub grit_lib::objects::index_pack::ObjectKindCounts::commits: u64
+pub grit_lib::objects::index_pack::ObjectKindCounts::tags: u64
+pub grit_lib::objects::index_pack::ObjectKindCounts::trees: u64
+impl grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::add(&mut self, grit_lib::objects::ObjectKind)
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::total(&self) -> u64
+impl core::clone::Clone for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::cmp::PartialEq for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::default() -> Self
+impl core::fmt::Debug for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::FromIterator<grit_lib::objects::ObjectKind> for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::from_iter<I: core::iter::traits::collect::IntoIterator<Item = grit_lib::objects::ObjectKind>>(I) -> Self
+impl core::marker::Copy for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::StructuralPartialEq for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::Freeze for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::Send for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::Sync for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::Unpin for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::marker::UnsafeUnpin for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::index_pack::ObjectKindCounts
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::index_pack::ObjectKindCounts
 pub fn grit_lib::objects::index_pack::ingest_received_pack(alloc::vec::Vec<u8>, &grit_lib::objects::odb::Odb, &grit_lib::objects::index_pack::IngestPackOptions) -> grit_lib::error::Result<grit_lib::objects::index_pack::IngestedPack>
 pub fn grit_lib::objects::index_pack::ingest_received_pack_path(std::path::PathBuf, &grit_lib::objects::odb::Odb, &grit_lib::objects::index_pack::IngestPackOptions) -> grit_lib::error::Result<grit_lib::objects::index_pack::IngestedPack>
 pub fn grit_lib::objects::index_pack::ingest_received_pack_path_with_progress(std::path::PathBuf, &grit_lib::objects::odb::Odb, &grit_lib::objects::index_pack::IngestPackOptions, core::option::Option<&mut dyn grit_lib::progress::ProgressSink>) -> grit_lib::error::Result<grit_lib::objects::index_pack::IngestedPack>
@@ -7333,6 +7362,7 @@ pub fn grit_lib::objects::prune_packed::prune_packed_objects(&std::path::Path, g
 pub mod grit_lib::objects::unpack_objects
 pub struct grit_lib::objects::unpack_objects::PackIndexRecord
 pub grit_lib::objects::unpack_objects::PackIndexRecord::crc32: u32
+pub grit_lib::objects::unpack_objects::PackIndexRecord::kind: grit_lib::objects::ObjectKind
 pub grit_lib::objects::unpack_objects::PackIndexRecord::offset: u64
 pub grit_lib::objects::unpack_objects::PackIndexRecord::oid: grit_lib::objects::ObjectId
 impl core::clone::Clone for grit_lib::objects::unpack_objects::PackIndexRecord
@@ -7436,6 +7466,8 @@ impl core::fmt::Debug for grit_lib::objects::ObjectKind
 pub fn grit_lib::objects::ObjectKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for grit_lib::objects::ObjectKind
 pub fn grit_lib::objects::ObjectKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::FromIterator<grit_lib::objects::ObjectKind> for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::from_iter<I: core::iter::traits::collect::IntoIterator<Item = grit_lib::objects::ObjectKind>>(I) -> Self
 impl core::marker::Copy for grit_lib::objects::ObjectKind
 impl core::marker::StructuralPartialEq for grit_lib::objects::ObjectKind
 impl core::str::traits::FromStr for grit_lib::objects::ObjectKind
@@ -9033,6 +9065,8 @@ impl core::fmt::Debug for grit_lib::objects::ObjectKind
 pub fn grit_lib::objects::ObjectKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for grit_lib::objects::ObjectKind
 pub fn grit_lib::objects::ObjectKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::FromIterator<grit_lib::objects::ObjectKind> for grit_lib::objects::index_pack::ObjectKindCounts
+pub fn grit_lib::objects::index_pack::ObjectKindCounts::from_iter<I: core::iter::traits::collect::IntoIterator<Item = grit_lib::objects::ObjectKind>>(I) -> Self
 impl core::marker::Copy for grit_lib::objects::ObjectKind
 impl core::marker::StructuralPartialEq for grit_lib::objects::ObjectKind
 impl core::str::traits::FromStr for grit_lib::objects::ObjectKind
@@ -12078,6 +12112,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::transfer::Ref
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::transfer::RefUpdate
 pub struct grit_lib::remote::transfer::TransferStats
 pub grit_lib::remote::transfer::TransferStats::bytes: u64
+pub grit_lib::remote::transfer::TransferStats::kinds: core::option::Option<grit_lib::objects::index_pack::ObjectKindCounts>
 pub grit_lib::remote::transfer::TransferStats::objects: u64
 impl grit_lib::remote::transfer::TransferStats
 pub fn grit_lib::remote::transfer::TransferStats::from_ingested_pack(&grit_lib::objects::index_pack::IngestedPack) -> grit_lib::error::Result<Self>

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{Error, Result};
 use crate::fetch::Progress;
-use crate::progress::ProgressPhase;
+use crate::progress::{ProgressPhase, ProgressUnit};
 
 /// Where demuxed pack bytes are stored.
 pub enum PackReceiveTarget<'a> {
@@ -68,7 +68,7 @@ fn note_received_pack_bytes(progress: &mut dyn Progress, active: &mut bool, nbyt
         return;
     }
     if !*active {
-        progress.start(ProgressPhase::ReceivingObjects, None);
+        progress.start_with_unit(ProgressPhase::ReceivingObjects, ProgressUnit::Bytes, None);
         *active = true;
     }
     progress.inc(nbytes);
