@@ -330,6 +330,7 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: Some(config_arc),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
+        command_runner: Some(repo.command_runner()),
         ..DiffIndexToWorktreeOptions::default()
     };
     let (mut entries, _) = diff_index_to_worktree_with_renames(
@@ -527,6 +528,7 @@ fn worktree_against_tree(
                 refresh_index_stat_in_pass: false,
                 for_status: true,
                 worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
+                command_runner: Some(repo.command_runner()),
                 ..DiffIndexToWorktreeOptions::default()
             },
             DIFF_RENAME_THRESHOLD,
