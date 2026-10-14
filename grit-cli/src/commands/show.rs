@@ -551,7 +551,7 @@ pub(crate) fn render_markdown_stat(
     Ok(())
 }
 
-fn use_color() -> bool {
+pub(crate) fn use_color() -> bool {
     std::io::stdout().is_terminal()
         && grit_lib::porcelain::terminal::ansi_supported()
         && std::env::var_os("NO_COLOR").is_none()

@@ -333,6 +333,9 @@ enum Command {
         /// Continue listing from before this commit (for paging).
         #[arg(long)]
         before: Option<String>,
+        /// Show which files each commit changed, with insertion and deletion counts.
+        #[arg(long)]
+        stat: bool,
     },
     /// List or count commits matching revision ranges.
     Revs {
@@ -914,7 +917,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 ctx,
             ),
         },
-        Command::Log { before } => emit(&commands::log::run(before)?, opts, ctx),
+        Command::Log { before, stat } => emit(&commands::log::run(before, stat)?, opts, ctx),
         Command::Revs {
             ranges,
             count,

@@ -9,6 +9,8 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
+use crate::commands::diff::diff_of_commit;
+use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
 use crate::context::{self, subject_line, CommitSummary};
 use crate::markdown;
 use crate::output::{outln, CommitJson, HumanRender, MarkdownRender, RenderContext};
@@ -20,7 +22,7 @@ const PAGE: usize = 10;
 /// Result of `grit log`: one page of commits, plus the next page's start (if any).
 #[derive(Serialize, JsonSchema)]
 pub struct LogOutcome {
-    pub commits: Vec<CommitJson>,
+    pub commits: Vec<LogCommit>,
     /// Opaque continuation cursor for `--before`, or `null` when there is no further history.
     pub next: Option<String>,
     #[serde(skip)]
@@ -35,8 +37,16 @@ impl HumanRender for LogOutcome {
             return Ok(());
         }
         let now = ctx.now.unix_timestamp();
-        for row in ui::commit_rows(&self.commit_rows, now) {
+        let color = use_color();
+        for (row, commit) in ui::commit_rows(&self.commit_rows, now)
+            .iter()
+            .zip(&self.commits)
+        {
             outln!(w, "{row}");
+            if let Some(stat) = &commit.stat {
+                render_stat(w, stat, color, None)?;
+                outln!(w);
+            }
         }
         if let Some(next) = &self.next {
             outln!(w);
@@ -44,6 +54,16 @@ impl HumanRender for LogOutcome {
         }
         Ok(())
     }
+}
+
+/// One commit in `grit log` JSON output.
+#[derive(Serialize, JsonSchema)]
+pub struct LogCommit {
+    #[serde(flatten)]
+    pub commit: CommitJson,
+    /// The files the commit changed, only with `--stat`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stat: Option<DiffStat>,
 }
 
 impl MarkdownRender for LogOutcome {
@@ -61,7 +81,7 @@ impl MarkdownRender for LogOutcome {
     }
 }
 
-pub fn run(before: Option<String>) -> Result<LogOutcome> {
+pub fn run(before: Option<String>, stat: bool) -> Result<LogOutcome> {
     let repo = context::discover()?;
     let cursor = before
         .as_deref()
@@ -94,8 +114,17 @@ pub fn run(before: Option<String>) -> Result<LogOutcome> {
         .collect::<Result<Vec<_>>>()?;
     let commits = commit_rows
         .iter()
-        .map(|row| CommitJson::from_summary(row, now))
-        .collect();
+        .map(|row| {
+            Ok(LogCommit {
+                commit: CommitJson::from_summary(row, now),
+                stat: if stat {
+                    Some(diffstat(&diff_of_commit(&repo, &row.oid)?))
+                } else {
+                    None
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let next = page.next.map(|c| c.encode()).transpose()?;
 
