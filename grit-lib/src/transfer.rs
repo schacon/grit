@@ -349,8 +349,11 @@ fn transfer_stats_from_pack_dir(pack_dir: &Path) -> Result<TransferStats> {
         stats.bytes += fs::metadata(&path).map_err(Error::Io)?.len();
         let idx = path.with_extension("idx");
         if idx.is_file() {
-            let records = crate::pack::verify_pack_and_collect(&idx)?;
-            stats.objects += u64::try_from(records.len()).unwrap_or(u64::MAX);
+            // Linked or copied packfiles are already valid on disk; reading the
+            // index entry count is enough for transfer stats (Git's local clone
+            // path does not re-verify every object hash).
+            let index = crate::pack::read_pack_index_no_verify(&idx)?;
+            stats.objects += u64::try_from(index.len()).unwrap_or(u64::MAX);
         }
     }
     Ok(stats)
@@ -2357,6 +2360,37 @@ mod tests {
         assert!(
             first_progress.is_some(),
             "expected set/inc after start during copy"
+        );
+    }
+
+    #[test]
+    fn transfer_stats_from_pack_dir_reads_index_without_verify() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(git_ok(&repo, &["init", "-q", "-b", "main", "."]));
+        std::fs::write(repo.join("blob.txt"), b"payload\n").unwrap();
+        assert!(git_ok(&repo, &["add", "blob.txt"]));
+        assert!(git_ok(&repo, &["commit", "-qm", "c"]));
+        assert!(git_ok(&repo, &["repack", "-a", "-d", "-f"]));
+
+        let pack_dir = repo.join(".git/objects/pack");
+        let stats = transfer_stats_from_pack_dir(&pack_dir).expect("stats");
+        assert!(stats.bytes > 0);
+        assert!(stats.objects > 0);
+
+        let pack_path = std::fs::read_dir(&pack_dir)
+            .expect("read pack dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|e| e == "pack"))
+            .expect("pack file");
+        let idx = pack_path.with_extension("idx");
+        let index = crate::pack::read_pack_index_no_verify(&idx).expect("idx");
+        assert_eq!(
+            stats.objects,
+            u64::try_from(index.len()).expect("count"),
+            "object count must match the on-disk index entry count"
         );
     }
 }
