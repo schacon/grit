@@ -1877,6 +1877,109 @@ pub fn diff_index_to_tree(
     }
 }
 
+/// Diff the index against a tree and pair deleted/added paths as renames when similar enough.
+///
+/// `rename_threshold` is Git's `-M` percentage (50 is the usual default); pass `100` to skip
+/// rename detection.
+///
+/// # Errors
+///
+/// Propagates errors from [`diff_index_to_tree`].
+pub fn diff_index_to_tree_with_renames(
+    odb: &Odb,
+    index: &Index,
+    tree_oid: Option<&ObjectId>,
+    ignore_submodules: bool,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    let entries = diff_index_to_tree(odb, index, tree_oid, ignore_submodules)?;
+    apply_rename_detection_to_diff_entries(
+        odb,
+        entries,
+        None,
+        rename_threshold,
+        config,
+        thread_policy,
+    )
+}
+
+/// Apply Git `-M` rename detection to a flat diff (index↔tree, tree↔tree, or index↔worktree).
+///
+/// Pass `work_root` when added sides may be read from the working tree (index↔worktree diffs).
+/// Use `rename_threshold` `100` to leave entries unchanged.
+///
+/// # Errors
+///
+/// Propagates object read failures while scoring renames.
+pub fn apply_rename_detection_to_diff_entries(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    work_root: Option<&Path>,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    if rename_threshold >= 100 {
+        return Ok(entries);
+    }
+    if work_root.is_some() {
+        let opts = DiffPostprocessOptions {
+            rename_threshold,
+            ..DiffPostprocessOptions::default()
+        };
+        postprocess_diff_entries(
+            odb,
+            entries,
+            None,
+            work_root,
+            None,
+            config,
+            thread_policy,
+            &opts,
+        )
+    } else {
+        Ok(detect_renames_with_policy(
+            odb,
+            None,
+            entries,
+            rename_threshold,
+            config,
+            thread_policy,
+        ))
+    }
+}
+
+/// Diff the index against the working tree and pair deleted/added paths as renames when similar.
+///
+/// Runs [`diff_index_to_worktree_with_options`] then [`apply_rename_detection_to_diff_entries`]
+/// with `work_root` set to `work_tree`.
+///
+/// # Errors
+///
+/// Propagates errors from the index↔worktree diff or rename post-processing.
+pub fn diff_index_to_worktree_with_renames(
+    odb: &Odb,
+    index: &mut Index,
+    work_tree: &Path,
+    options: DiffIndexToWorktreeOptions,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<(Vec<DiffEntry>, bool)> {
+    let (entries, changed) = diff_index_to_worktree_with_options(odb, index, work_tree, options)?;
+    let entries = apply_rename_detection_to_diff_entries(
+        odb,
+        entries,
+        Some(work_tree),
+        rename_threshold,
+        config,
+        thread_policy,
+    )?;
+    Ok((entries, changed))
+}
+
 enum CacheTreeWalk<'a> {
     Fast {
         head_tree: &'a ObjectId,

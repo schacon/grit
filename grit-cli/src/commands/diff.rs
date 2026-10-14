@@ -16,8 +16,10 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    diff_commits_with_renames, diff_index_to_tree, diff_index_to_worktree_with_options,
-    diff_trees_with_renames, read_submodule_head_oid, read_worktree_side_bytes_for_diff,
+    apply_rename_detection_to_diff_entries, diff_commits_with_renames,
+    diff_index_to_tree_with_renames, diff_index_to_worktree_with_options,
+    diff_index_to_worktree_with_renames, diff_trees_with_renames, read_submodule_head_oid,
+    read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,
@@ -46,6 +48,9 @@ use crate::context;
 use crate::markdown;
 use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderContext};
 use crate::ui::{self, PathDisplayOptions};
+
+/// Git `-M` rename similarity threshold (matches commit-to-commit diffs in this command).
+const DIFF_RENAME_THRESHOLD: u32 = 50;
 
 /// Lines of unchanged context to show around each change.
 const CONTEXT_LINES: usize = 3;
@@ -322,15 +327,24 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .config_arc();
+    let config = repo.config().context("could not load config")?;
+    let thread_policy = repo.thread_policy();
     let diff_opts = DiffIndexToWorktreeOptions {
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: Some(config_arc),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
         ..DiffIndexToWorktreeOptions::default()
     };
-    let (mut entries, _) =
-        diff_index_to_worktree_with_options(repo.odb(), &mut index, work_tree, diff_opts)
-            .context("could not diff the index against the working tree")?;
+    let (mut entries, _) = diff_index_to_worktree_with_renames(
+        repo.odb(),
+        &mut index,
+        work_tree,
+        diff_opts,
+        DIFF_RENAME_THRESHOLD,
+        config.as_ref(),
+        &thread_policy,
+    )
+    .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
     let side = WorktreeDiffSide {
         work_tree,
@@ -358,8 +372,18 @@ fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> 
         .index_handle()
         .load()
         .context("could not load the index")?;
-    let mut entries = diff_index_to_tree(repo.odb(), &index, head_tree.as_ref(), false)
-        .context("could not diff the index against HEAD")?;
+    let config = repo.config().context("could not load config")?;
+    let thread_policy = repo.thread_policy();
+    let mut entries = diff_index_to_tree_with_renames(
+        repo.odb(),
+        &index,
+        head_tree.as_ref(),
+        false,
+        DIFF_RENAME_THRESHOLD,
+        config.as_ref(),
+        &thread_policy,
+    )
+    .context("could not diff the index against HEAD")?;
     sort_entries(&mut entries);
     entries
         .into_iter()
@@ -407,8 +431,8 @@ fn tree_commit_changes(
     base: &ObjectId,
     tip: &ObjectId,
 ) -> Result<Vec<FileChange>> {
-    let mut entries =
-        diff_commits_with_renames(repo.odb(), base, tip, 50).context("could not diff commits")?;
+    let mut entries = diff_commits_with_renames(repo.odb(), base, tip, DIFF_RENAME_THRESHOLD)
+        .context("could not diff commits")?;
     sort_entries(&mut entries);
     entries
         .into_iter()
@@ -527,6 +551,15 @@ fn worktree_against_tree(
         )
         .context("could not diff the working tree")?
     };
+    entries = apply_rename_detection_to_diff_entries(
+        repo.odb(),
+        entries,
+        Some(work_tree),
+        DIFF_RENAME_THRESHOLD,
+        config.as_ref(),
+        &repo.thread_policy(),
+    )
+    .context("could not detect renames in the working tree diff")?;
     sort_entries(&mut entries);
 
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
@@ -556,9 +589,14 @@ fn commit_changes(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Result<V
         None => None,
     };
 
-    let mut entries =
-        diff_trees_with_renames(repo.odb(), old_tree.as_ref(), Some(&new_tree), "", 50)
-            .context("could not diff the commit")?;
+    let mut entries = diff_trees_with_renames(
+        repo.odb(),
+        old_tree.as_ref(),
+        Some(&new_tree),
+        "",
+        DIFF_RENAME_THRESHOLD,
+    )
+    .context("could not diff the commit")?;
     sort_entries(&mut entries);
 
     entries
