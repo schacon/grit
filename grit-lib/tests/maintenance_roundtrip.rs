@@ -416,6 +416,7 @@ fn commit_graph_write_injected_ref_store_head_when_disk_unborn() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )

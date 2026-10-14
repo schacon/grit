@@ -132,6 +132,7 @@ fn create_commit_openpgp_uses_committer_default_without_signingkey() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )

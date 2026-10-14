@@ -1027,6 +1027,7 @@ mod tests {
                 allow_empty: false,
                 sign_override: None,
                 amend: false,
+                assume_worktree_synced: false,
             },
             &mut NullProgress,
         )

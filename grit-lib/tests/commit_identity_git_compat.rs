@@ -111,6 +111,7 @@ fn create_commit_bytes_match_git_with_explicit_environment_identity() {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )

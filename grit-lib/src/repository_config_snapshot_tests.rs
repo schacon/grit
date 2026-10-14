@@ -75,6 +75,7 @@ mod tests {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         };
         cascade_load_counters::measure(|| {
             create_commit(&repo3, &req, &mut NullProgress).unwrap();

@@ -101,6 +101,7 @@ pub fn run(message: Option<String>, amend: bool, allow_empty: bool) -> Result<Co
             allow_empty,
             sign_override: None,
             amend,
+            assume_worktree_synced: true,
         },
         &mut NullProgress,
     )
