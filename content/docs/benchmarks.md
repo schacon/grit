@@ -137,6 +137,23 @@ cargo bench -p grit-lib --bench hash
 - **Ratios** are **Grit median ÷ Git median** (stored in each scenario’s `ratio` field; hyperfine also records mean and spread). Values below `1.00×` mean Grit is faster; values above `2.00×` are highlighted as regressions worth investigating.
 - **Spread** shows Grit’s standard deviation across timed runs (hyperfine `--min-runs` / warmup settings from the baseline capture).
 
+### Maintenance (`grit-bench maintenance`)
+
+Baseline **`grit-utils/baselines/maintenance-medium.json`** compares full **`grit gc`**, **`grit gc repack --bitmaps`**, and **`grit gc commit-graph`** against **`git gc`**, **`git repack -adb`**, and **`git commit-graph write --reachable --changed-paths`** on the deep-history network fixture with a worktree seeded with extra loose objects. Each hyperfine run uses **`prepare-maintenance`** to restore that worktree so timings are not skewed by mutating the same checkout across iterations.
+
+Recorded on the factory VM when the baseline was captured (see `machine` / `tools` in the JSON). Roadmap item **15** targets **≤ 1.1×** Git on large-repo scenarios; maintenance work is tracked separately until repack and commit-graph close the gap:
+
+| Scenario | Grit ÷ Git (committed baseline) | vs 1.1× bar | Follow-up |
+| --- | ---: | --- | --- |
+| `gc-medium` | **7.31×** | miss | [GitHub #1026](https://github.com/gitbutlerapp/grit/issues/1026) — full in-process gc orchestration vs `git gc` |
+| `repack-medium` | **2.58×** | miss | [#1026](https://github.com/gitbutlerapp/grit/issues/1026) — pack build / bitmap sidecars |
+| `commit-graph-write` | **1.38×** | miss | [#1026](https://github.com/gitbutlerapp/grit/issues/1026) — changed-path Bloom generation |
+
+```bash
+cargo build --release -p grit-cli -p grit-utils
+./target/release/grit-bench maintenance --format json --output /tmp/maintenance-medium.json
+```
+
 ### Reproduce locally
 
 Build release binaries, install [hyperfine](https://github.com/sharkdp/hyperfine), then run matching grit-bench scenarios from the repo root (see `grit-utils/README.md` for the current subcommands):

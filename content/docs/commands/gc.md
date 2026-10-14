@@ -72,7 +72,7 @@ repack: packed 412 objects into .git/objects/pack/pack-….pack (800 ms).
 
 ## JSON output
 
-Schema: [v1](/schemas/gc/v1.json)
+Schema: [v1](/schemas/gc/v1.json) (task subcommands also have [gc.repack](/schemas/gc.repack/v1.json), [gc.commit-graph](/schemas/gc.commit-graph/v1.json), [gc.midx](/schemas/gc.midx/v1.json), [gc.pack-refs](/schemas/gc.pack-refs/v1.json), and [gc.prune](/schemas/gc.prune/v1.json) schemas).
 
 Pass `--json` for stable, scripting-friendly output:
 
