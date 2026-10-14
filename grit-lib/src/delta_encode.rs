@@ -109,7 +109,7 @@ impl DeltaIndex {
         }
     }
 
-    /// Indexed stride used when subsampling large bases (Git indexes every [`WINDOW`] bytes).
+    /// Indexed stride used when subsampling large bases (Git indexes one entry per 16-byte rolling-hash window).
     #[must_use]
     pub fn index_stride(&self) -> usize {
         WINDOW

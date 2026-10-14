@@ -108,7 +108,7 @@ pub fn run_maintenance_suite(
     std::fs::write(&marker, bare.display().to_string()).context("write maintenance bare marker")?;
     let worktree = prepare_gc_fixture(git, &bare)?;
     let mut scenarios = Vec::new();
-    let prepare_kind = Some(crate::scenarios::PrepareKind::MaintenanceReset);
+    let prepare_kind = Some(PrepareKind::MaintenanceReset);
 
     std::env::set_var(
         "GRIT_BENCH_MAINTENANCE_BARE",
