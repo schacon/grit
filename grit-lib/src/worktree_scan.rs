@@ -204,42 +204,37 @@ fn index_ordered_blobs(by_dir: &HashMap<String, Vec<BlobInDir>>) -> Vec<BlobInDi
     blobs
 }
 
-fn partial_dirs_from_blobs(blobs: &[BlobInDir]) -> HashMap<String, Vec<BlobInDir>> {
-    let mut partial: HashMap<String, Vec<BlobInDir>> = HashMap::new();
-    for blob in blobs {
-        let dir = match blob.rel_path.rsplit_once('/') {
-            Some((dir, _)) => dir.to_owned(),
-            None => String::new(),
-        };
-        partial.entry(dir).or_default().push(blob.clone());
-    }
-    partial
-}
-
 fn preload_blob_lookups_parallel(
-    ordered: &[BlobInDir],
+    by_dir: &HashMap<String, Vec<BlobInDir>>,
     entry_slots: usize,
     threads: usize,
     symlink_missing: &HashSet<String>,
     dir_abs: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
     file_abs: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
 ) -> Result<Vec<Option<BlobDiskLookup>>> {
-    if ordered.is_empty() {
+    if by_dir.is_empty() {
         return Ok(Vec::new());
     }
+    let mut dirs: Vec<String> = by_dir.keys().cloned().collect();
+    dirs.sort();
     let mut lookups: Vec<Option<BlobDiskLookup>> = (0..entry_slots).map(|_| None).collect();
-    let chunk_size = ordered.len().div_ceil(threads);
+    let chunk_size = dirs.len().div_ceil(threads);
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
-        for blob_chunk in ordered.chunks(chunk_size) {
-            let blob_chunk: Vec<BlobInDir> = blob_chunk.to_vec();
-            let partial_dirs = partial_dirs_from_blobs(&blob_chunk);
+        for dir_chunk in dirs.chunks(chunk_size) {
+            let mut partial_dirs = HashMap::new();
+            for dir in dir_chunk {
+                if let Some(blobs) = by_dir.get(dir) {
+                    partial_dirs.insert(dir.clone(), blobs.clone());
+                }
+            }
             let symlink_missing = symlink_missing.clone();
             let dir_abs = Arc::clone(&dir_abs);
             let file_abs = Arc::clone(&file_abs);
             handles.push(
                 scope.spawn(move || -> Result<Vec<(usize, BlobDiskLookup)>> {
-                    let mut local = Vec::with_capacity(blob_chunk.len());
+                    let mut local =
+                        Vec::with_capacity(partial_dirs.values().map(|v| v.len()).sum::<usize>());
                     for_each_blob_by_directory(
                         &partial_dirs,
                         |dir| dir_abs(dir),
@@ -394,7 +389,7 @@ where
             .max()
             .map_or(0, |i| i + 1);
         let mut preloaded = preload_blob_lookups_parallel(
-            &ordered,
+            by_dir,
             entry_slots,
             threads,
             &symlink_missing,
@@ -422,30 +417,36 @@ where
     )
 }
 
+fn dir_entry_name_matches(index_file_name: &str, entry: &fs::DirEntry) -> bool {
+    let disk = entry.file_name();
+    let disk = disk.to_string_lossy();
+    if disk == index_file_name {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        disk.eq_ignore_ascii_case(index_file_name)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 fn lookup_blob_in_directory(
     on_disk: &HashMap<String, fs::DirEntry>,
     index_file_name: &str,
     target_abs: &Path,
 ) -> BlobDiskLookup {
-    let try_entry = |entry: &fs::DirEntry| -> Option<std::result::Result<fs::Metadata, io::Error>> {
-        if entry.path() == target_abs {
-            Some(dir_entry_metadata(entry))
-        } else {
-            None
-        }
-    };
-
     if let Some(entry) = on_disk.get(index_file_name) {
-        if let Some(meta) = try_entry(entry) {
-            return match meta {
-                Ok(m) => BlobDiskLookup::Present(m),
-                Err(e) => BlobDiskLookup::Io(e),
-            };
-        }
+        return match dir_entry_metadata(entry) {
+            Ok(m) => BlobDiskLookup::Present(m),
+            Err(e) => BlobDiskLookup::Io(e),
+        };
     }
     for entry in on_disk.values() {
-        if let Some(meta) = try_entry(entry) {
-            return match meta {
+        if dir_entry_name_matches(index_file_name, entry) {
+            return match dir_entry_metadata(entry) {
                 Ok(m) => BlobDiskLookup::Present(m),
                 Err(e) => BlobDiskLookup::Io(e),
             };
@@ -696,6 +697,72 @@ mod tests {
             worktree_read_dir_probe_count() >= DIRS,
             "parallel preload must read_dir each multi-file parent (got {} read_dirs)",
             worktree_read_dir_probe_count()
+        );
+        let tracked = DIRS * FILES_PER_DIR;
+        assert!(
+            worktree_metadata_probe_count() <= tracked + DIRS + 8,
+            "metadata probes {} exceeded budget for grouped scan",
+            worktree_metadata_probe_count()
+        );
+    }
+
+    #[test]
+    fn dense_multi_file_dirs_one_read_dir_per_parent() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path().to_path_buf();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        const DIRS: usize = 80;
+        const FILES_PER_DIR: usize = 50;
+        let mut index = Index::new();
+        for d in 0..DIRS {
+            let dir = format!("p/a/b/leaf{d:04}");
+            for f in 0..FILES_PER_DIR {
+                let rel = format!("{dir}/f{f}-file.txt");
+                let oid = write_blob_file(&wt, &rel, format!("{d}-{f}\n").as_bytes());
+                index.add_or_replace(
+                    entry_from_stat(&wt.join(&rel), rel.as_bytes(), oid, 0o100644).unwrap(),
+                );
+            }
+        }
+        let grouped = group_blob_entries_by_dir(&index);
+        let _probe = reset_worktree_metadata_probe(&wt);
+        let wt_dir = wt.clone();
+        let dir_abs = move |dir: &str| {
+            if dir.is_empty() {
+                wt_dir.clone()
+            } else {
+                wt_dir.join(dir)
+            }
+        };
+        let wt_file = wt.clone();
+        let file_abs = move |rel: &str| wt_file.join(rel);
+        let policy = crate::parallel::ThreadPolicy::default();
+        let config = crate::config::ConfigSet::new();
+        let mut seen = 0;
+        for_each_blob_by_directory_parallel(
+            &grouped,
+            WorktreeBlobScanOptions {
+                preload_index: true,
+                stat_parallel_threads: Some(4),
+            },
+            &policy,
+            &config,
+            false,
+            dir_abs,
+            file_abs,
+            |_| false,
+            |_, _, lookup| {
+                assert!(matches!(lookup, BlobDiskLookup::Present(_)));
+                seen += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, DIRS * FILES_PER_DIR);
+        assert_eq!(
+            worktree_read_dir_probe_count(),
+            DIRS,
+            "each dense parent directory must be read once"
         );
         let tracked = DIRS * FILES_PER_DIR;
         assert!(

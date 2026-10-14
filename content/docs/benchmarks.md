@@ -285,6 +285,15 @@ cargo build --release -p grit-cli -p grit-utils
 ./target/release/grit-bench deep-leaf --smoke --format json --output /tmp/deep-leaf-smoke.json
 ```
 
+## grit-bench: dense-leaf worktree (issue #1041)
+
+**`grit-bench dense-leaf`** builds the Windows dogfood layout with **many small files per leaf directory** (~**50** **`*.txt`** files under each of **~1000** deep prefixes, plus a few extra-deep chains). Scenarios time clean **status**, dirty **status** after modifying **100** text files, **diff**, and **add** against system **`git`**. Use **`--smoke`** (~**4k** tracked paths) in CI; omit it for the full **~50k**-path production fixture. Release checks on Windows should compare medians to **`git`** and expect ratios within **3×** on warm-cache runs.
+
+```bash
+cargo build --release -p grit-cli -p grit-utils
+./target/release/grit-bench dense-leaf --smoke --format json --output /tmp/dense-leaf-smoke.json
+```
+
 ## grit-bench: parallelism (threads=1 vs auto)
 
 The **`grit-bench parallel`** suite measures how wall time scales when worker threads are pinned to **1** versus **auto** (unset `index.threads`, `checkout.workers`, and `pack.threads`, so system **git** and **grit** use all logical CPUs). Each scenario runs twice in the JSON baseline: ids end with **`-t1`** or **`-tauto`**. Hermetic git config matches other suites (`GIT_CONFIG_NOSYSTEM`, empty global config, `gc.auto=0`), with extra keys injected through **`GIT_CONFIG_COUNT`** for the one-thread runs. When the **`grit`** binary exposes a global **`--threads`** flag, the suite passes **`--threads=1`** or **`--threads=0`** (auto) in addition to those config keys.

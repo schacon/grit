@@ -311,6 +311,120 @@ pub fn create_deep_leaf_dogfood_repo(git: &Path, spec: DeepLeafDogfoodSpec) -> R
     Ok(dir)
 }
 
+/// Many small files per leaf directory (dogfood issue #1041): deep prefixes, 50 files/dir.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseLeafDogfoodSpec {
+    /// Deepest directories, each holding [`Self::files_per_leaf`] small text files.
+    pub leaf_dirs: usize,
+    pub files_per_leaf: usize,
+    /// Extra deep-only chains (21-level style) with [`Self::deep_files_per_chain`] files each.
+    pub deep_chains: usize,
+    pub deep_depth: usize,
+    pub deep_files_per_chain: usize,
+}
+
+impl DenseLeafDogfoodSpec {
+    /// CI smoke (~4k tracked blobs).
+    #[must_use]
+    pub fn smoke() -> Self {
+        Self {
+            leaf_dirs: 80,
+            files_per_leaf: 50,
+            deep_chains: 1,
+            deep_depth: 12,
+            deep_files_per_chain: 10,
+        }
+    }
+
+    /// Matches the Windows #1041 layout (~50k tracked paths).
+    #[must_use]
+    pub fn production() -> Self {
+        Self {
+            leaf_dirs: 1000,
+            files_per_leaf: 50,
+            deep_chains: 5,
+            deep_depth: 21,
+            deep_files_per_chain: 10,
+        }
+    }
+}
+
+fn dense_leaf_dir_prefix(leaf: usize) -> String {
+    let depth = 5 + (leaf % 7);
+    let mut path = String::new();
+    for level in 0..depth {
+        path.push_str(&format!(
+            "p{}/q{}/r{}/s{}/n{}/",
+            leaf % 10,
+            level % 10,
+            level % 8,
+            level % 6,
+            level % 5
+        ));
+    }
+    path
+}
+
+/// Build and commit the dense-leaf dogfood repository under [`scratch_dir`].
+pub fn create_dense_leaf_dogfood_repo(git: &Path, spec: DenseLeafDogfoodSpec) -> Result<PathBuf> {
+    let dir = scratch_dir();
+    remove_dir_robust(&dir);
+    fs::create_dir_all(&dir).context("create scratch dir")?;
+    run_git(git, &dir, &["init", "-q", "-b", "main"])?;
+
+    for leaf in 0..spec.leaf_dirs {
+        let prefix = dense_leaf_dir_prefix(leaf);
+        let leaf_dir = format!("{prefix}leaf{leaf:04}");
+        let abs_leaf = dir.join(&leaf_dir);
+        fs::create_dir_all(&abs_leaf)?;
+        for f in 0..spec.files_per_leaf {
+            let path = abs_leaf.join(format!("f{f}-file.txt"));
+            fs::write(path, format!("leaf={leaf} f={f}\n"))?;
+        }
+    }
+
+    for chain in 0..spec.deep_chains {
+        let mut rel = format!("deep{chain:02}");
+        for level in 0..spec.deep_depth {
+            rel.push_str(&format!("/d{level}"));
+        }
+        let abs = dir.join(&rel);
+        fs::create_dir_all(&abs)?;
+        for f in 0..spec.deep_files_per_chain {
+            fs::write(abs.join(format!("f{f}.txt")), format!("deep {chain} {f}\n"))?;
+        }
+    }
+
+    run_git(git, &dir, &["add", "-A"])?;
+    run_git(
+        git,
+        &dir,
+        &["commit", "-q", "-m", "dense-leaf dogfood seed"],
+    )?;
+    Ok(dir)
+}
+
+/// Append one line to the first `count` tracked `.txt` files (unstaged) for status/diff benches.
+pub fn modify_txt_files_for_diff(dir: &Path, count: usize) -> Result<()> {
+    use std::io::Write as _;
+
+    let mut paths: Vec<PathBuf> = walkdir(dir)?
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "txt"))
+        .collect();
+    paths.sort();
+    anyhow::ensure!(
+        paths.len() >= count,
+        "expected at least {count} .txt files, found {}",
+        paths.len()
+    );
+    for path in paths.iter().take(count) {
+        let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+        writeln!(file, "bench diff line")?;
+    }
+    Ok(())
+}
+
 /// Append one line to the first `count` tracked `.rs` files (unstaged) for diff/status benches.
 pub fn modify_rs_files_for_diff(dir: &Path, count: usize) -> Result<()> {
     use std::io::Write as _;

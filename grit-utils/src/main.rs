@@ -6,8 +6,8 @@ use grit_utils::binary::{require_hyperfine, resolve_binary};
 use grit_utils::bitmap_suite::{run_bitmaps_suite, BitmapRunConfig};
 use grit_utils::campaign_suite::{run_campaign_suite, CampaignOptions};
 use grit_utils::compare::compare_files;
-use grit_utils::fixture::DeepLeafDogfoodSpec;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
+use grit_utils::fixture::{DeepLeafDogfoodSpec, DenseLeafDogfoodSpec};
 use grit_utils::fsck_suite::run_fsck_suite;
 use grit_utils::ignore_suite::run_ignore_suite;
 use grit_utils::maintenance_prepare::run_prepare_maintenance;
@@ -31,11 +31,11 @@ use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
 use grit_utils::render::{render_markdown, render_text};
 use grit_utils::revwalk_suite::run_revwalk_suite;
 use grit_utils::scenarios::{
-    run_add_suite, run_blame_suite, run_commit_suite, run_deep_leaf_worktree_suite, run_diff_suite,
-    run_hot_path_suite, run_log_suite, run_prepare_add, run_prepare_commit, run_prepare_merge,
-    run_prepare_pick, run_prepare_pick_series, run_prepare_restore, run_prepare_revert,
-    run_prepare_stash, run_prepare_switch, run_restore_suite, run_stash_suite, run_status_suite,
-    RunConfig,
+    run_add_suite, run_blame_suite, run_commit_suite, run_deep_leaf_worktree_suite,
+    run_dense_leaf_worktree_suite, run_diff_suite, run_hot_path_suite, run_log_suite,
+    run_prepare_add, run_prepare_commit, run_prepare_merge, run_prepare_pick,
+    run_prepare_pick_series, run_prepare_restore, run_prepare_revert, run_prepare_stash,
+    run_prepare_switch, run_restore_suite, run_stash_suite, run_status_suite, RunConfig,
 };
 use grit_utils::schema::BenchReport;
 use std::net::TcpListener;
@@ -102,6 +102,11 @@ enum Cmd {
     },
     /// Deep-leaf CRLF worktree (dogfood #1017 layout): clean/dirty status and diff
     DeepLeaf {
+        #[arg(long)]
+        smoke: bool,
+    },
+    /// Dense leaf dirs with many files per directory (dogfood #1041 layout)
+    DenseLeaf {
         #[arg(long)]
         smoke: bool,
     },
@@ -741,6 +746,16 @@ fn main() -> Result<()> {
                 DeepLeafDogfoodSpec::production()
             };
             run_deep_leaf_worktree_suite(&hyperfine, &git, &grit, &cfg, spec, timestamp)?
+        }
+        Cmd::DenseLeaf { smoke } => {
+            eprintln!("Running dense-leaf worktree benchmarks (dogfood #1041 layout)...");
+            let cfg = run_config(&cli, true);
+            let spec = if *smoke {
+                DenseLeafDogfoodSpec::smoke()
+            } else {
+                DenseLeafDogfoodSpec::production()
+            };
+            run_dense_leaf_worktree_suite(&hyperfine, &git, &grit, &cfg, spec, timestamp)?
         }
         Cmd::Log { sizes } => {
             eprintln!("Running log benchmarks...");

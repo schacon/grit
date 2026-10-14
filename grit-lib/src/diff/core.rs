@@ -3412,7 +3412,10 @@ fn diff_index_to_worktree_inner(
                         // Mtime-only bumps keep size and still refresh.
                         let skip_refresh_for_status_diff =
                             options.for_status && !stat_matches && worktree_size != ie_ref.size;
-                        if !skip_refresh_for_status_diff {
+                        let skip_refresh_clean_status = options.for_status
+                            && stat_matches
+                            && !entry_is_racy_with_policy(ie_ref, index_mtime, stat_policy);
+                        if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
                             let ie = &mut index.entries[entry_index];
                             let refresh = refresh_index_blob_stat_from_metadata(
                                 odb,

@@ -1942,6 +1942,58 @@ mod status_op_tests {
     }
 
     #[test]
+    fn status_reports_hundred_modified_on_dense_leaf_fixture() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        init_min_repo(root);
+        const DIRS: usize = 40;
+        const FILES_PER_DIR: usize = 50;
+        for d in 0..DIRS {
+            let dir = format!("p/a/b/leaf{d:04}");
+            fs::create_dir_all(root.join(&dir)).unwrap();
+            for f in 0..FILES_PER_DIR {
+                fs::write(
+                    root.join(&dir).join(format!("f{f}-file.txt")),
+                    format!("body {d}/{f}\n"),
+                )
+                .unwrap();
+            }
+        }
+        grit_test_support::git(root, &["add", "."]);
+        grit_test_support::git(root, &["commit", "-qm", "seed"]);
+
+        let mut paths: Vec<_> = (0..DIRS)
+            .flat_map(|d| {
+                (0..FILES_PER_DIR)
+                    .map(move |f| root.join(format!("p/a/b/leaf{d:04}/f{f}-file.txt")))
+            })
+            .collect();
+        paths.sort();
+        for path in paths.iter().take(100) {
+            use std::io::Write as _;
+            let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+            writeln!(file, "dirty").unwrap();
+        }
+
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
+        let model = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let modified = model
+            .unstaged
+            .iter()
+            .filter(|d| d.status == crate::diff::DiffStatus::Modified)
+            .count();
+        assert_eq!(
+            modified, 100,
+            "expected 100 modified paths, got unstaged {:?}",
+            model.unstaged
+        );
+    }
+
+    #[test]
     fn status_scan_stats_each_tracked_path_once() {
         use crate::worktree_scan::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
 

@@ -8,10 +8,11 @@ use anyhow::{Context, Result};
 use crate::bench_env::isolated_env_prefix;
 use crate::binary::{grit_source_commit, tool_version};
 use crate::fixture::{
-    bench_work_dir, create_blame_deep_history_repo, create_deep_leaf_dogfood_repo, create_repo,
-    create_repo_with_history, dirty_repo, modify_files_for_diff, modify_rs_files_for_diff,
+    bench_work_dir, create_blame_deep_history_repo, create_deep_leaf_dogfood_repo,
+    create_dense_leaf_dogfood_repo, create_repo, create_repo_with_history, dirty_repo,
+    modify_files_for_diff, modify_rs_files_for_diff, modify_txt_files_for_diff,
     prepare_add_iteration, prepare_commit_iteration, prepare_restore_iteration, scratch_dir,
-    DeepLeafDogfoodSpec,
+    DeepLeafDogfoodSpec, DenseLeafDogfoodSpec,
 };
 use crate::hot_path_fixture::{
     load_meta, prepare_merge, prepare_pick, prepare_pick_series, prepare_revert, prepare_switch,
@@ -533,6 +534,105 @@ pub fn run_deep_leaf_worktree_suite(
             ),
             grit_argv: vec!["diff".into()],
             git_argv: vec!["diff".into()],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &repo,
+    )?);
+    Ok(build_report(git, grit, timestamp, scenarios))
+}
+
+/// Dense leaf dirs with many small files per directory (dogfood issue #1041).
+pub fn run_dense_leaf_worktree_suite(
+    hyperfine: &Path,
+    git: &Path,
+    grit: &Path,
+    cfg: &RunConfig,
+    spec: DenseLeafDogfoodSpec,
+    timestamp: time::OffsetDateTime,
+) -> Result<BenchReport> {
+    const MODIFIED_TXT: usize = 100;
+    let repo = create_dense_leaf_dogfood_repo(git, spec)?;
+    let tracked =
+        spec.leaf_dirs * spec.files_per_leaf + spec.deep_chains * spec.deep_files_per_chain;
+    let fixture = format!("dense-leaf-{tracked}");
+    let mut scenarios = vec![run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "status-clean-dense-leaf".into(),
+            group: "status".into(),
+            fixture: fixture.clone(),
+            description: "status on clean dense-leaf worktree (#1041 layout)".into(),
+            grit_argv: vec!["status".into()],
+            git_argv: vec!["status".into(), "-s".into()],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &repo,
+    )?];
+
+    modify_txt_files_for_diff(&repo, MODIFIED_TXT)?;
+    scenarios.push(run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "status-dirty-dense-leaf".into(),
+            group: "status".into(),
+            fixture: fixture.clone(),
+            description: format!(
+                "status after modifying {MODIFIED_TXT} .txt files on dense-leaf worktree"
+            ),
+            grit_argv: vec!["status".into()],
+            git_argv: vec!["status".into(), "-s".into()],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &repo,
+    )?);
+    scenarios.push(run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "diff-dense-leaf".into(),
+            group: "diff".into(),
+            fixture: fixture.clone(),
+            description: format!(
+                "worktree diff after modifying {MODIFIED_TXT} .txt files on dense-leaf worktree"
+            ),
+            grit_argv: vec!["diff".into()],
+            git_argv: vec!["diff".into()],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &repo,
+    )?);
+    scenarios.push(run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "add-dense-leaf".into(),
+            group: "add".into(),
+            fixture,
+            description: format!("stage {MODIFIED_TXT} modified .txt files on dense-leaf worktree"),
+            grit_argv: vec!["add".into()],
+            git_argv: vec!["add".into(), "-A".into()],
             driver: Driver::Cli,
             prepare_kind: None,
             grit_via_shell: false,
