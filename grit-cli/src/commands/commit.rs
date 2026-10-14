@@ -77,13 +77,6 @@ pub fn run(message: Option<String>, amend: bool, allow_empty: bool) -> Result<Co
     let config = repo.config().context("could not load config")?;
     let env = repo.environment();
     let now = crate::context::wall_clock_now(env);
-    let author = context::identity(
-        env,
-        config.as_ref(),
-        IdentRole::Author,
-        "GIT_AUTHOR_DATE",
-        now,
-    )?;
     let committer = context::identity(
         env,
         config.as_ref(),
@@ -91,6 +84,19 @@ pub fn run(message: Option<String>, amend: bool, allow_empty: bool) -> Result<Co
         "GIT_COMMITTER_DATE",
         now,
     )?;
+    let author = if amend {
+        // `create_commit` reuses the tip commit's author when amending; strict author resolution
+        // is not required (and would wrongly fail committer-only amend flows).
+        String::new()
+    } else {
+        context::identity(
+            env,
+            config.as_ref(),
+            IdentRole::Author,
+            "GIT_AUTHOR_DATE",
+            now,
+        )?
+    };
 
     let outcome = create_commit(
         &repo,

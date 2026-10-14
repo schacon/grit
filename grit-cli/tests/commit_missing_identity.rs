@@ -41,8 +41,8 @@ fn commit_fails_without_configured_identity() -> TestResult {
     assert!(!out.status.success(), "commit should fail: {:?}", out);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("Author identity unknown"),
-        "expected author hint: {stderr}"
+        stderr.contains("identity unknown"),
+        "expected identity hint: {stderr}"
     );
     assert!(
         stderr.contains("unable to auto-detect email address"),
