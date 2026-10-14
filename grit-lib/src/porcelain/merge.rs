@@ -337,12 +337,6 @@ pub fn integrate_branch(
         return Ok(IntegrateBranchOutcome::Conflicts { paths, details });
     }
 
-    let mut index = merged.index;
-    let merged_tree =
-        write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
-    prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
-    checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
-
     let config = repo.config()?;
     let author =
         strict_commit_identity(repo, config.as_ref(), IdentRole::Author, "GIT_AUTHOR_DATE")?;
@@ -352,6 +346,12 @@ pub fn integrate_branch(
         IdentRole::Committer,
         "GIT_COMMITTER_DATE",
     )?;
+
+    let mut index = merged.index;
+    let merged_tree =
+        write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
+    checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
 
     let commit = CommitData {
         tree: merged_tree,
