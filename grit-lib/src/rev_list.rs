@@ -9347,6 +9347,44 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn stdin_pseudo_ref_options_expand_specs() -> Result<()> {
+        let (dir, repo, tip) = seed_repo(12, true);
+        fs::create_dir_all(repo.git_dir().join("refs/heads/topic"))?;
+        fs::write(
+            repo.git_dir().join("refs/heads/topic/a"),
+            format!("{tip}\n"),
+        )?;
+        fs::write(repo.git_dir().join("refs/tags/v2"), format!("{tip}\n"))?;
+        fs::create_dir_all(repo.git_dir().join("refs/remotes/upstream"))?;
+        fs::write(
+            repo.git_dir().join("refs/remotes/upstream/main"),
+            format!("{tip}\n"),
+        )?;
+        let lines = [
+            "--branches",
+            "--tags",
+            "--remotes",
+            "--glob=refs/heads/topic/*",
+            "--tags=v2",
+            "--branches=main",
+        ];
+        let (pos, _neg, _all, paths) =
+            collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &lines)?;
+        assert!(paths.is_empty());
+        assert!(!pos.is_empty(), "stdin pseudo-options should expand positive specs");
+        let _ = rev_list(
+            &repo,
+            &pos,
+            &[],
+            &RevListOptions {
+                count: true,
+                ..RevListOptions::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn bounded_limit_list_and_ignore_missing_empty() -> Result<()> {
         let (_dir, repo, tip) = seed_repo(40, false);
         let bounded = rev_list(
