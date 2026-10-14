@@ -191,3 +191,44 @@ fn worktree_rename_detection_with_small_unstaged_edit() {
         renames[0].score
     );
 }
+
+#[test]
+fn plain_filesystem_mv_pairs_via_untracked_worktree_candidate() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_repo_with_large_file(root);
+    std::fs::rename(root.join("a.txt"), root.join("b.txt")).expect("mv");
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let mut index = repo.index_handle().load().expect("index");
+    let work_tree = repo.work_tree().expect("worktree");
+    let rules =
+        grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(&repo, &index)
+            .expect("rules");
+
+    let (entries, _) = grit_lib::diff::diff_index_to_worktree_with_renames(
+        &repo,
+        &mut index,
+        work_tree,
+        grit_lib::diff::DiffIndexToWorktreeOptions {
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
+            config: repo.config().ok(),
+            worktree_rules: Some(std::sync::Arc::new(std::sync::Mutex::new(rules))),
+            ..grit_lib::diff::DiffIndexToWorktreeOptions::default()
+        },
+        50,
+    )
+    .expect("unstaged diff");
+
+    let renames: Vec<_> = entries
+        .iter()
+        .filter(|e| e.status == DiffStatus::Renamed)
+        .collect();
+    assert_eq!(
+        renames.len(),
+        1,
+        "plain mv should rename via untracked b.txt, got: {entries:?}"
+    );
+    assert_eq!(renames[0].old_path.as_deref(), Some("a.txt"));
+    assert_eq!(renames[0].new_path.as_deref(), Some("b.txt"));
+}

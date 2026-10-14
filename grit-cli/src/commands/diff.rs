@@ -17,8 +17,8 @@
 use anyhow::{Context, Result};
 use grit_lib::diff::{
     apply_rename_detection_to_diff_entries, diff_commits_with_renames,
-    diff_index_to_tree_with_renames, diff_index_to_worktree_with_options,
-    diff_index_to_worktree_with_renames, diff_trees_with_renames, read_submodule_head_oid,
+    diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
+    diff_trees_with_renames, read_submodule_head_oid,
     read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
@@ -327,8 +327,6 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .config_arc();
-    let config = repo.config().context("could not load config")?;
-    let thread_policy = repo.thread_policy();
     let diff_opts = DiffIndexToWorktreeOptions {
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         config: Some(config_arc),
@@ -336,13 +334,11 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         ..DiffIndexToWorktreeOptions::default()
     };
     let (mut entries, _) = diff_index_to_worktree_with_renames(
-        repo.odb(),
+        repo,
         &mut index,
         work_tree,
         diff_opts,
         DIFF_RENAME_THRESHOLD,
-        config.as_ref(),
-        &thread_policy,
     )
     .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
@@ -519,9 +515,12 @@ fn worktree_against_tree(
             index.cache_tree.as_ref(),
         );
     let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
+    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
+        WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
+    ));
     let mut entries = if index_backed {
-        let (entries, _) = diff_index_to_worktree_with_options(
-            repo.odb(),
+        let (entries, _) = diff_index_to_worktree_with_renames(
+            repo,
             &mut index,
             work_tree,
             DiffIndexToWorktreeOptions {
@@ -531,8 +530,10 @@ fn worktree_against_tree(
                 thread_policy: Some(repo.thread_policy()),
                 refresh_index_stat_in_pass: false,
                 for_status: true,
+                worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
                 ..DiffIndexToWorktreeOptions::default()
             },
+            DIFF_RENAME_THRESHOLD,
         )
         .context("could not diff the working tree")?;
         entries
@@ -540,7 +541,7 @@ fn worktree_against_tree(
         let worktree_rules =
             grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(repo, &index)
                 .context("could not load worktree rules")?;
-        grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
+        let raw = grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(
             repo.odb(),
             base_tree,
             work_tree,
@@ -549,22 +550,18 @@ fn worktree_against_tree(
             Some(config.as_ref()),
             Some(&worktree_rules),
         )
-        .context("could not diff the working tree")?
+        .context("could not diff the working tree")?;
+        apply_rename_detection_to_diff_entries(
+            repo.odb(),
+            raw,
+            Some(work_tree),
+            DIFF_RENAME_THRESHOLD,
+            config.as_ref(),
+            &repo.thread_policy(),
+        )
+        .context("could not detect renames in the working tree diff")?
     };
-    entries = apply_rename_detection_to_diff_entries(
-        repo.odb(),
-        entries,
-        Some(work_tree),
-        DIFF_RENAME_THRESHOLD,
-        config.as_ref(),
-        &repo.thread_policy(),
-    )
-    .context("could not detect renames in the working tree diff")?;
     sort_entries(&mut entries);
-
-    let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
-        WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
-    ));
     let side = WorktreeDiffSide {
         work_tree,
         index: &index,
