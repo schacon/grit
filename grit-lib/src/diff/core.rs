@@ -10648,4 +10648,102 @@ mod line_coverage_tests {
         let _ = annotate_unified_diff_no_newline_at_eof("@@\n+a\n\\ No newline\n", "a", "a\n");
         Ok(())
     }
+
+    #[test]
+    fn unmerged_only_tree_worktree_diff_and_func_heuristics() -> Result<()> {
+        use similar::DiffOp;
+        assert!(inserted_block_starts_with_c_like_function_definition(
+            "static int foo(int bar) {"
+        ));
+        assert!(!inserted_block_starts_with_c_like_function_definition("printf(hi);"));
+        let ops = vec![
+            DiffOp::Equal {
+                old_index: 0,
+                new_index: 0,
+                len: 4,
+            },
+            DiffOp::Insert {
+                old_index: 4,
+                new_index: 4,
+                new_len: 2,
+            },
+        ];
+        let new_lines = [
+            "a\n", "b\n", "c\n", "d\n", "void added() {\n", "}\n",
+        ];
+        assert!(append_with_whole_function_added(&ops, 4, 6, &new_lines, None));
+        let _ = hunk_old_change_end_exclusive(&ops);
+
+        let temp = TempDir::new().expect("tempdir");
+        let wt = temp.path();
+        let git_dir = wt.join(".git");
+        let objects_dir = git_dir.join("objects");
+        std::fs::create_dir_all(&objects_dir).expect("objects");
+        let odb = Odb::new(&objects_dir);
+        let tree_blob = odb.write(ObjectKind::Blob, b"base\n").expect("blob");
+        std::fs::write(wt.join("conflict.txt"), b"worktree\n").expect("wt");
+        let tree = write_tree(&odb, &[("conflict.txt", tree_blob)]);
+        let mut index = Index::new();
+        let mut stage1 = index_entry("conflict.txt", MODE_REGULAR, tree_blob);
+        stage1.flags = (stage1.flags & 0x0FFF) | (1 << 12);
+        index.entries_mut().push(stage1);
+        let cfg = ConfigSet::new();
+        let diff = diff_tree_to_worktree_with_git_dir(
+            &odb,
+            Some(&tree),
+            wt,
+            &git_dir,
+            &index,
+            Some(&cfg),
+        )?;
+        assert!(!diff.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn high_volume_unified_diff_and_postprocess() -> Result<()> {
+        let (_temp, odb, old_tree, new_tree) = pair_of_trees_with_rename();
+        let config = ConfigSet::new();
+        let policy = ThreadPolicy::default();
+        for i in 0..600u32 {
+            let old = format!("seed {i}\nalpha\n");
+            let new = format!("seed {i}\nalpha\nvoid fn_{i}(int arg) {{\n  return arg;\n}}\n");
+            let _ = unified_diff_with_prefix_and_funcname_and_algorithm(
+                &old,
+                &new,
+                "a/f.c",
+                "b/f.c",
+                3,
+                0,
+                "a/",
+                "b/",
+                None,
+                Algorithm::Myers,
+                i % 2 == 0,
+                i % 3 == 0,
+                i % 5 == 0,
+                i % 7 == 0,
+            );
+            let threshold = 30 + (i % 40);
+            let raw = diff_trees(&odb, Some(&old_tree), Some(&new_tree), "")?;
+            let opts = DiffPostprocessOptions {
+                rename_threshold: threshold,
+                copy_threshold: Some(threshold),
+                find_copies_harder: i % 2 == 0,
+                break_score: Some(threshold as u64),
+                materialize_break_worktree_new_oid: i % 4 == 0,
+            };
+            let _ = postprocess_diff_entries(
+                &odb,
+                raw,
+                Some(&old_tree),
+                None,
+                None,
+                &config,
+                &policy,
+                &opts,
+            )?;
+        }
+        Ok(())
+    }
 }
