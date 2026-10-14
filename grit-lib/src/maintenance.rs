@@ -114,6 +114,7 @@ struct RepackDetail {
     prune_packed_loose: usize,
     unreachable_loose: usize,
     unreachable_prune_ms: u64,
+    unreachable_prune_ran: bool,
 }
 
 /// Counters produced by [`repack`].
@@ -152,6 +153,8 @@ pub struct RepackStats {
     pub unreachable_loose_pruned: usize,
     /// Wall time spent in unreachable loose-object pruning during this repack.
     pub unreachable_prune_ms: u64,
+    /// True when unreachable loose-object pruning was executed (even if nothing was removed).
+    pub unreachable_prune_ran: bool,
 }
 
 /// Options for [`Repository::write_commit_graph`].
@@ -609,6 +612,8 @@ pub struct GcStats {
     pub repack: RepackStats,
     /// Counters from loose-object pruning after repack.
     pub prune: PruneStats,
+    /// True when full gc ran unreachable loose-object pruning during repack.
+    pub prune_ran: bool,
     /// Monolithic commit-graph written after repack/prune (`None` when skipped).
     pub commit_graph: Option<CommitGraphWriteReport>,
     /// Reflog lines removed by expiry during gc.
@@ -651,6 +656,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             prune_packed_loose: 0,
             unreachable_loose: 0,
             unreachable_prune_ms: 0,
+            unreachable_prune_ran: false,
         });
     }
 
@@ -670,6 +676,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
             prune_packed_loose: 0,
             unreachable_loose: 0,
             unreachable_prune_ms: 0,
+            unreachable_prune_ran: false,
         });
     }
 
@@ -737,11 +744,13 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
     }
 
     let mut unreachable_prune_ms = 0u64;
+    let mut unreachable_prune_ran = false;
     if !opts.keep_unreachable {
         let keep_newer_than = opts.prune_older_than.map(offset_to_system_time);
         let prune_start = Instant::now();
         unreachable_loose = prune_loose_unreachable(odb, &roots, keep_newer_than)?.pruned;
         unreachable_prune_ms = prune_start.elapsed().as_millis() as u64;
+        unreachable_prune_ran = true;
     }
 
     report.loose_removed = prune_packed_loose + unreachable_loose;
@@ -750,6 +759,7 @@ fn repack_detail(repo: &Repository, opts: &RepackOptions) -> Result<RepackDetail
         prune_packed_loose,
         unreachable_loose,
         unreachable_prune_ms,
+        unreachable_prune_ran,
     })
 }
 
@@ -779,6 +789,7 @@ pub fn repack_all(repo: &Repository, opts: &RepackOptions) -> Result<RepackStats
     stats.pruned_loose = detail.prune_packed_loose;
     stats.unreachable_loose_pruned = detail.unreachable_loose;
     stats.unreachable_prune_ms = detail.unreachable_prune_ms;
+    stats.unreachable_prune_ran = detail.unreachable_prune_ran;
     if report.packs_written > 0 {
         let packs: Vec<_> = fs::read_dir(&pack_dir)
             .ok()
@@ -925,6 +936,7 @@ pub fn gc(repo: &Repository, opts: &GcOptions) -> Result<GcStats> {
             kept: 0,
         }
     };
+    stats.prune_ran = stats.repack.unreachable_prune_ran;
 
     if opts.write_commit_graph {
         let start = Instant::now();
@@ -1403,12 +1415,14 @@ mod tests {
         assert!(stats.pack_refs.is_some());
         assert!(stats.commit_graph.is_some());
         assert_eq!(
-            t.prune_ms, stats.repack.unreachable_prune_ms,
+            t.prune_ms,
+            stats.repack.unreachable_prune_ms,
             "prune_ms must track unreachable loose prune inside repack, not repack_ms"
         );
         assert!(
             t.reflog_ms > 0 || t.pack_refs_ms > 0 || t.commit_graph_ms > 0,
             "full gc must report more than one timed phase bucket, got {t:?}"
         );
+        assert!(stats.prune_ran, "full gc should run unreachable prune");
     }
 }

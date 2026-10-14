@@ -4579,6 +4579,7 @@ pub struct grit_lib::maintenance::GcStats
 pub grit_lib::maintenance::GcStats::commit_graph: core::option::Option<grit_lib::maintenance::CommitGraphWriteReport>
 pub grit_lib::maintenance::GcStats::pack_refs: core::option::Option<grit_lib::maintenance::PackRefsReport>
 pub grit_lib::maintenance::GcStats::prune: grit_lib::refs::gc::PruneStats
+pub grit_lib::maintenance::GcStats::prune_ran: bool
 pub grit_lib::maintenance::GcStats::reflog_entries_pruned: usize
 pub grit_lib::maintenance::GcStats::phase_timings: grit_lib::maintenance::GcPhaseTimings
 pub grit_lib::maintenance::GcStats::repack: grit_lib::maintenance::RepackStats
@@ -4757,6 +4758,7 @@ pub grit_lib::maintenance::RepackStats::pruned_loose: usize
 pub grit_lib::maintenance::RepackStats::removed_pack_files: usize
 pub grit_lib::maintenance::RepackStats::unreachable_loose_pruned: usize
 pub grit_lib::maintenance::RepackStats::unreachable_prune_ms: u64
+pub grit_lib::maintenance::RepackStats::unreachable_prune_ran: bool
 impl core::clone::Clone for grit_lib::maintenance::RepackStats
 pub fn grit_lib::maintenance::RepackStats::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::RepackStats

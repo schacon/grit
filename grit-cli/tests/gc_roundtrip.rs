@@ -3,6 +3,7 @@
 use std::process::Command;
 
 use grit_test_support::CliFixture;
+use serde_json::Value;
 
 fn git_ok(repo: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")
@@ -17,6 +18,30 @@ fn git_ok(repo: &std::path::Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+#[test]
+fn gc_full_json_lists_prune_when_nothing_removed() {
+    let fixture = CliFixture::empty();
+    git_ok(fixture.path(), &["config", "gc.auto", "0"]);
+    fixture.write_repo_file("README.md", "hello\n");
+    fixture.run_ok(&["add", "README.md"]);
+    fixture.run_ok(&["commit", "-m", "initial"]);
+
+    let out = fixture.run_ok(&["gc", "--json"]);
+    let doc: Value = serde_json::from_str(&out.stdout).expect("gc --json parses");
+    assert_eq!(doc.get("dry_run").and_then(Value::as_bool), Some(false));
+    let tasks = doc
+        .get("tasks")
+        .and_then(Value::as_array)
+        .expect("tasks array");
+    let prune = tasks
+        .iter()
+        .find(|t| t.get("task").and_then(Value::as_str) == Some("prune"))
+        .expect("full gc must report prune even when nothing was removed");
+    assert_eq!(prune.get("pruned").and_then(Value::as_u64), Some(0));
+    assert_eq!(prune.get("kept").and_then(Value::as_u64), Some(0));
+    assert!(prune.get("duration_ms").and_then(Value::as_u64).is_some());
 }
 
 #[test]

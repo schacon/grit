@@ -224,7 +224,7 @@ fn tasks_from_gc_stats(stats: GcStats, timings: GcPhaseTimings) -> Vec<GcTaskRep
         duration_ms: timings.repack_ms,
         report: stats.repack.into(),
     });
-    if stats.prune.pruned > 0 || stats.prune.kept > 0 || timings.prune_ms > 0 {
+    if stats.prune_ran {
         tasks.push(GcTaskReport::Prune {
             duration_ms: timings.prune_ms,
             pruned: stats.prune.pruned,
