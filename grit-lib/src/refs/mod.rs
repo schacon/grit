@@ -702,9 +702,21 @@ pub fn verify_refname_available_for_create(
     leaf_dir.push_str(refname);
     leaf_dir.push('/');
 
-    let under = list_refs(&git_dir, &leaf_dir).unwrap_or_default();
+    // Loose descendants can only exist inside a `<refname>/` directory; packed
+    // and stray-file descendants are checked separately below. Skipping the
+    // listing when no such directory exists keeps batch creates linear: listing
+    // a missing directory walks its parent, so a clone writing N tags would
+    // otherwise read every sibling ref N times.
+    let packed_dir = common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
+    let may_have_loose_descendants = packed_dir.join("reftable").is_dir()
+        || git_dir.join(refname).is_dir()
+        || packed_dir.join(refname).is_dir();
+    let under = if may_have_loose_descendants {
+        list_refs(&git_dir, &leaf_dir).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     if under.is_empty() {
-        let packed_dir = common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
         if let Ok(Some(name)) = packed_ref_with_prefix(&packed_dir, &leaf_dir) {
             if !skip.contains(&name) {
                 return Err(RefnameUnavailable::DescendantExists {
@@ -3805,6 +3817,54 @@ mod refname_available_tests {
             RefnameUnavailable::DescendantExists { ref blocking, .. }
                 if blocking == "refs/ns/p/x"
         ));
+    }
+
+    #[test]
+    fn verify_blocks_parent_when_only_a_packed_child_exists() {
+        // No `refs/ns/q/` directory on disk, so the loose listing is skipped;
+        // the packed-refs check must still find the descendant.
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs")).unwrap();
+        fs::write(
+            store::paths::packed_refs_path(git_dir),
+            "# pack-refs with: peeled fully-peeled\n\
+             67bf698f3ab735e92fb011a99cff3497c44d30c1 refs/ns/q/x\n",
+        )
+        .unwrap();
+        let err = verify_refname_available_for_create(
+            git_dir,
+            "refs/ns/q",
+            &BTreeSet::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            RefnameUnavailable::DescendantExists { ref blocking, .. }
+                if blocking == "refs/ns/q/x"
+        ));
+    }
+
+    #[test]
+    fn verify_allows_name_whose_siblings_share_a_prefix() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/tags")).unwrap();
+        for name in ["v1.0.1", "v1.0-rc1"] {
+            fs::write(
+                git_dir.join("refs/tags").join(name),
+                "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+            )
+            .unwrap();
+        }
+        verify_refname_available_for_create(
+            git_dir,
+            "refs/tags/v1.0",
+            &BTreeSet::new(),
+            &HashSet::new(),
+        )
+        .expect("siblings are not descendants");
     }
 
     #[test]
