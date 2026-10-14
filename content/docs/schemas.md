@@ -19,6 +19,7 @@ Plain command failures with `--json` validate against the shared [error schema](
 | `bundle.create` | [v1](/schemas/bundle.create/v1.json) |
 | `bundle.list` | [v1](/schemas/bundle.list/v1.json) |
 | `bundle.verify` | [v1](/schemas/bundle.verify/v1.json) |
+| `bundle.unbundle` | [v1](/schemas/bundle.unbundle/v1.json) |
 | `clean` | [v1](/schemas/clean/v1.json) |
 | `clone` | [v1](/schemas/clone/v1.json) |
 | `commit` | [v1](/schemas/commit/v1.json) |
@@ -65,6 +66,8 @@ Plain command failures with `--json` validate against the shared [error schema](
 | `worktree.list` | [v1](/schemas/worktree.list/v1.json) |
 | `worktree.prune` | [v1](/schemas/worktree.prune/v1.json) |
 | `worktree.remove` | [v1](/schemas/worktree.remove/v1.json) |
+| `worktree.lock` | [v1](/schemas/worktree.lock/v1.json) |
+| `worktree.unlock` | [v1](/schemas/worktree.unlock/v1.json) |
 
 Plumbing commands (`manager`, `upload-pack`, `receive-pack`) and shell completion generation do not emit JSON outcome objects and have no schemas here.
 

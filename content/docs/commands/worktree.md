@@ -15,6 +15,8 @@ grit worktree add --detach <path> [<rev>]
 grit worktree add -f <path> [<rev>]
 grit worktree remove <path>
 grit worktree remove -f <path>
+grit worktree lock <path> [--reason <text>]
+grit worktree unlock <path>
 grit worktree prune
 ```
 
@@ -29,6 +31,10 @@ If `<path>` is already registered but its directory was deleted manually, grit r
 `grit worktree remove` deletes the linked worktree's admin directory and, with `-f`, the working tree even when it has local changes.
 
 `grit worktree prune` removes admin directories for linked worktrees whose working tree is missing (skips locked worktrees).
+
+`grit worktree lock` writes a `locked` file under the worktree admin directory (same on-disk format as `git worktree lock`). Locked worktrees are skipped by `prune` and refused by `remove` unless `-f`.
+
+`grit worktree unlock` removes that lock file.
 
 ## Options
 
@@ -53,6 +59,19 @@ No flags.
 | `<path>` | Path to the linked worktree. |
 | `-f`, `--force` | Remove even when locked or dirty. |
 
+### `lock`
+
+| Option | Description |
+| --- | --- |
+| `<path>` | Path to the linked worktree. |
+| `--reason` | Optional reason stored in the lock file (shown by `git worktree list`). |
+
+### `unlock`
+
+| Option | Description |
+| --- | --- |
+| `<path>` | Path to the linked worktree. |
+
 ### `prune`
 
 No flags.
@@ -76,9 +95,9 @@ Pruned worktree /tmp/old-wt
 
 ## JSON output
 
-Schema: [v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json)
+Schema: [v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json) · [worktree.lock v1](/schemas/worktree.lock/v1.json) · [worktree.unlock v1](/schemas/worktree.unlock/v1.json)
 
-Pass `--json` on any subcommand. The top-level `action` is `list`, `add`, `remove`, or `prune`.
+Pass `--json` on any subcommand. The top-level `action` is `list`, `add`, `remove`, `prune`, `lock`, or `unlock`.
 
 List:
 
@@ -101,11 +120,12 @@ List:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `action` | string | `list`, `add`, `remove`, or `prune`. |
+| `action` | string | `list`, `add`, `remove`, `prune`, `lock`, or `unlock`. |
 | `worktrees` | array | For `list`, one row per worktree (each item includes `path`, `head`, `branch`, and related flags). |
-| `path` | string | For `add` / `remove`, absolute path to the working tree. |
+| `path` | string | For `add` / `remove` / `lock` / `unlock`, absolute path to the working tree. |
 | `head` | string | For `add`, current commit oid checked out in the new worktree. |
 | `branch` | string or null | For `add`, branch checked out when not detached. |
+| `reason` | string or null | For `lock`, optional reason stored in the lock file. |
 | `pruned` | array | For `prune`, absolute paths whose registrations were removed. |
 
 Add:
@@ -137,11 +157,30 @@ Prune:
 }
 ```
 
+Lock:
+
+```json
+{
+  "action": "lock",
+  "path": "/tmp/hotfix",
+  "reason": "maintenance"
+}
+```
+
+Unlock:
+
+```json
+{
+  "action": "unlock",
+  "path": "/tmp/hotfix"
+}
+```
+
 ## Markdown output
 
 Pass [`--markdown`](../global-options/) for structured output.
 
-Schema: [worktree.list v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json)
+Schema: [worktree.list v1](/schemas/worktree.list/v1.json) · [worktree.add v1](/schemas/worktree.add/v1.json) · [worktree.remove v1](/schemas/worktree.remove/v1.json) · [worktree.prune v1](/schemas/worktree.prune/v1.json) · [worktree.lock v1](/schemas/worktree.lock/v1.json) · [worktree.unlock v1](/schemas/worktree.unlock/v1.json)
 
 List shows a table of path, branch, and HEAD:
 

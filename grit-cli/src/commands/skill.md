@@ -84,6 +84,13 @@ $ grit commit -m "Explain what changed and why"
 
 URLs can be `https://`, `ssh://`, `user@host:path`, `git://`, `file://` or a local path.
 
+## Bundles and linked worktrees
+
+| Task | Command |
+| --- | --- |
+| Offline pack transfer | `grit bundle create`, `verify`, `list`, `unbundle` |
+| Extra working trees | `grit worktree list`, `add`, `remove`, `lock`, `unlock`, `prune` |
+
 ## Tags and config
 
 - `grit tag` lists tags, `grit tag <name>` creates a lightweight tag at the current commit, `grit tag -d <name>` deletes one.

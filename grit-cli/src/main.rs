@@ -237,6 +237,19 @@ enum WorktreeAction {
     },
     /// Drop registrations for linked worktrees whose directories are gone.
     Prune,
+    /// Mark a linked worktree as locked (prevents accidental removal).
+    Lock {
+        /// Path to the linked worktree.
+        path: std::path::PathBuf,
+        /// Optional reason stored in the lock file.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Clear the lock on a linked worktree.
+    Unlock {
+        /// Path to the linked worktree.
+        path: std::path::PathBuf,
+    },
 }
 
 /// Subcommands of `grit bundle`.
@@ -257,6 +270,11 @@ enum BundleAction {
     },
     /// List refs recorded in a bundle header.
     List {
+        /// Bundle file to read.
+        file: String,
+    },
+    /// Ingest a bundle pack into the current repository.
+    Unbundle {
         /// Bundle file to read.
         file: String,
     },
@@ -1088,6 +1106,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             BundleAction::List { file } => {
                 emit(&commands::bundle::run_list(file.into())?, opts, ctx)
             }
+            BundleAction::Unbundle { file } => {
+                emit(&commands::bundle::run_unbundle(file.into())?, opts, ctx)
+            }
         },
         Command::Notes { notes_ref, action } => {
             use commands::notes::NotesRunAction::*;
@@ -1148,6 +1169,12 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 emit(&commands::worktree::run_remove(path, force)?, opts, ctx)
             }
             WorktreeAction::Prune => emit(&commands::worktree::run_prune()?, opts, ctx),
+            WorktreeAction::Lock { path, reason } => {
+                emit(&commands::worktree::run_lock(path, reason)?, opts, ctx)
+            }
+            WorktreeAction::Unlock { path } => {
+                emit(&commands::worktree::run_unlock(path)?, opts, ctx)
+            }
         },
         Command::Switch {
             branch,
@@ -1657,6 +1684,58 @@ The keys are `initialized`, `path`, `bare`, and `branch`.
     fn markdown_output_only_when_supported_detects_unbackticked_flag() {
         let body = "## JSON output\n\nPass --markdown for agent output.\n";
         assert!(page_mentions_markdown(body));
+    }
+
+    /// Each library area from the project direction document must have a CLI entry point.
+    #[test]
+    fn every_library_area_has_a_command() {
+        const LIBRARY_AREAS: &[(&str, &[&str])] = &[
+            ("object database", &["cat"]),
+            ("network transport", &["fetch"]),
+            ("refs", &["branch"]),
+            ("index", &["add"]),
+            ("stash", &["stash"]),
+            ("reflog", &["reflog"]),
+            ("diffing", &["diff"]),
+            ("revwalking", &["revs"]),
+            ("revparsing", &["resolve"]),
+            ("config", &["config"]),
+            ("ignore rules", &["ignore", "check"]),
+            ("hooks", &["hooks"]),
+            ("patch-ids", &["patch-id"]),
+            ("notes", &["notes"]),
+            ("bundles", &["bundle", "unbundle"]),
+            ("fsck", &["fsck"]),
+            ("worktrees", &["worktree", "lock"]),
+        ];
+
+        fn cli_has_path(command: &clap::Command, path: &[&str]) -> bool {
+            let Some((head, tail)) = path.split_first() else {
+                return true;
+            };
+            let Some(sub) = command
+                .get_subcommands()
+                .find(|subcommand| subcommand.get_name() == *head)
+            else {
+                return false;
+            };
+            if tail.is_empty() {
+                return true;
+            }
+            cli_has_path(sub, tail)
+        }
+
+        let root = Cli::command();
+        let mut problems = Vec::new();
+        for (area, path) in LIBRARY_AREAS {
+            if !cli_has_path(&root, path) {
+                problems.push(format!(
+                    "library area `{area}` has no CLI path `{}`",
+                    path.join(" ")
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
     /// Every command (including hidden plumbing) has a man page in

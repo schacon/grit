@@ -226,3 +226,71 @@ fn bundle_verify_missing_prerequisite_exit_code() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+fn parse_bundle_list_heads(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let (oid, name) = line.split_once(' ')?;
+            Some((oid.to_string(), name.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn unbundle_then_git_fsck() {
+    let src = unique_tmp("unbundle-src");
+    git(&src, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(src.join("f"), b"payload\n").unwrap();
+    git(&src, &["add", "f"]);
+    git(&src, &["commit", "-qm", "c1"]);
+    let bundle = src.join("transfer.bundle");
+    git(
+        &src,
+        &["bundle", "create", bundle.to_str().unwrap(), "HEAD"],
+    );
+
+    let dest = unique_tmp("unbundle-dest");
+    git(&dest, &["init", "-q", "--bare", "-b", "main", "."]);
+
+    let out = grit(
+        &dest,
+        &["bundle", "unbundle", bundle.to_str().unwrap(), "--json"],
+    );
+    assert!(
+        out.status.success(),
+        "grit bundle unbundle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: Value = serde_json::from_slice(&out.stdout).expect("json");
+    let grit_refs: Vec<(String, String)> = json["references"]
+        .as_array()
+        .expect("references")
+        .iter()
+        .map(|r| {
+            (
+                r["oid"].as_str().expect("oid").to_string(),
+                r["name"].as_str().expect("name").to_string(),
+            )
+        })
+        .collect();
+
+    let heads = Command::new("git")
+        .current_dir(&src)
+        .args(["bundle", "list-heads", bundle.to_str().unwrap()])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git list-heads");
+    assert!(heads.status.success());
+    let expected = parse_bundle_list_heads(&String::from_utf8_lossy(&heads.stdout));
+    assert_eq!(
+        grit_refs, expected,
+        "imported heads must match bundle header"
+    );
+
+    git(&dest, &["fsck", "--strict", "--no-dangling"]);
+}

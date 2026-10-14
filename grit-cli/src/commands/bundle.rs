@@ -1,4 +1,4 @@
-//! `grit bundle` — create, verify, and list git bundle files.
+//! `grit bundle` — create, verify, list, and unbundle git bundle files.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -36,6 +36,15 @@ pub struct BundleVerifyOutcome {
 pub struct BundleListOutcome {
     pub path: String,
     pub references: Vec<BundleRefJson>,
+}
+
+/// Outcome of `grit bundle unbundle`.
+#[derive(Serialize, JsonSchema)]
+pub struct BundleUnbundleOutcome {
+    pub path: String,
+    pub references: Vec<BundleRefJson>,
+    pub objects: u64,
+    pub bytes: u64,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -140,6 +149,40 @@ impl HumanRender for BundleListOutcome {
     }
 }
 
+impl HumanRender for BundleUnbundleOutcome {
+    fn render_human(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        outln!(
+            w,
+            "Unbundled {} ({} objects, {} bytes).",
+            self.path,
+            self.objects,
+            self.bytes
+        );
+        for reference in &self.references {
+            outln!(w, "{} {}", reference.oid, reference.name);
+        }
+        Ok(())
+    }
+}
+
+impl MarkdownRender for BundleUnbundleOutcome {
+    fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
+        outln!(w, "## Bundle unbundle\n");
+        outln!(w, "- **path:** `{}`", self.path);
+        outln!(w, "- **objects:** {}", self.objects);
+        outln!(w, "- **bytes:** {}", self.bytes);
+        if !self.references.is_empty() {
+            outln!(w, "\n| Ref | OID |");
+            outln!(w, "| --- | --- |");
+            for reference in &self.references {
+                outln!(w, "| `{}` | `{}` |", reference.name, reference.oid);
+            }
+        }
+        outln!(w);
+        Ok(())
+    }
+}
+
 /// Create a bundle from the current repository.
 pub fn run_create(path: PathBuf, revs: Vec<String>) -> Result<BundleCreateOutcome> {
     let repo = context::discover()?;
@@ -163,6 +206,28 @@ pub fn run_verify(path: PathBuf) -> Result<BundleVerifyOutcome> {
         None => BundleVerifyReport::default(),
     };
     Ok(report_to_outcome(&path, &bundle, report))
+}
+
+/// Ingest a bundle pack into the current repository (refs are not updated).
+pub fn run_unbundle(path: PathBuf) -> Result<BundleUnbundleOutcome> {
+    let repo = context::discover()?;
+    let outcome = repo
+        .bundles()
+        .unbundle_with_progress(&path, &mut grit_lib::progress::NullProgress)
+        .map_err(map_bundle_error)?;
+    Ok(BundleUnbundleOutcome {
+        path: path.display().to_string(),
+        references: outcome
+            .refs
+            .iter()
+            .map(|r| BundleRefJson {
+                name: r.name.clone(),
+                oid: r.oid.to_hex(),
+            })
+            .collect(),
+        objects: outcome.transfer.objects,
+        bytes: outcome.transfer.bytes,
+    })
 }
 
 /// List refs contained in a bundle.

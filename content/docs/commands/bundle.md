@@ -1,6 +1,6 @@
 ---
 title: grit bundle
-summary: Create, verify, and list git bundle files for offline transfer.
+summary: Create, verify, list, and unbundle git bundle files for offline transfer.
 group: Remotes
 order: 6
 ---
@@ -11,6 +11,7 @@ order: 6
 grit bundle create <file> <rev>…
 grit bundle verify <file>
 grit bundle list <file>
+grit bundle unbundle <file>
 ```
 
 ## Description
@@ -23,6 +24,8 @@ Git bundles pack refs and objects into a single file. Use them to move history w
 
 `list` prints the refs recorded in the bundle header.
 
+`unbundle` ingests the embedded pack into the current repository (objects only; refs in the header are reported but not updated on disk). Run inside the destination repository.
+
 You can also treat a bundle path like a remote: [`grit fetch`](../fetch/) and [`grit clone`](../clone/) accept a path to a bundle file.
 
 ## Options
@@ -34,7 +37,7 @@ You can also treat a bundle path like a remote: [`grit fetch`](../fetch/) and [`
 | `<file>` | Output bundle path. |
 | `<rev>…` | One or more positive revision specs (commits, branches, ranges). |
 
-`verify` / `list`:
+`verify` / `list` / `unbundle`:
 
 | Argument | Description |
 | --- | --- |
@@ -58,7 +61,7 @@ f4e623f540cd491f8856e9487a3da5f8242307f0 refs/heads/main
 
 ## JSON output
 
-Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle.list/v1.json) · [bundle.verify v1](/schemas/bundle.verify/v1.json)
+Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle.list/v1.json) · [bundle.verify v1](/schemas/bundle.verify/v1.json) · [bundle.unbundle v1](/schemas/bundle.unbundle/v1.json)
 
 `grit bundle verify --json`:
 
@@ -112,6 +115,29 @@ Schema: [v1](/schemas/bundle.create/v1.json) · [bundle.list v1](/schemas/bundle
 | ----- | ---- | ------- |
 | `path` | string | Output bundle path. |
 | `refs` | number | Count of refs written to the header. |
+
+`grit bundle unbundle --json`:
+
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `path` | string | Bundle file path. |
+| `references` | array | Ref tips from the bundle header (`name`, `oid`). |
+| `objects` | number | Objects installed from the pack. |
+| `bytes` | number | Pack size in bytes. |
+
+```json
+{
+  "path": "backup.bundle",
+  "references": [
+    {
+      "name": "refs/heads/main",
+      "oid": "f4e623f540cd491f8856e9487a3da5f8242307f0"
+    }
+  ],
+  "objects": 3,
+  "bytes": 512
+}
+```
 
 ## Markdown output
 

@@ -13044,6 +13044,7 @@ impl<'repo> grit_lib::repo_handles::RepositoryWorktrees<'repo>
 pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::add(&self, &grit_lib::worktree::AddLinkedWorktreeOptions) -> grit_lib::error::Result<grit_lib::worktree::WorktreeEntry>
 pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::list(&self) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::worktree::WorktreeEntry>>
 pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::lock(&self, &std::path::Path, &grit_lib::repo_handles::LockWorktreeOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::unlock(&self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::remove(&self, &std::path::Path, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo_handles::RepositoryWorktrees<'repo>::repository(&self) -> &'repo grit_lib::repo::Repository
 impl<'repo> core::clone::Clone for grit_lib::repo_handles::RepositoryWorktrees<'repo>

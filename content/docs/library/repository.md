@@ -48,7 +48,7 @@ Larger subsystems use [`repo_handles`](rustdoc:grit_lib::repo_handles):
 | Method | Handle | Role |
 | --- | --- | --- |
 | [`Repository::remotes`](rustdoc:grit_lib::repo::Repository) | [`RepositoryRemotes`](rustdoc:grit_lib::repo_handles::RepositoryRemotes) | List/get remotes, `ls-remote`, fetch, push |
-| [`Repository::worktrees`](rustdoc:grit_lib::repo::Repository) | [`RepositoryWorktrees`](rustdoc:grit_lib::repo_handles::RepositoryWorktrees) | List/add/remove/lock linked worktrees |
+| [`Repository::worktrees`](rustdoc:grit_lib::repo::Repository) | [`RepositoryWorktrees`](rustdoc:grit_lib::repo_handles::RepositoryWorktrees) | List/add/remove/lock/unlock linked worktrees |
 | [`Repository::stash`](rustdoc:grit_lib::repo::Repository) | [`RepositoryStash`](rustdoc:grit_lib::repo_handles::RepositoryStash) | Stash list/push/apply/pop/drop |
 | [`Repository::notes`](rustdoc:grit_lib::repo::Repository) | [`RepositoryNotes`](rustdoc:grit_lib::repo_handles::RepositoryNotes) | Notes list/read/add/remove via [`NotesRef`](rustdoc:grit_lib::notes::NotesRef) |
 | [`Repository::bundles`](rustdoc:grit_lib::repo::Repository) | [`RepositoryBundles`](rustdoc:grit_lib::repo_handles::RepositoryBundles) | Bundle create/verify/list-heads/unbundle |
