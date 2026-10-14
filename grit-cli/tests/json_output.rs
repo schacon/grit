@@ -1059,6 +1059,78 @@ fn diff_commit_range_detects_rename() -> TestResult {
 }
 
 #[test]
+fn diff_staged_detects_rename() -> TestResult {
+    let scratch = Scratch::new("diffstagedrename")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    let body: String = (1..=40)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_file(&repo.join("a.txt"), &format!("{body}\n"));
+    gs_ok(&repo, &["commit", "one"]);
+    gs_ok(&repo, &["mv", "a.txt", "b.txt"]);
+
+    let v = gs_json(&repo, &["diff", "--staged"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{v}");
+    assert_eq!(files[0]["status"], "renamed");
+    assert_eq!(files[0]["path"], "b.txt");
+    assert_eq!(files[0]["old_path"], "a.txt");
+    Ok(())
+}
+
+#[test]
+fn diff_plain_mv_detects_rename_unstaged_and_default() -> TestResult {
+    let scratch = Scratch::new("diffplainmv")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    let body: String = (1..=40)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_file(&repo.join("a.txt"), &format!("{body}\n"));
+    gs_ok(&repo, &["commit", "one"]);
+    fs::rename(repo.join("a.txt"), repo.join("b.txt"))?;
+
+    for args in [&["diff", "--unstaged"][..], &["diff"][..]] {
+        let v = gs_json(&repo, args);
+        let files = v["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "args {args:?}: {v}");
+        assert_eq!(files[0]["status"], "renamed");
+        assert_eq!(files[0]["path"], "b.txt");
+        assert_eq!(files[0]["old_path"], "a.txt");
+    }
+    Ok(())
+}
+
+#[test]
+fn diff_worktree_rename_with_small_unstaged_edit() -> TestResult {
+    let scratch = Scratch::new("diffworktreerename")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    let body: String = (1..=40)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_file(&repo.join("a.txt"), &format!("{body}\n"));
+    gs_ok(&repo, &["commit", "one"]);
+    gs_ok(&repo, &["mv", "a.txt", "b.txt"]);
+    write_file(&repo.join("b.txt"), &format!("{body}\n41\n"));
+
+    let v = gs_json(&repo, &["diff"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{v}");
+    assert_eq!(files[0]["status"], "renamed");
+    assert_eq!(files[0]["path"], "b.txt");
+    assert_eq!(files[0]["old_path"], "a.txt");
+    Ok(())
+}
+
+#[test]
 fn diff_against_ref_compares_worktree() -> TestResult {
     let scratch = Scratch::new("diffagainst")?;
     let repo = scratch.child("repo");

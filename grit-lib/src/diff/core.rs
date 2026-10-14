@@ -20,6 +20,7 @@
 //! Output formats: unified patch, raw (`:old-mode new-mode ...`), stat,
 //! numstat.
 
+use std::collections::HashSet;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -36,7 +37,9 @@ use crate::index::{CacheTreeNode, Index, IndexEntry, MODE_SYMLINK};
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::parallel::ThreadPolicy;
+use crate::repo::Repository;
 use crate::userdiff::FuncnameMatcher;
+use crate::worktree_rules::WorktreeRules;
 
 #[path = "../structured_diff.rs"]
 pub mod structured;
@@ -1875,6 +1878,234 @@ pub fn diff_index_to_tree(
             diff_index_to_tree_flatten(odb, index, tree_oid, ignore_submodules)
         }
     }
+}
+
+/// Diff the index against a tree and pair deleted/added paths as renames when similar enough.
+///
+/// `rename_threshold` is Git's `-M` percentage (50 is the usual default); pass `100` to skip
+/// rename detection.
+///
+/// # Errors
+///
+/// Propagates errors from [`diff_index_to_tree`].
+pub fn diff_index_to_tree_with_renames(
+    odb: &Odb,
+    index: &Index,
+    tree_oid: Option<&ObjectId>,
+    ignore_submodules: bool,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    let entries = diff_index_to_tree(odb, index, tree_oid, ignore_submodules)?;
+    apply_rename_detection_to_diff_entries(
+        odb,
+        entries,
+        None,
+        rename_threshold,
+        config,
+        thread_policy,
+    )
+}
+
+/// Apply Git `-M` rename detection to a flat diff (index↔tree, tree↔tree, or index↔worktree).
+///
+/// Pass `work_root` when added sides may be read from the working tree (index↔worktree diffs).
+/// Use `rename_threshold` `100` to leave entries unchanged.
+///
+/// # Errors
+///
+/// Propagates object read failures while scoring renames.
+pub fn apply_rename_detection_to_diff_entries(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    work_root: Option<&Path>,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
+    if rename_threshold >= 100 {
+        return Ok(entries);
+    }
+    if work_root.is_some() {
+        let opts = DiffPostprocessOptions {
+            rename_threshold,
+            ..DiffPostprocessOptions::default()
+        };
+        postprocess_diff_entries(
+            odb,
+            entries,
+            None,
+            work_root,
+            None,
+            config,
+            thread_policy,
+            &opts,
+        )
+    } else {
+        Ok(detect_renames_with_policy(
+            odb,
+            None,
+            entries,
+            rename_threshold,
+            config,
+            thread_policy,
+        ))
+    }
+}
+
+/// Add [`DiffStatus::Added`] entries for untracked worktree files so rename detection can pair
+/// plain filesystem moves (index still lists the old path, new path only on disk).
+///
+/// # Errors
+///
+/// Propagates I/O and ignore-rule load failures while scanning the work tree.
+pub fn append_untracked_worktree_added_for_rename_detection(
+    repo: &Repository,
+    index: &Index,
+    rules: &WorktreeRules,
+    mut entries: Vec<DiffEntry>,
+) -> Result<Vec<DiffEntry>> {
+    if !entries.iter().any(|e| e.status == DiffStatus::Deleted) {
+        return Ok(entries);
+    }
+    let mut existing_new: HashSet<String> =
+        entries.iter().filter_map(|e| e.new_path.clone()).collect();
+    let untracked = list_untracked_worktree_files_for_rename(repo, index, rules)?;
+    for path in untracked {
+        if existing_new.contains(&path) {
+            continue;
+        }
+        existing_new.insert(path.clone());
+        entries.push(DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(path),
+            old_mode: "000000".to_owned(),
+            new_mode: "100644".to_owned(),
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
+    }
+    Ok(entries)
+}
+
+fn list_untracked_worktree_files_for_rename(
+    repo: &Repository,
+    index: &Index,
+    rules: &WorktreeRules,
+) -> Result<Vec<String>> {
+    let work_tree = repo
+        .work_tree()
+        .ok_or_else(|| Error::NotARepository("bare repository".into()))?;
+    let mut out = Vec::new();
+    walk_untracked_worktree_files(repo, index, work_tree, "", rules, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn walk_untracked_worktree_files(
+    repo: &Repository,
+    index: &Index,
+    dir: &Path,
+    rel_prefix: &str,
+    rules: &WorktreeRules,
+    out: &mut Vec<String>,
+) -> Result<()> {
+    let read = match fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    for entry in read {
+        let entry = entry.map_err(Error::Io)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if rel_prefix.is_empty() && name == ".git" {
+            continue;
+        }
+        let rel_path = if rel_prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{rel_prefix}/{name}")
+        };
+        let file_type = entry.file_type().map_err(Error::Io)?;
+        if file_type.is_dir() {
+            let (ignored, _) = rules
+                .ignore_mut()
+                .check_path(repo, Some(index), &rel_path, true)?;
+            if ignored {
+                continue;
+            }
+            walk_untracked_worktree_files(
+                repo,
+                index,
+                &dir.join(name.as_ref()),
+                &rel_path,
+                rules,
+                out,
+            )?;
+        } else if file_type.is_file() || file_type.is_symlink() {
+            if index.get(rel_path.as_bytes(), 0).is_some() {
+                continue;
+            }
+            let (ignored, _) =
+                rules
+                    .ignore_mut()
+                    .check_path(repo, Some(index), &rel_path, false)?;
+            if !ignored {
+                out.push(rel_path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Diff the index against the working tree and pair deleted/added paths as renames when similar.
+///
+/// Runs [`diff_index_to_worktree_with_options`], appends untracked worktree paths as added
+/// candidates when needed, then [`apply_rename_detection_to_diff_entries`] with `work_root`
+/// set to `work_tree`.
+///
+/// # Errors
+///
+/// Propagates errors from the index↔worktree diff or rename post-processing.
+pub fn diff_index_to_worktree_with_renames(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    options: DiffIndexToWorktreeOptions,
+    rename_threshold: u32,
+) -> Result<(Vec<DiffEntry>, bool)> {
+    let config = repo.config()?.as_ref().clone();
+    let thread_policy = repo.thread_policy();
+    let odb = repo.odb();
+    let rules_for_append = options.worktree_rules.clone();
+    let (mut entries, changed) =
+        diff_index_to_worktree_with_options(odb, index, work_tree, options)?;
+    if rename_threshold < 100 {
+        if let Some(rules_arc) = rules_for_append {
+            let rules = rules_arc
+                .lock()
+                .map_err(|e| Error::Message(format!("worktree rules lock poisoned: {e}")))?;
+            entries =
+                append_untracked_worktree_added_for_rename_detection(repo, index, &rules, entries)?;
+        } else {
+            let rules = WorktreeRules::from_repository(repo, index)?;
+            entries =
+                append_untracked_worktree_added_for_rename_detection(repo, index, &rules, entries)?;
+        }
+    }
+    let entries = apply_rename_detection_to_diff_entries(
+        odb,
+        entries,
+        Some(work_tree),
+        rename_threshold,
+        &config,
+        &thread_policy,
+    )?;
+    Ok((entries, changed))
 }
 
 enum CacheTreeWalk<'a> {
@@ -4953,7 +5184,9 @@ fn read_added_entry_bytes(
     work_root: Option<&Path>,
 ) -> Option<Vec<u8>> {
     if entry.new_oid != zero_oid() {
-        return odb.read(&entry.new_oid).ok().map(|obj| obj.data);
+        if let Ok(obj) = odb.read(&entry.new_oid) {
+            return Some(obj.data);
+        }
     }
     let path = entry.new_path.as_deref()?;
     let root = work_root?;
