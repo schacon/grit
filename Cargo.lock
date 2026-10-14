@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "grit-cli"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "grit-examples"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "grit-http-server"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "grit-protocol"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "grit-lib",
  "thiserror",
@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "grit-test-support"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "flate2",
  "grit-lib",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "grit-utils"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "anyhow",
  "clap",
