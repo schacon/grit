@@ -5,6 +5,7 @@
 mod support;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::diff::merge_diff::{
     all_blob_paths_in_tree_order, blob_oid_at_path, combined_diff_paths,
     combined_merge_parent_blob_paths, enrich_combined_path_renames, read_blob_at_path,
@@ -13,7 +14,6 @@ use grit_lib::diff::{
     diff_commits_with_renames, diff_index_to_tree, diff_trees, diff_trees_with_renames,
     postprocess_diff_entries, DiffPostprocessOptions,
 };
-use grit_lib::diff::diffstat::{write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
@@ -24,8 +24,8 @@ use grit_lib::revwalk::merge_base::{
     MergeBaseForDiffError,
 };
 use grit_lib::revwalk::rev_list::{
-    merge_bases, resolve_object_walk_roots, resolve_revision_commits, rev_list,
-    ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    merge_bases, resolve_object_walk_roots, resolve_revision_commits, rev_list, ObjectFilter,
+    OrderingMode, OutputMode, RevListOptions,
 };
 use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_range_end,
@@ -78,7 +78,7 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
         }
     }
     git(wt, &["checkout", "-b", "feature", "main~12"]);
-    for i in 0..20 {
+    for i in 0..32 {
         commit_file(
             wt,
             &format!("feature/x{i}.txt"),
@@ -91,7 +91,10 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
 
     let repo = open_grit_repo(wt);
     let tip: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().expect("tip");
-    let feature: ObjectId = git(wt, &["rev-parse", "feature"]).trim().parse().expect("feature");
+    let feature: ObjectId = git(wt, &["rev-parse", "feature"])
+        .trim()
+        .parse()
+        .expect("feature");
     let old_main: ObjectId = git(wt, &["rev-parse", "main~20"])
         .trim()
         .parse()
@@ -111,7 +114,7 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
     let _ = (ahead, behind);
     let _ = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[old_main], None)?;
 
-    for n in 0..60 {
+    for n in 0..90 {
         for spec in [
             format!("HEAD~{n}"),
             format!("main~{n}"),
@@ -138,9 +141,7 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
         for use_graph in [false, true] {
             let opts = RevListOptions {
                 ordering,
-                output_mode: OutputMode::Format(String::from(
-                    "format:%H %P %T %t %s %D %d %gD %N",
-                )),
+                output_mode: OutputMode::Format(String::from("format:%H %P %T %t %s %D %d %gD %N")),
                 paths: vec!["src/".into(), "docs/".into()],
                 all_refs: use_graph,
                 use_commit_graph: use_graph,
@@ -272,13 +273,7 @@ fn history_repo_revwalk_merge_base_and_diff_sweep() -> grit_lib::error::Result<(
                     .unwrap_or_else(grit_lib::diff::zero_oid),
                 parents: vec![],
             };
-            enrich_combined_path_renames(
-                repo.odb(),
-                &mut cpath,
-                &parsed.parents,
-                &parsed.tree,
-                50,
-            );
+            enrich_combined_path_renames(repo.odb(), &mut cpath, &parsed.parents, &parsed.tree, 50);
         }
     }
 
@@ -297,9 +292,8 @@ fn index_symlink_and_merge_base_diff_errors() -> grit_lib::error::Result<()> {
     let tree = repo
         .odb()
         .write_loose_materialize(ObjectKind::Tree, &link_body)?;
-    let commit_body = format!(
-        "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nc\n"
-    );
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nc\n");
     let tip = repo
         .odb()
         .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())?;
@@ -307,8 +301,12 @@ fn index_symlink_and_merge_base_diff_errors() -> grit_lib::error::Result<()> {
         .map_err(grit_lib::error::Error::Io)?;
 
     let mut index = Index::new();
-    index.entries_mut().push(index_entry("link", blob, MODE_SYMLINK));
-    index.entries_mut().push(index_entry("tracked.txt", blob, MODE_REGULAR));
+    index
+        .entries_mut()
+        .push(index_entry("link", blob, MODE_SYMLINK));
+    index
+        .entries_mut()
+        .push(index_entry("tracked.txt", blob, MODE_REGULAR));
     index.write_to_path(&repo.git_dir().join("index"), false)?;
     let head_tree = write_tree_from_index(repo.odb(), &index, "")?;
     let _ = diff_index_to_tree(repo.odb(), &index, Some(&head_tree), false)?;
@@ -320,7 +318,10 @@ fn index_symlink_and_merge_base_diff_errors() -> grit_lib::error::Result<()> {
     let missing = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("hex");
     let err = grit_lib::revwalk::merge_base::merge_base_for_diff_two_commits(&repo, tip, missing)
         .expect_err("missing");
-    assert!(matches!(err, MergeBaseForDiffError::None | MergeBaseForDiffError::Other(_)));
+    assert!(matches!(
+        err,
+        MergeBaseForDiffError::None | MergeBaseForDiffError::Other(_)
+    ));
 
     Ok(())
 }

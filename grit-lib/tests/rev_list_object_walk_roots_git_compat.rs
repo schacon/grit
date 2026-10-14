@@ -4,11 +4,8 @@ mod support;
 
 use std::collections::HashSet;
 
-use grit_lib::revwalk::rev_list::{
-    rev_list, MissingAction, ObjectFilter, RevListOptions,
-};
+use grit_lib::revwalk::rev_list::{rev_list, MissingAction, ObjectFilter, RevListOptions};
 use support::{commit_file, git, git_rev_list_object_set, grit_rev_list_object_set, HistoryRepo};
-
 
 #[test]
 fn object_walk_treeish_path_and_tagged_commit_match_git() {
@@ -18,24 +15,18 @@ fn object_walk_treeish_path_and_tagged_commit_match_git() {
     commit_file(wt, "top.txt", "top\n", "add top");
     git(
         wt,
-        &[
-            "tag",
-            "-a",
-            "annotated",
-            "-m",
-            "annotated tag",
-            "HEAD~1",
-        ],
+        &["tag", "-a", "annotated", "-m", "annotated tag", "HEAD~1"],
     );
 
-    for spec in ["HEAD:dir", "annotated", "HEAD^{tree}"] {
+    for spec in [
+        "HEAD:dir",
+        "annotated",
+        "HEAD^{tree}",
+        "annotated^{}",
+        "HEAD^{commit}",
+    ] {
         let git_set = git_rev_list_object_set(wt, &[spec]);
-        let grit_set = grit_rev_list_object_set(
-            wt,
-            &[spec.to_owned()],
-            &[],
-            None,
-        );
+        let grit_set = grit_rev_list_object_set(wt, &[spec.to_owned()], &[], None);
         assert_eq!(grit_set, git_set, "object walk {spec}");
     }
 }
@@ -53,23 +44,19 @@ fn object_walk_filters_and_missing_print_match_git() {
         ("tree:1", ObjectFilter::TreeDepth(1)),
     ];
     for (spec, filter) in filters {
-        let git_set =
-            git_rev_list_object_set(wt, &[&format!("--filter={spec}"), "HEAD"]);
-        let grit_set = grit_rev_list_object_set(
-            wt,
-            &[String::from("HEAD")],
-            &[],
-            Some(filter.clone()),
-        );
+        let git_set = git_rev_list_object_set(wt, &[&format!("--filter={spec}"), "HEAD"]);
+        let grit_set =
+            grit_rev_list_object_set(wt, &[String::from("HEAD")], &[], Some(filter.clone()));
         assert_eq!(grit_set, git_set, "filter {spec}");
     }
 
     let grit_repo = support::open_grit_repo(wt);
     let blob_hex = git(wt, &["rev-parse", "HEAD:small.txt"]).trim().to_string();
-    let loose = grit_repo
-        .git_dir()
-        .join("objects")
-        .join(format!("{}/{}", &blob_hex[..2], &blob_hex[2..]));
+    let loose =
+        grit_repo
+            .git_dir()
+            .join("objects")
+            .join(format!("{}/{}", &blob_hex[..2], &blob_hex[2..]));
     let backup = loose.with_extension("bak");
     std::fs::rename(&loose, &backup).expect("hide blob");
     let _restore = RestoreOnDrop(backup, loose);
@@ -87,7 +74,10 @@ fn object_walk_filters_and_missing_print_match_git() {
     )
     .expect("missing=print");
     assert!(
-        grit_missing.missing_objects.iter().any(|o| o.to_hex() == blob_hex),
+        grit_missing
+            .missing_objects
+            .iter()
+            .any(|o| o.to_hex() == blob_hex),
         "grit should report missing blob"
     );
     assert!(
@@ -111,10 +101,7 @@ fn object_walk_combine_filter_provided_objects_match_git() {
     commit_file(wt, "a.txt", "aaa\n", "a");
     commit_file(wt, "b.txt", "bbb\n", "b");
     let combine = ObjectFilter::parse("combine:blob:none+tree:1").expect("combine");
-    let git_set = git_rev_list_object_set(
-        wt,
-        &["--filter=combine:blob:none+tree:1", "HEAD"],
-    );
+    let git_set = git_rev_list_object_set(wt, &["--filter=combine:blob:none+tree:1", "HEAD"]);
     let grit_repo = support::open_grit_repo(wt);
     let result = rev_list(
         &grit_repo,

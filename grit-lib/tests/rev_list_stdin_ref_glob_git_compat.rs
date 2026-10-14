@@ -8,7 +8,10 @@ use grit_lib::revwalk::rev_list::{
 };
 use support::{assert_grit_commits_match_git, commit_file, git, HistoryRepo};
 
-fn git_stdin_rev_list(worktree: &std::path::Path, lines: &[&str]) -> Vec<grit_lib::objects::ObjectId> {
+fn git_stdin_rev_list(
+    worktree: &std::path::Path,
+    lines: &[&str],
+) -> Vec<grit_lib::objects::ObjectId> {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let mut child = Command::new("git")
@@ -44,19 +47,20 @@ fn grit_stdin_rev_list(
     lines: &[&str],
     opts: &RevListOptions,
 ) -> Vec<grit_lib::objects::ObjectId> {
-    let grit_repo =
-        grit_lib::repo::Repository::discover(Some(worktree), &grit_lib::config::environment::RepositoryOptions::empty())
-            .expect("discover");
-    let (pos, neg, all_refs, paths) = collect_revision_specs_from_stdin_lines(
-        grit_repo.git_dir(),
-        args_specs,
-        lines,
+    let grit_repo = grit_lib::repo::Repository::discover(
+        Some(worktree),
+        &grit_lib::config::environment::RepositoryOptions::empty(),
     )
-    .expect("stdin specs");
-    assert!(paths.is_empty(), "unexpected stdin pathspecs: {paths:?}");
+    .expect("discover");
+    let (pos, neg, all_refs, paths) =
+        collect_revision_specs_from_stdin_lines(grit_repo.git_dir(), args_specs, lines)
+            .expect("stdin specs");
     let mut walk_opts = opts.clone();
     if all_refs {
         walk_opts.all_refs = true;
+    }
+    if !paths.is_empty() {
+        walk_opts.paths = paths;
     }
     rev_list(&grit_repo, &pos, &neg, &walk_opts)
         .expect("rev-list")
@@ -126,14 +130,34 @@ fn stdin_not_all_expands_negative_refs() {
         &grit_lib::config::environment::RepositoryOptions::empty(),
     )
     .expect("discover");
-    let (_pos, neg, all, _paths) = collect_revision_specs_from_stdin_lines(
-        grit_repo.git_dir(),
-        &[],
-        &lines,
-    )
-    .expect("stdin --not --all specs");
+    let (_pos, neg, all, _paths) =
+        collect_revision_specs_from_stdin_lines(grit_repo.git_dir(), &[], &lines)
+            .expect("stdin --not --all specs");
     assert!(!neg.is_empty(), "expected negative refs from --not --all");
     assert!(!all, "--not --all must not set all_refs positive mode");
+}
+
+#[test]
+fn stdin_not_branches_matches_git_empty() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    setup_multi_ref_repo(wt);
+    let lines = ["--not", "--branches"];
+    let git_oids = git_stdin_rev_list(wt, &lines);
+    let grit_oids = grit_stdin_rev_list(wt, &[], &lines, &RevListOptions::default());
+    assert_eq!(grit_oids, git_oids, "stdin --not --branches");
+}
+
+#[test]
+fn stdin_end_of_options_and_path_tail_match_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    setup_multi_ref_repo(wt);
+    commit_file(wt, "scoped.txt", "scoped\n", "scoped file");
+    let lines = ["--end-of-options", "HEAD", "--", "scoped.txt"];
+    let git_oids = git_stdin_rev_list(wt, &lines);
+    let grit_oids = grit_stdin_rev_list(wt, &[], &lines, &RevListOptions::default());
+    assert_eq!(grit_oids, git_oids, "stdin --end-of-options with path tail");
 }
 
 #[test]

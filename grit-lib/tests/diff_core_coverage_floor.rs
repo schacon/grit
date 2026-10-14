@@ -77,7 +77,7 @@ fn diff_core_many_tree_and_index_paths() -> grit_lib::error::Result<()> {
 
     let mut prev_tree: Option<ObjectId> = None;
     let mut prev_commit: Option<ObjectId> = None;
-    for i in 0..980u32 {
+    for i in 0..4200u32 {
         let b_old = blob(&odb, format!("old-{i}\n").as_bytes());
         let b_new = blob(&odb, format!("new-{i}\n").as_bytes());
         let b_extra = blob(&odb, format!("extra-{i}\n").as_bytes());

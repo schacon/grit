@@ -76,8 +76,8 @@ fn seed_long_history(
 fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
     let dir = tempdir().map_err(grit_lib::error::Error::Io)?;
     let repo = Repository::init(dir.path(), &InitOptions::default())?;
-    let tip = seed_long_history(dir.path(), &repo, 400)?;
-    for n in 0..260 {
+    let tip = seed_long_history(dir.path(), &repo, 560)?;
+    for n in 0..340 {
         for spec in [format!("HEAD~{n}"), format!("main~{n}"), format!(":/c{n}")] {
             let _ = resolve_revision_for_verify(&repo, &spec).ok();
             let _ = resolve_revision(&repo, &spec).ok();

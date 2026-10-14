@@ -940,7 +940,7 @@ pub fn rev_list(
     };
 
     if include.is_empty() && object_roots.is_empty() {
-        if options.ignore_missing {
+        if options.ignore_missing || !exclude.is_empty() {
             return Ok(RevListResult {
                 commits: Vec::new(),
                 objects: Vec::new(),
@@ -9371,7 +9371,10 @@ mod line_coverage_tests {
         let (pos, _neg, _all, paths) =
             collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &lines)?;
         assert!(paths.is_empty());
-        assert!(!pos.is_empty(), "stdin pseudo-options should expand positive specs");
+        assert!(
+            !pos.is_empty(),
+            "stdin pseudo-options should expand positive specs"
+        );
         let _ = rev_list(
             &repo,
             &pos,
@@ -9381,6 +9384,61 @@ mod line_coverage_tests {
                 ..RevListOptions::default()
             },
         )?;
+        let not_lines = ["--not", "--branches", "--tags", "--remotes"];
+        let (_npos, nneg, _nall, _npaths) =
+            collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &not_lines)?;
+        assert!(!nneg.is_empty());
+        let split_lines = ["--tags", "v2", "--glob=refs/heads/topic/*"];
+        let (spos, _, _, _) =
+            collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &split_lines)?;
+        assert!(!spos.is_empty());
+        let eoo_lines = ["--end-of-options", "--not-a-ref"];
+        let (epos, _, _, _) =
+            collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &eoo_lines)?;
+        assert_eq!(epos, vec![String::from("--not-a-ref")]);
+        let path_lines = ["main", "--", "tracked.txt"];
+        let (_, _, _, paths) =
+            collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], &path_lines)?;
+        assert_eq!(paths, vec!["tracked.txt".to_owned()]);
+        let _dir_guard = dir;
+        Ok(())
+    }
+
+    #[test]
+    fn redundant_second_parent_simplify_by_decoration() -> Result<()> {
+        let (_dir, repo, _tip) = seed_repo(12, false);
+        let listed = rev_list(
+            &repo,
+            &[String::from("main")],
+            &[],
+            &RevListOptions::default(),
+        )?;
+        assert!(listed.commits.len() >= 4);
+        let first_parent = listed.commits[0];
+        let redundant_parent = listed.commits[1];
+        let commit_obj = repo.odb().read(&first_parent)?;
+        let tree = parse_commit(&commit_obj.data)?.tree;
+        let ident = "T <t@e.com> 200 +0000";
+        let merge_body = format!(
+            "tree {tree}\nparent {first_parent}\nparent {redundant_parent}\nauthor {ident}\ncommitter {ident}\n\nredundant-parent merge\n"
+        );
+        let merge = repo
+            .odb()
+            .write(ObjectKind::Commit, merge_body.as_bytes())
+            .expect("merge");
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{merge}\n")).expect("main");
+        let mut deco = HashSet::new();
+        deco.insert(merge);
+        let opts = RevListOptions {
+            simplify_by_decoration: true,
+            simplify_by_decoration_oids: deco,
+            simplify_merges: true,
+            full_history: true,
+            parent_rewrite: true,
+            ..RevListOptions::default()
+        };
+        let out = rev_list(&repo, &[String::from("main")], &[], &opts)?;
+        assert!(!out.commits.is_empty());
         Ok(())
     }
 
