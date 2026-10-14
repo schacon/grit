@@ -58,7 +58,10 @@ fn stage_for_commit_stages_single_edit_on_deep_tree_without_new_untracked() {
 
     let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage for commit");
     assert_eq!(outcome.modified, 1, "expected one staged path");
-    assert_eq!(outcome.added, 0, "clean tree should not stage untracked paths");
+    assert_eq!(
+        outcome.added, 0,
+        "clean tree should not stage untracked paths"
+    );
 }
 
 #[test]
@@ -91,6 +94,30 @@ fn create_commit_nothing_to_commit_without_second_stat_refresh() {
         matches!(err, grit_lib::error::Error::NothingToCommit),
         "expected NothingToCommit, got {err:?}"
     );
+}
+
+/// Exercises UNTR auto-threshold (4096+ index entries) with a wider tree than the smoke layout.
+#[test]
+fn stage_for_commit_untracked_cache_eligible_tree_stages_one_edit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_repo(root);
+    write_deep_tree(root, 25, 25, 7);
+    fs::write(root.join(".gitattributes"), "*.txt text eol=lf\n").expect("attrs");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "base"]);
+    assert!(
+        git(root, &["ls-files"]).lines().count() >= 4096,
+        "fixture should exceed UNTR auto-cache entry threshold"
+    );
+
+    let repo = open_repo(root);
+    status(&repo, &StatusOptions::default(), &mut NullProgress).expect("warm untracked cache");
+    fs::write(root.join(".gitattributes"), "*.txt text eol=lf\n# edit\n").expect("edit");
+
+    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage");
+    assert_eq!(outcome.modified, 1);
+    assert_eq!(outcome.added, 0);
 }
 
 #[test]
