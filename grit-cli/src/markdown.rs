@@ -607,6 +607,20 @@ pub fn print_worktree_outcome(w: &mut dyn Write, outcome: &WorktreeOutcome) -> a
                 }
             }
         }
+        WorktreeOutcome::Lock { path, reason } => {
+            outln!(w, "## Worktree lock");
+            outln!(w);
+            if let Some(r) = reason {
+                outln!(w, "- Locked **`{path}`** · {r}");
+            } else {
+                outln!(w, "- Locked **`{path}`**");
+            }
+        }
+        WorktreeOutcome::Unlock { path } => {
+            outln!(w, "## Worktree unlock");
+            outln!(w);
+            outln!(w, "- Unlocked **`{path}`**");
+        }
     }
     Ok(())
 }

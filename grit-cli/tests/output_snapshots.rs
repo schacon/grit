@@ -476,6 +476,17 @@ fn snapshot_bundle_list() {
 }
 
 #[test]
+fn snapshot_bundle_unbundle() {
+    let fixture = CliFixture::new();
+    fixture.run_ok(&["bundle", "create", "snap.bundle", "HEAD"]);
+    fixture.snapshot_all_modes(
+        "bundle_unbundle",
+        &["bundle", "unbundle", "snap.bundle"],
+        snapshot_dir(),
+    );
+}
+
+#[test]
 fn snapshot_init() {
     snapshot_workspace("init", &["init"]);
 }
@@ -706,6 +717,35 @@ fn snapshot_worktree_remove() {
             fixture
                 .run(&["worktree", "add", LINKED_WT, "-b", "wt-rm"])
                 .expect_success("worktree add");
+        },
+    );
+}
+
+#[test]
+fn snapshot_worktree_lock() {
+    snapshot_fresh(
+        "worktree_lock",
+        &["worktree", "lock", LINKED_WT, "--reason", "hold"],
+        |fixture| {
+            fixture
+                .run(&["worktree", "add", LINKED_WT, "-b", "wt-lock"])
+                .expect_success("worktree add");
+        },
+    );
+}
+
+#[test]
+fn snapshot_worktree_unlock() {
+    snapshot_fresh(
+        "worktree_unlock",
+        &["worktree", "unlock", LINKED_WT],
+        |fixture| {
+            fixture
+                .run(&["worktree", "add", LINKED_WT, "-b", "wt-unlock"])
+                .expect_success("worktree add");
+            fixture
+                .run(&["worktree", "lock", LINKED_WT, "--reason", "hold"])
+                .expect_success("worktree lock");
         },
     );
 }

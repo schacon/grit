@@ -1,8 +1,9 @@
-//! `grit worktree` — list, add, and remove linked worktrees.
+//! `grit worktree` — list, add, remove, lock, and unlock linked worktrees.
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::git_path::path_for_disk_compare;
 use grit_lib::refs::check_ref_format::validate_branch_short_name;
+use grit_lib::repo_handles::LockWorktreeOptions;
 use grit_lib::state::HeadState;
 use grit_lib::worktree::{
     add_linked_worktree, list_worktrees, prune_linked_worktrees, remove_linked_worktree,
@@ -35,6 +36,15 @@ pub enum WorktreeOutcome {
     },
     Prune {
         pruned: Vec<String>,
+    },
+    Lock {
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    Unlock {
+        path: String,
     },
 }
 
@@ -84,6 +94,14 @@ impl HumanRender for WorktreeOutcome {
                     }
                 }
             }
+            WorktreeOutcome::Lock { path, reason } => {
+                if let Some(r) = reason {
+                    outln!(w, "Locked worktree {path} ({r})");
+                } else {
+                    outln!(w, "Locked worktree {path}");
+                }
+            }
+            WorktreeOutcome::Unlock { path } => outln!(w, "Unlocked worktree {path}"),
         }
         Ok(())
     }
@@ -163,6 +181,34 @@ pub fn run_prune() -> Result<WorktreeOutcome> {
             .into_iter()
             .map(|p| p.display().to_string())
             .collect(),
+    })
+}
+
+pub fn run_lock(path: PathBuf, reason: Option<String>) -> Result<WorktreeOutcome> {
+    let repo = context::discover()?;
+    let canonical = path_for_disk_compare(&path);
+    repo.worktrees()
+        .lock(
+            &canonical,
+            &LockWorktreeOptions {
+                reason: reason.clone(),
+            },
+        )
+        .map_err(anyhow::Error::new)?;
+    Ok(WorktreeOutcome::Lock {
+        path: canonical.display().to_string(),
+        reason,
+    })
+}
+
+pub fn run_unlock(path: PathBuf) -> Result<WorktreeOutcome> {
+    let repo = context::discover()?;
+    let canonical = path_for_disk_compare(&path);
+    repo.worktrees()
+        .unlock(&canonical)
+        .map_err(anyhow::Error::new)?;
+    Ok(WorktreeOutcome::Unlock {
+        path: canonical.display().to_string(),
     })
 }
 
