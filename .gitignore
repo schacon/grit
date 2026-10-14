@@ -17,3 +17,6 @@ reports/*
 *.swp
 *.swo
 .*.sw?
+
+# Agent skills installed locally by tools (e.g. GitButler)
+.agents/skills/
