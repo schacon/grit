@@ -9405,6 +9405,55 @@ mod line_coverage_tests {
     }
 
     #[test]
+    fn stdin_all_branches_tags_remotes_glob_matrix() -> Result<()> {
+        let (_dir, repo, tip) = seed_repo(8, true);
+        for i in 0..6 {
+            fs::write(
+                repo.git_dir().join(format!("refs/heads/extra-{i}")),
+                format!("{tip}\n"),
+            )?;
+            fs::write(
+                repo.git_dir().join(format!("refs/tags/t{i}")),
+                format!("{tip}\n"),
+            )?;
+        }
+        fs::create_dir_all(repo.git_dir().join("refs/remotes/up"))?;
+        fs::write(
+            repo.git_dir().join("refs/remotes/up/main"),
+            format!("{tip}\n"),
+        )?;
+        let cases: &[&[&str]] = &[
+            &["--all"],
+            &["--not", "--all"],
+            &["--branches=main"],
+            &["--tags=t1"],
+            &["--remotes=up/main"],
+            &["--glob=refs/heads/extra-*"],
+            &["--glob=refs/tags/t*"],
+            &["--not", "--branches"],
+            &["--not", "--tags"],
+            &["--not", "--remotes"],
+        ];
+        for lines in cases {
+            let (pos, neg, all, paths) =
+                collect_revision_specs_from_stdin_lines(repo.git_dir(), &[], lines)?;
+            assert!(paths.is_empty());
+            let _ = rev_list(
+                &repo,
+                &pos,
+                &neg,
+                &RevListOptions {
+                    all_refs: all,
+                    count: true,
+                    ignore_missing: true,
+                    ..RevListOptions::default()
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn redundant_second_parent_simplify_by_decoration() -> Result<()> {
         let (_dir, repo, _tip) = seed_repo(12, false);
         let listed = rev_list(

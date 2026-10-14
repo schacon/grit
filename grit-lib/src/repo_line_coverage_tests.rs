@@ -2,8 +2,9 @@
 
 #![allow(clippy::unwrap_used)]
 
-use crate::environment::RepositoryOptions;
+use crate::config::environment::{Environment, RepositoryOptions};
 use crate::index::{IndexEntry, MODE_REGULAR};
+use crate::objects::ObjectId;
 use crate::objects::ObjectKind;
 use crate::parallel::ThreadPolicy;
 use crate::ref_storage::RefStorageFormat;
@@ -113,5 +114,100 @@ fn separate_git_dir_and_bare_init_paths() -> crate::error::Result<()> {
             ..InitOptions::default()
         },
     )?;
+    Ok(())
+}
+
+#[test]
+fn open_for_serving_and_bare_worktree_at_path() -> crate::error::Result<()> {
+    let wt = tempdir().map_err(crate::error::Error::Io)?;
+    Repository::init(
+        wt.path(),
+        &InitOptions {
+            bare_with_worktree_at_path: true,
+            initial_branch: "main".into(),
+            ..InitOptions::default()
+        },
+    )?;
+    let mut serve_opts = RepositoryOptions::empty();
+    serve_opts.open_for_serving = true;
+    let _ = Repository::open(wt.path(), &serve_opts)?;
+
+    let bare_git = tempdir().map_err(crate::error::Error::Io)?;
+    let git_dir = bare_git.path().join("repo.git");
+    std::fs::create_dir_all(&git_dir).map_err(crate::error::Error::Io)?;
+    std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")
+        .map_err(crate::error::Error::Io)?;
+    std::fs::create_dir_all(git_dir.join("refs/heads")).map_err(crate::error::Error::Io)?;
+    std::fs::create_dir_all(git_dir.join("objects")).map_err(crate::error::Error::Io)?;
+    std::fs::write(
+        git_dir.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n",
+    )
+    .map_err(crate::error::Error::Io)?;
+    let objects = git_dir.join("objects");
+    let blob = {
+        let odb = crate::odb::Odb::new(&objects);
+        odb.write(ObjectKind::Blob, b"root\n")?
+    };
+    let tree_body = format!("100644 f.txt\0").into_bytes();
+    let mut tree_bytes = tree_body;
+    tree_bytes.extend_from_slice(blob.as_bytes());
+    let tree = {
+        let odb = crate::odb::Odb::new(&objects);
+        odb.write(ObjectKind::Tree, &tree_bytes)?
+    };
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\ninit\n");
+    let tip = {
+        let odb = crate::odb::Odb::new(&objects);
+        odb.write(ObjectKind::Commit, commit_body.as_bytes())?
+    };
+    std::fs::write(git_dir.join("refs/heads/main"), format!("{tip}\n"))
+        .map_err(crate::error::Error::Io)?;
+    let bare_path = bare_git.path().join("repo.git");
+    let _ = Repository::open(&bare_path, &serve_opts)?;
+    Ok(())
+}
+
+#[test]
+fn setup_trace_and_replace_ref_read_paths() -> crate::error::Result<()> {
+    let dir = tempdir().map_err(crate::error::Error::Io)?;
+    std::fs::create_dir_all(dir.path().join("nested/deep")).map_err(crate::error::Error::Io)?;
+    let trace = dir.path().join("setup-trace.txt");
+    std::fs::write(&trace, b"").map_err(crate::error::Error::Io)?;
+    let trace_abs = trace.canonicalize().unwrap_or(trace);
+    let mut env = Environment::empty();
+    env.git_trace_setup = Some(trace_abs.to_string_lossy().into_owned());
+    env.cwd = dir.path().join("nested/deep");
+    let mut opts = RepositoryOptions::empty();
+    opts.environment = env;
+    let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+    let git_dir = dir.path().join(".git");
+    let blob = repo.odb().write(ObjectKind::Blob, b"payload\n")?;
+    let tree_body = format!("100644 x.txt\0").into_bytes();
+    let mut tree_bytes = tree_body;
+    tree_bytes.extend_from_slice(blob.as_bytes());
+    let tree = repo.odb().write(ObjectKind::Tree, &tree_bytes)?;
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\nm\n");
+    let tip = repo
+        .odb()
+        .write(ObjectKind::Commit, commit_body.as_bytes())?;
+    std::fs::write(git_dir.join("refs/heads/main"), format!("{tip}\n"))
+        .map_err(crate::error::Error::Io)?;
+    let replacement = repo.odb().write(ObjectKind::Blob, b"replacement\n")?;
+    std::fs::create_dir_all(git_dir.join("refs/replace")).map_err(crate::error::Error::Io)?;
+    std::fs::write(
+        git_dir.join(format!("refs/replace/{}", tip.to_hex())),
+        format!("{replacement}\n"),
+    )
+    .map_err(crate::error::Error::Io)?;
+    let discovered = Repository::discover(Some(dir.path()), &opts)?;
+    trace_repo_setup_if_requested(&discovered).map_err(crate::error::Error::Io)?;
+    let contents = std::fs::read_to_string(&trace_abs).map_err(crate::error::Error::Io)?;
+    assert!(contents.contains("setup:"));
+    let replaced = discovered.read_replaced(&tip)?;
+    assert_eq!(replaced.kind, ObjectKind::Blob);
+    let _oid: ObjectId = tip;
     Ok(())
 }

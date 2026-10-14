@@ -167,3 +167,106 @@ pub fn shared_repository_from_config_value(raw: Option<&str>) -> Result<i32, Str
     };
     git_config_perm("core.sharedRepository", v)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::{CollectingDiagnostics, Warning};
+
+    #[test]
+    fn git_config_perm_parses_git_shared_variants() {
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "umask").expect("umask"),
+            PERM_UMASK
+        );
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "group").expect("group"),
+            PERM_GROUP
+        );
+        for v in ["all", "world", "everybody", "ALL"] {
+            assert_eq!(
+                git_config_perm("core.sharedRepository", v).expect(v),
+                PERM_EVERYBODY
+            );
+        }
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "true").expect("true"),
+            PERM_GROUP
+        );
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "false").expect("false"),
+            PERM_UMASK
+        );
+        let neg = git_config_perm("core.sharedRepository", "0660").expect("0660");
+        assert!(neg < 0);
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "1").expect("1"),
+            PERM_GROUP
+        );
+        assert_eq!(
+            git_config_perm("core.sharedRepository", "2").expect("2"),
+            PERM_EVERYBODY
+        );
+        assert!(git_config_perm("core.sharedRepository", "0444").is_err());
+    }
+
+    #[test]
+    fn git_config_perm_bad_bool_emits_diagnostic() {
+        let cap = CollectingDiagnostics::new();
+        assert_eq!(
+            git_config_perm_with_diagnostics("core.sharedRepository", "maybe", Some(&cap))
+                .expect("fallback"),
+            PERM_UMASK
+        );
+        assert!(cap
+            .warnings()
+            .iter()
+            .any(|w| matches!(w, Warning::BadBooleanConfig { .. })));
+    }
+
+    #[test]
+    fn split_octal_prefix_and_calc_shared_perm() {
+        assert_eq!(split_octal_prefix("0660x"), ("0660", "x"));
+        assert_eq!(split_octal_prefix("abc"), ("", "abc"));
+        let mode = 0o100644;
+        assert_eq!(calc_shared_perm(PERM_GROUP, mode) & 0o777, 0o664);
+        let neg = git_config_perm("core.sharedRepository", "0660").expect("0660");
+        let adjusted = calc_shared_perm(neg, mode);
+        assert_ne!(adjusted & 0o777, 0);
+        assert_eq!(calc_shared_perm(PERM_UMASK, mode), mode);
+    }
+
+    #[test]
+    fn shared_repository_from_config_value_empty() {
+        assert_eq!(
+            shared_repository_from_config_value(None).expect("none"),
+            PERM_UMASK
+        );
+        assert_eq!(
+            shared_repository_from_config_value(Some("  ")).expect("blank"),
+            PERM_UMASK
+        );
+        assert_eq!(
+            shared_repository_from_config_value(Some("group")).expect("group"),
+            PERM_GROUP
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adjust_shared_perm_path_updates_file_mode() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("obj");
+        std::fs::write(&file, b"x")?;
+        let shared = git_config_perm("core.sharedRepository", "0660").expect("0660");
+        adjust_shared_perm_path(shared, &file)?;
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub)?;
+        adjust_shared_perm_path(shared, &sub)?;
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&file, &link)?;
+        adjust_shared_perm_path(shared, &link)?;
+        adjust_shared_perm_path(0, &file)?;
+        Ok(())
+    }
+}
