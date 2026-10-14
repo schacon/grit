@@ -30,8 +30,16 @@ use output::{emit, OutputMode, OutputOptions, RenderContext};
 
 /// A small, opinionated Git client built on `grit-lib`.
 #[derive(Debug, Parser)]
-#[command(name = "grit", version, about = "A simple Grit-powered CLI")]
+#[command(
+    name = "grit",
+    version,
+    about = "A simple Grit-powered CLI",
+    disable_version_flag = true
+)]
 pub(crate) struct Cli {
+    /// Print version.
+    #[arg(short = 'v', short_alias = 'V', long, action = clap::ArgAction::Version)]
+    version: (),
     /// Emit machine-readable JSON instead of human-readable text.
     #[arg(long, global = true, conflicts_with = "markdown")]
     json: bool,
