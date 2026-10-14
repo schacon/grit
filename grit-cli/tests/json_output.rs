@@ -1107,6 +1107,25 @@ fn diff_plain_mv_detects_rename_unstaged_and_default() -> TestResult {
 }
 
 #[test]
+fn diff_unstaged_omits_unrelated_untracked_when_tracked_deleted() -> TestResult {
+    let scratch = Scratch::new("diffdeluntracked")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("tracked.txt"), "body\n");
+    gs_ok(&repo, &["commit", "one"]);
+    fs::remove_file(repo.join("tracked.txt"))?;
+    write_file(&repo.join("untracked.txt"), "noise\n");
+
+    let v = gs_json(&repo, &["diff", "--unstaged"]);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{v}");
+    assert_eq!(files[0]["status"], "deleted");
+    assert_eq!(files[0]["path"], "tracked.txt");
+    Ok(())
+}
+
+#[test]
 fn diff_worktree_rename_with_small_unstaged_edit() -> TestResult {
     let scratch = Scratch::new("diffworktreerename")?;
     let repo = scratch.child("repo");

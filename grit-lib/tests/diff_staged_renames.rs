@@ -202,9 +202,8 @@ fn plain_filesystem_mv_pairs_via_untracked_worktree_candidate() {
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let mut index = repo.index_handle().load().expect("index");
     let work_tree = repo.work_tree().expect("worktree");
-    let rules =
-        grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(&repo, &index)
-            .expect("rules");
+    let rules = grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(&repo, &index)
+        .expect("rules");
 
     let (entries, _) = grit_lib::diff::diff_index_to_worktree_with_renames(
         &repo,
@@ -231,4 +230,62 @@ fn plain_filesystem_mv_pairs_via_untracked_worktree_candidate() {
     );
     assert_eq!(renames[0].old_path.as_deref(), Some("a.txt"));
     assert_eq!(renames[0].new_path.as_deref(), Some("b.txt"));
+}
+
+#[test]
+fn unrelated_untracked_not_listed_when_tracked_file_deleted() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_repo_with_large_file(root);
+    std::fs::remove_file(root.join("a.txt")).expect("delete tracked");
+    std::fs::write(root.join("unrelated.txt"), "noise\n").expect("untracked");
+
+    let git_out = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--name-status"])
+        .output()
+        .expect("git diff");
+    assert!(git_out.status.success());
+    let git_line = String::from_utf8_lossy(&git_out.stdout);
+    assert!(
+        !git_line.contains("unrelated.txt"),
+        "git should not list unrelated untracked in diff: {git_line}"
+    );
+    assert!(
+        git_line.contains('D'),
+        "git should show deletion: {git_line}"
+    );
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let mut index = repo.index_handle().load().expect("index");
+    let work_tree = repo.work_tree().expect("worktree");
+    let rules = grit_lib::worktree::worktree_rules::WorktreeRules::from_repository(&repo, &index)
+        .expect("rules");
+
+    let (entries, _) = grit_lib::diff::diff_index_to_worktree_with_renames(
+        &repo,
+        &mut index,
+        work_tree,
+        grit_lib::diff::DiffIndexToWorktreeOptions {
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
+            config: repo.config().ok(),
+            worktree_rules: Some(std::sync::Arc::new(std::sync::Mutex::new(rules))),
+            ..grit_lib::diff::DiffIndexToWorktreeOptions::default()
+        },
+        50,
+    )
+    .expect("unstaged diff");
+
+    assert!(
+        !entries.iter().any(|e| e.path() == "unrelated.txt"),
+        "unrelated untracked must not appear in diff: {entries:?}"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|e| e.status == DiffStatus::Deleted)
+            .count(),
+        1,
+        "expected single deletion: {entries:?}"
+    );
 }
