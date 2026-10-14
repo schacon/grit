@@ -22,9 +22,8 @@ fn upload_pack_v0_and_v2_advertise_refs_only() -> grit_lib::remote::serve::Resul
     let repo = Repository::open(dir.path(), &RepositoryOptions::empty())
         .map_err(ServeError::Repository)?;
     let tree = repo.odb().write(ObjectKind::Tree, b"")?;
-    let commit_body = format!(
-        "tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\ninit\n"
-    );
+    let commit_body =
+        format!("tree {tree}\nauthor T <t@e.com> 1 +0000\ncommitter T <t@e.com> 1 +0000\n\ninit\n");
     let commit = repo
         .odb()
         .write(ObjectKind::Commit, commit_body.as_bytes())?;
@@ -43,12 +42,7 @@ fn upload_pack_v0_and_v2_advertise_refs_only() -> grit_lib::remote::serve::Resul
             hidden_refs: Vec::new(),
         };
         let mut out = Vec::new();
-        upload_pack(
-            &repo,
-            &mut Cursor::new(b""),
-            &mut out,
-            &opts,
-        )?;
+        upload_pack(&repo, &mut Cursor::new(b""), &mut out, &opts)?;
         assert!(!out.is_empty());
     }
     Ok(())

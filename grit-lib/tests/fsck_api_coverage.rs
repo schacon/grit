@@ -3,10 +3,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use grit_lib::config::ConfigSet;
+use grit_lib::maintenance::fsck::FsckError;
 use grit_lib::maintenance::repository_fsck::{
     format_fsck_line, issue_msg_id, issue_severity, FsckIssue, FsckOptions, FsckSeverity,
 };
-use grit_lib::maintenance::fsck::FsckError;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::refs_fsck::RefsFsckIssue;
 use std::path::PathBuf;

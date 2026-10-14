@@ -17,9 +17,8 @@
 use anyhow::{Context, Result};
 use grit_lib::diff::{
     apply_rename_detection_to_diff_entries, diff_commits_with_renames,
-    diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
-    diff_trees_with_renames, read_submodule_head_oid,
-    read_worktree_side_bytes_for_diff,
+    diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames, diff_trees_with_renames,
+    read_submodule_head_oid, read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
         StructuredLineKind,

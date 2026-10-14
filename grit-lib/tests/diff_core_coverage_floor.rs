@@ -35,7 +35,8 @@ fn commit(odb: &Odb, tree: ObjectId, parent: Option<ObjectId>, n: u32) -> Object
     body.push_str(&format!(
         "author T <t@e.com> {n} +0000\ncommitter T <t@e.com> {n} +0000\n\nm{n}\n"
     ));
-    odb.write(ObjectKind::Commit, body.as_bytes()).expect("commit")
+    odb.write(ObjectKind::Commit, body.as_bytes())
+        .expect("commit")
 }
 
 fn index_entry(path: &str, oid: ObjectId) -> IndexEntry {
@@ -81,10 +82,7 @@ fn diff_core_many_tree_and_index_paths() -> grit_lib::error::Result<()> {
         let f_name = format!("f{i}.txt");
         let g_name = format!("g{i}.txt");
         let h_name = format!("h{i}.txt");
-        let old_tree = tree_named(
-            &odb,
-            &[(f_name.as_str(), b_old), ("shared.txt", b_old)],
-        );
+        let old_tree = tree_named(&odb, &[(f_name.as_str(), b_old), ("shared.txt", b_old)]);
         let new_tree = tree_named(
             &odb,
             &[
@@ -110,9 +108,7 @@ fn diff_core_many_tree_and_index_paths() -> grit_lib::error::Result<()> {
             let _ = diff_commits_with_renames(&odb, &p_commit, &head, 50)?;
             let mut index = Index::new();
             index.entries_mut().push(index_entry("shared.txt", b_new));
-            index
-                .entries_mut()
-                .push(index_entry(&f_name, b_old));
+            index.entries_mut().push(index_entry(&f_name, b_old));
             let idx_tree = write_tree_from_index(&odb, &index, "")?;
             let _ = diff_index_to_tree(&odb, &index, Some(&idx_tree), false)?;
             let _ = diff_trees(&odb, Some(&p_tree), Some(&new_tree), "prefix/")?;

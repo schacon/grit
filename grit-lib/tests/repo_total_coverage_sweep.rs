@@ -41,8 +41,7 @@ fn repository_handles_and_discovery_sweep() -> grit_lib::error::Result<()> {
     let _ = repo.network_trace_enabled();
     repo.set_network_trace(false);
 
-    let discovered =
-        Repository::discover(Some(dir.path()), &RepositoryOptions::empty())?;
+    let discovered = Repository::discover(Some(dir.path()), &RepositoryOptions::empty())?;
     let _ = discovered.enforce_safe_directory();
     let _ = discovered.verify_safe_for_clone_source();
 

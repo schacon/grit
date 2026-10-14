@@ -696,9 +696,7 @@ enum PackObjectCheckOutcome {
 
 fn pack_object_read_issue(oid: ObjectId, pack: &Path, err: Error) -> FsckIssue {
     match err {
-        Error::CorruptObject(msg)
-            if msg.contains("checksum") && msg.contains("index") =>
-        {
+        Error::CorruptObject(msg) if msg.contains("checksum") && msg.contains("index") => {
             FsckIssue::IdxMismatch {
                 pack: pack.to_path_buf(),
             }

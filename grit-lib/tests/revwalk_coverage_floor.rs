@@ -49,7 +49,8 @@ fn seed_merged_history(
     }
     let tip = *linear.last().expect("tip");
     let base = linear[linear.len() / 3];
-    let side_body = format!("tree {tree}\nparent {base}\nauthor {ident}\ncommitter {ident}\n\nside\n");
+    let side_body =
+        format!("tree {tree}\nparent {base}\nauthor {ident}\ncommitter {ident}\n\nside\n");
     let side_tip = repo
         .odb()
         .write_loose_materialize(ObjectKind::Commit, side_body.as_bytes())?;
@@ -64,11 +65,8 @@ fn seed_merged_history(
     let merge = repo
         .odb()
         .write_loose_materialize(ObjectKind::Commit, merge_body.as_bytes())?;
-    fs::write(
-        repo.git_dir().join("refs/heads/main"),
-        format!("{merge}\n"),
-    )
-    .map_err(grit_lib::error::Error::Io)?;
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{merge}\n"))
+        .map_err(grit_lib::error::Error::Io)?;
     for (i, oid) in linear.iter().enumerate().step_by(4) {
         fs::write(
             repo.git_dir().join(format!("refs/heads/topic-{i}")),
@@ -94,7 +92,8 @@ fn revwalk_floor_cartesian_sweep() -> grit_lib::error::Result<()> {
 
     trace_combine_filter_append("blob:limit=1k");
     let _ = expand_object_filter_for_protocol("tree:0").map_err(grit_lib::error::Error::Message)?;
-    let _ = expand_object_filter_for_protocol("blob:none").map_err(grit_lib::error::Error::Message)?;
+    let _ =
+        expand_object_filter_for_protocol("blob:none").map_err(grit_lib::error::Error::Message)?;
 
     let mut deco = HashSet::new();
     deco.insert(merge);

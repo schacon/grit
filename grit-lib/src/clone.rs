@@ -537,10 +537,7 @@ mod tests {
             ],
             upstream.path(),
         );
-        git(
-            &["symbolic-ref", "HEAD", "refs/heads/trunk"],
-            &bare,
-        );
+        git(&["symbolic-ref", "HEAD", "refs/heads/trunk"], &bare);
         let wt = upstream.path().join("wt");
         fs::create_dir_all(&wt).expect("mkdir");
         git(&["init", "-q"], &wt);

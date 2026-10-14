@@ -2,13 +2,12 @@
 
 use grit_lib::worktree::pathspec::{
     bloom_lookup_prefix, bloom_lookup_prefix_with_cwd, context_from_mode_octal,
-    extend_pathspec_list_implicit_cwd, has_glob_chars, literal_pathspecs_enabled,
-    matches_pathspec, matches_pathspec_list, matches_pathspec_list_for_object,
-    matches_pathspec_list_with_context, matches_pathspec_set_for_object,
-    matches_pathspec_set_for_object_ls_tree, matches_pathspec_with_context,
-    parse_pathspecs_from_source, path_allowed_by_pathspec_list, pathspec_contributes_match,
-    pathspec_exclude_matches, pathspec_has_top, pathspec_is_exclude, pathspec_matches,
-    pathspec_wants_descent_into_tree, pathspecs_allow_bloom, simple_length,
+    extend_pathspec_list_implicit_cwd, has_glob_chars, literal_pathspecs_enabled, matches_pathspec,
+    matches_pathspec_list, matches_pathspec_list_for_object, matches_pathspec_list_with_context,
+    matches_pathspec_set_for_object, matches_pathspec_set_for_object_ls_tree,
+    matches_pathspec_with_context, parse_pathspecs_from_source, path_allowed_by_pathspec_list,
+    pathspec_contributes_match, pathspec_exclude_matches, pathspec_has_top, pathspec_is_exclude,
+    pathspec_matches, pathspec_wants_descent_into_tree, pathspecs_allow_bloom, simple_length,
     validate_attr_pathspecs, validate_global_pathspec_flags, PathspecMatchContext,
 };
 

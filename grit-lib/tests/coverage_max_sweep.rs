@@ -235,8 +235,7 @@ fn supporting_and_submodule_gitdir_sweep() -> grit_lib::error::Result<()> {
         ConfigScope::Local,
     )?;
     let mut cfg_mut = cfg.clone();
-    let gitdir_rel =
-        ensure_submodule_gitdir_config(dir.path(), git_dir, &mut cfg_mut, "lib/foo")?;
+    let gitdir_rel = ensure_submodule_gitdir_config(dir.path(), git_dir, &mut cfg_mut, "lib/foo")?;
     assert!(!gitdir_rel.is_empty());
     let fs_path = submodule_gitdir_filesystem_path(dir.path(), git_dir, &cfg_mut, "lib/foo")?;
     assert!(fs_path.exists() || fs_path.starts_with(dir.path()));

@@ -6,8 +6,8 @@ use std::fs;
 use std::process::Command;
 
 use grit_lib::index::Index;
-use grit_lib::objects::pack::{read_pack_index, write_v2_pack_index_with_trailer};
 use grit_lib::maintenance::repository_fsck::{self as fsck, FsckIssue, FsckOptions};
+use grit_lib::objects::pack::{read_pack_index, write_v2_pack_index_with_trailer};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
@@ -501,10 +501,10 @@ fn idx_oid_content_mismatch_returns_fsck_report_not_error() {
         report.issues
     );
     assert!(
-        report
-            .issues
-            .iter()
-            .any(|i| matches!(i, FsckIssue::PackChecksum { .. } | FsckIssue::MissingObject { .. })),
+        report.issues.iter().any(|i| matches!(
+            i,
+            FsckIssue::PackChecksum { .. } | FsckIssue::MissingObject { .. }
+        )),
         "{:?}",
         report.issues
     );

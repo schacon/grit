@@ -33,7 +33,10 @@ fn seed_blame_repo(depth: usize) -> (tempfile::TempDir, Repository, grit_lib::ob
         let tree = format!("100644 file.txt\0").into_bytes();
         let mut tree_body = tree;
         tree_body.extend_from_slice(blob.as_bytes());
-        let tree_oid = repo.odb().write(ObjectKind::Tree, &tree_body).expect("tree");
+        let tree_oid = repo
+            .odb()
+            .write(ObjectKind::Tree, &tree_body)
+            .expect("tree");
         let mut body = format!("tree {tree_oid}\n");
         if let Some(p) = parent {
             body.push_str(&format!("parent {p}\n"));

@@ -594,8 +594,7 @@ fn midx_reuse_tables_bitmaps_and_sidecars() {
         let _ = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects);
     }
     let tip = tip_midx_path(&pack_dir);
-    let _ =
-        grit_lib::objects::midx::midx_sidecar_path_for_midx_file(&tip, "rev").expect("sidecar");
+    let _ = grit_lib::objects::midx::midx_sidecar_path_for_midx_file(&tip, "rev").expect("sidecar");
     grit_lib::objects::midx::validate_midx_referenced_packs(&objects);
     let _ = grit_lib::objects::midx::midx_oid_listed_in_tip(&objects, &oids[0]).expect("listed");
     let _ = repo;

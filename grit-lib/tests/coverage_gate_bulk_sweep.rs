@@ -18,8 +18,8 @@ use grit_lib::diff::merge_diff::{
     format_worktree_conflict_combined, is_binary_for_diff, read_blob_at_path, run_textconv,
 };
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
-use grit_lib::refs::ref_exclusions::RefExclusions;
 use grit_lib::refs;
+use grit_lib::refs::ref_exclusions::RefExclusions;
 use grit_lib::refs::ref_storage::RefStorageFormat;
 use grit_lib::repo::{
     common_git_dir_for_config, early_config_ignore_repo_reason, ensure_core_bare,
@@ -84,11 +84,8 @@ fn merge_diff_and_textconv_matrix_on_merge_commit() -> grit_lib::error::Result<(
         );
         repo.odb().write(ObjectKind::Commit, body.as_bytes())?
     };
-    fs::write(
-        repo.git_dir().join("refs/heads/main"),
-        format!("{merge}\n"),
-    )
-    .map_err(grit_lib::error::Error::Io)?;
+    fs::write(repo.git_dir().join("refs/heads/main"), format!("{merge}\n"))
+        .map_err(grit_lib::error::Error::Io)?;
     let commit_obj = repo.odb().read(&merge)?;
     let parsed = parse_commit(&commit_obj.data)?;
     assert_eq!(parsed.parents.len(), 2);
@@ -98,13 +95,8 @@ fn merge_diff_and_textconv_matrix_on_merge_commit() -> grit_lib::error::Result<(
     assert!(!paths.is_empty());
     let all_paths = all_blob_paths_in_tree_order(repo.odb(), &parsed.tree);
     assert!(!all_paths.is_empty());
-    let _ = combined_merge_parent_blob_paths(
-        repo.odb(),
-        "file.txt",
-        &parsed.parents,
-        &parsed.tree,
-        50,
-    );
+    let _ =
+        combined_merge_parent_blob_paths(repo.odb(), "file.txt", &parsed.parents, &parsed.tree, 50);
 
     let config = repo.config()?;
     let sides = [

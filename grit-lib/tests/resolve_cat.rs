@@ -6,9 +6,9 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use grit_lib::config::environment::Environment;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::object_inspect::{format_tree_cat_file_p, ObjectContents, ResolveError};
 use grit_lib::objects::ObjectKind;
-use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 use support::{
