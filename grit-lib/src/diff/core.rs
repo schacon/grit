@@ -3415,9 +3415,7 @@ fn diff_index_to_worktree_inner(
                         let skip_refresh_clean_status = options.for_status
                             && stat_matches
                             && !entry_is_racy_with_policy(ie_ref, index_mtime, stat_policy);
-                        if skip_refresh_clean_status
-                            && index_stat_cache_trustworthy(index_mtime)
-                        {
+                        if skip_refresh_clean_status && index_stat_cache_trustworthy(index_mtime) {
                             stat_refresh_verified[entry_index] = true;
                         }
                         if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
