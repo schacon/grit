@@ -2769,7 +2769,9 @@ pub struct DiffIndexToWorktreeOptions {
     /// When set, only index paths in this set are compared against the work tree.
     ///
     /// Used by branch switch to verify dirty paths only where the tree-to-tree diff would
-    /// update the worktree, avoiding a full tracked scan on large indexes.
+    /// update the worktree, avoiding a full tracked scan on large indexes. Callers must
+    /// refuse the operation when the index has unmerged entries; this filter does not
+    /// substitute for a full unmerged scan.
     pub restrict_to_paths: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
 }
 
@@ -3418,7 +3420,11 @@ fn diff_index_to_worktree_inner(
         preload_index,
         stat_parallel_threads: options.stat_parallel_threads,
     };
-    let blob_dirs = group_blob_entries_by_dir(index, honor_fsmonitor_valid);
+    let blob_dirs = if let Some(limit) = options.restrict_to_paths.as_ref() {
+        crate::worktree_scan::group_blob_entries_by_dir_for_paths(index, limit)
+    } else {
+        group_blob_entries_by_dir(index, honor_fsmonitor_valid)
+    };
     let work_tree_owned = work_tree.to_path_buf();
     let dir_abs = move |dir: &str| {
         if dir.is_empty() {
