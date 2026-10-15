@@ -647,6 +647,63 @@ fn diff_tree_to_worktree_and_show_tree_entries() {
 }
 
 #[test]
+fn rename_similarity_trailing_newline_is_add_delete_not_rename_at_m50() {
+    let dr = DiffRepo::init();
+    let wt = &dr.worktree;
+    fs::write(wt.join("old"), "a").unwrap();
+    git_quiet(wt, &["add", "old"]);
+    git_quiet(wt, &["commit", "-qm", "base"]);
+    let base: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+    fs::write(wt.join("new"), "a\n").unwrap();
+    git_quiet(wt, &["add", "new"]);
+    git_quiet(wt, &["rm", "old"]);
+    git_quiet(wt, &["commit", "-qm", "newline-only change"]);
+    let tip: ObjectId = git_quiet(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    let config = ConfigSet::new();
+    let opts = rename_opts(50);
+    let git_lines = git_raw_lines(
+        wt,
+        &[
+            "diff-tree",
+            "-r",
+            "-M50",
+            "--root",
+            "--raw",
+            &base.to_hex(),
+            &tip.to_hex(),
+        ],
+    );
+    assert!(
+        git_lines.iter().any(|l| l.contains(" A\tnew")),
+        "git must report add+delete, not rename: {git_lines:?}"
+    );
+    assert!(
+        git_lines.iter().any(|l| l.contains(" D\told")),
+        "git must report add+delete, not rename: {git_lines:?}"
+    );
+    assert!(
+        !git_lines.iter().any(|l| {
+            l.split_whitespace()
+                .any(|tok| tok.starts_with('R') && tok.len() == 4)
+        }),
+        "git must not classify as rename: {git_lines:?}"
+    );
+    let grit_lines = commits_diff_raw(&dr.repo, &base, &tip, &config, &opts);
+    assert_raw_matches_git(
+        &grit_lines,
+        &git_lines,
+        "trailing newline only change must not pair as rename at -M50",
+    );
+}
+
+#[test]
 fn diff_commits_rename_raw_matches_git() {
     let dr = DiffRepo::init();
     let wt = &dr.worktree;

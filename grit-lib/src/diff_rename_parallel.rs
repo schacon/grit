@@ -6,8 +6,7 @@ use crate::config::ConfigSet;
 use crate::objects::pack_store::PackReadContextGuard;
 use crate::odb::Odb;
 use crate::parallel::{
-    try_par_map, try_par_map_with_local, ParallelHashError, ParallelOp, ParallelOptions,
-    ThreadPolicy,
+    try_par_map_with_local, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy,
 };
 use std::sync::Arc;
 

@@ -303,7 +303,7 @@ fn histogram_structured_hunks_line_level(
             for &token in &input.before[pos as usize..hunk.before.start as usize] {
                 push_histogram_context_line(
                     &mut lines,
-                    &input.interner[token],
+                    input.interner[token],
                     &mut old_line,
                     &mut new_line,
                     before_line_count,
@@ -315,7 +315,7 @@ fn histogram_structured_hunks_line_level(
             for &token in &input.before[hunk.before.start as usize..hunk.before.end as usize] {
                 push_histogram_del_line(
                     &mut lines,
-                    &input.interner[token],
+                    input.interner[token],
                     &mut old_line,
                     before_line_count,
                     before_ends_nl,
@@ -324,7 +324,7 @@ fn histogram_structured_hunks_line_level(
             for &token in &input.after[hunk.after.start as usize..hunk.after.end as usize] {
                 push_histogram_add_line(
                     &mut lines,
-                    &input.interner[token],
+                    input.interner[token],
                     &mut new_line,
                     after_line_count,
                     after_ends_nl,
@@ -335,7 +335,7 @@ fn histogram_structured_hunks_line_level(
         for &token in &input.before[pos as usize..b_end as usize] {
             push_histogram_context_line(
                 &mut lines,
-                &input.interner[token],
+                input.interner[token],
                 &mut old_line,
                 &mut new_line,
                 before_line_count,
@@ -357,6 +357,7 @@ fn histogram_structured_hunks_line_level(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_histogram_context_line(
     lines: &mut Vec<StructuredLine>,
     raw: &str,
@@ -442,131 +443,6 @@ fn push_histogram_add_line(
             after_ends_nl,
         ),
     });
-}
-
-/// Parse a histogram unified body (no file headers) into structured hunks.
-fn structured_hunks_from_histogram_body(
-    body: &str,
-    old: &TextLines,
-    new: &TextLines,
-) -> Vec<StructuredHunk> {
-    let mut hunks = Vec::new();
-    let mut lines_iter = body.split('\n').peekable();
-    while lines_iter.peek().is_some() {
-        let header = match lines_iter.next() {
-            Some(h) if h.starts_with("@@ ") => h,
-            Some(_) => continue,
-            None => break,
-        };
-        let Some(parsed) = parse_unified_hunk_header(header) else {
-            continue;
-        };
-        let (old_start, old_lines, new_start, new_lines) = parsed;
-        let mut hunk_lines = Vec::new();
-        let mut old_line = old_start;
-        let mut new_line = new_start;
-        while let Some(line) = lines_iter.peek() {
-            if line.starts_with("@@ ") {
-                break;
-            }
-            let Some(raw) = lines_iter.next() else {
-                break;
-            };
-            if raw.is_empty() {
-                continue;
-            }
-            let (kind, text) = match raw.as_bytes().first() {
-                Some(b' ') => (StructuredLineKind::Context, &raw[1..]),
-                Some(b'-') => (StructuredLineKind::Del, &raw[1..]),
-                Some(b'+') => (StructuredLineKind::Add, &raw[1..]),
-                _ => continue,
-            };
-            let text = strip_diff_newline_only(text).to_owned();
-            let (line_old, line_new) = match kind {
-                StructuredLineKind::Context => {
-                    let o = old_line;
-                    let n = new_line;
-                    old_line = old_line.saturating_add(1);
-                    new_line = new_line.saturating_add(1);
-                    (Some(o), Some(n))
-                }
-                StructuredLineKind::Del => {
-                    let o = old_line;
-                    old_line = old_line.saturating_add(1);
-                    (Some(o), None)
-                }
-                StructuredLineKind::Add => {
-                    let n = new_line;
-                    new_line = new_line.saturating_add(1);
-                    (None, Some(n))
-                }
-            };
-            let no_newline_at_eof = match kind {
-                StructuredLineKind::Del => line_missing_eof_newline(
-                    line_old.map(|n| n.saturating_sub(1)),
-                    old.line_count(),
-                    old.ends_with_newline,
-                ),
-                StructuredLineKind::Add => line_missing_eof_newline(
-                    line_new.map(|n| n.saturating_sub(1)),
-                    new.line_count(),
-                    new.ends_with_newline,
-                ),
-                StructuredLineKind::Context => {
-                    line_missing_eof_newline(
-                        line_old.map(|n| n.saturating_sub(1)),
-                        old.line_count(),
-                        old.ends_with_newline,
-                    ) || line_missing_eof_newline(
-                        line_new.map(|n| n.saturating_sub(1)),
-                        new.line_count(),
-                        new.ends_with_newline,
-                    )
-                }
-            };
-            hunk_lines.push(StructuredLine {
-                kind,
-                old: line_old,
-                new: line_new,
-                segments: vec![StructuredSegment {
-                    text,
-                    emphasis: false,
-                }],
-                no_newline_at_eof,
-            });
-        }
-        hunks.push(StructuredHunk {
-            old_start,
-            new_start,
-            old_lines,
-            new_lines,
-            context: None,
-            lines: hunk_lines,
-        });
-    }
-    hunks
-}
-
-fn parse_unified_hunk_header(header: &str) -> Option<(usize, usize, usize, usize)> {
-    let rest = header.strip_prefix("@@ -")?;
-    let (old_part, rest) = rest.split_once(" +")?;
-    let new_part = rest.split_once(" @@").map(|(n, _)| n)?;
-    let (old_start, old_lines) = parse_hunk_side(old_part)?;
-    let (new_start, new_lines) = parse_hunk_side(new_part)?;
-    Some((old_start, old_lines, new_start, new_lines))
-}
-
-fn parse_hunk_side(part: &str) -> Option<(usize, usize)> {
-    if part == "0,0" {
-        return Some((0, 0));
-    }
-    if let Some((start, count)) = part.split_once(',') {
-        let start: usize = start.parse().ok()?;
-        let count: usize = count.parse().ok()?;
-        return Some((start, count));
-    }
-    let start: usize = part.parse().ok()?;
-    Some((start, 1))
 }
 
 /// One O(n) pass: `similar` may drop `\r` in inline segments; restore from precomputed lines.

@@ -6617,8 +6617,9 @@ fn count_copied_line_bytes(src: &[u8], dst: &[u8]) -> usize {
             if b != b'\n' {
                 continue;
             }
-            let line = &data[start..i];
-            let weight = i - start + 1;
+            // Hash includes the line terminator so `a` and `a\n` are distinct lines.
+            let line = &data[start..=i];
+            let weight = line.len();
             out.push((hash_rename_line(line), weight));
             start = i + 1;
         }
@@ -10778,6 +10779,8 @@ mod line_coverage_tests {
         let diff = diff_index_to_worktree(&odb, &mut index_mut, wt, false, false)?;
         assert!(!diff.is_empty());
         let _ = diff_tree_to_worktree(&odb, Some(&head), wt, &index)?;
+        assert_eq!(rename_similarity_score(b"a", b"a\n"), 0);
+        assert_eq!(rename_similarity_score(b"a\n", b"a"), 0);
         let score = rename_similarity_score(b"line one\nline two\n", b"line one\nline TWO\n");
         assert!(score >= 50);
         let _ = detect_renames(&odb, Some(wt), diff, 50);
