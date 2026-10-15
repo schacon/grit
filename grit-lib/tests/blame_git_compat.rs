@@ -240,6 +240,35 @@ fn blame_merge_commit_matches_git_porcelain() {
     let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, file, None, None);
     assert_blame_matches(&repo, dir, file, Some("HEAD"), Some((1, 3)));
+    assert_blame_matches(&repo, dir, "side-only.txt", None, None);
+}
+
+#[test]
+fn blame_merge_side_only_file_matches_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    std::fs::write(root.join("base.txt"), "base\n").unwrap();
+    git_run(root, &["add", "."]);
+    git_run(root, &["commit", "-m", "base"]);
+
+    git_run(root, &["switch", "-c", "side"]);
+    std::fs::write(root.join("new.txt"), "one\ntwo\nthree\n").unwrap();
+    git_run(root, &["add", "new.txt"]);
+    git_run(root, &["commit", "-m", "side adds new.txt"]);
+
+    git_run(root, &["switch", "main"]);
+    std::fs::write(root.join("base.txt"), "base\nmore\n").unwrap();
+    git_run(root, &["commit", "-am", "main change"]);
+
+    git_run(root, &["merge", "-m", "merge side", "side"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    assert_blame_matches(&repo, dir, "new.txt", None, None);
 }
 
 #[test]

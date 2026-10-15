@@ -1334,118 +1334,118 @@ fn compute_blame_with_session(
 
         // Merge commits (2+ parents): sequential `pass_blame_to_parent` order from git/blame.c —
         // each line is attributed to the first parent whose version matches after line mapping.
+        // Parents without `current_path` are skipped; lines stay in `remaining` for later parents.
         // Octopus merges and `.git/info/grafts` with many synthetic parents use the same rule.
-        let mut all_parents_have_path = parents.len() >= 2;
-        if all_parents_have_path {
-            for p in &parents {
-                let pc = get_commit(odb, *p, &mut commit_cache)?;
-                if session
-                    .resolve_path_in_tree(pc.tree, &current_path)?
-                    .is_none()
-                {
-                    all_parents_have_path = false;
-                    break;
-                }
-            }
-        }
-
-        if !first_parent_only && !is_ignored && all_parents_have_path {
+        if !first_parent_only && !is_ignored && parents.len() >= 2 {
             let cur_lines_arc =
                 session.load_blob_lines(current_blob_oid, &current_path, current_blob_mode)?;
             let cur_lines = BlameSession::line_refs(&cur_lines_arc);
 
-            let mut parent_blobs: Vec<(ObjectId, ObjectId, u32)> =
+            let mut parent_blobs: Vec<Option<(ObjectId, ObjectId, u32)>> =
                 Vec::with_capacity(parents.len());
-            let mut par_lines_vec: Vec<Arc<Vec<String>>> = Vec::with_capacity(parents.len());
-            let mut maps: Vec<Arc<Vec<Option<usize>>>> = Vec::with_capacity(parents.len());
+            let mut par_lines_vec: Vec<Option<Arc<Vec<String>>>> =
+                Vec::with_capacity(parents.len());
+            let mut maps: Vec<Option<Arc<Vec<Option<usize>>>>> = Vec::with_capacity(parents.len());
 
+            let map_algo = if parents.len() > 2 {
+                BlameDiffAlgorithm::Patience
+            } else {
+                diff_algorithm
+            };
+
+            let mut any_parent_has_path = false;
             for &p in &parents {
                 let pc = get_commit(odb, p, &mut commit_cache)?;
-                let Some((blob, mode)) = session.resolve_path_in_tree(pc.tree, &current_path)?
-                else {
-                    return Err(LibError::Message(
-                        "internal: missing blob in merge parent".to_string(),
-                    ));
-                };
-                let pl_arc = session.load_blob_lines(blob, &current_path, mode)?;
-                let map_algo = if parents.len() > 2 {
-                    BlameDiffAlgorithm::Patience
+                if let Some((blob, mode)) = session.resolve_path_in_tree(pc.tree, &current_path)? {
+                    any_parent_has_path = true;
+                    let pl_arc = session.load_blob_lines(blob, &current_path, mode)?;
+                    let pair = session.parent_child_line_maps(
+                        blob,
+                        &current_path,
+                        mode,
+                        current_blob_oid,
+                        &current_path,
+                        current_blob_mode,
+                        &pl_arc,
+                        &cur_lines_arc,
+                        map_algo,
+                        indent_heuristic,
+                        false,
+                    );
+                    parent_blobs.push(Some((p, blob, mode)));
+                    par_lines_vec.push(Some(pl_arc));
+                    maps.push(Some(pair.diff_line_map));
                 } else {
-                    diff_algorithm
-                };
-                let pair = session.parent_child_line_maps(
-                    blob,
-                    &current_path,
-                    mode,
-                    current_blob_oid,
-                    &current_path,
-                    current_blob_mode,
-                    &pl_arc,
-                    &cur_lines_arc,
-                    map_algo,
-                    indent_heuristic,
-                    false,
-                );
-                parent_blobs.push((p, blob, mode));
-                par_lines_vec.push(pl_arc);
-                maps.push(pair.diff_line_map);
+                    parent_blobs.push(None);
+                    par_lines_vec.push(None);
+                    maps.push(None);
+                }
             }
 
-            let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
-            let mut attributed: Vec<BlameLine> = Vec::new();
+            if any_parent_has_path {
+                let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
+                let mut attributed: Vec<BlameLine> = Vec::new();
 
-            let mut used_in_parent: Vec<HashSet<usize>> = vec![HashSet::new(); parents.len()];
+                let mut used_in_parent: Vec<HashSet<usize>> = vec![HashSet::new(); parents.len()];
 
-            let mut remaining = std::mem::take(&mut pending);
-            for i in 0..parents.len() {
-                if remaining.is_empty() {
-                    break;
-                }
-                let mut next_remaining: Vec<TrackedLine> = Vec::new();
-                for t in remaining {
-                    let idx = t.current_idx;
-                    let cur_line = cur_lines.get(idx).copied();
-                    let m = maps[i].get(idx).copied().flatten();
-                    if let Some(p_idx) = m {
-                        let text_ok = par_lines_vec[i].get(p_idx).map(|s| s.as_str()) == cur_line;
-                        if text_ok && used_in_parent[i].insert(p_idx) {
-                            buckets[i].push(TrackedLine {
-                                final_lineno: t.final_lineno,
-                                current_idx: p_idx,
-                                ignored: t.ignored,
-                                source_path: t.source_path.clone(),
-                            });
+                let mut remaining = std::mem::take(&mut pending);
+                for i in 0..parents.len() {
+                    if remaining.is_empty() {
+                        break;
+                    }
+                    let (Some(map), Some(pl_arc)) = (maps[i].as_ref(), par_lines_vec[i].as_ref())
+                    else {
+                        continue;
+                    };
+                    let mut next_remaining: Vec<TrackedLine> = Vec::new();
+                    for t in remaining {
+                        let idx = t.current_idx;
+                        let cur_line = cur_lines.get(idx).copied();
+                        let m = map.get(idx).copied().flatten();
+                        if let Some(p_idx) = m {
+                            let text_ok = pl_arc.get(p_idx).map(|s| s.as_str()) == cur_line;
+                            if text_ok && used_in_parent[i].insert(p_idx) {
+                                buckets[i].push(TrackedLine {
+                                    final_lineno: t.final_lineno,
+                                    current_idx: p_idx,
+                                    ignored: t.ignored,
+                                    source_path: t.source_path.clone(),
+                                });
+                            } else {
+                                next_remaining.push(t);
+                            }
                         } else {
                             next_remaining.push(t);
                         }
-                    } else {
-                        next_remaining.push(t);
                     }
+                    remaining = next_remaining;
                 }
-                remaining = next_remaining;
-            }
 
-            for t in remaining {
-                let idx = t.current_idx;
-                attributed.push(BlameLine {
-                    oid: current_oid,
-                    final_lineno: t.final_lineno,
-                    orig_lineno: idx + 1,
-                    content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
-                    ignored: t.ignored,
-                    unblamable: false,
-                    external_contents: false,
-                });
-            }
+                for t in remaining {
+                    let idx = t.current_idx;
+                    attributed.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                        source_file: None,
+                        ignored: t.ignored,
+                        unblamable: false,
+                        external_contents: false,
+                    });
+                }
 
-            for bl in attributed {
-                result.push(bl);
-            }
+                for bl in attributed {
+                    result.push(bl);
+                }
 
-            for i in 1..parents.len() {
-                if !buckets[i].is_empty() {
-                    let (p, blob, mode) = parent_blobs[i];
+                for i in 1..parents.len() {
+                    if buckets[i].is_empty() {
+                        continue;
+                    }
+                    let Some((p, blob, mode)) = parent_blobs[i] else {
+                        continue;
+                    };
                     deferred.push_back((
                         p,
                         blob,
@@ -1454,18 +1454,20 @@ fn compute_blame_with_session(
                         std::mem::take(&mut buckets[i]),
                     ));
                 }
-            }
 
-            if !buckets[0].is_empty() {
-                let (p, blob, mode) = parent_blobs[0];
-                current_oid = p;
-                current_blob_oid = blob;
-                current_blob_mode = mode;
-                pending = std::mem::take(&mut buckets[0]);
-            } else if deferred.is_empty() {
-                break 'blame_loop;
+                if !buckets[0].is_empty() {
+                    let Some((p, blob, mode)) = parent_blobs[0] else {
+                        continue 'blame_loop;
+                    };
+                    current_oid = p;
+                    current_blob_oid = blob;
+                    current_blob_mode = mode;
+                    pending = std::mem::take(&mut buckets[0]);
+                } else if deferred.is_empty() {
+                    break 'blame_loop;
+                }
+                continue;
             }
-            continue;
         }
 
         let parent_oid = parents[0];
