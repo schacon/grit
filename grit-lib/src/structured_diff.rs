@@ -958,6 +958,77 @@ mod tests {
     }
 
     #[test]
+    fn line_level_multiple_hunks_match_git() {
+        let old = "keep\nchange-a\nmid\nchange-b\nend\n";
+        let new = "keep\nCHANGE-A\nmid\nCHANGE-B\nend\n";
+        let patch = git_diff_u0(old, new);
+        let git_hunks: Vec<_> = patch.lines().filter(|l| l.starts_with("@@")).collect();
+        assert_eq!(git_hunks.len(), 2);
+        let d = structured_text_diff(
+            old,
+            new,
+            StructuredDiffOptions {
+                context_lines: 0,
+                word_level_inline: false,
+            },
+        );
+        assert_eq!(d.hunks.len(), 2);
+        for (h, header) in d.hunks.iter().zip(git_hunks) {
+            let (g_os, g_ol, g_ns, g_nl) = parse_hunk_header(&format!("{header}\n"));
+            assert_eq!(
+                (h.old_start, h.old_lines, h.new_start, h.new_lines),
+                (g_os, g_ol, g_ns, g_nl)
+            );
+        }
+    }
+
+    #[test]
+    fn line_level_blank_line_in_hunk() {
+        let old = "a\n\nb\n";
+        let new = "a\nX\n\nb\n";
+        let d = structured_text_diff(
+            old,
+            new,
+            StructuredDiffOptions {
+                context_lines: 1,
+                word_level_inline: false,
+            },
+        );
+        assert!(!d.hunks.is_empty());
+        assert!(
+            d.hunks[0]
+                .lines
+                .iter()
+                .any(|l| l.segments[0].text.is_empty() && l.kind == StructuredLineKind::Context)
+                || d.hunks[0]
+                    .lines
+                    .iter()
+                    .any(|l| l.segments[0].text.is_empty())
+        );
+    }
+
+    #[test]
+    fn line_level_missing_eof_newline_flag() {
+        let old = "only";
+        let new = "only\n";
+        let d = structured_text_diff(
+            old,
+            new,
+            StructuredDiffOptions {
+                context_lines: 0,
+                word_level_inline: false,
+            },
+        );
+        let h = &d.hunks[0];
+        let add = h
+            .lines
+            .iter()
+            .find(|l| l.kind == StructuredLineKind::Add)
+            .expect("add line");
+        assert!(add.no_newline_at_eof || h.lines.iter().any(|l| l.no_newline_at_eof));
+    }
+
+    #[test]
     fn hunk_header_counts_match_line_totals() {
         let old = "x\n";
         let new = "x\nmore\n";

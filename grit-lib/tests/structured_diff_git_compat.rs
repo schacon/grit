@@ -74,7 +74,10 @@ fn structured_hunk_counts_match_git_diff() {
     let d = structured_text_diff(
         "x\nmore\n",
         "x\n",
-        StructuredDiffOptions { context_lines: 3 },
+        StructuredDiffOptions {
+            context_lines: 3,
+            word_level_inline: true,
+        },
     );
     let h = &d.hunks[0];
     assert_eq!(h.old_start, g_os);
@@ -88,5 +91,61 @@ fn structured_hunk_counts_match_git_diff() {
         } else {
             format!("{g_os},{g_ol}")
         }
+    );
+}
+
+#[test]
+fn line_level_histogram_hunk_counts_match_git_diff() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::write(root.join("f.txt"), b"x\nmore\n").expect("write");
+    Command::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .current_dir(root)
+        .status()
+        .expect("git init");
+    Command::new("git")
+        .args(["config", "user.email", "t@e.com"])
+        .current_dir(root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "T"])
+        .current_dir(root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-qm", "init"])
+        .current_dir(root)
+        .status()
+        .unwrap();
+
+    std::fs::write(root.join("f.txt"), b"x\n").expect("rewrite");
+    let patch = git_diff(root);
+    let (g_os, g_ol, g_ns, g_nl) = parse_first_hunk_header(&patch);
+
+    let d = structured_text_diff(
+        "x\nmore\n",
+        "x\n",
+        StructuredDiffOptions {
+            context_lines: 3,
+            word_level_inline: false,
+        },
+    );
+    let h = &d.hunks[0];
+    assert_eq!(h.old_start, g_os);
+    assert_eq!(h.old_lines, g_ol);
+    assert_eq!(h.new_start, g_ns);
+    assert_eq!(h.new_lines, g_nl);
+    assert!(
+        h.lines
+            .iter()
+            .all(|l| l.segments.len() == 1 && !l.segments[0].emphasis),
+        "line-level mode must not emit word emphasis"
     );
 }
