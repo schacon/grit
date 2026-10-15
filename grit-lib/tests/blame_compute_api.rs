@@ -71,6 +71,7 @@ fn compute_blame_public_entry_point_attributes_lines() {
         false,
         &grafts,
         false,
+        None,
         &grit_lib::parallel::ThreadPolicy::default(),
     )
     .expect("compute_blame");
@@ -82,4 +83,47 @@ fn compute_blame_public_entry_point_attributes_lines() {
         lines[0].oid, lines[1].oid,
         "second line should be a newer commit"
     );
+}
+
+#[test]
+fn compute_blame_line_range_limits_output_and_work() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("f.txt"), "stable\n").unwrap();
+    git_run(root, &["add", "f.txt"]);
+    git_run(root, &["commit", "-m", "intro"]);
+    let root_commit = head_oid(root);
+    for i in 0..80 {
+        std::fs::write(root.join("other.txt"), format!("noise {i}\n")).unwrap();
+        git_run(root, &["add", "other.txt"]);
+        git_run(root, &["commit", "-m", &format!("touch {i}")]);
+    }
+
+    let start = head_oid(root);
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let ignore_revs = HashSet::new();
+    let grafts = HashMap::new();
+    let policy = grit_lib::parallel::ThreadPolicy::default();
+
+    let ranged = compute_blame(
+        repo.odb(),
+        start,
+        "f.txt",
+        &ignore_revs,
+        BlameDiffAlgorithm::Myers,
+        None,
+        false,
+        0,
+        true,
+        &grafts,
+        false,
+        Some(1..=1),
+        &policy,
+    )
+    .expect("ranged blame");
+
+    assert_eq!(ranged.len(), 1);
+    assert_eq!(ranged[0].final_lineno, 1);
+    assert_eq!(ranged[0].oid, root_commit);
 }

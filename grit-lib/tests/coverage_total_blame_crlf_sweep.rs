@@ -72,6 +72,7 @@ fn blame_crlf_apply_and_pathspec_deep_sweep() -> grit_lib::error::Result<()> {
                 &BlameOptions {
                     start,
                     line_range: range,
+                    ..Default::default()
                 },
             )?;
             assert!(!blame.lines.is_empty());

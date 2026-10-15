@@ -515,6 +515,7 @@ fn blame_copy_serial_matches_parallel_scoring() {
         false,
         &grafts,
         false,
+        None,
         &serial_policy(),
     )
     .expect("serial blame");
@@ -530,6 +531,7 @@ fn blame_copy_serial_matches_parallel_scoring() {
         false,
         &grafts,
         false,
+        None,
         &parallel_policy(),
     )
     .expect("parallel blame");

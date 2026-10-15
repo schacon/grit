@@ -1106,6 +1106,9 @@ const BLAME_RENAME_SIMILARITY: u32 = 50;
 
 /// Walk history and attribute each line in a blob at `start_oid` to a commit.
 ///
+/// When `line_range` is set, only lines whose 1-based final line number lies in the range
+/// are walked and returned.
+///
 /// Lower-level building block; prefer [`blame_file`] for repository callers.
 #[expect(clippy::too_many_arguments)]
 pub fn compute_blame(
@@ -1120,6 +1123,7 @@ pub fn compute_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
+    line_range: Option<RangeInclusive<usize>>,
     thread_policy: &ThreadPolicy,
 ) -> Result<Vec<BlameLine>> {
     let mut session = BlameSession::new(odb, textconv_ctx, use_textconv, thread_policy);
@@ -1135,8 +1139,36 @@ pub fn compute_blame(
         first_parent_only,
         grafts,
         indent_heuristic,
+        line_range,
         &mut session,
     )
+}
+
+/// Advance `start_oid` along first parents while `path` resolves to `blob_oid`.
+fn fast_forward_same_blob(
+    odb: &Odb,
+    session: &mut BlameSession<'_>,
+    mut oid: ObjectId,
+    blob_oid: ObjectId,
+    path: &str,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
+    commit_cache: &mut HashMap<ObjectId, CommitData>,
+) -> Result<ObjectId> {
+    loop {
+        let parents = commit_parents_for_blame(odb, oid, grafts, commit_cache)?;
+        let Some(parent_oid) = parents.first().copied() else {
+            break;
+        };
+        let parent_commit = get_commit(odb, parent_oid, commit_cache)?;
+        let Some((p_blob, _mode)) = session.resolve_path_in_tree(parent_commit.tree, path)? else {
+            break;
+        };
+        if p_blob != blob_oid {
+            break;
+        }
+        oid = parent_oid;
+    }
+    Ok(oid)
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -1152,6 +1184,7 @@ fn compute_blame_with_session(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
+    line_range: Option<RangeInclusive<usize>>,
     session: &mut BlameSession<'_>,
 ) -> Result<Vec<BlameLine>> {
     let start_commit = {
@@ -1170,14 +1203,34 @@ fn compute_blame_with_session(
     }
 
     // Lines still needing attribution
-    let mut pending: Vec<TrackedLine> = (0..num_lines)
-        .map(|i| TrackedLine {
-            final_lineno: i + 1,
-            current_idx: i,
-            ignored: false,
-            source_path: None,
-        })
-        .collect();
+    let mut pending: Vec<TrackedLine> = match &line_range {
+        Some(range) => range
+            .clone()
+            .filter_map(|lineno| {
+                if lineno == 0 || lineno > num_lines {
+                    return None;
+                }
+                Some(TrackedLine {
+                    final_lineno: lineno,
+                    current_idx: lineno - 1,
+                    ignored: false,
+                    source_path: None,
+                })
+            })
+            .collect(),
+        None => (0..num_lines)
+            .map(|i| TrackedLine {
+                final_lineno: i + 1,
+                current_idx: i,
+                ignored: false,
+                source_path: None,
+            })
+            .collect(),
+    };
+
+    if pending.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut result: Vec<BlameLine> = Vec::with_capacity(num_lines);
     // Store final content for output
@@ -1239,6 +1292,7 @@ fn compute_blame_with_session(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
+                        line_range.clone(),
                         session,
                     )?;
                     parent_lines.push(Some(p_lines));
@@ -1559,6 +1613,7 @@ fn compute_blame_with_session(
                             first_parent_only,
                             grafts,
                             indent_heuristic,
+                            line_range.clone(),
                             session,
                         )?;
                         for line in source_blame {
@@ -1652,8 +1707,15 @@ fn compute_blame_with_session(
                 break 'blame_loop;
             }
             Some((p_blob_oid, p_blob_mode)) if p_blob_oid == current_blob_oid => {
-                // Identical blob — skip to parent
-                current_oid = parent_oid;
+                current_oid = fast_forward_same_blob(
+                    odb,
+                    session,
+                    parent_oid,
+                    current_blob_oid,
+                    &current_path,
+                    grafts,
+                    &mut commit_cache,
+                )?;
                 current_blob_mode = p_blob_mode;
                 continue;
             }
@@ -1697,6 +1759,7 @@ fn compute_blame_with_session(
                         first_parent_only,
                         grafts,
                         indent_heuristic,
+                        line_range.clone(),
                         session,
                     )? {
                         let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
@@ -1945,6 +2008,7 @@ fn find_copy_source_blame(
     first_parent_only: bool,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     indent_heuristic: bool,
+    line_range: Option<RangeInclusive<usize>>,
     session: &mut BlameSession<'_>,
 ) -> Result<Option<(String, Vec<BlameLine>)>> {
     let mut entries = Vec::new();
@@ -2010,6 +2074,7 @@ fn find_copy_source_blame(
         first_parent_only,
         grafts,
         indent_heuristic,
+        line_range,
         session,
     )?;
     Ok(Some((source_path, source_blame)))
@@ -2076,6 +2141,8 @@ pub struct BlameOptions {
     pub start: Option<ObjectId>,
     /// When set, only include lines whose 1-based final line number lies in this range.
     pub line_range: Option<RangeInclusive<usize>>,
+    /// When true, walk all parents at merge commits (Git's default blame follows first parent only).
+    pub all_parents: bool,
 }
 
 /// One blamed line returned by [`blame_file`].
@@ -2145,13 +2212,14 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         None,
         false,
         0,
-        false,
+        !options.all_parents,
         &grafts,
         indent_heuristic,
+        options.line_range.clone(),
         &thread_policy,
     )?;
 
-    let mut lines: Vec<BlameAttributedLine> = raw
+    let lines: Vec<BlameAttributedLine> = raw
         .into_iter()
         .map(|line| BlameAttributedLine {
             commit: line.oid,
@@ -2160,10 +2228,6 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
             content: line.content,
         })
         .collect();
-
-    if let Some(range) = &options.line_range {
-        lines.retain(|line| range.contains(&line.final_line));
-    }
 
     let mut commits = HashMap::new();
     for line in &lines {
@@ -2378,6 +2442,7 @@ mod tests {
             &BlameOptions {
                 start: Some(tip),
                 line_range: Some(1..=10),
+                ..Default::default()
             },
         )?;
         assert!(!result.lines.is_empty());

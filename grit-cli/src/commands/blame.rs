@@ -111,6 +111,7 @@ pub fn run(
     file: String,
     rev: Option<String>,
     line_range: Option<String>,
+    all_parents: bool,
     now: time::OffsetDateTime,
 ) -> Result<BlameOutcome> {
     let repo = context::discover()?;
@@ -136,6 +137,7 @@ pub fn run(
         &BlameOptions {
             start: Some(start),
             line_range: range,
+            all_parents,
         },
     )?;
 

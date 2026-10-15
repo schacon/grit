@@ -126,7 +126,16 @@ fn grit_blame(
     start: Option<ObjectId>,
     line_range: Option<std::ops::RangeInclusive<usize>>,
 ) -> Vec<PorcelainLine> {
-    let result = blame_file(repo, file, &BlameOptions { start, line_range }).expect("blame_file");
+    let result = blame_file(
+        repo,
+        file,
+        &BlameOptions {
+            start,
+            line_range,
+            ..Default::default()
+        },
+    )
+    .expect("blame_file");
     let mut out: Vec<PorcelainLine> = result
         .lines
         .into_iter()

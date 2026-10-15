@@ -8,7 +8,7 @@ order: 2
 ## Synopsis
 
 ```text
-grit blame [--rev <commit>] [-L START,END] <file>
+grit blame [--rev <commit>] [-L START,END] [--all-parents] <file>
 ```
 
 ## Description
@@ -24,8 +24,9 @@ When a commit renamed or moved the file (including rename-and-edit in the same c
 | Option | Description |
 | --- | --- |
 | `--rev <commit>` | Blame the file as it existed at this revision (branch, tag, oid, `HEAD~N`, …). Defaults to `HEAD`. |
-| `-L START,END` | Limit output to an inclusive 1-based line range in the final file. |
+| `-L START,END` | Limit output to an inclusive 1-based line range in the final file. Blame stops once every line in the range is attributed. |
 | `--lines` | Same as `-L` (long form). |
+| `--all-parents` | At merge commits, consider every parent when attributing lines. Default follows Git blame: first parent only. |
 
 ## Examples
 

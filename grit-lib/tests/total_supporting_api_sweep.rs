@@ -66,6 +66,7 @@ fn blame_apply_binary_and_trailer_sweep() -> grit_lib::error::Result<()> {
         &BlameOptions {
             start: Some(tip),
             line_range: None,
+            ..Default::default()
         },
     )?;
     assert!(!blame.lines.is_empty());

@@ -111,6 +111,7 @@ fn long_history_revwalk_revparse_and_blame() -> grit_lib::error::Result<()> {
         &BlameOptions {
             start: Some(tip),
             line_range: None,
+            ..Default::default()
         },
     )?;
     assert!(!blame.lines.is_empty());

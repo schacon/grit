@@ -126,6 +126,7 @@ fn deep_history_revwalk_blame_and_merge_bases_nudge() -> grit_lib::error::Result
                 &BlameOptions {
                     start,
                     line_range: Some(1..=2),
+                    ..Default::default()
                 },
             )?;
             assert!(!blame.lines.is_empty());
