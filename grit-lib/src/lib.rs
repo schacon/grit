@@ -185,6 +185,7 @@ pub(crate) mod environment;
 pub mod error;
 mod ewah_bitmap;
 pub(crate) mod line_interner;
+pub(crate) mod oid_abbrev_cache;
 pub(crate) mod pack_roll_delta;
 
 #[path = "bench_fixture/mod.rs"]

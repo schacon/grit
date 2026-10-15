@@ -165,6 +165,7 @@ pub(crate) mod pack_cache {
         THREAD_WARM_STORE.set(0);
         super::clear_pack_read_info_cache();
         PACK_MONOTONIC_CURSOR.with(|cell| *cell.borrow_mut() = None);
+        super::clear_pack_read_info_cache();
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -231,6 +232,7 @@ pub(crate) mod pack_cache {
         if let Some(pack_dir) = pack_path.parent() {
             drop_thread_local_dir_listing(pack_dir);
         }
+        super::clear_pack_read_info_cache();
     }
 
     /// Seed thread-local pack caches from `store` (one catalog read lock; hot reads avoid the catalog).
@@ -2345,11 +2347,6 @@ fn pack_read_info_cache_key(pack_path: &Path, offset: u64) -> Option<PackReadInf
     })
 }
 
-/// Drop cached batch `read_info` entries (pack context end, invalidation, repack).
-pub(crate) fn clear_pack_read_info_cache() {
-    PACK_READ_INFO_CACHE.with(|c| c.borrow_mut().clear());
-}
-
 fn drop_pack_read_info_cache_for(pack_path: &Path) {
     let pack_id = pack_cache::pack_id_for(pack_path);
     PACK_READ_INFO_CACHE.with(|c| {
@@ -3367,6 +3364,26 @@ pub struct SingleLocalPackReader {
     delta_scratch: ZlibInflateScratch,
 }
 
+fn objects_dir_has_loose_objects(objects_dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(objects_dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.len() != 2 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let Ok(hex_entries) = std::fs::read_dir(entry.path()) else {
+            continue;
+        };
+        if hex_entries.flatten().any(|e| e.path().is_file()) {
+            return true;
+        }
+    }
+    false
+}
+
 impl SingleLocalPackReader {
     /// Open when [`crate::pack_store::PackStore`] read context matches and one local pack index exists.
     ///
@@ -3379,7 +3396,7 @@ impl SingleLocalPackReader {
         }
         pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
         let indexes = pack_indexes_for_lookup(objects_dir, PackLookupOptions::ALL_LOCAL_PACKS)?;
-        if indexes.len() != 1 {
+        if indexes.len() != 1 || objects_dir_has_loose_objects(objects_dir) {
             return Ok(None);
         }
         let idx = Arc::clone(&indexes[0]);
@@ -4394,6 +4411,7 @@ mod tests {
     use crate::transfer::{build_pack, PackBuildOptions};
     use flate2::write::ZlibEncoder;
     use flate2::Compression;
+    use std::io::Read;
     use std::io::Write;
     use std::process::Command;
 
