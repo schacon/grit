@@ -1820,6 +1820,8 @@ pub struct VerifyObjectRecord {
     pub depth: Option<u64>,
     /// Base object for ref-delta objects.
     pub base_oid: Option<Vec<u8>>,
+    /// In-pack base offset for ofs-delta objects.
+    pub base_pack_offset: Option<u64>,
 }
 
 /// How a delta object in a pack references its base, used to compute chain depth order-independently.
@@ -2097,6 +2099,10 @@ fn verify_pack_structure_and_records(
         }
 
         let size_in_pack = next_off - offset;
+        let base_pack_offset = match &base_link {
+            Some(DeltaBaseLink::Offset(off)) => Some(*off),
+            _ => None,
+        };
         records.push(VerifyObjectRecord {
             oid: oid.clone(),
             packed_type,
@@ -2105,6 +2111,7 @@ fn verify_pack_structure_and_records(
             offset,
             depth: None,
             base_oid,
+            base_pack_offset,
         });
         base_links.push(base_link);
         by_oid.insert(oid, i);
@@ -2258,7 +2265,7 @@ fn packed_type_to_kind(pt: PackedType) -> Result<ObjectKind> {
     }
 }
 
-// hygiene: per-thread zlib scratch for delta size prefix reads in pack hot path
+// hygiene: per-thread pack read scratch and info cache for batch cat-file hot paths
 thread_local! {
     static DELTA_SIZE_ZLIB: std::cell::RefCell<crate::zlib_inflate::ZlibInflateScratch> =
         std::cell::RefCell::new(crate::zlib_inflate::ZlibInflateScratch::default());
@@ -4040,7 +4047,7 @@ fn peek_pack_zlib_prefix(bytes: &[u8], zlib_start: usize) -> Result<(Vec<u8>, us
     inflate_prefix(&bytes[zlib_start..], 64)
 }
 
-fn parse_pack_object_header(bytes: &[u8], pos: &mut usize) -> Result<(PackedType, u64)> {
+pub(crate) fn parse_pack_object_header(bytes: &[u8], pos: &mut usize) -> Result<(PackedType, u64)> {
     let first = *bytes.get(*pos).ok_or_else(|| {
         Error::CorruptObject("unexpected end of pack header while decoding object".to_owned())
     })?;
@@ -4114,7 +4121,7 @@ pub fn read_packed_delta_dependency(
     }
 }
 
-fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Result<u64> {
+pub(crate) fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Result<u64> {
     let mut c = *bytes
         .get(*pos)
         .ok_or_else(|| Error::CorruptObject("truncated ofs-delta header".to_owned()))?;
