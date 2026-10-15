@@ -9,11 +9,15 @@ use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_list::{rev_list, RevListOptions};
 use support::{
     assert_rev_list_commits_match_git, build_commit_dag, commit_file, expand_token_for_rev_list,
-    git, git_rev_list, git_rev_list_object_set, grit_rev_list_object_set,
-    open_grit_repo, HistoryRepo,
+    git, git_rev_list, git_rev_list_object_set, grit_rev_list_object_set, open_grit_repo,
+    HistoryRepo,
 };
 
-fn tag_commits(worktree: &std::path::Path, labels: &[&str], oids: &std::collections::HashMap<String, ObjectId>) {
+fn tag_commits(
+    worktree: &std::path::Path,
+    labels: &[&str],
+    oids: &std::collections::HashMap<String, ObjectId>,
+) {
     for name in labels {
         let oid = oids
             .get(*name)
@@ -120,8 +124,7 @@ fn t6019_ancestry_path_upstream_cases_match_git() {
     let i = oids["I"].to_hex();
     let sym = format!("{f}...{i}");
     let mut sym_opts = RevListOptions::default();
-    let (sym_pos, sym_neg) =
-        expand_token_for_rev_list(&grit, &sym, &mut sym_opts).expect("F...I");
+    let (sym_pos, sym_neg) = expand_token_for_rev_list(&grit, &sym, &mut sym_opts).expect("F...I");
     assert_rev_list_commits_match_git(
         wt,
         &grit,
@@ -143,7 +146,6 @@ fn t6019_ancestry_path_upstream_cases_match_git() {
         },
         "t6019 --ancestry-path F...I",
     );
-
 }
 
 #[test]
@@ -172,7 +174,10 @@ fn t6019_criss_cross_ancestry_path_empty_matches_git() {
     let grit = open_grit_repo(wt);
 
     let git_empty = git_rev_list(wt, &["--ancestry-path", "xcb..xbc"]);
-    assert!(git_empty.is_empty(), "git expected empty ancestry-path xcb..xbc");
+    assert!(
+        git_empty.is_empty(),
+        "git expected empty ancestry-path xcb..xbc"
+    );
     let xcb = oids["Y"].to_hex();
     let xbc = oids["X"].to_hex();
     let grit_empty = rev_list(
@@ -237,5 +242,8 @@ fn t6000_rev_list_unpacked_objects_matches_git() {
     let mut grit_set: HashSet<ObjectId> = HashSet::new();
     grit_set.extend(result.commits);
     grit_set.extend(result.objects.iter().map(|(o, _)| *o));
-    assert_eq!(grit_set, git_all_unpacked, "grit --all --unpacked --objects");
+    assert_eq!(
+        grit_set, git_all_unpacked,
+        "grit --all --unpacked --objects"
+    );
 }

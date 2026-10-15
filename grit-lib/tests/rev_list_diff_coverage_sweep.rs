@@ -178,7 +178,8 @@ fn long_merged_history_object_walk_and_decoration() -> grit_lib::error::Result<(
     }
     let tip = *linear.last().expect("tip");
     let base = linear[linear.len() / 3];
-    let side_body = format!("tree {tree}\nparent {base}\nauthor {ident}\ncommitter {ident}\n\nside\n");
+    let side_body =
+        format!("tree {tree}\nparent {base}\nauthor {ident}\ncommitter {ident}\n\nside\n");
     let side = repo
         .odb()
         .write_loose_materialize(ObjectKind::Commit, side_body.as_bytes())?;

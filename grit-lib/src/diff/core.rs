@@ -10663,7 +10663,9 @@ mod line_coverage_tests {
         assert!(inserted_block_starts_with_c_like_function_definition(
             "static int foo(int bar) {"
         ));
-        assert!(!inserted_block_starts_with_c_like_function_definition("printf(hi);"));
+        assert!(!inserted_block_starts_with_c_like_function_definition(
+            "printf(hi);"
+        ));
         let ops = vec![
             DiffOp::Equal {
                 old_index: 0,
@@ -10676,10 +10678,10 @@ mod line_coverage_tests {
                 new_len: 2,
             },
         ];
-        let new_lines = [
-            "a\n", "b\n", "c\n", "d\n", "void added() {\n", "}\n",
-        ];
-        assert!(append_with_whole_function_added(&ops, 4, 6, &new_lines, None));
+        let new_lines = ["a\n", "b\n", "c\n", "d\n", "void added() {\n", "}\n"];
+        assert!(append_with_whole_function_added(
+            &ops, 4, 6, &new_lines, None
+        ));
         let _ = hunk_old_change_end_exclusive(&ops);
 
         let temp = TempDir::new().expect("tempdir");
