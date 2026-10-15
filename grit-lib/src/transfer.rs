@@ -639,13 +639,18 @@ fn copy_objects_for_local_fetch(
 ) -> Result<(HashSet<ObjectId>, TransferStats)> {
     use crate::local_object_copy::{
         link_loose_objects_for_oids, linked_object_set, refresh_local_odb_after_link,
-        try_satisfy_via_object_link,
+        source_objects_fully_packed, try_satisfy_via_object_link,
     };
 
     let remote_objects = remote_git_dir.join("objects");
     let local_objects = local_git_dir.join("objects");
-    // Initial fetch into an empty repo: link packfiles before walking the object graph.
-    if !pack_build.thin && try_pack_link && haves.is_empty() && !wants.is_empty() {
+
+    if !pack_build.thin
+        && try_pack_link
+        && haves.is_empty()
+        && !wants.is_empty()
+        && source_objects_fully_packed(&remote_objects)?
+    {
         progress.start(ProgressPhase::CopyingObjects, Some(wants.len() as u64));
         if try_satisfy_via_object_link(&remote_objects, &local_objects, local_odb, wants, false)? {
             progress.set(wants.len() as u64);
