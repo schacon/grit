@@ -762,7 +762,7 @@ fn has_hidden_untracked_file_or_dir(
         }
         let path = entry.path();
         let child_rel = relative_path(rel, &name);
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let is_dir = crate::read_dir_kind::entry_is_dir(&entry).unwrap_or(false);
         if is_dir && gitlinks.contains(&child_rel) {
             continue;
         }
@@ -776,7 +776,7 @@ fn has_hidden_untracked_file_or_dir(
                 return Ok(true);
             }
         } else {
-            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
             if !is_ign && name.starts_with('.') {
                 return Ok(true);
             }
@@ -794,7 +794,7 @@ fn has_ignored_entry_or_dir(
     rel: &str,
     abs: &Path,
 ) -> Result<bool> {
-    if matcher.check_path(repo, Some(index), rel, true)?.0 {
+    if matcher.is_path_ignored(repo, Some(index), rel, true)? {
         return Ok(true);
     }
     let entries = match fs::read_dir(abs) {
@@ -810,7 +810,7 @@ fn has_ignored_entry_or_dir(
         }
         let path = entry.path();
         let child_rel = relative_path(rel, &name);
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let is_dir = crate::read_dir_kind::entry_is_dir(&entry).unwrap_or(false);
         if is_dir && gitlinks.contains(&child_rel) {
             continue;
         }
@@ -823,7 +823,7 @@ fn has_ignored_entry_or_dir(
                 return Ok(true);
             }
         } else {
-            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
             if is_ign {
                 return Ok(true);
             }
@@ -1147,7 +1147,7 @@ fn read_directory_recursive(
                     continue;
                 }
                 let path = entry.path();
-                let is_dir = entry.file_type().map_err(Error::Io)?.is_dir();
+                let is_dir = crate::read_dir_kind::entry_is_dir(&entry)?;
                 Some((name, path, is_dir))
             }
             DirSource::Cache {
@@ -1224,7 +1224,7 @@ fn read_directory_recursive(
                 uc,
             )?;
         } else {
-            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
             if is_ign {
                 continue;
             }
@@ -1297,15 +1297,17 @@ fn visit_untracked_directory_uc(
 
     // Fast prune for default ignored mode: an excluded directory cannot surface untracked
     // entries unless tracked descendants exist (handled above).
+    let _ = matcher.note_directory_entered(repo, Some(index), rel);
+
     if ignored_mode == UntrackedIgnoredMode::No
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         return Ok(());
     }
 
     if ignored_mode == UntrackedIgnoredMode::Matching
         && show_all
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         return Ok(());
     }
@@ -1636,7 +1638,7 @@ fn visit_untracked_node_full(
         }
         let path = entry.path();
         let child_rel = relative_path(rel, &name);
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let is_dir = crate::read_dir_kind::entry_is_dir(&entry).unwrap_or(false);
 
         if is_dir && gitlinks.contains(&child_rel) {
             continue;
@@ -1662,7 +1664,7 @@ fn visit_untracked_node_full(
                 uc,
             )?;
         } else {
-            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            let is_ign = matcher.is_path_ignored(repo, Some(index), &child_rel, false)?;
             if is_ign {
                 if ignored_mode != UntrackedIgnoredMode::No {
                     ignored_out.push(child_rel);
@@ -1708,17 +1710,19 @@ fn visit_untracked_directory_collect(
         );
     }
 
+    let _ = matcher.note_directory_entered(repo, Some(index), rel);
+
     // Fast prune for default ignored mode: excluded directories cannot contribute visible
     // untracked entries when there are no tracked descendants.
     if ignored_mode == UntrackedIgnoredMode::No
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         return Ok(());
     }
 
     if ignored_mode == UntrackedIgnoredMode::Matching
         && show_all
-        && matcher.check_path(repo, Some(index), rel, true)?.0
+        && matcher.is_path_ignored(repo, Some(index), rel, true)?
     {
         ignored_out.push(format!("{rel}/"));
         return Ok(());
@@ -1764,7 +1768,7 @@ fn visit_untracked_directory_collect(
     }
 
     if sub_u.is_empty() && !sub_i.is_empty() {
-        let dir_excluded = matcher.check_path(repo, Some(index), rel, true)?.0;
+        let dir_excluded = matcher.is_path_ignored(repo, Some(index), rel, true)?;
         let collapse_matching = ignored_mode == UntrackedIgnoredMode::Matching && dir_excluded;
         let collapse_traditional = ignored_mode == UntrackedIgnoredMode::Traditional;
         if collapse_matching || collapse_traditional {
@@ -1815,7 +1819,7 @@ fn traditional_normal_directory_only(
                 continue;
             }
             let path = entry.path();
-            let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            let is_dir = crate::read_dir_kind::entry_is_dir(&entry).unwrap_or(false);
             let rel_child = if dir == *abs {
                 relative_path(rel, &name)
             } else {

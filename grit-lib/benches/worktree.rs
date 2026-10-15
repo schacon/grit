@@ -12,7 +12,9 @@ use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexParseContext};
 use grit_lib::objects::HashAlgo;
 use grit_lib::parallel::ThreadPolicy;
-use grit_lib::porcelain::status::{status, StatusOptions};
+use grit_lib::porcelain::status::{
+    collect_untracked_and_ignored, status, IgnoredMode, StatusOptions,
+};
 use grit_lib::progress::NullProgress;
 use grit_lib::worktree::attributes::collect_attrs_for_path;
 use grit_lib::worktree::ignore::IgnoreMatcher;
@@ -120,9 +122,11 @@ fn bench_config_load(c: &mut Criterion) {
 
 fn bench_ignore_match(c: &mut Criterion) {
     let fx = WorktreeBenchFixtures::global();
-    let paths = &fx.ignore_paths;
+    let paths = &fx.ignore_paths[..10_000];
     let mut matcher = IgnoreMatcher::from_repository(&fx.ignore_repo).expect("ignore matcher");
-    c.bench_function("ignore_match_100k_paths", |b| {
+    let mut group = c.benchmark_group("ignore/match_10k_paths");
+    group.throughput(Throughput::Elements(10_000));
+    group.bench_function("check_path", |b| {
         b.iter(|| {
             for path in paths {
                 black_box(
@@ -133,6 +137,31 @@ fn bench_ignore_match(c: &mut Criterion) {
             }
         });
     });
+    group.finish();
+}
+
+fn bench_untracked_walk(c: &mut Criterion) {
+    let fx = WorktreeBenchFixtures::global();
+    let repo = &fx.untracked_walk_repo;
+    let work_tree = repo.work_tree().expect("work tree");
+    let mut group = c.benchmark_group("status/untracked_walk_100k");
+    group.bench_function("collect_untracked", |b| {
+        b.iter(|| {
+            let mut index = fx.untracked_walk_index.clone();
+            black_box(
+                collect_untracked_and_ignored(
+                    repo,
+                    &mut index,
+                    work_tree,
+                    IgnoredMode::No,
+                    false,
+                    &[],
+                )
+                .expect("collect untracked"),
+            );
+        });
+    });
+    group.finish();
 }
 
 fn bench_attributes_match(c: &mut Criterion) {
@@ -177,6 +206,7 @@ criterion_group!(
     bench_index_write,
     bench_config_load,
     bench_ignore_match,
+    bench_untracked_walk,
     bench_attributes_match,
     bench_status_with_nested_gitattributes_l
 );

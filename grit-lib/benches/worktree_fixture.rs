@@ -215,6 +215,9 @@ pub struct WorktreeBenchFixtures {
     pub status_nested_attr_repo: Repository,
     /// Same tree layout without per-directory `.gitattributes` (baseline).
     pub status_plain_l_repo: Repository,
+    /// Work tree with ~100k untracked files for untracked-walk benchmarks.
+    pub untracked_walk_repo: Repository,
+    pub untracked_walk_index: Index,
 }
 
 impl WorktreeBenchFixtures {
@@ -370,6 +373,32 @@ impl WorktreeBenchFixtures {
 
         let (status_nested_attr_repo, status_plain_l_repo) = build_status_nested_l_fixtures(base);
 
+        let untracked_root = base.join("untracked-walk-100k");
+        let untracked_walk_repo = Repository::init(
+            &untracked_root,
+            &InitOptions::new()
+                .with_initial_branch("main".to_owned())
+                .with_ref_storage(grit_lib::RefStorageFormat::Files),
+        )
+        .expect("untracked walk repo init");
+        let untracked_wt = untracked_walk_repo.work_tree().expect("work tree");
+        write_realistic_gitignore(&untracked_wt.join(".gitignore"));
+        for d in 0..128 {
+            let sub = untracked_wt.join(format!("tree{d:03}"));
+            std::fs::create_dir_all(&sub).expect("untracked subdir");
+            if d % 8 == 0 {
+                write_realistic_gitignore(&sub.join(".gitignore"));
+            }
+        }
+        const UNTRACKED_FILES: usize = 100_000;
+        for i in 0..UNTRACKED_FILES {
+            let dir = format!("tree{:03}", i % 128);
+            let rel = format!("{dir}/leaf{i:06}.txt");
+            let path = untracked_wt.join(&rel);
+            std::fs::write(path, format!("u{i}\n")).expect("untracked leaf");
+        }
+        let untracked_walk_index = Index::empty(2);
+
         Self {
             _root: root,
             index_v2_10k_path,
@@ -393,6 +422,8 @@ impl WorktreeBenchFixtures {
             scan_repo_10k: scan_repo,
             status_nested_attr_repo,
             status_plain_l_repo,
+            untracked_walk_repo,
+            untracked_walk_index,
         }
     }
 
