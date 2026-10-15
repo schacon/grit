@@ -1360,10 +1360,7 @@ mod tests {
         let old = {
             let mut p = tip;
             for _ in 0..20 {
-                p = first_parent_oid(
-                    &mut CommitGraphCache::new(&repo),
-                    p,
-                )?;
+                p = first_parent_oid(&mut CommitGraphCache::new(&repo), p)?;
             }
             p
         };
