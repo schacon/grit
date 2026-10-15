@@ -562,6 +562,9 @@ pub struct OdbBackendCase {
     pub odb: Odb,
     pub hit: ObjectId,
     pub miss: ObjectId,
+    /// Newest commit (or last-written object) for reachability workloads such as pack write.
+    #[allow(dead_code)]
+    pub history_tip: ObjectId,
 }
 
 /// Four ODB backend shapes used before the ObjectStore refactor.
@@ -610,6 +613,7 @@ fn build_loose_only_backend(count: usize) -> OdbBackendCase {
         odb,
         hit: last,
         miss: miss_oid("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+        history_tip: last,
     }
 }
 
@@ -656,14 +660,15 @@ fn build_single_pack_backend(object_count: usize) -> OdbBackendCase {
             "cached pack idx too small: {}",
             idx.len()
         );
-        let hit = head_oid_in_git_repo(repo_root);
+        let history_tip = head_oid_in_git_repo(repo_root);
         let odb = Odb::new(&objects);
         let keep = tempfile::tempdir().expect("pack backend anchor tempdir");
         return OdbBackendCase {
             _keep: keep,
             odb,
-            hit,
+            hit: history_tip,
             miss: miss_oid("cafebabecafebabecafebabecafebabecafebabe"),
+            history_tip,
         };
     }
 
@@ -683,6 +688,7 @@ fn build_single_pack_backend(object_count: usize) -> OdbBackendCase {
         odb,
         hit,
         miss: miss_oid("cafebabecafebabecafebabecafebabecafebabe"),
+        history_tip: tip,
     }
 }
 
@@ -822,6 +828,7 @@ fn build_midx_backend(pack_count: usize) -> OdbBackendCase {
         odb,
         hit,
         miss: miss_oid("00000000000000000000000000000000000000f1"),
+        history_tip: hit,
     }
 }
 
@@ -858,6 +865,7 @@ fn build_alternate_only_backend() -> OdbBackendCase {
         odb,
         hit,
         miss: miss_oid("badc0ffebadc0ffebadc0ffebadc0ffebadc0ffe"),
+        history_tip: hit,
     }
 }
 

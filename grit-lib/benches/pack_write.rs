@@ -6,18 +6,24 @@
 mod fixture;
 
 use std::hint::black_box;
-use std::path::Path;
 use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use fixture::OdbBackendFixtures;
-use grit_lib::objects::pack::read_pack_index;
 use grit_lib::objects::pack_objects::{build_pack_with_parallel_threads, PackBuildOptions};
+use grit_lib::objects::ObjectId;
 
 struct PackWriteBench {
-    object_count: u64,
+    root: ObjectId,
+    /// Object count in the emitted pack when rebuilding the full closure from [`Self::root`].
+    emitted_object_count: u64,
     reuse_opts: PackBuildOptions,
     fresh_opts: PackBuildOptions,
+}
+
+fn pack_header_object_count(pack: &[u8]) -> u32 {
+    assert!(pack.len() >= 12 && &pack[0..4] == b"PACK");
+    u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]])
 }
 
 fn pack_write_bench() -> &'static PackWriteBench {
@@ -25,7 +31,7 @@ fn pack_write_bench() -> &'static PackWriteBench {
     BENCH.get_or_init(|| {
         let fx = OdbBackendFixtures::global();
         let case = &fx.pack_100k;
-        let object_count = pack_object_count(case.odb.objects_dir()) as u64;
+        let root = case.history_tip;
         let reuse_opts = PackBuildOptions {
             use_bitmaps: false,
             ..PackBuildOptions::for_local_copy(None)
@@ -37,63 +43,95 @@ fn pack_write_bench() -> &'static PackWriteBench {
             use_bitmaps: false,
             ..PackBuildOptions::default()
         };
+
+        let reuse_pack = build_pack_with_parallel_threads(
+            &case.odb,
+            &[root],
+            &[],
+            &reuse_opts,
+            None,
+            None,
+        )
+        .expect("probe reuse pack from history tip");
+        let fresh_pack = build_pack_with_parallel_threads(
+            &case.odb,
+            &[root],
+            &[],
+            &fresh_opts,
+            None,
+            None,
+        )
+        .expect("probe fresh pack from history tip");
+
+        let reuse_count = pack_header_object_count(&reuse_pack);
+        let fresh_count = pack_header_object_count(&fresh_pack);
+        assert_eq!(
+            reuse_count, fresh_count,
+            "reuse and fresh paths must emit the same object set size (reuse={reuse_count}, fresh={fresh_count})"
+        );
+        assert!(
+            reuse_count >= 100_000,
+            "expected a large closure from history tip {root}, pack header count {reuse_count}"
+        );
+
         PackWriteBench {
-            object_count,
+            root,
+            emitted_object_count: u64::from(reuse_count),
             reuse_opts,
             fresh_opts,
         }
     })
 }
 
-fn pack_object_count(objects_dir: &Path) -> usize {
-    let pack_dir = objects_dir.join("pack");
-    let idx_path = std::fs::read_dir(&pack_dir)
-        .expect("pack dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "idx"))
-        .expect("pack index in 100k fixture");
-    read_pack_index(&idx_path).expect("read pack idx").len()
-}
-
 fn bench_pack_write_100k(c: &mut Criterion) {
     let fx = OdbBackendFixtures::global();
     let case = &fx.pack_100k;
-    let tip = case.hit;
     let meta = pack_write_bench();
+    assert_eq!(
+        meta.root, case.history_tip,
+        "benchmark root must stay the fixture history tip"
+    );
 
     let mut group = c.benchmark_group("pack");
-    group.throughput(Throughput::Elements(meta.object_count));
+    group.throughput(Throughput::Elements(meta.emitted_object_count));
 
     group.bench_function("write_100k_reuse", |b| {
         b.iter(|| {
-            black_box(
-                build_pack_with_parallel_threads(
-                    &case.odb,
-                    &[tip],
-                    &[],
-                    &meta.reuse_opts,
-                    None,
-                    None,
-                )
-                .expect("reuse pack"),
+            let pack = build_pack_with_parallel_threads(
+                &case.odb,
+                &[meta.root],
+                &[],
+                &meta.reuse_opts,
+                None,
+                None,
             )
+            .expect("reuse pack");
+            assert_eq!(
+                pack_header_object_count(&pack) as u64,
+                meta.emitted_object_count,
+                "reuse pack object count must match throughput baseline"
+            );
+            black_box(pack)
         });
     });
 
     group.bench_function("write_100k_fresh", |b| {
         b.iter(|| {
-            black_box(
-                build_pack_with_parallel_threads(
-                    &case.odb,
-                    &[tip],
-                    &[],
-                    &meta.fresh_opts,
-                    None,
-                    None,
-                )
-                .expect("fresh pack"),
+            let pack = build_pack_with_parallel_threads(
+                &case.odb,
+                &[meta.root],
+                &[],
+                &meta.fresh_opts,
+                None,
+                None,
             )
+            .expect("fresh pack");
+            assert_eq!(
+                pack_header_object_count(&pack) as u64,
+                meta.emitted_object_count,
+                "fresh pack object count must match throughput baseline"
+            );
+            black_box(pack)
         });
     });
 
