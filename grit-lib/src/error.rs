@@ -159,6 +159,15 @@ pub enum ConfigError {
     /// Inline `--comment` text must not span lines.
     #[error("no multi-line comment allowed")]
     MultilineCommentNotAllowed,
+
+    /// `status.showUntrackedFiles` must be `no`, `normal`, or `all`.
+    #[error(
+        "invalid value '{value}' for 'status.showUntrackedFiles' (expected no, normal, or all)"
+    )]
+    InvalidUntrackedFilesMode {
+        /// Raw config value that could not be parsed.
+        value: String,
+    },
 }
 
 impl From<String> for ConfigError {

@@ -241,6 +241,48 @@ fn status_untracked_all_from_config_without_flag() -> TestResult {
 }
 
 #[test]
+fn status_rejects_invalid_show_untracked_files_config_like_git() -> TestResult {
+    let base = tempfile::tempdir()?;
+    let repo = base.path();
+    fs::write(repo.join("lonely.txt"), "x\n")?;
+    Command::new(GRIT)
+        .args(["init", "."])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .status()
+        .expect("grit init");
+    grit_ok(repo, &["config", "status.showUntrackedFiles", "false"]);
+
+    let grit = Command::new(GRIT)
+        .args(["status", "--json"])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("grit status");
+    assert!(
+        !grit.status.success(),
+        "grit must reject invalid showUntrackedFiles like git:\n{}",
+        String::from_utf8_lossy(&grit.stdout)
+    );
+
+    let git = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("git status");
+    assert_ne!(
+        git.status.code(),
+        Some(0),
+        "system git must reject showUntrackedFiles=false"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_untracked_no_omits_untracked_paths() -> TestResult {
     let base = tempfile::tempdir()?;
     let repo = base.path();

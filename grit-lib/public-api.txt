@@ -3253,6 +3253,8 @@ pub grit_lib::error::ConfigError::ConfigFileLocked::path: alloc::string::String
 pub grit_lib::error::ConfigError::IncludeDepthExceeded
 pub grit_lib::error::ConfigError::IncludeDepthExceeded::depth: usize
 pub grit_lib::error::ConfigError::IncludeDepthExceeded::limit: usize
+pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode
+pub grit_lib::error::ConfigError::InvalidUntrackedFilesMode::value: alloc::string::String
 pub grit_lib::error::ConfigError::MissingValue
 pub grit_lib::error::ConfigError::MissingValue::key: alloc::string::String
 pub grit_lib::error::ConfigError::MultilineCommentNotAllowed
@@ -8711,7 +8713,7 @@ pub fn grit_lib::porcelain::status::status(&grit_lib::repo::Repository, &grit_li
 pub fn grit_lib::porcelain::status::status_path_matches(&str, &[alloc::string::String]) -> bool
 pub fn grit_lib::porcelain::status::status_path_matches_worktree(&grit_lib::repo::Repository, &grit_lib::index::Index, &std::path::Path, &str, &[alloc::string::String]) -> bool
 pub fn grit_lib::porcelain::status::status_path_matches_worktree_with_rules(&grit_lib::repo::Repository, &grit_lib::index::Index, &std::path::Path, &str, &[alloc::string::String], core::option::Option<&grit_lib::worktree::worktree_rules::WorktreeRules>) -> bool
-pub fn grit_lib::porcelain::status::untracked_mode_from_config(&grit_lib::config::ConfigSet) -> grit_lib::porcelain::status::UntrackedMode
+pub fn grit_lib::porcelain::status::untracked_mode_from_config(&grit_lib::config::ConfigSet) -> core::result::Result<grit_lib::porcelain::status::UntrackedMode, grit_lib::error::ConfigError>
 pub mod grit_lib::porcelain::switch
 pub enum grit_lib::porcelain::switch::SwitchMode
 pub grit_lib::porcelain::switch::SwitchMode::Create

@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
 use crate::diff::{is_unregistered_embedded_git_repo, DiffEntry};
+use crate::error::ConfigError;
 use crate::error::Result;
 use crate::hash::{try_par_hash_with, ParallelHashError};
 use crate::ignore::IgnoreMatcher;
@@ -97,28 +98,20 @@ pub struct StatusOptions {
 
 /// Map `status.showUntrackedFiles` to [`UntrackedMode`].
 ///
-/// Recognizes Git's string modes (`no`, `normal`, `all`) and boolean spellings
-/// (`false`/`0`/`off` → [`UntrackedMode::No`], `true`/`1`/`on` → [`UntrackedMode::Normal`]).
-/// Missing or unrecognized values default to [`UntrackedMode::Normal`].
-pub fn untracked_mode_from_config(config: &ConfigSet) -> UntrackedMode {
+/// Accepts only Git's enum modes (`no`, `normal`, `all`, case-insensitive).
+/// When the key is missing, returns [`UntrackedMode::Normal`].
+pub fn untracked_mode_from_config(
+    config: &ConfigSet,
+) -> std::result::Result<UntrackedMode, ConfigError> {
     let raw = config
         .get("status.showUntrackedFiles")
         .or_else(|| config.get("status.showuntrackedfiles"));
     match raw {
-        Some(v) if v.eq_ignore_ascii_case("no") => UntrackedMode::No,
-        Some(v) if v.eq_ignore_ascii_case("all") => UntrackedMode::All,
-        Some(v) if v.eq_ignore_ascii_case("normal") => UntrackedMode::Normal,
-        Some(v) if matches_bool(&v, false) => UntrackedMode::No,
-        Some(v) if matches_bool(&v, true) => UntrackedMode::Normal,
-        _ => UntrackedMode::Normal,
-    }
-}
-
-fn matches_bool(raw: &str, want: bool) -> bool {
-    if want {
-        raw.eq_ignore_ascii_case("true") || raw.eq_ignore_ascii_case("on") || raw == "1"
-    } else {
-        raw.eq_ignore_ascii_case("false") || raw.eq_ignore_ascii_case("off") || raw == "0"
+        None => Ok(UntrackedMode::Normal),
+        Some(v) if v.eq_ignore_ascii_case("no") => Ok(UntrackedMode::No),
+        Some(v) if v.eq_ignore_ascii_case("all") => Ok(UntrackedMode::All),
+        Some(v) if v.eq_ignore_ascii_case("normal") => Ok(UntrackedMode::Normal),
+        Some(v) => Err(ConfigError::InvalidUntrackedFilesMode { value: v }),
     }
 }
 
@@ -1906,7 +1899,7 @@ mod status_op_tests {
     #[test]
     fn untracked_mode_from_config_reads_show_untracked_files() {
         assert_eq!(
-            untracked_mode_from_config(&ConfigSet::new()),
+            untracked_mode_from_config(&ConfigSet::new()).unwrap(),
             UntrackedMode::Normal,
             "missing key defaults to normal"
         );
@@ -1922,7 +1915,10 @@ mod status_op_tests {
             true,
         )
         .unwrap();
-        assert_eq!(untracked_mode_from_config(&cfg_all), UntrackedMode::All);
+        assert_eq!(
+            untracked_mode_from_config(&cfg_all).unwrap(),
+            UntrackedMode::All
+        );
 
         let cfg_dir = tempfile::TempDir::new().unwrap();
         fs::write(
@@ -1936,7 +1932,10 @@ mod status_op_tests {
             true,
         )
         .unwrap();
-        assert_eq!(untracked_mode_from_config(&cfg_no), UntrackedMode::No);
+        assert_eq!(
+            untracked_mode_from_config(&cfg_no).unwrap(),
+            UntrackedMode::No
+        );
 
         let cfg_dir = tempfile::TempDir::new().unwrap();
         fs::write(
@@ -1944,30 +1943,16 @@ mod status_op_tests {
             "[status]\n\tshowUntrackedFiles = false\n",
         )
         .unwrap();
-        let cfg_bool_off = ConfigSet::load(
+        let cfg_invalid = ConfigSet::load(
             &crate::environment::Environment::empty(),
             Some(cfg_dir.path()),
             true,
         )
         .unwrap();
-        assert_eq!(untracked_mode_from_config(&cfg_bool_off), UntrackedMode::No);
-
-        let cfg_dir = tempfile::TempDir::new().unwrap();
-        fs::write(
-            cfg_dir.path().join("config"),
-            "[status]\n\tshowUntrackedFiles = true\n",
-        )
-        .unwrap();
-        let cfg_bool_on = ConfigSet::load(
-            &crate::environment::Environment::empty(),
-            Some(cfg_dir.path()),
-            true,
-        )
-        .unwrap();
-        assert_eq!(
-            untracked_mode_from_config(&cfg_bool_on),
-            UntrackedMode::Normal
-        );
+        assert!(matches!(
+            untracked_mode_from_config(&cfg_invalid),
+            Err(ConfigError::InvalidUntrackedFilesMode { .. })
+        ));
     }
 
     #[test]

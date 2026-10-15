@@ -387,7 +387,7 @@ pub fn run(untracked: Option<UntrackedListing>) -> Result<StatusOutcome> {
         Some(mode) => mode.into_lib(),
         None => {
             let config = repo.config().context("could not load config")?;
-            untracked_mode_from_config(&config)
+            untracked_mode_from_config(&config)?
         }
     };
     let status_opts = StatusOptions {
