@@ -37,9 +37,11 @@ static WORKTREE_READ_DIR_PROBE: AtomicUsize = AtomicUsize::new(0);
 /// Only syscalls under this root are counted, so tests scanning other worktrees in
 /// parallel do not inflate a probing test's counts.
 static WORKTREE_PROBE_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+// hygiene: test-only probe root for integration switch regressions
 static WORKTREE_PROBE_ROOT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// Serializes probing tests; each owns the counters while its scope is alive.
+// hygiene: test-only probe serialization for integration switch regressions
 static WORKTREE_PROBE_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Keeps worktree syscall probing armed for one test; disarms on drop.
