@@ -36,6 +36,7 @@ fn small_bulk_thresholds() -> IndexStagingThresholds {
 fn stage_opts_with_small_bulk() -> StageOptions {
     StageOptions {
         mode: StageMode::All,
+        executable_hint: Default::default(),
         staging_thresholds: Some(small_bulk_thresholds()),
         ..StageOptions::default()
     }
@@ -115,4 +116,3 @@ fn stage_tracked_modifications_public_api_replays_untr_after_bulk_removal() {
         "public stage_tracked_modifications must persist invalid UNTR after bulk defer replay"
     );
 }
-
