@@ -35,10 +35,9 @@ fn small_bulk_thresholds() -> IndexStagingThresholds {
 
 fn stage_opts_with_small_bulk() -> StageOptions {
     StageOptions {
-        pathspecs: Vec::new(),
-        pathspec_sources: Vec::new(),
         mode: StageMode::All,
         staging_thresholds: Some(small_bulk_thresholds()),
+        ..StageOptions::default()
     }
 }
 
