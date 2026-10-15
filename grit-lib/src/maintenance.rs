@@ -990,9 +990,7 @@ fn should_auto_skip_repack(
         return false;
     }
     if !config.is_some_and(ConfigSet::gc_auto_loose_disabled) {
-        let loose_auto = config
-            .map(ConfigSet::gc_auto_loose_limit)
-            .unwrap_or(6700);
+        let loose_auto = config.map(ConfigSet::gc_auto_loose_limit).unwrap_or(6700);
         if loose_objects >= loose_auto {
             return false;
         }
@@ -1509,6 +1507,8 @@ mod tests {
                 sign_override: None,
                 amend: false,
                 assume_worktree_synced: false,
+                skip_pre_commit_tree_match: false,
+                staged_change_count: None,
             },
             &mut NullProgress,
         )
