@@ -147,8 +147,7 @@ impl HotPathsFixture {
         self.reset_worktree_to_head();
         let mut index = self.repo.index_handle().load().expect("load index");
         let work_tree = self.repo.work_tree().expect("work tree");
-        let diff_index_mtime =
-            grit_lib::diff::index_mtime_for_diff(&index, index.source_mtime);
+        let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, index.source_mtime);
         let _ = diff_index_to_worktree_with_options(
             self.repo.odb(),
             &mut index,
