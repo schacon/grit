@@ -544,3 +544,43 @@ fn blame_matches_git_porcelain_at_head_rev_and_line_range() {
     assert_blame_matches(&repo, dir, file, Some(&mid_rev), None);
     assert_blame_matches(&repo, dir, file, None, Some((2, 3)));
 }
+
+#[test]
+fn blame_respects_graft_over_commit_graph_bloom() {
+    use grit_lib::maintenance::{write_commit_graph, CommitGraphOptions};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    std::fs::write(root.join("f.txt"), "same\n").unwrap();
+    git_run(root, &["add", "f.txt"]);
+    git_run(root, &["commit", "-m", "root"]);
+
+    git_run(root, &["commit", "--allow-empty", "-m", "child same tree"]);
+    let child = git_output(root, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let root_rev = git_output(root, &["rev-parse", "HEAD~1"])
+        .trim()
+        .to_string();
+    git_run(root, &["checkout", "-b", "alt", &root_rev]);
+    std::fs::write(root.join("f.txt"), "other\n").unwrap();
+    git_run(root, &["add", "f.txt"]);
+    git_run(root, &["commit", "-m", "different at graft parent"]);
+    let graft_parent = git_output(root, &["rev-parse", "HEAD"]).trim().to_string();
+
+    git_run(root, &["checkout", "main"]);
+    std::fs::create_dir_all(root.join(".git/info")).expect("info dir");
+    std::fs::write(
+        root.join(".git/info/grafts"),
+        format!("{child} {graft_parent}\n"),
+    )
+    .expect("graft");
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    write_commit_graph(&repo, &CommitGraphOptions::with_changed_paths(true)).expect("graph");
+
+    assert_blame_matches(&repo, root, "f.txt", Some(&child), None);
+}
