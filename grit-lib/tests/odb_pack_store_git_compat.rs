@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use grit_lib::objects::odb::store::{ObjectStore, PackFilter, PackedObjects};
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::pack::{clear_pack_cache, read_pack_index};
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index, verify_pack_and_collect};
 use grit_lib::objects::pack_store::PackStore;
 use grit_lib::objects::{Object, ObjectId, ObjectKind};
 use tempfile::TempDir;
@@ -164,6 +164,55 @@ fn git_cat_file_size(repo: &Path, oid: &ObjectId) -> u64 {
         .expect("size")
 }
 
+fn git_aggressive_single_pack_repo(seed: u32) -> (TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    git_in(root, &["init", "-q", "-b", "main"]);
+    git_in(root, &["config", "user.email", "t@example.com"]);
+    git_in(root, &["config", "user.name", "T"]);
+    let mut content = format!("seed-{seed}\n").into_bytes();
+    fs::write(root.join("data.txt"), &content).expect("write");
+    git_in(root, &["add", "data.txt"]);
+    git_in(root, &["commit", "-m", "base", "-q"]);
+    for i in 0..96 {
+        content.extend_from_slice(format!("line-{seed}-{i}\n").as_bytes());
+        fs::write(root.join("data.txt"), &content).expect("write");
+        git_in(root, &["commit", "-a", "-m", &format!("c{i}"), "-q"]);
+    }
+    git_in(root, &["repack", "-a", "-d", "-f"]);
+    git_in(root, &["gc", "--aggressive", "-q"]);
+    let idx_path = fs::read_dir(root.join(".git/objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "idx"))
+        .expect("pack idx");
+    let idx = read_pack_index(&idx_path).expect("read idx");
+    assert!(
+        idx.len() >= 150,
+        "fixture should contain many packed objects, got {}",
+        idx.len()
+    );
+    (dir, idx_path)
+}
+
+fn git_fsck_and_verify_pack(repo: &Path, idx_path: &Path) {
+    git_in(repo, &["fsck", "--strict"]);
+    let out = Command::new("git")
+        .current_dir(repo)
+        .arg("verify-pack")
+        .args(["-v", idx_path.to_str().expect("idx utf8")])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("verify-pack");
+    assert!(
+        out.status.success(),
+        "git verify-pack: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 fn single_local_pack_offset(objects: &Path, oid: &ObjectId) -> u64 {
     let pack_dir = objects.join("pack");
     let idx_path = fs::read_dir(&pack_dir)
@@ -180,6 +229,27 @@ fn single_local_pack_offset(objects: &Path, oid: &ObjectId) -> u64 {
 fn packed_store(objects: &Path) -> PackedObjects {
     clear_pack_cache();
     PackedObjects::new(Arc::new(PackStore::new(objects.to_path_buf())))
+}
+
+/// Regression: sequential [`verify_pack_and_collect`] on independent git packs must not reuse
+/// delta-base cache entries from earlier packs on the same thread (implicit [`PackStore`]).
+#[test]
+fn verify_pack_and_collect_sequential_git_packs_without_intermediate_cache_clear() {
+    clear_pack_cache();
+    let mut repos: Vec<TempDir> = Vec::new();
+    let mut idx_paths: Vec<PathBuf> = Vec::new();
+    for seed in 0..6 {
+        let (dir, idx_path) = git_aggressive_single_pack_repo(seed);
+        git_fsck_and_verify_pack(dir.path(), &idx_path);
+        idx_paths.push(idx_path);
+        repos.push(dir);
+    }
+    let _keep = repos;
+    for (i, idx_path) in idx_paths.iter().enumerate() {
+        verify_pack_and_collect(idx_path).unwrap_or_else(|err| {
+            panic!("verify_pack_and_collect repo {i} failed without clear_pack_cache between repos: {err}")
+        });
+    }
 }
 
 /// Regression: per-thread `PACK_READ_INFO_CACHE` must not reuse `(pack_id, offset)` across
