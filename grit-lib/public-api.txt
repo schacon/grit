@@ -7662,6 +7662,7 @@ impl core::marker::Unpin for grit_lib::objects::TreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::TreeEntry
+pub fn grit_lib::objects::read_commit_subject_line(&[u8]) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::objects::parse_commit(&[u8]) -> grit_lib::error::Result<grit_lib::objects::CommitData>
 pub fn grit_lib::objects::parse_tag(&[u8]) -> grit_lib::error::Result<grit_lib::objects::TagData>
 pub fn grit_lib::objects::parse_tree(&[u8]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::TreeEntry>>

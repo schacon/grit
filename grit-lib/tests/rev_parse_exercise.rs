@@ -79,18 +79,48 @@ fn exercise_many_specs_on_deep_history() {
 fn head_tilde_matches_git_when_commit_graph_is_stale() {
     let hist = HistoryRepo::init();
     let wt = hist.worktree();
-    for i in 0..25 {
+    for i in 0..15 {
         git(wt, &["commit", "--allow-empty", "-m", &format!("c{i}")]);
     }
     git(wt, &["commit-graph", "write", "--reachable"]);
+    let tip_at_graph_write = git_rev_parse_verify(wt, "HEAD").expect("tip at graph write");
+    for i in 15..25 {
+        git(wt, &["commit", "--allow-empty", "-m", &format!("c{i}")]);
+    }
     let repo = open_grit(wt);
     let spec = "HEAD~20";
-    let with_graph = resolve_revision(&repo, spec).expect("with graph");
+    let grit_oid = resolve_revision(&repo, spec).expect("stale graph");
+    let git_oid = git_rev_parse_verify(wt, spec).expect("git");
+    assert_eq!(grit_oid, git_oid);
+    assert_ne!(
+        grit_oid, tip_at_graph_write,
+        "fixture must resolve through commits added after the graph was written"
+    );
+    let info = wt.join(".git/objects/info");
+    assert!(
+        info.join("commit-graph").is_file() || info.join("commit-graphs").is_dir(),
+        "commit-graph must still exist on disk (stale, not absent)"
+    );
+}
+
+#[test]
+fn head_tilde_matches_git_when_commit_graph_is_missing() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    for i in 0..25 {
+        git(wt, &["commit", "--allow-empty", "-m", &format!("c{i}")]);
+    }
+    let repo = open_grit(wt);
+    let spec = "HEAD~20";
+    let grit_oid = resolve_revision(&repo, spec).expect("no graph");
+    assert_eq!(grit_oid, git_rev_parse_verify(wt, spec).expect("git"));
     let graph_path = wt.join(".git/objects/info/commit-graph");
-    fs::remove_file(&graph_path).expect("remove commit-graph");
-    let without_graph = resolve_revision(&repo, spec).expect("stale graph");
-    assert_eq!(with_graph, without_graph);
-    assert_eq!(with_graph, git_rev_parse_verify(wt, spec).expect("git"));
+    let _ = fs::remove_file(&graph_path);
+    let _ = fs::remove_dir_all(wt.join(".git/objects/info/commit-graphs"));
+    assert_eq!(
+        resolve_revision(&repo, spec).expect("after delete"),
+        grit_oid
+    );
 }
 
 #[test]

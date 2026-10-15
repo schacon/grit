@@ -66,7 +66,14 @@ pub fn merge_bases_first_vs_rest(
         }
     }
     if others.len() == 1 {
+        let other = others[0];
         let mut cache = CommitGraphCache::new(repo);
+        if let Some(base) = try_direct_ancestor_merge_base(&mut cache, other, first)? {
+            return Ok(vec![base]);
+        }
+        if let Some(base) = try_direct_ancestor_merge_base(&mut cache, first, other)? {
+            return Ok(vec![base]);
+        }
         let mut selected = walk_intersecting_histories(&mut cache, first, others, false)?;
         if selected.is_empty() {
             return Ok(Vec::new());
@@ -856,6 +863,41 @@ impl OpenQueueTally {
     }
 }
 
+fn first_parent_oid(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> Result<ObjectId> {
+    let parents = cache.parents_of(oid)?;
+    parents
+        .first()
+        .copied()
+        .ok_or_else(|| Error::ObjectNotFound(format!("{oid} has no parent")))
+}
+
+/// When `ancestor` is a direct ancestor of `descendant` on first-parent chains, return it
+/// using commit-graph generations to bound the walk.
+fn try_direct_ancestor_merge_base(
+    cache: &mut CommitGraphCache<'_>,
+    ancestor: ObjectId,
+    descendant: ObjectId,
+) -> Result<Option<ObjectId>> {
+    if ancestor == descendant {
+        return Ok(Some(ancestor));
+    }
+    let desc_gen = commit_rank_for_walk(cache, descendant);
+    let anc_gen = commit_rank_for_walk(cache, ancestor);
+    if desc_gen == UNRANKED_COMMIT || anc_gen == UNRANKED_COMMIT || desc_gen <= anc_gen {
+        return Ok(None);
+    }
+    let mut cur = descendant;
+    let mut gen = desc_gen;
+    while gen > anc_gen {
+        cur = first_parent_oid(cache, cur)?;
+        gen = commit_rank_for_walk(cache, cur);
+        if gen == UNRANKED_COMMIT {
+            return Ok(None);
+        }
+    }
+    Ok((cur == ancestor).then_some(ancestor))
+}
+
 fn commit_rank_for_walk(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 {
     if let Some(graph) = &cache.graph {
         let rank = graph.commit_generation_for_walk(&oid);
@@ -1074,8 +1116,10 @@ impl<'r> CommitGraphCache<'r> {
         } else {
             HashSet::new()
         };
-        let graph =
-            crate::commit_graph_file::CommitGraphChain::load(&repo.git_dir().join("objects"));
+        let graph = repo
+            .caches()
+            .commit_graph_chain(&repo.git_dir().join("objects"))
+            .map(|arc| (*arc).clone());
         let shallow_boundaries = load_shallow_boundaries(repo.git_dir());
         Self {
             repo,
@@ -1302,6 +1346,30 @@ mod tests {
             },
         )?;
         Repository::open(dir.path(), &RepositoryOptions::empty())
+    }
+
+    #[test]
+    fn merge_base_linear_ancestor_uses_generation_shortcut() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let mut parent = write_commit_same_time(&repo.odb(), &[], "root", 100)?;
+        for i in 1..50 {
+            parent = write_commit_same_time(&repo.odb(), &[parent], &format!("c{i}"), 100 + i)?;
+        }
+        let tip = parent;
+        let old = {
+            let mut p = tip;
+            for _ in 0..20 {
+                p = first_parent_oid(
+                    &mut CommitGraphCache::new(&repo),
+                    p,
+                )?;
+            }
+            p
+        };
+        let bases = merge_bases_first_vs_rest(&repo, tip, &[old])?;
+        assert_eq!(bases, vec![old]);
+        Ok(())
     }
 
     #[test]

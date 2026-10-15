@@ -679,6 +679,38 @@ pub(crate) struct CommitLinkage {
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing.
+/// First non-blank line of a commit object's message (header scan only).
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] when the commit headers are malformed.
+pub fn read_commit_subject_line(data: &[u8]) -> Result<String> {
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < data.len() && data[line_end] != b'\n' {
+            line_end += 1;
+        }
+        let line = &data[line_start..line_end];
+        let after_nl = line_end.saturating_add(1);
+        if line.is_empty() {
+            let body = data.get(after_nl..).unwrap_or_default();
+            let message = std::str::from_utf8(body).unwrap_or("");
+            return Ok(message
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .map(str::trim)
+                .unwrap_or("(no subject)")
+                .to_owned());
+        }
+        pos = after_nl;
+    }
+    Err(Error::CorruptObject(
+        "commit missing blank line before message".to_owned(),
+    ))
+}
+
 pub(crate) fn parse_commit_linkage(data: &[u8]) -> Result<CommitLinkage> {
     #[derive(Clone, Copy)]
     enum Continuation {

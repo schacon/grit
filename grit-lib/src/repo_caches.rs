@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::commit_graph_file::CommitGraphChain;
+
 use crate::attributes::{
     attr_file_stamp, attr_stamps_valid, collect_stack_stamps, load_gitattributes_bare_uncached,
     load_gitattributes_stack_uncached, AttrStackCacheEntry, ParsedGitAttributes,
@@ -42,6 +44,7 @@ pub struct RepoCaches {
     promisor_hydrate: Mutex<Option<PromisorHydrateHook>>,
     bare_worktree_warn_seen: Mutex<HashSet<String>>,
     commit_graph_warn_seen: Mutex<HashSet<String>>,
+    commit_graph: Mutex<Option<Arc<CommitGraphChain>>>,
     bitmap_index: BitmapIndexCache,
     diagnostics: Mutex<DiagnosticsHandle>,
 }
@@ -77,6 +80,7 @@ impl RepoCaches {
             promisor_hydrate: Mutex::new(None),
             bare_worktree_warn_seen: Mutex::new(HashSet::new()),
             commit_graph_warn_seen: Mutex::new(HashSet::new()),
+            commit_graph: Mutex::new(None),
             bitmap_index: BitmapIndexCache::default(),
             diagnostics: Mutex::new(diagnostics),
         })
@@ -122,6 +126,29 @@ impl RepoCaches {
             return true;
         };
         guard.insert(id.to_string())
+    }
+
+    /// Parsed commit-graph chain for this repository handle (at most one disk load).
+    pub(crate) fn commit_graph_chain(&self, objects_dir: &Path) -> Option<Arc<CommitGraphChain>> {
+        let Ok(mut guard) = self.commit_graph.lock() else {
+            return None;
+        };
+        if let Some(chain) = guard.as_ref() {
+            return Some(Arc::clone(chain));
+        }
+        let chain = CommitGraphChain::try_load_with_caches(objects_dir, Some(self))
+            .ok()
+            .flatten()?;
+        let arc = Arc::new(chain);
+        *guard = Some(Arc::clone(&arc));
+        Some(arc)
+    }
+
+    /// Drop a cached commit-graph after the on-disk file was rewritten.
+    pub(crate) fn invalidate_commit_graph_cache(&self) {
+        if let Ok(mut guard) = self.commit_graph.lock() {
+            *guard = None;
+        }
     }
 
     /// Load the standard configuration cascade with repository-scoped memoization.

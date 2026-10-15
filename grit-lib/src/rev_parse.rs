@@ -18,7 +18,6 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use crate::check_ref_format::{check_refname_format, RefNameOptions};
-use crate::commit_graph_file::CommitGraphChain;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -712,37 +711,24 @@ pub fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
     grafts
 }
 
-/// Cached commit-graph and graft state for a sequence of `^` / `~` navigation steps.
+/// Cached graft state for a sequence of `^` / `~` navigation steps.
+///
+/// Parent links come from the object database with header-only parsing so `HEAD~N`
+/// does not parse the full commit-graph file (Git resolves short parent chains lazily).
 struct NavParentCache<'repo> {
     repo: &'repo Repository,
-    graph: Option<CommitGraphChain>,
     grafts: HashMap<ObjectId, Vec<ObjectId>>,
 }
 
 impl<'repo> NavParentCache<'repo> {
     fn new(repo: &'repo Repository) -> Self {
-        let graph = CommitGraphChain::try_load_with_caches(
-            &repo.git_dir().join("objects"),
-            Some(repo.caches().as_ref()),
-        )
-        .ok()
-        .flatten();
         let grafts = load_graft_parents(repo.git_dir());
-        Self {
-            repo,
-            graph,
-            grafts,
-        }
+        Self { repo, grafts }
     }
 
     fn parents_of(&self, commit_oid: ObjectId) -> Result<Vec<ObjectId>> {
         if let Some(grafted) = self.grafts.get(&commit_oid) {
             return Ok(grafted.clone());
-        }
-        if let Some(chain) = &self.graph {
-            if let Some((parents, _)) = chain.graph_commit(&commit_oid) {
-                return Ok(parents);
-            }
         }
         let obj = self.repo.odb().read(&commit_oid)?;
         if obj.kind != ObjectKind::Commit {
