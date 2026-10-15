@@ -19,12 +19,13 @@ const OWNED_READ_THRESHOLD: u64 = 8192;
 
 /// Header plus trailing pack checksum — enough to detect on-disk replacement when
 /// mtime/size are unchanged (same-second repack) without re-reading the whole file.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PackFingerprint {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]pub(crate) struct PackFingerprint {
     /// `PACK`, version, and object count (`12` bytes).
     pub header: [u8; HEADER_LEN],
-    /// Pack trailer hash at the repository hash width (20 for SHA-1, 32 for SHA-256).
-    pub trailer: Vec<u8>,
+    /// Trailer width in bytes (20 for SHA-1, 32 for SHA-256).
+    pub hash_bytes: u8,
+    /// Pack trailer hash (only the first `hash_bytes` entries are meaningful).
+    pub trailer: [u8; 32],
 }
 
 enum Storage {
@@ -164,11 +165,16 @@ fn read_fingerprint_from_open_file(
             "pack too small for trailer".to_owned(),
         ));
     }
-    let mut trailer = vec![0u8; hash_bytes];
+    let mut trailer = [0u8; 32];
     file.seek(SeekFrom::Start(file_len - hash_bytes as u64))
         .map_err(Error::Io)?;
-    file.read_exact(&mut trailer).map_err(Error::Io)?;
-    Ok(PackFingerprint { header, trailer })
+    file.read_exact(&mut trailer[..hash_bytes])
+        .map_err(Error::Io)?;
+    Ok(PackFingerprint {
+        header,
+        hash_bytes: hash_bytes as u8,
+        trailer,
+    })
 }
 
 pub(crate) fn fingerprint_from_slice(bytes: &[u8], hash_bytes: usize) -> Result<PackFingerprint> {
@@ -188,9 +194,12 @@ pub(crate) fn fingerprint_from_slice(bytes: &[u8], hash_bytes: usize) -> Result<
             "pack too small for trailer".to_owned(),
         ));
     }
+    let mut trailer = [0u8; 32];
+    trailer[..hash_bytes].copy_from_slice(&bytes[bytes.len() - hash_bytes..]);
     Ok(PackFingerprint {
         header,
-        trailer: bytes[bytes.len() - hash_bytes..].to_vec(),
+        hash_bytes: hash_bytes as u8,
+        trailer,
     })
 }
 
@@ -247,7 +256,7 @@ mod tests {
         pack.extend_from_slice(&trailer);
         fs::write(&path, &pack).expect("write");
         let fp = fingerprint_from_file(&path, 32).expect("fp");
-        assert_eq!(fp.trailer, trailer.to_vec());
+        assert_eq!(&fp.trailer[..fp.hash_bytes as usize], &trailer[..]);
         assert_eq!(fp.header[4..8], 2u32.to_be_bytes());
     }
 
@@ -297,7 +306,7 @@ mod tests {
         let data = PackData::open(&path).expect("open owned");
         assert_eq!(data.len(), pack.len());
         let fp = data.fingerprint(20).expect("fp");
-        assert_eq!(fp.trailer, b"aaaaaaaaaaaaaaaaaaaa".to_vec());
+        assert_eq!(&fp.trailer[..20], b"aaaaaaaaaaaaaaaaaaaa");
     }
 
     #[test]

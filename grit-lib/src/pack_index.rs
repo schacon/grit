@@ -229,6 +229,7 @@ impl PackIndex {
     /// input), falls back to fanout + binary search and resets `cursor`.
     #[must_use]
     pub fn find_offset_monotonic(&self, oid: &ObjectId, cursor: &mut usize) -> Option<u64> {
+        const FORWARD_SCAN_MAX: usize = 128;
         let needle = oid.as_bytes();
         if needle.len() != self.layout.hash_bytes {
             return None;
@@ -245,7 +246,8 @@ impl PackIndex {
             return None;
         }
         let mut pos = *cursor;
-        while pos < len {
+        let scan_start = pos;
+        while pos < len && pos - scan_start < FORWARD_SCAN_MAX {
             match compare_oid_bytes(self.oid_at(pos), needle) {
                 Ordering::Less => pos += 1,
                 Ordering::Equal => {
@@ -255,9 +257,15 @@ impl PackIndex {
                 Ordering::Greater => return None,
             }
         }
+        if pos < len {
+            if let Some(found) = self.find_position(oid) {
+                *cursor = found;
+                return Some(self.offset_at(found));
+            }
+            return None;
+        }
         None
     }
-
     /// Whether this pack index contains the given OID.
     #[must_use]
     pub fn contains(&self, oid: &ObjectId) -> bool {

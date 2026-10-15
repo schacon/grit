@@ -5,18 +5,22 @@ use std::io::Read;
 use flate2::{Decompress, FlushDecompress, Status};
 
 use crate::error::{Error, Result};
+use crate::unpack_objects::delta_uncompressed_result_size_if_complete;
 
 const READ_CHUNK: usize = 64 * 1024;
 
 /// Scratch space for one zlib stream decode; reset before each object.
 pub(crate) struct ZlibInflateScratch {
     dec: Decompress,
+    /// Reused prefix buffer for pack delta size reads (batch-check hot path).
+    delta_prefix: Vec<u8>,
 }
 
 impl Default for ZlibInflateScratch {
     fn default() -> Self {
         Self {
             dec: Decompress::new(true),
+            delta_prefix: Vec::with_capacity(64),
         }
     }
 }
@@ -25,6 +29,71 @@ impl ZlibInflateScratch {
     /// Prepare for a new zlib wrapper stream.
     pub fn reset(&mut self) {
         self.dec.reset(true);
+        self.delta_prefix.clear();
+    }
+
+    /// Read the Git delta "result size" varint from a pack zlib stream without inflating the object.
+    ///
+    /// Stops inflating as soon as both delta varints are available. Advances `*pos` by compressed
+    /// bytes consumed from `bytes`.
+    pub fn read_pack_delta_result_size(&mut self, bytes: &[u8], pos: &mut usize) -> Result<u64> {
+        const MAX_PREFIX: usize = 256;
+        self.reset();
+        let input = &bytes[*pos..];
+        let mut in_off = 0usize;
+        let mut chunk = [0u8; 32];
+        loop {
+            if let Some(dest) = delta_uncompressed_result_size_if_complete(&self.delta_prefix)? {
+                *pos += in_off;
+                return u64::try_from(dest)
+                    .map_err(|_| Error::CorruptObject("delta result size overflow".to_owned()));
+            }
+            if self.delta_prefix.len() >= MAX_PREFIX {
+                return Err(Error::CorruptObject(
+                    "delta size prefix exceeds header limit".to_owned(),
+                ));
+            }
+            if in_off >= input.len() {
+                return Err(Error::CorruptObject(
+                    "truncated delta zlib stream".to_owned(),
+                ));
+            }
+            let before_in = self.dec.total_in();
+            let before_out = self.dec.total_out();
+            let status = self
+                .dec
+                .decompress(&input[in_off..], &mut chunk, FlushDecompress::None)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            let consumed = (self.dec.total_in() - before_in) as usize;
+            let produced = (self.dec.total_out() - before_out) as usize;
+            in_off += consumed;
+            if produced > 0 {
+                self.delta_prefix
+                    .extend_from_slice(&chunk[..produced.min(chunk.len())]);
+            }
+            match status {
+                Status::StreamEnd => {
+                    if let Some(dest) =
+                        delta_uncompressed_result_size_if_complete(&self.delta_prefix)?
+                    {
+                        *pos += in_off;
+                        return u64::try_from(dest).map_err(|_| {
+                            Error::CorruptObject("delta result size overflow".to_owned())
+                        });
+                    }
+                    return Err(Error::CorruptObject(
+                        "delta size prefix exceeds header limit".to_owned(),
+                    ));
+                }
+                Status::Ok | Status::BufError => {
+                    if consumed == 0 && produced == 0 {
+                        return Err(Error::CorruptObject(
+                            "zlib stream stalled before delta size".to_owned(),
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     /// Inflate a zlib stream in `bytes` starting at `*pos` to exactly `expected_size` bytes.
