@@ -11,8 +11,8 @@ use crate::fixture::{
     bench_work_dir, create_blame_deep_history_repo, create_deep_leaf_dogfood_repo,
     create_dense_leaf_dogfood_repo, create_repo, create_repo_with_history, dirty_repo,
     modify_files_for_diff, modify_rs_files_for_diff, modify_txt_files_for_diff,
-    prepare_add_iteration, prepare_commit_iteration, prepare_restore_iteration, scratch_dir,
-    DeepLeafDogfoodSpec, DenseLeafDogfoodSpec,
+    prepare_add_iteration, prepare_commit_iteration, prepare_dense_leaf_add_iteration,
+    prepare_restore_iteration, scratch_dir, DeepLeafDogfoodSpec, DenseLeafDogfoodSpec,
 };
 use crate::hot_path_fixture::{
     load_meta, prepare_merge, prepare_pick, prepare_pick_series, prepare_revert, prepare_switch,
@@ -64,6 +64,7 @@ pub struct Scenario {
 #[derive(Debug, Clone, Copy)]
 pub enum PrepareKind {
     AddIteration,
+    DenseLeafAddIteration,
     SwitchReset,
     PickReset,
     MergeReset,
@@ -114,6 +115,7 @@ fn bench_tool(
 fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind) -> String {
     let sub = match kind {
         PrepareKind::AddIteration => "prepare-add",
+        PrepareKind::DenseLeafAddIteration => "prepare-dense-leaf-add",
         PrepareKind::SwitchReset => "prepare-switch",
         PrepareKind::PickReset => "prepare-pick",
         PrepareKind::MergeReset => "prepare-merge",
@@ -634,7 +636,7 @@ pub fn run_dense_leaf_worktree_suite(
             grit_argv: vec!["add".into()],
             git_argv: vec!["add".into(), "-A".into()],
             driver: Driver::Cli,
-            prepare_kind: None,
+            prepare_kind: Some(PrepareKind::DenseLeafAddIteration),
             grit_via_shell: false,
             git_via_shell: false,
         },
@@ -1006,6 +1008,12 @@ pub(crate) fn build_report(
 /// Shared prepare hook for `add` scenarios (invoked by hyperfine `--prepare`).
 pub fn run_prepare_add(git: &Path) -> Result<()> {
     prepare_add_iteration(&bench_work_dir(), git)
+}
+
+/// Hyperfine `--prepare` hook for dense-leaf add (reset index, re-dirty 100 `.txt` files).
+pub fn run_prepare_dense_leaf_add(git: &Path) -> Result<()> {
+    const MODIFIED_TXT: usize = 100;
+    prepare_dense_leaf_add_iteration(&scratch_dir(), git, MODIFIED_TXT)
 }
 
 pub fn run_prepare_commit(git: &Path) -> Result<()> {

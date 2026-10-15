@@ -404,6 +404,25 @@ pub fn create_dense_leaf_dogfood_repo(git: &Path, spec: DenseLeafDogfoodSpec) ->
     Ok(dir)
 }
 
+/// Reset the index and re-dirty the first `count` tracked `.txt` files (for hyperfine `--prepare`).
+pub fn prepare_dense_leaf_add_iteration(dir: &Path, git: &Path, count: usize) -> Result<()> {
+    run_git(git, dir, &["reset", "-q", "HEAD"])?;
+    let mut paths: Vec<PathBuf> = walkdir(dir)?
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "txt"))
+        .collect();
+    paths.sort();
+    anyhow::ensure!(
+        paths.len() >= count,
+        "expected at least {count} .txt files, found {}",
+        paths.len()
+    );
+    for path in paths.iter().take(count) {
+        fs::write(path, "modified for dense-leaf add bench\n")?;
+    }
+    Ok(())
+}
+
 /// Append one line to the first `count` tracked `.txt` files (unstaged) for status/diff benches.
 pub fn modify_txt_files_for_diff(dir: &Path, count: usize) -> Result<()> {
     use std::io::Write as _;

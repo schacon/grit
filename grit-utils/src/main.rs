@@ -33,9 +33,10 @@ use grit_utils::revwalk_suite::run_revwalk_suite;
 use grit_utils::scenarios::{
     run_add_suite, run_blame_suite, run_commit_suite, run_deep_leaf_worktree_suite,
     run_dense_leaf_worktree_suite, run_diff_suite, run_hot_path_suite, run_log_suite,
-    run_prepare_add, run_prepare_commit, run_prepare_merge, run_prepare_pick,
-    run_prepare_pick_series, run_prepare_restore, run_prepare_revert, run_prepare_stash,
-    run_prepare_switch, run_restore_suite, run_stash_suite, run_status_suite, RunConfig,
+    run_prepare_add, run_prepare_commit, run_prepare_dense_leaf_add, run_prepare_merge,
+    run_prepare_pick, run_prepare_pick_series, run_prepare_restore, run_prepare_revert,
+    run_prepare_stash, run_prepare_switch, run_restore_suite, run_stash_suite, run_status_suite,
+    RunConfig,
 };
 use grit_utils::schema::BenchReport;
 use std::net::TcpListener;
@@ -230,6 +231,11 @@ enum Cmd {
     /// Internal: hyperfine `--prepare` hook for add benchmarks
     #[command(hide = true)]
     PrepareAdd {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareDenseLeafAdd {
         #[arg(long)]
         git: PathBuf,
     },
@@ -585,6 +591,10 @@ fn main() -> Result<()> {
         Cmd::PrepareAdd { git } => {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_add(&git);
+        }
+        Cmd::PrepareDenseLeafAdd { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return run_prepare_dense_leaf_add(&git);
         }
         Cmd::PrepareSwitch { git } => {
             let git = resolve_binary("git", Some(git))?;
@@ -950,6 +960,7 @@ fn main() -> Result<()> {
         | Cmd::RunLimited { .. }
         | Cmd::Drive { .. }
         | Cmd::PrepareAdd { .. }
+        | Cmd::PrepareDenseLeafAdd { .. }
         | Cmd::PrepareSwitch { .. }
         | Cmd::PreparePick { .. }
         | Cmd::PrepareMerge { .. }
