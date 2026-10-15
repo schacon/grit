@@ -145,6 +145,8 @@ pub(crate) mod pack_cache {
         static THREAD_WARM_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// [`PackStore`] address last warmed on this thread (distinct stores can share epoch 0).
         static THREAD_WARM_STORE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        static PACK_MONOTONIC_CURSOR: std::cell::RefCell<Option<(PathBuf, usize)>> =
+            const { std::cell::RefCell::new(None) };
     }
 
     fn store_thread_local_key(store: &crate::pack_store::PackStore) -> usize {
@@ -162,6 +164,7 @@ pub(crate) mod pack_cache {
         THREAD_WARM_EPOCH.set(0);
         THREAD_WARM_STORE.set(0);
         super::clear_pack_read_info_cache();
+        PACK_MONOTONIC_CURSOR.with(|cell| *cell.borrow_mut() = None);
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -304,6 +307,24 @@ pub(crate) mod pack_cache {
             *cell.borrow_mut() = Some((objects_dir.to_path_buf(), Arc::clone(idx)));
         });
     }
+
+    pub(crate) fn find_offset_for_batch(
+        idx: &PackIndex,
+        oid: &crate::objects::ObjectId,
+    ) -> Option<u64> {
+        if !crate::pack_store::PackStore::has_context() {
+            return idx.find_offset(oid);
+        }
+        PACK_MONOTONIC_CURSOR.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.as_ref().is_none_or(|(path, _)| path != &idx.idx_path) {
+                *slot = Some((idx.idx_path.clone(), 0));
+            }
+            let (_, cursor) = slot.as_mut().expect("initialized above");
+            idx.find_offset_monotonic(oid, cursor)
+        })
+    }
+
 
     pub(crate) fn try_read_from_hinted_pack(
         objects_dir: &Path,
@@ -2292,7 +2313,7 @@ fn packed_type_to_kind(pt: PackedType) -> Result<ObjectKind> {
     }
 }
 
-// hygiene: per-thread zlib scratch for delta size prefix reads in pack hot path
+// hygiene: per-thread pack zlib scratch and read-info cache (ROADMAP item 7 — pack read hot path)
 thread_local! {
     static DELTA_SIZE_ZLIB: std::cell::RefCell<crate::zlib_inflate::ZlibInflateScratch> =
         std::cell::RefCell::new(crate::zlib_inflate::ZlibInflateScratch::default());
@@ -3130,7 +3151,7 @@ fn read_whole_pack_entry_info_fast(
     }
 }
 
-// hygiene: per-thread zlib scratch for whole-object pack inflates in batch reads
+// hygiene: per-thread zlib scratch for whole pack entry reads (ROADMAP item 7 — pack read hot path)
 thread_local! {
     static WHOLE_OBJECT_ZLIB: RefCell<ZlibInflateScratch> =
         RefCell::new(ZlibInflateScratch::default());
