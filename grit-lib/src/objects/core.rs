@@ -663,7 +663,7 @@ pub struct CommitData {
 
 /// Commit headers needed for graph walks without parsing the message body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitLinkage {
+pub(crate) struct CommitLinkage {
     /// Root tree OID.
     pub tree: ObjectId,
     /// Parent commit OIDs.
@@ -679,7 +679,7 @@ pub struct CommitLinkage {
 /// # Errors
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing.
-pub fn parse_commit_linkage(data: &[u8]) -> Result<CommitLinkage> {
+pub(crate) fn parse_commit_linkage(data: &[u8]) -> Result<CommitLinkage> {
     #[derive(Clone, Copy)]
     enum Continuation {
         Author,

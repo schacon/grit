@@ -4,13 +4,15 @@ mod support;
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
 use grit_lib::repo::Repository;
+use std::fs;
+
 use grit_lib::revwalk::rev_parse::{
     resolve_revision, resolve_revision_as_commit, resolve_revision_for_checkout_guess,
     resolve_revision_for_range_end, resolve_revision_for_verify,
     resolve_revision_without_index_dwim,
 };
 
-use support::{build_commit_dag, commit_file, HistoryRepo};
+use support::{build_commit_dag, commit_file, git, git_rev_parse_verify, HistoryRepo};
 
 fn open_grit(wt: &std::path::Path) -> Repository {
     let mut env = Environment::empty();
@@ -71,6 +73,24 @@ fn exercise_many_specs_on_deep_history() {
         let _ = resolve_revision_for_verify(&repo, spec);
         let _ = resolve_revision(&repo, spec);
     }
+}
+
+#[test]
+fn head_tilde_matches_git_when_commit_graph_is_stale() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    for i in 0..25 {
+        git(wt, &["commit", "--allow-empty", "-m", &format!("c{i}")]);
+    }
+    git(wt, &["commit-graph", "write", "--reachable"]);
+    let repo = open_grit(wt);
+    let spec = "HEAD~20";
+    let with_graph = resolve_revision(&repo, spec).expect("with graph");
+    let graph_path = wt.join(".git/objects/info/commit-graph");
+    fs::remove_file(&graph_path).expect("remove commit-graph");
+    let without_graph = resolve_revision(&repo, spec).expect("stale graph");
+    assert_eq!(with_graph, without_graph);
+    assert_eq!(with_graph, git_rev_parse_verify(wt, spec).expect("git"));
 }
 
 #[test]
