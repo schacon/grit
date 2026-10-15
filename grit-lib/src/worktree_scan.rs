@@ -730,7 +730,7 @@ mod tests {
                 );
             }
         }
-        let grouped = group_blob_entries_by_dir(&index);
+        let grouped = group_blob_entries_by_dir(&index, false);
         let _probe = reset_worktree_metadata_probe(&wt);
         let wt_dir = wt.clone();
         let dir_abs = move |dir: &str| {
