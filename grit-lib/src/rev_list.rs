@@ -6087,12 +6087,16 @@ impl<'r> CommitGraph<'r> {
                 return Ok(());
             }
         }
-        let commit = load_commit(self.repo, oid)?;
+        let object = self.repo.odb().read(&oid)?;
+        if object.kind != ObjectKind::Commit {
+            return Err(rev_list_unexpected_kind(oid, "commit"));
+        }
+        let linkage = crate::objects::parse_commit_linkage(&object.data)?;
         // Shallow boundaries: treat commit as having no parents
         let mut parents = if self.shallow_boundaries.contains(&oid) {
             Vec::new()
         } else {
-            commit.parents
+            linkage.parents
         };
         if let Some(graft_parents) = self.graft_parents.get(&oid) {
             parents = graft_parents.clone();
@@ -6101,10 +6105,10 @@ impl<'r> CommitGraph<'r> {
             parents.truncate(1);
         }
         self.committer_time
-            .insert(oid, committer_unix_seconds_for_ordering(&commit.committer));
+            .insert(oid, committer_unix_seconds_for_ordering(&linkage.committer));
         self.author_time
-            .insert(oid, committer_unix_seconds_for_ordering(&commit.author));
-        self.commit_trees.insert(oid, commit.tree);
+            .insert(oid, committer_unix_seconds_for_ordering(&linkage.author));
+        self.commit_trees.insert(oid, linkage.tree);
         self.parents.insert(oid, parents);
         Ok(())
     }

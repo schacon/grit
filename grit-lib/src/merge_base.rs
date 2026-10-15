@@ -65,6 +65,18 @@ pub fn merge_bases_first_vs_rest(
             return Ok(vec![first]);
         }
     }
+    if others.len() == 1 {
+        let mut cache = CommitGraphCache::new(repo);
+        let mut selected = walk_intersecting_histories(&mut cache, first, others, false)?;
+        if selected.is_empty() {
+            return Ok(Vec::new());
+        }
+        sort_merge_bases_for_git_output(&mut cache, &mut selected)?;
+        if selected.len() > 1 {
+            selected.truncate(1);
+        }
+        return Ok(selected);
+    }
     let mut cache = CommitGraphCache::new(repo);
     let first_anc = cache.ancestor_closure(first)?;
     let mut others_union = HashSet::new();
@@ -1017,7 +1029,7 @@ fn reduce_to_best(
             if candidate == other {
                 continue;
             }
-            if cache.ancestor_closure(other)?.contains(&candidate) {
+            if cache.is_ancestor(candidate, other)? {
                 better_found = true;
                 break;
             }
@@ -1152,15 +1164,15 @@ impl<'r> CommitGraphCache<'r> {
                 "object {commit_oid} is not a commit"
             )));
         }
-        let commit = parse_commit(&object.data)?;
+        let linkage = crate::objects::parse_commit_linkage(&object.data)?;
         self.times.insert(
             oid,
-            crate::ident::committer_timestamp_for_until_filter(&commit.committer),
+            crate::ident::committer_timestamp_for_until_filter(&linkage.committer),
         );
         let parents: Vec<ObjectId> = if self.shallow_boundaries.contains(&commit_oid) {
             Vec::new()
         } else {
-            commit
+            linkage
                 .parents
                 .iter()
                 .copied()

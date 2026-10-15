@@ -716,19 +716,28 @@ pub fn commit_parents_for_navigation(
     repo: &Repository,
     commit_oid: ObjectId,
 ) -> Result<Vec<ObjectId>> {
+    let grafts = load_graft_parents(repo.git_dir());
+    if let Some(grafted) = grafts.get(&commit_oid) {
+        return Ok(grafted.clone());
+    }
+    if let Some(chain) = crate::commit_graph_file::CommitGraphChain::try_load_with_caches(
+        &repo.git_dir().join("objects"),
+        Some(repo.caches().as_ref()),
+    )
+    .ok()
+    .flatten()
+    {
+        if let Some((parents, _)) = chain.graph_commit(&commit_oid) {
+            return Ok(parents);
+        }
+    }
     let obj = repo.odb().read(&commit_oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::InvalidRef(format!(
             "invalid ref: {commit_oid} is not a commit"
         )));
     }
-    let commit = parse_commit(&obj.data)?;
-    let mut parents = commit.parents;
-    let grafts = load_graft_parents(repo.git_dir());
-    if let Some(grafted) = grafts.get(&commit_oid) {
-        parents = grafted.clone();
-    }
-    Ok(parents)
+    Ok(crate::objects::parse_commit_linkage(&obj.data)?.parents)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1787,7 +1796,11 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
         NavStep::AncestorN(n) => {
             let mut current = peel_annotated_tag_chain(repo, oid)?;
             for _ in 0..n {
-                current = apply_nav_step(repo, current, NavStep::ParentN(1))?;
+                let parents = commit_parents_for_navigation(repo, current)?;
+                current = parents
+                    .first()
+                    .copied()
+                    .ok_or_else(|| Error::ObjectNotFound(format!("{current}~1")))?;
             }
             Ok(current)
         }
