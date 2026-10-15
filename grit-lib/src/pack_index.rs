@@ -223,6 +223,41 @@ impl PackIndex {
         self.find_position(oid).map(|i| self.offset_at(i))
     }
 
+    /// Like [`Self::find_offset`] but optimized for monotonically non-decreasing `oid` probes.
+    ///
+    /// Updates `cursor` to the matching row on success. When the probe regresses (out-of-order
+    /// input), falls back to fanout + binary search and resets `cursor`.
+    #[must_use]
+    pub fn find_offset_monotonic(&self, oid: &ObjectId, cursor: &mut usize) -> Option<u64> {
+        let needle = oid.as_bytes();
+        if needle.len() != self.layout.hash_bytes {
+            return None;
+        }
+        let len = self.len();
+        if *cursor >= len {
+            *cursor = 0;
+        }
+        if *cursor < len && compare_oid_bytes(self.oid_at(*cursor), needle) == Ordering::Greater {
+            if let Some(pos) = self.find_position(oid) {
+                *cursor = pos;
+                return Some(self.offset_at(pos));
+            }
+            return None;
+        }
+        let mut pos = *cursor;
+        while pos < len {
+            match compare_oid_bytes(self.oid_at(pos), needle) {
+                Ordering::Less => pos += 1,
+                Ordering::Equal => {
+                    *cursor = pos;
+                    return Some(self.offset_at(pos));
+                }
+                Ordering::Greater => return None,
+            }
+        }
+        None
+    }
+
     /// Whether this pack index contains the given OID.
     #[must_use]
     pub fn contains(&self, oid: &ObjectId) -> bool {
@@ -294,7 +329,7 @@ impl PackIndex {
     fn binary_search(&self, mut lo: usize, mut hi: usize, needle: &[u8]) -> Option<usize> {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match self.oid_at(mid).cmp(needle) {
+            match compare_oid_bytes(self.oid_at(mid), needle) {
                 Ordering::Less => lo = mid + 1,
                 Ordering::Greater => hi = mid,
                 Ordering::Equal => return Some(mid),
@@ -324,7 +359,7 @@ impl PackIndex {
                 lo.saturating_add(((num * u128::from(span as u64)) / den) as usize)
             };
             let pos = guess.min(hi - 1);
-            match self.oid_at(pos).cmp(needle) {
+            match compare_oid_bytes(self.oid_at(pos), needle) {
                 Ordering::Equal => return Some(pos),
                 Ordering::Less => lo = pos + 1,
                 Ordering::Greater => hi = pos,
@@ -332,6 +367,27 @@ impl PackIndex {
         }
         None
     }
+}
+
+/// Lexicographic compare for fixed-width object ids (hot path for pack index search).
+#[inline]
+fn compare_oid_bytes(a: &[u8], b: &[u8]) -> Ordering {
+    if a.len() == 20 && b.len() == 20 {
+        let a0 = u64::from_be_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]);
+        let b0 = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+        if a0 != b0 {
+            return a0.cmp(&b0);
+        }
+        let a1 = u64::from_be_bytes([a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]]);
+        let b1 = u64::from_be_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]);
+        if a1 != b1 {
+            return a1.cmp(&b1);
+        }
+        let a2 = u32::from_be_bytes([a[16], a[17], a[18], a[19]]);
+        let b2 = u32::from_be_bytes([b[16], b[17], b[18], b[19]]);
+        return a2.cmp(&b2);
+    }
+    a.cmp(b)
 }
 
 /// Leading OID bytes for interpolation probing (8 bytes — fits in `u64` without overflow).

@@ -14,11 +14,10 @@ use crate::objects::{HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind};
 pub use crate::pack_map::PackData;
 use crate::unpack_objects::{apply_delta_into, delta_uncompressed_result_size_if_complete};
 use crate::zlib_inflate::{inflate_prefix, ZlibInflateScratch};
-use flate2::read::ZlibDecoder;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::io::Read;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -162,6 +161,7 @@ pub(crate) mod pack_cache {
         PACK_DIR_LISTING_TRUSTED.set(false);
         THREAD_WARM_EPOCH.set(0);
         THREAD_WARM_STORE.set(0);
+        super::clear_pack_read_info_cache();
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -301,6 +301,32 @@ pub(crate) mod pack_cache {
         PACK_HIT_INDEX.with(|cell| {
             *cell.borrow_mut() = Some((objects_dir.to_path_buf(), Arc::clone(idx)));
         });
+        promote_pack_index(objects_dir, &idx.idx_path);
+    }
+
+    // hygiene: monotonic pack index cursor for sorted batch reads in pack context
+    thread_local! {
+        static PACK_MONOTONIC_CURSOR: std::cell::RefCell<Option<(PathBuf, usize)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(crate) fn find_offset_for_batch(
+        idx: &PackIndex,
+        oid: &crate::objects::ObjectId,
+    ) -> Option<u64> {
+        if !crate::pack_store::PackStore::has_context() {
+            return idx.find_offset(oid);
+        }
+        PACK_MONOTONIC_CURSOR.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.as_ref().is_none_or(|(path, _)| path != &idx.idx_path) {
+                *slot = Some((idx.idx_path.clone(), 0));
+            }
+            let Some((_, cursor)) = slot.as_mut() else {
+                return idx.find_offset(oid);
+            };
+            idx.find_offset_monotonic(oid, cursor)
+        })
     }
 
     pub(crate) fn try_read_from_hinted_pack(
@@ -311,15 +337,43 @@ pub(crate) mod pack_cache {
             return Ok(None);
         }
         let idx = PACK_HIT_INDEX.with(|cell| {
-            cell.borrow().as_ref().and_then(|(dir, idx)| {
-                (dir == objects_dir && idx.find_offset(oid).is_some()).then(|| Arc::clone(idx))
-            })
+            cell.borrow()
+                .as_ref()
+                .and_then(|(dir, idx)| (dir == objects_dir).then(|| Arc::clone(idx)))
         });
         let Some(idx) = idx else {
             return Ok(None);
         };
-        match super::read_object_from_pack(&idx, oid) {
+        let Some(offset) = find_offset_for_batch(idx.as_ref(), oid) else {
+            return Ok(None);
+        };
+        match super::read_object_from_pack_at_offset(&idx, offset) {
             Ok(obj) => Ok(Some(obj)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(crate) fn try_read_info_from_hinted_pack(
+        objects_dir: &Path,
+        oid: &crate::objects::ObjectId,
+    ) -> Result<Option<crate::objects::ObjectInfo>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return Ok(None);
+        }
+        let idx = PACK_HIT_INDEX.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .and_then(|(dir, idx)| (dir == objects_dir).then(|| Arc::clone(idx)))
+        });
+        let Some(idx) = idx else {
+            return Ok(None);
+        };
+        let Some(offset) = find_offset_for_batch(idx.as_ref(), oid) else {
+            return Ok(None);
+        };
+        match super::read_object_info_from_pack_at_offset(&idx, offset) {
+            Ok(info) => Ok(Some(info)),
             Err(Error::ObjectNotFound(_)) => Ok(None),
             Err(err) => Err(err),
         }
@@ -1099,6 +1153,7 @@ pub(crate) mod pack_cache {
                 removed
             });
             invalidate_thread_local_for_pack_path_change(pack_path);
+            super::drop_pack_read_info_cache_for(pack_path);
             return Ok(removed);
         };
         let store = crate::pack_store::PackStore::active_for_reads();
@@ -1110,6 +1165,7 @@ pub(crate) mod pack_cache {
             return Ok(false);
         }
         load_pack_bytes_from_disk(pack_path, mtime, size)?;
+        super::drop_pack_read_info_cache_for(pack_path);
         Ok(true)
     }
 
@@ -1151,6 +1207,7 @@ pub(crate) mod pack_cache {
             return Ok(false);
         }
         load_pack_bytes_from_disk(pack_path, mtime, size)?;
+        super::drop_pack_read_info_cache_for(pack_path);
         Ok(true)
     }
 
@@ -1451,6 +1508,7 @@ pub fn read_pack_bytes_cached(pack_path: &Path) -> Result<Arc<PackData>> {
 pub fn clear_pack_cache() {
     #[cfg(test)]
     let _guard = pack_cache_test_guard();
+    clear_pack_read_info_cache();
     pack_cache::clear_thread_local_dir_indexes();
     crate::pack_store::PackStore::invalidate_all_legacy();
 }
@@ -2200,36 +2258,106 @@ fn packed_type_to_kind(pt: PackedType) -> Result<ObjectKind> {
     }
 }
 
+// hygiene: per-thread zlib scratch for delta size prefix reads in pack hot path
+thread_local! {
+    static DELTA_SIZE_ZLIB: std::cell::RefCell<crate::zlib_inflate::ZlibInflateScratch> =
+        std::cell::RefCell::new(crate::zlib_inflate::ZlibInflateScratch::default());
+}
+// hygiene: scoped batch read_info cache; cleared on pack invalidation and context exit
+thread_local! {
+    static PACK_READ_INFO_CACHE: std::cell::RefCell<HashMap<PackReadInfoCacheKey, ObjectInfo>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+const PACK_READ_INFO_CACHE_CAP: usize = 600_000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PackReadInfoCacheKey {
+    objects_dir: PathBuf,
+    pack_path: PathBuf,
+    fingerprint: crate::pack_map::PackFingerprint,
+    offset: u64,
+}
+
+fn pack_read_info_cache_key(
+    pack_path: &Path,
+    pack_bytes: &[u8],
+    hash_bytes: usize,
+    offset: u64,
+) -> Result<Option<PackReadInfoCacheKey>> {
+    if !crate::pack_store::PackStore::has_context() {
+        return Ok(None);
+    }
+    let Some(objects_dir) = crate::pack_store::PackStore::active_objects_dir() else {
+        return Ok(None);
+    };
+    let fingerprint = crate::pack_map::fingerprint_from_slice(pack_bytes, hash_bytes)?;
+    Ok(Some(PackReadInfoCacheKey {
+        objects_dir,
+        pack_path: pack_path.to_path_buf(),
+        fingerprint,
+        offset,
+    }))
+}
+
+/// Drop cached batch `read_info` entries (pack context end, invalidation, repack).
+pub(crate) fn clear_pack_read_info_cache() {
+    PACK_READ_INFO_CACHE.with(|c| c.borrow_mut().clear());
+}
+
+fn drop_pack_read_info_cache_for(pack_path: &Path) {
+    PACK_READ_INFO_CACHE.with(|c| {
+        c.borrow_mut().retain(|k, _| k.pack_path != pack_path);
+    });
+}
+
+fn cached_pack_read_info(
+    pack_path: &Path,
+    pack_bytes: &[u8],
+    hash_bytes: usize,
+    offset: u64,
+) -> Option<ObjectInfo> {
+    let key = pack_read_info_cache_key(pack_path, pack_bytes, hash_bytes, offset).ok()??;
+    PACK_READ_INFO_CACHE.with(|c| c.borrow().get(&key).cloned())
+}
+
+fn remember_pack_read_info(
+    pack_path: &Path,
+    pack_bytes: &[u8],
+    hash_bytes: usize,
+    offset: u64,
+    info: ObjectInfo,
+) {
+    let Ok(Some(key)) = pack_read_info_cache_key(pack_path, pack_bytes, hash_bytes, offset) else {
+        return;
+    };
+    PACK_READ_INFO_CACHE.with(|c| {
+        let mut g = c.borrow_mut();
+        if g.len() >= PACK_READ_INFO_CACHE_CAP {
+            g.clear();
+        }
+        g.insert(key, info);
+    });
+}
+
 /// Read the delta result-size varint from a pack zlib stream without inflating the full delta.
 ///
 /// Advances `*pos` past the compressed bytes consumed from `bytes`.
 fn read_delta_result_size_from_pack_zlib(bytes: &[u8], pos: &mut usize) -> Result<u64> {
-    let slice = &bytes[*pos..];
-    let mut decoder = ZlibDecoder::new(slice);
-    let mut prefix = Vec::with_capacity(64);
-    let mut chunk = [0u8; 64];
     const MAX_PREFIX: usize = 128;
-    loop {
+    DELTA_SIZE_ZLIB.with(|slot| {
+        let mut scratch = slot.borrow_mut();
+        scratch.reset();
+        let (prefix, consumed) = scratch.inflate_prefix(&bytes[*pos..], MAX_PREFIX)?;
+        *pos += consumed;
         if let Some(dest) = delta_uncompressed_result_size_if_complete(&prefix)? {
-            *pos += decoder.total_in() as usize;
             return u64::try_from(dest)
                 .map_err(|_| Error::CorruptObject("delta result size overflow".to_owned()));
         }
-        if prefix.len() >= MAX_PREFIX {
-            return Err(Error::CorruptObject(
-                "delta size prefix exceeds header limit".to_owned(),
-            ));
-        }
-        let n = decoder
-            .read(&mut chunk)
-            .map_err(|e| Error::Zlib(e.to_string()))?;
-        if n == 0 {
-            return Err(Error::CorruptObject(
-                "truncated delta zlib before size varints".to_owned(),
-            ));
-        }
-        prefix.extend_from_slice(&chunk[..n]);
-    }
+        Err(Error::CorruptObject(
+            "delta size prefix exceeds header limit".to_owned(),
+        ))
+    })
 }
 
 /// Decompress zlib data from a byte slice starting at `pos`.
@@ -2598,6 +2726,9 @@ fn resolve_pack_object_at_body(
                     }
                 };
                 let kind = packed_type_to_kind(packed_type)?;
+                if pending.is_empty() {
+                    return Ok((kind, data));
+                }
                 let result = apply_delta_chain_forward(
                     kind,
                     &data,
@@ -2717,23 +2848,7 @@ fn resolve_pack_object_info_at(
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
 ) -> Result<ObjectInfo> {
-    let pack_path = start_idx.get().pack_path.clone();
-    let start_pack_id = pack_cache::pack_id_for(&pack_path);
-    for attempt in 0..2 {
-        match resolve_pack_object_info_at_body(start_idx.clone(), start_offset, objects_dir, state)
-        {
-            Ok(v) => return Ok(v),
-            Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
-                if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
-                    state.visited.retain(|(id, _)| *id != start_pack_id);
-                    continue;
-                }
-                return Err(e);
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    unreachable!("at most two resolution attempts")
+    resolve_pack_object_info_at_with_bytes(start_idx, start_offset, objects_dir, state, None)
 }
 
 fn resolve_pack_object_info_at_body(
@@ -2741,8 +2856,15 @@ fn resolve_pack_object_info_at_body(
     start_offset: u64,
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
+    pack_bytes_override: Option<&[u8]>,
 ) -> Result<ObjectInfo> {
-    let cur_bytes = read_pack_bytes_cached(&cur_idx.get().pack_path)?;
+    let cached_pack;
+    let cur_bytes: &[u8] = if let Some(b) = pack_bytes_override {
+        b
+    } else {
+        cached_pack = read_pack_bytes_cached(&cur_idx.get().pack_path)?;
+        cached_pack.as_ref()
+    };
     let mut cur_offset = start_offset;
     let mut result_size: Option<u64> = None;
 
@@ -2751,22 +2873,42 @@ fn resolve_pack_object_info_at_body(
         let pack_id = pack_cache::pack_id_for(&idx_ref.pack_path);
         state.visit(pack_id, cur_offset)?;
 
+        if result_size.is_none() {
+            if let Some(base) = cached_pack_read_info(
+                &idx_ref.pack_path,
+                cur_bytes,
+                idx_ref.hash_bytes(),
+                cur_offset,
+            ) {
+                return Ok(base);
+            }
+        }
+
         let object_start = cur_offset;
         let mut pos = cur_offset as usize;
-        let (packed_type, header_size) = parse_pack_object_header(&cur_bytes, &mut pos)?;
+        let (packed_type, header_size) = parse_pack_object_header(cur_bytes, &mut pos)?;
 
         match packed_type {
             PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
                 let kind = packed_type_to_kind(packed_type)?;
                 let size = result_size.unwrap_or(header_size);
-                return Ok(ObjectInfo { kind, size });
+                let info = ObjectInfo { kind, size };
+                if result_size.is_none() {
+                    remember_pack_read_info(
+                        &idx_ref.pack_path,
+                        cur_bytes,
+                        idx_ref.hash_bytes(),
+                        cur_offset,
+                        info,
+                    );
+                }
+                return Ok(info);
             }
             PackedType::OfsDelta => {
                 state.next_hop()?;
-                let base_offset = parse_ofs_delta_base(&cur_bytes, &mut pos, object_start)?;
+                let base_offset = parse_ofs_delta_base(cur_bytes, &mut pos, object_start)?;
                 if result_size.is_none() {
-                    result_size =
-                        Some(read_delta_result_size_from_pack_zlib(&cur_bytes, &mut pos)?);
+                    result_size = Some(read_delta_result_size_from_pack_zlib(cur_bytes, &mut pos)?);
                 }
                 cur_offset = base_offset;
             }
@@ -2781,8 +2923,7 @@ fn resolve_pack_object_info_at_body(
                 let base_raw = &cur_bytes[pos..pos + hb];
                 pos += hb;
                 if result_size.is_none() {
-                    result_size =
-                        Some(read_delta_result_size_from_pack_zlib(&cur_bytes, &mut pos)?);
+                    result_size = Some(read_delta_result_size_from_pack_zlib(cur_bytes, &mut pos)?);
                 }
 
                 let base_oid = ObjectId::from_bytes(base_raw)?;
@@ -2876,37 +3017,32 @@ pub fn read_object_info_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Obj
     let Some(offset) = idx.find_offset(oid) else {
         return Err(Error::ObjectNotFound(oid.to_hex()));
     };
+    read_object_info_from_pack_at_offset(idx, offset)
+}
 
+/// Read [`ObjectInfo`] at a known pack offset (avoids a second index lookup in batch workloads).
+///
+/// # Errors
+///
+/// Same as [`read_object_info_from_pack`].
+pub fn read_object_info_from_pack_at_offset(idx: &PackIndex, offset: u64) -> Result<ObjectInfo> {
     let pack_path = idx.pack_path.clone();
-    let objects_dir = idx.pack_path.parent().and_then(Path::parent);
     for attempt in 0..2 {
         let pack_bytes = read_pack_bytes_cached(&pack_path)?;
-        match validate_pack_index_object_count(&pack_bytes, idx) {
-            Ok(()) => {}
-            Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
-                if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
-                    continue;
+        if !pack_cache::pack_object_count_validated(&pack_path) {
+            match validate_pack_index_object_count(&pack_bytes, idx) {
+                Ok(()) => pack_cache::mark_pack_object_count_validated(&pack_path),
+                Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
+                    if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
+                        continue;
+                    }
+                    return Err(e);
                 }
-                return Err(e);
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
         }
-        let mut state = DeltaChainState {
-            depth: 0,
-            visited: HashSet::new(),
-        };
-        match resolve_pack_object_info_at(
-            PackIndexHandle::Borrowed(idx),
-            offset,
-            objects_dir,
-            &mut state,
-        ) {
-            Ok(info) => {
-                if let Some(dir) = objects_dir {
-                    pack_cache::promote_pack_index(dir, &idx.idx_path);
-                }
-                return Ok(info);
-            }
+        match read_object_info_from_pack_at_offset_with_bytes(idx, offset, pack_bytes.as_ref()) {
+            Ok(info) => return Ok(info),
             Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
                 if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
                     continue;
@@ -2917,6 +3053,140 @@ pub fn read_object_info_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Obj
         }
     }
     unreachable!("at most two read attempts")
+}
+
+fn read_object_info_from_pack_at_offset_with_bytes(
+    idx: &PackIndex,
+    offset: u64,
+    pack_bytes: &[u8],
+) -> Result<ObjectInfo> {
+    if let Some(info) = read_whole_pack_entry_info_fast(idx, offset, pack_bytes) {
+        return Ok(info);
+    }
+    let objects_dir = idx.pack_path.parent().and_then(Path::parent);
+    with_pack_read_delta_state(0, |state| {
+        resolve_pack_object_info_at_with_bytes(
+            PackIndexHandle::Borrowed(idx),
+            offset,
+            objects_dir,
+            state,
+            Some(pack_bytes),
+        )
+    })
+}
+
+fn resolve_pack_object_info_at_with_bytes(
+    start_idx: PackIndexHandle<'_>,
+    start_offset: u64,
+    objects_dir: Option<&Path>,
+    state: &mut DeltaChainState,
+    pack_bytes_override: Option<&[u8]>,
+) -> Result<ObjectInfo> {
+    let idx_ref = start_idx.get();
+    let pack_path = idx_ref.pack_path.clone();
+    let hash_bytes = idx_ref.hash_bytes();
+    let start_pack_id = pack_cache::pack_id_for(&pack_path);
+    let cached_bytes = read_pack_bytes_cached(&pack_path).ok();
+    let cached_slice = cached_bytes.as_ref().map(|data| {
+        let packed: &PackData = data;
+        let bytes: &[u8] = packed;
+        bytes
+    });
+    if let Some(bytes) = pack_bytes_override.or(cached_slice) {
+        if let Some(info) = cached_pack_read_info(&pack_path, bytes, hash_bytes, start_offset) {
+            return Ok(info);
+        }
+    }
+    for attempt in 0..2 {
+        match resolve_pack_object_info_at_body(
+            start_idx.clone(),
+            start_offset,
+            objects_dir,
+            state,
+            pack_bytes_override,
+        ) {
+            Ok(v) => {
+                if let Ok(pack_bytes) = read_pack_bytes_cached(&pack_path) {
+                    remember_pack_read_info(
+                        &pack_path,
+                        pack_bytes.as_ref(),
+                        hash_bytes,
+                        start_offset,
+                        v,
+                    );
+                }
+                return Ok(v);
+            }
+            Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
+                if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
+                    state.visited.retain(|(id, _)| *id != start_pack_id);
+                    continue;
+                }
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("at most two resolution attempts")
+}
+
+/// Header-only info for undeltified pack entries (batch-check hot path).
+#[inline]
+fn read_whole_pack_entry_info_fast(
+    _idx: &PackIndex,
+    offset: u64,
+    pack_bytes: &[u8],
+) -> Option<ObjectInfo> {
+    let mut pos = offset as usize;
+    if pos >= pack_bytes.len() {
+        return None;
+    }
+    let (packed_type, header_size) = parse_pack_object_header(pack_bytes, &mut pos).ok()?;
+    match packed_type {
+        PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
+            let kind = packed_type_to_kind(packed_type).ok()?;
+            Some(ObjectInfo {
+                kind,
+                size: header_size,
+            })
+        }
+        PackedType::OfsDelta | PackedType::RefDelta => None,
+    }
+}
+
+// hygiene: per-thread zlib scratch for whole-object pack inflates in batch reads
+thread_local! {
+    static WHOLE_OBJECT_ZLIB: RefCell<ZlibInflateScratch> =
+        RefCell::new(ZlibInflateScratch::default());
+}
+
+/// Read and inflate undeltified pack entries without delta-chain bookkeeping.
+fn read_whole_pack_entry_object_fast(
+    idx: &PackIndex,
+    offset: u64,
+    pack_bytes: &[u8],
+) -> Option<Object> {
+    let pack_id = pack_cache::pack_id_for(&idx.pack_path);
+    if let Some((kind, data)) = pack_cache::get_delta_base(pack_id, offset) {
+        return Some(Object::new(kind, data.to_vec()));
+    }
+    let mut pos = offset as usize;
+    if pos >= pack_bytes.len() {
+        return None;
+    }
+    let (packed_type, size) = parse_pack_object_header(pack_bytes, &mut pos).ok()?;
+    match packed_type {
+        PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
+            let kind = packed_type_to_kind(packed_type).ok()?;
+            WHOLE_OBJECT_ZLIB.with(|slot| {
+                let mut inflate = slot.borrow_mut();
+                decompress_pack_data(pack_bytes, &mut pos, size, &mut inflate)
+                    .ok()
+                    .map(|data| Object::new(kind, data))
+            })
+        }
+        PackedType::OfsDelta | PackedType::RefDelta => None,
+    }
 }
 
 fn read_object_from_packs_in_context(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
@@ -2988,16 +3258,16 @@ fn read_object_at_depth(idx: &PackIndex, offset: u64, depth: usize) -> Result<Ob
                 Err(e) => return Err(e),
             }
         }
+        if depth == 0 {
+            if let Some(obj) = read_whole_pack_entry_object_fast(idx, offset, &pack_bytes) {
+                return Ok(obj);
+            }
+        }
         let resolved = with_pack_read_delta_state(depth, |state| {
             resolve_pack_object_at(PackIndexHandle::Borrowed(idx), offset, objects_dir, state)
         });
         match resolved {
-            Ok((kind, data)) => {
-                if let Some(dir) = objects_dir {
-                    pack_cache::promote_pack_index(dir, &idx.idx_path);
-                }
-                return Ok(Object::new(kind, data));
-            }
+            Ok((kind, data)) => return Ok(Object::new(kind, data)),
             Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
                 if pack_cache::reload_pack_bytes_after_parse_failure(pack_path)? {
                     continue;
@@ -3080,6 +3350,77 @@ impl PackLookupOptions {
         skip_midx_covered_packs: false,
         only_midx_covered_packs: true,
     };
+}
+
+/// Sorted `cat-file --batch` reader for repos with exactly one local pack (hot-path benchmarks).
+///
+/// Keeps a pack index cursor so probes in non-decreasing OID order avoid repeated binary search.
+pub struct SingleLocalPackReader {
+    idx: Arc<PackIndex>,
+    pack_bytes: Arc<PackData>,
+    cursor: usize,
+}
+
+impl SingleLocalPackReader {
+    /// Open when [`crate::pack_store::PackStore`] read context matches and one local pack index exists.
+    ///
+    /// # Errors
+    ///
+    /// Propagates pack directory read failures from index loading.
+    pub fn open(objects_dir: &Path) -> Result<Option<Self>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return Ok(None);
+        }
+        pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
+        let indexes = pack_indexes_for_lookup(objects_dir, PackLookupOptions::ALL_LOCAL_PACKS)?;
+        if indexes.len() != 1 {
+            return Ok(None);
+        }
+        let idx = Arc::clone(&indexes[0]);
+        let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
+        validate_pack_index_object_count(pack_bytes.as_ref(), idx.as_ref())?;
+        pack_cache::mark_pack_object_count_validated(&idx.pack_path);
+        pack_cache::remember_pack_hit(objects_dir, &idx);
+        Ok(Some(Self {
+            idx,
+            pack_bytes,
+            cursor: 0,
+        }))
+    }
+
+    /// Kind and size for `oid` without loading the object body.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`read_object_info_from_pack_at_offset`].
+    pub fn read_info(&mut self, oid: &ObjectId) -> Result<ObjectInfo> {
+        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor) else {
+            return Err(Error::ObjectNotFound(oid.to_hex()));
+        };
+        if let Some(info) =
+            read_whole_pack_entry_info_fast(&self.idx, offset, self.pack_bytes.as_ref())
+        {
+            return Ok(info);
+        }
+        read_object_info_from_pack_at_offset_with_bytes(&self.idx, offset, self.pack_bytes.as_ref())
+    }
+
+    /// Decompress the object for `oid`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`read_object_from_pack_at_offset`].
+    pub fn read_object(&mut self, oid: &ObjectId) -> Result<Object> {
+        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor) else {
+            return Err(Error::ObjectNotFound(oid.to_hex()));
+        };
+        if let Some(obj) =
+            read_whole_pack_entry_object_fast(&self.idx, offset, self.pack_bytes.as_ref())
+        {
+            return Ok(obj);
+        }
+        read_object_from_pack_at_offset(&self.idx, offset)
+    }
 }
 
 fn pack_indexes_for_lookup(
@@ -3170,14 +3511,23 @@ pub(crate) fn try_read_object_info_from_packs_with_options(
     oid: &ObjectId,
     opts: PackLookupOptions,
 ) -> Result<ObjectInfo> {
+    if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+        pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
+    }
+    if let Some(info) = pack_cache::try_read_info_from_hinted_pack(objects_dir, oid)? {
+        return Ok(info);
+    }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        if idx.find_offset(oid).is_none() {
+        let Some(offset) = pack_cache::find_offset_for_batch(idx.as_ref(), oid) else {
             continue;
-        }
-        match read_object_info_from_pack(idx, oid) {
-            Ok(info) => return Ok(info),
+        };
+        match read_object_info_from_pack_at_offset(idx, offset) {
+            Ok(info) => {
+                pack_cache::remember_pack_hit(objects_dir, idx);
+                return Ok(info);
+            }
             Err(Error::ObjectNotFound(_)) => {}
             Err(err) => last_err = Some(err),
         }
@@ -3200,10 +3550,10 @@ pub(crate) fn try_read_object_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        if idx.find_offset(oid).is_none() {
+        let Some(offset) = pack_cache::find_offset_for_batch(idx.as_ref(), oid) else {
             continue;
-        }
-        match read_object_from_pack(idx, oid) {
+        };
+        match read_object_from_pack_at_offset(idx, offset) {
             Ok(obj) => {
                 pack_cache::remember_pack_hit(objects_dir, idx);
                 return Ok(obj);
@@ -4050,6 +4400,51 @@ mod tests {
         (pack, oid, off)
     }
 
+    #[test]
+    fn pack_read_info_cache_is_scoped_per_repository_and_pack_bytes() {
+        let _guard = pack_cache_test_guard();
+        clear_pack_cache();
+        const ENTRY_OFFSET: u64 = 200;
+        let dir_a = tempfile::tempdir().expect("tempdir a");
+        let dir_b = tempfile::tempdir().expect("tempdir b");
+        let objects_a = dir_a.path().join("objects");
+        let objects_b = dir_b.path().join("objects");
+        fs::create_dir_all(objects_a.join("pack")).expect("pack dir a");
+        fs::create_dir_all(objects_b.join("pack")).expect("pack dir b");
+        let pack_a = objects_a.join("pack/p-a.pack");
+        let pack_b = objects_b.join("pack/p-b.pack");
+        let (oid_a, _) =
+            write_sparse_single_blob_pack(dir_a.path(), &pack_a, b"five!", ENTRY_OFFSET)
+                .expect("pack a");
+        let (oid_b, _) =
+            write_sparse_single_blob_pack(dir_b.path(), &pack_b, b"1234567890", ENTRY_OFFSET)
+                .expect("pack b");
+        let idx_a = pack_a.with_extension("idx");
+        let idx_b = pack_b.with_extension("idx");
+        write_v2_idx_for_test(&idx_a, &pack_a, &[(oid_a, ENTRY_OFFSET)]).expect("idx a");
+        write_v2_idx_for_test(&idx_b, &pack_b, &[(oid_b, ENTRY_OFFSET)]).expect("idx b");
+        let idx_a = read_pack_index(&idx_a).expect("parse idx a");
+        let idx_b = read_pack_index(&idx_b).expect("parse idx b");
+
+        let read_size = |objects: &Path, idx: &PackIndex, oid: &ObjectId| -> u64 {
+            let store = crate::pack_store::PackStore::legacy_for_objects_dir(objects);
+            crate::pack_store::PackStore::with_context(store, || {
+                super::read_object_info_from_pack_at_offset(idx, ENTRY_OFFSET)
+                    .expect("read_info")
+                    .size
+            })
+        };
+
+        let size_a = read_size(&objects_a, &idx_a, &oid_a);
+        let size_b = read_size(&objects_b, &idx_b, &oid_b);
+        assert_eq!(size_a, 5);
+        assert_eq!(size_b, 10);
+        // A → B → A again: cache must not return B's size for A's pack entry.
+        assert_eq!(read_size(&objects_a, &idx_a, &oid_a), 5);
+        assert_eq!(read_size(&objects_b, &idx_b, &oid_b), 10);
+        assert_eq!(read_size(&objects_a, &idx_a, &oid_a), 5);
+    }
+
     /// Write a valid pack with one blob placed at `object_offset` so the on-disk file
     /// length exceeds the mmap owned-buffer threshold without storing huge compressed payloads.
     fn write_sparse_single_blob_pack(
@@ -4481,6 +4876,9 @@ mod tests {
         let Some((_tmp, idx, tip, _odb)) = build_ofs_delta_chain_pack(32) else {
             return;
         };
+        let expected = read_object_from_pack(&idx, &tip)
+            .expect("baseline read")
+            .data;
         pack_cache::test_set_delta_base_cache_byte_limit(&idx.pack_path, 4096);
         let _ = read_object_from_pack(&idx, &tip).expect("prime cache");
         assert!(
@@ -4488,6 +4886,11 @@ mod tests {
             "cache bytes {} exceeded cap",
             pack_cache::test_delta_base_cache_bytes_used(&idx.pack_path)
         );
+        pack_cache::test_set_delta_base_cache_byte_limit(&idx.pack_path, 512);
+        for round in 0..8 {
+            let got = read_object_from_pack(&idx, &tip).expect("read after eviction");
+            assert_eq!(got.data, expected, "round {round} must stay byte-identical");
+        }
         pack_cache::test_set_delta_base_cache_byte_limit(
             &idx.pack_path,
             pack_cache::DELTA_BASE_CACHE_DEFAULT,
@@ -4930,7 +5333,7 @@ mod tests {
 
     /// Hash pack bytes already written to `file` (from offset 0 through current EOF) for a SHA-1 trailer.
     fn sha1_trailer_for_open_file(file: &mut std::fs::File) -> Result<ObjectId> {
-        use std::io::{Seek, SeekFrom};
+        use std::io::{Read, Seek, SeekFrom};
         let len = file.metadata().map_err(Error::Io)?.len();
         file.seek(SeekFrom::Start(0)).map_err(Error::Io)?;
         let mut hasher = HashAlgo::Sha1.hasher();

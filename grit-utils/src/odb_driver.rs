@@ -9,52 +9,110 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_trees, unified_diff_with_prefix, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::maintenance::{write_commit_graph, CommitGraphOptions};
-use grit_lib::objects::pack::{read_object_from_pack_at_offset, read_pack_index_cached, PackIndex};
+use grit_lib::objects::pack::{
+    read_object_from_pack_at_offset, read_pack_index_cached, PackIndex, SingleLocalPackReader,
+};
 use grit_lib::objects::{parse_commit, Object, ObjectId, ObjectKind};
 use grit_lib::remote::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_list::{rev_list, RevListOptions, RevListResult};
 
+/// Parse one stdin line for `git cat-file --batch` / `--batch-check` (hex OID, optional trailing fields).
+pub(crate) fn parse_cat_file_batch_oid_line(line: &[u8]) -> Result<ObjectId> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let text = std::str::from_utf8(line).context("oid line utf-8")?;
+    ObjectId::from_hex(text).with_context(|| format!("parse oid {text}"))
+}
+
 /// Read hex object ids from stdin and emit `git cat-file --batch` lines.
 pub fn cat_file_batch(repo: &Repository) -> Result<()> {
     repo.odb().with_pack_read_context(|| {
-        let stdin = io::stdin();
-        let mut stdout = io::stdout().lock();
-        for line in stdin.lock().lines() {
-            let line = line.context("read oid line")?;
-            let hex = line.trim();
-            if hex.is_empty() {
+        let mut stdin = io::stdin().lock();
+        let mut stdout = BufWriter::with_capacity(1 << 20, io::stdout().lock());
+        let mut line = Vec::with_capacity(64);
+        let mut fast =
+            SingleLocalPackReader::open(repo.odb().objects_dir()).context("single-pack reader")?;
+        loop {
+            line.clear();
+            let n = stdin
+                .read_until(b'\n', &mut line)
+                .context("read oid line")?;
+            if n == 0 {
+                break;
+            }
+            if line.iter().all(|b| b.is_ascii_whitespace()) {
                 continue;
             }
-            let oid = ObjectId::from_hex(hex).with_context(|| format!("parse oid {hex}"))?;
-            write_batch_object(&mut stdout, repo, &oid)?;
+            let hex = line.strip_suffix(b"\n").unwrap_or(&line);
+            let hex_str = std::str::from_utf8(hex).context("oid line utf-8")?;
+            let Ok(oid) = parse_cat_file_batch_oid_line(&line) else {
+                writeln!(stdout, "{hex_str} missing")?;
+                continue;
+            };
+            if let Some(reader) = fast.as_mut() {
+                match reader.read_object(&oid) {
+                    Ok(object) => write_batch_object_body(&mut stdout, hex, &object)?,
+                    Err(Error::ObjectNotFound(_)) => {
+                        write_batch_object(&mut stdout, repo, hex, &oid)?;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            } else {
+                write_batch_object(&mut stdout, repo, hex, &oid)?;
+            }
         }
+        stdout.flush()?;
         Ok(())
     })
 }
 
 /// Read hex object ids from stdin and emit `git cat-file --batch-check` lines.
 pub fn cat_file_batch_check(repo: &Repository) -> Result<()> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let line = line.context("read oid line")?;
-        let hex = line.trim();
-        if hex.is_empty() {
-            continue;
-        }
-        let oid = ObjectId::from_hex(hex).with_context(|| format!("parse oid {hex}"))?;
-        match repo.odb().read_info(&oid) {
-            Ok(info) => {
-                writeln!(stdout, "{oid} {} {}", info.kind.as_str(), info.size)?;
+    repo.odb().with_pack_read_context(|| {
+        let mut stdin = io::stdin().lock();
+        let mut stdout = BufWriter::with_capacity(1 << 20, io::stdout().lock());
+        let mut line = Vec::with_capacity(64);
+        let mut fast =
+            SingleLocalPackReader::open(repo.odb().objects_dir()).context("single-pack reader")?;
+        loop {
+            line.clear();
+            let n = stdin
+                .read_until(b'\n', &mut line)
+                .context("read oid line")?;
+            if n == 0 {
+                break;
             }
-            Err(Error::ObjectNotFound(_)) => {
-                writeln!(stdout, "{oid} missing")?;
+            if line.iter().all(|b| b.is_ascii_whitespace()) {
+                continue;
             }
-            Err(e) => return Err(e.into()),
+            let hex = line.strip_suffix(b"\n").unwrap_or(&line);
+            let hex_str = std::str::from_utf8(hex).context("oid line utf-8")?;
+            let Ok(oid) = parse_cat_file_batch_oid_line(&line) else {
+                writeln!(stdout, "{hex_str} missing")?;
+                continue;
+            };
+            let info_result = if let Some(reader) = fast.as_mut() {
+                match reader.read_info(&oid) {
+                    Ok(info) => Ok(info),
+                    Err(Error::ObjectNotFound(_)) => repo.odb().read_info(&oid),
+                    Err(e) => Err(e),
+                }
+            } else {
+                repo.odb().read_info(&oid)
+            };
+            match info_result {
+                Ok(info) => {
+                    writeln!(stdout, "{hex_str} {} {}", info.kind.as_str(), info.size)?;
+                }
+                Err(Error::ObjectNotFound(_)) => {
+                    writeln!(stdout, "{hex_str} missing")?;
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
-    }
-    Ok(())
+        stdout.flush()?;
+        Ok(())
+    })
 }
 
 /// Emit every packed object in pack-file offset order (like `cat-file --batch-all-objects --unordered`).
@@ -90,22 +148,33 @@ fn emit_pack_in_offset_order(out: &mut impl Write, idx: &PackIndex) -> Result<()
         let oid = ObjectId::from_bytes(idx.oid_at(i)).context("pack entry oid")?;
         let object = read_object_from_pack_at_offset(idx, offset)
             .with_context(|| format!("read packed object at offset {offset}"))?;
-        write_batch_object_body(out, &oid, &object)?;
+        let hex = oid.to_hex();
+        write_batch_object_body(out, hex.as_bytes(), &object)?;
     }
     Ok(())
 }
 
-fn write_batch_object(out: &mut impl Write, repo: &Repository, oid: &ObjectId) -> Result<()> {
-    let object = repo
-        .odb()
-        .read(oid)
-        .with_context(|| format!("read {oid}"))?;
-    write_batch_object_body(out, oid, &object)
+fn write_batch_object(
+    out: &mut impl Write,
+    repo: &Repository,
+    hex: &[u8],
+    oid: &ObjectId,
+) -> Result<()> {
+    let hex_str = std::str::from_utf8(hex).context("oid line utf-8")?;
+    match repo.odb().read(oid) {
+        Ok(object) => write_batch_object_body(out, hex, &object),
+        Err(Error::ObjectNotFound(_)) => {
+            writeln!(out, "{hex_str} missing")?;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
-fn write_batch_object_body(out: &mut impl Write, oid: &ObjectId, object: &Object) -> Result<()> {
+fn write_batch_object_body(out: &mut impl Write, hex: &[u8], object: &Object) -> Result<()> {
     let kind = object.kind.as_str();
-    writeln!(out, "{oid} {kind} {}", object.data.len())?;
+    let hex = std::str::from_utf8(hex).context("oid line utf-8")?;
+    writeln!(out, "{hex} {kind} {}", object.data.len())?;
     out.write_all(&object.data)?;
     out.write_all(b"\n")?;
     Ok(())
