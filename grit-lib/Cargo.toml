@@ -139,6 +139,10 @@ name = "pack_bitmap"
 harness = false
 
 [[bench]]
+name = "pack_write"
+harness = false
+
+[[bench]]
 name = "refs_files"
 harness = false
 

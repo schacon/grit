@@ -37,6 +37,21 @@ Criterion measures [`Odb::read`](https://docs.rs/grit-lib/latest/grit_lib/odb/st
 
 An additional benchmark, **`odb_backend/exists_miss_loop_10k`**, calls `exists` on 10 000 distinct missing OIDs against the 100k pack fixture (models add/status miss scans).
 
+## grit-lib: pack write (100k reuse vs fresh)
+
+Criterion group **`pack`** (`cargo bench -p grit-lib --bench pack_write`) rebuilds the full closure of the repacked **`pack_100k`** fixture (~100 000 objects) via [`build_pack_with_parallel_threads`](https://docs.rs/grit-lib/latest/grit_lib/objects/pack_objects/fn.build_pack_with_parallel_threads.html):
+
+| Benchmark | What it measures |
+| --- | --- |
+| **`write_100k_reuse`** | Delta planning with on-disk delta and whole-object reuse (`PackBuildOptions::for_local_copy`, bitmaps off) |
+| **`write_100k_fresh`** | Same window/depth but **`reuse_objects`** and **`reuse_deltas`** disabled (recompress and re-delta everything) |
+
+Throughput is reported in objects per second using the **emitted** pack header count from a probe rebuild of the full closure from the fixture **history tip** (cached repo `HEAD` or the generated repo tip), not the midpoint `hit` OID used for ODB read micro-benchmarks. Each iteration asserts that count matches the probe. Populate **`GRIT_BENCH_ODB_CACHE`** (or run **`grit-bench odb-backend`** once) so the fixture reuses the cached repacked repo instead of rebuilding 100k commits inline.
+
+```bash
+cargo bench -p grit-lib --bench pack_write -- write_100k
+```
+
 Command-level ODB scenarios on the repacked **100k-file / 1000-commit** synthetic repo live in **`grit-utils/baselines/odb-backend-before.json`** and **`grit-utils/baselines/odb-backend-after.json`** (`grit-bench odb-backend`): library drivers (`grit-bench drive …`) vs **`git cat-file --batch`**, **`git cat-file --batch-check`**, and **`git rev-list --objects --all`** on the same sorted OID stdin list where applicable.
 
 ```bash
