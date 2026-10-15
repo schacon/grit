@@ -2766,6 +2766,11 @@ pub struct DiffIndexToWorktreeOptions {
     pub command_runner: Option<std::sync::Arc<dyn crate::command_runner::CommandRunner>>,
     /// When set, used as the hook protocol v1 query boundary; otherwise [`crate::environment::wall_clock_unix_timestamp_nanos`] is sampled once per diff.
     pub fsmonitor_query_boundary: Option<crate::fsmonitor::FsmonitorQueryBoundary>,
+    /// When set, only index paths in this set are compared against the work tree.
+    ///
+    /// Used by branch switch to verify dirty paths only where the tree-to-tree diff would
+    /// update the worktree, avoiding a full tracked scan on large indexes.
+    pub restrict_to_paths: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
 }
 
 impl Default for DiffIndexToWorktreeOptions {
@@ -2785,6 +2790,7 @@ impl Default for DiffIndexToWorktreeOptions {
             refresh_fsmonitor: true,
             command_runner: None,
             fsmonitor_query_boundary: None,
+            restrict_to_paths: None,
         }
     }
 }
@@ -3210,6 +3216,11 @@ fn diff_index_to_worktree_inner(
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+        if let Some(limit) = &options.restrict_to_paths {
+            if !limit.contains(path_str_ref) {
+                continue;
+            }
+        }
         let is_intent_to_add = ie.intent_to_add();
 
         // Gitlink entries (submodules): Git's `diff-index` reports `M` when the recorded
