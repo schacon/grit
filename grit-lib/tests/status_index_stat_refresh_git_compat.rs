@@ -90,6 +90,45 @@ fn touch_all_tracked(repo: &Path) {
 }
 
 #[test]
+fn refreshed_index_matches_git_ls_files_debug() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path();
+    git(repo_root, &["init", "-q", "-b", "main", "."]);
+    git(repo_root, &["config", "user.email", "t@example.com"]);
+    git(repo_root, &["config", "user.name", "Test"]);
+    fs::write(repo_root.join("tracked.txt"), "payload\n").expect("write");
+    git(repo_root, &["add", "tracked.txt"]);
+    git(repo_root, &["commit", "-qm", "initial"]);
+
+    std::thread::sleep(Duration::from_secs(1));
+    filetime::set_file_mtime(repo_root.join("tracked.txt"), filetime::FileTime::now())
+        .expect("touch");
+
+    let grit_repo = Repository::open(
+        &repo_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(repo_root),
+    )
+    .expect("open grit repo");
+    let _model = status(&grit_repo, &StatusOptions::default(), &mut NullProgress).expect("status");
+
+    let git_debug = Command::new("git")
+        .args(["ls-files", "-s", "--debug"])
+        .current_dir(repo_root)
+        .output()
+        .expect("git ls-files --debug");
+    assert!(
+        git_debug.status.success(),
+        "git ls-files --debug must read grit-written index: {}",
+        String::from_utf8_lossy(&git_debug.stderr)
+    );
+    let porcelain = git(repo_root, &["status", "--porcelain"]);
+    assert!(
+        porcelain.trim().is_empty(),
+        "git status --porcelain must stay clean after grit refresh"
+    );
+}
+
+#[test]
 fn status_refreshes_index_stat_after_touch_and_second_run_is_faster() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_root = tmp.path();

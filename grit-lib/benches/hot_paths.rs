@@ -96,6 +96,26 @@ fn bench_pick_paths(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_status_clean_100k(c: &mut Criterion) {
+    let fx = HotPathsFixture::heavy();
+    fx.ensure_clean_stat_cache();
+    let mut group = c.benchmark_group("status/clean_100k");
+    group.bench_function("grit_lib", |b| {
+        b.iter(|| black_box(fx.bench_status_clean()));
+    });
+    group.finish();
+}
+
+fn bench_diff_worktree_clean_10k(c: &mut Criterion) {
+    let fx = HotPathsFixture::large();
+    fx.ensure_clean_stat_cache();
+    let mut group = c.benchmark_group("diff/worktree_clean_10k");
+    group.bench_function("grit_lib", |b| {
+        b.iter(|| black_box(fx.bench_diff_worktree_clean()));
+    });
+    group.finish();
+}
+
 fn bench_staging_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("staging_scan_5_modified");
     for (label, fx) in [
@@ -121,6 +141,8 @@ criterion_group!(
     config = Criterion::default().sample_size(10);
     targets = bench_index_mutate,
     bench_checkout,
+    bench_status_clean_100k,
+    bench_diff_worktree_clean_10k,
     bench_staging_scan,
     bench_push_stash_group,
     bench_apply_stash_group,
