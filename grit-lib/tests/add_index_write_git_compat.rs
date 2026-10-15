@@ -85,6 +85,7 @@ fn cache_tree_after_add_matches_git_write_tree() {
         pathspecs: Vec::new(),
         pathspec_sources: Vec::new(),
         mode: StageMode::All,
+        ..StageOptions::default()
     };
     stage(&grit, &opts, &mut NullProgress).expect("grit add");
 
