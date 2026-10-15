@@ -25,7 +25,10 @@ use crate::porcelain::index_mode::{
     apply_executable_hint_to_index, staged_mode_with_hint, StageExecutableHint,
 };
 use crate::porcelain::pathspec_match::pathspec_matches_known_in_repository;
-use crate::porcelain::stage_tracked::stage_tracked_modifications_in_index;
+use crate::porcelain::bulk_index::IndexStagingThresholds;
+use crate::porcelain::stage_tracked::{
+    replay_deferred_untracked_invalidations, stage_tracked_modifications_in_index_with_rules,
+};
 use crate::porcelain::status::{
     collect_untracked_and_ignored_inner, expand_untracked_for_staging_with_rules, IgnoredMode,
     UntrackedScan,
@@ -62,6 +65,9 @@ pub struct StageOptions {
     pub mode: StageMode,
     /// Force executable or non-executable mode for explicitly listed regular files (see [`StageExecutableHint`]).
     pub executable_hint: StageExecutableHint,
+    /// Override bulk/parallel staging thresholds (integration tests only).
+    #[doc(hidden)]
+    pub staging_thresholds: Option<IndexStagingThresholds>,
 }
 
 /// Counts returned by [`stage`].
@@ -87,7 +93,7 @@ impl StageOutcome {
 
 /// Stage every tracked and untracked change for [`crate::porcelain::commit`].
 ///
-/// Uses the stat-trust tracked scan from [`stage_tracked_modifications_in_index`] instead of
+/// Uses the stat-trust tracked scan from [`stage_tracked_modifications_in_index_with_rules`] instead of
 /// the diff-for-staging pipeline, then stages untracked paths the same way as [`stage`] with
 /// [`StageMode::All`].
 ///
@@ -175,13 +181,26 @@ fn stage_inner(
         .unwrap_or(false);
     let mut icase_map = Stage0IcasePathMap::from_index(&index, ignorecase);
 
+    let staging_thresholds = opts
+        .staging_thresholds
+        .unwrap_or_default();
     let use_tracked_scan = tracked_scan && !index.entries.is_empty() && !ignorecase;
     let mut tracked_scan_summary = None;
     let (unstaged, staging_stats) = if index.entries.is_empty() {
         (Vec::new(), std::collections::BTreeMap::new())
     } else if use_tracked_scan {
-        let summary =
-            stage_tracked_modifications_in_index(repo, work_tree, &index_path, &mut index)?;
+        let mut rules_guard = lock_rules(&rules_arc)?;
+        let summary = stage_tracked_modifications_in_index_with_rules(
+            repo,
+            work_tree,
+            &index_path,
+            &mut index,
+            &mut rules_guard,
+            staging_thresholds,
+        )?;
+        if summary.untracked_invalidation_deferred {
+            replay_deferred_untracked_invalidations(&mut index, &summary);
+        }
         tracked_scan_summary = Some(summary);
         (Vec::new(), std::collections::BTreeMap::new())
     } else {
@@ -258,9 +277,6 @@ fn stage_inner(
     let matches =
         |path: &str| opts.pathspecs.is_empty() || repo.paths_match_pathspecs(path, &opts.pathspecs);
 
-    let indexed_any_stage: HashSet<Vec<u8>> =
-        index.entries.iter().map(|e| e.path.clone()).collect();
-
     let mut outcome = StageOutcome::default();
     let has_unmerged = index.has_unmerged_entries();
     let unmerged_only_paths: HashSet<Vec<u8>> = if has_unmerged {
@@ -311,28 +327,22 @@ fn stage_inner(
             stage_ignorecase_spelling_updates(work_tree, &icase_map, &matches, &mut index)?;
     }
 
-    stage_untracked_paths_parallel(
-        repo,
-        work_tree,
-        &untracked,
-        &matches,
-        &indexed_any_stage,
-        &rules,
-        &mut icase_map,
-        &mut index,
-        parallelism,
-        opts.executable_hint,
-        &mut outcome,
-    )?;
-
-    if let Some(summary) = &tracked_scan_summary {
-        if index.entries.len() >= 80_000 {
-            for raw in summary.modified.iter().chain(summary.removed.iter()) {
-                if let Ok(path) = std::str::from_utf8(raw) {
-                    index.invalidate_untracked_cache_for_path(path);
-                }
-            }
-        }
+    if !untracked.is_empty() {
+        let indexed_any_stage: HashSet<Vec<u8>> =
+            index.entries.iter().map(|e| e.path.clone()).collect();
+        stage_untracked_paths_parallel(
+            repo,
+            work_tree,
+            &untracked,
+            &matches,
+            &indexed_any_stage,
+            &rules,
+            &mut icase_map,
+            &mut index,
+            parallelism,
+            opts.executable_hint,
+            &mut outcome,
+        )?;
     }
 
     if has_unmerged && !opts.pathspecs.is_empty() {
@@ -346,7 +356,7 @@ fn stage_inner(
     }
 
     if outcome.total() > 0 {
-        index.sort();
+        index.ensure_canonical_order();
         repo.write_index(&mut index)?;
     }
 
@@ -723,7 +733,13 @@ fn stage_untracked_paths_parallel(
     let _written: Vec<ObjectId> = try_par_hash_with(&prepared, threads, write_bytes, |prep| {
         repo.odb()
             .write_loose_zlib_prehashed(&prep.oid, &prep.zlib_store, write_opts)
-            .map_err(|e| Error::Message(format!("could not store {}: {e}", prep.index_relpath)))
+            .map_err(|e| match e {
+                Error::Io(source) => Error::LooseObjectWrite {
+                    path: prep.index_relpath.clone(),
+                    source,
+                },
+                other => other,
+            })
     })
     .map_err(|e: ParallelHashError<Error>| match e {
         ParallelHashError::Task(err) => err,
@@ -754,16 +770,15 @@ fn stage_untracked_paths_parallel(
         batch_entries.push(entry);
         outcome.added += 1;
     }
-    if !batch_entries.is_empty() {
-        for entry in &batch_entries {
-            if let Ok(rel) = std::str::from_utf8(&entry.path) {
-                mark_fsmonitor_staged(index, rel);
-            }
+    let staged_batch_count = batch_entries.len();
+    for entry in batch_entries {
+        if let Ok(rel) = std::str::from_utf8(&entry.path) {
+            mark_fsmonitor_staged(index, rel);
         }
-        index.entries.extend(batch_entries);
-        if index.fsmonitor_last_update.is_some() {
-            index.fsmonitor_validity_changed();
-        }
+        index.add_or_replace(entry);
+    }
+    if staged_batch_count > 0 && index.fsmonitor_last_update.is_some() {
+        index.fsmonitor_validity_changed();
     }
 
     for path in deferred {

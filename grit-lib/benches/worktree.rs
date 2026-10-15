@@ -101,6 +101,7 @@ fn bench_index_write(c: &mut Criterion) {
         group.throughput(Throughput::Elements(index.entries().len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), index, |b, idx| {
             b.iter(|| {
+                let mut idx = idx.clone();
                 idx.write(&fx.index_write_scratch)
                     .expect("write index bench");
             });
@@ -116,6 +117,7 @@ fn bench_index_write_100k(c: &mut Criterion) {
         group.throughput(Throughput::Elements(100_000));
         group.bench_with_input(BenchmarkId::from_parameter(label), index, |b, idx| {
             b.iter(|| {
+                let mut idx = idx.clone();
                 idx.write(&fx.index_write_scratch)
                     .expect("write index bench");
             });
@@ -128,11 +130,7 @@ fn bench_add_stage_all_100k(c: &mut Criterion) {
     let fx = WorktreeBenchFixtures::global();
     let repo = &fx.scan_repo_100k;
     let wt = repo.work_tree().expect("work tree");
-    let opts = StageOptions {
-        pathspecs: Vec::new(),
-        pathspec_sources: Vec::new(),
-        mode: StageMode::All,
-    };
+    let opts = StageOptions::default();
     let mut progress = NullProgress;
     let mut group = c.benchmark_group("add/stage_all_100k");
     group.throughput(Throughput::Elements(100_000));

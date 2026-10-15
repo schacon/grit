@@ -3366,6 +3366,9 @@ pub grit_lib::error::Error::Io(core::io::error::Error)
 pub grit_lib::error::Error::LooseHashMismatch
 pub grit_lib::error::Error::LooseHashMismatch::path: alloc::string::String
 pub grit_lib::error::Error::LooseHashMismatch::real_oid: alloc::string::String
+pub grit_lib::error::Error::LooseObjectWrite
+pub grit_lib::error::Error::LooseObjectWrite::path: alloc::string::String
+pub grit_lib::error::Error::LooseObjectWrite::source: core::io::error::Error
 pub grit_lib::error::Error::MergeCommit
 pub grit_lib::error::Error::MergeCommit::oid: grit_lib::objects::ObjectId
 pub grit_lib::error::Error::Message(alloc::string::String)
@@ -4044,6 +4047,7 @@ pub fn grit_lib::index::Index::clear_resolve_undo(&mut self)
 pub fn grit_lib::index::Index::dedup_paths_keep_last(&mut self)
 pub fn grit_lib::index::Index::dump_cache_tree(&self, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::index::Index::empty(u32) -> Self
+pub fn grit_lib::index::Index::ensure_canonical_order(&mut self)
 pub fn grit_lib::index::Index::entries(&self) -> &[grit_lib::index::IndexEntry]
 pub fn grit_lib::index::Index::entries_are_sorted(&self) -> bool
 pub fn grit_lib::index::Index::entries_mut(&mut self) -> &mut alloc::vec::Vec<grit_lib::index::IndexEntry>
@@ -4085,10 +4089,10 @@ pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
 pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
-pub fn grit_lib::index::Index::write(&self, &std::path::Path) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_to_path(&self, &std::path::Path, bool) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_with_config(&self, &std::path::Path, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_with_config_and_policy(&self, &std::path::Path, &grit_lib::config::ConfigSet, grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_with_config(&mut self, &std::path::Path, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_with_config_and_policy(&mut self, &std::path::Path, &grit_lib::config::ConfigSet, grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<()>
 impl core::clone::Clone for grit_lib::index::Index
 pub fn grit_lib::index::Index::clone(&self) -> Self
 impl core::default::Default for grit_lib::index::Index
@@ -7698,11 +7702,11 @@ impl core::marker::Unpin for grit_lib::objects::TreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::TreeEntry
-pub fn grit_lib::objects::read_commit_subject_line(&[u8]) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::objects::parse_commit(&[u8]) -> grit_lib::error::Result<grit_lib::objects::CommitData>
 pub fn grit_lib::objects::parse_tag(&[u8]) -> grit_lib::error::Result<grit_lib::objects::TagData>
 pub fn grit_lib::objects::parse_tree(&[u8]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::TreeEntry>>
 pub fn grit_lib::objects::parse_tree_with_oid_len(&[u8], usize) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::TreeEntry>>
+pub fn grit_lib::objects::read_commit_subject_line(&[u8]) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::objects::serialize_commit(&grit_lib::objects::CommitData) -> alloc::vec::Vec<u8>
 pub fn grit_lib::objects::serialize_tag(&grit_lib::objects::TagData) -> alloc::vec::Vec<u8>
 pub fn grit_lib::objects::serialize_tree(&[grit_lib::objects::TreeEntry]) -> alloc::vec::Vec<u8>
@@ -8526,9 +8530,31 @@ pub fn grit_lib::porcelain::revert::committer_timestamp(&str) -> i64
 pub fn grit_lib::porcelain::revert::merge_commit_message_for_revert(&grit_lib::objects::CommitData, grit_lib::objects::ObjectId, bool, char) -> (alloc::string::String, alloc::string::String)
 pub fn grit_lib::porcelain::revert::revision_set_newest_first(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub mod grit_lib::porcelain::stage_tracked
+pub struct grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+pub grit_lib::porcelain::stage_tracked::IndexStagingThresholds::large_index_restage: usize
+pub grit_lib::porcelain::stage_tracked::IndexStagingThresholds::parallel_tracked_restage: usize
+impl core::clone::Clone for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+pub fn grit_lib::porcelain::stage_tracked::IndexStagingThresholds::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::cmp::PartialEq for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+pub fn grit_lib::porcelain::stage_tracked::IndexStagingThresholds::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+pub fn grit_lib::porcelain::stage_tracked::IndexStagingThresholds::default() -> Self
+impl core::fmt::Debug for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+pub fn grit_lib::porcelain::stage_tracked::IndexStagingThresholds::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::StructuralPartialEq for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::Freeze for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::Send for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::Sync for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::Unpin for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::marker::UnsafeUnpin for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::stage_tracked::IndexStagingThresholds
 pub struct grit_lib::porcelain::stage_tracked::StageTrackedSummary
 pub grit_lib::porcelain::stage_tracked::StageTrackedSummary::modified: alloc::vec::Vec<alloc::vec::Vec<u8>>
 pub grit_lib::porcelain::stage_tracked::StageTrackedSummary::removed: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub grit_lib::porcelain::stage_tracked::StageTrackedSummary::untracked_invalidation_deferred: bool
 impl grit_lib::porcelain::stage_tracked::StageTrackedSummary
 pub fn grit_lib::porcelain::stage_tracked::StageTrackedSummary::change_count(&self) -> usize
 impl core::clone::Clone for grit_lib::porcelain::stage_tracked::StageTrackedSummary
@@ -8548,8 +8574,11 @@ impl core::marker::Unpin for grit_lib::porcelain::stage_tracked::StageTrackedSum
 impl core::marker::UnsafeUnpin for grit_lib::porcelain::stage_tracked::StageTrackedSummary
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::stage_tracked::StageTrackedSummary
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::stage_tracked::StageTrackedSummary
+pub fn grit_lib::porcelain::stage_tracked::replay_deferred_untracked_invalidations(&mut grit_lib::index::Index, &grit_lib::porcelain::stage_tracked::StageTrackedSummary)
 pub fn grit_lib::porcelain::stage_tracked::stage_tracked_modifications(&grit_lib::repo::Repository, &std::path::Path) -> grit_lib::error::Result<grit_lib::porcelain::stage_tracked::StageTrackedSummary>
 pub fn grit_lib::porcelain::stage_tracked::stage_tracked_modifications_in_index(&grit_lib::repo::Repository, &std::path::Path, &std::path::Path, &mut grit_lib::index::Index) -> grit_lib::error::Result<grit_lib::porcelain::stage_tracked::StageTrackedSummary>
+pub fn grit_lib::porcelain::stage_tracked::stage_tracked_modifications_in_index_with_thresholds(&grit_lib::repo::Repository, &std::path::Path, &std::path::Path, &mut grit_lib::index::Index, grit_lib::porcelain::stage_tracked::IndexStagingThresholds) -> grit_lib::error::Result<grit_lib::porcelain::stage_tracked::StageTrackedSummary>
+pub fn grit_lib::porcelain::stage_tracked::stage_tracked_modifications_with_thresholds(&grit_lib::repo::Repository, &std::path::Path, grit_lib::porcelain::stage_tracked::IndexStagingThresholds) -> grit_lib::error::Result<grit_lib::porcelain::stage_tracked::StageTrackedSummary>
 pub mod grit_lib::porcelain::staging
 pub fn grit_lib::porcelain::staging::stage_worktree_changes(&grit_lib::repo::Repository, &[alloc::string::String]) -> grit_lib::error::Result<usize>
 pub mod grit_lib::porcelain::stash
@@ -8952,6 +8981,9 @@ pub grit_lib::prelude::Error::Io(core::io::error::Error)
 pub grit_lib::prelude::Error::LooseHashMismatch
 pub grit_lib::prelude::Error::LooseHashMismatch::path: alloc::string::String
 pub grit_lib::prelude::Error::LooseHashMismatch::real_oid: alloc::string::String
+pub grit_lib::prelude::Error::LooseObjectWrite
+pub grit_lib::prelude::Error::LooseObjectWrite::path: alloc::string::String
+pub grit_lib::prelude::Error::LooseObjectWrite::source: core::io::error::Error
 pub grit_lib::prelude::Error::MergeCommit
 pub grit_lib::prelude::Error::MergeCommit::oid: grit_lib::objects::ObjectId
 pub grit_lib::prelude::Error::Message(alloc::string::String)
@@ -9439,6 +9471,7 @@ pub fn grit_lib::index::Index::clear_resolve_undo(&mut self)
 pub fn grit_lib::index::Index::dedup_paths_keep_last(&mut self)
 pub fn grit_lib::index::Index::dump_cache_tree(&self, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<alloc::string::String>
 pub fn grit_lib::index::Index::empty(u32) -> Self
+pub fn grit_lib::index::Index::ensure_canonical_order(&mut self)
 pub fn grit_lib::index::Index::entries(&self) -> &[grit_lib::index::IndexEntry]
 pub fn grit_lib::index::Index::entries_are_sorted(&self) -> bool
 pub fn grit_lib::index::Index::entries_mut(&mut self) -> &mut alloc::vec::Vec<grit_lib::index::IndexEntry>
@@ -9480,10 +9513,10 @@ pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
 pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
-pub fn grit_lib::index::Index::write(&self, &std::path::Path) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_to_path(&self, &std::path::Path, bool) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_with_config(&self, &std::path::Path, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<()>
-pub fn grit_lib::index::Index::write_with_config_and_policy(&self, &std::path::Path, &grit_lib::config::ConfigSet, grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_with_config(&mut self, &std::path::Path, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::write_with_config_and_policy(&mut self, &std::path::Path, &grit_lib::config::ConfigSet, grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<()>
 impl core::clone::Clone for grit_lib::index::Index
 pub fn grit_lib::index::Index::clone(&self) -> Self
 impl core::default::Default for grit_lib::index::Index
