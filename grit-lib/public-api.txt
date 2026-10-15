@@ -3004,6 +3004,27 @@ impl core::marker::Unpin for grit_lib::diff::DiffStatus
 impl core::marker::UnsafeUnpin for grit_lib::diff::DiffStatus
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::DiffStatus
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffStatus
+pub enum grit_lib::diff::LogPatchCommitHeader
+pub grit_lib::diff::LogPatchCommitHeader::FormatPercentH
+pub grit_lib::diff::LogPatchCommitHeader::Full
+impl core::clone::Clone for grit_lib::diff::LogPatchCommitHeader
+pub fn grit_lib::diff::LogPatchCommitHeader::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::LogPatchCommitHeader
+impl core::cmp::PartialEq for grit_lib::diff::LogPatchCommitHeader
+pub fn grit_lib::diff::LogPatchCommitHeader::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::diff::LogPatchCommitHeader
+pub fn grit_lib::diff::LogPatchCommitHeader::default() -> Self
+impl core::fmt::Debug for grit_lib::diff::LogPatchCommitHeader
+pub fn grit_lib::diff::LogPatchCommitHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::StructuralPartialEq for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::Freeze for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::Send for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::Sync for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::Unpin for grit_lib::diff::LogPatchCommitHeader
+impl core::marker::UnsafeUnpin for grit_lib::diff::LogPatchCommitHeader
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::LogPatchCommitHeader
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::LogPatchCommitHeader
 pub enum grit_lib::diff::WorktreeAddRefresh
 pub grit_lib::diff::WorktreeAddRefresh::ModeOnly
 pub grit_lib::diff::WorktreeAddRefresh::ModeOnly::mode: u32
@@ -3134,6 +3155,49 @@ impl<'a> core::marker::Unpin for grit_lib::diff::DiffPostprocessWorktree<'a>
 impl<'a> core::marker::UnsafeUnpin for grit_lib::diff::DiffPostprocessWorktree<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::DiffPostprocessWorktree<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffPostprocessWorktree<'a>
+pub struct grit_lib::diff::LogPatchDiffOptions
+pub grit_lib::diff::LogPatchDiffOptions::algorithm: similar::types::Algorithm
+pub grit_lib::diff::LogPatchDiffOptions::context_lines: usize
+pub grit_lib::diff::LogPatchDiffOptions::indent_heuristic: bool
+pub grit_lib::diff::LogPatchDiffOptions::inter_hunk_context: usize
+pub grit_lib::diff::LogPatchDiffOptions::use_git_histogram: bool
+impl grit_lib::diff::LogPatchDiffOptions
+pub fn grit_lib::diff::LogPatchDiffOptions::from_config(&grit_lib::config::ConfigSet) -> Self
+impl core::clone::Clone for grit_lib::diff::LogPatchDiffOptions
+pub fn grit_lib::diff::LogPatchDiffOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::LogPatchDiffOptions
+impl core::cmp::PartialEq for grit_lib::diff::LogPatchDiffOptions
+pub fn grit_lib::diff::LogPatchDiffOptions::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::diff::LogPatchDiffOptions
+pub fn grit_lib::diff::LogPatchDiffOptions::default() -> Self
+impl core::fmt::Debug for grit_lib::diff::LogPatchDiffOptions
+pub fn grit_lib::diff::LogPatchDiffOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::StructuralPartialEq for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::Freeze for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::Send for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::Sync for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::Unpin for grit_lib::diff::LogPatchDiffOptions
+impl core::marker::UnsafeUnpin for grit_lib::diff::LogPatchDiffOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::LogPatchDiffOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::LogPatchDiffOptions
+pub struct grit_lib::diff::LogPatchOptions
+pub grit_lib::diff::LogPatchOptions::abbrev_len: usize
+pub grit_lib::diff::LogPatchOptions::commit_header: grit_lib::diff::LogPatchCommitHeader
+pub grit_lib::diff::LogPatchOptions::diff: grit_lib::diff::LogPatchDiffOptions
+impl grit_lib::diff::LogPatchOptions
+pub fn grit_lib::diff::LogPatchOptions::git_default(&grit_lib::config::ConfigSet) -> Self
+impl core::clone::Clone for grit_lib::diff::LogPatchOptions
+pub fn grit_lib::diff::LogPatchOptions::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::diff::LogPatchOptions
+pub fn grit_lib::diff::LogPatchOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::diff::LogPatchOptions
+impl core::marker::Send for grit_lib::diff::LogPatchOptions
+impl core::marker::Sync for grit_lib::diff::LogPatchOptions
+impl core::marker::Unpin for grit_lib::diff::LogPatchOptions
+impl core::marker::UnsafeUnpin for grit_lib::diff::LogPatchOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::LogPatchOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::LogPatchOptions
 pub struct grit_lib::diff::SubmodulePorcelainFlags
 pub grit_lib::diff::SubmodulePorcelainFlags::modified: bool
 pub grit_lib::diff::SubmodulePorcelainFlags::new_commits: bool
@@ -3309,6 +3373,11 @@ pub fn grit_lib::diff::unified_diff_with_prefix_and_funcname(&str, &str, &str, &
 pub fn grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(&str, &str, &str, &str, usize, usize, &str, &str, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, similar::types::Algorithm, bool, bool, bool, bool) -> alloc::string::String
 pub fn grit_lib::diff::word_diff_ops_imara(&[&str], &[&str]) -> alloc::vec::Vec<similar::types::DiffOp>
 pub fn grit_lib::diff::worktree_differs_from_index_entry(&grit_lib::objects::odb::Odb, &std::path::Path, &std::path::Path, &grit_lib::index::IndexEntry, bool, core::option::Option<&grit_lib::config::ConfigSet>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> grit_lib::error::Result<bool>
+pub fn grit_lib::diff::write_commit_header_and_message<W: core::io::write::Write>(&mut W, &str, &str) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_commit_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &grit_lib::objects::ObjectId, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_commits_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &[grit_lib::objects::ObjectId], &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_diff_entry_log_patch<W: core::io::write::Write>(&mut W, &grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::diff::DiffEntry, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_unified_diff_with_prefix_and_funcname_and_algorithm<W: core::io::write::Write>(&mut W, &str, &str, &str, &str, usize, usize, &str, &str, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, similar::types::Algorithm, bool, bool, bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::zero_oid() -> grit_lib::objects::ObjectId
 pub mod grit_lib::error
 #[non_exhaustive] pub enum grit_lib::error::ApplyError
@@ -7329,6 +7398,7 @@ impl core::marker::Unpin for grit_lib::objects::pack::StreamingReuse
 impl core::marker::UnsafeUnpin for grit_lib::objects::pack::StreamingReuse
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack::StreamingReuse
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack::StreamingReuse
+||||||| Common ancestor
 pub struct grit_lib::objects::pack::VerifyObjectRecord
 pub grit_lib::objects::pack::VerifyObjectRecord::base_oid: core::option::Option<alloc::vec::Vec<u8>>
 pub grit_lib::objects::pack::VerifyObjectRecord::base_pack_offset: core::option::Option<u64>
