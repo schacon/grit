@@ -1499,10 +1499,7 @@ pub fn status(
         && head_tree
             .as_ref()
             .is_some_and(|t| index.cache_tree_root.as_ref() == Some(t))
-        && index
-            .cache_tree
-            .as_ref()
-            .is_some_and(crate::index::CacheTreeNode::is_valid)
+        && crate::write_tree::cache_tree_extension_valid(index.cache_tree.as_ref())
     {
         Vec::new()
     } else {

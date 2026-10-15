@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::filter_process::FilterProcessState;
 use crate::ignore::IgnoreMatcher;
 use crate::index::Index;
+use crate::objects::ObjectId;
 use crate::odb::Odb;
 use crate::repo::Repository;
 use crate::repo_caches::RepoCaches;
@@ -96,7 +97,8 @@ struct AttributeState {
     work_tree: PathBuf,
     _git_dir: PathBuf,
     odb: Odb,
-    index: Index,
+    /// Stage-0 `.gitattributes` paths recorded in the index (path → blob oid).
+    gitattributes_index: HashMap<Vec<u8>, ObjectId>,
     /// When true, nested and root `.gitattributes` come only from [`Index`] blobs (checkout smudge).
     gitattributes_index_only: bool,
     /// Global + root `.gitattributes` (lowest precedence among file sources).
@@ -142,7 +144,7 @@ impl WorktreeRules {
             work_tree,
             _git_dir: repo.git_dir().to_path_buf(),
             odb: repo.odb().clone(),
-            index: index.clone(),
+            gitattributes_index: gitattributes_index_map(index),
             gitattributes_index_only: false,
             stack_prefix,
             info_rules,
@@ -190,7 +192,7 @@ impl WorktreeRules {
             work_tree,
             _git_dir: repo.git_dir().to_path_buf(),
             odb: repo.odb().clone(),
-            index: prospective_index.clone(),
+            gitattributes_index: gitattributes_index_map(prospective_index),
             gitattributes_index_only: true,
             stack_prefix,
             info_rules,
@@ -309,8 +311,8 @@ impl AttributeState {
                 return rules;
             }
         }
-        if let Some(entry) = self.index.get(&key, 0) {
-            if let Ok(obj) = self.odb.read(&entry.oid) {
+        if let Some(oid) = self.gitattributes_index.get(&key) {
+            if let Ok(obj) = self.odb.read(oid) {
                 if let Ok(content) = String::from_utf8(obj.data) {
                     rules.extend(crlf::parse_gitattributes_content(&content));
                 }
@@ -395,6 +397,19 @@ fn read_worktree_gitattributes(path: &Path) -> Option<String> {
     }
     record_attr_read(path);
     std::fs::read_to_string(path).ok()
+}
+
+fn gitattributes_index_map(index: &Index) -> HashMap<Vec<u8>, ObjectId> {
+    index
+        .entries()
+        .iter()
+        .filter(|e| e.stage() == 0 && is_gitattributes_index_path(&e.path))
+        .map(|e| (e.path.clone(), e.oid))
+        .collect()
+}
+
+fn is_gitattributes_index_path(path: &[u8]) -> bool {
+    path == b".gitattributes" || path.ends_with(b"/.gitattributes")
 }
 
 fn path_to_index_bytes(path: &Path) -> Vec<u8> {

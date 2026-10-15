@@ -3415,6 +3415,11 @@ fn diff_index_to_worktree_inner(
                         let skip_refresh_clean_status = options.for_status
                             && stat_matches
                             && !entry_is_racy_with_policy(ie_ref, index_mtime, stat_policy);
+                        if skip_refresh_clean_status
+                            && index_stat_cache_trustworthy(index_mtime)
+                        {
+                            stat_refresh_verified[entry_index] = true;
+                        }
                         if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
                             let ie = &mut index.entries[entry_index];
                             let refresh = refresh_index_blob_stat_from_metadata(
@@ -4819,7 +4824,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
     if worktree_rules.is_none() {
         if let Some(tree_oid) = tree_oid {
             if index.cache_tree_root.as_ref() == Some(tree_oid)
-                && crate::write_tree::cache_tree_fully_valid(odb, index.cache_tree.as_ref())
+                && crate::write_tree::cache_tree_extension_valid(index.cache_tree.as_ref())
             {
                 let mut idx = index.clone();
                 let options = DiffIndexToWorktreeOptions {

@@ -9,6 +9,7 @@ use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
+use grit_lib::diff::{diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions};
 use grit_lib::error::Result;
 use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::index::{entry_from_stat, Index, IndexEntry, MODE_REGULAR};
@@ -16,6 +17,8 @@ use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::staging::stage_worktree_changes;
 use grit_lib::porcelain::stash::{apply_stash, push_stash, StashCreateOptions};
+use grit_lib::porcelain::status::{status, StatusOptions};
+use grit_lib::progress::NullProgress;
 use grit_lib::refs;
 use grit_lib::repo::{InitOptions, Repository};
 use tempfile::TempDir;
@@ -137,6 +140,61 @@ impl HotPathsFixture {
 
     pub fn reset_worktree_to_head(&self) {
         checkout_between_trees(&self.repo, None, &self.head_tree).expect("reset to head");
+    }
+
+    /// Clean tracked tree: index stat cache matches the worktree (for status/diff benches).
+    pub fn ensure_clean_stat_cache(&self) {
+        self.reset_worktree_to_head();
+        let mut index = self.repo.index_handle().load().expect("load index");
+        let work_tree = self.repo.work_tree().expect("work tree");
+        let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, index.source_mtime);
+        let _ = diff_index_to_worktree_with_options(
+            self.repo.odb(),
+            &mut index,
+            work_tree,
+            DiffIndexToWorktreeOptions {
+                index_mtime: diff_index_mtime,
+                refresh_index_stat_in_pass: true,
+                for_status: true,
+                repository_git_dir: Some(self.repo.git_dir().to_path_buf()),
+                config: self.repo.config().ok(),
+                thread_policy: Some(self.repo.thread_policy()),
+                ..DiffIndexToWorktreeOptions::default()
+            },
+        )
+        .expect("refresh index stat cache");
+        let path = self.repo.index_handle().path();
+        index.write(&path).expect("write refreshed index");
+    }
+
+    pub fn bench_status_clean(&self) {
+        let opts = StatusOptions {
+            untracked: grit_lib::porcelain::status::UntrackedMode::No,
+            ahead_behind: false,
+            ..StatusOptions::default()
+        };
+        let _ = status(&self.repo, &opts, &mut NullProgress).expect("status clean");
+    }
+
+    pub fn bench_diff_worktree_clean(&self) {
+        let work_tree = self.repo.work_tree().expect("work tree");
+        let mut index = self.repo.index_handle().load().expect("load index");
+        let index_mtime = grit_lib::diff::index_mtime_for_diff(&index, index.source_mtime);
+        let _ = diff_index_to_worktree_with_options(
+            self.repo.odb(),
+            &mut index,
+            work_tree,
+            DiffIndexToWorktreeOptions {
+                index_mtime,
+                refresh_index_stat_in_pass: false,
+                for_status: true,
+                repository_git_dir: Some(self.repo.git_dir().to_path_buf()),
+                config: self.repo.config().ok(),
+                thread_policy: Some(self.repo.thread_policy()),
+                ..DiffIndexToWorktreeOptions::default()
+            },
+        )
+        .expect("diff index worktree clean");
     }
 
     /// Stash commit whose worktree parent differs on `fraction` of tracked paths (index matches HEAD).

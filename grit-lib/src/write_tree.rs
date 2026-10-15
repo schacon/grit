@@ -78,13 +78,30 @@ pub fn index_cache_tree_inputs_match(left: &Index, right: &Index) -> bool {
     })
 }
 
+/// Returns whether every node in the index cache-tree extension has valid metadata.
+///
+/// Hot paths (`status`, index↔worktree diff) trust this the same way Git trusts a loaded
+/// `TREE` extension until write-tree invalidates it. No object-store I/O is performed.
+#[must_use]
+pub fn cache_tree_extension_valid(node: Option<&CacheTreeNode>) -> bool {
+    let Some(it) = node else {
+        return false;
+    };
+    if !it.is_valid() {
+        return false;
+    }
+    it.children
+        .iter()
+        .all(|child| cache_tree_extension_valid(Some(child)))
+}
+
 /// Returns whether every node in `node` is valid and its tree object exists in `odb`.
 #[must_use]
 pub fn cache_tree_fully_valid(odb: &Odb, node: Option<&CacheTreeNode>) -> bool {
     let Some(it) = node else {
         return false;
     };
-    if it.entry_count < 0 {
+    if !cache_tree_extension_valid(Some(it)) {
         return false;
     }
     let Some(oid) = it.oid else {
@@ -1011,6 +1028,27 @@ mod tests {
         let mut e = entry(path, MODE_TREE, tree_oid);
         e.set_skip_worktree(true);
         e
+    }
+
+    #[test]
+    fn cache_tree_extension_valid_without_odb_io() {
+        let dir = TempDir::new().unwrap();
+        let odb = Odb::new(dir.path());
+        let blob = odb.write(ObjectKind::Blob, b"x").unwrap();
+        let tree_oid = write_tree_from_index(
+            &odb,
+            &Index {
+                entries: vec![entry("x", MODE_REGULAR, blob)],
+                ..Index::new()
+            },
+            "",
+        )
+        .unwrap();
+        let mut root = CacheTreeNode::valid(vec![], 1, tree_oid, vec![]);
+        assert!(cache_tree_extension_valid(Some(&root)));
+        root.invalidate();
+        assert!(!cache_tree_extension_valid(Some(&root)));
+        assert!(!cache_tree_fully_valid(&odb, Some(&root)));
     }
 
     #[test]

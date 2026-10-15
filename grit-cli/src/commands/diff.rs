@@ -509,10 +509,7 @@ fn worktree_against_tree(
         .zip(index.cache_tree_root.as_ref())
         .map(|(left, right)| left == right)
         .unwrap_or(base_tree.is_none() && index.cache_tree_root.is_none())
-        && grit_lib::index::write_tree::cache_tree_fully_valid(
-            repo.odb(),
-            index.cache_tree.as_ref(),
-        );
+        && grit_lib::index::write_tree::cache_tree_extension_valid(index.cache_tree.as_ref());
     let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
         WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
