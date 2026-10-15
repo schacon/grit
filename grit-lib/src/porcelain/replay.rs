@@ -12,7 +12,8 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    apply_tree_merge_output_to_index, merge_trees_three_way, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
@@ -25,7 +26,6 @@ use crate::refs::{
 };
 use crate::repo::Repository;
 use crate::state::{resolve_head, HeadState};
-use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
 
 /// Whether [`replay_commit`] applies a commit's patch or its inverse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,8 +139,10 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         });
     }
 
-    let mut index = merged.index;
-    let new_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let new_tree = merged.result_tree;
+    let mut index = repo.load_index()?;
+    apply_tree_merge_output_to_index(&mut index, &merged);
+    repo.write_index(&mut index)?;
     if new_tree == head_tree {
         return Ok(ReplayOutcome::AlreadyApplied);
     }
@@ -366,6 +368,8 @@ mod tests {
         let merged = TreeMergeOutput {
             index,
             conflict_content,
+            result_tree: crate::diff::zero_oid(),
+            touched_paths: std::collections::HashSet::new(),
         };
         assert_eq!(
             conflict_paths(&merged),

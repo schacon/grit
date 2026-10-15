@@ -114,51 +114,7 @@ pub fn grit_merge_result_tree(
     repo: &Repository,
     merged: &TreeMergeOutput,
 ) -> grit_lib::error::Result<ObjectId> {
-    let mut index = merged.index.clone();
-    let conflict_paths = conflict_path_bytes(merged);
-    for path in conflict_paths {
-        if let Some(marker) = merged.conflict_content.get(&path) {
-            let mode = index
-                .get(&path, 2)
-                .or_else(|| index.get(&path, 3))
-                .map(|e| e.mode)
-                .unwrap_or(MODE_REGULAR);
-            index.remove_path_all_stages(&path);
-            let mut entry = IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid: *marker,
-                flags: (path.len().min(0xFFF) as u16),
-                flags_extended: None,
-                path: path.clone(),
-                base_index_pos: 0,
-            };
-            entry.flags = (path.len().min(0xFFF) as u16);
-            index.add_or_replace(entry);
-        } else if let Some(stage2) = index.get(&path, 2) {
-            // Binary / submodule conflicts: git's result tree keeps stage-2 (ours) blob.
-            let mut entry = stage2.clone();
-            index.remove_path_all_stages(&path);
-            entry.flags = (path.len().min(0xFFF) as u16);
-            index.add_or_replace(entry);
-        } else if let Some(stage3) = index.get(&path, 3) {
-            // File/directory escapes and similar: result tree uses stage-3 when ours is absent.
-            let mut entry = stage3.clone();
-            index.remove_path_all_stages(&path);
-            entry.flags = (path.len().min(0xFFF) as u16);
-            index.add_or_replace(entry);
-        }
-    }
-    index.sort();
-    write_tree_from_index(repo.odb(), &index, "")
+    grit_lib::diff::merge_trees::materialized_merge_result_tree(repo.odb(), merged)
 }
 
 fn conflict_path_bytes(merged: &TreeMergeOutput) -> BTreeSet<Vec<u8>> {

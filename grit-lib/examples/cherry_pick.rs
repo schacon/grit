@@ -165,7 +165,7 @@ fn main() -> grit_lib::error::Result<()> {
         )));
     }
 
-    let new_tree = write_tree_from_index(repo.odb(), &merged.index, "")?;
+    let new_tree = merged.result_tree;
     let config = ConfigSet::load_repo_local_only(repo.git_dir())?;
     let msg = trailers::finalize_cherry_pick_message(
         &picked_data.message,

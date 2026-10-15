@@ -9,7 +9,7 @@ use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use hot_paths_fixture::{
     bench_apply_stash, bench_checkout_between_trees, bench_pick_path, bench_push_stash,
-    bench_stage_scan, bench_switch_wide, HotPathsFixture,
+    bench_stage_scan, bench_switch_wide, bench_tree_merge_100k, HotPathsFixture,
 };
 
 fn bench_index_mutate(c: &mut Criterion) {
@@ -129,6 +129,19 @@ fn bench_diff_worktree_clean_10k(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_tree_merge_group(c: &mut Criterion) {
+    let fx = HotPathsFixture::heavy();
+    let mut group = c.benchmark_group("merge");
+    group.bench_function("tree_merge_100k_2000_paths", |b| {
+        b.iter_batched(
+            || fx.reset_worktree_to_head(),
+            |_| bench_tree_merge_100k(fx, 2000),
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
 fn bench_staging_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("staging_scan_5_modified");
     for (label, fx) in [
@@ -160,7 +173,8 @@ criterion_group!(
     bench_staging_scan,
     bench_push_stash_group,
     bench_apply_stash_group,
-    bench_pick_paths
+    bench_pick_paths,
+    bench_tree_merge_group
 );
 criterion_main!(hot_paths);
 

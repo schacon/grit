@@ -7,7 +7,6 @@ use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
-use grit_lib::index::write_tree::{write_tree_update_index, WriteTreeFlags};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::stash::apply_stash;
@@ -86,8 +85,11 @@ fn grit_pick(repo: &Repository, source_hex: &str) -> grit_lib::error::Result<()>
         None,
         TreeMergeConflictPresentation::default(),
     )?;
-    let mut index = merged.index;
-    let new_tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let new_tree = merged.result_tree;
+    let index_handle = repo.index_handle();
+    let mut index = index_handle.load()?;
+    grit_lib::diff::merge_trees::apply_tree_merge_output_to_index(&mut index, &merged);
+    index_handle.write(&mut index)?;
     checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
     let commit_data = CommitData {
         tree: new_tree,

@@ -506,9 +506,25 @@ pub fn bench_pick_path(fx: &HotPathsFixture, path_count: usize) {
         TreeMergeConflictPresentation::default(),
     )
     .expect("merge");
-    let mut index = merged.index;
-    let new_tree =
-        write_tree_update_index(&fx.repo.odb(), &mut index, "", WriteTreeFlags::silent())
-            .expect("write tree");
+    let new_tree = merged.result_tree;
+    let index_handle = fx.repo.index_handle();
+    let mut index = index_handle.load().expect("index");
+    grit_lib::diff::merge_trees::apply_tree_merge_output_to_index(&mut index, &merged);
+    index_handle.write(&mut index).expect("write index");
     checkout_between_trees(&fx.repo, Some(&head), &new_tree).expect("checkout");
+}
+
+pub fn bench_tree_merge_100k(fx: &HotPathsFixture, path_count: usize) {
+    let (base, head, source) = fx.pick_three_trees(path_count);
+    let _merged = merge_trees_three_way(
+        &fx.repo,
+        base,
+        head,
+        source,
+        MergeFavor::default(),
+        WhitespaceMergeOptions::default(),
+        None,
+        TreeMergeConflictPresentation::default(),
+    )
+    .expect("merge");
 }

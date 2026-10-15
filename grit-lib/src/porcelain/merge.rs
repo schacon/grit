@@ -42,7 +42,8 @@ use crate::index::{Index, IndexEntry};
 use crate::merge_base::{is_ancestor, merge_bases_first_vs_rest};
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    merge_trees_three_way, TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
+    apply_tree_merge_output_to_index, materialized_merge_result_tree, merge_trees_three_way,
+    TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use crate::porcelain::checkout::{self, checkout_between_trees};
@@ -52,7 +53,7 @@ use crate::refs;
 use crate::repo::Repository;
 use crate::state::{clear_merge_state, read_merge_heads, read_orig_head};
 use crate::worktree_rules::WorktreeRules;
-use crate::write_tree::{write_tree_from_index, write_tree_update_index, WriteTreeFlags};
+use crate::write_tree::write_tree_from_index;
 
 /// Flatten a tree object into a recursive list of [`IndexEntry`] values.
 ///
@@ -330,7 +331,7 @@ pub fn integrate_branch(
         prepare_tree_checkout(
             repo,
             Some(&into_tree),
-            &write_tree_from_index(repo.odb(), &merged.index, "")?,
+            &materialized_merge_result_tree(repo.odb(), &merged)?,
         )?;
         apply_conflict_merge_worktree(repo, &into_tree, &merged)?;
         record_merge_in_progress(repo.git_dir(), into_oid, other_oid, label)?;
@@ -347,9 +348,10 @@ pub fn integrate_branch(
         "GIT_COMMITTER_DATE",
     )?;
 
-    let mut index = merged.index;
-    let merged_tree =
-        write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let merged_tree = merged.result_tree;
+    let mut index = repo.load_index()?;
+    apply_tree_merge_output_to_index(&mut index, &merged);
+    repo.write_index(&mut index)?;
     prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
     checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
 
@@ -614,6 +616,8 @@ fn move_branch(
 
 #[cfg(test)]
 mod integrate_tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::environment::RepositoryOptions;
     use crate::index::{Index, IndexEntry, MODE_REGULAR};
@@ -767,6 +771,8 @@ mod integrate_tests {
         let merged = TreeMergeOutput {
             index,
             conflict_content,
+            result_tree: crate::diff::zero_oid(),
+            touched_paths: HashSet::new(),
         };
         assert_eq!(
             tree_merge_conflict_paths(&merged),

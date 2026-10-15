@@ -2519,6 +2519,8 @@ impl<'a> core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::T
 pub struct grit_lib::diff::merge_trees::TreeMergeOutput
 pub grit_lib::diff::merge_trees::TreeMergeOutput::conflict_content: alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, grit_lib::objects::ObjectId>
 pub grit_lib::diff::merge_trees::TreeMergeOutput::index: grit_lib::index::Index
+pub grit_lib::diff::merge_trees::TreeMergeOutput::result_tree: grit_lib::objects::ObjectId
+pub grit_lib::diff::merge_trees::TreeMergeOutput::touched_paths: std::collections::hash_set::HashSet<alloc::vec::Vec<u8>>
 impl core::fmt::Debug for grit_lib::diff::merge_trees::TreeMergeOutput
 pub fn grit_lib::diff::merge_trees::TreeMergeOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for grit_lib::diff::merge_trees::TreeMergeOutput
@@ -2547,7 +2549,9 @@ impl core::marker::Unpin for grit_lib::diff::merge_trees::WhitespaceMergeOptions
 impl core::marker::UnsafeUnpin for grit_lib::diff::merge_trees::WhitespaceMergeOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees::WhitespaceMergeOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::WhitespaceMergeOptions
+pub fn grit_lib::diff::merge_trees::apply_tree_merge_output_to_index(&mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput)
 pub fn grit_lib::diff::merge_trees::index_tree_oid_matches_head(&grit_lib::objects::odb::Odb, &grit_lib::index::Index, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
+pub fn grit_lib::diff::merge_trees::materialized_merge_result_tree(&grit_lib::objects::odb::Odb, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::diff::merge_trees::merge_trees_three_way(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::diff::merge_file::MergeFavor, grit_lib::diff::merge_trees::WhitespaceMergeOptions, core::option::Option<&str>, grit_lib::diff::merge_trees::TreeMergeConflictPresentation<'_>) -> grit_lib::error::Result<grit_lib::diff::merge_trees::TreeMergeOutput>
 pub mod grit_lib::diff::patch_ids
 pub enum grit_lib::diff::patch_ids::PatchIdMode

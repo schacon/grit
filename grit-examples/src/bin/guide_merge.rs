@@ -66,7 +66,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
         TreeMergeConflictPresentation::default(),
     )?;
 
-    let result_tree = write_tree_from_index(repo.odb(), &merged.index, "")?;
+    let result_tree = merged.result_tree;
     println!("merged_tree={}", result_tree.to_hex());
     println!("unmerged_paths={}", merged.conflict_content.len());
 
