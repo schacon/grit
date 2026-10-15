@@ -1013,6 +1013,8 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 unstaged,
                 against,
                 commits,
+                word_level_inline: matches!(opts.mode, crate::output::OutputMode::Human)
+                    && commands::diff::diff_word_level_inline_for_output(),
             })?,
             opts,
             ctx,

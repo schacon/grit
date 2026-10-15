@@ -57,7 +57,7 @@ fn imara_unified_hunk_slices(body: &str) -> Vec<&str> {
     starts.windows(2).map(|w| &body[w[0]..w[1]]).collect()
 }
 
-fn histogram_unified_body_raw(
+pub(crate) fn histogram_unified_body_raw(
     old_content: &str,
     new_content: &str,
     context_lines: usize,
@@ -1526,9 +1526,37 @@ pub fn diff_trees_with_renames(
     prefix: &str,
     rename_threshold: u32,
 ) -> Result<Vec<DiffEntry>> {
+    let config = ConfigSet::new();
+    let policy = ThreadPolicy::default();
+    diff_trees_with_renames_and_policy(
+        odb,
+        old_tree_oid,
+        new_tree_oid,
+        prefix,
+        rename_threshold,
+        &config,
+        &policy,
+    )
+}
+
+/// Like [`diff_trees_with_renames`], but honors `index.threads` / embedder thread policy.
+///
+/// # Errors
+///
+/// Propagates errors from [`diff_trees`].
+pub fn diff_trees_with_renames_and_policy(
+    odb: &Odb,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
     let mut entries = diff_trees(odb, old_tree_oid, new_tree_oid, prefix)?;
     if rename_threshold < 100 {
-        entries = detect_renames(odb, None, entries, rename_threshold);
+        entries =
+            detect_renames_with_policy(odb, None, entries, rename_threshold, config, thread_policy);
     }
     Ok(entries)
 }
@@ -1573,9 +1601,35 @@ pub fn diff_commits_with_renames(
     tip: &ObjectId,
     rename_threshold: u32,
 ) -> Result<Vec<DiffEntry>> {
+    let config = ConfigSet::new();
+    let policy = ThreadPolicy::default();
+    diff_commits_with_renames_and_policy(odb, base, tip, rename_threshold, &config, &policy)
+}
+
+/// Like [`diff_commits_with_renames`], but honors `index.threads` / embedder thread policy.
+///
+/// # Errors
+///
+/// Propagates object read errors and tree diff failures.
+pub fn diff_commits_with_renames_and_policy(
+    odb: &Odb,
+    base: &ObjectId,
+    tip: &ObjectId,
+    rename_threshold: u32,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+) -> Result<Vec<DiffEntry>> {
     let base_tree = tree_oid_of_commit(odb, base)?;
     let tip_tree = tree_oid_of_commit(odb, tip)?;
-    diff_trees_with_renames(odb, Some(&base_tree), Some(&tip_tree), "", rename_threshold)
+    diff_trees_with_renames_and_policy(
+        odb,
+        Some(&base_tree),
+        Some(&tip_tree),
+        "",
+        rename_threshold,
+        config,
+        thread_policy,
+    )
 }
 
 /// Like `diff_trees` but with `show_trees` flag: when true, emit entries for

@@ -30,6 +30,8 @@ pub enum ParallelOp {
     PackDeltaSearch,
     /// Rename/copy detection scoring (`index.threads` when preload is enabled).
     DiffRename,
+    /// Per-file blob loads and line diffs for tree/commit ranges (`index.threads`).
+    DiffContent,
 }
 
 /// Explicit CLI or embedder overrides layered on top of config resolution.
@@ -105,11 +107,18 @@ impl ThreadPolicy {
     ) -> Result<ParallelOptions, ConfigError> {
         let preload = core_preload_index(config);
         let threads = match op {
-            ParallelOp::IndexRefresh | ParallelOp::IndexLoad | ParallelOp::DiffRename => {
+            ParallelOp::IndexRefresh | ParallelOp::IndexLoad => {
                 if !preload {
                     NonZeroUsize::MIN
                 } else {
                     resolve_index_threads(config, self.threads_override)
+                }
+            }
+            ParallelOp::DiffRename | ParallelOp::DiffContent => {
+                if self.threads_override.is_some() || preload {
+                    resolve_index_threads(config, self.threads_override)
+                } else {
+                    NonZeroUsize::MIN
                 }
             }
             ParallelOp::IndexPack | ParallelOp::PackWrite | ParallelOp::PackDeltaSearch => {
@@ -125,7 +134,9 @@ impl ThreadPolicy {
             ParallelOp::IndexPack | ParallelOp::PackWrite | ParallelOp::PackDeltaSearch => {
                 (0, None)
             }
-            ParallelOp::DiffRename => (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES)),
+            ParallelOp::DiffRename | ParallelOp::DiffContent => {
+                (PAR_HASH_MIN_ITEMS, Some(PAR_HASH_MIN_TOTAL_BYTES))
+            }
         };
 
         let min_items = self.min_items_override.unwrap_or(default_min_items);

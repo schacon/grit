@@ -14,9 +14,13 @@
 //! ```
 mod core;
 pub mod handle;
+mod tree_content;
 
 pub use core::*;
 pub use handle::Diff;
+pub use tree_content::{
+    tree_diff_contents_parallel, tree_diff_structured_parallel, TreeDiffContent, TreeDiffStructured,
+};
 
 pub mod bloom {
     //! bloom API (re-exported at this path).
