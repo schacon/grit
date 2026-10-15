@@ -24,7 +24,7 @@ fn git_available() -> bool {
         .unwrap_or(false)
 }
 
-const FIXED_GIT_TIME: &str = "2005-04-07T22:13:13 +0000";
+const FIXED_GIT_DATE: &str = "1000000000 +0000";
 
 fn git_cmd(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -36,8 +36,8 @@ fn git_cmd(dir: &Path, args: &[&str]) {
         .env("GIT_AUTHOR_EMAIL", "t@example.com")
         .env("GIT_COMMITTER_NAME", "T")
         .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", FIXED_GIT_TIME)
-        .env("GIT_COMMITTER_DATE", FIXED_GIT_TIME)
+        .env("GIT_AUTHOR_DATE", FIXED_GIT_DATE)
+        .env("GIT_COMMITTER_DATE", FIXED_GIT_DATE)
         .output()
         .expect("git");
     assert!(
@@ -57,8 +57,8 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "t@example.com")
         .env("GIT_COMMITTER_NAME", "T")
         .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .env("GIT_AUTHOR_DATE", FIXED_GIT_TIME)
-        .env("GIT_COMMITTER_DATE", FIXED_GIT_TIME)
+        .env("GIT_AUTHOR_DATE", FIXED_GIT_DATE)
+        .env("GIT_COMMITTER_DATE", FIXED_GIT_DATE)
         .output()
         .expect("git");
     assert!(

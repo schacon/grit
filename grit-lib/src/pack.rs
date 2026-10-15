@@ -165,7 +165,6 @@ pub(crate) mod pack_cache {
         THREAD_WARM_STORE.set(0);
         super::clear_pack_read_info_cache();
         PACK_MONOTONIC_CURSOR.with(|cell| *cell.borrow_mut() = None);
-        super::clear_pack_read_info_cache();
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -2345,6 +2344,11 @@ fn pack_read_info_cache_key(pack_path: &Path, offset: u64) -> Option<PackReadInf
         pack_id: pack_cache::pack_id_for(pack_path),
         offset,
     })
+}
+
+/// Drop cached batch `read_info` entries (pack context end, invalidation, repack).
+pub(crate) fn clear_pack_read_info_cache() {
+    PACK_READ_INFO_CACHE.with(|c| c.borrow_mut().clear());
 }
 
 fn drop_pack_read_info_cache_for(pack_path: &Path) {
