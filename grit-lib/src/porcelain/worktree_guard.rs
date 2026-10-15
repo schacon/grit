@@ -439,19 +439,72 @@ pub(crate) fn untracked_scan_pathspecs_for_tree_changes(tree_changes: &[DiffEntr
     specs.into_iter().collect()
 }
 
+/// Pathspec roots for deleted paths (parent directories), used before wholesale `remove_dir_all`.
+#[must_use]
+pub(crate) fn untracked_scan_pathspecs_for_deletes(tree_changes: &[DiffEntry]) -> Vec<String> {
+    let mut specs = BTreeSet::new();
+    for change in tree_changes {
+        if change.status != DiffStatus::Deleted {
+            continue;
+        }
+        let Some(deleted) = &change.old_path else {
+            continue;
+        };
+        let trimmed = deleted.trim_end_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((top, _rest)) = trimmed.split_once('/') {
+            specs.insert(top.to_owned());
+        } else {
+            specs.insert(trimmed.to_owned());
+        }
+    }
+    specs.into_iter().collect()
+}
+
 pub(crate) fn collect_untracked_for_tree_changes(
     repo: &Repository,
     index: &mut Index,
     work_tree: &Path,
     tree_changes: &[DiffEntry],
 ) -> Result<Vec<String>> {
-    if !tree_changes.iter().any(|c| c.status == DiffStatus::Added) {
-        return Ok(Vec::new());
-    }
-    let pathspecs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
-    let (untracked, _) =
-        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, true, &pathspecs)?;
+    let (untracked, _) = collect_untracked_and_wholesale_trust_for_tree_changes(
+        repo,
+        index,
+        work_tree,
+        tree_changes,
+    )?;
     Ok(untracked)
+}
+
+/// Untracked paths for added/deleted tree diff paths, plus wholesale-delete trust for switch checkout.
+pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    tree_changes: &[DiffEntry],
+) -> Result<(Vec<String>, bool)> {
+    let added_specs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
+    let delete_specs = untracked_scan_pathspecs_for_deletes(tree_changes);
+    let delete_roots: BTreeSet<String> = delete_specs.iter().cloned().collect();
+    let mut pathspecs: BTreeSet<String> = added_specs.iter().cloned().collect();
+    pathspecs.extend(delete_specs);
+    if pathspecs.is_empty() {
+        return Ok((Vec::new(), true));
+    }
+    let specs: Vec<String> = pathspecs.into_iter().collect();
+    let (untracked, _) =
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, true, &specs)?;
+    let trust_wholesale = if delete_roots.is_empty() {
+        true
+    } else {
+        !untracked.iter().any(|path| {
+            let root = path.split('/').next().unwrap_or(path.as_str());
+            delete_roots.contains(root)
+        })
+    };
+    Ok((untracked, trust_wholesale))
 }
 
 fn ensure_worktree_clean_with_message(

@@ -4653,6 +4653,34 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     rel_path: &str,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<bool> {
+    path_checkout_skip_blob_write_when_up_to_date_with_config(
+        odb,
+        git_dir,
+        work_tree,
+        index,
+        entry,
+        expected_oid,
+        expected_mode,
+        rel_path,
+        filter_process,
+        None,
+    )
+}
+
+/// Like [`path_checkout_skip_blob_write_when_up_to_date`], with an optional preloaded config.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn path_checkout_skip_blob_write_when_up_to_date_with_config(
+    odb: &Odb,
+    git_dir: &Path,
+    work_tree: &Path,
+    index: &Index,
+    entry: &IndexEntry,
+    expected_oid: &ObjectId,
+    expected_mode: u32,
+    rel_path: &str,
+    filter_process: Option<&crate::filter_process::FilterProcessState>,
+    preloaded_config: Option<&crate::config::ConfigSet>,
+) -> Result<bool> {
     use crate::config::ConfigSet;
     use crate::crlf;
     use crate::index::{MODE_EXECUTABLE, MODE_REGULAR};
@@ -4671,12 +4699,19 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     if !meta.is_file() || !stat_matches(entry, &meta) {
         return Ok(false);
     }
-    let config = ConfigSet::load(
-        &crate::environment::Environment::empty(),
-        Some(git_dir),
-        true,
-    )
-    .unwrap_or_default();
+    let owned_config;
+    let config = match preloaded_config {
+        Some(cfg) => cfg,
+        None => {
+            owned_config = ConfigSet::load(
+                &crate::environment::Environment::empty(),
+                Some(git_dir),
+                true,
+            )
+            .unwrap_or_default();
+            &owned_config
+        }
+    };
     let trust_filemode = config
         .get_bool("core.filemode")
         .and_then(|r| r.ok())
@@ -4688,9 +4723,9 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     if !entry_is_racy(entry, index_mtime) {
         return Ok(true);
     }
-    let conv = crlf::ConversionConfig::from_config(&config);
+    let conv = crlf::ConversionConfig::from_config(config);
     let attrs = crlf::load_gitattributes(work_tree);
-    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, config);
     let wt_oid = hash_worktree_file(
         odb,
         &abs_path,

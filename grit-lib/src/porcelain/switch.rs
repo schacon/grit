@@ -76,6 +76,8 @@ struct PreparedSwitch {
     preserve_worktree_paths: HashSet<String>,
     /// Index loaded for switch guards; reused for checkout to avoid a second disk read.
     index: crate::index::Index,
+    /// When true, checkout may remove wholesale directories without an on-disk safety walk.
+    trust_wholesale_dir_removal: bool,
 }
 
 /// Resolve `-c <branch> [<start-point>]`.
@@ -341,11 +343,9 @@ fn switch_to_target(
     reflog_to_label: &str,
 ) -> Result<SwitchOutcome> {
     let head_before = resolve_head(repo.git_dir())?;
-    let head_oid = head_before.oid().copied();
-    let head_tree = head_oid.map(|oid| commit_tree(repo, &oid)).transpose()?;
     let target_tree = commit_tree(repo, &target_oid)?;
 
-    let mut prepared = prepare_tree_switch_allow_local(repo, head_tree.as_ref(), &target_tree)?;
+    let mut prepared = prepare_tree_switch_allow_local(repo, &target_tree)?;
     ensure_no_untracked_overwrite(&prepared.plan.untracked, &prepared.plan.tree_changes)?;
 
     let tree_changes: Vec<DiffEntry> = prepared
@@ -357,13 +357,15 @@ fn switch_to_target(
                 .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
         })
         .collect();
+    let checkout_parallel_threshold = (tree_changes.len() >= 200).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
         &tree_changes,
         &mut prepared.index,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
-            checkout_parallel_threshold: None,
+            checkout_parallel_threshold,
+            trust_wholesale_dir_removal: prepared.trust_wholesale_dir_removal,
         },
     )?;
 
@@ -405,10 +407,10 @@ fn switch_to_target(
 
 fn prepare_tree_switch_allow_local(
     repo: &Repository,
-    from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
 ) -> Result<PreparedSwitch> {
     let mut snapshot = load_worktree_snapshot(repo)?;
+    let from_tree = snapshot.head_tree.as_ref();
     let tree_changes = if from_tree == Some(to_tree) {
         Vec::new()
     } else {
@@ -431,12 +433,13 @@ fn prepare_tree_switch_allow_local(
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
-    let untracked = crate::porcelain::worktree_guard::collect_untracked_for_tree_changes(
-        repo,
-        &mut snapshot.index,
-        work_tree,
-        &tree_changes,
-    )?;
+    let (untracked, trust_wholesale_dir_removal) =
+        crate::porcelain::worktree_guard::collect_untracked_and_wholesale_trust_for_tree_changes(
+            repo,
+            &mut snapshot.index,
+            work_tree,
+            &tree_changes,
+        )?;
     Ok(PreparedSwitch {
         plan: TreeSwitchPlan {
             untracked,
@@ -444,6 +447,7 @@ fn prepare_tree_switch_allow_local(
         },
         preserve_worktree_paths,
         index: snapshot.index,
+        trust_wholesale_dir_removal,
     })
 }
 

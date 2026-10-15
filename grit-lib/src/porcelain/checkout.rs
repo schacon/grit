@@ -354,7 +354,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
         }
 
         if let Some(existing) = index.get(te.path.as_slice(), 0) {
-            if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
+            if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                 repo.odb(),
                 repo.git_dir(),
                 work_tree,
@@ -364,6 +364,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
                 mode,
                 &path,
                 Some(rules.filter_process()),
+                Some(config.as_ref()),
             )? {
                 let abs = work_tree.join(&path);
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
@@ -448,6 +449,9 @@ pub(crate) struct CheckoutApplyOptions {
     pub parallel_prepare_blobs: bool,
     /// Override `checkout.thresholdForParallelism` for this apply (switch uses a low threshold).
     pub checkout_parallel_threshold: Option<i64>,
+    /// When true, wholesale directory removal skips the on-disk safety walk (switch already
+    /// verified no untracked paths under those directories).
+    pub trust_wholesale_dir_removal: bool,
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -489,20 +493,41 @@ fn wholesale_deleted_directories(index: &Index, delete_paths: &[String]) -> BTre
     }
     let candidate_dirs: BTreeSet<String> = deleted_under.keys().cloned().collect();
     let mut indexed_under: BTreeMap<String, usize> = BTreeMap::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 || entry.mode == MODE_GITLINK {
-            continue;
+    if index.entries_sorted {
+        for dir in &candidate_dirs {
+            let prefix = format!("{dir}/");
+            let start = index
+                .entries
+                .partition_point(|e| e.path.as_slice() < prefix.as_bytes());
+            let mut count = 0usize;
+            for entry in index.entries[start..].iter() {
+                if !entry.path.starts_with(prefix.as_bytes()) {
+                    break;
+                }
+                if entry.stage() == 0 && entry.mode != MODE_GITLINK {
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                indexed_under.insert(dir.clone(), count);
+            }
         }
-        let Ok(path) = std::str::from_utf8(&entry.path) else {
-            continue;
-        };
-        let Some((dir, _rest)) = path.split_once('/') else {
-            continue;
-        };
-        if !candidate_dirs.contains(dir) {
-            continue;
+    } else {
+        for entry in &index.entries {
+            if entry.stage() != 0 || entry.mode == MODE_GITLINK {
+                continue;
+            }
+            let Ok(path) = std::str::from_utf8(&entry.path) else {
+                continue;
+            };
+            let Some((dir, _rest)) = path.split_once('/') else {
+                continue;
+            };
+            if !candidate_dirs.contains(dir) {
+                continue;
+            }
+            *indexed_under.entry(dir.to_owned()).or_default() += 1;
         }
-        *indexed_under.entry(dir.to_owned()).or_default() += 1;
     }
     deleted_under
         .into_iter()
@@ -567,9 +592,14 @@ fn wholesale_deleted_directories_on_disk(
     index: &Index,
     delete_paths: &[String],
     ignorecase: bool,
+    trust_wholesale_dir_removal: bool,
 ) -> BTreeSet<String> {
+    let candidates = wholesale_deleted_directories(index, delete_paths);
+    if trust_wholesale_dir_removal {
+        return candidates;
+    }
     let delete_set: BTreeSet<String> = delete_paths.iter().cloned().collect();
-    wholesale_deleted_directories(index, delete_paths)
+    candidates
         .into_iter()
         .filter(|dir| wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase))
         .collect()
@@ -634,8 +664,13 @@ fn checkout_tree_changes_with_progress(
         .filter(|c| c.status == DiffStatus::Deleted)
         .filter_map(|c| c.old_path.clone())
         .collect();
-    let wholesale_candidates =
-        wholesale_deleted_directories_on_disk(work_tree, index, &delete_paths, ignorecase);
+    let wholesale_candidates = wholesale_deleted_directories_on_disk(
+        work_tree,
+        index,
+        &delete_paths,
+        ignorecase,
+        apply.trust_wholesale_dir_removal,
+    );
     let mut wholesale_dirs_removed = BTreeSet::new();
     for dir in &wholesale_candidates {
         let abs = work_tree.join(dir);
@@ -696,7 +731,7 @@ fn checkout_tree_changes_with_progress(
             continue;
         }
         if let Some(existing) = index.get(path.as_bytes(), 0) {
-            if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
+            if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                 repo.odb(),
                 repo.git_dir(),
                 work_tree,
@@ -706,6 +741,7 @@ fn checkout_tree_changes_with_progress(
                 mode,
                 path,
                 Some(rules.filter_process()),
+                Some(config.as_ref()),
             )? {
                 let abs = work_tree.join(path);
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
@@ -1708,7 +1744,7 @@ mod tests {
             false
         ));
         let wholesale =
-            super::wholesale_deleted_directories_on_disk(wt, &index, &delete_paths, false);
+            super::wholesale_deleted_directories_on_disk(wt, &index, &delete_paths, false, false);
         assert!(wholesale.is_empty());
     }
 
