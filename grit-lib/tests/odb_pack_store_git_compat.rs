@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use grit_lib::objects::odb::store::{ObjectStore, PackFilter, PackedObjects};
 use grit_lib::objects::odb::Odb;
-use grit_lib::objects::pack::clear_pack_cache;
+use grit_lib::objects::pack::{clear_pack_cache, read_pack_index};
 use grit_lib::objects::pack_store::PackStore;
 use grit_lib::objects::{Object, ObjectId, ObjectKind};
 use tempfile::TempDir;
@@ -111,27 +111,130 @@ fn git_batch_all_objects(repo: &Path) -> BTreeMap<ObjectId, (ObjectKind, u64)> {
 
 fn deep_delta_repo() -> (TempDir, PathBuf) {
     let dir = TempDir::new().expect("tempdir");
-    git_in(dir.path(), &["init", "-q", "-b", "main"]);
-    git_in(dir.path(), &["config", "user.email", "t@example.com"]);
-    git_in(dir.path(), &["config", "user.name", "T"]);
-    let mut content = b"base line for deep delta chain\n".to_vec();
-    fs::write(dir.path().join("file.txt"), &content).expect("write");
-    git_in(dir.path(), &["add", "file.txt"]);
-    git_in(dir.path(), &["commit", "-m", "base", "-q"]);
+    let (objects, _tip) = deep_delta_repo_in(dir.path(), "");
+    (dir, objects)
+}
+
+fn deep_delta_repo_in(repo_root: &Path, tag: &str) -> (PathBuf, ObjectId) {
+    git_in(repo_root, &["init", "-q", "-b", "main"]);
+    git_in(repo_root, &["config", "user.email", "t@example.com"]);
+    git_in(repo_root, &["config", "user.name", "T"]);
+    let mut content = format!("base line for deep delta chain {tag}\n").into_bytes();
+    fs::write(repo_root.join("file.txt"), &content).expect("write");
+    git_in(repo_root, &["add", "file.txt"]);
+    git_in(repo_root, &["commit", "-m", "base", "-q"]);
     for i in 0..64 {
         content.extend_from_slice(format!("line-{i}\n").as_bytes());
-        fs::write(dir.path().join("file.txt"), &content).expect("write");
-        git_in(dir.path(), &["commit", "-a", "-m", &format!("c{i}"), "-q"]);
+        fs::write(repo_root.join("file.txt"), &content).expect("write");
+        git_in(repo_root, &["commit", "-a", "-m", &format!("c{i}"), "-q"]);
     }
-    git_in(dir.path(), &["repack", "-a", "-d", "-f"]);
-    git_in(dir.path(), &["gc", "--aggressive", "-q"]);
-    let objects = dir.path().join(".git/objects");
-    (dir, objects)
+    git_in(repo_root, &["repack", "-a", "-d", "-f"]);
+    git_in(repo_root, &["gc", "--aggressive", "-q"]);
+    let objects = repo_root.join(".git/objects");
+    let tip = git_rev_parse_blob(repo_root, "HEAD:file.txt");
+    (objects, tip)
+}
+
+fn git_rev_parse_blob(repo: &Path, spec: &str) -> ObjectId {
+    let out = Command::new("git")
+        .current_dir(repo)
+        .args(["rev-parse", spec])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("rev-parse");
+    assert!(out.status.success(), "rev-parse {spec}");
+    ObjectId::from_hex(std::str::from_utf8(&out.stdout).expect("utf8").trim()).expect("oid")
+}
+
+fn git_cat_file_size(repo: &Path, oid: &ObjectId) -> u64 {
+    let hex = oid.to_hex();
+    let out = Command::new("git")
+        .current_dir(repo)
+        .args(["cat-file", "-s", &hex])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("cat-file -s");
+    assert!(out.status.success(), "git cat-file -s {hex}");
+    std::str::from_utf8(&out.stdout)
+        .expect("utf8")
+        .trim()
+        .parse()
+        .expect("size")
+}
+
+fn single_local_pack_offset(objects: &Path, oid: &ObjectId) -> u64 {
+    let pack_dir = objects.join("pack");
+    let idx_path = fs::read_dir(&pack_dir)
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "idx"))
+        .expect("pack idx");
+    let idx = read_pack_index(&idx_path).expect("read idx");
+    idx.find_offset(oid)
+        .unwrap_or_else(|| panic!("oid {} missing from {}", oid.to_hex(), idx_path.display()))
 }
 
 fn packed_store(objects: &Path) -> PackedObjects {
     clear_pack_cache();
     PackedObjects::new(Arc::new(PackStore::new(objects.to_path_buf())))
+}
+
+/// Regression: per-thread `PACK_READ_INFO_CACHE` must not reuse `(pack_id, offset)` across
+/// distinct [`Odb`] / [`PackStore`] instances on one thread.
+#[test]
+fn pack_read_info_cache_scoped_per_pack_store_on_one_thread() {
+    clear_pack_cache();
+    let mut pair = None;
+    let mut keep_dirs: Vec<TempDir> = Vec::new();
+    'search: for tag_a in 0u32..24 {
+        for tag_b in (tag_a + 1)..24 {
+            let dir_a = TempDir::new().expect("tempdir a");
+            let dir_b = TempDir::new().expect("tempdir b");
+            let (objects_a, tip_a) = deep_delta_repo_in(dir_a.path(), &format!("a{tag_a}"));
+            let (objects_b, tip_b) = deep_delta_repo_in(dir_b.path(), &format!("b{tag_b}"));
+            let repo_a = dir_a.path();
+            let repo_b = dir_b.path();
+            let size_a = git_cat_file_size(repo_a, &tip_a);
+            let size_b = git_cat_file_size(repo_b, &tip_b);
+            if size_a == size_b {
+                continue;
+            }
+            let off_a = single_local_pack_offset(&objects_a, &tip_a);
+            let off_b = single_local_pack_offset(&objects_b, &tip_b);
+            if off_a != off_b {
+                continue;
+            }
+            keep_dirs.push(dir_a);
+            keep_dirs.push(dir_b);
+            pair = Some((objects_a, objects_b, tip_a, tip_b, size_a, size_b, off_a));
+            break 'search;
+        }
+    }
+    let _keep_dirs = keep_dirs;
+    let (objects_a, objects_b, tip_a, tip_b, git_size_a, git_size_b, shared_offset) =
+        pair.expect("find two git packs with same delta offset and different expanded sizes");
+    let odb_a = Odb::new(&objects_a);
+    let odb_b = Odb::new(&objects_b);
+    let grit_size_a = odb_a
+        .with_pack_read_context(|| odb_a.read_info(&tip_a))
+        .expect("read_info a")
+        .size;
+    let grit_size_b = odb_b
+        .with_pack_read_context(|| odb_b.read_info(&tip_b))
+        .expect("read_info b")
+        .size;
+    assert_eq!(
+        grit_size_a, git_size_a,
+        "repo A at pack offset {shared_offset}"
+    );
+    assert_eq!(
+        grit_size_b, git_size_b,
+        "repo B at pack offset {shared_offset} must not reuse repo A cached info"
+    );
+    assert_ne!(git_size_a, git_size_b);
 }
 
 #[test]

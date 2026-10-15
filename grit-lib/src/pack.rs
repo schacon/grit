@@ -248,6 +248,7 @@ pub(crate) mod pack_cache {
         PACK_IDS.with(|cell| cell.borrow_mut().clear());
         PACK_COUNT_VALIDATED.with(|cell| cell.borrow_mut().clear());
         PACK_HIT_INDEX.with(|cell| *cell.borrow_mut() = None);
+        super::clear_pack_read_info_cache();
         let objects_dir = store.objects_dir();
         let pack_dir = objects_dir.join("pack");
         store.with_catalog_read(|g| {
@@ -3263,9 +3264,12 @@ pub fn read_object_from_pack_bytes(
         .ok()
         .and_then(|id| idx.find_offset(&id))
         .ok_or_else(|| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
-    let (kind, data) = read_pack_object_at(pack_bytes, entry_offset, idx, None, 0)?;
-    verify_packed_object_hash(kind, &data, oid)?;
-    Ok(Object::new(kind, data))
+    let store = crate::pack_store::PackStore::legacy_for_pack_path(&idx.pack_path);
+    crate::pack_store::PackStore::with_context(store, || {
+        let (kind, data) = read_pack_object_at(pack_bytes, entry_offset, idx, None, 0)?;
+        verify_packed_object_hash(kind, &data, oid)?;
+        Ok(Object::new(kind, data))
+    })
 }
 
 fn validate_pack_index_object_count(pack_bytes: &[u8], idx: &PackIndex) -> Result<()> {
