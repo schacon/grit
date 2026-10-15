@@ -113,10 +113,23 @@ pub fn build_line_map(
     diff_algorithm: BlameDiffAlgorithm,
     indent_heuristic: bool,
 ) -> Vec<Option<usize>> {
+    build_line_map_with_changed_flags(old, new, diff_algorithm, indent_heuristic, false).0
+}
+
+/// Like [`build_line_map`], optionally returning xdiff-style changed flags for the new side
+/// from the same compacted diff ops (avoids a second full diff on blame hot paths).
+fn build_line_map_with_changed_flags(
+    old: &[&str],
+    new: &[&str],
+    diff_algorithm: BlameDiffAlgorithm,
+    indent_heuristic: bool,
+    with_changed_flags: bool,
+) -> (Vec<Option<usize>>, Vec<bool>) {
     let (prefix, suffix, old_mid, new_mid) = common_affix_trim(old, new);
     let mut map = vec![None; new.len()];
-    for i in 0..prefix {
-        map[i] = Some(i);
+    let mut flags = vec![false; new.len()];
+    for (i, slot) in map.iter_mut().take(prefix).enumerate() {
+        *slot = Some(i);
     }
     for i in 0..suffix {
         let new_idx = new.len() - suffix + i;
@@ -124,38 +137,32 @@ pub fn build_line_map(
         map[new_idx] = Some(old_idx);
     }
     if old_mid.is_empty() && new_mid.is_empty() {
-        return map;
+        return (map, flags);
     }
     // `--indent-heuristic` / `diff.indentHeuristic` shifts ambiguous add/delete
     // runs like Git's xdiff, which changes which lines blame attributes (t4061).
-    let ops = crate::diff_indent_heuristic::diff_slice_ops_compacted(
-        old_mid,
-        new_mid,
-        diff_algorithm.to_similar(),
-        indent_heuristic,
-    );
+    let ops = if diff_algorithm == BlameDiffAlgorithm::Myers {
+        crate::diff::line_diff_ops_git_xdiff_compacted(old_mid, new_mid, indent_heuristic)
+    } else {
+        crate::diff_indent_heuristic::diff_slice_ops_compacted(
+            old_mid,
+            new_mid,
+            diff_algorithm.to_similar(),
+            indent_heuristic,
+        )
+    };
     let mid_map = crate::diff_indent_heuristic::map_new_to_old_from_ops(&ops, new_mid.len());
     for (j, parent) in mid_map.into_iter().enumerate() {
         map[prefix + j] = parent.map(|idx| idx + prefix);
     }
-    map
-}
-
-fn xdiff_new_line_changed_flags_trimmed(
-    old: &[&str],
-    new: &[&str],
-    indent_heuristic: bool,
-) -> Vec<bool> {
-    let (prefix, _suffix, old_mid, new_mid) = common_affix_trim(old, new);
-    let mut flags = vec![false; new.len()];
-    if old_mid.is_empty() && new_mid.is_empty() {
-        return flags;
+    if with_changed_flags {
+        let mid_flags =
+            crate::diff_indent_heuristic::new_line_changed_flags_from_ops(&ops, new_mid.len());
+        for (j, flag) in mid_flags.into_iter().enumerate() {
+            flags[prefix + j] = flag;
+        }
     }
-    let mid_flags = crate::diff::xdiff_new_line_changed_flags(old_mid, new_mid, indent_heuristic);
-    for (j, flag) in mid_flags.into_iter().enumerate() {
-        flags[prefix + j] = flag;
-    }
-    flags
+    (map, flags)
 }
 
 /// Greedily map unresolved new lines to identical old lines (lowest use count, then distance).
@@ -170,6 +177,7 @@ fn fill_exact_text_relocate(
         by_content.entry(*line).or_default().push(idx);
     }
 
+    let mut windowed: Vec<usize> = Vec::new();
     for new_idx in 0..map.len() {
         if map[new_idx].is_some() {
             continue;
@@ -178,7 +186,26 @@ fn fill_exact_text_relocate(
             continue;
         };
         let mut best: Option<(usize, usize, usize)> = None;
-        for &old_idx in candidates {
+        let scan: &[usize] = if candidates.len() > 32 {
+            windowed.clear();
+            const WINDOW: usize = 768;
+            let lo = new_idx.saturating_sub(WINDOW);
+            let hi = new_idx.saturating_add(WINDOW);
+            windowed.extend(
+                candidates
+                    .iter()
+                    .copied()
+                    .filter(|&idx| (lo..=hi).contains(&idx)),
+            );
+            if windowed.is_empty() {
+                candidates
+            } else {
+                &windowed
+            }
+        } else {
+            candidates
+        };
+        for &old_idx in scan {
             let candidate = (used_old[old_idx], old_idx.abs_diff(new_idx), old_idx);
             if best.is_none_or(|b| candidate < b) {
                 best = Some(candidate);
@@ -253,6 +280,34 @@ fn blame_stops_on_current_commit(
     stop
 }
 
+/// Prefix maximum on a 1-indexed Fenwick tree (max `len`/`arg` pairs on `[1, idx]`).
+#[allow(clippy::manual_isolate_lowest_one)]
+fn fenwick_max_prefix(len: &[usize], arg: &[usize], idx: usize) -> (usize, usize) {
+    let mut pos = idx;
+    let mut best_len = 0usize;
+    let mut best_i = usize::MAX;
+    while pos > 0 {
+        if len[pos] > best_len {
+            best_len = len[pos];
+            best_i = arg[pos];
+        }
+        pos &= pos - 1;
+    }
+    (best_len, best_i)
+}
+
+#[allow(clippy::manual_isolate_lowest_one)]
+fn fenwick_max_set(len: &mut [usize], arg: &mut [usize], idx: usize, value: usize, i: usize) {
+    let mut pos = idx;
+    while pos < len.len() {
+        if value > len[pos] {
+            len[pos] = value;
+            arg[pos] = i;
+        }
+        pos += pos & pos.wrapping_neg();
+    }
+}
+
 /// Longest-increasing-subsequence tie-break for lines that moved but stayed text-identical.
 fn blame_reposition_on_current_commit(line_map: &[Option<usize>]) -> Vec<bool> {
     let n = line_map.len();
@@ -262,18 +317,27 @@ fn blame_reposition_on_current_commit(line_map: &[Option<usize>]) -> Vec<bool> {
         .filter_map(|(child, parent)| parent.map(|p| (child, p)))
         .collect();
 
+    if pairs.is_empty() || pairs.iter().all(|&(c, p)| c == p) {
+        return vec![false; n];
+    }
+
     let mut in_lis = vec![false; n];
     if !pairs.is_empty() {
         let len = pairs.len();
         let mut lis_len = vec![1usize; len];
         let mut pred = vec![usize::MAX; len];
+        let max_parent = pairs.iter().map(|(_, p)| *p).max().unwrap_or(0);
+        let fw_size = max_parent + 2;
+        let mut fw_len = vec![0usize; fw_size];
+        let mut fw_idx = vec![usize::MAX; fw_size];
         for i in 0..len {
-            for j in 0..i {
-                if pairs[j].1 < pairs[i].1 && lis_len[j] + 1 > lis_len[i] {
-                    lis_len[i] = lis_len[j] + 1;
-                    pred[i] = j;
-                }
+            let p = pairs[i].1;
+            let (prev_len, prev_i) = fenwick_max_prefix(&fw_len, &fw_idx, p);
+            if prev_len > 0 {
+                pred[i] = prev_i;
             }
+            lis_len[i] = prev_len + 1;
+            fenwick_max_set(&mut fw_len, &mut fw_idx, p + 1, lis_len[i], i);
         }
         let max_lis = *lis_len.iter().max().unwrap_or(&1);
         let end = (0..len)
@@ -621,6 +685,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::commit_graph_file::{BloomPrecheck, CommitGraphChain};
 use crate::config::ConfigSet;
 use crate::crlf::{
     convert_to_worktree_eager, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
@@ -630,8 +695,7 @@ use crate::diff::{detect_renames, diff_trees, DiffEntry, DiffStatus};
 use crate::diff_rename_parallel::{diff_rename_parallel_options, parallel_map_indices};
 use crate::error::{Error as LibError, Result};
 use crate::objects::{
-    parse_commit, parse_commit_tree_and_parents, parse_tree, Object, ObjectId,
-    ObjectKind,
+    parse_commit, parse_commit_tree_and_parents, parse_tree, Object, ObjectId, ObjectKind,
 };
 use crate::odb::Odb;
 use crate::parallel::{ParallelOptions, ThreadPolicy};
@@ -1027,6 +1091,7 @@ struct BlameSession<'a> {
     textconv_ctx: Option<&'a BlameTextconvContext>,
     use_textconv: bool,
     copy_score_parallel: ParallelOptions,
+    commit_graph: Option<Arc<CommitGraphChain>>,
     blob_lines: HashMap<BlobCacheKey, Arc<Vec<String>>>,
     path_entries: HashMap<PathCacheKey, Option<(ObjectId, u32)>>,
     pair_maps: HashMap<PairMapCacheKey, PairMapCacheValue>,
@@ -1047,6 +1112,7 @@ impl<'a> BlameSession<'a> {
             textconv_ctx,
             use_textconv,
             copy_score_parallel: diff_rename_parallel_options(&config, thread_policy),
+            commit_graph: None,
             blob_lines: HashMap::new(),
             path_entries: HashMap::new(),
             pair_maps: HashMap::new(),
@@ -1137,17 +1203,34 @@ impl<'a> BlameSession<'a> {
             return maps.clone();
         }
 
+        let identity_map = parent_oid == child_oid && par_lines.len() == cur_lines.len();
         let par_refs = Self::line_refs(par_lines);
         let cur_refs = Self::line_refs(cur_lines);
-        let diff_line_map = build_line_map(&par_refs, &cur_refs, diff_algorithm, indent_heuristic);
+        let (diff_line_map, xdiff_changed) = if identity_map {
+            (
+                (0..cur_lines.len()).map(Some).collect(),
+                vec![false; cur_lines.len()],
+            )
+        } else if include_stop_blame {
+            build_line_map_with_changed_flags(
+                &par_refs,
+                &cur_refs,
+                diff_algorithm,
+                indent_heuristic,
+                true,
+            )
+        } else {
+            (
+                build_line_map(&par_refs, &cur_refs, diff_algorithm, indent_heuristic),
+                Vec::new(),
+            )
+        };
         let (line_map, stop_blame_on_current) = if include_stop_blame {
             let mut line_map = build_exact_relocate_line_map(&par_refs, &cur_refs, &diff_line_map);
             if is_ignored {
                 line_map = build_fuzzy_line_map(&par_refs, &cur_refs, &line_map);
             }
             let stop = if par_lines.len() == cur_lines.len() {
-                let xdiff_changed =
-                    xdiff_new_line_changed_flags_trimmed(&par_refs, &cur_refs, indent_heuristic);
                 blame_stops_on_current_commit(&diff_line_map, &line_map, &xdiff_changed)
             } else {
                 Vec::new()
@@ -1477,7 +1560,6 @@ fn compute_blame_with_session(
 
         // Merge commits (2+ parents): sequential `pass_blame_to_parent` order from git/blame.c —
         // each line is attributed to the first parent whose version matches after line mapping.
-        // Parents without `current_path` are skipped; lines stay in `remaining` for later parents.
         // Octopus merges and `.git/info/grafts` with many synthetic parents use the same rule.
         let mut all_parents_have_path = parents.len() >= 2;
         if all_parents_have_path {
@@ -1493,35 +1575,28 @@ fn compute_blame_with_session(
             }
         }
 
+        // git/blame.c `pass_whole_blame`: when any parent has the same blob as the merge
+        // result, pass all remaining lines to that parent without merge diffs.
         if !first_parent_only && !is_ignored && parents.len() >= 2 && all_parents_have_path {
-            let mut all_parents_same_blob = true;
-            let mut first_parent_mode = current_blob_mode;
-            for (i, parent_oid) in parents.iter().enumerate() {
+            for parent_oid in &parents {
                 let parent_commit = get_blame_commit(odb, *parent_oid, &mut commit_cache)?;
-                match session.resolve_path_in_tree(parent_commit.tree, &current_path)? {
-                    Some((blob, mode)) if blob == current_blob_oid => {
-                        if i == 0 {
-                            first_parent_mode = mode;
-                        }
-                    }
-                    _ => {
-                        all_parents_same_blob = false;
-                        break;
+                if let Some((blob, mode)) =
+                    session.resolve_path_in_tree(parent_commit.tree, &current_path)?
+                {
+                    if blob == current_blob_oid {
+                        current_oid = fast_forward_same_blob(
+                            odb,
+                            session,
+                            *parent_oid,
+                            current_blob_oid,
+                            &current_path,
+                            grafts,
+                            &mut commit_cache,
+                        )?;
+                        current_blob_mode = mode;
+                        continue 'blame_loop;
                     }
                 }
-            }
-            if all_parents_same_blob {
-                current_oid = fast_forward_same_blob(
-                    odb,
-                    session,
-                    parents[0],
-                    current_blob_oid,
-                    &current_path,
-                    grafts,
-                    &mut commit_cache,
-                )?;
-                current_blob_mode = first_parent_mode;
-                continue;
             }
         }
 
@@ -1534,12 +1609,6 @@ fn compute_blame_with_session(
                 vec![None; parents.len()];
             let mut par_lines_vec: Vec<Option<Arc<Vec<String>>>> = vec![None; parents.len()];
             let mut maps: Vec<Option<Arc<Vec<Option<usize>>>>> = vec![None; parents.len()];
-
-            let map_algo = if parents.len() > 2 {
-                BlameDiffAlgorithm::Patience
-            } else {
-                diff_algorithm
-            };
 
             let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
             let mut attributed: Vec<BlameLine> = Vec::new();
@@ -1560,6 +1629,11 @@ fn compute_blame_with_session(
                 };
                 any_parent_has_path = true;
                 let pl_arc = session.load_blob_lines(blob, &current_path, mode)?;
+                let map_algo = if parents.len() > 2 {
+                    BlameDiffAlgorithm::Patience
+                } else {
+                    diff_algorithm
+                };
                 let pair = session.parent_child_line_maps(
                     blob,
                     &current_path,
@@ -1579,8 +1653,16 @@ fn compute_blame_with_session(
                 maps[i] = Some(pair.diff_line_map);
 
                 let mut next_remaining: Vec<TrackedLine> = Vec::new();
-                let map = maps[i].as_ref().expect("map loaded");
-                let par_lines = par_lines_vec[i].as_ref().expect("parent lines loaded");
+                let Some(map) = maps[i].as_ref() else {
+                    return Err(LibError::Message(
+                        "internal: missing merge parent line map".to_string(),
+                    ));
+                };
+                let Some(par_lines) = par_lines_vec[i].as_ref() else {
+                    return Err(LibError::Message(
+                        "internal: missing merge parent lines".to_string(),
+                    ));
+                };
                 for t in remaining {
                     let idx = t.current_idx;
                     let cur_line = cur_lines.get(idx).copied();
@@ -1655,6 +1737,20 @@ fn compute_blame_with_session(
         }
 
         let parent_oid = parents[0];
+        if parents.len() == 1
+            && bloom_may_skip_to_first_parent(
+                session,
+                odb,
+                current_oid,
+                parent_oid,
+                &current_path,
+                grafts,
+                &mut commit_cache,
+            )?
+        {
+            current_oid = parent_oid;
+            continue 'blame_loop;
+        }
         let parent_commit = get_blame_commit(odb, parent_oid, &mut commit_cache)?;
         let mut parent_blob_entry =
             session.resolve_path_in_tree(parent_commit.tree, &current_path)?;
@@ -2251,6 +2347,48 @@ fn get_blame_commit(
     Ok(meta)
 }
 
+/// Commit-graph Bloom filters describe path changes vs the commit object's first parent.
+/// Skip the shortcut when grafts replace parents or the walk target is not that parent.
+fn bloom_may_skip_to_first_parent(
+    session: &BlameSession<'_>,
+    odb: &Odb,
+    current_oid: ObjectId,
+    parent_oid: ObjectId,
+    path: &str,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
+    commit_cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
+) -> Result<bool> {
+    if grafts.contains_key(&current_oid) {
+        return Ok(false);
+    }
+    let object_parents = commit_object_parents(session, odb, current_oid, commit_cache)?;
+    if object_parents.first() != Some(&parent_oid) {
+        return Ok(false);
+    }
+    let Some(chain) = session.commit_graph.as_ref() else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        chain.bloom_precheck_for_paths(odb, current_oid, &[path.to_owned()], None, -1, true,),
+        Ok(BloomPrecheck::DefinitelyNot)
+    ))
+}
+
+/// Parent OIDs stored in the commit object (or commit-graph), ignoring grafts.
+fn commit_object_parents(
+    session: &BlameSession<'_>,
+    odb: &Odb,
+    oid: ObjectId,
+    cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
+) -> Result<Vec<ObjectId>> {
+    if let Some(chain) = session.commit_graph.as_ref() {
+        if let Some((parents, _commit_time)) = chain.graph_commit(&oid) {
+            return Ok(parents);
+        }
+    }
+    Ok(get_blame_commit(odb, oid, cache)?.parents.clone())
+}
+
 /// Parent list for a commit, honoring `.git/info/grafts` (same rules as `git rev-list`).
 fn commit_parents_for_blame(
     odb: &Odb,
@@ -2333,7 +2471,9 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     let ignore_revs = HashSet::new();
 
     let thread_policy = repo.thread_policy();
-    let raw = compute_blame(
+    let mut session = BlameSession::new(repo.odb(), None, false, &thread_policy);
+    session.commit_graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
+    let raw = compute_blame_with_session(
         repo.odb(),
         start_oid,
         &file_path,
@@ -2346,7 +2486,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         &grafts,
         indent_heuristic,
         options.line_range.clone(),
-        &thread_policy,
+        &mut session,
     )?;
 
     let lines: Vec<BlameAttributedLine> = raw

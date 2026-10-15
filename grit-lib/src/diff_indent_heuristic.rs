@@ -609,6 +609,24 @@ pub fn diff_slice_ops_compacted(
 
 /// Map each line in `new` to its origin line in `old` (if any), matching [`similar::TextDiff::iter_all_changes`]
 /// semantics over `ops` (typically compacted ops).
+/// Whether each new-side line is an insert/replace hunk after compaction (for blame stop).
+pub(crate) fn new_line_changed_flags_from_ops(ops: &[DiffOp], new_line_count: usize) -> Vec<bool> {
+    let mut flags = vec![false; new_line_count];
+    for op in ops {
+        match op.tag() {
+            DiffTag::Insert | DiffTag::Replace => {
+                for idx in op.new_range() {
+                    if idx < flags.len() {
+                        flags[idx] = true;
+                    }
+                }
+            }
+            DiffTag::Equal | DiffTag::Delete => {}
+        }
+    }
+    flags
+}
+
 pub(crate) fn map_new_to_old_from_ops(ops: &[DiffOp], new_line_count: usize) -> Vec<Option<usize>> {
     let mut result = vec![None; new_line_count];
     let mut old_idx: usize = 0;

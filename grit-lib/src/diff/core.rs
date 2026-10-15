@@ -1322,8 +1322,36 @@ pub fn diff_slice_ops_compacted(
     )
 }
 
+/// Line-diff ops using Git's xdiff Myers engine (default blame path; faster than `similar` on large files).
+#[must_use]
+pub(crate) fn line_diff_ops_git_xdiff_compacted(
+    old_lines: &[&str],
+    new_lines: &[&str],
+    indent_heuristic: bool,
+) -> Vec<similar::DiffOp> {
+    use std::collections::HashMap;
+
+    let mut interner: HashMap<&str, u32> = HashMap::new();
+    let mut ids1: Vec<u32> = Vec::with_capacity(old_lines.len());
+    for &line in old_lines {
+        let next = interner.len() as u32;
+        let id = *interner.entry(line).or_insert(next);
+        ids1.push(id);
+    }
+    let mut ids2: Vec<u32> = Vec::with_capacity(new_lines.len());
+    for &line in new_lines {
+        let next = interner.len() as u32;
+        let id = *interner.entry(line).or_insert(next);
+        ids2.push(id);
+    }
+    let (changed1, changed2) = git_xdiff::changed_flags(&ids1, &ids2);
+    let ops = changed_flags_to_ops(&changed1, &changed2, old_lines.len(), new_lines.len());
+    diff_indent_heuristic::apply_change_compact_to_ops(&ops, old_lines, new_lines, indent_heuristic)
+}
+
 /// Whether each new-side line is marked changed by Git's xdiff engine (after change compaction).
 #[must_use]
+#[allow(dead_code)]
 pub(crate) fn xdiff_new_line_changed_flags(
     old_lines: &[&str],
     new_lines: &[&str],
