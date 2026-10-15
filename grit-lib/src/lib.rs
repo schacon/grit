@@ -255,6 +255,7 @@ pub(crate) mod push;
 pub(crate) mod push_cert;
 pub(crate) mod push_report;
 pub mod quote_path;
+mod read_dir_kind;
 pub(crate) mod receive_pack;
 pub(crate) mod receive_quarantine;
 pub(crate) mod ref_exclusions;

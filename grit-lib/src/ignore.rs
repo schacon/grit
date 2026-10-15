@@ -62,6 +62,14 @@ pub struct IgnoreCheck {
 }
 
 #[derive(Debug, Clone)]
+enum IgnorePatternKind {
+    Wild,
+    Literal(String),
+    Prefix(String),
+    Suffix(String),
+}
+
+#[derive(Debug, Clone)]
 struct IgnoreRule {
     source: IgnoreSource,
     line_number: usize,
@@ -72,6 +80,7 @@ struct IgnoreRule {
     has_slash: bool,
     body: String,
     base_dir: String,
+    match_kind: IgnorePatternKind,
 }
 
 /// Engine used to evaluate ignore patterns against repository-relative paths.
@@ -95,6 +104,8 @@ pub struct IgnoreMatcher {
     pub warnings: Vec<String>,
     /// Cached ancestor directory list for the last [`Self::ensure_per_dir_rules_loaded`] parent.
     per_dir_dirs_cache: Option<(String, Vec<String>)>,
+    /// Per-directory ancestor exclude stacks reused across sibling checks under the same prefix.
+    dir_exclude_stack_cache: HashMap<String, Vec<String>>,
 }
 
 impl IgnoreMatcher {
@@ -149,6 +160,7 @@ impl IgnoreMatcher {
         // The cache is keyed by directory only; clear it so a new filename is honored.
         self.gitignore_cache.clear();
         self.per_dir_dirs_cache = None;
+        self.dir_exclude_stack_cache.clear();
     }
 
     /// Append patterns from `ls-files --exclude` / `-x` (Git command-line exclude list).
@@ -384,6 +396,33 @@ impl IgnoreMatcher {
             || per_dir_groups.iter().any(|g| !g.is_empty())
     }
 
+    /// Load per-directory exclude files for `dir_rel` when depth-first walking the work tree.
+    ///
+    /// Idempotent: repeated calls for the same directory reuse the in-memory cache.
+    pub fn note_directory_entered(
+        &mut self,
+        repo: &Repository,
+        index: Option<&Index>,
+        dir_rel: &str,
+    ) -> Result<()> {
+        if !self.read_per_directory {
+            return Ok(());
+        }
+        if self.gitignore_cache.contains_key(dir_rel) {
+            return Ok(());
+        }
+        let per_dir_name = self.per_directory_name.clone();
+        let rules = load_gitignore_for_dir(
+            repo,
+            index,
+            dir_rel,
+            per_dir_name.as_deref(),
+            &mut self.warnings,
+        )?;
+        self.gitignore_cache.insert(dir_rel.to_owned(), rules);
+        Ok(())
+    }
+
     fn ensure_per_dir_rules_loaded(
         &mut self,
         repo: &Repository,
@@ -397,25 +436,32 @@ impl IgnoreMatcher {
         let dirs = match self.per_dir_dirs_cache.as_ref() {
             Some((cached, cached_dirs)) if cached == parent => cached_dirs.clone(),
             _ => {
-                let mut dirs = Vec::new();
-                dirs.push(String::new());
-                if !parent.is_empty() {
-                    let mut cur = String::new();
-                    for segment in parent.split('/') {
-                        if !cur.is_empty() {
-                            cur.push('/');
+                if let Some(cached_dirs) = self.dir_exclude_stack_cache.get(parent) {
+                    self.per_dir_dirs_cache = Some((parent.to_string(), cached_dirs.clone()));
+                    cached_dirs.clone()
+                } else {
+                    let mut dirs = Vec::new();
+                    dirs.push(String::new());
+                    if !parent.is_empty() {
+                        let mut cur = String::new();
+                        for segment in parent.split('/') {
+                            if !cur.is_empty() {
+                                cur.push('/');
+                            }
+                            cur.push_str(segment);
+                            if worktree_path_is_existing_file(repo, &cur) {
+                                // Git does not treat a file path as a directory for EXC_DIRS
+                                // loading (`tracked.txt/.gitignore` must not be probed).
+                                break;
+                            }
+                            dirs.push(cur.clone());
                         }
-                        cur.push_str(segment);
-                        if worktree_path_is_existing_file(repo, &cur) {
-                            // Git does not treat a file path as a directory for EXC_DIRS
-                            // loading (`tracked.txt/.gitignore` must not be probed).
-                            break;
-                        }
-                        dirs.push(cur.clone());
                     }
+                    self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
+                    self.dir_exclude_stack_cache
+                        .insert(parent.to_string(), dirs.clone());
+                    dirs
                 }
-                self.per_dir_dirs_cache = Some((parent.to_string(), dirs.clone()));
-                dirs
             }
         };
 
@@ -677,6 +723,7 @@ fn parse_rule_line(
 
     let has_slash = raw.contains('/');
     let body = raw;
+    let match_kind = classify_ignore_pattern(&body);
     Some(IgnoreRule {
         source,
         line_number,
@@ -687,7 +734,30 @@ fn parse_rule_line(
         has_slash,
         body,
         base_dir: base_dir.to_owned(),
+        match_kind,
     })
+}
+
+fn classify_ignore_pattern(body: &str) -> IgnorePatternKind {
+    // Backslashes are wildmatch escapes (`foo\ bar` matches a literal space); never treat as
+    // a plain literal string.
+    if body.contains('\\') || body.contains(['?', '[']) {
+        return IgnorePatternKind::Wild;
+    }
+    if !body.contains('*') {
+        return IgnorePatternKind::Literal(body.to_owned());
+    }
+    if let Some(rest) = body.strip_prefix('*') {
+        if !rest.contains('*') && !rest.contains('/') {
+            return IgnorePatternKind::Suffix(rest.to_owned());
+        }
+    }
+    if let Some(rest) = body.strip_suffix('*') {
+        if !rest.contains('*') && !rest.contains('/') {
+            return IgnorePatternKind::Prefix(rest.to_owned());
+        }
+    }
+    IgnorePatternKind::Wild
 }
 
 fn base_dir_depth(base: &str) -> usize {
@@ -761,14 +831,14 @@ fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
     if rule.directory_only {
         if rule.has_slash || rule.anchored {
             for ancestor in ancestor_dirs(rel_to_base, is_dir) {
-                if gitignore_path_glob_matches(&rule.body, &ancestor) {
+                if rule_body_matches(rule, &ancestor, true) {
                     return true;
                 }
             }
             return false;
         }
         for ancestor in ancestor_dir_basenames(rel_to_base, is_dir) {
-            if glob_matches(&rule.body, ancestor) {
+            if rule_body_matches(rule, ancestor, false) {
                 return true;
             }
         }
@@ -776,12 +846,12 @@ fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
     }
 
     if rule.has_slash || rule.anchored {
-        return gitignore_path_glob_matches(&rule.body, rel_to_base);
+        return rule_body_matches(rule, rel_to_base, true);
     }
 
     path_component_names(rel_to_base)
         .iter()
-        .any(|name| glob_matches(&rule.body, name))
+        .any(|name| rule_body_matches(rule, name, false))
 }
 
 fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
@@ -915,17 +985,25 @@ fn ancestor_dir_basenames(path: &str, is_dir: bool) -> Vec<&str> {
     out
 }
 
-fn glob_matches(pattern: &str, text: &str) -> bool {
-    wildmatch(pattern.as_bytes(), text.as_bytes(), WM_PATHNAME)
+fn pattern_matches_kind(
+    kind: &IgnorePatternKind,
+    pattern: &str,
+    text: &str,
+    pathname: bool,
+) -> bool {
+    match kind {
+        IgnorePatternKind::Literal(lit) => text == lit,
+        IgnorePatternKind::Prefix(prefix) => text.starts_with(prefix),
+        IgnorePatternKind::Suffix(suffix) => text.ends_with(suffix),
+        IgnorePatternKind::Wild => {
+            let flags = if pathname { WM_PATHNAME } else { 0 };
+            wildmatch(pattern.as_bytes(), text.as_bytes(), flags)
+        }
+    }
 }
 
-/// Like [`glob_matches`] for pathname-shaped ignore patterns.
-///
-/// Plain `wildmatch` with `WM_PATHNAME`: per gitignore(5), `*` never matches `/`, so
-/// `dir/*.ext` matches only direct children of `dir/` (a previous extension that rewrote it
-/// to `dir/**/*.ext` diverged from Git and made `add .` un-track nested files).
-fn gitignore_path_glob_matches(pattern: &str, text: &str) -> bool {
-    wildmatch(pattern.as_bytes(), text.as_bytes(), WM_PATHNAME)
+fn rule_body_matches(rule: &IgnoreRule, text: &str, pathname: bool) -> bool {
+    pattern_matches_kind(&rule.match_kind, &rule.body, text, pathname)
 }
 
 /// One line from a sparse-checkout specification blob (`--filter=sparse:oid=…`).
@@ -1246,19 +1324,62 @@ mod sparse_checkout_tests {
 mod gitignore_glob_tests {
     use super::*;
 
+    fn pathname_pattern_matches(pattern: &str, text: &str) -> bool {
+        pattern_matches_kind(&classify_ignore_pattern(pattern), pattern, text, true)
+    }
+
+    #[test]
+    fn precompiled_literal_prefix_suffix_patterns() {
+        assert!(matches!(
+            classify_ignore_pattern("build"),
+            IgnorePatternKind::Literal(_)
+        ));
+        assert!(matches!(
+            classify_ignore_pattern("target*"),
+            IgnorePatternKind::Prefix(_)
+        ));
+        assert!(matches!(
+            classify_ignore_pattern("*.o"),
+            IgnorePatternKind::Suffix(_)
+        ));
+        assert!(matches!(
+            classify_ignore_pattern("a*b"),
+            IgnorePatternKind::Wild
+        ));
+        assert!(matches!(
+            classify_ignore_pattern(r"foo\ bar"),
+            IgnorePatternKind::Wild
+        ));
+        assert!(matches!(
+            classify_ignore_pattern("foo/*"),
+            IgnorePatternKind::Wild
+        ));
+        assert!(!pathname_pattern_matches("foo/*", "foo/bar/baz"));
+        assert!(rule_body_matches(
+            &IgnoreRule {
+                source: IgnoreSource::InfoExclude,
+                line_number: 1,
+                pattern_text: "*.log".into(),
+                negative: false,
+                directory_only: false,
+                anchored: false,
+                has_slash: false,
+                body: "*.log".into(),
+                base_dir: String::new(),
+                match_kind: IgnorePatternKind::Suffix(".log".into()),
+            },
+            "app.log",
+            false
+        ));
+    }
+
     #[test]
     fn dir_star_extension_matches_nested_path() {
         // Slash in pattern → WM_PATHNAME: `*` does not cross `/` (gitignore(5)).
-        assert!(!gitignore_path_glob_matches(
-            "doc/*.pdf",
-            "doc/sub/manual.pdf"
-        ));
-        assert!(gitignore_path_glob_matches("doc/*.pdf", "doc/manual.pdf"));
-        assert!(!gitignore_path_glob_matches(
-            "doc/*.pdf",
-            "other/manual.pdf"
-        ));
-        assert!(gitignore_path_glob_matches(
+        assert!(!pathname_pattern_matches("doc/*.pdf", "doc/sub/manual.pdf"));
+        assert!(pathname_pattern_matches("doc/*.pdf", "doc/manual.pdf"));
+        assert!(!pathname_pattern_matches("doc/*.pdf", "other/manual.pdf"));
+        assert!(pathname_pattern_matches(
             "doc/**/*.pdf",
             "doc/sub/manual.pdf"
         ));
@@ -1266,18 +1387,12 @@ mod gitignore_glob_tests {
 
     #[test]
     fn dir_star_extension_unexpanded_when_parent_has_glob() {
-        assert!(!gitignore_path_glob_matches(
-            "*/foo/*.pdf",
-            "a/foo/sub/x.pdf"
-        ));
+        assert!(!pathname_pattern_matches("*/foo/*.pdf", "a/foo/sub/x.pdf"));
     }
 
     #[test]
     fn nested_dir_star_extension() {
-        assert!(!gitignore_path_glob_matches(
-            "foo/bar/*.c",
-            "foo/bar/baz/x.c"
-        ));
+        assert!(!pathname_pattern_matches("foo/bar/*.c", "foo/bar/baz/x.c"));
     }
 }
 

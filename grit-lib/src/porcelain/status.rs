@@ -532,7 +532,7 @@ fn collect_untracked_parallel_top_level(
         if entry.file_name() == ".git" {
             continue;
         }
-        if entry.path().is_dir() {
+        if crate::read_dir_kind::entry_is_dir(&entry).unwrap_or(false) {
             root_dirs.push(entry);
         } else {
             root_files.push(entry);
@@ -691,7 +691,7 @@ fn visit_untracked_dir_entry(
     };
     let path = entry.path();
     let child_rel = relative_path(rel, &name);
-    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+    let is_dir = crate::read_dir_kind::entry_is_dir(entry).unwrap_or(false);
 
     if is_dir && gitlinks.contains(&child_rel) {
         return Ok(UntrackedWalkStep::Continue);
@@ -922,6 +922,8 @@ fn visit_untracked_directory(
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
+    let _ = matcher.note_directory_entered(repo, Some(index), rel);
+
     if has_tracked_under(index, gitlinks, rel) {
         visit_untracked_node(
             repo,
