@@ -868,8 +868,6 @@ pub fn rev_list(
     let repo_config = repo
         .config()
         .unwrap_or_else(|_| std::sync::Arc::new(ConfigSet::new()));
-    let mut graph =
-        CommitGraph::with_commit_graph(repo, options.first_parent, options.use_commit_graph);
 
     let (mut include, mut object_roots, tip_annotated_tag_by_commit) = if options.objects {
         resolve_specs_for_objects_with_options(
@@ -989,6 +987,9 @@ pub fn rev_list(
         return Ok(rev_list_result_from_commits(ordered));
     }
 
+    let mut graph =
+        CommitGraph::with_commit_graph(repo, options.first_parent, options.use_commit_graph);
+
     let use_dense_path_limit = !options.paths.is_empty()
         && !options.full_history
         && !options.ancestry_path
@@ -1075,12 +1076,9 @@ pub fn rev_list(
             && crate::pathspec::pathspecs_allow_bloom(&options.paths);
         let read_changed = read_paths && options.commit_graph_read_changed_paths;
         let chain = if use_bloom {
-            CommitGraphChain::try_load_with_caches(
-                &repo.git_dir().join("objects"),
-                Some(repo.caches().as_ref()),
-            )
-            .ok()
-            .flatten()
+            repo.caches()
+                .commit_graph_chain(&repo.git_dir().join("objects"))
+                .map(|arc| (*arc).clone())
         } else {
             None
         };
@@ -5402,12 +5400,10 @@ fn try_commit_graph_count_only(
     if !crate::rev_parse::load_graft_parents(repo.git_dir()).is_empty() {
         return Ok(None);
     }
-    let Some(chain) = CommitGraphChain::try_load_with_caches(
-        &repo.git_dir().join("objects"),
-        Some(repo.caches().as_ref()),
-    )
-    .ok()
-    .flatten() else {
+    let Some(chain) = repo
+        .caches()
+        .commit_graph_chain(&repo.git_dir().join("objects"))
+    else {
         return Ok(None);
     };
     let shallow = load_shallow_boundaries(repo.git_dir());
@@ -5986,12 +5982,9 @@ impl<'r> CommitGraph<'r> {
         let shallow_boundaries = load_shallow_boundaries(repo.git_dir());
         let graft_parents = crate::rev_parse::load_graft_parents(repo.git_dir());
         let graph_chain = if use_commit_graph {
-            CommitGraphChain::try_load_with_caches(
-                &repo.git_dir().join("objects"),
-                Some(repo.caches().as_ref()),
-            )
-            .ok()
-            .flatten()
+            repo.caches()
+                .commit_graph_chain(&repo.git_dir().join("objects"))
+                .map(|arc| (*arc).clone())
         } else {
             None
         };

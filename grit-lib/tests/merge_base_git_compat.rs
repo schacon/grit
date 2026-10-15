@@ -98,11 +98,18 @@ fn merge_base_identical_with_and_without_commit_graph() {
 
     let without = merge_bases_first_vs_rest(&repo, g, &[h]).expect("without graph");
 
-    git(wt, &["commit-graph", "write"]);
+    git(wt, &["commit-graph", "write", "--reachable"]);
     let with = merge_bases_first_vs_rest(&repo, g, &[h]).expect("with graph");
 
     assert_eq!(without, with);
     assert_eq!(without, git_merge_base(wt, &["G", "H"]));
+
+    let info_dir = wt.join(".git/objects/info");
+    let _ = fs::remove_file(info_dir.join("commit-graph"));
+    let _ = fs::remove_dir_all(info_dir.join("commit-graphs"));
+    let after_stale = merge_bases_first_vs_rest(&repo, g, &[h]).expect("stale graph");
+    assert_eq!(after_stale, without);
+    assert_eq!(after_stale, git_merge_base(wt, &["G", "H"]));
 }
 
 fn git(wt: &std::path::Path, args: &[&str]) {

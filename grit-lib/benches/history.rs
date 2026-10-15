@@ -9,6 +9,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use grit_lib::diff::{count_changes_with_algorithm, diff_trees};
+use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
 use grit_lib::revwalk::rev_list::{rev_list, OrderingMode, RevListOptions};
 use grit_lib::revwalk::rev_parse::resolve_revision;
 use similar::Algorithm;
@@ -83,6 +84,64 @@ fn bench_revwalk_topo(c: &mut Criterion) {
 
 fn bench_revwalk_date(c: &mut Criterion) {
     revwalk_group(c, OrderingMode::DateOrderWalk, "date_order");
+}
+
+fn bench_log_first_1000_gitgit_like(c: &mut Criterion) {
+    let fx = HistoryBenchFixtures::global();
+    let mut group = c.benchmark_group("revwalk/log_first_1000_gitgit_like");
+    group.throughput(Throughput::Elements(1000));
+    for (graph_label, use_graph) in [("no_commit_graph", false), ("commit_graph", true)] {
+        group.bench_with_input(
+            BenchmarkId::new("walk", graph_label),
+            &use_graph,
+            |b, with_graph| {
+                if *with_graph {
+                    fx.ensure_commit_graph();
+                } else {
+                    fx.remove_commit_graph();
+                }
+                b.iter(|| {
+                    let opts = RevListOptions {
+                        max_count: Some(1000),
+                        use_commit_graph: *with_graph,
+                        ..Default::default()
+                    };
+                    let result =
+                        rev_list(&fx.repo, &[String::from("HEAD")], &[], &opts).expect("rev-list");
+                    black_box(result.commits.len())
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_merge_base_deep(c: &mut Criterion) {
+    let fx = HistoryBenchFixtures::global();
+    let mid = grit_lib::refs::resolve_ref(fx.repo.git_dir(), "refs/heads/bench/b00100")
+        .expect("mid-history branch ref");
+    let mut group = c.benchmark_group("revwalk/merge_base_deep");
+    for (graph_label, use_graph) in [("no_commit_graph", false), ("commit_graph", true)] {
+        group.bench_with_input(
+            BenchmarkId::new("merge_base", graph_label),
+            &use_graph,
+            |b, with_graph| {
+                if *with_graph {
+                    fx.ensure_commit_graph();
+                } else {
+                    fx.remove_commit_graph();
+                }
+                b.iter(|| {
+                    black_box(
+                        merge_bases_first_vs_rest(&fx.repo, fx.head, &[mid])
+                            .expect("merge-base")
+                            .len(),
+                    )
+                });
+            },
+        );
+    }
+    group.finish();
 }
 
 fn bench_rev_parse(c: &mut Criterion) {
@@ -194,6 +253,8 @@ criterion_group!(
     bench_revwalk_topo,
     bench_revwalk_date,
     bench_revwalk_path_limited,
+    bench_log_first_1000_gitgit_like,
+    bench_merge_base_deep,
     bench_rev_parse,
     bench_tree_diff,
     bench_blob_diff

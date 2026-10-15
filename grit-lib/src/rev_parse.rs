@@ -711,24 +711,41 @@ pub fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
     grafts
 }
 
+/// Cached graft state for a sequence of `^` / `~` navigation steps.
+///
+/// Parent links come from the object database with header-only parsing so `HEAD~N`
+/// does not parse the full commit-graph file (Git resolves short parent chains lazily).
+struct NavParentCache<'repo> {
+    repo: &'repo Repository,
+    grafts: HashMap<ObjectId, Vec<ObjectId>>,
+}
+
+impl<'repo> NavParentCache<'repo> {
+    fn new(repo: &'repo Repository) -> Self {
+        let grafts = load_graft_parents(repo.git_dir());
+        Self { repo, grafts }
+    }
+
+    fn parents_of(&self, commit_oid: ObjectId) -> Result<Vec<ObjectId>> {
+        if let Some(grafted) = self.grafts.get(&commit_oid) {
+            return Ok(grafted.clone());
+        }
+        let obj = self.repo.odb().read(&commit_oid)?;
+        if obj.kind != ObjectKind::Commit {
+            return Err(Error::InvalidRef(format!(
+                "invalid ref: {commit_oid} is not a commit"
+            )));
+        }
+        Ok(crate::objects::parse_commit_linkage(&obj.data)?.parents)
+    }
+}
+
 /// Parent OIDs of `commit_oid` for revision navigation, honoring grafts.
 pub fn commit_parents_for_navigation(
     repo: &Repository,
     commit_oid: ObjectId,
 ) -> Result<Vec<ObjectId>> {
-    let obj = repo.odb().read(&commit_oid)?;
-    if obj.kind != ObjectKind::Commit {
-        return Err(Error::InvalidRef(format!(
-            "invalid ref: {commit_oid} is not a commit"
-        )));
-    }
-    let commit = parse_commit(&obj.data)?;
-    let mut parents = commit.parents;
-    let grafts = load_graft_parents(repo.git_dir());
-    if let Some(grafted) = grafts.get(&commit_oid) {
-        parents = grafted.clone();
-    }
-    Ok(parents)
+    NavParentCache::new(repo).parents_of(commit_oid)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1391,8 +1408,9 @@ fn resolve_revision_impl(
         implicit_blob_abbrev,
         remote_branch_name_guess,
     )?;
+    let nav_cache = NavParentCache::new(repo);
     for step in nav_steps {
-        oid = apply_nav_step(repo, oid, step).map_err(|e| {
+        oid = apply_nav_step(repo, &nav_cache, oid, step).map_err(|e| {
             if matches!(e, Error::ObjectNotFound(_)) {
                 RevParseError::AmbiguousArgument {
                     spec: spec.to_owned(),
@@ -1773,12 +1791,17 @@ fn peel_annotated_tag_chain(repo: &Repository, mut oid: ObjectId) -> Result<Obje
 }
 
 /// Apply a single navigation step to an OID, resolving parent/ancestor links.
-fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<ObjectId> {
+fn apply_nav_step(
+    repo: &Repository,
+    nav: &NavParentCache<'_>,
+    oid: ObjectId,
+    step: NavStep,
+) -> Result<ObjectId> {
     match step {
         NavStep::ParentN(0) => Ok(oid),
         NavStep::ParentN(n) => {
             let oid = peel_annotated_tag_chain(repo, oid)?;
-            let parents = commit_parents_for_navigation(repo, oid)?;
+            let parents = nav.parents_of(oid)?;
             parents
                 .get(n - 1)
                 .copied()
@@ -1787,7 +1810,11 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
         NavStep::AncestorN(n) => {
             let mut current = peel_annotated_tag_chain(repo, oid)?;
             for _ in 0..n {
-                current = apply_nav_step(repo, current, NavStep::ParentN(1))?;
+                let parents = nav.parents_of(current)?;
+                current = parents
+                    .first()
+                    .copied()
+                    .ok_or_else(|| Error::ObjectNotFound(format!("{current}~1")))?;
             }
             Ok(current)
         }
@@ -4798,8 +4825,9 @@ mod line_coverage_tests {
         let _ = peel_annotated_tag_chain(&repo, tag_oid);
         let _ = apply_peel(&repo, tag_oid, Some("commit"));
         let _ = apply_peel(&repo, c2, Some("tree"));
-        let _ = apply_nav_step(&repo, merge, NavStep::ParentN(2));
-        let _ = apply_nav_step(&repo, merge, NavStep::AncestorN(2));
+        let nav = NavParentCache::new(&repo);
+        let _ = apply_nav_step(&repo, &nav, merge, NavStep::ParentN(2));
+        let _ = apply_nav_step(&repo, &nav, merge, NavStep::AncestorN(2));
         let _ = commit_reachable_closure(&repo, merge);
         let _ = resolve_commit_message_search_from(&repo, merge, "merge");
         let _ = resolve_commit_message_search_from(&repo, merge, "!-two");

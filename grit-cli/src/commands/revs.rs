@@ -1,13 +1,13 @@
 //! `grit revs` — list or count commits matching revision ranges.
 
 use anyhow::{bail, Result};
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{read_commit_subject_line, ObjectId};
 use grit_lib::revwalk::RevWalkListOptions;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
-use crate::context::{self, subject_line};
+use crate::context;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
 /// One commit row in `grit revs` output.
@@ -100,10 +100,10 @@ fn load_commit_rows(
     let mut out = Vec::with_capacity(oids.len());
     for oid in oids {
         let obj = repo.odb().read(oid)?;
-        let commit = parse_commit(&obj.data)?;
+        let subject = read_commit_subject_line(&obj.data)?;
         out.push(RevsCommitRow {
             oid: oid.to_hex(),
-            subject: subject_line(&commit.message),
+            subject,
         });
     }
     Ok(out)
