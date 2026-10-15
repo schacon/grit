@@ -115,7 +115,7 @@ fn compute_blame_line_range_limits_output_and_work() {
         None,
         false,
         0,
-        true,
+        false,
         &grafts,
         false,
         Some(1..=1),

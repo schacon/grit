@@ -2141,8 +2141,8 @@ pub struct BlameOptions {
     pub start: Option<ObjectId>,
     /// When set, only include lines whose 1-based final line number lies in this range.
     pub line_range: Option<RangeInclusive<usize>>,
-    /// When true, walk all parents at merge commits (Git's default blame follows first parent only).
-    pub all_parents: bool,
+    /// When true, follow only the first parent at merge commits (Git's `--first-parent`).
+    pub first_parent_only: bool,
 }
 
 /// One blamed line returned by [`blame_file`].
@@ -2212,7 +2212,7 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
         None,
         false,
         0,
-        !options.all_parents,
+        options.first_parent_only,
         &grafts,
         indent_heuristic,
         options.line_range.clone(),

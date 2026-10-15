@@ -281,6 +281,60 @@ fn blame_merge_side_only_file_matches_git() {
 }
 
 #[test]
+fn blame_merge_line_from_second_parent_matches_git_default() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    let file = "ten.txt";
+    let mut base = String::new();
+    for i in 1..=9 {
+        base.push_str(&format!("line {i}\n"));
+    }
+    base.push_str("line ten on main\n");
+    std::fs::write(root.join(file), &base).unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "base ten lines"]);
+
+    git_run(root, &["branch", "side"]);
+    git_run(root, &["checkout", "side"]);
+    let mut side_content = base.clone();
+    side_content = side_content.replace("line ten on main\n", "line ten from side branch\n");
+    std::fs::write(root.join(file), &side_content).unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "side edits line ten"]);
+    let side_commit = git_output(root, &["rev-parse", "HEAD"])
+        .trim()
+        .parse::<ObjectId>()
+        .expect("side oid");
+
+    git_run(root, &["checkout", "main"]);
+    git_run(
+        root,
+        &["merge", "--no-ff", "side", "-m", "merge side line ten"],
+    );
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    let git_lines = git_blame(dir, file, None, Some((10, 10)));
+    assert_eq!(git_lines.len(), 1);
+    assert_eq!(
+        git_lines[0].commit, side_commit,
+        "git should attribute line 10 to the side-branch commit"
+    );
+
+    let grit_lines = grit_blame(&repo, file, None, Some(10..=10));
+    assert_eq!(grit_lines.len(), 1);
+    assert_eq!(
+        grit_lines[0].commit, side_commit,
+        "default grit blame should match git (second parent), not the merge commit"
+    );
+    assert_eq!(grit_lines[0].commit, git_lines[0].commit);
+}
+
+#[test]
 fn blame_matches_git_porcelain_after_adcb_permutation() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

@@ -404,9 +404,9 @@ enum Command {
         /// Limit to an inclusive 1-based line range (`START,END`).
         #[arg(short = 'L', long = "lines", value_name = "START,END")]
         line_range: Option<String>,
-        /// At merge commits, consider all parents (default: first parent only, like Git blame).
-        #[arg(long = "all-parents")]
-        all_parents: bool,
+        /// At merge commits, follow only the first parent (Git's `--first-parent`).
+        #[arg(long = "first-parent")]
+        first_parent: bool,
     },
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
@@ -1000,9 +1000,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             file,
             rev,
             line_range,
-            all_parents,
+            first_parent,
         } => emit(
-            &commands::blame::run(file, rev, line_range, all_parents, ctx.now)?,
+            &commands::blame::run(file, rev, line_range, first_parent, ctx.now)?,
             opts,
             ctx,
         ),

@@ -219,7 +219,7 @@ impl core::marker::UnsafeUnpin for grit_lib::blame::BlameLine
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::blame::BlameLine
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::blame::BlameLine
 pub struct grit_lib::blame::BlameOptions
-pub grit_lib::blame::BlameOptions::all_parents: bool
+pub grit_lib::blame::BlameOptions::first_parent_only: bool
 pub grit_lib::blame::BlameOptions::line_range: core::option::Option<core::ops::range::RangeInclusive<usize>>
 pub grit_lib::blame::BlameOptions::start: core::option::Option<grit_lib::objects::ObjectId>
 impl core::clone::Clone for grit_lib::blame::BlameOptions
