@@ -3,8 +3,13 @@
 use std::num::NonZeroUsize;
 
 use crate::config::ConfigSet;
+use crate::objects::pack_store::PackReadContextGuard;
 use crate::odb::Odb;
-use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy};
+use crate::parallel::{
+    try_par_map, try_par_map_with_local, ParallelHashError, ParallelOp, ParallelOptions,
+    ThreadPolicy,
+};
+use std::sync::Arc;
 
 /// Git's default `diff.renameLimit` when unset.
 pub(crate) const DEFAULT_RENAME_LIMIT: usize = 1000;
@@ -75,12 +80,17 @@ where
         return Vec::new();
     }
     let indices: Vec<usize> = (0..count).collect();
-    odb.with_pack_read_context(|| {
-        match try_par_map(&indices, options, total_bytes_hint, |&i| Ok(load_index(i))) {
-            Ok(rows) => rows,
-            Err(ParallelHashError::Task(err)) => err,
-        }
-    })
+    let store = odb.pack_store_for(odb.objects_dir());
+    match try_par_map_with_local(
+        &indices,
+        options,
+        total_bytes_hint,
+        || PackReadContextGuard::install(Arc::clone(&store)),
+        |_ctx, &i| Ok(load_index(i)),
+    ) {
+        Ok(rows) => rows,
+        Err(ParallelHashError::Task(err)) => err,
+    }
 }
 
 /// Map `0..len` with the rename/copy parallel policy inside a pack read context.
@@ -100,10 +110,15 @@ where
         return Ok(Vec::new());
     }
     let indices: Vec<usize> = (0..len).collect();
-    odb.with_pack_read_context(|| {
-        try_par_map(&indices, options, total_bytes_hint, |&i| f(i))
-            .map_err(|ParallelHashError::Task(err)| err)
-    })
+    let store = odb.pack_store_for(odb.objects_dir());
+    try_par_map_with_local(
+        &indices,
+        options,
+        total_bytes_hint,
+        || PackReadContextGuard::install(Arc::clone(&store)),
+        |_ctx, &i| f(i),
+    )
+    .map_err(|ParallelHashError::Task(err)| err)
 }
 
 #[cfg(test)]

@@ -3,10 +3,12 @@
 use crate::config::ConfigSet;
 use crate::diff_rename_parallel::parallel_map_indices;
 use crate::error::{Error, Result};
+use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::ObjectId;
 use crate::odb::Odb;
-use crate::parallel::{try_par_map_force, ParallelHashError};
+use crate::parallel::{try_par_map_with_local, ParallelHashError};
 use crate::parallel::{ParallelOp, ThreadPolicy};
+use std::sync::Arc;
 
 use super::structured::{
     structured_file_diff, SideBytes, StructuredDiffOptions, StructuredFileDiff,
@@ -89,8 +91,29 @@ pub fn tree_diff_structured_parallel(
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
     par_opts.min_total_bytes = None;
-    let rows = odb.with_pack_read_context(|| {
-        try_par_map_force(&entries, par_opts, |entry| {
+    let store = odb.pack_store_for(odb.objects_dir());
+    let rows = try_par_map_with_local(
+        &entries,
+        par_opts,
+        0,
+        || PackReadContextGuard::install(Arc::clone(&store)),
+        |_ctx, entry| {
+            if !entry.old_oid.is_zero()
+                && entry.old_oid == entry.new_oid
+                && entry.old_mode == entry.new_mode
+            {
+                return Ok(TreeDiffStructured {
+                    entry: entry.clone(),
+                    structured: StructuredFileDiff {
+                        old_mode: mode_display(&entry.old_mode),
+                        new_mode: mode_display(&entry.new_mode),
+                        old_encoding_lossy: false,
+                        new_encoding_lossy: false,
+                        hunks: Vec::new(),
+                    },
+                    binary: false,
+                });
+            }
             let (old_bytes, old_bin) = load_old_side(odb, entry)?;
             let (new_bytes, new_bin) = load_new_side(odb, entry)?;
             let binary = old_bin || new_bin;
@@ -116,8 +139,8 @@ pub fn tree_diff_structured_parallel(
                 structured,
                 binary,
             })
-        })
-    });
+        },
+    );
     match rows {
         Ok(rows) => Ok(rows),
         Err(ParallelHashError::Task(err)) => Err(err),

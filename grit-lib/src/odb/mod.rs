@@ -879,7 +879,7 @@ impl Odb {
         });
     }
 
-    fn pack_store_for(&self, objects_dir: &Path) -> Arc<PackStore> {
+    pub(crate) fn pack_store_for(&self, objects_dir: &Path) -> Arc<PackStore> {
         if objects_dir == self.objects_dir.as_path() {
             return Arc::clone(&self.pack_store);
         }

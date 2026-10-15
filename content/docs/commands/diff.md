@@ -116,18 +116,12 @@ Example:
             {
               "kind": "del",
               "old": 1,
-              "segments": [
-                { "text": "fn main() ", "emphasis": false },
-                { "text": "{}", "emphasis": true }
-              ]
+              "segments": [{ "text": "fn main() {}" }]
             },
             {
               "kind": "add",
               "new": 1,
-              "segments": [
-                { "text": "fn main() ", "emphasis": false },
-                { "text": "{", "emphasis": true }
-              ]
+              "segments": [{ "text": "fn main() {" }]
             }
           ]
         }

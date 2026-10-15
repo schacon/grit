@@ -228,17 +228,220 @@ fn structured_text_diff_line_level(
     new_text: &str,
     context_lines: usize,
 ) -> StructuredTextDiff {
-    if old_text == new_text {
-        return StructuredTextDiff { hunks: Vec::new() };
+    StructuredTextDiff {
+        hunks: histogram_structured_hunks_line_level(old_text, new_text, context_lines, 0),
     }
-    let body = super::histogram_unified_body_raw(old_text, new_text, context_lines, 0);
-    if body.is_empty() {
-        return StructuredTextDiff { hunks: Vec::new() };
+}
+
+/// Build structured hunks with Git histogram (imara) without a unified-text intermediate.
+fn histogram_structured_hunks_line_level(
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+) -> Vec<StructuredHunk> {
+    use imara_diff::{Algorithm, Diff, Hunk, InternedInput};
+
+    if old_content == new_content {
+        return Vec::new();
     }
-    let old = TextLines::from_text(old_text);
-    let new = TextLines::from_text(new_text);
-    let hunks = structured_hunks_from_histogram_body(&body, &old, &new);
-    StructuredTextDiff { hunks }
+    let input = InternedInput::new(old_content, new_content);
+    let mut diff = Diff::compute(Algorithm::Histogram, &input);
+    diff.postprocess_lines(&input);
+    let hunks: Vec<Hunk> = diff.hunks().collect();
+    if hunks.is_empty() {
+        return Vec::new();
+    }
+
+    let ctx = context_lines.min(u32::MAX as usize) as u32;
+    let max_gap = (2usize.saturating_mul(context_lines))
+        .saturating_add(inter_hunk_context)
+        .min(u32::MAX as usize) as u32;
+    let before_len = input.before.len() as u32;
+    let after_len = input.after.len() as u32;
+    let before_ends_nl = old_content.ends_with('\n');
+    let after_ends_nl = new_content.ends_with('\n');
+    let before_line_count = input.before.len();
+    let after_line_count = input.after.len();
+
+    let mut groups: Vec<&[Hunk]> = Vec::new();
+    let mut group_start = 0usize;
+    for i in 1..hunks.len() {
+        if hunks[i].before.start - hunks[i - 1].before.end > max_gap {
+            groups.push(&hunks[group_start..i]);
+            group_start = i;
+        }
+    }
+    groups.push(&hunks[group_start..]);
+
+    fn hunk_side_start(start: u32, count: u32) -> usize {
+        if count == 0 {
+            start as usize
+        } else {
+            start as usize + 1
+        }
+    }
+
+    let mut out = Vec::with_capacity(groups.len());
+    for group in groups {
+        let first = &group[0];
+        let last = &group[group.len() - 1];
+        let b_start = first.before.start.saturating_sub(ctx);
+        let a_start = first.after.start.saturating_sub(ctx);
+        let b_end = (last.before.end.saturating_add(ctx)).min(before_len);
+        let a_end = (last.after.end.saturating_add(ctx)).min(after_len);
+        let old_lines = (b_end - b_start) as usize;
+        let new_lines = (a_end - a_start) as usize;
+        let old_start = hunk_side_start(b_start, b_end - b_start);
+        let new_start = hunk_side_start(a_start, a_end - a_start);
+
+        let mut lines = Vec::new();
+        let mut old_line = old_start;
+        let mut new_line = new_start;
+        let mut pos = b_start;
+        for hunk in group {
+            for &token in &input.before[pos as usize..hunk.before.start as usize] {
+                push_histogram_context_line(
+                    &mut lines,
+                    &input.interner[token],
+                    &mut old_line,
+                    &mut new_line,
+                    before_line_count,
+                    after_line_count,
+                    before_ends_nl,
+                    after_ends_nl,
+                );
+            }
+            for &token in &input.before[hunk.before.start as usize..hunk.before.end as usize] {
+                push_histogram_del_line(
+                    &mut lines,
+                    &input.interner[token],
+                    &mut old_line,
+                    before_line_count,
+                    before_ends_nl,
+                );
+            }
+            for &token in &input.after[hunk.after.start as usize..hunk.after.end as usize] {
+                push_histogram_add_line(
+                    &mut lines,
+                    &input.interner[token],
+                    &mut new_line,
+                    after_line_count,
+                    after_ends_nl,
+                );
+            }
+            pos = hunk.before.end;
+        }
+        for &token in &input.before[pos as usize..b_end as usize] {
+            push_histogram_context_line(
+                &mut lines,
+                &input.interner[token],
+                &mut old_line,
+                &mut new_line,
+                before_line_count,
+                after_line_count,
+                before_ends_nl,
+                after_ends_nl,
+            );
+        }
+
+        out.push(StructuredHunk {
+            old_start,
+            new_start,
+            old_lines,
+            new_lines,
+            context: None,
+            lines,
+        });
+    }
+    out
+}
+
+fn push_histogram_context_line(
+    lines: &mut Vec<StructuredLine>,
+    raw: &str,
+    old_line: &mut usize,
+    new_line: &mut usize,
+    before_line_count: usize,
+    after_line_count: usize,
+    before_ends_nl: bool,
+    after_ends_nl: bool,
+) {
+    let text = strip_diff_newline_only(raw).to_owned();
+    let o = *old_line;
+    let n = *new_line;
+    *old_line = old_line.saturating_add(1);
+    *new_line = new_line.saturating_add(1);
+    lines.push(StructuredLine {
+        kind: StructuredLineKind::Context,
+        old: Some(o),
+        new: Some(n),
+        segments: vec![StructuredSegment {
+            text,
+            emphasis: false,
+        }],
+        no_newline_at_eof: line_missing_eof_newline(
+            Some(o.saturating_sub(1)),
+            before_line_count,
+            before_ends_nl,
+        ) || line_missing_eof_newline(
+            Some(n.saturating_sub(1)),
+            after_line_count,
+            after_ends_nl,
+        ),
+    });
+}
+
+fn push_histogram_del_line(
+    lines: &mut Vec<StructuredLine>,
+    raw: &str,
+    old_line: &mut usize,
+    before_line_count: usize,
+    before_ends_nl: bool,
+) {
+    let text = strip_diff_newline_only(raw).to_owned();
+    let o = *old_line;
+    *old_line = old_line.saturating_add(1);
+    lines.push(StructuredLine {
+        kind: StructuredLineKind::Del,
+        old: Some(o),
+        new: None,
+        segments: vec![StructuredSegment {
+            text,
+            emphasis: false,
+        }],
+        no_newline_at_eof: line_missing_eof_newline(
+            Some(o.saturating_sub(1)),
+            before_line_count,
+            before_ends_nl,
+        ),
+    });
+}
+
+fn push_histogram_add_line(
+    lines: &mut Vec<StructuredLine>,
+    raw: &str,
+    new_line: &mut usize,
+    after_line_count: usize,
+    after_ends_nl: bool,
+) {
+    let text = strip_diff_newline_only(raw).to_owned();
+    let n = *new_line;
+    *new_line = new_line.saturating_add(1);
+    lines.push(StructuredLine {
+        kind: StructuredLineKind::Add,
+        old: None,
+        new: Some(n),
+        segments: vec![StructuredSegment {
+            text,
+            emphasis: false,
+        }],
+        no_newline_at_eof: line_missing_eof_newline(
+            Some(n.saturating_sub(1)),
+            after_line_count,
+            after_ends_nl,
+        ),
+    });
 }
 
 /// Parse a histogram unified body (no file headers) into structured hunks.
@@ -519,15 +722,26 @@ pub fn structured_file_diff(
 ) -> StructuredFileDiff {
     let old_mode = mode_display(old_mode);
     let new_mode = mode_display(new_mode);
-    let old_text = side_text_for_diff(old);
-    let new_text = side_text_for_diff(new);
-    let body = structured_text_diff_cow(old_text, new_text, options);
+    let hunks = if options.word_level_inline {
+        let old_text = side_text_for_diff(old);
+        let new_text = side_text_for_diff(new);
+        structured_text_diff_cow(old_text, new_text, options).hunks
+    } else {
+        let old_text = side_text_for_diff(old);
+        let new_text = side_text_for_diff(new);
+        histogram_structured_hunks_line_level(
+            old_text.as_ref(),
+            new_text.as_ref(),
+            options.context_lines,
+            0,
+        )
+    };
     StructuredFileDiff {
         old_mode,
         new_mode,
         old_encoding_lossy: old.encoding_lossy,
         new_encoding_lossy: new.encoding_lossy,
-        hunks: body.hunks,
+        hunks,
     }
 }
 

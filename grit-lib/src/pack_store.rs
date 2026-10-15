@@ -289,13 +289,14 @@ impl PackStore {
     }
 }
 
-struct PackReadContextGuard {
+/// Keeps a thread-local pack read context alive for batch parallel reads.
+pub(crate) struct PackReadContextGuard {
     prev_store: Option<Arc<PackStore>>,
     prev_dir: Option<PathBuf>,
 }
 
 impl PackReadContextGuard {
-    fn install(store: Arc<PackStore>) -> Self {
+    pub(crate) fn install(store: Arc<PackStore>) -> Self {
         let prev_store = CURRENT.with(|c| c.borrow_mut().replace(Arc::clone(&store)));
         let prev_dir =
             ACTIVE_OBJECTS_DIR.with(|d| d.borrow_mut().replace(store.objects_dir().to_path_buf()));

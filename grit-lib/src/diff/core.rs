@@ -5674,11 +5674,12 @@ pub fn detect_renames_with_policy(
             parallel_load_optional_blobs(odb, remaining_deleted.len(), par_opts, 0, |i| {
                 odb.read(&deleted[remaining_deleted[i]].old_oid)
                     .ok()
-                    .map(|obj| obj.data)
+                    .map(|obj| crate::crlf::crlf_to_lf(&obj.data))
             });
         let added_contents =
             parallel_load_optional_blobs(odb, remaining_added.len(), par_opts, 0, |i| {
                 read_added_entry_bytes(odb, &added[remaining_added[i]], work_root)
+                    .map(|data| crate::crlf::crlf_to_lf(&data))
             });
 
         let est_bytes: usize = deleted_contents
@@ -5702,7 +5703,17 @@ pub fn detect_renames_with_policy(
                         continue;
                     }
                     let score = match (&deleted_contents[row], &added_contents[col]) {
-                        (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                        (Some(old_data), Some(new_data)) => {
+                            if !rename_pair_size_reachable(
+                                old_data.len(),
+                                new_data.len(),
+                                threshold,
+                            ) {
+                                0
+                            } else {
+                                line_hash_similarity_score(old_data, new_data)
+                            }
+                        }
                         _ => 0,
                     };
                     if score >= threshold {
@@ -6572,46 +6583,98 @@ fn same_basename(del: &DiffEntry, add: &DiffEntry) -> bool {
     old_base == new_base && !old_base.is_empty()
 }
 
-/// Compute a similarity percentage (0–100) between two byte slices.
-///
-/// Uses Git's approach: count the bytes that are "shared" (appear in
-/// equal lines), then compute `score = shared_bytes * 2 * 100 / (src_size + dst_size)`.
-fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
-    // Normalize CRLF → LF before comparing so that files differing
-    // only in line endings are detected as renames.
-    let old_norm = crate::crlf::crlf_to_lf(old);
-    let new_norm = crate::crlf::crlf_to_lf(new);
+const RENAME_SCORE_MAX: u32 = 100;
 
-    let src_size = old_norm.len();
-    let dst_size = new_norm.len();
+/// Git `diffcore-delta` size gate: skip pairs that cannot reach `minimum_score`.
+fn rename_pair_size_reachable(src_size: usize, dst_size: usize, minimum_score: u32) -> bool {
+    let max_size = src_size.max(dst_size);
+    let min_size = src_size.min(dst_size);
+    if max_size == 0 {
+        return minimum_score <= RENAME_SCORE_MAX;
+    }
+    (max_size - min_size).saturating_mul(RENAME_SCORE_MAX as usize)
+        <= max_size.saturating_mul((RENAME_SCORE_MAX - minimum_score) as usize)
+}
 
+fn hash_rename_line(line: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    line.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Count bytes copied when matching lines by content hash (Git rename estimate).
+fn count_copied_line_bytes(src: &[u8], dst: &[u8]) -> usize {
+    use std::collections::HashMap;
+
+    fn line_weights(data: &[u8]) -> Vec<(u64, usize)> {
+        let mut out = Vec::new();
+        if data.is_empty() {
+            return out;
+        }
+        let mut start = 0usize;
+        for (i, &b) in data.iter().enumerate() {
+            if b != b'\n' {
+                continue;
+            }
+            let line = &data[start..i];
+            let weight = i - start + 1;
+            out.push((hash_rename_line(line), weight));
+            start = i + 1;
+        }
+        if start < data.len() {
+            let line = &data[start..];
+            out.push((hash_rename_line(line), data.len() - start));
+        }
+        out
+    }
+
+    let (short, long) = if src.len() <= dst.len() {
+        (src, dst)
+    } else {
+        (dst, src)
+    };
+    let short_lines = line_weights(short);
+    let long_lines = line_weights(long);
+    let mut counts: HashMap<u64, usize> = HashMap::new();
+    for (hash, weight) in short_lines {
+        *counts.entry(hash).or_default() += weight;
+    }
+    let mut copied = 0usize;
+    for (hash, weight) in long_lines {
+        if let Some(slot) = counts.get_mut(&hash) {
+            if *slot > 0 {
+                let take = weight.min(*slot);
+                copied += take;
+                *slot -= take;
+            }
+        }
+    }
+    copied
+}
+
+fn line_hash_similarity_score(old: &[u8], new: &[u8]) -> u32 {
+    let src_size = old.len();
+    let dst_size = new.len();
     if src_size == 0 && dst_size == 0 {
         return 100;
     }
-    let total = src_size + dst_size;
-    if total == 0 {
+    let max_size = src_size.max(dst_size);
+    if max_size == 0 {
         return 100;
     }
+    let copied = count_copied_line_bytes(old, new);
+    ((copied * 100) / max_size).min(100) as u32
+}
 
-    // Use line-level diff to find shared content, then count bytes.
-    use similar::{ChangeTag, TextDiff};
-    let old_str = String::from_utf8_lossy(&old_norm);
-    let new_str = String::from_utf8_lossy(&new_norm);
-    let diff = TextDiff::from_lines(&old_str as &str, &new_str as &str);
-
-    let mut shared_bytes = 0usize;
-    for change in diff.iter_all_changes() {
-        if change.tag() == ChangeTag::Equal {
-            // Count bytes in the matching line (including newline).
-            shared_bytes += change.value().len();
-        }
-    }
-
-    // Git: score = copied * MAX_SCORE / max(src_size, dst_size)
-    // We normalize to 0-100.
-    let max_size = src_size.max(dst_size);
-
-    ((shared_bytes * 100) / max_size).min(100) as u32
+/// Compute a similarity percentage (0–100) between two byte slices.
+///
+/// Matches Git rename detection: line-hash intersection over CRLF-normalized bodies,
+/// `score = copied_bytes * 100 / max(src_size, dst_size)`.
+fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
+    let old_norm = crate::crlf::crlf_to_lf(old);
+    let new_norm = crate::crlf::crlf_to_lf(new);
+    line_hash_similarity_score(&old_norm, &new_norm)
 }
 
 /// Compute rename/copy similarity percentage (0–100) between two byte slices.
