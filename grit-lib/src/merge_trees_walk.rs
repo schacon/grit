@@ -161,15 +161,6 @@ fn full_path(prefix: &[u8], name: &[u8]) -> Vec<u8> {
     }
 }
 
-fn tree_entry_cmp(a_name: &[u8], a_tree: bool, b_name: &[u8], b_tree: bool) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    match (a_tree, b_tree) {
-        (true, false) => Ordering::Less,
-        (false, true) => Ordering::Greater,
-        _ => a_name.cmp(b_name),
-    }
-}
-
 fn parse_tree_entries(odb: &Odb, oid: &ObjectId) -> crate::error::Result<Vec<TreeEntry>> {
     let obj = odb.read(oid)?;
     if obj.kind != ObjectKind::Tree {
@@ -238,6 +229,7 @@ pub(crate) fn compose_merged_tree_oid(
         return Ok(*ours_oid);
     }
 
+    let empty_tree = odb.write(ObjectKind::Tree, &[])?;
     let base_entries = parse_tree_entries(odb, base_oid)?;
     let ours_entries = parse_tree_entries(odb, ours_oid)?;
     let theirs_entries = parse_tree_entries(odb, theirs_oid)?;
@@ -295,9 +287,9 @@ pub(crate) fn compose_merged_tree_oid(
 
         let mode = o_te.or(t_te).or(b_te).map(|e| e.mode).unwrap_or(MODE_DIR);
         if mode == MODE_DIR {
-            let b_sub = b_te.map(|e| e.oid).unwrap_or(*ours_oid);
-            let o_sub = o_te.map(|e| e.oid).unwrap_or(*ours_oid);
-            let t_sub = t_te.map(|e| e.oid).unwrap_or(*ours_oid);
+            let b_sub = b_te.map(|e| e.oid).unwrap_or(empty_tree);
+            let o_sub = o_te.map(|e| e.oid).unwrap_or(empty_tree);
+            let t_sub = t_te.map(|e| e.oid).unwrap_or(empty_tree);
             let sub = compose_merged_tree_oid(
                 odb,
                 &fp,
@@ -322,7 +314,7 @@ pub(crate) fn compose_merged_tree_oid(
             }
             // Unchanged blob under a touched directory (no sparse index entry).
             let keep = match t_te {
-                None => true,
+                None => !matches!(b_te, Some(b) if b.oid == te.oid && b.mode == te.mode),
                 Some(t) => t.oid == te.oid && t.mode == te.mode,
             };
             if keep {
@@ -332,9 +324,7 @@ pub(crate) fn compose_merged_tree_oid(
     }
 
     out_entries.sort_by(|a, b| {
-        let a_tree = a.mode == MODE_DIR;
-        let b_tree = b.mode == MODE_DIR;
-        tree_entry_cmp(&a.name, a_tree, &b.name, b_tree)
+        crate::objects::tree_entry_cmp(&a.name, a.mode == MODE_DIR, &b.name, b.mode == MODE_DIR)
     });
 
     let data = serialize_tree(&out_entries);

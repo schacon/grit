@@ -108,7 +108,7 @@ impl HotPathsFixture {
             index.add_or_replace(entry);
         }
         index.sort();
-        write_tree_update_index(&self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        write_tree_update_index(self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree")
     }
 
@@ -215,7 +215,7 @@ impl HotPathsFixture {
     pub fn build_stash_touching_fraction(&self, fraction: f64) -> ObjectId {
         self.reset_worktree_to_head();
         let stash_tree = self.tree_with_fraction_changed(fraction);
-        let head_oid = refs::resolve_ref(&self.repo.git_dir(), "HEAD").expect("head");
+        let head_oid = refs::resolve_ref(self.repo.git_dir(), "HEAD").expect("head");
         let index_parent = write_tree_commit(
             &self.repo,
             self.head_tree,
@@ -234,7 +234,7 @@ impl HotPathsFixture {
     pub fn pick_three_trees(&self, path_count: usize) -> (ObjectId, ObjectId, ObjectId) {
         self.reset_worktree_to_head();
         let head_tree = self.head_tree;
-        let head_oid = refs::resolve_ref(&self.repo.git_dir(), "HEAD").expect("head");
+        let head_oid = refs::resolve_ref(self.repo.git_dir(), "HEAD").expect("head");
         let source_tree = self.tree_with_path_count_changed(path_count);
         let _source_commit = write_tree_commit(&self.repo, source_tree, &[head_oid], "pick source");
         (head_tree, head_tree, source_tree)
@@ -257,7 +257,7 @@ impl HotPathsFixture {
             index.add_or_replace(entry);
         }
         index.sort();
-        write_tree_update_index(&self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
+        write_tree_update_index(self.repo.odb(), &mut index, "", WriteTreeFlags::silent())
             .expect("tree")
     }
 }
@@ -417,7 +417,7 @@ fn wide_tree_from_fraction(repo: &Repository, file_paths: &[String], fraction: f
         index.add_or_replace(entry);
     }
     index.sort();
-    write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent()).expect("tree")
+    write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent()).expect("tree")
 }
 
 pub fn bench_switch_wide(fx: &HotPathsFixture) {

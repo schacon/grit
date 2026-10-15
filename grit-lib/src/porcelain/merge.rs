@@ -349,11 +349,11 @@ pub fn integrate_branch(
     )?;
 
     let merged_tree = merged.result_tree;
+    prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
+    checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
     let mut index = repo.load_index()?;
     apply_tree_merge_output_to_index(&mut index, &merged);
     repo.write_index(&mut index)?;
-    prepare_tree_checkout(repo, Some(&into_tree), &merged_tree)?;
-    checkout_between_trees(repo, Some(&into_tree), &merged_tree)?;
 
     let commit = CommitData {
         tree: merged_tree,

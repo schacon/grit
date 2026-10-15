@@ -646,3 +646,83 @@ fn cherry_pick_tree_remap_matches_git() {
     };
     assert_eq!(grit_tree, git_tree, "cherry-pick --no-commit tree");
 }
+
+#[test]
+fn clean_theirs_deletes_unchanged_blob_matches_git() {
+    if !skip_merge_tree_git() {
+        return;
+    }
+    let history = init_repo();
+    commit_file(history.worktree(), "f.txt", "shared\n", "base");
+    let base: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    hist_git(history.worktree(), &["switch", "-c", "theirs"]);
+    hist_git(history.worktree(), &["rm", "f.txt"]);
+    hist_git(history.worktree(), &["commit", "-m", "delete f"]);
+    let theirs: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    hist_git(history.worktree(), &["switch", "main"]);
+    let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    let grit = open_grit_repo(history.worktree());
+    let labels = CommitMergeLabels::from_commits(&ours, &theirs);
+    assert_merge_commits_match_git(
+        &history,
+        &grit,
+        &base,
+        &ours,
+        &theirs,
+        labels.presentation(),
+        "clean theirs-only deletion of unchanged blob",
+    );
+}
+
+#[test]
+fn nested_one_sided_directory_addition_matches_git() {
+    if !skip_merge_tree_git() {
+        return;
+    }
+    let history = init_repo();
+    commit_file(history.worktree(), "src/a.txt", "a\n", "base");
+    let base: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    hist_git(history.worktree(), &["switch", "-c", "theirs"]);
+    std::fs::create_dir_all(history.worktree().join("src/newdir")).unwrap();
+    fs::write(history.worktree().join("src/newdir/x.txt"), "x\n").unwrap();
+    hist_git(history.worktree(), &["add", "src/newdir/x.txt"]);
+    hist_git(history.worktree(), &["commit", "-m", "add nested file"]);
+    let theirs: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    hist_git(history.worktree(), &["switch", "main"]);
+    let ours: ObjectId = hist_git(history.worktree(), &["rev-parse", "HEAD"])
+        .trim()
+        .parse()
+        .unwrap();
+
+    let grit = open_grit_repo(history.worktree());
+    let labels = CommitMergeLabels::from_commits(&ours, &theirs);
+    assert_merge_commits_match_git(
+        &history,
+        &grit,
+        &base,
+        &ours,
+        &theirs,
+        labels.presentation(),
+        "nested directory added on theirs only",
+    );
+}

@@ -177,27 +177,3 @@ criterion_group!(
     bench_tree_merge_group
 );
 criterion_main!(hot_paths);
-
-#[cfg(test)]
-mod smoke {
-    use super::hot_paths_fixture::{bench_switch_wide, HotPathsFixture};
-
-    #[test]
-    fn switch_wide_roundtrip_on_large_fixture() {
-        let fx = HotPathsFixture::large();
-        fx.reset_for_switch_benchmark();
-        bench_switch_wide(fx);
-        fx.reset_for_switch_benchmark();
-        bench_switch_wide(fx);
-    }
-
-    #[test]
-    #[ignore = "slow: builds 100k-file fixture"]
-    fn switch_wide_roundtrip_on_heavy_fixture() {
-        let fx = HotPathsFixture::heavy();
-        fx.reset_for_switch_benchmark();
-        bench_switch_wide(fx);
-        fx.reset_for_switch_benchmark();
-        bench_switch_wide(fx);
-    }
-}

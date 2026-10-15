@@ -140,12 +140,11 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
     }
 
     let new_tree = merged.result_tree;
-    let mut index = repo.load_index()?;
-    apply_tree_merge_output_to_index(&mut index, &merged);
-    repo.write_index(&mut index)?;
     if new_tree == head_tree {
         return Ok(ReplayOutcome::AlreadyApplied);
     }
+
+    prepare_tree_checkout(repo, Some(&head_tree), &new_tree)?;
 
     let message = commit_message(req, &source)?;
     let author = match req.direction {
@@ -189,8 +188,12 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         let current = resolve_ref(repo.git_dir(), &refname).ok();
         crate::refs::verify_branch_commit_cas(Some(head_oid), current, &refname)?;
 
-        prepare_tree_checkout(repo, Some(&head_tree), &new_tree)?;
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
+        {
+            let mut index = repo.load_index()?;
+            apply_tree_merge_output_to_index(&mut index, &merged);
+            repo.write_index(&mut index)?;
+        }
 
         if let Err(err) =
             update_branch_for_commit_with_config(repo.git_dir(), &ref_update, config.as_ref())
@@ -209,8 +212,12 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
             BranchCommitRefLock::acquire(repo.git_dir(), &refname, Some(head_oid))?;
         branch_ref_lock.write_reflogs(repo.git_dir(), &ref_update, &head_oid, config.as_ref())?;
 
-        prepare_tree_checkout(repo, Some(&head_tree), &new_tree)?;
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
+        {
+            let mut index = repo.load_index()?;
+            apply_tree_merge_output_to_index(&mut index, &merged);
+            repo.write_index(&mut index)?;
+        }
 
         if let Err(err) = branch_ref_lock.finish_ref_commit(repo.git_dir(), &ref_update) {
             undo_prepared_branch_commit_reflogs(repo.git_dir(), &refname, config.as_ref());
