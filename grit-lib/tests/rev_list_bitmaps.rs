@@ -367,35 +367,36 @@ fn t6113_blob_none_filter_with_bitmap_matches_git() {
     std::fs::write(fixture.path().join("one.t"), b"one").unwrap();
     git_ok(&fixture, &["add", "one.t"]);
     git_ok(&fixture, &["commit", "-m", "one"]);
-    std::fs::write(fixture.path().join("much-larger-blob-one.t"), vec![b'x'; 8192]).unwrap();
+    std::fs::write(
+        fixture.path().join("much-larger-blob-one.t"),
+        vec![b'x'; 8192],
+    )
+    .unwrap();
     git_ok(&fixture, &["add", "much-larger-blob-one.t"]);
     git_ok(&fixture, &["commit", "-m", "much-larger-blob-one"]);
     repack_with_bitmap(&fixture);
     std::fs::write(fixture.path().join("two.t"), b"two").unwrap();
     git_ok(&fixture, &["add", "two.t"]);
     git_ok(&fixture, &["commit", "-m", "two"]);
-    std::fs::write(fixture.path().join("much-larger-blob-two.t"), vec![b'y'; 8192]).unwrap();
+    std::fs::write(
+        fixture.path().join("much-larger-blob-two.t"),
+        vec![b'y'; 8192],
+    )
+    .unwrap();
     git_ok(&fixture, &["add", "much-larger-blob-two.t"]);
     git_ok(&fixture, &["commit", "-m", "much-larger-blob-two"]);
     git_ok(&fixture, &["tag", "tag"]);
 
     let repo = open_repo(fixture.path());
-    let git_filtered = git_rev_list_object_set_with_filter(
-        &fixture,
-        &["HEAD"],
-        &[],
-        ObjectFilter::BlobNone,
-        true,
-    );
-    let (grit_filtered, used_bitmap) = grit_rev_list_object_set_with_filter(
-        &repo,
-        &["HEAD"],
-        &[],
-        ObjectFilter::BlobNone,
-        true,
-    );
+    let git_filtered =
+        git_rev_list_object_set_with_filter(&fixture, &["HEAD"], &[], ObjectFilter::BlobNone, true);
+    let (grit_filtered, used_bitmap) =
+        grit_rev_list_object_set_with_filter(&repo, &["HEAD"], &[], ObjectFilter::BlobNone, true);
     assert!(used_bitmap, "t6113 expected bitmap traversal");
-    assert_eq!(grit_filtered, git_filtered, "t6113 explicit blob:none filter");
+    assert_eq!(
+        grit_filtered, git_filtered,
+        "t6113 explicit blob:none filter"
+    );
 }
 
 fn git_rev_list_object_set_with_filter(

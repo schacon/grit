@@ -5,8 +5,8 @@ mod support;
 use grit_lib::blame::{blame_file, BlameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    diff_commits_with_renames, diff_index_to_tree, diff_trees_with_renames, postprocess_diff_entries,
-    DiffPostprocessOptions,
+    diff_commits_with_renames, diff_index_to_tree, diff_trees_with_renames,
+    postprocess_diff_entries, DiffPostprocessOptions,
 };
 use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
@@ -102,18 +102,21 @@ fn deep_history_revwalk_blame_and_merge_bases_nudge() -> grit_lib::error::Result
         }
     }
 
-    let _ = merge_bases_all(&repo, &[
-        tip.parse().expect("tip"),
-        mid.parse().expect("mid"),
-    ])?;
-    let _ = merge_bases_octopus(&repo, &[
-        tip.parse().expect("tip"),
-        mid.parse().expect("mid"),
-        git(wt, &["rev-parse", "fork"])
-            .trim()
-            .parse()
-            .expect("fork tip"),
-    ])?;
+    let _ = merge_bases_all(
+        &repo,
+        &[tip.parse().expect("tip"), mid.parse().expect("mid")],
+    )?;
+    let _ = merge_bases_octopus(
+        &repo,
+        &[
+            tip.parse().expect("tip"),
+            mid.parse().expect("mid"),
+            git(wt, &["rev-parse", "fork"])
+                .trim()
+                .parse()
+                .expect("fork tip"),
+        ],
+    )?;
 
     for start in [None, Some(tip.parse().expect("tip"))] {
         for path in ["deep/layer40.txt", "wide/w40.txt", "fork/f5.txt"] {

@@ -22,7 +22,10 @@ fn log_decorations_cover_all_ref_namespaces() -> grit_lib::error::Result<()> {
     commit_file(wt, "a.txt", "a\n", "init");
     git(wt, &["tag", "v1"]);
     git(wt, &["branch", "topic"]);
-    git(wt, &["remote", "add", "origin", wt.to_str().expect("utf8 path")]);
+    git(
+        wt,
+        &["remote", "add", "origin", wt.to_str().expect("utf8 path")],
+    );
     git(wt, &["fetch", "origin"]);
     git(wt, &["update-ref", "refs/hidden/extra", "HEAD"]);
     git(wt, &["stash", "push", "-m", "stash me"]);
@@ -42,7 +45,10 @@ fn log_decorations_cover_all_ref_namespaces() -> grit_lib::error::Result<()> {
     assert!(!filter.matches("refs/heads/topic"));
 
     let cleared = collect_decorations_inner(&repo, false, true, &DecorationFilter::default())?;
-    assert!(cleared.values().flatten().any(|it| it.kind == DecorationKind::Other));
+    assert!(cleared
+        .values()
+        .flatten()
+        .any(|it| it.kind == DecorationKind::Other));
 
     let filtered = collect_decorations_inner(&repo, true, false, &filter)?;
     assert!(!filtered.is_empty());

@@ -24,10 +24,7 @@ fn format_parents_and_decorations_match_git() {
         "format:%T %t %an %ae",
         "format:%cn %ce %ad %cd",
     ] {
-        let git_lines = git(
-            wt,
-            &["rev-list", &format!("--format={fmt}"), "main"],
-        );
+        let git_lines = git(wt, &["rev-list", &format!("--format={fmt}"), "main"]);
         let grit_repo = support::open_grit_repo(wt);
         let out = rev_list(
             &grit_repo,
@@ -42,7 +39,10 @@ fn format_parents_and_decorations_match_git() {
         .expect("rev-list");
         assert_eq!(
             out.commits.len(),
-            git_lines.lines().filter(|l| !l.starts_with("commit ")).count(),
+            git_lines
+                .lines()
+                .filter(|l| !l.starts_with("commit "))
+                .count(),
             "commit count for {fmt}"
         );
     }
@@ -66,12 +66,7 @@ fn object_walk_tag_peel_and_treeish_match_git() {
 
     for spec in ["ann^{}", "light", "HEAD:dir", "HEAD^{tree}"] {
         let git_set = support::git_rev_list_object_set(wt, &[spec]);
-        let grit_set = support::grit_rev_list_object_set(
-            wt,
-            &[spec.to_owned()],
-            &[],
-            None,
-        );
+        let grit_set = support::grit_rev_list_object_set(wt, &[spec.to_owned()], &[], None);
         assert_eq!(grit_set, git_set, "objects {spec}");
     }
 }

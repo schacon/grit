@@ -594,9 +594,7 @@ fn midx_reuse_tables_bitmaps_and_sidecars() {
             let formatted = grit_lib::objects::midx::format_midx_bitmapped_packs(&objects);
             assert!(
                 formatted.as_ref().map(|s| s.is_empty()).unwrap_or(true)
-                    || formatted
-                        .as_ref()
-                        .is_ok_and(|s| s.contains("no bitmapped")),
+                    || formatted.as_ref().is_ok_and(|s| s.contains("no bitmapped")),
                 "expected empty or no-bitmap message, got: {formatted:?}"
             );
         }
@@ -611,9 +609,7 @@ fn midx_reuse_tables_bitmaps_and_sidecars() {
         }
         Err(_) => {
             // Fixture MIDX may omit BTMP; formatting must fail cleanly without a chunk.
-            assert!(
-                grit_lib::objects::midx::format_midx_bitmapped_packs(&objects).is_err()
-            );
+            assert!(grit_lib::objects::midx::format_midx_bitmapped_packs(&objects).is_err());
         }
     }
     let tip = tip_midx_path(&pack_dir);
