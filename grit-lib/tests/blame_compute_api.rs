@@ -127,3 +127,114 @@ fn compute_blame_line_range_limits_output_and_work() {
     assert_eq!(ranged[0].final_lineno, 1);
     assert_eq!(ranged[0].oid, root_commit);
 }
+
+#[test]
+fn compute_blame_line_range_through_ignored_merge_after_line_insert() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root_dir = tmp.path();
+    git_run(root_dir, &["init", "-q", "-b", "main"]);
+    git_run(root_dir, &["config", "user.name", "Blame API Test"]);
+    git_run(root_dir, &["config", "user.email", "blame-api@example.com"]);
+
+    std::fs::write(root_dir.join("target.txt"), "target\n").unwrap();
+    git_run(root_dir, &["add", "target.txt"]);
+    git_run(root_dir, &["commit", "-m", "root target line"]);
+    let root_commit = head_oid(root_dir);
+
+    git_run(root_dir, &["branch", "side"]);
+    git_run(root_dir, &["checkout", "side"]);
+    std::fs::write(root_dir.join("side.txt"), "side\n").unwrap();
+    git_run(root_dir, &["add", "side.txt"]);
+    git_run(root_dir, &["commit", "-m", "side branch tip"]);
+
+    git_run(root_dir, &["checkout", "main"]);
+    git_run(
+        root_dir,
+        &["merge", "--no-ff", "side", "-m", "ignored merge"],
+    );
+    let merge_commit = head_oid(root_dir);
+
+    std::fs::write(root_dir.join("target.txt"), "new top\ntarget\n").unwrap();
+    git_run(root_dir, &["add", "target.txt"]);
+    git_run(root_dir, &["commit", "-m", "insert line above target"]);
+    let tip = head_oid(root_dir);
+
+    let git_out = Command::new("git")
+        .current_dir(root_dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args([
+            "blame",
+            "--porcelain",
+            &format!("--ignore-rev={merge_commit}"),
+            "-L",
+            "2,2",
+            "target.txt",
+        ])
+        .output()
+        .expect("git blame");
+    assert!(
+        git_out.status.success(),
+        "git blame failed: {}",
+        String::from_utf8_lossy(&git_out.stderr)
+    );
+    let git_stdout = String::from_utf8_lossy(&git_out.stdout);
+    let git_sha = git_stdout
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().next())
+        .expect("git porcelain sha");
+    assert_eq!(git_sha, root_commit.to_hex());
+
+    let repo = Repository::discover(Some(root_dir), &RepositoryOptions::empty()).expect("open");
+    let mut ignore_revs = HashSet::new();
+    ignore_revs.insert(merge_commit);
+    let grafts = HashMap::new();
+    let policy = grit_lib::parallel::ThreadPolicy::default();
+
+    let full = compute_blame(
+        repo.odb(),
+        tip,
+        "target.txt",
+        &ignore_revs,
+        BlameDiffAlgorithm::Myers,
+        None,
+        false,
+        0,
+        false,
+        &grafts,
+        false,
+        None,
+        &policy,
+    )
+    .expect("full blame");
+    let full_line2 = full
+        .iter()
+        .find(|l| l.final_lineno == 2)
+        .expect("line 2 in full blame");
+    assert_eq!(full_line2.oid, root_commit);
+
+    let ranged = compute_blame(
+        repo.odb(),
+        tip,
+        "target.txt",
+        &ignore_revs,
+        BlameDiffAlgorithm::Myers,
+        None,
+        false,
+        0,
+        false,
+        &grafts,
+        false,
+        Some(2..=2),
+        &policy,
+    )
+    .expect("ranged blame");
+    assert_eq!(ranged.len(), 1);
+    assert_eq!(ranged[0].final_lineno, 2);
+    assert_eq!(
+        ranged[0].oid, root_commit,
+        "ranged blame must match full blame and git through ignored merge"
+    );
+}

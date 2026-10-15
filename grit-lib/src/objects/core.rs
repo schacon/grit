@@ -858,6 +858,49 @@ fn parse_oid_field(value: &[u8]) -> Result<ObjectId> {
         .map_err(|_| Error::CorruptObject("invalid object id in commit header".to_owned()))
 }
 
+/// Parse only `tree` and `parent` headers from a commit object (stops at the blank line).
+///
+/// Used on hot paths such as blame history walks that do not need author/committer data.
+pub(crate) fn parse_commit_tree_and_parents(data: &[u8]) -> Result<(ObjectId, Vec<ObjectId>)> {
+    let mut pos = 0usize;
+    let mut tree = None;
+    let mut parents = Vec::new();
+
+    while pos < data.len() {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < data.len() && data[line_end] != b'\n' {
+            line_end += 1;
+        }
+        let line = &data[line_start..line_end];
+        let after_nl = line_end.saturating_add(1);
+        if line.is_empty() {
+            break;
+        }
+        if line.first() == Some(&b' ') {
+            pos = after_nl;
+            continue;
+        }
+        let key_end = line
+            .iter()
+            .position(|&b| b == b' ')
+            .ok_or_else(|| Error::CorruptObject("malformed commit header line".to_owned()))?;
+        let key = &line[..key_end];
+        let rest = line.get(key_end + 1..).unwrap_or_default();
+        match key {
+            b"tree" => tree = Some(parse_oid_field(rest)?),
+            b"parent" => parents.push(parse_oid_field(rest)?),
+            _ => {}
+        }
+        pos = after_nl;
+    }
+
+    Ok((
+        tree.ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,
+        parents,
+    ))
+}
+
 /// Parse the raw data of a commit object.
 ///
 /// # Errors
