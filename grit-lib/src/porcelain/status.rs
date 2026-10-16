@@ -101,7 +101,10 @@ pub struct StatusOptions {
 
 /// Map `status.showUntrackedFiles` to [`UntrackedMode`].
 ///
-/// Accepts only Git's enum modes (`no`, `normal`, `all`, case-insensitive).
+/// Accepts Git's enum modes (`no`, `normal`, `all`, case-insensitive), boolean word
+/// synonyms (since Git 2.45), and integer booleans via the same rules as
+/// `git_parse_maybe_bool` (`0` → [`UntrackedMode::No`], any other integer →
+/// [`UntrackedMode::Normal`]).
 /// When the key is missing, returns [`UntrackedMode::Normal`].
 pub fn untracked_mode_from_config(
     config: &ConfigSet,
@@ -111,10 +114,34 @@ pub fn untracked_mode_from_config(
         .or_else(|| config.get("status.showuntrackedfiles"));
     match raw {
         None => Ok(UntrackedMode::Normal),
-        Some(v) if v.eq_ignore_ascii_case("no") => Ok(UntrackedMode::No),
-        Some(v) if v.eq_ignore_ascii_case("all") => Ok(UntrackedMode::All),
-        Some(v) if v.eq_ignore_ascii_case("normal") => Ok(UntrackedMode::Normal),
-        Some(v) => Err(ConfigError::InvalidUntrackedFilesMode { value: v }),
+        Some(v) => untracked_mode_from_config_value(&v)
+            .ok_or(ConfigError::InvalidUntrackedFilesMode { value: v }),
+    }
+}
+
+fn untracked_mode_from_config_value(v: &str) -> Option<UntrackedMode> {
+    if v.eq_ignore_ascii_case("no")
+        || v.eq_ignore_ascii_case("false")
+        || v.eq_ignore_ascii_case("off")
+        || v == "0"
+    {
+        Some(UntrackedMode::No)
+    } else if v.eq_ignore_ascii_case("all") {
+        Some(UntrackedMode::All)
+    } else if v.eq_ignore_ascii_case("normal")
+        || v.eq_ignore_ascii_case("true")
+        || v.eq_ignore_ascii_case("yes")
+        || v.eq_ignore_ascii_case("on")
+    {
+        Some(UntrackedMode::Normal)
+    } else if let Ok(n) = v.parse::<i64>() {
+        Some(if n == 0 {
+            UntrackedMode::No
+        } else {
+            UntrackedMode::Normal
+        })
+    } else {
+        None
     }
 }
 
@@ -1955,10 +1982,54 @@ mod status_op_tests {
             true,
         )
         .unwrap();
-        assert!(matches!(
-            untracked_mode_from_config(&cfg_invalid),
-            Err(ConfigError::InvalidUntrackedFilesMode { .. })
-        ));
+        assert_eq!(
+            untracked_mode_from_config(&cfg_invalid).unwrap(),
+            UntrackedMode::No
+        );
+
+        let cfg_dir = tempfile::TempDir::new().unwrap();
+        fs::write(
+            cfg_dir.path().join("config"),
+            "[status]\n\tshowUntrackedFiles = true\n",
+        )
+        .unwrap();
+        let cfg_true = ConfigSet::load(
+            &crate::environment::Environment::empty(),
+            Some(cfg_dir.path()),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            untracked_mode_from_config(&cfg_true).unwrap(),
+            UntrackedMode::Normal
+        );
+    }
+
+    #[test]
+    fn untracked_mode_from_config_accepts_git_boolean_synonyms() {
+        for v in ["false", "off", "0", "OFF", "False"] {
+            assert_eq!(
+                untracked_mode_from_config_value(v),
+                Some(UntrackedMode::No),
+                "no synonym {v:?}"
+            );
+        }
+        for v in ["true", "on", "yes", "1", "ON", "YES"] {
+            assert_eq!(
+                untracked_mode_from_config_value(v),
+                Some(UntrackedMode::Normal),
+                "normal synonym {v:?}"
+            );
+        }
+        for v in ["2", "-1", "42", "01"] {
+            assert_eq!(
+                untracked_mode_from_config_value(v),
+                Some(UntrackedMode::Normal),
+                "nonzero integer {v:?}"
+            );
+        }
+        assert_eq!(untracked_mode_from_config_value("1.5"), None);
+        assert_eq!(untracked_mode_from_config_value("bogus"), None);
     }
 
     #[test]
