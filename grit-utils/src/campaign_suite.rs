@@ -68,6 +68,7 @@ pub fn run_campaign_suite(
             &BitmapRunConfig {
                 warmup: cfg.warmup,
                 min_runs: cfg.min_runs,
+                exact_runs: cfg.exact_runs,
                 prepare_bin: cfg.prepare_bin.clone(),
             },
             Some(&git_bare),

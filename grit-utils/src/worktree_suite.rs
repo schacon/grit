@@ -12,7 +12,8 @@ use crate::scenarios::{
 use crate::schema::BenchReport;
 use crate::worktree_fixture::{
     ensure_worktree_bench_repo, set_worktree_bench_cwd, shell_git_add_modified_set,
-    shell_grit_add_modified_set, shell_redirect_devnull, MODIFY_FRACTION_DENOM,
+    shell_git_add_modified_set_and_commit, shell_grit_add_modified_set, shell_redirect_devnull,
+    MODIFY_FRACTION_DENOM,
 };
 
 struct WorktreeCwdGuard;
@@ -50,10 +51,7 @@ pub fn run_worktree_group(
     let git_add = sh_script_internal(shell_git_add_modified_set(git));
     let grit_add = sh_script_internal(shell_grit_add_modified_set(grit));
 
-    let git_commit = sh_script_internal(shell_redirect_devnull(
-        git,
-        &["commit", "-q", "-m", "bench"],
-    ));
+    let git_commit = sh_script_internal(shell_git_add_modified_set_and_commit(git));
     let grit_commit = sh_script_internal(shell_redirect_devnull(grit, &["commit", "bench"]));
 
     let git_diff = sh_script_internal(shell_redirect_devnull(git, &["diff"]));
@@ -131,7 +129,7 @@ pub fn run_worktree_group(
                 group: "worktree".into(),
                 fixture: fixture.clone(),
                 description: format!(
-                    "commit after staging ~1/{MODIFY_FRACTION_DENOM} modified paths (output discarded)"
+                    "stage ~1/{MODIFY_FRACTION_DENOM} modified paths and commit (git add+commit vs grit commit; output discarded)"
                 ),
                 grit_argv: grit_commit,
                 git_argv: git_commit,

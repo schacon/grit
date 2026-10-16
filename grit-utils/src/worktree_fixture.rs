@@ -261,7 +261,6 @@ pub fn prepare_add(git: &Path) -> Result<()> {
 pub fn prepare_commit(git: &Path) -> Result<()> {
     let repo = active_worktree_repo();
     apply_one_percent_modified(git, &repo)?;
-    stage_modified_set(git, &repo)?;
     let head = fixture_registry::git_head_oid(git, &repo)?;
     let base = read_fixture_base_oid()?;
     anyhow::ensure!(
@@ -269,6 +268,15 @@ pub fn prepare_commit(git: &Path) -> Result<()> {
         "commit prepare must leave HEAD at fixture base, got {head} expected {base}"
     );
     Ok(())
+}
+
+/// Stage the modified path set and commit (matches grit `commit` staging + commit in one timed run).
+pub fn shell_git_add_modified_set_and_commit(git: &Path) -> String {
+    format!(
+        "set -eu\n{}\n{}",
+        shell_git_add_modified_set(git).trim(),
+        shell_redirect_devnull(git, &["commit", "-q", "-m", "bench"])
+    )
 }
 
 pub fn prepare_diff(git: &Path) -> Result<()> {

@@ -6,6 +6,7 @@ use grit_utils::binary::{require_hyperfine, resolve_binary};
 use grit_utils::bitmap_suite::{run_bitmaps_suite, BitmapRunConfig};
 use grit_utils::campaign_suite::{run_campaign_suite, CampaignOptions};
 use grit_utils::compare::compare_files;
+use grit_utils::criterion_summary;
 use grit_utils::fixture::{remove_dir_robust, scratch_dir};
 use grit_utils::fixture::{DeepLeafDogfoodSpec, DenseLeafDogfoodSpec};
 use grit_utils::fixture_registry::{self, FixtureKind};
@@ -33,6 +34,7 @@ use grit_utils::refs_fixture::{run_prepare_refs, RefsWorkMode};
 use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
 use grit_utils::render::{render_markdown, render_text};
 use grit_utils::revwalk_suite::run_revwalk_suite;
+use grit_utils::scenario_suite::{self, ScenarioSuiteOptions};
 use grit_utils::scenarios::{
     run_add_suite, run_blame_suite, run_commit_suite, run_deep_leaf_worktree_suite,
     run_dense_leaf_worktree_suite, run_diff_suite, run_hot_path_suite, run_log_suite,
@@ -248,7 +250,18 @@ enum Cmd {
         #[arg(long)]
         no_network: bool,
     },
-    /// Run a scenario group against a cached registry fixture
+    /// Run every grit-bench scenario group for a synthetic fixture tier (S / M / L).
+    Scenarios {
+        #[arg(long, value_enum, default_value_t = SynthTierArg::M)]
+        tier: SynthTierArg,
+        /// One timed hyperfine iteration per scenario (CI smoke).
+        #[arg(long)]
+        smoke: bool,
+        /// Require fixtures to already exist under the cache (`fixtures prepare`).
+        #[arg(long)]
+        offline: bool,
+    },
+    /// Run a scenario group against a cached registry fixture.
     Run {
         #[arg(long, value_enum)]
         group: RunGroup,
@@ -260,6 +273,17 @@ enum Cmd {
         /// Do not clone or generate missing cache entries (requires prior `fixtures prepare`).
         #[arg(long)]
         offline: bool,
+    },
+    /// Summarize Criterion `estimates.json` files into JSON for `make bench-lib`.
+    CriterionSummary {
+        #[arg(long, default_value = "target/criterion")]
+        criterion_dir: PathBuf,
+    },
+    /// Render a saved grit-bench JSON report (text or markdown).
+    Render {
+        /// JSON report path (`make bench-scenarios` passes `--input`).
+        #[arg(long, value_name = "INPUT")]
+        input: PathBuf,
     },
     /// Compare two JSON reports; exit non-zero when ratios differ beyond tolerance
     Compare {
@@ -434,6 +458,11 @@ enum Cmd {
     },
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum RunGroup {
+    Worktree,
+}
+
 fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
     match s {
         "full" => Ok(RefsWorkMode::Full),
@@ -442,12 +471,7 @@ fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum RunGroup {
-    Worktree,
-}
-
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum)]
 enum SynthTierArg {
     S,
     M,
@@ -876,6 +900,42 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Cmd::Render { input } => {
+            let json = std::fs::read_to_string(input)
+                .with_context(|| format!("read {}", input.display()))?;
+            let report = BenchReport::from_json_str(&json)?;
+            let rendered = render_report(&cli.format, &report)?;
+            write_output(&cli, &rendered)?;
+            return Ok(());
+        }
+        Cmd::CriterionSummary { criterion_dir } => {
+            let timestamp = parse_timestamp(&cli)?;
+            let report = criterion_summary::summarize_criterion_tree(criterion_dir, timestamp)?;
+            let body = match cli.format {
+                OutputFormat::Json => serde_json::to_string_pretty(&report)?,
+                OutputFormat::Text => format!(
+                    "criterion summary: {} scenarios from {}\n",
+                    report.scenarios.len(),
+                    criterion_dir.display()
+                ),
+                OutputFormat::Markdown => {
+                    format!(
+                        "## Criterion summary\n\n| id | group | median ms |\n| --- | --- | ---: |\n{}",
+                        report
+                            .scenarios
+                            .iter()
+                            .map(|s| format!(
+                                "| `{}` | {} | {:.2} |",
+                                s.id, s.group, s.grit.median_ms
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                }
+            };
+            write_output(&cli, &body)?;
+            return Ok(());
+        }
         Cmd::PrepareRefs {
             git,
             source,
@@ -1091,16 +1151,72 @@ fn main() -> Result<()> {
         }
         Cmd::History { smoke } => {
             eprintln!("Running history and object-inspection benchmarks...");
-            let cfg = run_config(&cli, true);
+            let mut cfg = run_config(&cli, true);
+            if *smoke {
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
+            }
             let odb_cfg = OdbRunConfig {
-                warmup: cli.warmup,
-                min_runs: cli.min_runs,
+                warmup: cfg.warmup,
+                min_runs: cfg.min_runs,
+                exact_runs: cfg.exact_runs,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
             let bench_exe = std::env::current_exe().context("current exe")?;
+            let tier = if *smoke { SynthTier::S } else { SynthTier::L };
             run_history_suite(
-                &hyperfine, &git, &grit, &bench_exe, &cfg, &odb_cfg, *smoke, timestamp,
+                &hyperfine, &git, &grit, &bench_exe, &cfg, &odb_cfg, tier, *smoke, timestamp,
+            )?
+        }
+        Cmd::Run {
+            group,
+            fixture,
+            smoke,
+            offline,
+        } => {
+            let mut cfg = run_config(&cli, true);
+            if *smoke {
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
+            }
+            match group {
+                RunGroup::Worktree => {
+                    eprintln!(
+                        "Running worktree scenarios on fixture {} …",
+                        fixture.public_cache_name()
+                    );
+                    run_worktree_group(
+                        &hyperfine, &git, &grit, &cfg, *fixture, *offline, timestamp,
+                    )?
+                }
+            }
+        }
+        Cmd::Scenarios {
+            tier,
+            smoke,
+            offline,
+        } => {
+            eprintln!("Running scenario suite (tier {tier:?}, smoke={smoke})...");
+            let mut cfg = run_config(&cli, true);
+            if *smoke {
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
+            }
+            let bench_exe = std::env::current_exe().context("current exe")?;
+            scenario_suite::run_scenario_suite(
+                &hyperfine,
+                &git,
+                &grit,
+                cli.http_server.as_deref(),
+                &bench_exe,
+                &cfg,
+                ScenarioSuiteOptions {
+                    tier: SynthTier::from(tier.clone()),
+                    smoke: *smoke,
+                    offline: *offline,
+                },
+                timestamp,
             )?
         }
         Cmd::Blame { commits } => {
@@ -1140,6 +1256,7 @@ fn main() -> Result<()> {
             let cfg = OdbRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1151,6 +1268,7 @@ fn main() -> Result<()> {
             let cfg = OdbRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1162,6 +1280,7 @@ fn main() -> Result<()> {
             let cfg = BitmapRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1228,29 +1347,6 @@ fn main() -> Result<()> {
             eprintln!("Running ignore check benchmarks...");
             let cfg = run_config(&cli, false);
             run_ignore_suite(&hyperfine, &git, &grit, &cfg, timestamp)?
-        }
-        Cmd::Run {
-            group,
-            fixture,
-            smoke,
-            offline,
-        } => {
-            let mut cfg = run_config(&cli, true);
-            if *smoke {
-                cfg.warmup = 0;
-                cfg.exact_runs = Some(1);
-            }
-            match group {
-                RunGroup::Worktree => {
-                    eprintln!(
-                        "Running worktree scenarios on fixture {} …",
-                        fixture.cache_name()
-                    );
-                    run_worktree_group(
-                        &hyperfine, &git, &grit, &cfg, *fixture, *offline, timestamp,
-                    )?
-                }
-            }
         }
         Cmd::Campaign {
             smoke,
@@ -1342,6 +1438,8 @@ fn main() -> Result<()> {
         | Cmd::PrepareWorktreeAdd { .. }
         | Cmd::PrepareWorktreeCommit { .. }
         | Cmd::PrepareWorktreeDiff { .. }
+        | Cmd::Render { .. }
+        | Cmd::CriterionSummary { .. }
         | Cmd::PrepareParallelCheckout { .. }
         | Cmd::PrepareParallelClone { .. }
         | Cmd::PrepareParallelIndexPack { .. }
@@ -1367,6 +1465,7 @@ fn main() -> Result<()> {
             | Cmd::Bitmaps { .. }
             | Cmd::Network { .. }
             | Cmd::Parallel { .. }
+            | Cmd::Scenarios { .. }
     ) {
         remove_dir_robust(&scratch_dir());
     }

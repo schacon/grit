@@ -1,5 +1,6 @@
-//! Commit prepare must reset to the pinned fixture base, not advancing git commits.
+//! Worktree commit prepare hooks and fixture-base reset behavior.
 
+use std::path::Path;
 use std::process::Command;
 
 use grit_utils::fixture_registry::{self, FixtureKind};
@@ -25,6 +26,11 @@ fn commit_prepare_resets_to_fixture_base_after_git_commits() {
 
     prepare_commit(&git).expect("first prepare");
     Command::new(&git)
+        .args(["add", "-A"])
+        .current_dir(&repo)
+        .status()
+        .expect("git add");
+    Command::new(&git)
         .args(["commit", "-q", "-m", "advance"])
         .current_dir(&repo)
         .status()
@@ -40,4 +46,20 @@ fn commit_prepare_resets_to_fixture_base_after_git_commits() {
     );
 
     reset_to_fixture_base(&git, &repo).expect("cleanup");
+}
+
+#[test]
+fn worktree_commit_prepare_leaves_head_at_fixture_base() {
+    let git = grit_utils::binary::resolve_binary("git", None).expect("git");
+    let (repo, _record) =
+        ensure_worktree_bench_repo(&git, FixtureKind::SynthS, false).expect("worktree repo");
+    set_worktree_bench_cwd(&repo).expect("cwd");
+    let base = read_fixture_base_oid().expect("base oid");
+    prepare_commit(&git).expect("prepare commit");
+    let head = fixture_registry::git_head_oid(&git, &repo).expect("head");
+    assert_eq!(
+        head, base,
+        "prepare must not create a commit before hyperfine runs"
+    );
+    let _ = Path::new(".");
 }
