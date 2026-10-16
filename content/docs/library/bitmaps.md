@@ -22,9 +22,9 @@ Integration tests in `grit-lib/tests/pack_bitmap_read_git_compat.rs` round-trip 
 
 ## Querying reachability
 
-[`BitmapIndex::reachability`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) (see the [`objects::bitmap`](rustdoc:grit_lib::objects::bitmap) domain module) takes a [`ReachabilityQuery`](rustdoc:grit_lib::bitmap_walk::ReachabilityQuery) (wants, haves, optional [`ObjectFilter`](rustdoc:grit_lib::rev_list::ObjectFilter)), and [`MissingAction`](rustdoc:grit_lib::rev_list::MissingAction) for missing links. It returns [`ReachableSet`](rustdoc:grit_lib::bitmap_walk::ReachableSet) or [`BitmapWalkUnsupported`](rustdoc:grit_lib::bitmap_walk::BitmapWalkUnsupported) when the repository is shallow or the filter needs a non-bitmap walk (`sparse:oid`, `tree:<n>` with `n > 0`, and similar).
+[`BitmapIndex::reachability`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) (see the [`objects::bitmap`](rustdoc:grit_lib::objects::bitmap) domain module) takes a [`ReachabilityQuery`](rustdoc:grit_lib::objects::bitmap::ReachabilityQuery) (wants, haves, optional [`ObjectFilter`](rustdoc:grit_lib::revwalk::rev_list::ObjectFilter)), and [`MissingAction`](rustdoc:grit_lib::revwalk::rev_list::MissingAction) for missing links. It returns [`ReachableSet`](rustdoc:grit_lib::objects::bitmap::ReachableSet) or [`BitmapWalkUnsupported`](rustdoc:grit_lib::objects::bitmap::BitmapWalkUnsupported) when the repository is shallow or the filter needs a non-bitmap walk (`sparse:oid`, `tree:<n>` with `n > 0`, and similar).
 
-[`ReachableSet`](rustdoc:grit_lib::bitmap_walk::ReachableSet) exposes `object_ids` for indexed and **extended** (out-of-namespace) objects, and `iter_grouped_by_kind` for oids in Git’s bitmap order (commits, trees, blobs, tags).
+[`ReachableSet`](rustdoc:grit_lib::objects::bitmap::ReachableSet) exposes `object_ids` for indexed and **extended** (out-of-namespace) objects, and `iter_grouped_by_kind` for oids in Git’s bitmap order (commits, trees, blobs, tags).
 
 [`BitmapIndex::verify_commit`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) compares a stored commit bitmap with a fresh non-bitmap walk (same idea as `git rev-list --test-bitmap`).
 
@@ -44,8 +44,8 @@ When bitmaps are missing, truncated, or unsupported for the requested walk:
 
 - [`BitmapIndex::open`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) returns `Ok(None)`; callers fall back to graph walks.
 - Corrupt sidecars may emit diagnostics (for example EWAH or index corruption) while still completing the operation via fallback where Git would.
-- [`rev_list`](rustdoc:grit_lib::rev_list::rev_list) uses bitmap fast paths when [`RevListOptions`](rustdoc:grit_lib::rev_list::RevListOptions) allow it (`--use-bitmap-index` semantics); incompatible options or shallow repos fall back transparently (see `grit-lib/tests/rev_list_bitmaps.rs`).
-- [`build_pack`](rustdoc:grit_lib::pack_objects::build_pack) and upload-pack use [`enumerate_pack_objects`](rustdoc:grit_lib::pack_object_select::enumerate_pack_objects) when [`PackBuildOptions::use_bitmaps`](rustdoc:grit_lib::pack_objects::PackBuildOptions) is true and a [`BitmapIndex`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) is available; otherwise the object walk runs with the same resulting set.
+- [`rev_list`](rustdoc:grit_lib::revwalk::rev_list::rev_list) uses bitmap fast paths when [`RevListOptions`](rustdoc:grit_lib::revwalk::rev_list::RevListOptions) allow it (`--use-bitmap-index` semantics); incompatible options or shallow repos fall back transparently (see `grit-lib/tests/rev_list_bitmaps.rs`).
+- [`build_pack`](rustdoc:grit_lib::objects::pack_objects::build_pack) and upload-pack use [`enumerate_pack_objects`](rustdoc:grit_lib::objects::pack_object_select::enumerate_pack_objects) when [`PackBuildOptions::use_bitmaps`](rustdoc:grit_lib::objects::pack_objects::PackBuildOptions) is true and a [`BitmapIndex`](rustdoc:grit_lib::objects::bitmap::BitmapIndex) is available; otherwise the object walk runs with the same resulting set.
 
 ## Not supported yet
 
