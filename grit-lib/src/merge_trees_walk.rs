@@ -1,6 +1,6 @@
 //! Recursive three-tree merge: skip identical subtrees and compose the result tree in the ODB.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::index::IndexEntry;
 use crate::merge_file::MergeFavor;
@@ -363,8 +363,14 @@ pub(crate) fn three_way_on_touched_paths(
     ours_paths.sort();
     ours_paths.dedup();
 
+    let theirs_rename_source_by_dest: HashMap<Vec<u8>, Vec<u8>> = theirs_old_to_new
+        .iter()
+        .map(|(old, new)| (new.clone(), old.clone()))
+        .collect();
+
     // When the other side renamed base paths to `new`, those destinations are also in
-    // `touched`. The rename source iteration already merges at `new`; skip duplicate passes.
+    // `touched`. When ours still has the rename source, the source iteration already merges
+    // at `new`; skip duplicate passes (issue #1093). Do not skip when ours deleted the source.
     let mut theirs_rename_destinations: HSet<Vec<u8>> = HSet::new();
     for (old, new) in theirs_old_to_new {
         if old != new && touched.contains(old) {
@@ -374,13 +380,30 @@ pub(crate) fn three_way_on_touched_paths(
 
     for op in ours_paths {
         if theirs_rename_destinations.contains(&op) && !ours_new_to_old.contains_key(&op) {
-            let ours_present = ours.contains_key(&op)
-                || lookup_index_entry_at_path(odb, &ours_tree, &op)
-                    .ok()
-                    .flatten()
-                    .is_some();
-            if !ours_present {
-                continue;
+            if let Some(old) = theirs_rename_source_by_dest.get(&op) {
+                let ours_still_at_source = ours.contains_key(old)
+                    || lookup_index_entry_at_path(odb, &ours_tree, old)
+                        .ok()
+                        .flatten()
+                        .is_some();
+                if ours_still_at_source {
+                    let ours_present_at_dest = ours.contains_key(&op)
+                        || lookup_index_entry_at_path(odb, &ours_tree, &op)
+                            .ok()
+                            .flatten()
+                            .is_some();
+                    if !ours_present_at_dest {
+                        if theirs.get(&op).is_some()
+                            || lookup_index_entry_at_path(odb, &theirs_tree, &op)
+                                .ok()
+                                .flatten()
+                                .is_some()
+                        {
+                            handled_theirs.insert(op.clone());
+                        }
+                        continue;
+                    }
+                }
             }
         }
         let bp = if let Some(old) = ours_new_to_old.get(&op) {
