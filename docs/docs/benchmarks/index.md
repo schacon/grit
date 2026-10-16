@@ -84,6 +84,8 @@ GRIT_BENCH_BITMAPS_REPO="$(grit-bench …)" ./target/release/grit-bench bitmaps 
 
 Two back-to-back runs on the git-prepared fixture (2026-10-16) agreed within **~6–8% relative** on Grit medians for the rev-list scenarios (`971 ms` vs `1033 ms` count; `984 ms` vs `1065 ms` object count).
 
+**Grit-written bitmap fixture:** set **`GRIT_BENCH_BITMAP_FIXTURE=grit`** when running `grit-bench bitmaps` to prepare the same pinned **`git.git`** clone with **`git repack -ad`**, commit-graph, and a grit-lib **`PackBitmapWriter`** sidecar (`ensure_bitmaps_grit_repo`). The committed **`bitmaps-after.json`** uses the **Git-prepared** fixture (default); capture a separate JSON for grit-written bitmaps when comparing interoperability (see factory notes for the grit-fixture run ratios).
+
 **Acceptance bar (roadmap item 14):** each ratio **≤ 1.2×** (and serve-clone within the same bar). The after run **passes compatibility** (bitmaps read/write, serve packs validate with `git index-pack --strict` after the thin-pack reuse fix) but **misses the 1.2× performance bar** on all three command-level metrics on this tag-heavy **`git.git`** fixture (~954 tag refs). Follow-ups (not retargeting the bar):
 
 - **Multi-tip bitmap counting:** optimize `rev-list --count --all` / `--objects --use-bitmap-index` when hundreds of tag tips are present (Git ~60 ms vs grit ~1 s on the same fixture).

@@ -6,8 +6,7 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use grit_lib::pack::read_local_pack_indexes;
-use grit_lib::pack_bitmap::{PackBitmapWriteOptions, PackBitmapWriter};
+use grit_lib::pack_bitmap::PackBitmapWriteOptions;
 use grit_lib::repo::Repository;
 
 use crate::fixture::remove_dir_robust;
@@ -121,19 +120,8 @@ pub fn ensure_bitmaps_grit_repo(git: &Path) -> Result<PathBuf> {
     run_git(git, &dest, &["repack", "-a", "-d"])?;
     run_git(git, &dest, &["commit-graph", "write", "--reachable"])?;
     let repo = Repository::open(&dest, None).context("open bare git.git for grit bitmap write")?;
-    let idx_path = read_local_pack_indexes(&dest.join("objects"))
-        .context("list pack indexes")?
-        .into_iter()
-        .max_by_key(|i| i.len())
-        .map(|i| i.idx_path)
-        .ok_or_else(|| anyhow::anyhow!("no pack index after repack"))?;
-    PackBitmapWriter::write(
-        &repo,
-        &idx_path,
-        &PackBitmapWriteOptions::default(),
-        SystemTime::UNIX_EPOCH,
-    )
-    .context("write pack bitmap with grit")?;
+    repo.write_largest_pack_bitmap(&PackBitmapWriteOptions::default(), SystemTime::UNIX_EPOCH)
+        .context("write pack bitmap with grit")?;
     run_git(git, &dest, &["rev-list", "--test-bitmap", "HEAD"])
         .context("git rev-list --test-bitmap on grit-written bitmap")?;
     ensure_serve_clone_request(&dest)?;

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::binary::{grit_source_commit, tool_version};
-use crate::bitmap_fixture::{bitmap_isolated_env, ensure_bitmaps_git_repo};
+use crate::bitmap_fixture::{
+    bitmap_isolated_env, ensure_bitmaps_git_repo, ensure_bitmaps_grit_repo,
+};
 use crate::capped_run::{TerminationKind, EXIT_MEMORY_CAP, EXIT_TIMEOUT};
 use crate::machine::{collect_machine_info, format_timestamp};
 use crate::odb_fixture::odb_scratch_root;
@@ -191,7 +193,16 @@ pub fn run_bitmaps_suite(
             }
             p.to_path_buf()
         }
-        None => ensure_bitmaps_git_repo(git)?,
+        None => {
+            if std::env::var("GRIT_BENCH_BITMAP_FIXTURE")
+                .map(|v| v.eq_ignore_ascii_case("grit"))
+                .unwrap_or(false)
+            {
+                ensure_bitmaps_grit_repo(git)?
+            } else {
+                ensure_bitmaps_git_repo(git)?
+            }
+        }
     };
 
     let req = repo.join(SERVE_CLONE_REQUEST_FILE);
