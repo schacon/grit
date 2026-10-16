@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fs;
 
 use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::objects::ObjectId;
+use grit_lib::porcelain::merge::{integrate_branch, IntegrateBranchOutcome};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::merge_base::{
     fork_point, independent_commits, is_ancestor, merge_bases_all, merge_bases_first_vs_rest,
@@ -51,8 +53,6 @@ fn setup_t6010(wt: &std::path::Path) -> (ObjectId, ObjectId, ObjectId) {
     let b = oids["B"];
     (g, h, b)
 }
-
-use grit_lib::objects::ObjectId;
 
 #[test]
 fn t6010_merge_base_variants_match_git() {
@@ -146,6 +146,57 @@ fn build_t6010_skewed_commit_dates(wt: &std::path::Path) -> HashMap<String, Obje
         git(wt, &["update-ref", refname, &oids[label].to_hex()]);
     }
     oids
+}
+
+#[test]
+fn merge_base_default_skewed_dates_without_commit_graph_matches_git() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let oids = build_t6010_skewed_commit_dates(wt);
+    let g = oids["G"];
+    let h = oids["H"];
+
+    let graph_path = wt.join(".git/objects/info/commit-graph");
+    assert!(!graph_path.exists(), "fixture must not use commit-graph");
+
+    git(wt, &["config", "user.name", "Merge Base Test"]);
+    git(wt, &["config", "user.email", "merge-base-test@example.com"]);
+
+    let repo = open_grit(wt);
+    let git_one = git_merge_base(wt, &["G", "H"]);
+    let grit_one = merge_bases_first_vs_rest(&repo, g, &[h]).expect("default merge-base");
+    assert_eq!(
+        grit_one, git_one,
+        "merge_bases_first_vs_rest vs git merge-base"
+    );
+    git(wt, &["update-ref", "refs/heads/main", &h.to_hex()]);
+    git(wt, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let git_merge_tree = grit_test_support::git_cmd(&["merge-tree", "--write-tree", "HEAD", "G"])
+        .in_dir(wt)
+        .exec()
+        .stdout
+        .lines()
+        .next()
+        .expect("git merge-tree")
+        .trim()
+        .to_owned();
+
+    let outcome =
+        integrate_branch(&repo, "refs/heads/main", h, g, "G").expect("integrate_branch merge");
+    let IntegrateBranchOutcome::Merged { oid: merge_oid } = outcome else {
+        panic!("expected clean merge, got {outcome:?}");
+    };
+    let grit_tree = {
+        let obj = repo.odb().read(&merge_oid).expect("merge commit");
+        grit_lib::objects::parse_commit(&obj.data)
+            .expect("parse")
+            .tree
+            .to_hex()
+    };
+    assert_eq!(
+        grit_tree, git_merge_tree,
+        "integrate_branch merge tree must match git merge-tree"
+    );
 }
 
 #[test]
