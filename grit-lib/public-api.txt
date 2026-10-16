@@ -13870,6 +13870,8 @@ pub grit_lib::revwalk::history::HistoryError::EmptyMessage
 pub grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan
 pub grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan::planned_commit: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan::planned_ref: core::option::Option<alloc::string::String>
+pub grit_lib::revwalk::history::HistoryError::InsertBeforeOnMerge
+pub grit_lib::revwalk::history::HistoryError::InsertBeforeOnMerge::commit: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::HistoryError::Library(alloc::boxed::Box<grit_lib::error::Error>)
 pub grit_lib::revwalk::history::HistoryError::LocalChangesWouldBeOverwritten
 pub grit_lib::revwalk::history::HistoryError::LocalChangesWouldBeOverwritten::paths: alloc::vec::Vec<alloc::string::String>
@@ -13877,6 +13879,8 @@ pub grit_lib::revwalk::history::HistoryError::MergeCommitInReplay
 pub grit_lib::revwalk::history::HistoryError::MergeCommitInReplay::commit: grit_lib::objects::ObjectId
 pub grit_lib::revwalk::history::HistoryError::NotInHistory
 pub grit_lib::revwalk::history::HistoryError::NotInHistory::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::Planning
+pub grit_lib::revwalk::history::HistoryError::Planning::message: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::RefApply
 pub grit_lib::revwalk::history::HistoryError::RefApply::message: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::RefCasMismatch
