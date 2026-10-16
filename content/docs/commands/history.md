@@ -53,6 +53,15 @@ Message mode (pick one; default keeps the oldest message, including `amend!` adj
 
 With **`--update-refs=branches`** (default), grit refuses when a local branch tip points at a commit inside the range but is not the range tip (use **`--update-refs=head`** to rewrite only the current branch).
 
+### `fixup`
+
+Apply **staged** index changes onto an earlier commit and replay descendants. Grit three-way merges `HEAD`'s tree (base), the target commit's tree (ours), and the index tree (theirs), matching upstream `git history fixup`. The target keeps its author and message unless you pass `-m` / `--message-file`.
+
+Requires a working tree with at least one staged change relative to `HEAD`. Bare repositories are rejected. On merge conflicts, nothing is applied.
+
+After a successful apply, staged changes on the paths you fixed are consumed: the index matches the new `HEAD` for those paths, and unrelated unstaged edits stay in the worktree.
+
+
 ## Options
 
 | Option | Description |
