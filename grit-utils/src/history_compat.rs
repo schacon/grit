@@ -8,6 +8,7 @@ use grit_lib::objects::ObjectId;
 
 use crate::bench_env::{empty_global_config_path, isolated_env_prefix};
 use crate::history_fixture::ensure_head_oid_list;
+use crate::shell::shell_command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PorcelainLine {
@@ -83,8 +84,9 @@ fn lib_op_batch_out(bench_exe: &Path, dir: &Path, oid_list: &Path) -> Result<Vec
     Ok(out.stdout)
 }
 
-fn git_batch_out(_git: &Path, dir: &Path, oid_list: &Path) -> Result<Vec<u8>> {
-    let inner = format!("git cat-file --batch < {}", shell_quote_path(oid_list));
+fn git_batch_out(git: &Path, dir: &Path, oid_list: &Path) -> Result<Vec<u8>> {
+    let git_inner = shell_command(git, &["cat-file", "--batch"]);
+    let inner = format!("{git_inner} < {}", shell_quote_path(oid_list));
     let out = Command::new("/bin/sh")
         .arg("-c")
         .arg(&inner)
@@ -230,4 +232,18 @@ pub fn verify_history_lib_ops(
     verify_blame_porcelain(git, bench_exe, repo, blame_path)?;
     verify_cat_file_batch_head(git, bench_exe, repo)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn git_batch_shell_uses_resolved_git_path() {
+        let git = Path::new("/opt/alternate/git");
+        let inner = shell_command(git, &["cat-file", "--batch"]);
+        assert!(inner.contains("/opt/alternate/git"));
+        assert!(!inner.contains("'git' 'cat-file'"));
+    }
 }

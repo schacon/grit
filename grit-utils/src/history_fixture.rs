@@ -114,7 +114,7 @@ fn pick_high_churn_path(git: &Path, repo: &Path) -> Result<String> {
     }
     counts
         .into_iter()
-        .max_by_key(|(_, n)| *n)
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
         .map(|(path, _)| path)
         .ok_or_else(|| anyhow::anyhow!("no tracked paths in synth repo"))
 }
