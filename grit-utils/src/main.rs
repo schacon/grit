@@ -43,6 +43,12 @@ use grit_utils::scenarios::{
 };
 use grit_utils::schema::BenchReport;
 use grit_utils::synth::{generate_synth_repo, SynthReport, SynthTier};
+use grit_utils::worktree_fixture::{
+    prepare_add as prepare_worktree_add, prepare_commit as prepare_worktree_commit,
+    prepare_diff as prepare_worktree_diff, prepare_status_clean as prepare_worktree_status_clean,
+    prepare_status_dirty as prepare_worktree_status_dirty,
+};
+use grit_utils::worktree_suite::run_worktree_group;
 use std::net::TcpListener;
 use time::OffsetDateTime;
 
@@ -242,6 +248,19 @@ enum Cmd {
         #[arg(long)]
         no_network: bool,
     },
+    /// Run a scenario group against a cached registry fixture
+    Run {
+        #[arg(long, value_enum)]
+        group: RunGroup,
+        #[arg(long, value_enum)]
+        fixture: FixtureKind,
+        /// CI smoke: one timed run per scenario (still compares grit vs git).
+        #[arg(long)]
+        smoke: bool,
+        /// Do not clone or generate missing cache entries (requires prior `fixtures prepare`).
+        #[arg(long)]
+        offline: bool,
+    },
     /// Compare two JSON reports; exit non-zero when ratios differ beyond tolerance
     Compare {
         baseline: PathBuf,
@@ -364,6 +383,31 @@ enum Cmd {
         git: PathBuf,
     },
     #[command(hide = true)]
+    PrepareWorktreeStatusClean {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareWorktreeStatusDirty {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareWorktreeAdd {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareWorktreeCommit {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
+    PrepareWorktreeDiff {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
     PrepareParallelCheckout {
         #[arg(long)]
         git: PathBuf,
@@ -396,6 +440,11 @@ fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
         "empty" => Ok(RefsWorkMode::Empty),
         other => Err(format!("expected full or empty, got {other}")),
     }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum RunGroup {
+    Worktree,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -663,6 +712,7 @@ fn run_config(cli: &Cli, isolated_config: bool) -> RunConfig {
     RunConfig {
         warmup: cli.warmup,
         min_runs: cli.min_runs,
+        exact_runs: None,
         prepare_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit-bench")),
         isolated_config,
     }
@@ -915,6 +965,26 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return grit_utils::scenarios::run_prepare_diff_dirty(&git);
         }
+        Cmd::PrepareWorktreeStatusClean { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_worktree_status_clean(&git);
+        }
+        Cmd::PrepareWorktreeStatusDirty { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_worktree_status_dirty(&git);
+        }
+        Cmd::PrepareWorktreeAdd { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_worktree_add(&git);
+        }
+        Cmd::PrepareWorktreeCommit { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_worktree_commit(&git);
+        }
+        Cmd::PrepareWorktreeDiff { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return prepare_worktree_diff(&git);
+        }
         Cmd::PrepareParallelCheckout { git, url, dest } => {
             let git = resolve_binary("git", Some(git))?;
             return prepare_parallel_checkout(&git, url, dest.as_path());
@@ -1159,6 +1229,29 @@ fn main() -> Result<()> {
             let cfg = run_config(&cli, false);
             run_ignore_suite(&hyperfine, &git, &grit, &cfg, timestamp)?
         }
+        Cmd::Run {
+            group,
+            fixture,
+            smoke,
+            offline,
+        } => {
+            let mut cfg = run_config(&cli, true);
+            if *smoke {
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
+            }
+            match group {
+                RunGroup::Worktree => {
+                    eprintln!(
+                        "Running worktree scenarios on fixture {} …",
+                        fixture.cache_name()
+                    );
+                    run_worktree_group(
+                        &hyperfine, &git, &grit, &cfg, *fixture, *offline, timestamp,
+                    )?
+                }
+            }
+        }
         Cmd::Campaign {
             smoke,
             with_linux,
@@ -1244,6 +1337,11 @@ fn main() -> Result<()> {
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
         | Cmd::PrepareDiffDirty { .. }
+        | Cmd::PrepareWorktreeStatusClean { .. }
+        | Cmd::PrepareWorktreeStatusDirty { .. }
+        | Cmd::PrepareWorktreeAdd { .. }
+        | Cmd::PrepareWorktreeCommit { .. }
+        | Cmd::PrepareWorktreeDiff { .. }
         | Cmd::PrepareParallelCheckout { .. }
         | Cmd::PrepareParallelClone { .. }
         | Cmd::PrepareParallelIndexPack { .. }
