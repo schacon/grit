@@ -205,10 +205,10 @@ fn serve_v0(
         }
     }
     match common.last() {
-        Some(last) if detailed => write_line(output, &format!("ACK {}", last.to_hex()))?,
-        Some(_) => {}
+        Some(last) => write_line(output, &format!("ACK {}", last.to_hex()))?,
         None => write_line(output, "NAK")?,
     }
+    output.flush()?;
     let sideband = request.caps.contains("side-band-64k");
     let pack = build_response_pack_from_v0(
         repo,

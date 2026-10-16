@@ -39,39 +39,7 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
 fn two_post_shallow_depth_one_returns_pack_on_done() {
     let dir = std::env::temp_dir().join(format!("grit-shallow-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-<<<<<<< New base: bench: grit-written git.git fixture env and docs update
-    Repository::init(
-        &dir,
-        &InitOptions::new()
-            .with_bare(true)
-            .with_initial_branch("main")
-            .with_ref_storage(grit_lib::refs::ref_storage::RefStorageFormat::Files),
-    )
-    .expect("init bare");
-    let repo = Repository::open(&dir, &RepositoryOptions::default().for_serving()).expect("open");
-||||||| Common ancestor
-    grit_lib::repo::init_bare_clone_minimal(&dir, "main", "files").expect("init bare");
-    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
-=======
-    grit_lib::repo::init_bare_clone_minimal(
-        &dir,
-        "main",
-        grit_lib::ref_storage::RefStorageFormat::Files,
-    )
-    .expect("init bare");
-    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
->>>>>>> Current commit: fix: grit-lib clippy gate and multi-sidecar pack reuse test
-    let tree = grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
-        .expect("empty tree");
-    let commit_body = format!(
-        "tree {}\nauthor T <t@x> 1 +0000\ncommitter T <t@x> 1 +0000\n\nm\n",
-        tree.to_hex()
-    );
-    let main = repo
-        .odb()
-        .write_loose_materialize(ObjectKind::Commit, commit_body.as_bytes())
-        .expect("commit");
-    grit_lib::refs::write_ref(&dir, "refs/heads/main", &main).expect("ref");
+    let main = init_linear_bare(&dir, 1);
 
     let caps = " multi_ack_detailed side-band-64k thin-pack no-progress ofs-delta";
     let mut round1 = Vec::new();

@@ -68,8 +68,8 @@ Scenario group **`bitmaps`** measures three acceptance metrics on upstream **`gi
 ```bash
 cargo build --release -p grit-utils -p grit-cli
 ./target/release/grit-bench bitmaps --format json --output grit-utils/baselines/bitmaps-after.json
-# Optional second fixture (grit-written bitmap sidecar):
-GRIT_BENCH_BITMAPS_REPO="$(grit-bench …)" ./target/release/grit-bench bitmaps --repo "$GRIT_BENCH_BITMAPS_GRIT_REPO" …
+# Optional grit-written pack bitmap sidecar (separate JSON; default fixture stays Git-prepared):
+GRIT_BENCH_BITMAP_FIXTURE=grit ./target/release/grit-bench bitmaps --format json --output grit-utils/baselines/bitmaps-grit-written.json
 ```
 
 **Before (`bitmaps-before.json`, 2026-10-10, pre-reader/writer stack):** bitmap reader missing — object count ~**23 000×** vs Git; serve-clone hit **memory_cap**.
