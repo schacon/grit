@@ -4,6 +4,7 @@
 //! default merge-base selection, `--all`, `--octopus`, `--independent`,
 //! and `--is-ancestor`.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::error::{Error, Result};
@@ -457,15 +458,47 @@ pub enum ReachableWalkLimit {
     Unlimited,
 }
 
+/// Max-heap key for Git default rev-list date ordering (newest committer time first).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WalkDateKey {
+    oid: ObjectId,
+    time: i64,
+    /// Insertion-order tiebreaker for equal dates (earlier insertion pops first).
+    seq: u64,
+}
+
+impl Ord for WalkDateKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.time.cmp(&other.time) {
+            Ordering::Equal => match other.seq.cmp(&self.seq) {
+                Ordering::Equal => self.oid.cmp(&other.oid),
+                ord => ord,
+            },
+            ord => ord,
+        }
+    }
+}
+
+impl PartialOrd for WalkDateKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// Resumable date-order walk state for [`walk_commits_reachable_excluding_ancestors_of`].
 ///
-/// The heap, `done`, and `queued` sets match Git's default rev-list date ordering:
-/// newest commit time first, with a monotonic tie-breaker (`seq`).
+/// Ordering matches Git's default `rev-list`: among commits ready to print, take the
+/// greatest committer timestamp; a parent becomes ready only after all of its children
+/// still in the walk have been processed.
 #[derive(Clone, Debug)]
 pub struct ReachableWalkState {
-    heap: BinaryHeap<(i64, u64, ObjectId)>,
+    heap: BinaryHeap<WalkDateKey>,
     done: HashSet<ObjectId>,
     queued: HashSet<ObjectId>,
+    /// Selected children not yet emitted, per parent (Git `limit_list` gating).
+    unfinished_children: HashMap<ObjectId, usize>,
+    /// Tips seeded on the heap up front (may emit before all children are shown).
+    seeded: HashSet<ObjectId>,
     seq: u64,
     hide: Vec<ObjectId>,
 }
@@ -479,6 +512,10 @@ pub struct ReachableWalkSnapshot {
     pub done: Vec<ObjectId>,
     /// Every OID ever queued on the heap.
     pub queued: Vec<ObjectId>,
+    /// Pending child counts per parent OID.
+    pub unfinished_children: Vec<(ObjectId, u32)>,
+    /// Tip OIDs seeded on the heap at walk start.
+    pub seeded: Vec<ObjectId>,
     /// `seq` field.
     pub seq: u64,
     /// `hide` field.
@@ -494,26 +531,24 @@ impl ReachableWalkState {
     pub fn new(repo: &Repository, tips: &[ObjectId], hide: &[ObjectId]) -> Result<Self> {
         let hide_vec: Vec<ObjectId> = hide.to_vec();
         let mut cache = CommitGraphCache::new(repo);
-        let mut heap = BinaryHeap::new();
-        let mut queued = HashSet::new();
-        let mut seq = 0u64;
+        let mut state = Self {
+            heap: BinaryHeap::new(),
+            done: HashSet::new(),
+            queued: HashSet::new(),
+            unfinished_children: HashMap::new(),
+            seeded: HashSet::new(),
+            seq: 0,
+            hide: hide_vec,
+        };
         for &tip in tips {
-            if hide_vec.contains(&tip) {
+            if state.hide.contains(&tip) {
                 continue;
             }
-            if queued.insert(tip) {
-                let time = cache.commit_time(tip)?;
-                heap.push((time, seq, tip));
-                seq += 1;
+            if state.queued.insert(tip) {
+                state.push_on_heap(&mut cache, tip, true)?;
             }
         }
-        Ok(Self {
-            heap,
-            done: HashSet::new(),
-            queued,
-            seq,
-            hide: hide_vec,
-        })
+        Ok(state)
     }
 
     /// Restore walk state from a [`ReachableWalkSnapshot`].
@@ -523,13 +558,23 @@ impl ReachableWalkState {
             heap,
             done,
             queued,
+            unfinished_children,
+            seeded,
             seq,
             hide,
         } = snapshot;
         Self {
-            heap: heap.into_iter().collect(),
+            heap: heap
+                .into_iter()
+                .map(|(time, seq, oid)| WalkDateKey { oid, time, seq })
+                .collect(),
             done: done.into_iter().collect(),
             queued: queued.into_iter().collect(),
+            unfinished_children: unfinished_children
+                .into_iter()
+                .map(|(oid, count)| (oid, count as usize))
+                .collect(),
+            seeded: seeded.into_iter().collect(),
             seq,
             hide,
         }
@@ -539,9 +584,19 @@ impl ReachableWalkState {
     #[must_use]
     pub fn snapshot(&self) -> ReachableWalkSnapshot {
         ReachableWalkSnapshot {
-            heap: self.heap.clone().into_iter().collect(),
+            heap: self
+                .heap
+                .iter()
+                .map(|key| (key.time, key.seq, key.oid))
+                .collect(),
             done: self.done.iter().copied().collect(),
             queued: self.queued.iter().copied().collect(),
+            unfinished_children: self
+                .unfinished_children
+                .iter()
+                .map(|(oid, count)| (*oid, *count as u32))
+                .collect(),
+            seeded: self.seeded.iter().copied().collect(),
             seq: self.seq,
             hide: self.hide.clone(),
         }
@@ -553,6 +608,65 @@ impl ReachableWalkState {
         !self.heap.is_empty()
     }
 
+    fn is_hidden(&self, cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> Result<bool> {
+        for &hide_tip in &self.hide {
+            if oid == hide_tip || cache.is_ancestor(oid, hide_tip)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn push_on_heap(
+        &mut self,
+        cache: &mut CommitGraphCache<'_>,
+        oid: ObjectId,
+        is_tip: bool,
+    ) -> Result<()> {
+        if is_tip {
+            self.seeded.insert(oid);
+        }
+        for parent in cache.parents_of(oid)? {
+            *self.unfinished_children.entry(parent).or_insert(0) += 1;
+        }
+        let time = cache.commit_time(oid)?;
+        let seq = self.seq;
+        self.seq += 1;
+        self.heap.push(WalkDateKey { oid, time, seq });
+        Ok(())
+    }
+
+    fn after_processed(&mut self, cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> Result<()> {
+        for parent in cache.parents_of(oid)? {
+            let Some(count) = self.unfinished_children.get_mut(&parent) else {
+                continue;
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 && !self.seeded.contains(&parent) && self.queued.insert(parent) {
+                self.push_on_heap(cache, parent, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn pop_next_emit(&mut self, cache: &mut CommitGraphCache<'_>) -> Result<Option<ObjectId>> {
+        loop {
+            let Some(key) = self.heap.pop() else {
+                return Ok(None);
+            };
+            let oid = key.oid;
+            if !self.done.insert(oid) {
+                continue;
+            }
+            let hidden = self.is_hidden(cache, oid)?;
+            self.after_processed(cache, oid)?;
+            if hidden {
+                continue;
+            }
+            return Ok(Some(oid));
+        }
+    }
+
     /// Emit up to `limit` commits (newest first), stopping early when `limit` is reached.
     ///
     /// # Errors
@@ -561,32 +675,8 @@ impl ReachableWalkState {
     pub fn emit_until(&mut self, repo: &Repository, limit: Option<usize>) -> Result<Vec<ObjectId>> {
         let mut cache = CommitGraphCache::new(repo);
         let mut out = Vec::new();
-        while let Some((_time, _seq, oid)) = self.heap.pop() {
-            if !self.done.insert(oid) {
-                continue;
-            }
-
-            let mut hidden = false;
-            for &hide_tip in &self.hide {
-                if oid == hide_tip || cache.is_ancestor(oid, hide_tip)? {
-                    hidden = true;
-                    break;
-                }
-            }
-            if hidden {
-                continue;
-            }
-
+        while let Some(oid) = self.pop_next_emit(&mut cache)? {
             out.push(oid);
-
-            for parent in cache.parents_of(oid)? {
-                if self.queued.insert(parent) {
-                    let time = cache.commit_time(parent)?;
-                    self.heap.push((time, self.seq, parent));
-                    self.seq += 1;
-                }
-            }
-
             if limit.is_some_and(|n| out.len() >= n) {
                 break;
             }
@@ -621,30 +711,10 @@ pub fn walk_commits_reachable_excluding_ancestors_of(
         let mut cache = CommitGraphCache::new(repo);
         let mut out = Vec::new();
         let mut emitted = 0usize;
-        while let Some((_time, _seq, oid)) = state.heap.pop() {
-            if !state.done.insert(oid) {
-                continue;
-            }
-            let mut hidden = false;
-            for &hide_tip in &state.hide {
-                if oid == hide_tip || cache.is_ancestor(oid, hide_tip)? {
-                    hidden = true;
-                    break;
-                }
-            }
-            if hidden {
-                continue;
-            }
+        while let Some(oid) = state.pop_next_emit(&mut cache)? {
             emitted += 1;
             if out.len() < k {
                 out.push(oid);
-            }
-            for parent in cache.parents_of(oid)? {
-                if state.queued.insert(parent) {
-                    let time = cache.commit_time(parent)?;
-                    state.heap.push((time, state.seq, parent));
-                    state.seq += 1;
-                }
             }
         }
         return Ok((emitted, out));

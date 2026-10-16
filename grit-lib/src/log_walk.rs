@@ -12,7 +12,7 @@ use crate::repo::Repository;
 use crate::state::resolve_head;
 
 const CURSOR_PREFIX: &str = "lw1.";
-const MAGIC: &[u8; 4] = b"GLW1";
+const MAGIC: &[u8; 4] = b"GLW2";
 
 /// Opaque continuation token for paged `grit log` history walks.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +104,12 @@ fn write_snapshot(out: &mut Vec<u8>, anchor: ObjectId, walk: &ReachableWalkSnaps
     write_oid_vec(out, &walk.hide)?;
     write_oid_vec(out, &walk.done)?;
     write_oid_vec(out, &walk.queued)?;
+    write_u32(out, walk.unfinished_children.len() as u32)?;
+    for (oid, count) in &walk.unfinished_children {
+        out.write_all(oid.as_bytes()).map_err(Error::Io)?;
+        write_u32(out, *count)?;
+    }
+    write_oid_vec(out, &walk.seeded)?;
     write_u32(out, walk.heap.len() as u32)?;
     for &(time, seq, oid) in &walk.heap {
         write_i64(out, time)?;
@@ -128,6 +134,14 @@ fn read_snapshot(bytes: &[u8]) -> Result<LogWalkCursor> {
     let hide = read_oid_vec(&mut cur)?;
     let done = read_oid_vec(&mut cur)?;
     let queued = read_oid_vec(&mut cur)?;
+    let unfinished_len = read_u32(&mut cur)? as usize;
+    let mut unfinished_children = Vec::with_capacity(unfinished_len);
+    for _ in 0..unfinished_len {
+        let oid = read_oid(&mut cur)?;
+        let count = read_u32(&mut cur)?;
+        unfinished_children.push((oid, count));
+    }
+    let seeded = read_oid_vec(&mut cur)?;
     let heap_len = read_u32(&mut cur)? as usize;
     let mut heap = Vec::with_capacity(heap_len);
     for _ in 0..heap_len {
@@ -147,6 +161,8 @@ fn read_snapshot(bytes: &[u8]) -> Result<LogWalkCursor> {
             heap,
             done,
             queued,
+            unfinished_children,
+            seeded,
             seq,
             hide,
         },
@@ -369,6 +385,37 @@ mod tests {
         let git_order = git_log_oids(&repo, 20);
         assert_eq!(paged, git_order);
         Ok(())
+    }
+
+    #[test]
+    fn equal_committer_dates_match_git_log_order() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_repo(&dir)?;
+        let same = 1_735_689_600i64; // 2026-01-01T00:00:00Z
+        let base = write_commit(&repo.odb(), &[], "base", same)?;
+        let side = write_commit(&repo.odb(), &[base], "side", same)?;
+        let mainedit = write_commit(&repo.odb(), &[base], "mainedit", same)?;
+        let merge = write_commit(&repo.odb(), &[mainedit, side], "merge", same)?;
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &merge)?;
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main")?;
+
+        let git_order = git_log_oids(&repo, 10);
+        let page = LogWalkCursor::step(&repo, None, 10)?;
+        assert_eq!(page.commits, git_order);
+        assert_no_ancestor_before_descendant(&repo, &page.commits);
+        Ok(())
+    }
+
+    fn assert_no_ancestor_before_descendant(repo: &Repository, order: &[ObjectId]) {
+        for (i, &ancestor) in order.iter().enumerate() {
+            for &maybe_descendant in &order[i + 1..] {
+                assert!(
+                    !crate::merge_base::is_ancestor(repo, ancestor, maybe_descendant)
+                        .expect("ancestry"),
+                    "ancestor {ancestor} listed before descendant {maybe_descendant}"
+                );
+            }
+        }
     }
 
     #[test]
