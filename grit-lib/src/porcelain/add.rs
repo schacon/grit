@@ -186,7 +186,7 @@ fn stage_inner_on_index(
     opts: &StageOptions,
     _progress: &mut dyn ProgressSink,
     tracked_scan: bool,
-    mut index: &mut Index,
+    index: &mut Index,
     write_index: bool,
 ) -> Result<StageOutcome> {
     let work_tree = repo
@@ -199,7 +199,7 @@ fn stage_inner_on_index(
     // One attribute/ignore/conversion context for the whole add: the worktree diff, the
     // untracked walk and blob conversion all reuse the files it has already loaded.
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(WorktreeRules::from_repository(
-        repo, &index,
+        repo, index,
     )?));
     let rules_config = lock_rules(&rules_arc)?.config_arc();
     let parallelism = repo
@@ -213,7 +213,7 @@ fn stage_inner_on_index(
         .get_bool("core.ignorecase")
         .and_then(|r| r.ok())
         .unwrap_or(false);
-    let mut icase_map = Stage0IcasePathMap::from_index(&index, ignorecase);
+    let mut icase_map = Stage0IcasePathMap::from_index(index, ignorecase);
 
     let staging_thresholds = opts.staging_thresholds.unwrap_or_default();
     let use_tracked_scan = tracked_scan && !index.entries.is_empty() && !ignorecase;
@@ -226,7 +226,7 @@ fn stage_inner_on_index(
             repo,
             work_tree,
             &index_path,
-            &mut index,
+            index,
             &mut rules_guard,
             staging_thresholds,
         )?;
@@ -244,7 +244,7 @@ fn stage_inner_on_index(
         let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
             repo.odb(),
             repo.git_dir(),
-            &mut index,
+            index,
             work_tree,
             diff_opts,
         )?;
@@ -265,7 +265,7 @@ fn stage_inner_on_index(
             };
             let (untracked, _, _) = collect_untracked_and_ignored_inner(
                 repo,
-                &mut index,
+                index,
                 work_tree,
                 &opts.pathspecs,
                 scan,
@@ -306,7 +306,7 @@ fn stage_inner_on_index(
     };
 
     if !opts.pathspecs.is_empty() {
-        validate_pathspecs(repo, &index, work_tree, &unstaged, &untracked, opts)?;
+        validate_pathspecs(repo, index, work_tree, &unstaged, &untracked, opts)?;
     }
 
     let matches =
@@ -341,14 +341,14 @@ fn stage_inner_on_index(
                 }
                 continue;
             }
-            icase_map.remove_alias_of(&mut index, path.as_bytes());
+            icase_map.remove_alias_of(index, path.as_bytes());
             apply_tracked_stage_plan(
                 repo,
                 work_tree,
                 &path,
                 &plan,
                 staging_stats.get(&path),
-                &mut index,
+                index,
                 has_unmerged,
                 opts.executable_hint,
                 &matches,
@@ -359,7 +359,7 @@ fn stage_inner_on_index(
 
     if ignorecase {
         outcome.modified +=
-            stage_ignorecase_spelling_updates(work_tree, &icase_map, &matches, &mut index)?;
+            stage_ignorecase_spelling_updates(work_tree, &icase_map, &matches, index)?;
     }
 
     if !untracked.is_empty() {
@@ -373,7 +373,7 @@ fn stage_inner_on_index(
             &indexed_any_stage,
             &rules,
             &mut icase_map,
-            &mut index,
+            index,
             parallelism,
             opts.executable_hint,
             &mut outcome,
@@ -382,12 +382,11 @@ fn stage_inner_on_index(
 
     if has_unmerged && !opts.pathspecs.is_empty() {
         outcome.modified +=
-            stage_unmerged_paths_matching_pathspecs(repo, work_tree, &matches, &mut index, &rules)?;
+            stage_unmerged_paths_matching_pathspecs(repo, work_tree, &matches, index, &rules)?;
     }
 
     if opts.executable_hint != StageExecutableHint::None && !opts.pathspecs.is_empty() {
-        outcome.modified +=
-            apply_executable_hint_to_index(&mut index, opts.executable_hint, &matches)?;
+        outcome.modified += apply_executable_hint_to_index(index, opts.executable_hint, &matches)?;
     }
 
     if outcome.total() > 0 {

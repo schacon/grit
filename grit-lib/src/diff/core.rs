@@ -1850,10 +1850,7 @@ fn diff_tree_entries_count(
                                     Some(&n.oid),
                                     &path,
                                 )?;
-                            } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
-                                emit_deleted_count(odb, o, prefix, show_trees, count)?;
-                                emit_added_count(odb, n, prefix, show_trees, count)?;
-                            } else if !is_tree_mode(o.mode) && is_tree_mode(n.mode) {
+                            } else if is_tree_mode(o.mode) != is_tree_mode(n.mode) {
                                 emit_deleted_count(odb, o, prefix, show_trees, count)?;
                                 emit_added_count(odb, n, prefix, show_trees, count)?;
                             } else {

@@ -110,8 +110,7 @@ pub fn commit_worktree(
     progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
     let mut index = repo.load_index()?;
-    let staged =
-        crate::porcelain::add::stage_for_commit_on_index(repo, &mut index, progress)?;
+    let staged = crate::porcelain::add::stage_for_commit_on_index(repo, &mut index, progress)?;
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
     }
@@ -124,7 +123,7 @@ pub fn commit_worktree(
 
 fn create_commit_with_index(
     repo: &Repository,
-    mut index: &mut Index,
+    index: &mut Index,
     req: &CommitRequest,
     _progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
@@ -183,7 +182,7 @@ fn create_commit_with_index(
         let skip_tree_match = req.assume_worktree_synced && req.skip_pre_commit_tree_match;
         if !skip_tree_match {
             if let Some(ref old) = parent_tree {
-                if index_staged_tree_matches(repo.odb(), &index, old) {
+                if index_staged_tree_matches(repo.odb(), index, old) {
                     return Err(Error::NothingToCommit);
                 }
             } else if index.entries.is_empty() {
@@ -192,7 +191,7 @@ fn create_commit_with_index(
         }
     }
 
-    repo.write_index(&mut index)?;
+    repo.write_index(index)?;
 
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
@@ -202,7 +201,7 @@ fn create_commit_with_index(
     };
     run_commit_hook_checked(repo, "pre-commit", &[], None, &commit_env)?;
 
-    let tree = write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::silent())?;
+    let tree = write_tree_update_index(repo.odb(), index, "", WriteTreeFlags::silent())?;
 
     if !req.allow_empty && !req.amend {
         if parent_tree.is_none() && is_empty_tree_oid(repo.odb(), &tree) {
@@ -296,12 +295,12 @@ fn create_commit_with_index(
 
     if !req.assume_worktree_synced {
         if let Some(work_tree) = repo.work_tree() {
-            let rules = WorktreeRules::from_repository(repo, &index).ok();
+            let rules = WorktreeRules::from_repository(repo, index).ok();
             let rules_arc = rules.map(|r| Arc::new(Mutex::new(r)));
             let _ = refresh_index_stat_content_verified_with_rules(
                 repo.odb(),
                 repo.git_dir(),
-                &mut index,
+                index,
                 work_tree,
                 None,
                 Some(config.as_ref()),
@@ -310,16 +309,23 @@ fn create_commit_with_index(
             )?;
         }
     }
-    repo.write_index(&mut index)?;
+    repo.write_index(index)?;
 
     let changes = if parent_tree.as_ref() == Some(&tree) {
         0
     } else if req.assume_worktree_synced && req.skip_pre_commit_tree_match {
-        match req.staged_change_count {
-            Some(n) => n,
-            None => {
+        // Large-index commits skip the tree diff for speed (issue #1064); smaller repos keep
+        // accurate path counts for pre-staged and JSON output.
+        const LARGE_INDEX_CHANGE_COUNT_FAST_PATH: usize = 4096;
+        let large_index = index.entries.len() >= LARGE_INDEX_CHANGE_COUNT_FAST_PATH;
+        if large_index {
+            if let Some(n) = req.staged_change_count.filter(|&n| n > 0) {
+                n
+            } else {
                 diff_tree_path_change_count(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?
             }
+        } else {
+            diff_tree_path_change_count(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?
         }
     } else {
         diff_tree_path_change_count(repo.odb(), parent_tree.as_ref(), Some(&tree), "")?

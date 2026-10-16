@@ -72,9 +72,7 @@ fn commit_50k_hundred_edits_within_twice_git() {
 
     let grit = std::env::var("CARGO_BIN_EXE_grit").unwrap_or_else(|_| "grit".into());
     let grit = if std::path::Path::new(&grit).is_relative() {
-        std::env::current_dir()
-            .expect("cwd")
-            .join(&grit)
+        std::env::current_dir().expect("cwd").join(&grit)
     } else {
         std::path::PathBuf::from(grit)
     };
