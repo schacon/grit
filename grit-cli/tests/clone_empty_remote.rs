@@ -70,6 +70,7 @@ fn clone_empty_bare_exits_zero_and_creates_directory() -> TestResult {
     let parsed: serde_json::Value = serde_json::from_slice(&json.stdout)?;
     assert_eq!(parsed["files"], 0);
     assert_eq!(parsed["branch"], "main");
+    assert_eq!(parsed["no_checkout_reason"], "empty_remote");
 
     Ok(())
 }

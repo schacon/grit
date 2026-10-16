@@ -11296,9 +11296,30 @@ impl core::marker::Unpin for grit_lib::remote::clone::CloneOptions
 impl core::marker::UnsafeUnpin for grit_lib::remote::clone::CloneOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::CloneOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneOptions
+pub enum grit_lib::remote::clone::CloneCheckout
+pub grit_lib::remote::clone::CloneCheckout::CheckedOut(grit_lib::objects::ObjectId)
+pub grit_lib::remote::clone::CloneCheckout::EmptyRemote
+pub grit_lib::remote::clone::CloneCheckout::UnbornDefaultBranch
+impl core::clone::Clone for grit_lib::remote::clone::CloneCheckout
+pub fn grit_lib::remote::clone::CloneCheckout::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::remote::clone::CloneCheckout
+impl core::cmp::PartialEq for grit_lib::remote::clone::CloneCheckout
+pub fn grit_lib::remote::clone::CloneCheckout::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::remote::clone::CloneCheckout
+pub fn grit_lib::remote::clone::CloneCheckout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::remote::clone::CloneCheckout
+impl core::marker::Freeze for grit_lib::remote::clone::CloneCheckout
+impl core::marker::Send for grit_lib::remote::clone::CloneCheckout
+impl core::marker::Sync for grit_lib::remote::clone::CloneCheckout
+impl core::marker::Unpin for grit_lib::remote::clone::CloneCheckout
+impl core::marker::UnsafeUnpin for grit_lib::remote::clone::CloneCheckout
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::remote::clone::CloneCheckout
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::remote::clone::CloneCheckout
 pub struct grit_lib::remote::clone::CloneOutcome
 pub grit_lib::remote::clone::CloneOutcome::branch: alloc::string::String
 pub grit_lib::remote::clone::CloneOutcome::branches: u64
+pub grit_lib::remote::clone::CloneOutcome::branches_with_commits: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::remote::clone::CloneOutcome::checkout: grit_lib::remote::clone::CloneCheckout
 pub grit_lib::remote::clone::CloneOutcome::checkout_oid: grit_lib::objects::ObjectId
 pub grit_lib::remote::clone::CloneOutcome::path: std::path::PathBuf
 pub grit_lib::remote::clone::CloneOutcome::repo: grit_lib::repo::Repository

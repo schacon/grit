@@ -79,6 +79,16 @@
       "minimum": 0.0,
       "type": "integer"
     },
+    "branches_with_commits": {
+      "description": "Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "bytes": {
       "description": "Pack bytes received during the fetch.",
       "format": "uint64",
@@ -90,6 +100,13 @@
       "format": "uint64",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "no_checkout_reason": {
+      "description": "Why no working-tree checkout happened, when `files` is zero.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "object_types": {
       "anyOf": [
