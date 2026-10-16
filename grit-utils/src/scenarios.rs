@@ -86,6 +86,8 @@ pub enum PrepareKind {
 pub struct RunConfig {
     pub warmup: u32,
     pub min_runs: u32,
+    /// When set, each hyperfine invocation uses `--runs N` (exact sample count).
+    pub exact_runs: Option<u32>,
     pub prepare_bin: PathBuf,
     /// When true, scenarios use `GIT_CONFIG_NOSYSTEM` and an empty global config file.
     pub isolated_config: bool,
@@ -109,6 +111,7 @@ fn bench_tool(
             prepare: prepare.map(str::to_string),
             warmup: cfg.warmup,
             min_runs: cfg.min_runs,
+            exact_runs: cfg.exact_runs,
             command_name: Some(command_name.into()),
             env_prefix,
         },

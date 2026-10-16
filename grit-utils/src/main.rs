@@ -712,6 +712,7 @@ fn run_config(cli: &Cli, isolated_config: bool) -> RunConfig {
     RunConfig {
         warmup: cli.warmup,
         min_runs: cli.min_runs,
+        exact_runs: None,
         prepare_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit-bench")),
         isolated_config,
     }
@@ -1236,8 +1237,8 @@ fn main() -> Result<()> {
         } => {
             let mut cfg = run_config(&cli, true);
             if *smoke {
-                cfg.warmup = 1;
-                cfg.min_runs = 1;
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
             }
             match group {
                 RunGroup::Worktree => {

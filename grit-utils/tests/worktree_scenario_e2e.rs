@@ -48,10 +48,6 @@ fn worktree_group_smoke_on_synth_s() {
             "synth-s",
             "--smoke",
             "--offline",
-            "--warmup",
-            "1",
-            "--min-runs",
-            "1",
             "--format",
             "json",
             "--grit",
@@ -76,6 +72,20 @@ fn worktree_group_smoke_on_synth_s() {
     for s in scenarios {
         assert_eq!(s["group"], "worktree");
         assert!(s["ratio"].as_f64().unwrap() > 0.0);
+        let git_runs = s["git"]["runs_ms"].as_array().expect("git runs_ms");
+        let grit_runs = s["grit"]["runs_ms"].as_array().expect("grit runs_ms");
+        assert_eq!(
+            git_runs.len(),
+            1,
+            "smoke must use hyperfine --runs 1 for git ({})",
+            s["id"]
+        );
+        assert_eq!(
+            grit_runs.len(),
+            1,
+            "smoke must use hyperfine --runs 1 for grit ({})",
+            s["id"]
+        );
         assert!(s["git"]["median_ms"].as_f64().unwrap() > 0.0);
         assert!(s["grit"]["median_ms"].as_f64().unwrap() > 0.0);
     }

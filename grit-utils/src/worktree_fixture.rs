@@ -15,13 +15,17 @@ use crate::shell::shell_quote;
 const PATHS_MARKER: &str = ".grit-bench-worktree-paths";
 const MODIFY_COUNT_MARKER: &str = ".grit-bench-worktree-modify-count";
 const ACTIVE_REPO_MARKER: &str = ".grit-bench-worktree-active";
+const BASE_OID_MARKER: &str = ".grit-bench-worktree-base-oid";
+
+/// Branch checked out for git.git worktrees (avoids detached HEAD).
+pub const GIT_GIT_BENCH_BRANCH: &str = "grit-bench-worktree";
 
 /// Fraction of tracked files to touch in mutating scenarios (~1%).
 pub const MODIFY_FRACTION_DENOM: usize = 100;
 
 /// Return the sorted path list used for ~1% modifications (relative paths).
 pub fn modified_path_list(git: &Path, repo: &Path) -> Result<Vec<PathBuf>> {
-    let count = read_modify_count(repo)?;
+    let count = read_modify_count()?;
     let mut rel = list_tracked_files(git, repo)?
         .into_iter()
         .filter(|p| p.to_string_lossy() != ".gitmodules")
@@ -35,7 +39,7 @@ fn meta_paths() -> (PathBuf, PathBuf) {
     (root.join(MODIFY_COUNT_MARKER), root.join(PATHS_MARKER))
 }
 
-fn read_modify_count(_repo: &Path) -> Result<usize> {
+fn read_modify_count() -> Result<usize> {
     let (count_path, _) = meta_paths();
     let raw = fs::read_to_string(&count_path).context("read modify count")?;
     raw.trim()
@@ -43,12 +47,12 @@ fn read_modify_count(_repo: &Path) -> Result<usize> {
         .context("parse modify count marker")
 }
 
-fn write_modify_count(_repo: &Path, count: usize) -> Result<()> {
+fn write_modify_count(count: usize) -> Result<()> {
     let (count_path, _) = meta_paths();
     fs::write(&count_path, format!("{count}\n")).context("write modify count marker")
 }
 
-fn write_paths_marker(_repo: &Path, paths: &[PathBuf]) -> Result<()> {
+fn write_paths_marker(paths: &[PathBuf]) -> Result<()> {
     let (_, paths_path) = meta_paths();
     let body = paths
         .iter()
@@ -56,6 +60,20 @@ fn write_paths_marker(_repo: &Path, paths: &[PathBuf]) -> Result<()> {
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(&paths_path, format!("{body}\n")).context("write paths marker")
+}
+
+fn write_base_oid(oid: &str) -> Result<()> {
+    fs::write(scratch_dir().join(BASE_OID_MARKER), format!("{oid}\n"))
+        .context("write base oid marker")
+}
+
+/// Pinned `HEAD` oid recorded when the worktree clone was created.
+pub fn read_fixture_base_oid() -> Result<String> {
+    let raw =
+        fs::read_to_string(scratch_dir().join(BASE_OID_MARKER)).context("read base oid marker")?;
+    let oid = raw.trim().to_string();
+    anyhow::ensure!(!oid.is_empty(), "empty base oid marker");
+    Ok(oid)
 }
 
 /// Pin config knobs that would otherwise differ between git and grit runs.
@@ -69,12 +87,18 @@ pub fn pin_worktree_bench_config(git: &Path, repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Hard reset and remove untracked files (keep bench marker files).
-pub fn reset_worktree_clean(git: &Path, repo: &Path) -> Result<()> {
-    run_git(git, repo, &["reset", "--hard", "HEAD"])?;
+/// Reset branch, index, and worktree to the pinned fixture base commit.
+pub fn reset_to_fixture_base(git: &Path, repo: &Path) -> Result<()> {
+    let base = read_fixture_base_oid()?;
+    run_git(git, repo, &["reset", "--hard", &base])?;
     run_git(git, repo, &["clean", "-fd", "-q"])?;
     pin_worktree_bench_config(git, repo)?;
     Ok(())
+}
+
+/// Hard reset and remove untracked files (always returns to fixture base, not tip).
+pub fn reset_worktree_clean(git: &Path, repo: &Path) -> Result<()> {
+    reset_to_fixture_base(git, repo)
 }
 
 /// Modify ~1% of tracked paths and add ~1% untracked files (status-dirty shape).
@@ -93,7 +117,7 @@ pub fn apply_one_percent_dirty(git: &Path, repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Modify ~1% of tracked paths only (unstaged; index matches `HEAD`).
+/// Modify ~1% of tracked paths only (unstaged; index matches fixture base).
 pub fn apply_one_percent_modified(git: &Path, repo: &Path) -> Result<()> {
     reset_worktree_clean(git, repo)?;
     let paths = modified_path_list(git, repo)?;
@@ -101,13 +125,13 @@ pub fn apply_one_percent_modified(git: &Path, repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Stage the deterministic modified path set with git (for commit prepare).
+/// Stage the deterministic modified path set with one `git add` invocation.
 pub fn stage_modified_set(git: &Path, repo: &Path) -> Result<()> {
     let paths = modified_path_list(git, repo)?;
     if paths.is_empty() {
         return Ok(());
     }
-    let mut args = vec!["add".to_string()];
+    let mut args = vec!["add".to_string(), "--".to_string()];
     for p in &paths {
         args.push(p.display().to_string());
     }
@@ -140,10 +164,14 @@ pub fn ensure_worktree_bench_repo(
     let src = cached.to_str().context("cached utf-8")?;
     if kind == FixtureKind::GitGit {
         run_git(git, parent, &["clone", "-q", "--local", src, name])?;
+        run_git(git, &dest, &["checkout", "-B", GIT_GIT_BENCH_BRANCH])?;
     } else {
         fixture_registry::copy_for_use(git, &cached, &dest)?;
     }
     pin_worktree_bench_config(git, &dest)?;
+
+    let head = fixture_registry::git_head_oid(git, &dest)?;
+    write_base_oid(&head)?;
 
     let mut rel = list_tracked_files(git, &dest)?
         .into_iter()
@@ -151,8 +179,8 @@ pub fn ensure_worktree_bench_repo(
         .collect::<Vec<_>>();
     rel.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
     let modify_count = (rel.len() / MODIFY_FRACTION_DENOM).max(1).min(rel.len());
-    write_modify_count(&dest, modify_count)?;
-    write_paths_marker(&dest, &rel[..modify_count])?;
+    write_modify_count(modify_count)?;
+    write_paths_marker(&rel[..modify_count])?;
     Ok((dest, record))
 }
 
@@ -187,16 +215,24 @@ pub fn set_worktree_bench_cwd(repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Shell snippet: stage the modified set (paths file written at fixture setup).
+/// Shell snippet: one `git add --` with every path from the paths file.
 pub fn shell_git_add_modified_set(git: &Path) -> String {
-    let git_q = crate::shell::shell_quote(&git.to_string_lossy());
+    shell_add_modified_set(git)
+}
+
+/// Shell snippet: one `grit add --` with the same path list as git.
+pub fn shell_grit_add_modified_set(grit: &Path) -> String {
+    shell_add_modified_set(grit)
+}
+
+fn shell_add_modified_set(program: &Path) -> String {
+    let prog_q = shell_quote(&program.to_string_lossy());
+    let paths_q = shell_quote(&scratch_dir().join(PATHS_MARKER).to_string_lossy());
     format!(
         r#"set -eu
-while IFS= read -r p || [ -n "$p" ]; do
-  [ -n "$p" ] || continue
-  {git_q} add -- "$p" || exit $?
-done < {paths} > /dev/null 2>&1"#,
-        paths = shell_quote(&scratch_dir().join(PATHS_MARKER).to_string_lossy(),)
+if [ -s {paths_q} ]; then
+  tr '\n' '\0' < {paths_q} | xargs -0 {prog_q} add -- > /dev/null 2>&1
+fi"#
     )
 }
 
@@ -225,9 +261,35 @@ pub fn prepare_add(git: &Path) -> Result<()> {
 pub fn prepare_commit(git: &Path) -> Result<()> {
     let repo = active_worktree_repo();
     apply_one_percent_modified(git, &repo)?;
-    stage_modified_set(git, &repo)
+    stage_modified_set(git, &repo)?;
+    let head = fixture_registry::git_head_oid(git, &repo)?;
+    let base = read_fixture_base_oid()?;
+    anyhow::ensure!(
+        head == base,
+        "commit prepare must leave HEAD at fixture base, got {head} expected {base}"
+    );
+    Ok(())
 }
 
 pub fn prepare_diff(git: &Path) -> Result<()> {
     apply_one_percent_modified(git, &active_worktree_repo())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_shell_uses_single_invocation_with_path_array() {
+        let git = Path::new("/usr/bin/git");
+        let script = shell_git_add_modified_set(git);
+        assert!(
+            script.contains("xargs -0") && script.contains(" add --"),
+            "expected one xargs-driven add: {script}"
+        );
+        assert!(
+            !script.contains(" add -- \"$p\""),
+            "must not invoke add once per path: {script}"
+        );
+    }
 }
