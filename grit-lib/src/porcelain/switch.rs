@@ -9,7 +9,8 @@ use crate::index::MODE_GITLINK;
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::{
     checkout_tree_changes_with_index_opts, path_under_wholesale_directory,
-    precompute_wholesale_safe_directories, CheckoutApplyOptions, WholesaleWorktreeScan,
+    precompute_wholesale_safe_directories, CheckoutApplyOptions, WholesalePrecomputeResult,
+    WholesaleWorktreeScan,
 };
 use crate::porcelain::checkout_reflog::{
     append_head_checkout_reflog, checkout_reflog_from_label, finish_switch_ref_updates,
@@ -384,8 +385,8 @@ fn switch_to_target(
         .iter()
         .filter(|c| c.status == DiffStatus::Deleted)
         .count();
-    let checkout_parallel_threshold = (apply_tree_changes.len() >= 150 || delete_count >= 150)
-        .then_some(0);
+    let checkout_parallel_threshold =
+        (attribute_tree_changes.len() >= 150 || delete_count >= 150).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
         &apply_tree_changes,
@@ -464,6 +465,7 @@ fn prepare_tree_switch_allow_local(
             &mut snapshot.index,
             snapshot.head_tree,
             &tree_changes,
+            None,
         )?;
     let preserve_worktree_paths = ensure_local_changes_compatible_with_switch(
         &snapshot.index,
@@ -501,28 +503,27 @@ fn prepare_tree_switch_allow_local(
             (mode == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
-    let (preverified_wholesale_dirs, wholesale_safety_precomputed) =
-        if trust_wholesale_dir_removal || delete_paths.is_empty() {
-            (BTreeSet::new(), false)
-        } else {
-            let scan = traditional_ignore_scan.then(|| WholesaleWorktreeScan {
-                untracked: &untracked,
-                ignored: &wholesale_ignored,
-                ignorecase,
-            });
-            (
-                precompute_wholesale_safe_directories(
-                    repo,
-                    work_tree,
-                    &snapshot.index,
-                    &delete_paths,
-                    ignorecase,
-                    scan.as_ref(),
-                    &gitlink_deletes,
-                ),
-                true,
-            )
-        };
+    let WholesalePrecomputeResult {
+        safe_directories: preverified_wholesale_dirs,
+    } = if trust_wholesale_dir_removal || delete_paths.is_empty() {
+        WholesalePrecomputeResult::default()
+    } else {
+        let scan = traditional_ignore_scan.then(|| WholesaleWorktreeScan {
+            untracked: &untracked,
+            ignored: &wholesale_ignored,
+            ignorecase,
+        });
+        precompute_wholesale_safe_directories(
+            repo,
+            work_tree,
+            &snapshot.index,
+            &delete_paths,
+            ignorecase,
+            scan.as_ref(),
+            &gitlink_deletes,
+        )
+    };
+    let wholesale_safety_precomputed = !delete_paths.is_empty() && !trust_wholesale_dir_removal;
     Ok(PreparedSwitch {
         plan: TreeSwitchPlan {
             untracked,

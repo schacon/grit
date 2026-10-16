@@ -2025,6 +2025,13 @@ impl Index {
         }
     }
 
+    /// Drop derived `TREE` / untracked-cache extensions before a large checkout rewrite.
+    pub(crate) fn drop_derived_index_extensions(&mut self) {
+        self.cache_tree = None;
+        self.cache_tree_root = None;
+        self.untracked_cache = None;
+    }
+
     fn invalidate_after_path_removal(&mut self, path: &[u8]) {
         if let Ok(p) = std::str::from_utf8(path) {
             self.invalidate_untracked_cache_for_path(p);
