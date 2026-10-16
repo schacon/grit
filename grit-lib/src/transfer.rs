@@ -451,6 +451,7 @@ pub use crate::pack_objects::{
     PackObjectsOptions, PackStats,
 };
 
+<<<<<<< New base: style: rustfmt pack_build_bitmaps test
 pub(crate) fn collect_objects_for_commits_only(
     odb: &Odb,
     commits: &[ObjectId],
