@@ -310,6 +310,7 @@ fn has_stashable_changes(
             show_all: false,
             sort_paths: true,
             use_untracked_cache: false,
+            refresh_cache_on_miss: true,
         },
         &worktree_rules,
     )?;
@@ -329,6 +330,7 @@ fn collect_untracked_paths(repo: &Repository, work_tree: &Path) -> Result<Vec<St
             show_all: true,
             sort_paths: true,
             use_untracked_cache: false,
+            refresh_cache_on_miss: true,
         },
         &worktree_rules,
     )?;
@@ -980,6 +982,7 @@ fn collect_worktree_paths_blocking_stash_untracked_restore(
             show_all: true,
             sort_paths: true,
             use_untracked_cache: false,
+            refresh_cache_on_miss: true,
         },
         &worktree_rules,
     )?;

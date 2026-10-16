@@ -118,6 +118,7 @@ fn one_commit(repo: &Repository) -> ObjectId {
             sign_override: None,
             amend: false,
             assume_worktree_synced: false,
+            staged_path_changes: None,
         },
         &mut NullProgress,
     )
@@ -377,6 +378,7 @@ fn fsck_passes_on_deltified_pack_after_many_commits() {
                 sign_override: None,
                 amend: false,
                 assume_worktree_synced: false,
+                staged_path_changes: None,
             },
             &mut NullProgress,
         )
@@ -427,6 +429,7 @@ fn fsck_reports_corrupt_deltified_object_and_still_checks_pack() {
                 sign_override: None,
                 amend: false,
                 assume_worktree_synced: false,
+                staged_path_changes: None,
             },
             &mut NullProgress,
         )
@@ -1332,6 +1335,7 @@ fn fsck_commit_with_multibyte_name_at_byte_six() {
             sign_override: None,
             amend: false,
             assume_worktree_synced: false,
+            staged_path_changes: None,
         },
         &mut NullProgress,
     )

@@ -250,6 +250,7 @@ pub fn collect_untracked_and_ignored_with_cache(
             show_all,
             sort_paths: true,
             use_untracked_cache,
+            refresh_cache_on_miss: true,
         },
         &rules,
     )
@@ -278,6 +279,7 @@ pub fn collect_untracked_and_ignored_with_rules(
             show_all,
             sort_paths: true,
             use_untracked_cache: true,
+            refresh_cache_on_miss: true,
         },
         rules,
     )
@@ -294,6 +296,8 @@ pub(crate) struct UntrackedScan {
     pub sort_paths: bool,
     /// Refresh and answer from the index UNTR extension when configured.
     pub use_untracked_cache: bool,
+    /// When false, a cache miss returns no untracked paths instead of rescanning the work tree.
+    pub refresh_cache_on_miss: bool,
 }
 
 /// Side effects from an untracked/ignored walk beyond the path lists.
@@ -317,6 +321,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         show_all,
         sort_paths,
         use_untracked_cache,
+        refresh_cache_on_miss,
     } = scan;
     // Keep parity with historical status behavior in tests that rely on broad untracked scans
     // (including detached-HEAD wtstatus cases): when no explicit pathspec is requested, avoid
@@ -343,6 +348,10 @@ pub(crate) fn collect_untracked_and_ignored_inner(
                 )? {
                     index.untracked_cache = Some(uc);
                     return Ok((untracked, Vec::new(), UntrackedCollectMeta::default()));
+                }
+                if !refresh_cache_on_miss {
+                    index.untracked_cache = Some(uc);
+                    return Ok((Vec::new(), Vec::new(), UntrackedCollectMeta::default()));
                 }
                 crate::untracked_cache::refresh_untracked_cache_for_status(
                     repo,
@@ -387,6 +396,9 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         effective_core_precomposeunicode_with_config(Some(repo.git_dir()), Some(rules.config()));
 
     if effective_pathspecs.is_empty() {
+        if !refresh_cache_on_miss {
+            return Ok((Vec::new(), Vec::new(), UntrackedCollectMeta::default()));
+        }
         let (mut par_untracked, mut par_ignored) = collect_untracked_parallel_top_level(
             repo,
             index,
