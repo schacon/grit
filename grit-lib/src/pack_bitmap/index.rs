@@ -137,6 +137,14 @@ impl BitmapIndex {
         Ok(loaded)
     }
 
+    /// Pack index backing this bitmap when opened from a pack sidecar (not MIDX).
+    pub(crate) fn backing_pack_index(&self) -> Option<Arc<PackIndex>> {
+        match &self.order {
+            super::order::BitmapOrder::Pack { index, .. } => Some(Arc::clone(index)),
+            super::order::BitmapOrder::Midx { .. } => None,
+        }
+    }
+
     /// Reachability bitmap for `commit`, when that commit is indexed.
     #[must_use]
     pub fn commit_bitmap(&self, commit: &ObjectId) -> Option<CommitReachabilityBitmap> {

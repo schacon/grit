@@ -195,14 +195,18 @@ pub fn try_write_streaming_pack(
     repo: &Repository,
     wants: &[ObjectId],
     haves: &[ObjectId],
-    shallow_grafts: &HashSet<ObjectId>,
+    source_shallow: &HashSet<ObjectId>,
+    have_shallow: &HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
     opts: &PackBuildOptions,
     progress: &mut dyn FnMut(PackProgress),
     w: &mut dyn Write,
 ) -> Result<Option<PackStats>> {
+    if !source_shallow.is_empty() || !have_shallow.is_empty() {
+        return Ok(None);
+    }
     let Some((send_set, have_closure)) =
-        try_bitmap_reachable_for_upload(repo.odb(), wants, haves, filter, shallow_grafts)?
+        try_bitmap_reachable_for_upload(repo.odb(), wants, haves, filter, source_shallow)?
     else {
         return Ok(None);
     };
@@ -309,14 +313,30 @@ fn resolve_bitmapped_packs(
     if count == 0 {
         return Ok(Vec::new());
     }
-    for (stem, idx) in &indexes {
-        let bitmap_path = pack_dir.join(format!("{stem}.bitmap"));
-        if !bitmap_path.is_file() {
-            continue;
-        }
+    if let Some(idx) = index.backing_pack_index() {
         let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
         return Ok(vec![BitmappedPack {
-            idx: Arc::clone(idx),
+            idx,
+            pack_bytes,
+            bitmap_pos: 0,
+            bitmap_nr: count,
+        }]);
+    }
+    let mut with_bitmap: Vec<Arc<PackIndex>> = indexes
+        .values()
+        .filter(|idx| {
+            idx.idx_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|stem| pack_dir.join(format!("{stem}.bitmap")).is_file())
+        })
+        .cloned()
+        .collect();
+    with_bitmap.sort_by_key(|idx| std::cmp::Reverse(idx.len()));
+    if let Some(idx) = with_bitmap.into_iter().next() {
+        let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
+        return Ok(vec![BitmappedPack {
+            idx,
             pack_bytes,
             bitmap_pos: 0,
             bitmap_nr: count,

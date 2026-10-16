@@ -451,6 +451,7 @@ pub fn write_upload_pack_stream(
             wants,
             haves,
             source_shallow,
+            have_shallow,
             filter,
             opts,
             progress,

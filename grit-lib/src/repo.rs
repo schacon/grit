@@ -1321,6 +1321,27 @@ impl Repository {
         Ok(())
     }
 
+    /// Write a `.bitmap` sidecar for the largest pack in the primary object store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::pack_bitmap::PackBitmapWriteError`] when no pack index exists or the
+    /// pack is not closed under reachability from repository refs.
+    pub fn write_largest_pack_bitmap(
+        &self,
+        options: &crate::pack_bitmap::PackBitmapWriteOptions,
+        now: std::time::SystemTime,
+    ) -> std::result::Result<std::path::PathBuf, crate::pack_bitmap::PackBitmapWriteError> {
+        let path = self
+            .odb
+            .largest_pack_index_path()
+            .map_err(|e| crate::pack_bitmap::PackBitmapWriteError::Object(e.to_string()))?
+            .ok_or(crate::pack_bitmap::PackBitmapWriteError::InvalidPackPath(
+                "no pack index in object store".to_owned(),
+            ))?;
+        self.write_pack_bitmap(&path, options, now)
+    }
+
     /// Persist the index when the lock can be acquired (Git `repo_update_index_if_able`).
     ///
     /// Opportunistic writers such as `status` stat refresh call this instead of

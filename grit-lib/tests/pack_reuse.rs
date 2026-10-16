@@ -325,6 +325,42 @@ fn bitmap_pack_with_haves_git_index_pack_strict() {
 }
 
 #[test]
+fn reuse_skips_when_have_shallow_grafts_present() {
+    let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    build_history(&fx);
+    git_ok(&fx, &["repack", "-adb"]);
+    let git_dir = fx.path().join(".git");
+    let repo = Repository::open(&git_dir, None).expect("open");
+    let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
+    let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
+    let mut have_shallow = HashSet::new();
+    have_shallow.insert(parent);
+    let opts = PackBuildOptions {
+        delta: true,
+        use_bitmaps: true,
+        ..PackBuildOptions::default()
+    };
+    let mut buf = Vec::new();
+    let mut progress = |_ev: PackProgress| {};
+    let out = grit_lib::pack_reuse::try_write_streaming_pack(
+        &repo,
+        &[tip],
+        &[parent],
+        &HashSet::new(),
+        &have_shallow,
+        None,
+        &opts,
+        &mut progress,
+        &mut buf,
+    )
+    .expect("try reuse");
+    assert!(
+        out.is_none(),
+        "bitmap reuse must fall back when client shallow grafts are present"
+    );
+}
+
+#[test]
 fn thin_pack_bitmap_reuse_index_pack_strict_ok() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
     build_history(&fx);

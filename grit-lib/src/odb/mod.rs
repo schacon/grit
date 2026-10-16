@@ -900,6 +900,21 @@ impl Odb {
         Ok(&self.pack_store)
     }
 
+    /// Path to the largest pack index in the primary `objects/pack/` directory (by entry count).
+    ///
+    /// Used when writing a reachability bitmap for an all-into-one repack. Returns `Ok(None)`
+    /// when no pack index exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidRef`] when the store is not files-backed.
+    pub fn largest_pack_index_path(&self) -> Result<Option<PathBuf>> {
+        self.require_files_primary("largest_pack_index_path")?;
+        let mut indexes = pack::read_local_pack_indexes_cached(&self.objects_dir())?;
+        indexes.sort_by_key(|idx| std::cmp::Reverse(idx.len()));
+        Ok(indexes.first().map(|idx| idx.idx_path.clone()))
+    }
+
     /// Drop cached pack listings, parsed indexes, pack bytes, delta bases, and MIDX layers.
     ///
     /// Call after in-process repack, garbage collection, or [`crate::index_pack::install_pack_bytes`]
