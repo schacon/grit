@@ -19,7 +19,8 @@ const OWNED_READ_THRESHOLD: u64 = 8192;
 
 /// Header plus trailing pack checksum — enough to detect on-disk replacement when
 /// mtime/size are unchanged (same-second repack) without re-reading the whole file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]pub(crate) struct PackFingerprint {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PackFingerprint {
     /// `PACK`, version, and object count (`12` bytes).
     pub header: [u8; HEADER_LEN],
     /// Trailer width in bytes (20 for SHA-1, 32 for SHA-256).

@@ -18,7 +18,6 @@ name = "grit-bench"
 path = "src/main.rs"
 
 [dependencies]
-grit-lib = { path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true
 grit-lib = { path = "../grit-lib" }

@@ -40,6 +40,7 @@ use grit_utils::scenarios::{
     RunConfig,
 };
 use grit_utils::schema::BenchReport;
+use grit_utils::synth::{generate_synth_repo, SynthReport, SynthTier};
 use std::net::TcpListener;
 use time::OffsetDateTime;
 
@@ -378,6 +379,89 @@ fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
     }
 }
 
+#[derive(Clone, ValueEnum)]
+enum SynthTierArg {
+    S,
+    M,
+    L,
+}
+
+impl From<SynthTierArg> for SynthTier {
+    fn from(value: SynthTierArg) -> Self {
+        match value {
+            SynthTierArg::S => SynthTier::S,
+            SynthTierArg::M => SynthTier::M,
+            SynthTierArg::L => SynthTier::L,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum FixtureCmd {
+    /// Build a deterministic synthetic repo (grit-lib, no `git` shell).
+    Synth {
+        #[arg(long, value_enum)]
+        tier: SynthTierArg,
+        #[arg(long)]
+        out: PathBuf,
+    },
+}
+
+fn render_synth_report(format: &OutputFormat, report: &SynthReport) -> Result<String> {
+    match format {
+        OutputFormat::Text => Ok(format!(
+            "tier={:?} head={} commits={} refs={} files={} pack_uncompressed_bytes={} generation_ms={} repo={}\n",
+            report.tier,
+            report.head,
+            report.commit_count,
+            report.ref_count,
+            report.file_count,
+            report.pack_uncompressed_bytes,
+            report.generation_ms,
+            report.repo_path.display(),
+        )),
+        OutputFormat::Markdown => Ok(format!(
+            "## Synthetic fixture\n\n| field | value |\n| --- | --- |\n| tier | `{tier:?}` |\n| head | `{head}` |\n| commits | {commits} |\n| refs | {refs} |\n| files | {files} |\n| pack_uncompressed_bytes | {pack} |\n| generation_ms | {ms} |\n| repo | `{repo}` |\n",
+            tier = report.tier,
+            head = report.head,
+            commits = report.commit_count,
+            refs = report.ref_count,
+            files = report.file_count,
+            pack = report.pack_uncompressed_bytes,
+            ms = report.generation_ms,
+            repo = report.repo_path.display(),
+        )),
+        OutputFormat::Json => {
+            #[derive(serde::Serialize)]
+            struct JsonReport<'a> {
+                tier: &'static str,
+                head: &'a str,
+                commit_count: usize,
+                ref_count: usize,
+                file_count: usize,
+                pack_uncompressed_bytes: u64,
+                generation_ms: u64,
+                repo_path: String,
+            }
+            let tier = match report.tier {
+                SynthTier::S => "S",
+                SynthTier::M => "M",
+                SynthTier::L => "L",
+            };
+            Ok(serde_json::to_string_pretty(&JsonReport {
+                tier,
+                head: &report.head,
+                commit_count: report.commit_count,
+                ref_count: report.ref_count,
+                file_count: report.file_count,
+                pack_uncompressed_bytes: report.pack_uncompressed_bytes,
+                generation_ms: report.generation_ms,
+                repo_path: report.repo_path.display().to_string(),
+            })?)
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum RefsDriveCmd {
     ForEachRef {
@@ -589,6 +673,16 @@ fn main() -> Result<()> {
         }
         Cmd::RefsDriver { workload } => {
             return run_refs_drive(workload);
+        }
+        Cmd::Fixture { fixture } => {
+            match fixture {
+                FixtureCmd::Synth { tier, out } => {
+                    let report = generate_synth_repo(out, SynthTier::from(tier.clone()))?;
+                    let body = render_synth_report(&cli.format, &report)?;
+                    write_output(&cli, &body)?;
+                }
+            }
+            return Ok(());
         }
         Cmd::PrepareRefs {
             git,
@@ -997,7 +1091,8 @@ fn main() -> Result<()> {
         | Cmd::PrepareParallelCheckout { .. }
         | Cmd::PrepareParallelClone { .. }
         | Cmd::PrepareParallelIndexPack { .. }
-        | Cmd::RefsDriver { .. } => unreachable!(),
+        | Cmd::RefsDriver { .. }
+        | Cmd::Fixture { .. } => unreachable!(),
     };
 
     let ledger_wrote_markdown = matches!(cli.command, Cmd::Campaign { ledger: true, .. })

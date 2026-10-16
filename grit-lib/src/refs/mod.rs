@@ -3172,6 +3172,58 @@ fn atomic_rewrite_packed_refs(git_dir: &Path, body: &str) -> Result<()> {
     write_result
 }
 
+/// One reference line (and optional peel) for [`write_packed_refs_file`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackedRefRecord {
+    /// Full ref name (for example `refs/heads/feature`).
+    pub refname: String,
+    /// Object id stored at this ref.
+    pub oid: ObjectId,
+    /// When set, emit a following `^` peeled line (annotated tags).
+    pub peeled: Option<ObjectId>,
+}
+
+/// Replace `packed-refs` with `records`, sorted by ref name.
+///
+/// Existing loose ref files for names present in `records` are removed so the
+/// packed file is authoritative (Git's `pack-refs` behaviour).
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidRef`] for unsafe ref names, or [`Error::Io`] on failure.
+pub fn write_packed_refs_file(git_dir: &Path, records: &[PackedRefRecord]) -> Result<()> {
+    let mut sorted: Vec<&PackedRefRecord> = records.iter().collect();
+    sorted.sort_by(|a, b| a.refname.cmp(&b.refname));
+    for rec in &sorted {
+        ensure_refname_safe_for_storage(&rec.refname)?;
+    }
+    let mut body = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+    for rec in &sorted {
+        body.push_str(&rec.oid.to_hex());
+        body.push(' ');
+        body.push_str(&rec.refname);
+        body.push('\n');
+        if let Some(peeled) = rec.peeled {
+            body.push('^');
+            body.push_str(&peeled.to_hex());
+            body.push('\n');
+        }
+    }
+    atomic_rewrite_packed_refs(git_dir, &body)?;
+    for rec in &sorted {
+        let storage_dir = ref_storage_dir(git_dir, &rec.refname);
+        let stor = crate::ref_namespace::storage_ref_name(&rec.refname);
+        let loose = storage_dir.join(stor);
+        if loose.is_file() {
+            fs::remove_file(&loose).map_err(Error::Io)?;
+        }
+        if let Some(parent) = loose.parent() {
+            remove_empty_ref_directory(parent);
+        }
+    }
+    Ok(())
+}
+
 /// List all refs under a given prefix (e.g. `"refs/heads/"`).
 ///
 /// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
@@ -4313,5 +4365,57 @@ mod pack_refs_tests {
             body.contains(&format!("^{}", tree.to_hex())),
             "expected peel to tree: {body}"
         );
+    }
+
+    #[test]
+    fn write_packed_refs_file_survives_publish_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).expect("refs/heads");
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid");
+        fs::write(git_dir.join("refs/heads/keep"), format!("{oid}\n")).expect("loose ref");
+        fs::create_dir_all(git_dir.join("packed-refs")).expect("block packed-refs file");
+        let err = write_packed_refs_file(
+            git_dir,
+            &[PackedRefRecord {
+                refname: "refs/heads/keep".into(),
+                oid,
+                peeled: None,
+            }],
+        )
+        .expect_err("publish should fail");
+        assert!(matches!(err, Error::Io(_)));
+        assert!(git_dir.join("refs/heads/keep").is_file());
+    }
+
+    #[test]
+    fn write_packed_refs_file_replaces_loose_and_sorts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).expect("refs/heads");
+        let oid_a = ObjectId::from_hex("0000000000000000000000000000000000000001").expect("oid a");
+        let oid_b = ObjectId::from_hex("0000000000000000000000000000000000000002").expect("oid b");
+        fs::write(git_dir.join("refs/heads/a-first"), format!("{oid_b}\n")).expect("loose ref");
+        write_packed_refs_file(
+            git_dir,
+            &[
+                PackedRefRecord {
+                    refname: "refs/heads/z-last".into(),
+                    oid: oid_b,
+                    peeled: None,
+                },
+                PackedRefRecord {
+                    refname: "refs/heads/a-first".into(),
+                    oid: oid_a,
+                    peeled: None,
+                },
+            ],
+        )
+        .expect("write packed-refs");
+        assert!(!git_dir.join("refs/heads/a-first").exists());
+        let body =
+            fs::read_to_string(store::paths::packed_refs_path(git_dir)).expect("packed-refs");
+        assert!(body.contains("refs/heads/a-first"));
+        assert!(body.find("a-first").expect("a-first") < body.find("z-last").expect("z-last"));
     }
 }
