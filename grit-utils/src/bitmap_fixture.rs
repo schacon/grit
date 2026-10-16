@@ -6,18 +6,16 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use grit_lib::pack_bitmap::PackBitmapWriteOptions;
+use grit_lib::objects::bitmap::PackBitmapWriteOptions;
+use grit_lib::prelude::RepositoryOptions;
 use grit_lib::repo::Repository;
 
 use crate::fixture::remove_dir_robust;
 use crate::odb_fixture::odb_scratch_root;
-use crate::real_repo_fixture::{
-    assert_tag_pinned_fixture_refs, ensure_git_git_bitmaps, list_branch_head_refs, run_git,
-    DEFAULT_GIT_GIT_TAG,
-};
+use crate::real_repo_fixture::{ensure_git_git_bitmaps, run_git};
+use crate::serve_request::ensure_serve_clone_request;
 
 const GIT_GIT_URL: &str = "https://github.com/git/git.git";
-use crate::serve_request::ensure_serve_clone_request;
 
 pub use crate::real_repo_fixture::{
     assert_tag_pinned_fixture_refs, bitmap_isolated_env, list_branch_head_refs, DEFAULT_GIT_GIT_TAG,
@@ -34,7 +32,8 @@ pub fn bitmap_repo_cache_path() -> PathBuf {
 }
 
 fn pinned_tag() -> String {
-    std::env::var("GRIT_BENCH_GIT_GIT_TAG").unwrap_or_else(|_| DEFAULT_GIT_GIT_TAG.to_owned())
+    std::env::var("GRIT_BENCH_GIT_GIT_TAG")
+        .unwrap_or_else(|_| crate::real_repo_fixture::DEFAULT_GIT_GIT_TAG.to_owned())
 }
 
 const GRIT_READY_MARKER: &str = ".grit-bench-bitmaps-grit-ready";
@@ -119,7 +118,8 @@ pub fn ensure_bitmaps_grit_repo(git: &Path) -> Result<PathBuf> {
     eprintln!("Preparing grit bitmap fixture (repack -ad, commit-graph, PackBitmapWriter) …");
     run_git(git, &dest, &["repack", "-a", "-d"])?;
     run_git(git, &dest, &["commit-graph", "write", "--reachable"])?;
-    let repo = Repository::open(&dest, None).context("open bare git.git for grit bitmap write")?;
+    let repo = Repository::open(&dest, &RepositoryOptions::empty())
+        .context("open bare git.git for grit bitmap write")?;
     repo.write_largest_pack_bitmap(&PackBitmapWriteOptions::default(), SystemTime::UNIX_EPOCH)
         .context("write pack bitmap with grit")?;
     run_git(git, &dest, &["rev-list", "--test-bitmap", "HEAD"])
