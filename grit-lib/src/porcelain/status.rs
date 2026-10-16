@@ -26,7 +26,7 @@ use std::fs::{self, DirEntry, ReadDir};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::config::ConfigSet;
+use crate::config::{parse_git_config_maybe_bool, ConfigSet};
 use crate::diff::{is_unregistered_embedded_git_repo, DiffEntry};
 use crate::error::ConfigError;
 use crate::error::Result;
@@ -102,9 +102,8 @@ pub struct StatusOptions {
 /// Map `status.showUntrackedFiles` to [`UntrackedMode`].
 ///
 /// Accepts Git's enum modes (`no`, `normal`, `all`, case-insensitive), boolean word
-/// synonyms (since Git 2.45), and integer booleans via the same rules as
-/// `git_parse_maybe_bool` (`0` → [`UntrackedMode::No`], any other integer →
-/// [`UntrackedMode::Normal`]).
+/// synonyms (since Git 2.45), and integer booleans via [`parse_git_config_maybe_bool`]
+/// (same rules as Git's `parse_untracked_setting_name`).
 /// When the key is missing, returns [`UntrackedMode::Normal`].
 pub fn untracked_mode_from_config(
     config: &ConfigSet,
@@ -120,26 +119,17 @@ pub fn untracked_mode_from_config(
 }
 
 fn untracked_mode_from_config_value(v: &str) -> Option<UntrackedMode> {
-    if v.eq_ignore_ascii_case("no")
-        || v.eq_ignore_ascii_case("false")
-        || v.eq_ignore_ascii_case("off")
-        || v == "0"
-    {
+    let mapped = match parse_git_config_maybe_bool(v) {
+        Some(false) => "no",
+        Some(true) => "normal",
+        None => v,
+    };
+    if mapped.eq_ignore_ascii_case("no") {
         Some(UntrackedMode::No)
-    } else if v.eq_ignore_ascii_case("all") {
+    } else if mapped.eq_ignore_ascii_case("all") {
         Some(UntrackedMode::All)
-    } else if v.eq_ignore_ascii_case("normal")
-        || v.eq_ignore_ascii_case("true")
-        || v.eq_ignore_ascii_case("yes")
-        || v.eq_ignore_ascii_case("on")
-    {
+    } else if mapped.eq_ignore_ascii_case("normal") {
         Some(UntrackedMode::Normal)
-    } else if let Ok(n) = v.parse::<i64>() {
-        Some(if n == 0 {
-            UntrackedMode::No
-        } else {
-            UntrackedMode::Normal
-        })
     } else {
         None
     }
@@ -2021,15 +2011,21 @@ mod status_op_tests {
                 "normal synonym {v:?}"
             );
         }
-        for v in ["2", "-1", "42", "01"] {
+        for v in ["2", "-1", "42", "01", "2k", "0x2"] {
             assert_eq!(
                 untracked_mode_from_config_value(v),
                 Some(UntrackedMode::Normal),
                 "nonzero integer {v:?}"
             );
         }
-        assert_eq!(untracked_mode_from_config_value("1.5"), None);
-        assert_eq!(untracked_mode_from_config_value("bogus"), None);
+        for v in ["08", "2147483648", "-2147483649", "1.5", "bogus", "2 "] {
+            assert_eq!(untracked_mode_from_config_value(v), None, "rejected {v:?}");
+        }
+        assert_eq!(
+            untracked_mode_from_config_value(" 2"),
+            Some(UntrackedMode::Normal),
+            "leading C-locale whitespace before integer"
+        );
     }
 
     #[test]
