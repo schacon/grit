@@ -417,8 +417,8 @@ fn prepare_tree_switch_allow_local(
 ) -> Result<PreparedSwitch> {
     let mut snapshot = load_worktree_snapshot(repo)?;
     let from_tree = snapshot.head_tree.as_ref();
-    let trust_index_for_old_tree = from_tree.is_some()
-        && !snapshot.index.entries.iter().any(|e| e.stage() != 0);
+    let trust_index_for_old_tree =
+        from_tree.is_some() && !snapshot.index.entries.iter().any(|e| e.stage() != 0);
     let tree_changes = if from_tree == Some(to_tree) {
         Vec::new()
     } else if trust_index_for_old_tree {

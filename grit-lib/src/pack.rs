@@ -2354,7 +2354,8 @@ fn remember_pack_read_info(pack_path: &Path, offset: u64, info: ObjectInfo) {
 ///
 /// Advances `*pos` past the compressed bytes consumed from `bytes`.
 fn read_delta_result_size_from_pack_zlib(bytes: &[u8], pos: &mut usize) -> Result<u64> {
-    DELTA_SIZE_ZLIB.with(|slot| slot.borrow_mut().read_pack_delta_result_size(bytes, pos))}
+    DELTA_SIZE_ZLIB.with(|slot| slot.borrow_mut().read_pack_delta_result_size(bytes, pos))
+}
 
 /// Decompress zlib data from a byte slice starting at `pos`.
 ///
@@ -3086,10 +3087,12 @@ fn resolve_pack_object_info_at_with_bytes(
             start_offset,
             objects_dir,
             state,
-            pack_bytes_override,        ) {
+            pack_bytes_override,
+        ) {
             Ok(v) => {
                 remember_pack_read_info(&pack_path, start_offset, v);
-                return Ok(v);            }
+                return Ok(v);
+            }
             Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
                 if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
                     state.visited.retain(|(id, _)| *id != start_pack_id);
@@ -3587,7 +3590,8 @@ pub(crate) fn try_read_object_info_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = idx.find_offset(oid) else {            continue;
+        let Some(offset) = idx.find_offset(oid) else {
+            continue;
         };
         match read_object_info_from_pack_at_offset(idx, offset) {
             Ok(info) => {
@@ -3616,7 +3620,8 @@ pub(crate) fn try_read_object_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = idx.find_offset(oid) else {            continue;
+        let Some(offset) = idx.find_offset(oid) else {
+            continue;
         };
         match read_object_from_pack_at_offset(idx, offset) {
             Ok(obj) => {

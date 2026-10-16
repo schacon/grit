@@ -46,11 +46,6 @@ impl Default for InstallPackOptions {
     }
 }
 
-/// Scan a pack containing only whole (non-delta) objects and return sorted index entries.
-///
-/// # Errors
-///
-/// Returns [`Error::CorruptObject`] when the stream is malformed or contains delta objects.
 /// Validate a PACK header and return `(body_end, object_count)` for `hash_algo`.
 fn validated_pack_body(pack: &[u8], hash_algo: HashAlgo) -> Result<(usize, usize)> {
     let hash_bytes = hash_algo.len();
@@ -71,6 +66,11 @@ fn validated_pack_body(pack: &[u8], hash_algo: HashAlgo) -> Result<(usize, usize
     Ok((body_end, count))
 }
 
+/// Scan a pack containing only whole (non-delta) objects and return sorted index entries.
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] when the stream is malformed or contains delta objects.
 pub fn enumerate_whole_pack_entries(
     pack: &[u8],
     hash_algo: HashAlgo,
