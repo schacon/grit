@@ -27,7 +27,9 @@ After the clone, stdout gets a summary: total time with a bar showing where it w
 
 For private GitHub repositories over HTTPS, sign in first with [`grit auth`](../auth/).
 
-When the remote has no commits yet (an empty bare repository), grit still creates the destination directory, configures `origin`, and points `HEAD` at the remote's default branch without checking out files. Human output includes a short note on stderr; `--json` reports `"files": 0` and the configured branch name.
+When the remote has no commits yet (an empty bare repository), grit still creates the destination directory, configures `origin`, and points `HEAD` at the remote's default branch without checking out files. Human output includes a short note on stderr (`note: the remote repository is empty.`); `--json` reports `"files": 0`, `"no_checkout_reason": "empty_remote"`, and the configured branch name.
+
+When the remote advertises a default branch that has no commits yet but other branches (or tags) were fetched, grit configures `HEAD` to that default branch without checking out files — the same situation as `git clone` when `HEAD` on the server points at an unborn branch. Human output prints a **warning** on stderr that the default branch has no commits, lists remote branches that do have commits, and may suggest `grit switch <branch>`. `--json` sets `"no_checkout_reason": "unborn_default_branch"` and `"branches_with_commits"` to those branch names; `"files"` stays `0` until you switch.
 
 You can clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
 
@@ -104,6 +106,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `worktree_bytes` | integer | Total size of the checked-out files. |
 | `seconds` | number | Wall-clock seconds for the whole clone. |
 | `phases` | array | Time spent in each step, in order: `phase` (`receiving`, `indexing`, `resolving_deltas`, `copying` or `checkout`), `unit` (`bytes`, `objects` or `files`), `count` and `seconds`. Steps that processed nothing are left out. |
+| `no_checkout_reason` | string or omitted | When no files were checked out: `empty_remote` (nothing on the remote) or `unborn_default_branch` (default branch unborn but other refs may exist). Omitted when checkout succeeded. |
+| `branches_with_commits` | array of strings | Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`. Omitted when empty. |
 
 Example (repository with commits):
 
@@ -144,9 +148,31 @@ Empty remote (no branch tips yet):
   "branches": 0,
   "tags": 0,
   "files": 0,
+  "no_checkout_reason": "empty_remote",
   "object_types": null,
   "worktree_bytes": 0,
   "seconds": 0.05,
+  "phases": []
+}
+```
+
+Unborn remote default branch (`HEAD` on the server points at a branch with no commits, but `main` was pushed):
+
+```json
+{
+  "url": "/tmp/remote.git",
+  "path": "clone2",
+  "branch": "master",
+  "objects": 4,
+  "bytes": 72896,
+  "branches": 1,
+  "tags": 0,
+  "files": 0,
+  "no_checkout_reason": "unborn_default_branch",
+  "branches_with_commits": ["main"],
+  "object_types": { "commits": 1, "trees": 1, "blobs": 1, "tags": 0 },
+  "worktree_bytes": 0,
+  "seconds": 0.12,
   "phases": []
 }
 ```

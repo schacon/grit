@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use grit_lib::porcelain::checkout::checkout_between_trees_with_progress;
 use grit_lib::remote::clone::{
-    cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty, CloneError,
-    CloneOptions,
+    cleanup_failed_clone, clone as clone_repo, derive_clone_dir, dest_preexisted_empty,
+    CloneCheckout, CloneError, CloneOptions, CloneOutcome as LibCloneOutcome,
 };
 use grit_lib::remote::DefaultHttpClientFactory;
 use schemars::JsonSchema;
@@ -72,6 +72,12 @@ pub struct CloneOutcome {
     pub seconds: f64,
     /// Time spent in each step, in order.
     pub phases: Vec<ClonePhase>,
+    /// Why no working-tree checkout happened, when `files` is zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_checkout_reason: Option<String>,
+    /// Remote branch names that have commits when `no_checkout_reason` is `unborn_default_branch`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branches_with_commits: Option<Vec<String>>,
     #[serde(skip)]
     #[schemars(skip)]
     pub elapsed: Duration,
@@ -355,6 +361,50 @@ impl MarkdownRender for CloneOutcome {
     }
 }
 
+fn emit_no_checkout_note(mode: OutputMode, outcome: &LibCloneOutcome) {
+    match outcome.checkout {
+        CloneCheckout::CheckedOut(_) => {}
+        CloneCheckout::EmptyRemote => {
+            if mode == OutputMode::Human {
+                eprintln!("note: the remote repository is empty.");
+            } else if mode == OutputMode::Markdown {
+                eprintln!("> The remote repository is empty.");
+            }
+        }
+        CloneCheckout::UnbornDefaultBranch => {
+            let branch = &outcome.branch;
+            if mode == OutputMode::Human {
+                eprintln!(
+                    "warning: the remote default branch '{branch}' has no commits yet; no files were checked out."
+                );
+                if !outcome.branches_with_commits.is_empty() {
+                    let names = outcome.branches_with_commits.join(", ");
+                    eprintln!("note: remote branches with commits: {names}");
+                    if let Some(first) = outcome.branches_with_commits.first() {
+                        eprintln!("hint: run `grit switch {first}` to check one out");
+                    }
+                }
+            } else if mode == OutputMode::Markdown {
+                eprintln!(
+                    "> **Warning:** the remote default branch `{branch}` has no commits yet; no files were checked out."
+                );
+                if !outcome.branches_with_commits.is_empty() {
+                    let names = outcome
+                        .branches_with_commits
+                        .iter()
+                        .map(|b| format!("`{b}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!("> Remote branches with commits: {names}.");
+                    if let Some(first) = outcome.branches_with_commits.first() {
+                        eprintln!("> Try `grit switch {first}`.");
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn run(url: &str, dir: Option<String>, mode: OutputMode) -> Result<CloneOutcome> {
     let dir = dir.unwrap_or_else(|| derive_clone_dir(url));
     let path = PathBuf::from(&dir);
@@ -408,28 +458,34 @@ fn clone_into(
     };
     let outcome = clone_repo(clone_opts, &mut *term_progress, Some(&factory))?;
 
-    let (files, worktree_bytes) = if outcome.checkout_oid.is_zero() {
-        if mode == OutputMode::Human {
-            eprintln!("note: the remote repository is empty.");
-        } else if mode == OutputMode::Markdown {
-            eprintln!("> The remote repository is empty.");
-        }
-        (0, 0)
-    } else {
-        let tree = context::commit_tree(&outcome.repo, &outcome.checkout_oid)?;
-        checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut *term_progress)
-            .context("could not check out files")?;
-        let index = outcome
-            .repo
-            .index_handle()
-            .load()
-            .context("could not read index")?;
-        let entries = index.entries();
-        (
-            u64::try_from(entries.len()).unwrap_or(u64::MAX),
-            entries.iter().map(|e| u64::from(e.size)).sum(),
-        )
-    };
+    let (files, worktree_bytes, no_checkout_reason, branches_with_commits) =
+        if let CloneCheckout::CheckedOut(oid) = outcome.checkout {
+            let tree = context::commit_tree(&outcome.repo, &oid)?;
+            checkout_between_trees_with_progress(&outcome.repo, None, &tree, &mut *term_progress)
+                .context("could not check out files")?;
+            let index = outcome
+                .repo
+                .index_handle()
+                .load()
+                .context("could not read index")?;
+            let entries = index.entries();
+            (
+                u64::try_from(entries.len()).unwrap_or(u64::MAX),
+                entries.iter().map(|e| u64::from(e.size)).sum(),
+                None,
+                None,
+            )
+        } else {
+            emit_no_checkout_note(mode, &outcome);
+            let reason = match outcome.checkout {
+                CloneCheckout::EmptyRemote => Some("empty_remote".to_owned()),
+                CloneCheckout::UnbornDefaultBranch => Some("unborn_default_branch".to_owned()),
+                CloneCheckout::CheckedOut(_) => None,
+            };
+            let tips = (!outcome.branches_with_commits.is_empty())
+                .then(|| outcome.branches_with_commits.clone());
+            (0, 0, reason, tips)
+        };
     let records = term_progress.phases().to_vec();
     let elapsed = started.elapsed();
 
@@ -461,6 +517,8 @@ fn clone_into(
             .collect(),
         elapsed,
         records,
+        no_checkout_reason,
+        branches_with_commits,
     })
 }
 
@@ -507,6 +565,8 @@ mod tests {
             phases: Vec::new(),
             elapsed: Duration::from_secs(2),
             records,
+            no_checkout_reason: None,
+            branches_with_commits: None,
         }
     }
 

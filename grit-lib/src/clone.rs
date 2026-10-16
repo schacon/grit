@@ -94,6 +94,17 @@ impl CloneOptions {
     }
 }
 
+/// Whether [`clone`] checked out the default branch or left the work tree empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneCheckout {
+    /// The default branch tip was fetched and should be checked out.
+    CheckedOut(ObjectId),
+    /// No objects and no remote branches were received.
+    EmptyRemote,
+    /// The remote advertised default branch has no commits yet; other refs may exist.
+    UnbornDefaultBranch,
+}
+
 /// Result of a successful [`clone`] before working-tree checkout.
 #[derive(Debug)]
 pub struct CloneOutcome {
@@ -107,6 +118,11 @@ pub struct CloneOutcome {
     ///
     /// [`ObjectId::zero()`] when the remote default branch has no commits yet.
     pub checkout_oid: ObjectId,
+    /// Checkout disposition after fetch and default-branch setup.
+    pub checkout: CloneCheckout,
+    /// Remote-tracking branch names that resolved to a commit (empty unless checkout is
+    /// [`CloneCheckout::UnbornDefaultBranch`]).
+    pub branches_with_commits: Vec<String>,
     /// Open handle to the new repository.
     pub repo: Repository,
     /// Objects and pack bytes received during the initial fetch.
@@ -290,16 +306,60 @@ pub fn clone(
         ],
     )?;
 
+    let branches_with_commits = remote_branch_names_with_commits(&repo, &opts.remote_name);
+    let checkout = classify_clone_checkout(
+        oid,
+        &fetch_outcome.transfer,
+        fetch_outcome.branch_count(),
+        &branches_with_commits,
+    );
+
     Ok(CloneOutcome {
         url: opts.url.clone(),
         path: opts.dest.clone(),
         branch: default,
         checkout_oid: oid,
+        checkout,
+        branches_with_commits,
         repo: repo.with_thread_policy(opts.thread_policy),
         transfer: fetch_outcome.transfer,
         branches: fetch_outcome.branch_count(),
         tags: fetch_outcome.tag_count(),
     })
+}
+
+fn remote_branch_names_with_commits(repo: &Repository, remote_name: &str) -> Vec<String> {
+    let prefix = format!("refs/remotes/{remote_name}/");
+    refs::list_refs(repo.git_dir(), &prefix)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(name, oid)| {
+            if oid.is_zero() {
+                return None;
+            }
+            name.strip_prefix(&prefix)
+                .filter(|b| *b != "HEAD")
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+fn classify_clone_checkout(
+    checkout_oid: ObjectId,
+    transfer: &TransferStats,
+    branch_count: u64,
+    branches_with_commits: &[String],
+) -> CloneCheckout {
+    if !checkout_oid.is_zero() {
+        return CloneCheckout::CheckedOut(checkout_oid);
+    }
+    if transfer.objects == 0 && branch_count == 0 {
+        return CloneCheckout::EmptyRemote;
+    }
+    if transfer.objects > 0 || !branches_with_commits.is_empty() {
+        return CloneCheckout::UnbornDefaultBranch;
+    }
+    CloneCheckout::EmptyRemote
 }
 
 fn stored_clone_remote_url(url: &str) -> String {
@@ -559,12 +619,21 @@ mod tests {
 
         assert_eq!(outcome.branch, "trunk");
         assert!(outcome.checkout_oid.is_zero());
+        assert_eq!(outcome.checkout, CloneCheckout::UnbornDefaultBranch);
+        assert!(
+            outcome
+                .branches_with_commits
+                .contains(&"feature".to_owned()),
+            "{:?}",
+            outcome.branches_with_commits
+        );
         assert!(!dest.path().join(".git/refs/heads/trunk").exists());
         assert!(!dest.path().join(".git/refs/heads/feature").exists());
         let head = fs::read_to_string(dest.path().join(".git/HEAD")).expect("HEAD");
         assert_eq!(head.trim(), "ref: refs/heads/trunk");
     }
 
+    #[test]
     fn clone_empty_bare_remote_leaves_unborn_default_branch() {
         use std::process::Command;
 
@@ -593,9 +662,66 @@ mod tests {
 
         assert_eq!(outcome.branch, "main");
         assert!(outcome.checkout_oid.is_zero());
+        assert_eq!(outcome.checkout, CloneCheckout::EmptyRemote);
+        assert!(outcome.branches_with_commits.is_empty());
         assert!(!dest.path().join(".git").join("refs/heads/main").exists());
         let head = fs::read_to_string(dest.path().join(".git/HEAD")).expect("HEAD");
         assert_eq!(head.trim(), "ref: refs/heads/main");
+    }
+
+    #[test]
+    fn classify_unborn_default_when_master_advertised_but_main_has_commits() {
+        use std::process::Command;
+
+        let upstream = tempfile::tempdir().expect("upstream");
+        let bare = upstream.path().join("remote.git");
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(
+            &["init", "-q", "--bare", bare.to_str().unwrap()],
+            upstream.path(),
+        );
+
+        let src = upstream.path().join("src");
+        fs::create_dir_all(&src).expect("mkdir");
+        git(&["init", "-q", "-b", "main"], &src);
+        git(&["config", "user.email", "a@b.c"], &src);
+        git(&["config", "user.name", "a"], &src);
+        fs::write(src.join("f"), b"x\n").expect("write");
+        git(&["add", "f"], &src);
+        git(&["commit", "-m", "c1"], &src);
+        git(&["remote", "add", "origin", bare.to_str().unwrap()], &src);
+        git(&["push", "-u", "origin", "main"], &src);
+
+        let dest = tempfile::tempdir().expect("dest");
+        let outcome = clone(
+            CloneOptions::new(bare.to_string_lossy(), dest.path().to_path_buf()),
+            &mut crate::fetch::NoProgress,
+            None,
+        )
+        .expect("clone");
+
+        assert!(outcome.checkout_oid.is_zero());
+        assert_eq!(outcome.checkout, CloneCheckout::UnbornDefaultBranch);
+        assert!(
+            outcome.branches_with_commits.contains(&"main".to_owned()),
+            "{:?}",
+            outcome.branches_with_commits
+        );
+        assert!(outcome.transfer.objects > 0);
     }
 
     #[test]
