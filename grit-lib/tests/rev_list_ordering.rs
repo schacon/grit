@@ -5,6 +5,7 @@ mod support;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_list::{
@@ -12,8 +13,9 @@ use grit_lib::revwalk::rev_list::{
 };
 use support::{
     assert_rev_list_commits_match_git, build_commit_dag, commit_file, commit_labeled_with_dates,
-    expand_token_for_rev_list, git, git_commit_graph_write, git_rev_list, git_rev_list_lines,
-    git_rev_parse, grit_rev_list_commits_in_repo, open_grit_repo, HistoryRepo,
+    expand_token_for_rev_list, git, git_commit_graph_write, git_merge_base_is_ancestor,
+    git_rev_list, git_rev_list_lines, git_rev_parse, grit_rev_list_commits_in_repo, open_grit_repo,
+    HistoryRepo,
 };
 
 fn topo_skew_dag(worktree: &Path) -> (ObjectId, HashMap<String, ObjectId>) {
@@ -1345,6 +1347,117 @@ fn rev_list_option_smoke_exercises_library_paths() {
         false,
     )
     .expect("bisect");
+}
+
+const ISSUE_1067_DATE: &str = "2026-01-01T00:00:00Z";
+
+fn git_with_commit_dates(worktree: &Path, date: &str, args: &[&str]) {
+    let out = Command::new("git")
+        .current_dir(worktree)
+        .args(args)
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// Issue #1067: equal committer dates on a merge DAG with bounded `--max-count`.
+fn issue_1067_equal_date_merge_dag(worktree: &Path) {
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &[
+            "-c",
+            "user.name=a",
+            "-c",
+            "user.email=a@b.c",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    );
+    git_with_commit_dates(worktree, ISSUE_1067_DATE, &["switch", "-c", "side"]);
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["commit", "--allow-empty", "-m", "side"],
+    );
+    git_with_commit_dates(worktree, ISSUE_1067_DATE, &["switch", "main"]);
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["commit", "--allow-empty", "-m", "mainedit"],
+    );
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["merge", "--no-ff", "side", "-m", "merge"],
+    );
+}
+
+fn assert_no_ancestor_before_descendant(worktree: &Path, order: &[ObjectId]) {
+    for (i, &ancestor) in order.iter().enumerate() {
+        for &maybe_descendant in &order[i + 1..] {
+            if git_merge_base_is_ancestor(worktree, &ancestor.to_hex(), &maybe_descendant.to_hex())
+            {
+                panic!(
+                    "commit {ancestor} is an ancestor of {maybe_descendant} but appears earlier in the list"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn issue_1067_bounded_rev_list_matches_git_on_equal_dates() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    issue_1067_equal_date_merge_dag(wt);
+    let grit = open_grit_repo(wt);
+
+    let git_subjects: Vec<String> = git(wt, &["log", "--format=%s"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        git_subjects,
+        vec!["merge", "mainedit", "side", "base"],
+        "git fixture order"
+    );
+
+    for max in [None, Some(10usize), Some(3)] {
+        let mut git_args = vec!["HEAD".to_owned()];
+        if let Some(n) = max {
+            git_args.insert(0, n.to_string());
+            git_args.insert(0, "--max-count".to_owned());
+        }
+        let git_arg_refs: Vec<&str> = git_args.iter().map(String::as_str).collect();
+        let opts = RevListOptions {
+            max_count: max,
+            ..RevListOptions::default()
+        };
+        assert_rev_list_commits_match_git(
+            wt,
+            &grit,
+            &git_arg_refs,
+            &[String::from("HEAD")],
+            &[],
+            opts.clone(),
+            "issue 1067 max-count",
+        );
+        let grit_oids = grit_rev_list_commits_in_repo(&grit, &[String::from("HEAD")], &[], &opts)
+            .expect("grit rev_list");
+        assert_no_ancestor_before_descendant(wt, &grit_oids);
+    }
 }
 
 #[test]
