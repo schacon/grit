@@ -85,40 +85,79 @@ fn parse_estimates(path: &Path) -> Result<CriterionEstimates> {
     serde_json::from_str(&raw).with_context(|| format!("parse estimates {}", path.display()))
 }
 
-fn load_sample_runs_ms(estimates_path: &Path) -> Option<Vec<f64>> {
+/// Per-iteration wall times from Criterion `sample.json` (aggregate `times` ÷ matching `iters`).
+pub fn per_iteration_samples_ms(times_ns: &[f64], iters: &[f64]) -> Result<Vec<f64>> {
+    anyhow::ensure!(
+        !times_ns.is_empty(),
+        "criterion sample times must not be empty"
+    );
+    anyhow::ensure!(
+        times_ns.len() == iters.len(),
+        "criterion sample times length {} != iters length {}",
+        times_ns.len(),
+        iters.len()
+    );
+    times_ns
+        .iter()
+        .zip(iters.iter())
+        .map(|(time_ns, iter_count)| {
+            anyhow::ensure!(
+                *iter_count > 0.0,
+                "criterion sample iters must be positive, got {iter_count}"
+            );
+            Ok(ns_to_ms(*time_ns / *iter_count))
+        })
+        .collect()
+}
+
+fn load_sample_runs_ms(estimates_path: &Path) -> Result<Option<Vec<f64>>> {
     let sample_path = estimates_path.with_file_name("sample.json");
-    let raw = fs::read_to_string(sample_path).ok()?;
+    let raw = fs::read_to_string(&sample_path)
+        .with_context(|| format!("read {}", sample_path.display()))?;
     #[derive(Deserialize)]
     struct Sample {
+        iters: Vec<f64>,
         times: Vec<f64>,
     }
-    let sample: Sample = serde_json::from_str(&raw).ok()?;
+    let sample: Sample =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", sample_path.display()))?;
     if sample.times.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(sample.times.iter().map(|t| ns_to_ms(*t)).collect())
+    Ok(Some(per_iteration_samples_ms(
+        &sample.times,
+        &sample.iters,
+    )?))
 }
 
 /// Derive `(group, id_suffix)` from a path like `target/criterion/hash_sha1/4KiB/new/estimates.json`.
-fn scenario_id_from_path(criterion_root: &Path, estimates_path: &Path) -> (String, String) {
+pub fn scenario_id_from_path(criterion_root: &Path, estimates_path: &Path) -> (String, String) {
     let rel = estimates_path
         .strip_prefix(criterion_root)
         .unwrap_or(estimates_path);
     let parts: Vec<_> = rel
         .components()
         .filter_map(|c| c.as_os_str().to_str())
+        .filter(|s| *s != "new" && *s != "estimates.json")
         .collect();
-    // [bench_group, param?, "new", "estimates.json"]
-    let group = parts.first().unwrap_or(&"criterion").to_string();
-    let mut id_parts: Vec<String> = parts
-        .iter()
-        .take(parts.len().saturating_sub(2))
-        .map(|s| s.replace('/', "_"))
-        .collect();
-    if id_parts.is_empty() {
-        id_parts.push("bench".into());
+    let group = parts
+        .first()
+        .map(|s| (*s).to_string())
+        .unwrap_or_else(|| "criterion".into());
+    let suffix = if parts.len() > 1 {
+        parts[1..].join("/")
+    } else {
+        "bench".into()
+    };
+    (group, suffix)
+}
+
+pub fn criterion_scenario_id(group: &str, suffix: &str) -> String {
+    if suffix.is_empty() || suffix == "bench" {
+        format!("criterion-{group}")
+    } else {
+        format!("criterion-{group}-{}", suffix.replace('/', "-"))
     }
-    (group.clone(), id_parts.join("/"))
 }
 
 fn timing_from_estimates(estimates: &CriterionEstimates, runs_ms: Option<Vec<f64>>) -> TimingStats {
@@ -157,8 +196,8 @@ pub fn summarize_criterion_tree(
     for path in paths {
         let estimates = parse_estimates(&path)?;
         let (group, id_suffix) = scenario_id_from_path(criterion_root, &path);
-        let runs_ms = load_sample_runs_ms(&path);
-        let id = format!("criterion-{group}-{id_suffix}").replace('/', "-");
+        let runs_ms = load_sample_runs_ms(&path)?;
+        let id = criterion_scenario_id(&group, &id_suffix);
         scenarios.push(CriterionScenarioResult {
             id: id.clone(),
             group: group.clone(),
@@ -205,7 +244,24 @@ mod tests {
         let path = Path::new("/tmp/criterion/hash_sha1/4KiB/new/estimates.json");
         let (group, suffix) = scenario_id_from_path(root, path);
         assert_eq!(group, "hash_sha1");
-        assert_eq!(suffix, "hash_sha1/4KiB");
+        assert_eq!(suffix, "4KiB");
+        assert_eq!(
+            criterion_scenario_id(&group, &suffix),
+            "criterion-hash_sha1-4KiB"
+        );
+    }
+
+    #[test]
+    fn per_iteration_samples_from_fixture() {
+        let sample = include_str!("../tests/fixtures/criterion_sample_linear.json");
+        #[derive(Deserialize)]
+        struct Sample {
+            iters: Vec<f64>,
+            times: Vec<f64>,
+        }
+        let parsed: Sample = serde_json::from_str(sample).expect("parse");
+        let runs = per_iteration_samples_ms(&parsed.times, &parsed.iters).expect("samples");
+        assert_eq!(runs, vec![0.0001, 0.0002]);
     }
 
     #[test]

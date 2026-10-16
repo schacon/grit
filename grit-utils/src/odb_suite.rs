@@ -20,6 +20,7 @@ use crate::stats::median_ratio;
 pub struct OdbRunConfig {
     pub warmup: u32,
     pub min_runs: u32,
+    pub exact_runs: Option<u32>,
     pub prepare_bin: PathBuf,
 }
 
@@ -50,6 +51,7 @@ pub(crate) fn run_odb_scenario(
         repo,
         cfg.warmup,
         cfg.min_runs,
+        cfg.exact_runs,
         "git",
         env.as_deref(),
         None,
@@ -61,6 +63,7 @@ pub(crate) fn run_odb_scenario(
         repo,
         cfg.warmup,
         cfg.min_runs,
+        cfg.exact_runs,
         "grit",
         env.as_deref(),
         None,

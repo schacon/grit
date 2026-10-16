@@ -279,6 +279,8 @@ enum Cmd {
         #[arg(long, default_value = "target/criterion")]
         criterion_dir: PathBuf,
     },
+    /// Render a saved grit-bench JSON report (text or markdown).
+    Render { input: PathBuf },
     /// Compare two JSON reports; exit non-zero when ratios differ beyond tolerance
     Compare {
         baseline: PathBuf,
@@ -899,6 +901,14 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Cmd::Render { input } => {
+            let json = std::fs::read_to_string(input)
+                .with_context(|| format!("read {}", input.display()))?;
+            let report = BenchReport::from_json_str(&json)?;
+            let rendered = render_report(&cli.format, &report)?;
+            write_output(&cli, &rendered)?;
+            return Ok(());
+        }
         Cmd::CriterionSummary { criterion_dir } => {
             let timestamp = parse_timestamp(&cli)?;
             let report = criterion_summary::summarize_criterion_tree(criterion_dir, timestamp)?;
@@ -1142,10 +1152,15 @@ fn main() -> Result<()> {
         }
         Cmd::History { smoke } => {
             eprintln!("Running history and object-inspection benchmarks...");
-            let cfg = run_config(&cli, true);
+            let mut cfg = run_config(&cli, true);
+            if *smoke {
+                cfg.warmup = 0;
+                cfg.exact_runs = Some(1);
+            }
             let odb_cfg = OdbRunConfig {
-                warmup: cli.warmup,
-                min_runs: cli.min_runs,
+                warmup: cfg.warmup,
+                min_runs: cfg.min_runs,
+                exact_runs: cfg.exact_runs,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1242,6 +1257,7 @@ fn main() -> Result<()> {
             let cfg = OdbRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1253,6 +1269,7 @@ fn main() -> Result<()> {
             let cfg = OdbRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1264,6 +1281,7 @@ fn main() -> Result<()> {
             let cfg = BitmapRunConfig {
                 warmup: cli.warmup,
                 min_runs: cli.min_runs,
+                exact_runs: None,
                 prepare_bin: std::env::current_exe()
                     .unwrap_or_else(|_| PathBuf::from("grit-bench")),
             };
@@ -1444,6 +1462,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareWorktreeAdd { .. }
         | Cmd::PrepareWorktreeCommit { .. }
         | Cmd::PrepareWorktreeDiff { .. }
+        | Cmd::Render { .. }
         | Cmd::CriterionSummary { .. }
         | Cmd::PrepareParallelCheckout { .. }
         | Cmd::PrepareParallelClone { .. }

@@ -64,7 +64,7 @@ bench-scenarios:
 	@mkdir -p $(BENCH_DIR)
 	$(CARGO) build --release -p grit-cli -p grit-http-server -p grit-utils
 	./target/release/grit-bench scenarios --tier $(TIER_ARG) $(if $(filter 1,$(SMOKE)),--smoke,) --format json --output $(BENCH_DIR)/scenarios-$(SCENARIO_HOST).json
-	./target/release/grit-bench scenarios --tier $(TIER_ARG) $(if $(filter 1,$(SMOKE)),--smoke,) --format markdown --output $(BENCH_DIR)/scenarios-$(SCENARIO_HOST).md
+	./target/release/grit-bench render --format markdown --input $(BENCH_DIR)/scenarios-$(SCENARIO_HOST).json --output $(BENCH_DIR)/scenarios-$(SCENARIO_HOST).md
 
 public-api:
 	./scripts/public-api.sh generate

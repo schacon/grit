@@ -35,9 +35,10 @@ pub struct ScenarioSuiteOptions {
     pub offline: bool,
 }
 
-/// Merge multiple partial reports into one (first report supplies machine/tools when present).
-pub fn merge_reports(mut reports: Vec<BenchReport>) -> BenchReport {
-    let Some(mut merged) = reports.pop() else {
+/// Merge multiple partial reports into one (metadata from the **first** group report).
+pub fn merge_reports(reports: Vec<BenchReport>) -> BenchReport {
+    let mut iter = reports.into_iter();
+    let Some(mut merged) = iter.next() else {
         return BenchReport {
             schema_version: crate::schema::SCHEMA_VERSION,
             timestamp: String::new(),
@@ -61,7 +62,7 @@ pub fn merge_reports(mut reports: Vec<BenchReport>) -> BenchReport {
             scenarios: Vec::new(),
         };
     };
-    for report in reports {
+    for report in iter {
         merged.scenarios.extend(report.scenarios);
         for fixture in report.fixtures {
             if !merged.fixtures.iter().any(|f| f.name == fixture.name) {
@@ -70,6 +71,21 @@ pub fn merge_reports(mut reports: Vec<BenchReport>) -> BenchReport {
         }
     }
     merged
+}
+
+/// Union fixture records from the registry prepare step and per-group reports.
+pub fn merge_fixture_records(
+    mut base: Vec<crate::schema::FixtureRecord>,
+    from_reports: &[BenchReport],
+) -> Vec<crate::schema::FixtureRecord> {
+    for report in from_reports {
+        for fixture in &report.fixtures {
+            if !base.iter().any(|f| f.name == fixture.name) {
+                base.push(fixture.clone());
+            }
+        }
+    }
+    base
 }
 
 fn hot_path_sizes(tier: SynthTier, smoke: bool) -> Vec<usize> {
@@ -141,6 +157,7 @@ pub fn run_scenario_suite(
     let odb_cfg = OdbRunConfig {
         warmup: cfg.warmup,
         min_runs: cfg.min_runs,
+        exact_runs: cfg.exact_runs,
         prepare_bin: cfg.prepare_bin.clone(),
     };
     reports.push(run_history_suite(
@@ -257,6 +274,7 @@ pub fn run_scenario_suite(
         let bitmap_cfg = BitmapRunConfig {
             warmup: cfg.warmup,
             min_runs: cfg.min_runs,
+            exact_runs: cfg.exact_runs,
             prepare_bin: cfg.prepare_bin.clone(),
         };
         reports.push(run_bitmaps_suite(
@@ -278,11 +296,15 @@ pub fn run_scenario_suite(
         )?);
     }
 
-    let mut merged = merge_reports(reports);
-    if merged.fixtures.is_empty() {
-        merged.fixtures = fixture_records;
-    }
-    Ok(merged)
+    let fixtures = {
+        let mut records = fixture_records;
+        for report in &reports {
+            records = merge_fixture_records(records, std::slice::from_ref(report));
+        }
+        records
+    };
+    let merged = merge_reports(reports);
+    Ok(BenchReport { fixtures, ..merged })
 }
 
 /// Hostname for `scenarios-<host>.json` (short name when available).
@@ -309,4 +331,72 @@ pub fn default_scenarios_output(repo_root: &Path) -> PathBuf {
     repo_root
         .join("target/bench")
         .join(format!("scenarios-{}.json", bench_host_slug()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{
+        BenchReport, DriverKind, MachineInfo, ScenarioResult, TimingStats, ToolVersions,
+    };
+
+    fn stub_timing() -> TimingStats {
+        TimingStats {
+            mean_ms: 1.0,
+            median_ms: 1.0,
+            stddev_ms: 0.0,
+            min_ms: 1.0,
+            max_ms: 1.0,
+            runs_ms: vec![1.0],
+            peak_rss_bytes: None,
+        }
+    }
+
+    fn stub_report(timestamp: &str, scenario_id: &str) -> BenchReport {
+        BenchReport {
+            schema_version: crate::schema::SCHEMA_VERSION,
+            timestamp: timestamp.into(),
+            machine: MachineInfo {
+                cpu_model: "test-cpu".into(),
+                physical_cores: 1,
+                logical_cores: 1,
+                ram_bytes: 0,
+                os: "test".into(),
+                kernel: "test".into(),
+                scratch_filesystem: "test".into(),
+                rustc_version: "test".into(),
+                cargo_profile: "test".into(),
+            },
+            tools: ToolVersions {
+                git: "git-test".into(),
+                grit: "grit-test".into(),
+                grit_commit: None,
+            },
+            fixtures: Vec::new(),
+            scenarios: vec![ScenarioResult {
+                id: scenario_id.into(),
+                group: "g".into(),
+                fixture: "f".into(),
+                description: "d".into(),
+                driver: DriverKind::Cli,
+                git: stub_timing(),
+                grit: stub_timing(),
+                ratio: 1.0,
+                grit_failure: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn merge_reports_keeps_first_metadata_and_unions_scenarios() {
+        let first = stub_report("first-ts", "scenario-a");
+        let second = stub_report("second-ts", "scenario-b");
+        let merged = merge_reports(vec![first, second]);
+        assert_eq!(merged.timestamp, "first-ts");
+        assert_eq!(merged.machine.cpu_model, "test-cpu");
+        assert_eq!(merged.tools.git, "git-test");
+        assert_eq!(merged.scenarios.len(), 2);
+        assert_eq!(merged.scenarios[0].id, "scenario-a");
+        assert_eq!(merged.scenarios[1].id, "scenario-b");
+    }
 }

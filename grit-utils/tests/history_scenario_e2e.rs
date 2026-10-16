@@ -86,6 +86,18 @@ fn history_scenario_smoke_end_to_end() {
             "bad ratio for {}",
             scenario["id"]
         );
+        for side in ["git", "grit"] {
+            let runs = scenario[side]["runs_ms"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{} missing {} runs_ms", scenario["id"], side));
+            assert_eq!(
+                runs.len(),
+                1,
+                "history --smoke must use one hyperfine run for {} ({})",
+                scenario["id"],
+                side
+            );
+        }
         if driver == "lib" {
             assert!(
                 scenario["grit_failure"].is_null(),
