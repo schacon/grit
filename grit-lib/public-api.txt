@@ -6845,6 +6845,7 @@ pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
+pub fn grit_lib::objects::odb::Odb::largest_pack_index_path(&self) -> grit_lib::error::Result<core::option::Option<std::path::PathBuf>>
 pub fn grit_lib::objects::odb::Odb::lookup_prefix(&self, &str, usize, &mut alloc::vec::Vec<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::loose_object_plumbing_ok(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::new(&std::path::Path) -> Self
@@ -7172,6 +7173,29 @@ impl core::marker::Unpin for grit_lib::objects::pack::PackLookupOptions
 impl core::marker::UnsafeUnpin for grit_lib::objects::pack::PackLookupOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack::PackLookupOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack::PackLookupOptions
+pub struct grit_lib::objects::pack::ReuseWriteStats
+pub grit_lib::objects::pack::ReuseWriteStats::pack_ofs_fixup_objects: u32
+pub grit_lib::objects::pack::ReuseWriteStats::pack_ref_from_ofs_objects: u32
+pub grit_lib::objects::pack::ReuseWriteStats::verbatim_reuse_bytes: u64
+pub grit_lib::objects::pack::ReuseWriteStats::verbatim_reuse_objects: u32
+impl core::clone::Clone for grit_lib::pack_reuse::ReuseWriteStats
+pub fn grit_lib::pack_reuse::ReuseWriteStats::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::pack_reuse::ReuseWriteStats
+impl core::cmp::PartialEq for grit_lib::pack_reuse::ReuseWriteStats
+pub fn grit_lib::pack_reuse::ReuseWriteStats::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::pack_reuse::ReuseWriteStats
+pub fn grit_lib::pack_reuse::ReuseWriteStats::default() -> Self
+impl core::fmt::Debug for grit_lib::pack_reuse::ReuseWriteStats
+pub fn grit_lib::pack_reuse::ReuseWriteStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::StructuralPartialEq for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::Freeze for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::Send for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::Sync for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::Unpin for grit_lib::pack_reuse::ReuseWriteStats
+impl core::marker::UnsafeUnpin for grit_lib::pack_reuse::ReuseWriteStats
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::pack_reuse::ReuseWriteStats
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::pack_reuse::ReuseWriteStats
 pub struct grit_lib::objects::pack::SingleLocalPackReader
 impl grit_lib::objects::pack::SingleLocalPackReader
 pub fn grit_lib::objects::pack::SingleLocalPackReader::open(&std::path::Path) -> grit_lib::error::Result<core::option::Option<Self>>
@@ -7184,6 +7208,14 @@ impl core::marker::Unpin for grit_lib::objects::pack::SingleLocalPackReader
 impl core::marker::UnsafeUnpin for grit_lib::objects::pack::SingleLocalPackReader
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack::SingleLocalPackReader
 impl !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack::SingleLocalPackReader
+pub struct grit_lib::objects::pack::StreamingReuse
+impl core::marker::Freeze for grit_lib::pack_reuse::StreamingReuse
+impl core::marker::Send for grit_lib::pack_reuse::StreamingReuse
+impl core::marker::Sync for grit_lib::pack_reuse::StreamingReuse
+impl core::marker::Unpin for grit_lib::pack_reuse::StreamingReuse
+impl core::marker::UnsafeUnpin for grit_lib::pack_reuse::StreamingReuse
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::pack_reuse::StreamingReuse
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::pack_reuse::StreamingReuse
 pub struct grit_lib::objects::pack::VerifyObjectRecord
 pub grit_lib::objects::pack::VerifyObjectRecord::base_oid: core::option::Option<alloc::vec::Vec<u8>>
 pub grit_lib::objects::pack::VerifyObjectRecord::base_pack_offset: core::option::Option<u64>
@@ -7246,6 +7278,7 @@ pub fn grit_lib::objects::pack::skip_one_pack_object(&[u8], &mut usize, u64, usi
 pub fn grit_lib::objects::pack::slice_one_pack_object(&[u8], u64, usize) -> grit_lib::error::Result<&[u8]>
 pub fn grit_lib::objects::pack::test_pack_cache_guard() -> grit_lib::pack::pack_cache_test_sync::PackCacheTestGuard
 pub fn grit_lib::objects::pack::try_read_object_from_local_packs_cached(&std::path::Path, &grit_lib::objects::ObjectId, impl core::ops::function::FnMut() -> grit_lib::error::Result<grit_lib::objects::Object>) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::Object>>
+pub fn grit_lib::objects::pack::try_write_streaming_pack(&grit_lib::repo::Repository, &[grit_lib::objects::ObjectId], &[grit_lib::objects::ObjectId], &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, &std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::revwalk::rev_list::ObjectFilter>, &grit_lib::objects::pack_objects::PackBuildOptions, &mut dyn core::ops::function::FnMut(grit_lib::objects::pack_objects::PackProgress), &mut dyn core::io::write::Write) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::pack_objects::PackStats>>
 pub fn grit_lib::objects::pack::verify_pack_and_collect(&std::path::Path) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::pack::VerifyObjectRecord>>
 pub fn grit_lib::objects::pack::write_v2_pack_index(&std::path::Path, &std::path::Path, &[(grit_lib::objects::ObjectId, u64, u32)], usize) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::pack::write_v2_pack_index_with_trailer(&std::path::Path, &[(grit_lib::objects::ObjectId, u64, u32)], &[u8], usize, core::option::Option<usize>) -> grit_lib::error::Result<()>
@@ -9922,6 +9955,7 @@ pub fn grit_lib::objects::odb::Odb::hash(&self, grit_lib::objects::ObjectKind, &
 pub fn grit_lib::objects::odb::Odb::hash_algo(&self) -> grit_lib::objects::HashAlgo
 pub fn grit_lib::objects::odb::Odb::invalidate_alternates_cache(&self)
 pub fn grit_lib::objects::odb::Odb::invalidate_packs(&self)
+pub fn grit_lib::objects::odb::Odb::largest_pack_index_path(&self) -> grit_lib::error::Result<core::option::Option<std::path::PathBuf>>
 pub fn grit_lib::objects::odb::Odb::lookup_prefix(&self, &str, usize, &mut alloc::vec::Vec<grit_lib::objects::ObjectId>) -> grit_lib::error::Result<()>
 pub fn grit_lib::objects::odb::Odb::loose_object_plumbing_ok(&self, &grit_lib::objects::ObjectId) -> bool
 pub fn grit_lib::objects::odb::Odb::new(&std::path::Path) -> Self
@@ -10027,6 +10061,7 @@ pub fn grit_lib::repo::Repository::with_ref_store(self, alloc::rcs::arc::Arc<dyn
 pub fn grit_lib::repo::Repository::with_thread_policy(self, grit_lib::parallel::ThreadPolicy) -> Self
 pub fn grit_lib::repo::Repository::work_tree(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::repo::Repository::worktrees(&self) -> grit_lib::repo_handles::RepositoryWorktrees<'_>
+pub fn grit_lib::repo::Repository::write_largest_pack_bitmap(&self, &grit_lib::objects::bitmap::PackBitmapWriteOptions, std::time::SystemTime) -> core::result::Result<std::path::PathBuf, grit_lib::objects::bitmap::PackBitmapWriteError>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>
@@ -13231,6 +13266,7 @@ pub fn grit_lib::repo::Repository::with_ref_store(self, alloc::rcs::arc::Arc<dyn
 pub fn grit_lib::repo::Repository::with_thread_policy(self, grit_lib::parallel::ThreadPolicy) -> Self
 pub fn grit_lib::repo::Repository::work_tree(&self) -> core::option::Option<&std::path::Path>
 pub fn grit_lib::repo::Repository::worktrees(&self) -> grit_lib::repo_handles::RepositoryWorktrees<'_>
+pub fn grit_lib::repo::Repository::write_largest_pack_bitmap(&self, &grit_lib::objects::bitmap::PackBitmapWriteOptions, std::time::SystemTime) -> core::result::Result<std::path::PathBuf, grit_lib::objects::bitmap::PackBitmapWriteError>
 impl grit_lib::repo::Repository
 pub fn grit_lib::repo::Repository::enforce_safe_directory(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::verify_safe_for_clone_source(&self) -> grit_lib::error::Result<()>

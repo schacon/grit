@@ -17,4 +17,4 @@ If no `.rev` sidecar exists, the writer creates one first so object order matche
 
 ## Compatibility
 
-Integration tests in `grit-lib` round-trip against the system `git` binary (`rev-list --test-bitmap`, `--use-bitmap-index` counts). Name hashes use [`pack_name_hash`](rustdoc:grit_lib::pack_name_hash::pack_name_hash) (v1) recorded during tree walks.
+Integration tests in `grit-lib` round-trip against the system `git` binary (`rev-list --test-bitmap`, `--use-bitmap-index` counts). Name hashes use [`pack_name_hash`](rustdoc:grit_lib::objects::pack_name_hash::pack_name_hash) (v1) recorded during tree walks.
