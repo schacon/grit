@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
 
-use crate::fixture::scratch_dir;
 use crate::shell::shell_quote;
 
 static EMPTY_GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
@@ -15,9 +14,8 @@ static EMPTY_GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
 /// Path to an empty file used as `GIT_CONFIG_GLOBAL` for benchmarks.
 pub fn empty_global_config_path() -> &'static Path {
     EMPTY_GLOBAL_CONFIG.get_or_init(|| {
-        let dir = scratch_dir();
-        let _ = fs::create_dir_all(&dir);
-        let path = dir.join(".grit-bench-empty-config");
+        let path = PathBuf::from("/tmp/grit-bench-global-config");
+        let _ = fs::create_dir_all(path.parent().unwrap_or(Path::new("/tmp")));
         // v0 smart HTTP matches system `git` against git-http-backend (v2 fetch breaks on CGI).
         let contents = "[protocol]\n\tversion = 0\n";
         if fs::write(&path, contents).is_err() {

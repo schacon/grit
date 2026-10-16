@@ -1021,7 +1021,10 @@ pub(crate) fn build_report_with_fixtures(
         tools: ToolVersions {
             git: tool_version(git),
             grit: tool_version(grit),
-            grit_commit: grit_source_commit(),
+            grit_commit: std::env::var("GRIT_BENCH_REPORT_GRIT_COMMIT")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(grit_source_commit),
         },
         fixtures,
         scenarios,
@@ -1264,7 +1267,7 @@ pub fn run_hot_path_suite(
         )?);
 
         let (grit_revert, git_revert) = revert_argv(&meta_pick);
-        scenarios.push(run_scenario(
+        scenarios.push(run_scenario_allow_grit_failure(
             hyperfine,
             git,
             grit,
@@ -1339,6 +1342,48 @@ pub fn run_hot_path_suite(
                 git_via_shell: false,
             },
             &repo_series,
+        )?);
+    }
+    Ok(build_report(git, grit, timestamp, scenarios))
+}
+
+/// Merge-only hot-path scenario (isolated fixture; no prior pick/revert in the same run).
+pub fn run_merge_only_suite(
+    hyperfine: &Path,
+    git: &Path,
+    grit: &Path,
+    cfg: &RunConfig,
+    sizes: &[usize],
+    fsmonitor: bool,
+    timestamp: time::OffsetDateTime,
+) -> Result<BenchReport> {
+    let mut scenarios = Vec::new();
+    for &size in sizes {
+        let spec = hot_path_spec(size, fsmonitor);
+        let fixture = format!("synthetic-{size}");
+        let touch = touch_paths_for_size(size);
+        setup_pick_merge_fixture(git, spec, touch)?;
+        let meta = load_meta(&scratch_dir())?;
+        let (grit_merge, git_merge) = merge_argv(&meta);
+        let repo = scratch_dir();
+        scenarios.push(run_scenario(
+            hyperfine,
+            git,
+            grit,
+            cfg,
+            &Scenario {
+                id: format!("merge-{size}"),
+                group: "merge".into(),
+                fixture: fixture.clone(),
+                description: format!("merge topic branch with one {touch}-path commit"),
+                grit_argv: grit_merge,
+                git_argv: git_merge,
+                driver: Driver::Cli,
+                prepare_kind: Some(PrepareKind::MergeReset),
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            &repo,
         )?);
     }
     Ok(build_report(git, grit, timestamp, scenarios))
