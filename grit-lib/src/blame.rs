@@ -792,6 +792,7 @@ use crate::diff_rename_parallel::{diff_rename_parallel_options, parallel_map_ind
 use crate::error::{Error as LibError, Result};
 use crate::objects::{
     parse_commit, parse_commit_tree_and_parents, parse_tree, Object, ObjectId, ObjectKind,
+    TreeEntry,
 };
 use crate::odb::Odb;
 use crate::parallel::{ParallelOptions, ThreadPolicy};
@@ -1285,6 +1286,7 @@ struct BlameSession<'a> {
     bloom_pathspec: Vec<String>,
     bloom_key_cache: Option<BloomKeyCacheEntry>,
     blob_lines: HashMap<BlobCacheKey, Arc<BlobLines>>,
+    tree_entries: HashMap<ObjectId, Arc<Vec<TreeEntry>>>,
     path_entries: HashMap<PathCacheKey, Option<(ObjectId, u32)>>,
     pair_maps: HashMap<PairMapCacheKey, PairMapCacheValue>,
 }
@@ -1308,9 +1310,20 @@ impl<'a> BlameSession<'a> {
             bloom_pathspec: Vec::new(),
             bloom_key_cache: None,
             blob_lines: HashMap::new(),
+            tree_entries: HashMap::new(),
             path_entries: HashMap::new(),
             pair_maps: HashMap::new(),
         }
+    }
+
+    fn tree_entries_cached(&mut self, tree_oid: ObjectId) -> Result<Arc<Vec<TreeEntry>>> {
+        if let Some(entries) = self.tree_entries.get(&tree_oid) {
+            return Ok(Arc::clone(entries));
+        }
+        let obj = read_object_for_blame(self.odb, &tree_oid, None)?;
+        let entries = Arc::new(parse_tree(&obj.data)?);
+        self.tree_entries.insert(tree_oid, Arc::clone(&entries));
+        Ok(entries)
     }
 
     fn set_bloom_path(&mut self, path: &str) {
@@ -1351,7 +1364,7 @@ impl<'a> BlameSession<'a> {
         path: &str,
         commit_cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
     ) -> Result<Option<(ObjectId, u32)>> {
-        let meta = get_blame_commit(odb, commit, commit_cache)?;
+        let meta = get_blame_commit(odb, commit, commit_cache, self.commit_graph.as_deref())?;
         self.resolve_path_in_tree(meta.tree, path)
     }
 
@@ -1393,7 +1406,34 @@ impl<'a> BlameSession<'a> {
         if let Some(entry) = self.path_entries.get(&key) {
             return Ok(*entry);
         }
-        let resolved = resolve_path_in_tree_entry(self.odb, &tree_oid, path)?;
+        let parts: Vec<&str> = path.split('/').collect();
+        let mut current = tree_oid;
+        let mut resolved = None;
+        for (i, part) in parts.iter().enumerate() {
+            let entries = self.tree_entries_cached(current)?;
+            match entries
+                .iter()
+                .find(|e| String::from_utf8_lossy(&e.name) == *part)
+            {
+                Some(e) if i == parts.len() - 1 => {
+                    if e.mode == 0o040000 {
+                        resolved = None;
+                    } else {
+                        resolved = Some((e.oid, e.mode));
+                    }
+                    break;
+                }
+                Some(e) if e.mode == 0o040000 => current = e.oid,
+                Some(_) => {
+                    resolved = None;
+                    break;
+                }
+                None => {
+                    resolved = None;
+                    break;
+                }
+            }
+        }
         self.path_entries.insert(key, resolved);
         Ok(resolved)
     }
@@ -1560,11 +1600,16 @@ fn fast_forward_same_blob(
     commit_cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
 ) -> Result<ObjectId> {
     loop {
-        let parents = commit_parents_for_blame(odb, oid, grafts, commit_cache)?;
+        let parents = commit_parents_for_blame(odb, oid, grafts, commit_cache, session)?;
         let Some(parent_oid) = parents.first().copied() else {
             break;
         };
-        let parent_commit = get_blame_commit(odb, parent_oid, commit_cache)?;
+        let parent_commit = get_blame_commit(
+            odb,
+            parent_oid,
+            commit_cache,
+            session.commit_graph.as_deref(),
+        )?;
         let Some((p_blob, _mode)) = session.resolve_path_in_tree(parent_commit.tree, path)? else {
             break;
         };
@@ -1593,7 +1638,12 @@ fn compute_blame_with_session(
     session: &mut BlameSession<'_>,
 ) -> Result<Vec<BlameLine>> {
     let mut commit_cache: HashMap<ObjectId, Arc<BlameCommitMeta>> = HashMap::new();
-    let start_commit = get_blame_commit(odb, start_oid, &mut commit_cache)?;
+    let start_commit = get_blame_commit(
+        odb,
+        start_oid,
+        &mut commit_cache,
+        session.commit_graph.as_deref(),
+    )?;
 
     let (blob_oid, blob_mode) = session
         .resolve_path_in_tree(start_commit.tree, file_path)?
@@ -1683,14 +1733,25 @@ fn compute_blame_with_session(
             }
         }
 
-        let commit = get_blame_commit(odb, current_oid, &mut commit_cache)?;
-        let mut parents = commit_parents_for_blame(odb, current_oid, grafts, &mut commit_cache)?;
+        let commit = get_blame_commit(
+            odb,
+            current_oid,
+            &mut commit_cache,
+            session.commit_graph.as_deref(),
+        )?;
+        let mut parents =
+            commit_parents_for_blame(odb, current_oid, grafts, &mut commit_cache, session)?;
 
         if !first_parent_only && !ignore_revs.contains(&current_oid) && parents.len() >= 2 {
             let mut parent_blob_ids: Vec<ObjectId> = Vec::with_capacity(parents.len());
             let mut all_resolved = true;
             for parent_oid in &parents {
-                let parent_commit = get_blame_commit(odb, *parent_oid, &mut commit_cache)?;
+                let parent_commit = get_blame_commit(
+                    odb,
+                    *parent_oid,
+                    &mut commit_cache,
+                    session.commit_graph.as_deref(),
+                )?;
                 match session.resolve_path_in_tree(parent_commit.tree, &current_path)? {
                     Some((blob, _mode)) => parent_blob_ids.push(blob),
                     None => {
@@ -1723,7 +1784,12 @@ fn compute_blame_with_session(
             let mut parent_lines: Vec<Option<Vec<String>>> = Vec::new();
             let mut parent_blames: Vec<Option<Vec<BlameLine>>> = Vec::new();
             for parent_oid in &parents {
-                let parent_commit = get_blame_commit(odb, *parent_oid, &mut commit_cache)?;
+                let parent_commit = get_blame_commit(
+                    odb,
+                    *parent_oid,
+                    &mut commit_cache,
+                    session.commit_graph.as_deref(),
+                )?;
                 if let Some((p_blob_oid, p_blob_mode)) =
                     session.resolve_path_in_tree(parent_commit.tree, &current_path)?
                 {
@@ -2035,7 +2101,12 @@ fn compute_blame_with_session(
         }
 
         let parent_oid = parents[0];
-        let parent_commit = get_blame_commit(odb, parent_oid, &mut commit_cache)?;
+        let parent_commit = get_blame_commit(
+            odb,
+            parent_oid,
+            &mut commit_cache,
+            session.commit_graph.as_deref(),
+        )?;
         let mut parent_blob_entry =
             session.resolve_blob_at_commit(odb, parent_oid, &current_path, &mut commit_cache)?;
         let mut parent_blob_path = current_path.clone();
@@ -2627,15 +2698,28 @@ fn get_blame_commit(
     odb: &Odb,
     oid: ObjectId,
     cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
+    graph: Option<&CommitGraphChain>,
 ) -> Result<Arc<BlameCommitMeta>> {
     if let Some(c) = cache.get(&oid) {
         return Ok(Arc::clone(c));
     }
-    let obj = read_object_for_blame(odb, &oid, None)?;
-    let (tree, parents) = parse_commit_tree_and_parents(&obj.data)?;
-    let meta = Arc::new(BlameCommitMeta { tree, parents });
+    let meta = if let Some(chain) = graph {
+        if let Some((tree, parents)) = chain.graph_commit_meta(&oid) {
+            Arc::new(BlameCommitMeta { tree, parents })
+        } else {
+            load_blame_commit_from_object(odb, oid)?
+        }
+    } else {
+        load_blame_commit_from_object(odb, oid)?
+    };
     cache.insert(oid, Arc::clone(&meta));
     Ok(meta)
+}
+
+fn load_blame_commit_from_object(odb: &Odb, oid: ObjectId) -> Result<Arc<BlameCommitMeta>> {
+    let obj = read_object_for_blame(odb, &oid, None)?;
+    let (tree, parents) = parse_commit_tree_and_parents(&obj.data)?;
+    Ok(Arc::new(BlameCommitMeta { tree, parents }))
 }
 
 /// Skip first-parent history while Bloom filters or an identical blob show `path` unchanged.
@@ -2660,12 +2744,12 @@ fn advance_across_unchanged_first_parents(
             if let Some((parents, _)) = chain.graph_commit(&current_oid) {
                 parents.first().copied()
             } else {
-                commit_parents_for_blame(odb, current_oid, grafts, commit_cache)?
+                commit_parents_for_blame(odb, current_oid, grafts, commit_cache, session)?
                     .first()
                     .copied()
             }
         } else {
-            commit_parents_for_blame(odb, current_oid, grafts, commit_cache)?
+            commit_parents_for_blame(odb, current_oid, grafts, commit_cache, session)?
                 .first()
                 .copied()
         };
@@ -2768,7 +2852,11 @@ fn commit_object_parents(
             return Ok(parents);
         }
     }
-    Ok(get_blame_commit(odb, oid, cache)?.parents.clone())
+    Ok(
+        get_blame_commit(odb, oid, cache, session.commit_graph.as_deref())?
+            .parents
+            .clone(),
+    )
 }
 
 /// Parent list for a commit, honoring `.git/info/grafts` (same rules as `git rev-list`).
@@ -2777,11 +2865,21 @@ fn commit_parents_for_blame(
     oid: ObjectId,
     grafts: &HashMap<ObjectId, Vec<ObjectId>>,
     cache: &mut HashMap<ObjectId, Arc<BlameCommitMeta>>,
+    session: &BlameSession<'_>,
 ) -> Result<Vec<ObjectId>> {
     if let Some(p) = grafts.get(&oid) {
         return Ok(p.clone());
     }
-    Ok(get_blame_commit(odb, oid, cache)?.parents.clone())
+    if let Some(chain) = session.commit_graph.as_ref() {
+        if let Some((parents, _)) = chain.graph_commit(&oid) {
+            return Ok(parents);
+        }
+    }
+    Ok(
+        get_blame_commit(odb, oid, cache, session.commit_graph.as_deref())?
+            .parents
+            .clone(),
+    )
 }
 
 /// Options for [`blame_file`].

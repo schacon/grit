@@ -715,6 +715,15 @@ impl CommitGraphLayer {
         Some(out)
     }
 
+    /// Root tree OID stored in the CDAT record for `lex_index`.
+    fn cdat_root_tree(&self, lex_index: u32) -> Option<ObjectId> {
+        if lex_index >= self.num_commits {
+            return None;
+        }
+        let base = self.chunk_commit_data_off + lex_index as usize * (self.hash_len + 16);
+        ObjectId::from_bytes(self.body.get(base..base + self.hash_len)?).ok()
+    }
+
     fn cdat_record(&self, lex_index: u32) -> Option<(u32, u32, i64)> {
         if lex_index >= self.num_commits {
             return None;
@@ -1311,6 +1320,19 @@ impl CommitGraphChain {
             .filter_map(|pos| self.oid_at_global_position(pos))
             .collect();
         Some((oids, commit_time))
+    }
+
+    /// Root tree OID for `oid` from commit-graph CDAT (no object read).
+    pub(crate) fn graph_commit_tree(&self, oid: &ObjectId) -> Option<ObjectId> {
+        let (layer_idx, lex) = self.find_commit(oid)?;
+        self.layers[layer_idx].cdat_root_tree(lex)
+    }
+
+    /// Tree and parent OIDs for blame when `oid` is indexed in the chain.
+    pub(crate) fn graph_commit_meta(&self, oid: &ObjectId) -> Option<(ObjectId, Vec<ObjectId>)> {
+        let tree = self.graph_commit_tree(oid)?;
+        let (parents, _) = self.graph_commit(oid)?;
+        Some((tree, parents))
     }
 
     /// Generation number for ordering merge-base walks (`2^63-1` when unknown).
