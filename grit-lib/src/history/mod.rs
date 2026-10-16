@@ -39,12 +39,14 @@
 //! ```
 
 mod apply;
+mod drop;
 mod error;
 mod plan;
 mod reword;
 mod types;
 
 pub use apply::apply_rewrite;
+pub use drop::drop;
 pub use error::HistoryError;
 pub use plan::plan_rewrite;
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
