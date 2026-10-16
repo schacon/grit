@@ -47,6 +47,9 @@ cargo build --release -p grit-cli -p grit-utils
 ./target/release/grit-bench history --format json --output baselines/history-synth-L.json
 ./target/release/grit-bench history --smoke --format json --output /tmp/history-smoke.json
 
+# Worktree scenarios on a cached registry fixture (status / add / commit / diff)
+./target/release/grit-bench fixtures prepare --only synth-s
+./target/release/grit-bench run --group worktree --fixture synth-s --format json --output /tmp/worktree-synth-s.json
 # Compare two JSON reports (exit 1 if any scenario ratio drifts > tolerance)
 ./target/release/grit-bench compare baseline.json candidate.json --tolerance 0.10
 
@@ -174,6 +177,16 @@ Mutating scenarios should take a **`git clone --local`** copy via [`fixture_regi
 | `history-cat-file-batch` | history | Sorted OIDs reachable from `HEAD` fed to `cat-file --batch`; grit side uses **`lib-op cat-file-batch`**; **`driver: lib`** |
 
 Library-backed scenarios (`driver: lib`) run through the hidden `grit-bench lib-op` subcommand (same workloads as `grit-bench drive` for cat-file batch). Correctness is checked before timing: rev-list count equality, blame porcelain line attribution, and byte-identical cat-file batch output vs system `git`.
+
+**Worktree group** (`grit-bench run --group worktree --fixture <kind>`) runs on registry fixtures (`synth-s`, `synth-m`, `synth-l`, `git-git`). Each scenario uses hyperfine `--prepare` to reset the clone identically for git and grit (always back to a pinned fixture-base commit, especially before commit iterations); stdout/stderr are discarded (`> /dev/null`). `--smoke` uses hyperfine `--runs 1` (exactly one timed sample per tool). Repos pin `core.untrackedCache=false` and `core.fsmonitor=false` locally, with the same isolated git env as other suites.
+
+| ID pattern | What it measures |
+| --- | --- |
+| `worktree-status-clean-{fixture}` | Clean tree: `git status -s` vs `grit status` |
+| `worktree-status-dirty-{fixture}` | ~1% tracked files modified plus ~1% untracked files |
+| `worktree-add-{fixture}` | Stage the modified path set (`git add` paths vs `grit add`) |
+| `worktree-commit-{fixture}` | Commit after staging ~1% modified paths |
+| `worktree-diff-{fixture}` | Unstaged worktree vs index (`git diff` vs `grit diff`) |
 
 Hot-path scenarios set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to an empty file. Append `-fsmn` to the scenario id when `--fsmonitor-fixture` is used (trivial hook v2 + FSMN index extension).
 

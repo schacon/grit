@@ -74,6 +74,11 @@ pub enum PrepareKind {
     StashReset,
     MaintenanceReset,
     DiffDirtyReset,
+    WorktreeStatusClean,
+    WorktreeStatusDirty,
+    WorktreeAdd,
+    WorktreeCommit,
+    WorktreeDiff,
 }
 
 /// Hyperfine tuning for all scenarios in a run.
@@ -125,6 +130,11 @@ fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind) -> String {
         PrepareKind::StashReset => "prepare-stash",
         PrepareKind::MaintenanceReset => "prepare-maintenance",
         PrepareKind::DiffDirtyReset => "prepare-diff-dirty",
+        PrepareKind::WorktreeStatusClean => "prepare-worktree-status-clean",
+        PrepareKind::WorktreeStatusDirty => "prepare-worktree-status-dirty",
+        PrepareKind::WorktreeAdd => "prepare-worktree-add",
+        PrepareKind::WorktreeCommit => "prepare-worktree-commit",
+        PrepareKind::WorktreeDiff => "prepare-worktree-diff",
     };
     shell_command(
         &cfg.prepare_bin,
@@ -1094,6 +1104,10 @@ fn hot_path_spec(file_count: usize, fsmonitor: bool) -> HotPathRepoSpec {
     let mut spec = HotPathRepoSpec::for_size(file_count);
     spec.fsmonitor = fsmonitor;
     spec
+}
+
+pub(crate) fn sh_script_internal(script: String) -> Vec<String> {
+    sh_script(script)
 }
 
 fn sh_script(script: String) -> Vec<String> {
