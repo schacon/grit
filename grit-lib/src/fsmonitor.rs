@@ -373,10 +373,10 @@ fn ipc_send_query_windows(ipc_path: &Path, message: &[u8]) -> Result<Vec<u8>> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
 
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FlushFileBuffers, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING,
+        OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 
