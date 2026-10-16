@@ -45,7 +45,7 @@ mod plan;
 mod reword;
 mod types;
 
-pub use apply::apply_rewrite;
+pub use apply::{apply_rewrite, verify_rewrite_plan};
 pub use drop::drop;
 pub use error::HistoryError;
 pub use plan::plan_rewrite;

@@ -1,6 +1,5 @@
 //! `grit history` — stateless history rewrite helpers.
 
-use std::collections::HashMap;
 use std::io::{self, Read, Write};
 
 use anyhow::{bail, Context, Result};
@@ -8,8 +7,8 @@ use clap::ValueEnum;
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::config::ConfigSet;
 use grit_lib::revwalk::history::{
-    apply_rewrite, drop as history_drop, reword, ApplyOptions, EmptyPolicy, HistoryError, RefScope,
-    RewriteOptions, RewritePlan,
+    apply_rewrite, drop as history_drop, reword, verify_rewrite_plan, ApplyOptions, EmptyPolicy,
+    HistoryError, RefScope, RewriteOptions, RewritePlan,
 };
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
@@ -161,7 +160,8 @@ pub fn run_reword(
             committer,
         },
     )
-    .map_err(|e| map_history_error(e, "reword"))?;
+    .map_err(|e| map_history_error(e, "reword", None))?;
+    verify_rewrite_plan(&repo, &plan).map_err(|e| map_history_error(e, "reword", None))?;
     let subject = rewritten_subject(&repo, &plan, commit_oid)?;
     let mut outcome = outcome_from_plan(&repo, &plan, "reword", shared.dry_run)?;
     if !shared.dry_run {
@@ -174,7 +174,7 @@ pub fn run_reword(
                 reflog_message: format!("history reword: {subject}"),
             },
         )
-        .map_err(|e| map_history_error(e, "reword"))?;
+        .map_err(|e| map_history_error(e, "reword", None))?;
     }
     outcome.dry_run = shared.dry_run;
     Ok(outcome)
@@ -204,7 +204,9 @@ pub fn run_drop(commit: &str, shared: &HistoryRewriteArgs) -> Result<HistoryRewr
             committer,
         },
     )
-    .map_err(|e| map_history_error(e, "drop"))?;
+    .map_err(|e| map_history_error(e, "drop", Some(commit_oid)))?;
+    verify_rewrite_plan(&repo, &plan)
+        .map_err(|e| map_history_error(e, "drop", Some(commit_oid)))?;
     let subject = dropped_subject(&repo, commit_oid)?;
     let mut outcome = outcome_from_plan(&repo, &plan, "drop", shared.dry_run)?;
     if !shared.dry_run {
@@ -217,7 +219,7 @@ pub fn run_drop(commit: &str, shared: &HistoryRewriteArgs) -> Result<HistoryRewr
                 reflog_message: format!("history drop: {subject}"),
             },
         )
-        .map_err(|e| map_history_error(e, "drop"))?;
+        .map_err(|e| map_history_error(e, "drop", Some(commit_oid)))?;
     }
     outcome.dry_run = shared.dry_run;
     Ok(outcome)
@@ -303,12 +305,19 @@ fn head_pair(repo: &grit_lib::repo::Repository, plan: &RewritePlan) -> Result<Op
         return Ok(None);
     }
     let old_oid = head_commit_oid(repo)?;
-    let mapping: HashMap<ObjectId, ObjectId> = plan
-        .commits
-        .iter()
-        .filter_map(|r| r.new.map(|n| (r.old, n)))
-        .collect();
-    let new_oid = mapping.get(&old_oid).copied().unwrap_or(old_oid);
+    let new_oid = plan
+        .mapped_tip(old_oid)
+        .or_else(|| match resolve_head(repo.git_dir()).ok()? {
+            HeadState::Branch { refname, .. } => plan
+                .ref_updates
+                .iter()
+                .find(|u| u.name == refname)
+                .map(|u| u.new),
+            _ => None,
+        });
+    let Some(new_oid) = new_oid else {
+        bail!("rewrite plan missing HEAD ref update");
+    };
     Ok(Some(HeadPair {
         old: old_oid.to_hex(),
         new: new_oid.to_hex(),
@@ -324,7 +333,11 @@ fn head_commit_oid(repo: &grit_lib::repo::Repository) -> Result<ObjectId> {
     }
 }
 
-fn map_history_error(err: HistoryError, operation: &str) -> anyhow::Error {
+fn map_history_error(
+    err: HistoryError,
+    operation: &str,
+    drop_target: Option<ObjectId>,
+) -> anyhow::Error {
     match err {
         HistoryError::EmptyMessage => anyhow::anyhow!("commit message cannot be empty"),
         HistoryError::Conflict { mut paths, .. } => {
@@ -341,8 +354,10 @@ fn map_history_error(err: HistoryError, operation: &str) -> anyhow::Error {
         }
         HistoryError::MergeCommitInReplay { commit } => {
             let short = &commit.to_hex()[..7];
-            if operation == "drop" {
+            if operation == "drop" && drop_target == Some(commit) {
                 anyhow::anyhow!("cannot drop merge commit {short}")
+            } else if operation == "drop" {
+                anyhow::anyhow!("replaying merge commits is not supported yet (commit {short})")
             } else {
                 anyhow::anyhow!(
                     "{short} is a merge commit — grit history {operation} cannot replay merges yet"

@@ -326,7 +326,7 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         );
         obj.insert("$id".into(), schema_id(command).into());
     }
-    if command == "history.reword" {
+    if command == "history.reword" || command == "history.drop" {
         ensure_required_nullable_head(&mut value);
     }
     canonicalize_json(&mut value);
@@ -533,6 +533,7 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             "history_reword",
             &["history", "reword", "HEAD~1", "-m", "reworded subject"],
         ),
+        ("history_drop", &["history", "drop", "HEAD~1"]),
         ("revert", &["revert", "HEAD"]),
         ("shortlog", &["shortlog"]),
         ("revs_head", &["revs", "HEAD"]),

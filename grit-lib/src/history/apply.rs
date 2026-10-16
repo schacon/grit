@@ -38,6 +38,21 @@ use super::types::{AppliedRewrite, ApplyOptions, PlannedRefUpdate, RewritePlan};
 ///
 /// Returns [`HistoryError::LocalChangesWouldBeOverwritten`], [`HistoryError::HeadMovedSincePlan`],
 /// [`HistoryError::RefCasMismatch`], [`HistoryError::RefApply`], or [`HistoryError::WorktreeApply`].
+///
+/// [`verify_rewrite_plan`] runs the same worktree safety checks without moving refs.
+pub fn verify_rewrite_plan(repo: &Repository, plan: &RewritePlan) -> Result<(), HistoryError> {
+    let (old_tree, new_tree) = head_tree_transition(plan);
+    if repo.is_bare() {
+        return Ok(());
+    }
+    if let (Some(old), Some(new)) = (old_tree.as_ref(), new_tree.as_ref()) {
+        verify_worktree_ready_for_head_tree_change(repo, Some(old), new)?;
+    }
+    Ok(())
+}
+
+/// Returns [`HistoryError::LocalChangesWouldBeOverwritten`], [`HistoryError::HeadMovedSincePlan`],
+/// [`HistoryError::RefCasMismatch`], [`HistoryError::RefApply`], or [`HistoryError::WorktreeApply`].
 pub fn apply_rewrite(
     repo: &Repository,
     plan: &RewritePlan,

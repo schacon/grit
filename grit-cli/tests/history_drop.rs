@@ -154,6 +154,46 @@ fn history_drop_json_schema() -> TestResult {
 }
 
 #[test]
+fn history_drop_head_json_reports_new_parent() -> TestResult {
+    let scratch = Scratch::new("head-json")?;
+    let dir = scratch.path();
+    git(dir, &["init", "-b", "main"])?;
+    fs::write(dir.join("first.t"), b"1\n")?;
+    git(dir, &["add", "first.t"])?;
+    git(dir, &["commit", "-m", "first"])?;
+    let parent = git(dir, &["rev-parse", "HEAD"])?.trim().to_string();
+    fs::write(dir.join("second.t"), b"2\n")?;
+    git(dir, &["add", "second.t"])?;
+    git(dir, &["commit", "-m", "second"])?;
+    let tip = git(dir, &["rev-parse", "HEAD"])?.trim().to_string();
+    let out = gs(dir, ["history", "drop", "HEAD", "--json"])?;
+    assert!(out.success(), "{}", out.stderr);
+    let json = parse_json(&out.stdout)?;
+    let head = json["head"].as_object().ok_or("head object")?;
+    assert_eq!(head["old"].as_str(), Some(tip.as_str()));
+    assert_eq!(head["new"].as_str(), Some(parent.as_str()));
+    assert_ne!(head["old"], head["new"]);
+    Ok(())
+}
+
+#[test]
+fn history_drop_dry_run_rejects_dirty_worktree() -> TestResult {
+    let scratch = Scratch::new("dry-dirty")?;
+    let dir = scratch.path();
+    let (_a, _b, _c) = init_linear_repo(dir)?;
+    fs::write(dir.join("third.t"), b"local edit\n")?;
+    let before = git(dir, &["rev-parse", "main"])?.trim().to_string();
+    let out = gs(dir, ["history", "drop", "HEAD", "--dry-run"])?;
+    assert!(
+        !out.success(),
+        "dry-run must fail when worktree would be overwritten"
+    );
+    let after = git(dir, &["rev-parse", "main"])?.trim().to_string();
+    assert_eq!(before, after);
+    Ok(())
+}
+
+#[test]
 fn history_drop_dry_run_changes_no_refs() -> TestResult {
     let scratch = Scratch::new("dry")?;
     let dir = scratch.path();

@@ -118,6 +118,15 @@ pub struct RewritePlan {
 }
 
 impl RewritePlan {
+    /// Tip OID after rewrite when a ref update moves `old_tip`, if any.
+    #[must_use]
+    pub fn mapped_tip(&self, old_tip: ObjectId) -> Option<ObjectId> {
+        self.ref_updates
+            .iter()
+            .find(|u| u.old == old_tip)
+            .map(|u| u.new)
+    }
+
     /// `update <ref> <new> <old>` lines accepted by `git update-ref --stdin`.
     #[must_use]
     pub fn ref_update_lines(&self) -> Vec<String> {

@@ -1,4 +1,4 @@
-//! Tests for [`grit_lib::history::drop`].
+//! Tests for [`grit_lib::revwalk::history::drop`].
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -7,7 +7,7 @@ mod support;
 use std::fs;
 use std::process::Command;
 
-use grit_lib::history::{
+use grit_lib::revwalk::history::{
     apply_rewrite, drop as history_drop, ApplyOptions, EmptyPolicy, HistoryError, RefScope,
     RewriteOptions,
 };
@@ -98,6 +98,20 @@ fn write_test_commit(
 }
 
 #[test]
+fn drop_head_maps_to_parent_in_ref_updates() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "first.t", "1\n", "first");
+    commit_file(wt, "second.t", "2\n", "second");
+    let tip = git_rev_parse(wt, "HEAD").expect("tip");
+    let parent = git_rev_parse(wt, "HEAD~").expect("parent");
+    let grit = open_grit(wt);
+    let plan = history_drop(&grit, tip, &opts(0)).expect("drop head");
+    assert!(plan.head.commit_changes);
+    assert_eq!(plan.mapped_tip(tip), Some(parent));
+}
+
+#[test]
 fn drop_replays_descendants_onto_parent() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
@@ -145,7 +159,10 @@ fn drop_rejects_root_commit() {
     let oids = build_commit_dag(wt, &[("b", "a")], &[("b", "refs/heads/main")]);
     let grit = open_grit(wt);
     let err = history_drop(&grit, oids["a"], &opts(3)).unwrap_err();
-    assert_eq!(err, HistoryError::RootCommit { commit: oids["a"] });
+    assert!(matches!(
+        err,
+        HistoryError::RootCommit { commit } if commit == oids["a"]
+    ));
 }
 
 #[test]
@@ -159,7 +176,10 @@ fn drop_rejects_merge_commit() {
     );
     let grit = open_grit(wt);
     let err = history_drop(&grit, oids["m"], &opts(4)).unwrap_err();
-    assert_eq!(err, HistoryError::MergeCommitInReplay { commit: oids["m"] });
+    assert!(matches!(
+        err,
+        HistoryError::MergeCommitInReplay { commit } if commit == oids["m"]
+    ));
 }
 
 #[test]
