@@ -330,7 +330,7 @@ fn reuse_skips_when_have_shallow_grafts_present() {
     build_history(&fx);
     git_ok(&fx, &["repack", "-adb"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
     let mut have_shallow = HashSet::new();
@@ -366,7 +366,7 @@ fn thin_pack_bitmap_reuse_index_pack_strict_ok() {
     build_history(&fx);
     git_ok(&fx, &["repack", "-adb"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
@@ -430,7 +430,7 @@ fn multi_sidecar_pack_reuse_binds_bitmap_backing_pack() {
     );
 
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let opts = PackBuildOptions {
         delta: true,
         use_bitmaps: true,
