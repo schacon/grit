@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use crate::index::MODE_GITLINK;
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::{
-    checkout_tree_changes_with_index_opts, precompute_wholesale_safe_directories,
-    CheckoutApplyOptions, WholesaleWorktreeScan,
+    checkout_tree_changes_with_index_opts, path_under_wholesale_directory,
+    precompute_wholesale_safe_directories, CheckoutApplyOptions, WholesaleWorktreeScan,
 };
 use crate::porcelain::checkout_reflog::{
     append_head_checkout_reflog, checkout_reflog_from_label, finish_switch_ref_updates,
@@ -355,11 +355,19 @@ fn switch_to_target(
     let mut prepared = prepare_tree_switch_allow_local(repo, &target_tree)?;
     ensure_no_untracked_overwrite(&prepared.plan.untracked, &prepared.plan.tree_changes)?;
 
+    let wholesale_skip = &prepared.preverified_wholesale_dirs;
     let tree_changes: Vec<DiffEntry> = prepared
         .plan
         .tree_changes
         .into_iter()
         .filter(|change| {
+            if change.status == DiffStatus::Deleted {
+                if let Some(path) = change.old_path.as_deref() {
+                    if path_under_wholesale_directory(path, wholesale_skip) {
+                        return false;
+                    }
+                }
+            }
             path_from_diff(change)
                 .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
         })
