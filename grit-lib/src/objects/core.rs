@@ -692,16 +692,16 @@ pub fn find_tree_entry_by_name_dir_or_file<'a>(
     find_tree_entry_by_name(entries, name, false)
 }
 
-/// Find one tree entry by name without building a full [`TreeEntry`] vector.
-///
-/// Scans `data` in on-disk order (trees are small enough that allocation-free scan
-/// beats caching fully parsed trees during blame path walks).
-pub fn find_tree_entry_by_name_in_data(
-    data: &[u8],
-    oid_len: usize,
-    name: &[u8],
-) -> Result<Option<TreeEntry>> {
+struct TreeEntrySpan {
+    mode: u32,
+    name_off: usize,
+    name_len: usize,
+    oid_off: usize,
+}
+
+fn tree_entry_spans(data: &[u8], oid_len: usize) -> Result<Vec<TreeEntrySpan>> {
     let mut pos = 0usize;
+    let mut spans = Vec::new();
     while pos < data.len() {
         let sp = data[pos..]
             .iter()
@@ -717,16 +717,60 @@ pub fn find_tree_entry_by_name_in_data(
             .iter()
             .position(|&b| b == 0)
             .ok_or_else(|| Error::CorruptObject("tree entry missing NUL".to_owned()))?;
-        let entry_name = &data[pos..pos + nul];
+        let name_off = pos;
+        let name_len = nul;
         pos += nul + 1;
         if pos + oid_len > data.len() {
             return Err(Error::CorruptObject("tree entry truncated SHA".to_owned()));
         }
-        let oid = ObjectId::from_bytes(&data[pos..pos + oid_len])?;
+        spans.push(TreeEntrySpan {
+            mode,
+            name_off,
+            name_len,
+            oid_off: pos,
+        });
         pos += oid_len;
+    }
+    Ok(spans)
+}
+
+/// Find one tree entry by name without building a full [`TreeEntry`] vector.
+pub(crate) fn find_tree_entry_by_name_in_data(
+    data: &[u8],
+    oid_len: usize,
+    name: &[u8],
+) -> Result<Option<TreeEntry>> {
+    const BINSEARCH_MIN_ENTRIES: usize = 48;
+    let spans = tree_entry_spans(data, oid_len)?;
+    if spans.is_empty() {
+        return Ok(None);
+    }
+    if spans.len() < BINSEARCH_MIN_ENTRIES {
+        for span in spans {
+            let entry_name = &data[span.name_off..span.name_off + span.name_len];
+            if entry_name == name {
+                let oid = ObjectId::from_bytes(&data[span.oid_off..span.oid_off + oid_len])?;
+                return Ok(Some(TreeEntry {
+                    mode: span.mode,
+                    name: entry_name.to_vec(),
+                    oid,
+                }));
+            }
+        }
+        return Ok(None);
+    }
+    let name_is_tree = name.ends_with(b"/");
+    let idx = spans.binary_search_by(|span| {
+        let entry_name = &data[span.name_off..span.name_off + span.name_len];
+        tree_entry_cmp(entry_name, span.mode == 0o040000, name, name_is_tree)
+    });
+    if let Ok(i) = idx {
+        let span = &spans[i];
+        let entry_name = &data[span.name_off..span.name_off + span.name_len];
         if entry_name == name {
+            let oid = ObjectId::from_bytes(&data[span.oid_off..span.oid_off + oid_len])?;
             return Ok(Some(TreeEntry {
-                mode,
+                mode: span.mode,
                 name: entry_name.to_vec(),
                 oid,
             }));

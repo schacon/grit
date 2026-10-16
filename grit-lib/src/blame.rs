@@ -170,7 +170,6 @@ fn build_line_map_with_changed_flags_owned(
 ) -> (Vec<Option<usize>>, Vec<bool>) {
     let (prefix, suffix, old_lo, old_hi, new_lo, new_hi) = common_affix_trim_blob_lines(old, new);
     let mut map = vec![None; new.len()];
-    let mut flags = vec![false; new.len()];
     for (i, slot) in map.iter_mut().take(prefix).enumerate() {
         *slot = Some(i);
     }
@@ -180,8 +179,17 @@ fn build_line_map_with_changed_flags_owned(
         map[new_idx] = Some(old_idx);
     }
     if old_lo >= old_hi && new_lo >= new_hi {
-        return (map, flags);
+        return if with_changed_flags {
+            (map, vec![false; new.len()])
+        } else {
+            (map, Vec::new())
+        };
     }
+    let mut flags = if with_changed_flags {
+        vec![false; new.len()]
+    } else {
+        Vec::new()
+    };
     let old_mid_refs: Vec<&str> = (old_lo..old_hi).map(|i| old.line(i)).collect();
     let new_mid_refs: Vec<&str> = (new_lo..new_hi).map(|i| new.line(i)).collect();
     let ops = if diff_algorithm == BlameDiffAlgorithm::Myers {
@@ -208,8 +216,10 @@ fn build_line_map_with_changed_flags_owned(
         for (j, flag) in mid_flags.into_iter().enumerate() {
             flags[prefix + j] = flag;
         }
+        (map, flags)
+    } else {
+        (map, Vec::new())
     }
-    (map, flags)
 }
 
 /// Like [`build_line_map`], optionally returning xdiff-style changed flags for the new side
@@ -1247,6 +1257,37 @@ impl BlobLines {
     }
 }
 
+/// Marks line indices used in one merge-parent pass without clearing a full `Vec<bool>`.
+#[derive(Default)]
+struct LineUseStamp {
+    generation: u32,
+    marks: Vec<u32>,
+}
+
+impl LineUseStamp {
+    fn begin_pass(&mut self, min_len: usize) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.marks.fill(0);
+            self.generation = 1;
+        }
+        if self.marks.len() < min_len {
+            self.marks.resize(min_len, 0);
+        }
+    }
+
+    fn mark(&mut self, idx: usize) {
+        if idx >= self.marks.len() {
+            self.marks.resize(idx + 1, 0);
+        }
+        self.marks[idx] = self.generation;
+    }
+
+    fn is_unused(&self, idx: usize) -> bool {
+        self.marks.get(idx).is_none_or(|&g| g != self.generation)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PathCacheKey {
     tree: ObjectId,
@@ -1291,6 +1332,10 @@ struct BlameSession<'a> {
     pair_maps: HashMap<PairMapCacheKey, PairMapCacheValue>,
     /// When set, lines were handed off from a merge parent ≥2; walk only first-parent links.
     deferred_branch: bool,
+    tree_object_data: HashMap<ObjectId, Arc<Vec<u8>>>,
+    identity_line_maps: HashMap<usize, Arc<Vec<Option<usize>>>>,
+    merge_line_stamps: Vec<LineUseStamp>,
+    commit_meta: HashMap<ObjectId, Arc<BlameCommitMeta>>,
 }
 
 impl<'a> BlameSession<'a> {
@@ -1316,7 +1361,33 @@ impl<'a> BlameSession<'a> {
             commit_path_blob: HashMap::new(),
             pair_maps: HashMap::new(),
             deferred_branch: false,
+            tree_object_data: HashMap::new(),
+            identity_line_maps: HashMap::new(),
+            merge_line_stamps: Vec::new(),
+            commit_meta: HashMap::new(),
         }
+    }
+
+    fn identity_line_map(&mut self, len: usize) -> Arc<Vec<Option<usize>>> {
+        if let Some(map) = self.identity_line_maps.get(&len) {
+            return Arc::clone(map);
+        }
+        let map: Arc<Vec<Option<usize>>> = Arc::new((0..len).map(Some).collect());
+        self.identity_line_maps.insert(len, Arc::clone(&map));
+        map
+    }
+
+    fn tree_object_data(&mut self, tree_oid: ObjectId) -> Result<Arc<Vec<u8>>> {
+        if let Some(data) = self.tree_object_data.get(&tree_oid) {
+            return Ok(Arc::clone(data));
+        }
+        let obj = read_object_for_blame(self.odb, &tree_oid, None)?;
+        if obj.kind != ObjectKind::Tree {
+            return Err(LibError::Message("expected tree".to_string()));
+        }
+        let data = Arc::new(obj.data);
+        self.tree_object_data.insert(tree_oid, Arc::clone(&data));
+        Ok(data)
     }
 
     fn merge_aware_blame(&self, first_parent_only: bool) -> bool {
@@ -1414,8 +1485,8 @@ impl<'a> BlameSession<'a> {
         let mut current = tree_oid;
         let mut resolved = None;
         for (i, part) in parts.iter().enumerate() {
-            let obj = read_object_for_blame(self.odb, &current, None)?;
-            let Some(e) = find_tree_entry_by_name_in_data(&obj.data, oid_len, part)? else {
+            let data = self.tree_object_data(current)?;
+            let Some(e) = find_tree_entry_by_name_in_data(data.as_slice(), oid_len, part)? else {
                 resolved = None;
                 break;
             };
@@ -1547,6 +1618,29 @@ const BLAME_RENAME_SIMILARITY: u32 = 50;
 struct BlameCommitMeta {
     tree: ObjectId,
     parents: Vec<ObjectId>,
+    /// Populated when the commit object was read during the walk.
+    display: Option<BlameCommitInfo>,
+}
+
+impl BlameCommitMeta {
+    fn from_commit_object(data: &[u8], tree: ObjectId, parents: Vec<ObjectId>) -> Self {
+        let display = parse_commit(data).ok().map(|commit| BlameCommitInfo {
+            author: commit.author.trim().to_string(),
+            author_time: author_epoch_from_identity(&commit.author),
+            summary: commit
+                .message
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        });
+        Self {
+            tree,
+            parents,
+            display,
+        }
+    }
 }
 
 /// Walk history and attribute each line in a blob at `start_oid` to a commit.
@@ -2001,7 +2095,11 @@ fn compute_blame_with_session(
             let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
             let mut attributed: Vec<BlameLine> = Vec::new();
 
-            let mut used_in_parent: Vec<Vec<bool>> = vec![Vec::new(); parents.len()];
+            if session.merge_line_stamps.len() < parents.len() {
+                session
+                    .merge_line_stamps
+                    .resize_with(parents.len(), LineUseStamp::default);
+            }
 
             let mut remaining = std::mem::take(&mut pending);
             let mut any_parent_has_path = false;
@@ -2019,12 +2117,14 @@ fn compute_blame_with_session(
                 parent_blobs[i] = Some((p, blob, mode));
                 if blob == current_blob_oid {
                     par_lines_vec[i] = Some(Arc::clone(&cur_lines_arc));
-                    maps[i] = Some(Arc::new((0..line_count).map(Some).collect::<Vec<_>>()));
-                    used_in_parent[i].resize(line_count, false);
+                    maps[i] = Some(session.identity_line_map(line_count));
+                    session.merge_line_stamps[i].begin_pass(line_count);
                     let mut next_remaining: Vec<TrackedLine> = Vec::new();
                     for t in remaining {
-                        if t.current_idx < line_count && !used_in_parent[i][t.current_idx] {
-                            used_in_parent[i][t.current_idx] = true;
+                        if t.current_idx < line_count
+                            && session.merge_line_stamps[i].is_unused(t.current_idx)
+                        {
+                            session.merge_line_stamps[i].mark(t.current_idx);
                             buckets[i].push(TrackedLine {
                                 final_lineno: t.final_lineno,
                                 current_idx: t.current_idx,
@@ -2069,17 +2169,18 @@ fn compute_blame_with_session(
                     ));
                 };
                 let parent_line_count = par_lines.len();
-                if used_in_parent[i].len() != parent_line_count {
-                    used_in_parent[i].resize(parent_line_count, false);
-                }
+                session.merge_line_stamps[i].begin_pass(parent_line_count);
                 for t in remaining {
                     let idx = t.current_idx;
                     let cur_line = Some(cur_lines_arc.line(idx));
                     let m = map.get(idx).copied().flatten();
                     if let Some(p_idx) = m {
                         let text_ok = Some(par_lines.line(p_idx)) == cur_line;
-                        if text_ok && p_idx < parent_line_count && !used_in_parent[i][p_idx] {
-                            used_in_parent[i][p_idx] = true;
+                        if text_ok
+                            && p_idx < parent_line_count
+                            && session.merge_line_stamps[i].is_unused(p_idx)
+                        {
+                            session.merge_line_stamps[i].mark(p_idx);
                             buckets[i].push(TrackedLine {
                                 final_lineno: t.final_lineno,
                                 current_idx: p_idx,
@@ -2586,6 +2687,9 @@ fn compute_blame_with_session(
     }
 
     result.sort_by_key(|b| b.final_lineno);
+    for (oid, meta) in commit_cache {
+        session.commit_meta.entry(oid).or_insert(meta);
+    }
     Ok(result)
 }
 
@@ -2755,7 +2859,11 @@ fn get_blame_commit(
     }
     let meta = if let Some(chain) = graph {
         if let Some((tree, parents)) = chain.graph_commit_meta(&oid) {
-            Arc::new(BlameCommitMeta { tree, parents })
+            Arc::new(BlameCommitMeta {
+                tree,
+                parents,
+                display: None,
+            })
         } else {
             load_blame_commit_from_object(odb, oid)?
         }
@@ -2769,7 +2877,9 @@ fn get_blame_commit(
 fn load_blame_commit_from_object(odb: &Odb, oid: ObjectId) -> Result<Arc<BlameCommitMeta>> {
     let obj = read_object_for_blame(odb, &oid, None)?;
     let (tree, parents) = parse_commit_tree_and_parents(&obj.data)?;
-    Ok(Arc::new(BlameCommitMeta { tree, parents }))
+    Ok(Arc::new(BlameCommitMeta::from_commit_object(
+        &obj.data, tree, parents,
+    )))
 }
 
 /// Skip first-parent history while Bloom filters or an identical blob show `path` unchanged.
@@ -3003,40 +3113,47 @@ pub fn blame_file(repo: &Repository, path: &str, options: &BlameOptions) -> Resu
     let thread_policy = repo.thread_policy();
     let mut session = BlameSession::new(repo.odb(), None, false, &thread_policy);
     session.commit_graph = repo.caches().commit_graph_chain(repo.odb().objects_dir());
-    let raw = repo.odb().with_pack_read_context(|| {
-        compute_blame_with_session(
-            repo.odb(),
-            start_oid,
-            &file_path,
-            &ignore_revs,
-            diff_algorithm,
-            None,
-            false,
-            0,
-            options.first_parent_only,
-            &grafts,
-            indent_heuristic,
-            options.line_range.clone(),
-            &mut session,
-        )
-    })?;
+    let (lines, commits) = repo.odb().with_pack_read_context(
+        || -> Result<(Vec<BlameAttributedLine>, HashMap<ObjectId, BlameCommitInfo>)> {
+            let raw = compute_blame_with_session(
+                repo.odb(),
+                start_oid,
+                &file_path,
+                &ignore_revs,
+                diff_algorithm,
+                None,
+                false,
+                0,
+                options.first_parent_only,
+                &grafts,
+                indent_heuristic,
+                options.line_range.clone(),
+                &mut session,
+            )?;
 
-    let lines: Vec<BlameAttributedLine> = raw
-        .into_iter()
-        .map(|line| BlameAttributedLine {
-            commit: line.oid,
-            original_line: line.orig_lineno,
-            final_line: line.final_lineno,
-            content: line.content,
-        })
-        .collect();
+            let lines: Vec<BlameAttributedLine> = raw
+                .into_iter()
+                .map(|line| BlameAttributedLine {
+                    commit: line.oid,
+                    original_line: line.orig_lineno,
+                    final_line: line.final_lineno,
+                    content: line.content,
+                })
+                .collect();
 
-    let mut commits = HashMap::new();
-    for line in &lines {
-        commits
-            .entry(line.commit)
-            .or_insert_with(|| load_blame_commit_info(repo.odb(), line.commit));
-    }
+            let mut commits = HashMap::new();
+            for line in &lines {
+                commits.entry(line.commit).or_insert_with(|| {
+                    session
+                        .commit_meta
+                        .get(&line.commit)
+                        .and_then(|meta| meta.display.clone())
+                        .unwrap_or_else(|| load_blame_commit_info(repo.odb(), line.commit))
+                });
+            }
+            Ok((lines, commits))
+        },
+    )?;
 
     Ok(BlameResult { lines, commits })
 }
