@@ -484,6 +484,19 @@ fn normalize_repo_relative_and_submodule_containing_path() {
 }
 
 #[test]
+fn normalize_repo_relative_missing_path_in_work_tree() {
+    let fx = T0008Repo::setup();
+    let repo = fx.open_grit();
+    let rel = grit_lib::worktree::ignore::normalize_repo_relative(
+        &repo,
+        &fx.root,
+        "nested/not-created-yet.txt",
+    )
+    .expect("missing paths under the work tree must normalize");
+    assert_eq!(rel, "nested/not-created-yet.txt");
+}
+
+#[test]
 fn t3001_exclude_from_and_per_directory_name() {
     let root = unique_tmp("ignore", "t3001");
     let home = unique_tmp("ignore", "home4");
