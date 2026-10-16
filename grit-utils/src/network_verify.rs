@@ -77,6 +77,13 @@ pub fn verify_clone_against_bare(
         bail!("HEAD mismatch: bare {default_branch} is {bare_tip}, clone HEAD is {clone_head}");
     }
 
+    let origin_ref = format!("refs/remotes/origin/{default_branch}");
+    let origin_oid = ref_oid(git, clone, &origin_ref)
+        .with_context(|| format!("clone missing remote-tracking ref {origin_ref} after clone"))?;
+    if origin_oid != bare_tip {
+        bail!("origin/{default_branch} mismatch: bare {bare_tip} != clone {origin_oid}");
+    }
+
     let mut cmd = Command::new(git);
     cmd.args([
         "for-each-ref",

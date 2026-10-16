@@ -15,7 +15,7 @@ use grit_utils::network_verify::{verify_client_fetch_tip, verify_clone_against_b
 use grit_utils::synth::{generate_synth_repo, SynthTier};
 use tempfile::TempDir;
 
-fn build_network_binaries() -> Option<(PathBuf, PathBuf)> {
+fn build_network_binaries() -> (PathBuf, PathBuf) {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let status = Command::new(env!("CARGO"))
         .args([
@@ -32,14 +32,15 @@ fn build_network_binaries() -> Option<(PathBuf, PathBuf)> {
         ])
         .current_dir(&workspace)
         .status()
-        .ok()?;
-    if !status.success() {
-        return None;
-    }
-    Some((
+        .expect("spawn cargo build");
+    assert!(
+        status.success(),
+        "cargo build grit / grit-http-server failed; fix compilation before running this test"
+    );
+    (
         workspace.join("target/debug/grit"),
         workspace.join("target/debug/grit-http-server"),
-    ))
+    )
 }
 
 fn run_ok(program: &Path, cwd: Option<&Path>, args: &[&str]) {
@@ -85,10 +86,7 @@ fn network_synth_s_clone_and_fetch_file_and_grit_http() {
             return;
         }
     };
-    let Some((grit, http_server)) = build_network_binaries() else {
-        eprintln!("SKIP: could not build grit / grit-http-server");
-        return;
-    };
+    let (grit, http_server) = build_network_binaries();
 
     let tmp = TempDir::new().expect("tempdir");
     let bare = synth_s_bare(&git, tmp.path());
@@ -127,6 +125,19 @@ fn network_synth_s_clone_and_fetch_file_and_grit_http() {
     let grit_server = GritHttpServer::start(&grit, Some(&http_server), http_root)
         .expect("start grit-http-server");
     let grit_url = grit_server.url(REPO_NAME);
+    prepare_network_clone(&bare).expect("prepare clone");
+    run_ok(
+        &git,
+        meta.clone_dest.parent().as_deref(),
+        &[
+            "clone",
+            "-q",
+            &grit_url,
+            meta.clone_dest.file_name().unwrap().to_str().unwrap(),
+        ],
+    );
+    verify_clone_against_bare(&git, &bare, &meta.clone_dest, &meta.default_branch)
+        .expect("git smart HTTP clone over grit-http-server");
     prepare_network_clone(&bare).expect("prepare clone");
     run_ok(
         &grit,

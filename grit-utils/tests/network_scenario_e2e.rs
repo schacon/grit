@@ -5,7 +5,7 @@ use std::process::Command;
 
 use grit_utils::binary::{require_hyperfine, resolve_binary};
 
-fn build_network_binaries() -> Option<(PathBuf, PathBuf)> {
+fn build_network_binaries() -> (PathBuf, PathBuf) {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let status = Command::new(env!("CARGO"))
         .args([
@@ -23,13 +23,14 @@ fn build_network_binaries() -> Option<(PathBuf, PathBuf)> {
         .current_dir(&workspace)
         .status()
         .expect("spawn cargo build");
-    if !status.success() {
-        return None;
-    }
-    Some((
+    assert!(
+        status.success(),
+        "cargo build grit / grit-http-server failed; fix compilation before running this test"
+    );
+    (
         workspace.join("target/debug/grit"),
         workspace.join("target/debug/grit-http-server"),
-    ))
+    )
 }
 
 #[test]
@@ -44,10 +45,7 @@ fn network_scenario_smoke_end_to_end() {
         eprintln!("SKIP: system git not available");
         return;
     }
-    let Some((grit, http_server)) = build_network_binaries() else {
-        eprintln!("SKIP: could not build grit / grit-http-server");
-        return;
-    };
+    let (grit, http_server) = build_network_binaries();
     let bench = PathBuf::from(env!("CARGO_BIN_EXE_grit-bench"));
     let grit_flag = grit.to_string_lossy();
     let http_flag = http_server.to_string_lossy();
