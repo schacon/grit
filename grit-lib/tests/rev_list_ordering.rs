@@ -5,6 +5,7 @@ mod support;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::rev_list::{
@@ -1348,12 +1349,31 @@ fn rev_list_option_smoke_exercises_library_paths() {
     .expect("bisect");
 }
 
+const ISSUE_1067_DATE: &str = "2026-01-01T00:00:00Z";
+
+fn git_with_commit_dates(worktree: &Path, date: &str, args: &[&str]) {
+    let out = Command::new("git")
+        .current_dir(worktree)
+        .args(args)
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 // Issue #1067: equal committer dates on a merge DAG with bounded `--max-count`.
 fn issue_1067_equal_date_merge_dag(worktree: &Path) {
-    std::env::set_var("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z");
-    std::env::set_var("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z");
-    git(
+    git_with_commit_dates(
         worktree,
+        ISSUE_1067_DATE,
         &[
             "-c",
             "user.name=a",
@@ -1365,13 +1385,23 @@ fn issue_1067_equal_date_merge_dag(worktree: &Path) {
             "base",
         ],
     );
-    git(worktree, &["switch", "-c", "side"]);
-    git(worktree, &["commit", "--allow-empty", "-m", "side"]);
-    git(worktree, &["switch", "main"]);
-    git(worktree, &["commit", "--allow-empty", "-m", "mainedit"]);
-    git(worktree, &["merge", "--no-ff", "side", "-m", "merge"]);
-    std::env::remove_var("GIT_AUTHOR_DATE");
-    std::env::remove_var("GIT_COMMITTER_DATE");
+    git_with_commit_dates(worktree, ISSUE_1067_DATE, &["switch", "-c", "side"]);
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["commit", "--allow-empty", "-m", "side"],
+    );
+    git_with_commit_dates(worktree, ISSUE_1067_DATE, &["switch", "main"]);
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["commit", "--allow-empty", "-m", "mainedit"],
+    );
+    git_with_commit_dates(
+        worktree,
+        ISSUE_1067_DATE,
+        &["merge", "--no-ff", "side", "-m", "merge"],
+    );
 }
 
 fn assert_no_ancestor_before_descendant(worktree: &Path, order: &[ObjectId]) {
