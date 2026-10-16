@@ -55,11 +55,11 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::checkout::apply_index_file_mode;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
-use grit_lib::progress::NullProgress;
 use grit_lib::porcelain::stash::worktree_bytes_for_index_mode;
 use grit_lib::porcelain::status::{expand_untracked_for_staging, status_path_matches_worktree};
 use grit_lib::porcelain::tag::{creator_date, get_tag_annotation, tag_contains, tag_points_at};
 use grit_lib::porcelain::worktree_guard::prepare_tree_switch;
+use grit_lib::progress::NullProgress;
 use grit_lib::refs::ref_storage::detect_format;
 use grit_lib::refs::{
     list_refs_glob_for_repository, reftable::verify_ref_transaction_batch_reftable, write_ref,

@@ -233,11 +233,9 @@ fn pkt_line_promisor_push_cert_and_ref_helpers() {
     );
 
     let mut advert2 = Cursor::new(git_advert.stdout.as_slice());
-    let git_data_lines = read_data_lines_until_flush(
-        &mut advert2,
-        "expected flush after git ref advertisement",
-    )
-    .expect("read git pkt-lines until flush");
+    let git_data_lines =
+        read_data_lines_until_flush(&mut advert2, "expected flush after git ref advertisement")
+            .expect("read git pkt-lines until flush");
     assert_eq!(git_data_lines, git_ref_lines);
 
     let mut fetch_request = Vec::new();
@@ -346,9 +344,7 @@ fn transport_http_discover_helpers() {
     let body = sample_smart_advertisement();
     let _ = discover_upload_pack_from_body(&body);
     let _ = discover_upload_pack_for_list_refs_from_body(&body);
-    let client = MockHttp {
-        body: body.clone(),
-    };
+    let client = MockHttp { body: body.clone() };
     let _ = discover_upload_pack(&client, "https://example.com/r.git", None);
     let _ = discover_upload_pack_exact(&client, "https://example.com/r.git", Some("version=2"));
     let _ = discover_upload_pack_for_list_refs(&client, "https://example.com/r.git", None);
@@ -402,7 +398,8 @@ fn transport_http_discover_helpers() {
         "parsed advertisement must list main: {refs:?}"
     );
     let (_version2, list_refs, _caps2, _agent2) =
-        discover_upload_pack_for_list_refs_from_body(&git_advert.stdout).expect("list refs from git");
+        discover_upload_pack_for_list_refs_from_body(&git_advert.stdout)
+            .expect("list refs from git");
     assert!(
         list_refs.iter().any(|(name, _)| name == "refs/heads/main"),
         "list-refs parse must include main: {list_refs:?}"
