@@ -17,7 +17,10 @@ use crate::refs::{
     LogRefsConfig, Ref,
 };
 
-use super::apply::{apply_update, ref_lock_names_for_updates, simulate_batch_apply, RefBatchState};
+use super::apply::{
+    apply_update, ref_lock_names_for_updates, simulate_batch_apply,
+    symref_deref_delete_changed_targets, RefBatchState,
+};
 use super::error::RefStoreError;
 use super::routing::{resolve_common_dir, route_ref_storage_with_namespace, RefStorageRoute};
 use super::transaction::expected_matches;
@@ -175,17 +178,59 @@ impl FilesRefStore {
         Ok(false)
     }
 
+    /// Load `start` and any further symbolic targets into `refs` (up to [`crate::refs::SYMREF_MAXDEPTH`]).
+    fn insert_symref_peel_chain(
+        &self,
+        refs: &mut BTreeMap<String, RawRef>,
+        start: &str,
+    ) -> Result<()> {
+        let mut name = start.to_owned();
+        for _ in 0..crate::refs::SYMREF_MAXDEPTH {
+            if refs.contains_key(&name) {
+                match refs.get(&name) {
+                    Some(RawRef::Symbolic(next)) => name = next.clone(),
+                    _ => break,
+                }
+                continue;
+            }
+            let Some(raw) = self.read_raw(&name)? else {
+                break;
+            };
+            let advance = match &raw {
+                RawRef::Symbolic(next) => Some(next.clone()),
+                RawRef::Direct(_) => None,
+            };
+            refs.insert(name.clone(), raw);
+            match advance {
+                Some(next) => name = next,
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
     fn load_batch_state_for_prepare(&self, updates: &[RefUpdate]) -> Result<RefBatchState> {
         let mut refs = BTreeMap::new();
         for update in updates {
-            if update.flags.log_only {
-                continue;
-            }
             if let Some(raw) = self.read_raw(&update.name)? {
                 refs.insert(update.name.clone(), raw);
             }
         }
         self.insert_head_for_batch_state(&mut refs)?;
+
+        let mut peel_roots: BTreeSet<String> = BTreeSet::new();
+        for update in updates {
+            if let Some(RawRef::Symbolic(first)) = refs.get(&update.name) {
+                peel_roots.insert(first.clone());
+            }
+        }
+        if let Some(RawRef::Symbolic(first)) = refs.get("HEAD") {
+            peel_roots.insert(first.clone());
+        }
+        for start in peel_roots {
+            self.insert_symref_peel_chain(&mut refs, &start)?;
+        }
+
         Ok(RefBatchState {
             refs,
             reflogs: self.load_reflog_map()?,
@@ -460,6 +505,18 @@ impl FilesRefStore {
         Ok(())
     }
 
+    fn peel_ref_to_oid(&self, start: &str) -> Result<Option<ObjectId>> {
+        let mut name = start.to_owned();
+        for _ in 0..crate::refs::SYMREF_MAXDEPTH {
+            match self.read_raw(&name)? {
+                Some(RawRef::Direct(oid)) => return Ok(Some(oid)),
+                Some(RawRef::Symbolic(next)) => name = next,
+                None => return Ok(None),
+            }
+        }
+        Err(Error::RefStore(RefStoreError::SymrefLoop))
+    }
+
     fn recheck_update_at_commit(
         &self,
         update: &RefUpdate,
@@ -470,25 +527,42 @@ impl FilesRefStore {
         if update.flags.log_only {
             return Ok(());
         }
-        let batch_actual = state_before.refs.get(&update.name).cloned();
         let batch_differs =
             batch_start.refs.get(&update.name) != state_before.refs.get(&update.name);
-        let actual = if batch_differs {
-            batch_actual
-        } else {
-            Some(
-                self.read_raw(&update.name)
-                    .map_err(|e| RefStoreError::Corrupt(e.to_string()))?,
-            )
-            .flatten()
-        };
-        let actual_ref = actual.as_ref();
-        if !expected_matches(actual_ref, &update.expected) {
+        if !super::apply::expected_matches_for_update(state_before, update) {
             return Err(RefStoreError::ExpectedMismatch {
                 name: update.name.clone(),
                 expected: update.expected.clone(),
-                actual,
+                actual: state_before.refs.get(&update.name).cloned(),
             });
+        }
+        let actual = if batch_differs {
+            state_before.refs.get(&update.name).cloned()
+        } else {
+            self.read_raw(&update.name)
+                .map_err(|e| RefStoreError::Corrupt(e.to_string()))?
+        };
+        let actual_ref = actual.as_ref();
+        if !batch_differs {
+            let disk_ok = match &update.expected {
+                Expected::Oid(want)
+                    if matches!(actual_ref, Some(RawRef::Symbolic(_)))
+                        && matches!(update.new_value.as_ref(), Some(RawRef::Direct(_)))
+                        && !update.flags.no_deref =>
+                {
+                    self.peel_ref_to_oid(&update.name)
+                        .map_err(|e| RefStoreError::Corrupt(e.to_string()))?
+                        .is_some_and(|got| got == *want)
+                }
+                _ => expected_matches(actual_ref, &update.expected),
+            };
+            if !disk_ok {
+                return Err(RefStoreError::ExpectedMismatch {
+                    name: update.name.clone(),
+                    expected: update.expected.clone(),
+                    actual,
+                });
+            }
         }
         if update.new_value.is_some() && actual_ref.is_none() && !batch_differs {
             let skip = HashSet::new();
@@ -542,7 +616,6 @@ impl FilesRefStore {
         &self,
         before: &RefBatchState,
         after: &RefBatchState,
-        _held_locks: &mut HashMap<String, PathBuf>,
         packed_lock_held: bool,
         updates: &[RefUpdate],
     ) -> Result<()> {
@@ -571,6 +644,9 @@ impl FilesRefStore {
             let mut next = running.clone();
             apply_update(&mut next, update).map_err(Error::from)?;
 
+            self.recheck_update_at_commit(update, &batch_extras, before, &running)
+                .map_err(Error::from)?;
+
             let mut changed: BTreeSet<String> = BTreeSet::new();
             for name in running.refs.keys().chain(next.refs.keys()) {
                 if running.refs.get(name) != next.refs.get(name) {
@@ -592,6 +668,23 @@ impl FilesRefStore {
                 )?;
             }
 
+            for target in symref_deref_delete_changed_targets(&running, &next, update) {
+                if persisted_refs.contains(&target) {
+                    continue;
+                }
+                let (_, _, lock_path) = self.ref_lock_paths(&target);
+                if let Some(parent) = lock_path.parent() {
+                    fs::create_dir_all(parent).map_err(Error::Io)?;
+                }
+                self.acquire_ref_lock(&lock_path, &target)
+                    .map_err(Error::from)?;
+                let write_result =
+                    self.persist_one_ref_change(&target, &next, &lock_path, packed_lock_held);
+                let _ = fs::remove_file(&lock_path);
+                write_result?;
+                persisted_refs.insert(target);
+            }
+
             let name = &update.name;
             let b = running.refs.get(name);
             let a = next.refs.get(name);
@@ -609,17 +702,11 @@ impl FilesRefStore {
                 }
                 self.acquire_ref_lock(&lock_path, name)
                     .map_err(Error::from)?;
-                let write_result = (|| {
-                    self.recheck_update_at_commit(update, &batch_extras, before, &running)
-                        .map_err(Error::from)?;
-                    self.persist_one_ref_change(name, &next, &lock_path, packed_lock_held)
-                })();
+                let write_result =
+                    self.persist_one_ref_change(name, &next, &lock_path, packed_lock_held);
                 let _ = fs::remove_file(&lock_path);
                 write_result?;
                 persisted_refs.insert(name.clone());
-            } else {
-                self.recheck_update_at_commit(update, &batch_extras, before, &running)
-                    .map_err(Error::from)?;
             }
 
             running = next;
@@ -934,17 +1021,12 @@ impl PreparedRefTransaction for FilesPrepared<'_> {
         for lock in batch.ref_locks.values() {
             let _ = fs::remove_file(lock);
         }
-        let mut ref_locks = HashMap::new();
         if let Err(err) = self.store.persist_state_diff(
             &batch.before_commit,
             &batch.after_commit,
-            &mut ref_locks,
             packed_lock_held,
             &batch.updates,
         ) {
-            for lock in ref_locks.values() {
-                let _ = fs::remove_file(lock);
-            }
             if let Some(p) = &batch.packed_lock {
                 let _ = fs::remove_file(p);
             }
