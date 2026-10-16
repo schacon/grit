@@ -52,24 +52,61 @@ impl FixtureKind {
     }
 }
 
+/// Environment inputs for [`cache_root_from_env`] (testable without mutating process globals).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheEnv {
+    /// `GRIT_BENCH_CACHE` when set.
+    pub grit_bench_cache: Option<String>,
+    /// `XDG_CACHE_HOME` when set.
+    pub xdg_cache_home: Option<String>,
+    /// `HOME` when set.
+    pub home: Option<String>,
+}
+
+impl CacheEnv {
+    /// Snapshot the current process environment.
+    #[must_use]
+    pub fn capture() -> Self {
+        Self {
+            grit_bench_cache: std::env::var("GRIT_BENCH_CACHE").ok(),
+            xdg_cache_home: std::env::var("XDG_CACHE_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+        }
+    }
+}
+
+/// Resolve the fixture cache root from `env` (pure; safe for parallel unit tests).
+///
+/// Order: non-empty `grit_bench_cache`, then absolute non-empty `xdg_cache_home/grit-bench`,
+/// then `home/.cache/grit-bench`, then `/tmp/grit-bench-cache`.
+#[must_use]
+pub fn cache_root_from_env(env: &CacheEnv) -> PathBuf {
+    if let Some(p) = env.grit_bench_cache.as_ref() {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    if let Some(xdg) = env.xdg_cache_home.as_ref() {
+        if !xdg.is_empty() {
+            let path = PathBuf::from(xdg);
+            if path.is_absolute() {
+                return path.join("grit-bench");
+            }
+        }
+    }
+    if let Some(home) = env.home.as_ref() {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".cache/grit-bench");
+        }
+    }
+    PathBuf::from("/tmp/grit-bench-cache")
+}
+
 /// Root directory for prepared fixtures.
 ///
 /// Resolution order: `GRIT_BENCH_CACHE`, then `$XDG_CACHE_HOME/grit-bench`, then `~/.cache/grit-bench`.
 pub fn cache_root() -> PathBuf {
-    if let Ok(p) = std::env::var("GRIT_BENCH_CACHE") {
-        return PathBuf::from(p);
-    }
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        return PathBuf::from(xdg).join("grit-bench");
-    }
-    dirs_fallback_cache()
-}
-
-fn dirs_fallback_cache() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".cache/grit-bench");
-    }
-    PathBuf::from("/tmp/grit-bench-cache")
+    cache_root_from_env(&CacheEnv::capture())
 }
 
 fn cache_path(kind: FixtureKind) -> PathBuf {
@@ -401,38 +438,103 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn cache_root_honors_grit_bench_cache() {
-        let dir = TempDir::new().unwrap();
-        let custom = dir.path().join("bench-cache");
-        std::env::set_var("GRIT_BENCH_CACHE", custom.to_str().unwrap());
-        assert_eq!(cache_root(), custom);
-        std::env::remove_var("GRIT_BENCH_CACHE");
+    fn cache_root_from_env_honors_grit_bench_cache() {
+        let custom = "/tmp/grit-bench-custom-root";
+        let env = CacheEnv {
+            grit_bench_cache: Some(custom.into()),
+            ..CacheEnv::default()
+        };
+        assert_eq!(cache_root_from_env(&env), PathBuf::from(custom));
     }
 
     #[test]
-    fn cache_root_honors_xdg_cache_home() {
-        let dir = TempDir::new().unwrap();
-        std::env::remove_var("GRIT_BENCH_CACHE");
-        std::env::set_var("XDG_CACHE_HOME", dir.path().to_str().unwrap());
-        assert_eq!(cache_root(), dir.path().join("grit-bench"));
-        std::env::remove_var("XDG_CACHE_HOME");
+    fn cache_root_from_env_honors_absolute_xdg_cache_home() {
+        let xdg = "/var/tmp/xdg-cache";
+        let env = CacheEnv {
+            xdg_cache_home: Some(xdg.into()),
+            ..CacheEnv::default()
+        };
+        assert_eq!(
+            cache_root_from_env(&env),
+            PathBuf::from(xdg).join("grit-bench")
+        );
+    }
+
+    #[test]
+    fn cache_root_from_env_skips_empty_or_relative_xdg() {
+        let env = CacheEnv {
+            xdg_cache_home: Some(String::new()),
+            home: Some("/home/user".into()),
+            ..CacheEnv::default()
+        };
+        assert_eq!(
+            cache_root_from_env(&env),
+            PathBuf::from("/home/user/.cache/grit-bench")
+        );
+        let env = CacheEnv {
+            xdg_cache_home: Some("relative/cache".into()),
+            home: Some("/home/user".into()),
+            ..CacheEnv::default()
+        };
+        assert_eq!(
+            cache_root_from_env(&env),
+            PathBuf::from("/home/user/.cache/grit-bench")
+        );
+    }
+
+    fn bare_clone_with_commit(parent: &Path) -> Result<PathBuf> {
+        let work = parent.join("work");
+        fs::create_dir_all(&work)?;
+        Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&work)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()?;
+        fs::write(work.join("f.txt"), b"seed\n")?;
+        Command::new("git")
+            .args(["add", "f.txt"])
+            .current_dir(&work)
+            .status()?;
+        Command::new("git")
+            .args(["commit", "-m", "seed"])
+            .current_dir(&work)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .status()?;
+        let bare = parent.join("standin.git");
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--bare",
+                work.to_str().context("work utf-8")?,
+                bare.to_str().context("bare utf-8")?,
+            ])
+            .current_dir(parent)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()?;
+        anyhow::ensure!(status.success(), "git clone --bare failed");
+        Ok(bare)
     }
 
     #[test]
     fn verify_pinned_head_rejects_mismatched_bare_clone() -> Result<()> {
-        let dir = TempDir::new()?;
-        Command::new("git")
-            .args(["init", "--bare", "-b", "main"])
-            .current_dir(dir.path())
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .status()?;
+        let parent = TempDir::new()?;
+        let bare = bare_clone_with_commit(parent.path())?;
+        let git = crate::binary::resolve_binary("git", None)?;
+        let actual = git_head_oid(&git, &bare)?;
+        assert_ne!(actual.len(), 0);
+        assert!(actual.chars().all(|c| c.is_ascii_hexdigit()));
         let wrong = "0000000000000000000000000000000000000000";
-        let err = verify_pinned_head(dir.path(), wrong).unwrap_err();
+        let err = verify_pinned_head(&bare, wrong).unwrap_err();
         assert!(
             err.to_string().contains("does not match pinned oid"),
             "{err}"
         );
+        verify_pinned_head(&bare, &actual)?;
         Ok(())
     }
 

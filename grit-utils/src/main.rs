@@ -539,7 +539,13 @@ fn render_fixtures_list(
             }
             Ok(out)
         }
-        OutputFormat::Json => Ok(serde_json::to_string_pretty(records)?),
+        OutputFormat::Json => {
+            let mut body = serde_json::to_string_pretty(records)?;
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            Ok(body)
+        }
     }
 }
 
