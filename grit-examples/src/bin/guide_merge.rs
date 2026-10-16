@@ -7,7 +7,6 @@ use grit_lib::diff::merge_file::MergeFavor;
 use grit_lib::diff::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
-use grit_lib::index::write_tree::write_tree_from_index;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::merge_base::merge_bases_first_vs_rest;
