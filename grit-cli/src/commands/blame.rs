@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::context::{self, relative_date_from};
 use crate::markdown;
-use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
+use crate::output::{outln, HumanRender, MarkdownRender, Person, RenderContext};
 
 /// Result of `grit blame`.
 #[derive(Serialize, JsonSchema)]
@@ -37,8 +37,7 @@ pub struct BlameLineJson {
 
 #[derive(Serialize, JsonSchema)]
 pub struct BlameCommitJson {
-    pub author: String,
-    pub author_time: i64,
+    pub author: Person,
     pub summary: String,
 }
 
@@ -176,8 +175,7 @@ fn outcome_from_result(file: String, rev: String, result: BlameResult, now: i64)
         commits_json.insert(
             oid.to_hex(),
             BlameCommitJson {
-                author: info.author.clone(),
-                author_time: info.author_time,
+                author: Person::from_identity_line(&info.author),
                 summary: info.summary.clone(),
             },
         );

@@ -27,7 +27,6 @@ pub fn thread_policy_for_repo() -> ThreadPolicy {
     THREAD_POLICY.get().copied().unwrap_or_default()
 }
 
-use crate::dates::{identity_when_suffix, rfc3339_from_identity_when};
 use crate::diagnostics;
 
 /// Build the process [`Environment`] for repository discovery and config loading.
@@ -60,10 +59,10 @@ pub struct CommitSummary {
     /// Author display name: the identity name when present, otherwise the email
     /// local-part (e.g. `schacon` from `schacon@gmail.com`).
     pub author: String,
+    /// Raw `author` line from the commit object (`Name <email> <epoch> <tz>`).
+    pub author_ident: String,
     /// Author date as a Unix timestamp (for relative-date rendering).
     pub timestamp: i64,
-    /// Author date in RFC 3339.
-    pub author_date: String,
 }
 
 /// Discover the repository containing the current directory.
@@ -169,8 +168,8 @@ pub fn commits_ahead_of(
             oid,
             subject: subject_line(&commit.message),
             author,
+            author_ident: commit.author.clone(),
             timestamp,
-            author_date: rfc3339_from_identity_when(identity_when_suffix(&commit.author)),
         });
     }
 
@@ -209,8 +208,8 @@ pub fn commits_ahead_behind_of(
             oid,
             subject: subject_line(&commit.message),
             author,
+            author_ident: commit.author.clone(),
             timestamp,
-            author_date: rfc3339_from_identity_when(identity_when_suffix(&commit.author)),
         });
     }
     Ok(AheadBehindOfTarget {

@@ -144,10 +144,8 @@ fn build_outcome(
                 oid: *oid,
                 subject: subject_line(&commit.message),
                 author,
+                author_ident: commit.author.clone(),
                 timestamp,
-                author_date: crate::dates::rfc3339_from_identity_when(
-                    crate::dates::identity_when_suffix(&commit.author),
-                ),
             })
         })
         .collect::<Result<Vec<_>>>()?;

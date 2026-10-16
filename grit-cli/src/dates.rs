@@ -22,15 +22,6 @@ pub fn rfc3339_from_epoch_and_tz(epoch: i64, tz: &str) -> Option<String> {
     local.format(&Rfc3339).ok()
 }
 
-/// Extract the `"epoch tz"` suffix from a `Name <email> epoch tz` identity line.
-#[must_use]
-pub fn identity_when_suffix(ident: &str) -> &str {
-    ident
-        .rsplit_once('>')
-        .map(|(_, after)| after.trim())
-        .unwrap_or("")
-}
-
 fn parse_git_tz_offset(tz: &str) -> Option<UtcOffset> {
     if tz.len() < 5 {
         return Some(UtcOffset::UTC);

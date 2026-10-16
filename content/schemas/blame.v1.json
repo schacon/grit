@@ -5,11 +5,7 @@
     "BlameCommitJson": {
       "properties": {
         "author": {
-          "type": "string"
-        },
-        "author_time": {
-          "format": "int64",
-          "type": "integer"
+          "$ref": "#/definitions/Person"
         },
         "summary": {
           "type": "string"
@@ -17,7 +13,6 @@
       },
       "required": [
         "author",
-        "author_time",
         "summary"
       ],
       "type": "object"
@@ -46,6 +41,27 @@
         "content",
         "final_line",
         "original_line"
+      ],
+      "type": "object"
+    },
+    "Person": {
+      "description": "A parsed identity line (`Name <email> <epoch> <tz>`) for stable `--json` output.",
+      "properties": {
+        "date": {
+          "description": "Author or committer timestamp in RFC 3339.",
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "email",
+        "name"
       ],
       "type": "object"
     }

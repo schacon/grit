@@ -163,7 +163,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `target` | string or null | Target branch, or `null` when none was found. |
 | `ahead` | number | Commits on the branch that the target does not have. |
 | `behind` | number | Commits on the target that the branch does not have. |
-| `commits` | array | Newest of those commits, up to ten, each with `oid` and `subject`. |
+| `commits` | array | Newest of those commits, up to ten, each with `oid`, `subject`, and `author` (`name`, `email`, `date` — same shape as [`grit show`](../show/)). |
 | `staged` | array | Staged changes with `path` and `status`. |
 | `unstaged` | array | Unstaged changes with `path` and `status`. |
 | `untracked` | array | Untracked paths (raw UTF-8; JSON escapes control characters). With default `--untracked normal`, wholly untracked directories appear once (often with a trailing `/`); with `--untracked all`, every file path is listed. |

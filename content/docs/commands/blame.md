@@ -66,8 +66,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `lines[].final_line` | number | 1-based line number in the blamed revision. |
 | `lines[].content` | string | Line text. |
 | `commits` | object | Map of commit oid → metadata for every line. |
-| `commits.<oid>.author` | string | Author identity line. |
-| `commits.<oid>.author_time` | number | Author time (Unix seconds). |
+| `commits.<oid>.author` | object | Author with `name`, `email`, and `date` (RFC 3339 — same shape as [`grit show`](../show/)). |
 | `commits.<oid>.summary` | string | First line of the commit message. |
 
 Example:
@@ -86,8 +85,11 @@ Example:
   ],
   "commits": {
     "919c45f33de5e5c0bd05f8ffb089f697f4644976": {
-      "author": "Blame Test <blame@example.com>",
-      "author_time": 1710000000,
+      "author": {
+        "name": "Blame Test",
+        "email": "blame@example.com",
+        "date": "2024-03-09T12:26:40Z"
+      },
       "summary": "edit first line"
     }
   }
