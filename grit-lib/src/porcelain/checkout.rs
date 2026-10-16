@@ -514,7 +514,7 @@ pub(crate) fn wholesale_deleted_directories(
                 if !entry.path.starts_with(prefix.as_bytes()) {
                     break;
                 }
-                if entry.stage() == 0 && entry.mode != MODE_GITLINK {
+                if entry.stage() == 0 {
                     count += 1;
                 }
             }
@@ -524,7 +524,7 @@ pub(crate) fn wholesale_deleted_directories(
         }
     } else {
         for entry in &index.entries {
-            if entry.stage() != 0 || entry.mode == MODE_GITLINK {
+            if entry.stage() != 0 {
                 continue;
             }
             let Ok(path) = std::str::from_utf8(&entry.path) else {
@@ -604,6 +604,32 @@ pub(crate) fn wholesale_directory_safe_to_remove(
     true
 }
 
+/// Untracked and ignored paths collected under wholesale delete trees before switch checkout.
+pub(crate) struct WholesaleWorktreeScan<'a> {
+    pub untracked: &'a [String],
+    pub ignored: &'a [String],
+    pub ignorecase: bool,
+}
+
+fn wholesale_dir_has_extra_paths(dir: &str, scan: &WholesaleWorktreeScan<'_>) -> bool {
+    scan.untracked
+        .iter()
+        .chain(scan.ignored.iter())
+        .any(|path| path_is_under_dir(path, dir, scan.ignorecase))
+}
+
+fn path_is_under_dir(path: &str, dir: &str, ignorecase: bool) -> bool {
+    let prefix = format!("{dir}/");
+    if ignorecase {
+        path.eq_ignore_ascii_case(dir)
+            || path
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(&prefix))
+    } else {
+        path == dir || path.starts_with(&prefix)
+    }
+}
+
 /// On-disk safety walk for wholesale directory removal, parallelized for switch prepare.
 pub(crate) fn precompute_wholesale_safe_directories(
     repo: &Repository,
@@ -611,10 +637,19 @@ pub(crate) fn precompute_wholesale_safe_directories(
     index: &Index,
     delete_paths: &[String],
     ignorecase: bool,
+    worktree_scan: Option<&WholesaleWorktreeScan<'_>>,
+    gitlink_deletes: &HashSet<String>,
 ) -> BTreeSet<String> {
     let candidates = wholesale_deleted_directories(index, delete_paths);
     if candidates.is_empty() {
         return BTreeSet::new();
+    }
+    if let Some(scan) = worktree_scan {
+        let filtered = candidates
+            .into_iter()
+            .filter(|dir| !wholesale_dir_has_extra_paths(dir, scan))
+            .collect();
+        return filter_wholesale_dirs_with_populated_gitlinks(work_tree, filtered, gitlink_deletes);
     }
     let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
     let needs_walk: Vec<String> = candidates.into_iter().collect();
@@ -641,16 +676,18 @@ pub(crate) fn precompute_wholesale_safe_directories(
                 })
                 .collect()
         });
-        return needs_walk
+        let safe: BTreeSet<String> = needs_walk
             .into_iter()
             .zip(safe_flags)
             .filter_map(|(dir, safe)| safe.then_some(dir))
             .collect();
+        return filter_wholesale_dirs_with_populated_gitlinks(work_tree, safe, gitlink_deletes);
     }
-    needs_walk
+    let safe = needs_walk
         .into_iter()
         .filter(|dir| wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase))
-        .collect()
+        .collect();
+    filter_wholesale_dirs_with_populated_gitlinks(work_tree, safe, gitlink_deletes)
 }
 
 fn wholesale_deleted_directories_on_disk(
@@ -660,16 +697,22 @@ fn wholesale_deleted_directories_on_disk(
     delete_paths: &[String],
     ignorecase: bool,
     apply: &CheckoutApplyOptions,
+    gitlink_deletes: &HashSet<String>,
 ) -> BTreeSet<String> {
     let candidates = wholesale_deleted_directories(index, delete_paths);
     if apply.trust_wholesale_dir_removal {
-        return candidates;
+        return filter_wholesale_dirs_with_populated_gitlinks(
+            work_tree,
+            candidates,
+            gitlink_deletes,
+        );
     }
     if apply.wholesale_safety_precomputed {
-        return candidates
+        let filtered = candidates
             .into_iter()
             .filter(|dir| apply.preverified_wholesale_dirs.contains(dir))
             .collect();
+        return filter_wholesale_dirs_with_populated_gitlinks(work_tree, filtered, gitlink_deletes);
     }
     let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
     let needs_walk: Vec<String> = candidates.into_iter().collect();
@@ -712,7 +755,7 @@ fn wholesale_deleted_directories_on_disk(
             }
         }
     }
-    trusted
+    filter_wholesale_dirs_with_populated_gitlinks(work_tree, trusted, gitlink_deletes)
 }
 
 fn path_under_wholesale_directory(path: &str, wholesale_dirs: &BTreeSet<String>) -> bool {
@@ -774,6 +817,14 @@ fn checkout_tree_changes_with_progress(
         .filter(|c| c.status == DiffStatus::Deleted)
         .filter_map(|c| c.old_path.clone())
         .collect();
+    let gitlink_deletes: HashSet<String> = changes
+        .iter()
+        .filter(|c| c.status == DiffStatus::Deleted)
+        .filter_map(|c| {
+            let path = c.old_path.as_ref()?;
+            (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
+        })
+        .collect();
     let wholesale_candidates = wholesale_deleted_directories_on_disk(
         repo,
         work_tree,
@@ -781,6 +832,7 @@ fn checkout_tree_changes_with_progress(
         &delete_paths,
         ignorecase,
         &apply,
+        &gitlink_deletes,
     );
     let mut wholesale_dirs_removed = BTreeSet::new();
     for dir in &wholesale_candidates {
@@ -1206,13 +1258,42 @@ fn parse_git_mode(mode: &str) -> u32 {
     u32::from_str_radix(mode, 8).unwrap_or(MODE_REGULAR)
 }
 
+/// True when `path` is a gitlink directory with an initialized submodule (`.git` file or dir).
+fn gitlink_worktree_is_populated(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let git_meta = path.join(".git");
+    git_meta.is_file() || git_meta.is_dir()
+}
+
+/// Drop wholesale-removal candidates when a deleted gitlink under `dir` still has a worktree.
+fn filter_wholesale_dirs_with_populated_gitlinks(
+    work_tree: &Path,
+    dir_candidates: BTreeSet<String>,
+    gitlink_deletes: &HashSet<String>,
+) -> BTreeSet<String> {
+    if dir_candidates.is_empty() || gitlink_deletes.is_empty() {
+        return dir_candidates;
+    }
+    dir_candidates
+        .into_iter()
+        .filter(|dir| {
+            let prefix = format!("{dir}/");
+            !gitlink_deletes.iter().any(|path| {
+                (path == dir || path.starts_with(&prefix))
+                    && gitlink_worktree_is_populated(&work_tree.join(path))
+            })
+        })
+        .collect()
+}
+
 /// True when `path` is an uninitialized submodule checkout (directory, no nested `.git`).
 fn gitlink_worktree_matches_index(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
     }
-    let git_meta = path.join(".git");
-    !(git_meta.is_file() || git_meta.is_dir())
+    !gitlink_worktree_is_populated(path)
 }
 
 /// Remove a gitlink path from the worktree unless it looks like an initialized submodule.
@@ -1897,6 +1978,7 @@ mod tests {
             &delete_paths,
             false,
             &CheckoutApplyOptions::default(),
+            &HashSet::new(),
         );
         assert!(wholesale.is_empty());
     }
