@@ -344,6 +344,9 @@ This page is regenerated from the local `grit-lib` rustdoc build (`cargo doc -p 
 | `grit_lib::pack_receive` | module | Stream side-band pack data from fetch/clone into memory or a pack temp file. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_receive/index.html) |
 | `grit_lib::pack_receive::PackReceiveTarget` | enum | Where demuxed pack bytes are stored. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_receive/enum.PackReceiveTarget.html) |
 | `grit_lib::pack_receive::TempPackReceive` | struct | A temp pack file under objects/pack/ for streaming clone/fetch receive. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_receive/struct.TempPackReceive.html) |
+| `grit_lib::pack_reuse` | module | Verbatim pack reuse for bitmap-accelerated upload-pack (streaming PACK v2). | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_reuse/index.html) |
+| `grit_lib::pack_reuse::ReuseWriteStats` | struct | Counters updated while streaming reused pack bytes. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_reuse/struct.ReuseWriteStats.html) |
+| `grit_lib::pack_reuse::StreamingReuse` | struct | Active verbatim reuse context while streaming a pack body. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_reuse/struct.StreamingReuse.html) |
 | `grit_lib::pack_rev` | module | On-disk pack reverse index (.rev) — RIDX format matching Git’s pack-write.c. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_rev/index.html) |
 | `grit_lib::pack_store` | module | Repository-scoped pack and MIDX read caches. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_store/index.html) |
 | `grit_lib::pack_store::PackStore` | struct | Per-objects/ cache of pack indexes, bytes, MIDX views, and delta-base LRU state. | [API](https://docs.rs/grit-lib/latest/grit_lib/pack_store/struct.PackStore.html) |
@@ -362,6 +365,7 @@ This page is regenerated from the local `grit-lib` rustdoc build (`cargo doc -p 
 | `grit_lib::pathspec::PathspecMatchContext` | struct | Optional path metadata for literal pathspecs with a trailing / (tree-walk / diff-tree). | [API](https://docs.rs/grit-lib/latest/grit_lib/pathspec/struct.PathspecMatchContext.html) |
 | `grit_lib::pkt_line` | module | Git pkt-line format helpers. | [API](https://docs.rs/grit-lib/latest/grit_lib/pkt_line/index.html) |
 | `grit_lib::pkt_line::Packet` | enum | A single packet read from the wire. | [API](https://docs.rs/grit-lib/latest/grit_lib/pkt_line/enum.Packet.html) |
+| `grit_lib::pkt_line::SidebandChannel1Writer` | struct | Incrementally frame pack bytes on sideband channel 1 (64k pkt-lines). | [API](https://docs.rs/grit-lib/latest/grit_lib/pkt_line/struct.SidebandChannel1Writer.html) |
 | `grit_lib::plumbing` | module | Plumbing operations — low-level, machine-stable building blocks that map ~1:1 to a Git plumbing command (e.g. | [API](https://docs.rs/grit-lib/latest/grit_lib/plumbing/index.html) |
 | `grit_lib::porcelain` | module | Porcelain operations — user-facing engines that assemble a structured result model from plumbing pieces (e.g. | [API](https://docs.rs/grit-lib/latest/grit_lib/porcelain/index.html) |
 | `grit_lib::porcelain::add` | module | Stage working-tree changes into the index (git add). | [API](https://docs.rs/grit-lib/latest/grit_lib/porcelain/add/index.html) |
