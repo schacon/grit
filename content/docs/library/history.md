@@ -28,6 +28,7 @@ The [`history`](rustdoc:grit_lib::revwalk::history) module supports stateless hi
 
 - `LocalChangesWouldBeOverwritten` — staged, unstaged, or untracked paths would be clobbered by the planned tree checkout.
 - `RefCasMismatch` — a ref tip changed after planning; nothing is written.
+- `HeadMovedSincePlan` — `HEAD` no longer points at the ref or commit recorded when the plan was built; nothing is written.
 - `RefApply` / `WorktreeApply` — ref batch or post-ref checkout failed (apply rolls back ref updates when checkout fails).
 - `ApplyRollbackIncomplete` — checkout failed after refs moved and ref rollback or worktree restore also failed.
 

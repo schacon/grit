@@ -212,6 +212,56 @@ fn apply_rewrite_updates_refs_atomically_reftable_backend() {
 }
 
 #[test]
+fn apply_rewrite_refuses_when_head_moved_since_plan() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    git(wt, &["update-ref", "refs/heads/other", &oids["c"].to_hex()]);
+    let plan = {
+        let grit = open_grit(wt);
+        let mut edits = HistoryEdits::new();
+        let parent_tree = parse_commit(&grit.odb().read(&oids["b"]).expect("read").data)
+            .expect("parse")
+            .tree;
+        let new_tree =
+            tree_plus_file(&grit, parent_tree, "rewritten-only.txt", b"new\n").expect("tree");
+        edits.insert(
+            oids["b"],
+            CommitEdit::Rewrite {
+                tree: Some(new_tree),
+                message: Some("tree change\n".into()),
+                author: None,
+                parents: None,
+            },
+        );
+        plan_rewrite(
+            &grit,
+            &edits,
+            &RewriteOptions {
+                scope: RefScope::Head,
+                empty: EmptyPolicy::Drop,
+                committer: committer(1),
+            },
+        )
+        .expect("plan")
+    };
+    git(wt, &["switch", "other"]);
+    let main_before = git_rev_parse(wt, "refs/heads/main").expect("main");
+    let grit = open_grit(wt);
+    let err = apply_rewrite(&grit, &plan, &apply_opts()).expect_err("head moved");
+    assert!(matches!(
+        err,
+        grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan { .. }
+    ));
+    assert_eq!(git_rev_parse(wt, "refs/heads/main"), Some(main_before));
+    assert!(
+        git_porcelain(wt).trim().is_empty(),
+        "other branch worktree must be untouched: {}",
+        git_porcelain(wt)
+    );
+}
+
+#[test]
 fn apply_rewrite_cas_mismatch_changes_nothing() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
@@ -220,10 +270,11 @@ fn apply_rewrite_cas_mismatch_changes_nothing() {
     commit_file(wt, "move.txt", "tip\n", "advance tip");
     let tip_after_move = git_rev_parse(wt, "refs/heads/main").expect("tip");
     let grit = open_grit(wt);
-    let err = apply_rewrite(&grit, &plan, &apply_opts()).expect_err("cas");
+    let err = apply_rewrite(&grit, &plan, &apply_opts()).expect_err("stale plan");
     assert!(matches!(
         err,
-        grit_lib::revwalk::history::HistoryError::RefCasMismatch { .. }
+        grit_lib::revwalk::history::HistoryError::HeadMovedSincePlan { .. }
+            | grit_lib::revwalk::history::HistoryError::RefCasMismatch { .. }
     ));
     assert_eq!(git_rev_parse(wt, "refs/heads/main"), Some(tip_after_move));
 }

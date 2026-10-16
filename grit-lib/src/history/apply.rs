@@ -15,7 +15,7 @@ use crate::refs::store::{
     Expected, RawRef, RefStoreError, RefTransaction, RefUpdate, ReflogUpdate,
 };
 use crate::repo::Repository;
-use crate::state::resolve_head;
+use crate::state::{resolve_head, HeadState};
 
 use super::error::HistoryError;
 use super::types::{AppliedRewrite, ApplyOptions, PlannedRefUpdate, RewritePlan};
@@ -33,13 +33,15 @@ use super::types::{AppliedRewrite, ApplyOptions, PlannedRefUpdate, RewritePlan};
 ///
 /// # Errors
 ///
-/// Returns [`HistoryError::LocalChangesWouldBeOverwritten`], [`HistoryError::RefCasMismatch`],
-/// [`HistoryError::RefApply`], or [`HistoryError::WorktreeApply`].
+/// Returns [`HistoryError::LocalChangesWouldBeOverwritten`], [`HistoryError::HeadMovedSincePlan`],
+/// [`HistoryError::RefCasMismatch`], [`HistoryError::RefApply`], or [`HistoryError::WorktreeApply`].
 pub fn apply_rewrite(
     repo: &Repository,
     plan: &RewritePlan,
     opts: &ApplyOptions,
 ) -> Result<AppliedRewrite, HistoryError> {
+    verify_live_head_matches_plan(repo, &plan.head)?;
+
     let (old_tree, new_tree) = head_tree_transition(plan);
     let needs_worktree = !repo.is_bare() && head_tree_changes(&old_tree, &new_tree);
 
@@ -87,6 +89,42 @@ pub fn apply_rewrite(
         ref_updates: plan.ref_updates.clone(),
         head,
     })
+}
+
+fn verify_live_head_matches_plan(
+    repo: &Repository,
+    head: &super::types::HeadEffect,
+) -> Result<(), HistoryError> {
+    let Some(planned_commit) = head.old_commit else {
+        return Ok(());
+    };
+    let live = resolve_head(repo.git_dir()).map_err(|e| HistoryError::RefApply {
+        message: e.to_string(),
+    })?;
+    let mismatch = || HistoryError::HeadMovedSincePlan {
+        planned_ref: head.head_ref.clone(),
+        planned_commit,
+    };
+    match (&head.head_ref, live) {
+        (Some(planned_ref), HeadState::Branch { refname, oid, .. }) => {
+            if planned_ref != &refname {
+                return Err(mismatch());
+            }
+            if oid.as_ref() != Some(&planned_commit) {
+                return Err(mismatch());
+            }
+        }
+        (None, HeadState::Detached { oid }) => {
+            if oid != planned_commit {
+                return Err(mismatch());
+            }
+        }
+        (Some(_), HeadState::Detached { .. }) | (None, HeadState::Branch { .. }) => {
+            return Err(mismatch());
+        }
+        (_, HeadState::Invalid) => return Err(mismatch()),
+    }
+    Ok(())
 }
 
 fn head_tree_transition(plan: &RewritePlan) -> (Option<ObjectId>, Option<ObjectId>) {

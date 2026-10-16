@@ -643,8 +643,14 @@ fn head_effect(
     let new_oid = mapping.get(&old_oid).copied().unwrap_or(old_oid);
     let old_tree = load_commit(repo, old_oid).ok().map(|c| c.tree);
     let new_tree = load_commit(repo, new_oid).ok().map(|c| c.tree);
+    let head_ref = match &head {
+        crate::state::HeadState::Branch { refname, .. } => Some(refname.clone()),
+        crate::state::HeadState::Detached { .. } | crate::state::HeadState::Invalid => None,
+    };
     Ok(HeadEffect {
         commit_changes: new_oid != old_oid,
+        old_commit: Some(old_oid),
+        head_ref,
         old_tree,
         new_tree,
     })

@@ -601,6 +601,7 @@ pub(crate) fn verify_tree_transition_allow_local(
             &mut prepared.index,
             from_tree.copied(),
             &tree_changes,
+            None,
         )
         .map_err(|_| Vec::new())?;
     ensure_local_changes_compatible_with_switch(
@@ -642,7 +643,7 @@ fn checkout_prepared_tree_transition(
         .filter(|c| c.status == DiffStatus::Deleted)
         .count();
     let checkout_parallel_threshold =
-        (tree_changes.len() >= 150 || delete_count >= 150).then_some(0);
+        (tree_changes.len() >= 100 || delete_count >= 100).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
         &tree_changes,
@@ -654,6 +655,7 @@ fn checkout_prepared_tree_transition(
             preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
         },
+        Some(&tree_changes),
     )
 }
 

@@ -96,6 +96,10 @@ pub struct PlannedRefUpdate {
 pub struct HeadEffect {
     /// Whether `HEAD`'s commit OID changes.
     pub commit_changes: bool,
+    /// Commit OID `HEAD` resolved to when the plan was built.
+    pub old_commit: Option<ObjectId>,
+    /// Full ref name when `HEAD` was symbolic at plan time (`refs/heads/...`); `None` when detached.
+    pub head_ref: Option<String>,
     /// Tree OID at `HEAD` before rewrite, when known.
     pub old_tree: Option<ObjectId>,
     /// Tree OID at `HEAD` after rewrite, when known.

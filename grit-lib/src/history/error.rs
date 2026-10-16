@@ -79,6 +79,15 @@ pub enum HistoryError {
         name: String,
     },
 
+    /// `HEAD` no longer points at the ref or commit recorded in the plan.
+    #[error("HEAD moved since the rewrite plan was built")]
+    HeadMovedSincePlan {
+        /// Ref `HEAD` pointed at when planning, if symbolic.
+        planned_ref: Option<String>,
+        /// Commit `HEAD` pointed at when planning.
+        planned_commit: ObjectId,
+    },
+
     /// Ref storage rejected the update batch.
     #[error("ref update failed: {message}")]
     RefApply {
