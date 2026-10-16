@@ -184,26 +184,59 @@ fn protocol_version_from_headers(headers: &HeaderMap) -> Option<u8> {
     None
 }
 
-/// Decode a smart-HTTP POST body (Git may send `Content-Encoding: gzip`).
-fn decode_smart_http_body(headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>, Box<Response>> {
+/// Maximum smart-HTTP POST body size after decompression (or for identity bodies).
+///
+/// Legitimate v2 fetch requests (thousands of `want` lines) stay well under this; it blocks
+/// gzip decompression bombs that expand far beyond the compressed size Axum accepts.
+const SMART_HTTP_MAX_DECODED_BODY: usize = 32 * 1024 * 1024;
+
+enum GzipDecodeError {
+    Invalid,
+    TooLarge,
+}
+
+/// Read at most `max` bytes from a gzip stream; reject if decompressed size exceeds `max`.
+fn read_gzip_with_limit(body: &[u8], max: usize) -> Result<Vec<u8>, GzipDecodeError> {
     use std::io::Read;
 
+    let decoder = flate2::read::GzDecoder::new(body);
+    let limit = (max as u64).saturating_add(1);
+    let mut limited = decoder.take(limit);
+    let mut decoded = Vec::new();
+    if limited.read_to_end(&mut decoded).is_err() {
+        return Err(GzipDecodeError::Invalid);
+    }
+    if decoded.len() > max {
+        return Err(GzipDecodeError::TooLarge);
+    }
+    Ok(decoded)
+}
+
+fn payload_too_large() -> Box<Response> {
+    Box::new((StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response())
+}
+
+/// Decode a smart-HTTP POST body (Git may send `Content-Encoding: gzip`).
+fn decode_smart_http_body(headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>, Box<Response>> {
     let encoding = headers
         .get(header::CONTENT_ENCODING)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     if encoding.eq_ignore_ascii_case("gzip") {
-        let mut decoder = flate2::read::GzDecoder::new(body);
-        let mut decoded = Vec::new();
-        decoder.read_to_end(&mut decoded).map_err(|_| {
-            Box::new((StatusCode::BAD_REQUEST, "invalid gzip request body").into_response())
-        })?;
-        return Ok(decoded);
+        return read_gzip_with_limit(body, SMART_HTTP_MAX_DECODED_BODY).map_err(|e| match e {
+            GzipDecodeError::Invalid => {
+                Box::new((StatusCode::BAD_REQUEST, "invalid gzip request body").into_response())
+            }
+            GzipDecodeError::TooLarge => payload_too_large(),
+        });
     }
     if !encoding.is_empty() && !encoding.eq_ignore_ascii_case("identity") {
         return Err(Box::new(
             (StatusCode::BAD_REQUEST, "unsupported Content-Encoding").into_response(),
         ));
+    }
+    if body.len() > SMART_HTTP_MAX_DECODED_BODY {
+        return Err(payload_too_large());
     }
     Ok(body.to_vec())
 }
@@ -468,19 +501,56 @@ async fn rpc_dispatch(
 #[cfg(test)]
 mod body_tests {
     use super::*;
+    use axum::http::HeaderValue;
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::Write;
 
+    fn gzip_bytes(plain: &[u8]) -> Vec<u8> {
+        let mut enc = GzEncoder::new(Vec::new(), Compression::fast());
+        assert!(enc.write_all(plain).is_ok(), "gzip compress setup");
+        match enc.finish() {
+            Ok(v) => v,
+            Err(e) => panic!("gzip finish failed: {e}"),
+        }
+    }
+
+    fn gzip_content_encoding_header() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        headers
+    }
+
     #[test]
     fn gzip_smart_http_post_body_is_decoded() {
         let plain = b"0012command=fetch\n";
-        let mut enc = GzEncoder::new(Vec::new(), Compression::fast());
-        enc.write_all(plain).unwrap();
-        let gzip = enc.finish().unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
-        let out = decode_smart_http_body(&headers, &gzip).expect("decode gzip body");
+        let gzip = gzip_bytes(plain);
+        let headers = gzip_content_encoding_header();
+        let out = match decode_smart_http_body(&headers, &gzip) {
+            Ok(v) => v,
+            Err(_) => panic!("decode gzip body"),
+        };
         assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn gzip_decoded_body_over_limit_returns_payload_too_large() {
+        let plain = vec![0u8; SMART_HTTP_MAX_DECODED_BODY + 1];
+        let gzip = gzip_bytes(&plain);
+        let headers = gzip_content_encoding_header();
+        match decode_smart_http_body(&headers, &gzip) {
+            Err(resp) => assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE),
+            Ok(_) => panic!("oversized gzip must fail"),
+        }
+    }
+
+    #[test]
+    fn identity_body_over_limit_returns_payload_too_large() {
+        let body = vec![0u8; SMART_HTTP_MAX_DECODED_BODY + 1];
+        let headers = HeaderMap::new();
+        match decode_smart_http_body(&headers, &body) {
+            Err(resp) => assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE),
+            Ok(_) => panic!("oversized body must fail"),
+        }
     }
 }
