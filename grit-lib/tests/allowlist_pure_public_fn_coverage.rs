@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use grit_lib::blame::build_fuzzy_line_map;
 use grit_lib::command_runner::hooks::{
-    list_hooks_display_lines, resolve_hooks_dir, run_hook_capture, run_hook_with_env,
+    resolve_hooks_dir, run_hook_capture, run_hook_with_env,
     run_reference_transaction_committed_for_head_update,
 };
 use grit_lib::command_runner::{run_program, CommandStdin, CommandStdio, RecordingRunner};
@@ -449,9 +449,8 @@ fn porcelain_log_revert_and_submodule_diff_helpers() {
 fn hooks_helpers_with_repo() {
     let dir = tempdir().expect("tempdir");
     let repo = init_repo(dir.path());
-    let cfg = ConfigSet::new();
     let _ = resolve_hooks_dir(&repo);
-    let _ = list_hooks_display_lines(Some(&repo), "pre-commit", &cfg);
+    let _ = repo.hooks().list();
     let _ = run_hook_with_env(&repo, "pre-commit", &[], None, &[]);
     let _ = run_hook_capture(&repo, "pre-commit", &[], None);
     let head = grit_lib::state::resolve_head(repo.git_dir()).expect("head");
