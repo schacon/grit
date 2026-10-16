@@ -1143,6 +1143,52 @@ fn diff_binary_content_shows_differs_message() -> TestResult {
     Ok(())
 }
 
+fn assert_binary_json_no_hunk_content(v: &Value, label: &str) {
+    let files = v["files"].as_array().expect("files array");
+    assert_eq!(files.len(), 1, "{label}: {v}");
+    let file = &files[0];
+    assert_eq!(file["binary"], true, "{label}: {file}");
+    let hunks = file["hunks"].as_array().expect("hunks");
+    assert!(
+        hunks.is_empty(),
+        "{label}: expected no hunks, got {hunks:?}"
+    );
+}
+
+#[test]
+fn diff_unstaged_binary_json_omits_hunks_small_and_large() -> TestResult {
+    for (tag, size) in [("small", 2000_usize), ("large", 200_000_usize)] {
+        let scratch = Scratch::new(&format!("diffbinjson-{tag}"))?;
+        let repo = scratch.child("repo");
+        fs::create_dir_all(&repo)?;
+        gs_ok(&repo, &["init", "."]);
+        let mut initial = vec![0_u8];
+        initial.extend(std::iter::repeat_n(0xAB_u8, size.saturating_sub(1)));
+        std::fs::write(repo.join("img.bin"), &initial)?;
+        gs_ok(&repo, &["commit", "init"]);
+        let mut updated = vec![0_u8];
+        updated.extend(std::iter::repeat_n(0xCD_u8, size.saturating_sub(1)));
+        std::fs::write(repo.join("img.bin"), &updated)?;
+        let v = gs_json(&repo, &["diff", "--unstaged"]);
+        assert_binary_json_no_hunk_content(&v, tag);
+    }
+    Ok(())
+}
+
+#[test]
+fn diff_unstaged_binary_json_omits_hunks_when_only_index_side_is_binary() -> TestResult {
+    let scratch = Scratch::new("diffbinjson-mixed")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    std::fs::write(repo.join("img.bin"), b"a\0committed")?;
+    gs_ok(&repo, &["commit", "init"]);
+    std::fs::write(repo.join("img.bin"), &[0xFF, 0xFE, 0xFD])?;
+    let v = gs_json(&repo, &["diff", "--unstaged"]);
+    assert_binary_json_no_hunk_content(&v, "mixed sides");
+    Ok(())
+}
+
 #[test]
 fn diff_two_commits_and_range() -> TestResult {
     let scratch = Scratch::new("difftwocommit")?;

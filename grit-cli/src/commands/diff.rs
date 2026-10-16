@@ -21,7 +21,7 @@ use grit_lib::diff::{
     diff_trees_with_renames_and_policy, read_submodule_head_oid, read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredDiffOptions,
-        StructuredLineKind,
+        StructuredFileDiff, StructuredLineKind,
     },
     submodule_porcelain_flags, tree_diff_structured_parallel, DiffEntry,
     DiffIndexToWorktreeOptions, DiffStatus, TreeDiffStructured,
@@ -898,14 +898,39 @@ fn bytes_for_diff(data: &[u8]) -> (SideBytes, bool) {
     }
 }
 
+fn diff_mode_display(mode: &str) -> Option<String> {
+    if mode == "000000" {
+        None
+    } else {
+        Some(mode.to_owned())
+    }
+}
+
+fn structured_for_file_change(
+    fc: &FileChange,
+    diff_options: StructuredDiffOptions,
+) -> StructuredFileDiff {
+    if fc.binary {
+        StructuredFileDiff {
+            old_mode: diff_mode_display(&fc.old_mode),
+            new_mode: diff_mode_display(&fc.new_mode),
+            old_encoding_lossy: fc.old_bytes.encoding_lossy,
+            new_encoding_lossy: fc.new_bytes.encoding_lossy,
+            hunks: Vec::new(),
+        }
+    } else {
+        structured_file_diff(
+            &fc.old_mode,
+            &fc.new_mode,
+            &fc.old_bytes,
+            &fc.new_bytes,
+            diff_options,
+        )
+    }
+}
+
 fn build_file_diff(fc: &FileChange, diff_options: StructuredDiffOptions) -> FileDiff {
-    let structured = structured_file_diff(
-        &fc.old_mode,
-        &fc.new_mode,
-        &fc.old_bytes,
-        &fc.new_bytes,
-        diff_options,
-    );
+    let structured = structured_for_file_change(fc, diff_options);
     let hunks = structured
         .hunks
         .into_iter()
