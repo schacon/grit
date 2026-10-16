@@ -415,6 +415,7 @@ impl CliFixture {
             markdown: &markdown,
         };
         let mut settings = insta::Settings::clone_current();
+        register_common_cli_snapshot_filters(&mut settings);
         settings.set_snapshot_path(snapshot_dir);
         settings.bind(|| {
             insta::assert_json_snapshot!(snapshot_name, payload);
@@ -670,14 +671,19 @@ struct AllModesSnapshot<'a> {
     markdown: &'a ModeCapture,
 }
 
-/// Register shared insta redactions for CLI snapshots in `settings`.
-pub fn register_cli_snapshot_filters(settings: &mut insta::Settings, fixture: &CliFixture) {
-    register_cli_snapshot_filters_for(settings, &[fixture]);
-}
+/// Insta redactions for crate version strings embedded in CLI snapshots (`CARGO_PKG_VERSION`).
+///
+/// Patterns match both raw command output and JSON-escaped forms inside insta snapshot files.
+const CRATE_VERSION_SNAPSHOT_FILTERS: &[(&str, &str)] = &[
+    (r"grit \d+\.\d+\.\d+", "grit [VERSION]"),
+    // Insta JSON snapshots escape inner quotes; replace only the semver token.
+    (r#"(\\"version\\": \\")([\d.]+)(\\")"#, r#"$1[VERSION]$3"#),
+    (r#"("version": ")([\d.]+)(")"#, r#"$1[VERSION]$3"#),
+    (r"(previous version \*\*)([\d.]+)(\*\*)", r"$1[VERSION]$3"),
+];
 
-/// Like [`register_cli_snapshot_filters`], but redact every fixture path (for
-/// `snapshot_fresh_all_modes`, where human/json/markdown use separate repos).
-pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixtures: &[&CliFixture]) {
+/// Timing, throughput, pack hash, and crate-version redactions shared by every CLI snapshot.
+pub fn register_common_cli_snapshot_filters(settings: &mut insta::Settings) {
     settings.add_filter(
         r"(?i)\b\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago\b",
         "[TIME_AGO]",
@@ -688,8 +694,20 @@ pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixture
     settings.add_filter(r#"`\{\\"duration_ms\\": ?\d+"#, r#"`{\"duration_ms\": 0"#);
     settings.add_filter(r#"\{\\"duration_ms\\": ?\d+"#, r#"{\"duration_ms\": 0"#);
     settings.add_filter(r"pack-[0-9a-f]{20,}\.pack", "pack-[HASH].pack");
-    settings.add_filter(r"grit \d+\.\d+\.\d+", "grit [VERSION]");
-    settings.add_filter(r#""version": "[\d.]+""#, r#""version": "[VERSION]""#);
+    for (pattern, replacement) in CRATE_VERSION_SNAPSHOT_FILTERS {
+        settings.add_filter(pattern, *replacement);
+    }
+}
+
+/// Register shared insta redactions for CLI snapshots in `settings`.
+pub fn register_cli_snapshot_filters(settings: &mut insta::Settings, fixture: &CliFixture) {
+    register_cli_snapshot_filters_for(settings, &[fixture]);
+}
+
+/// Like [`register_cli_snapshot_filters`], but redact every fixture path (for
+/// `snapshot_fresh_all_modes`, where human/json/markdown use separate repos).
+pub fn register_cli_snapshot_filters_for(settings: &mut insta::Settings, fixtures: &[&CliFixture]) {
+    register_common_cli_snapshot_filters(settings);
 
     for fixture in fixtures {
         redact_path(settings, fixture.path(), "[REPO]");
@@ -841,4 +859,68 @@ fn grit_bin() -> OsString {
         }
     }
     OsString::from(format!("target/debug/{program}"))
+}
+
+#[cfg(test)]
+mod snapshot_filter_tests {
+    fn snap_json_body(name: &str) -> String {
+        let path = match name {
+            "update_render" => concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../grit-cli/tests/snapshots/grit_test_support__cli_fixture__update_render.snap"
+            ),
+            "skill" => concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../grit-cli/tests/snapshots/grit_test_support__cli_fixture__skill.snap"
+            ),
+            other => panic!("unknown snap {other}"),
+        };
+        let sample = std::fs::read_to_string(path).expect("read snap");
+        sample
+            .splitn(3, "---")
+            .nth(2)
+            .expect("snap body")
+            .to_string()
+    }
+
+    #[test]
+    fn committed_version_snapshots_are_valid_json_without_live_crate_version() {
+        let pkg_version = env!("CARGO_PKG_VERSION");
+        for name in ["update_render", "skill"] {
+            let stored = snap_json_body(name);
+            assert!(
+                !stored.contains(pkg_version),
+                "{name} snapshot must not embed CARGO_PKG_VERSION ({pkg_version})"
+            );
+            assert!(
+                stored.contains("[VERSION]"),
+                "{name} snapshot must use [VERSION] placeholder"
+            );
+            serde_json::from_str::<serde_json::Value>(stored.trim())
+                .unwrap_or_else(|e| panic!("{name} snapshot body must be valid JSON: {e}"));
+        }
+    }
+
+    #[test]
+    fn crate_version_filters_redact_live_output_before_snapshot() {
+        let pkg_version = env!("CARGO_PKG_VERSION");
+        let live_json = format!("{{\n  \"updated\": true,\n  \"version\": \"{pkg_version}\"\n}}\n");
+        let live_md = format!(
+            "## Update\n\n- Updated grit (ran installer; previous version **{pkg_version}**)\n"
+        );
+        let redact = |input: &str| {
+            let mut out = input.to_string();
+            for (pattern, replacement) in super::CRATE_VERSION_SNAPSHOT_FILTERS {
+                let re = regex::Regex::new(pattern).expect("filter regex");
+                out = re.replace_all(&out, *replacement).to_string();
+            }
+            out
+        };
+        let json = redact(&live_json);
+        let md = redact(&live_md);
+        assert!(!json.contains(pkg_version));
+        assert!(!md.contains(pkg_version));
+        assert!(json.contains(r#""version": "[VERSION]""#));
+        assert!(md.contains("previous version **[VERSION]**"));
+    }
 }

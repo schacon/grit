@@ -10,8 +10,9 @@ pub mod odb_conformance;
 pub mod parallel;
 
 pub use cli_fixture::{
-    register_cli_snapshot_filters, register_network_snapshot_filters, with_cli_snapshot_filters,
-    CliFixture, CliFixtureWithUpstream, ModeCapture, NetworkSnapshotOptions, PreparedNetworkRun,
+    register_cli_snapshot_filters, register_common_cli_snapshot_filters,
+    register_network_snapshot_filters, with_cli_snapshot_filters, CliFixture,
+    CliFixtureWithUpstream, ModeCapture, NetworkSnapshotOptions, PreparedNetworkRun,
     SnapshotExitCodes, SnapshotOutputMode,
 };
 pub use objects::{
