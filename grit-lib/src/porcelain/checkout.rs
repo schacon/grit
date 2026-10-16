@@ -517,54 +517,72 @@ pub(crate) fn wholesale_deleted_directories(
     if deleted_under.is_empty() {
         return BTreeSet::new();
     }
-    let candidate_dirs: BTreeSet<String> = deleted_under.keys().cloned().collect();
-    let mut indexed_under: BTreeMap<String, usize> = BTreeMap::new();
+    let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
+    let mut wholesale = BTreeSet::new();
     if index.entries_sorted {
-        for dir in &candidate_dirs {
+        for (dir, del_count) in &deleted_under {
+            if *del_count == 0 {
+                continue;
+            }
             let prefix = format!("{dir}/");
+            let prefix_bytes = prefix.as_bytes();
             let start = index
                 .entries
-                .partition_point(|e| e.path.as_slice() < prefix.as_bytes());
-            let mut count = 0usize;
+                .partition_point(|e| e.path.as_slice() < prefix_bytes);
+            let mut indexed_count = 0usize;
+            let mut all_scheduled = true;
             for entry in index.entries[start..].iter() {
-                if !entry.path.starts_with(prefix.as_bytes()) {
+                if !entry.path.starts_with(prefix_bytes) {
                     break;
                 }
-                if entry.stage() == 0 {
-                    count += 1;
+                if entry.stage() != 0 {
+                    continue;
+                }
+                indexed_count += 1;
+                let Ok(path) = std::str::from_utf8(&entry.path) else {
+                    all_scheduled = false;
+                    break;
+                };
+                if !delete_path_is_scheduled(path, &delete_set, false) {
+                    all_scheduled = false;
+                    break;
                 }
             }
-            if count > 0 {
-                indexed_under.insert(dir.clone(), count);
+            if all_scheduled && indexed_count == *del_count {
+                wholesale.insert(dir.clone());
             }
         }
-    } else {
-        for entry in &index.entries {
-            if entry.stage() != 0 {
-                continue;
-            }
-            let Ok(path) = std::str::from_utf8(&entry.path) else {
-                continue;
-            };
-            let Some((dir, _rest)) = path.split_once('/') else {
-                continue;
-            };
-            if !candidate_dirs.contains(dir) {
-                continue;
-            }
-            *indexed_under.entry(dir.to_owned()).or_default() += 1;
+        return wholesale;
+    }
+    let mut indexed_under: BTreeMap<String, usize> = BTreeMap::new();
+    let mut blocked: BTreeSet<String> = BTreeSet::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let Ok(path) = std::str::from_utf8(&entry.path) else {
+            continue;
+        };
+        let Some((dir, _rest)) = path.split_once('/') else {
+            continue;
+        };
+        if !deleted_under.contains_key(dir) {
+            continue;
+        }
+        *indexed_under.entry(dir.to_owned()).or_default() += 1;
+        if !delete_path_is_scheduled(path, &delete_set, false) {
+            blocked.insert(dir.to_owned());
         }
     }
-    deleted_under
-        .into_iter()
-        .filter_map(|(dir, del_count)| {
-            indexed_under
-                .get(&dir)
-                .copied()
-                .filter(|indexed| *indexed == del_count && del_count > 0)
-                .map(|_| dir)
-        })
-        .collect()
+    for (dir, del_count) in deleted_under {
+        if del_count == 0 || blocked.contains(&dir) {
+            continue;
+        }
+        if indexed_under.get(&dir).copied() == Some(del_count) {
+            wholesale.insert(dir);
+        }
+    }
+    wholesale
 }
 
 /// True when every file under `work_tree`/`dir` is listed in `delete_paths` (Git keeps untracked/ignored extras).
@@ -867,11 +885,7 @@ fn checkout_tree_changes_with_progress(
         })
         .collect();
     let wholesale_candidates = if apply.wholesale_safety_precomputed {
-        filter_wholesale_dirs_with_populated_gitlinks(
-            work_tree,
-            apply.preverified_wholesale_dirs.clone(),
-            &gitlink_deletes,
-        )
+        apply.preverified_wholesale_dirs.clone()
     } else {
         wholesale_deleted_directories_on_disk(
             repo,
@@ -884,11 +898,33 @@ fn checkout_tree_changes_with_progress(
         )
     };
     let mut wholesale_dirs_removed = BTreeSet::new();
-    for dir in &wholesale_candidates {
-        let abs = work_tree.join(dir);
-        if fs::remove_dir_all(&abs).is_ok() {
-            wholesale_dirs_removed.insert(dir.clone());
+    if wholesale_candidates.len() >= 2 {
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let wt = work_tree.to_path_buf();
+        let dirs: Vec<String> = wholesale_candidates.iter().cloned().collect();
+        let removed = try_par_map(&dirs, options, 0, |dir| {
+            let abs = wt.join(dir);
+            Ok(fs::remove_dir_all(&abs)
+                .is_ok()
+                .then_some((dir.clone(), abs)))
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel wholesale directory removal failed".into())
+            }
+        })?;
+        for (dir, abs) in removed.into_iter().flatten() {
+            wholesale_dirs_removed.insert(dir);
             deleted_abs_paths.push(abs);
+        }
+    } else {
+        for dir in &wholesale_candidates {
+            let abs = work_tree.join(dir);
+            if fs::remove_dir_all(&abs).is_ok() {
+                wholesale_dirs_removed.insert(dir.clone());
+                deleted_abs_paths.push(abs);
+            }
         }
     }
 
@@ -1961,6 +1997,48 @@ mod tests {
             .expect("commit");
         refs::write_ref(repo.git_dir(), "HEAD", &commit_oid).expect("head");
         tree
+    }
+
+    #[test]
+    fn wholesale_deleted_directories_skips_dir_with_remaining_gitlink() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let wt = repo.work_tree().expect("wt");
+        std::fs::create_dir_all(wt.join("d005")).expect("mkdir");
+        let mut index = repo.load_index().expect("index");
+        let mut delete_paths = Vec::new();
+        for i in 0..50 {
+            let rel = format!("d005/f{i:02}.txt");
+            let abs = wt.join(&rel);
+            std::fs::write(&abs, format!("v{i}\n")).expect("write");
+            let data = fs::read(&abs).expect("read");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
+            index.add_or_replace(
+                entry_from_stat(&abs, rel.as_bytes(), oid, MODE_REGULAR).expect("entry"),
+            );
+            delete_paths.push(rel);
+        }
+        let sub_rel = "d005/submodule";
+        std::fs::create_dir_all(wt.join(sub_rel)).expect("gitlink dir");
+        let sub_oid = repo.odb().write(ObjectKind::Blob, b"sub\n").expect("blob");
+        index.add_or_replace(
+            entry_from_stat(&wt.join(sub_rel), sub_rel.as_bytes(), sub_oid, MODE_GITLINK)
+                .expect("gitlink entry"),
+        );
+        index.sort();
+        repo.write_index(&mut index).expect("write index");
+        let wholesale = wholesale_deleted_directories(&index, &delete_paths);
+        assert!(
+            wholesale.is_empty(),
+            "gitlink under dir must block wholesale removal"
+        );
     }
 
     #[test]
