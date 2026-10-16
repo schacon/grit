@@ -397,6 +397,30 @@ fn prepare_tree_switch_allow_local(
 ) -> Result<PreparedSwitch> {
     let snapshot = load_worktree_snapshot(repo)?;
     prepare_tree_transition_allow_local(repo, snapshot.head_tree.as_ref(), to_tree)
+        .map_err(tree_transition_prepare_to_error)
+}
+
+/// Local edits on tree-diff paths block a tree transition.
+pub(crate) enum TreeTransitionPrepareError {
+    /// Staged or unstaged paths that would be overwritten.
+    OverwritePaths(Vec<String>),
+    /// Any other failure while planning the transition.
+    Failed(Error),
+}
+
+impl From<Error> for TreeTransitionPrepareError {
+    fn from(value: Error) -> Self {
+        Self::Failed(value)
+    }
+}
+
+fn tree_transition_prepare_to_error(err: TreeTransitionPrepareError) -> Error {
+    match err {
+        TreeTransitionPrepareError::OverwritePaths(_) => {
+            Error::Message("you have uncommitted changes — commit them before switching".into())
+        }
+        TreeTransitionPrepareError::Failed(err) => err,
+    }
 }
 
 /// Plan a tree-to-tree checkout that keeps staged/unstaged edits on paths the target tree already matches.
@@ -404,7 +428,7 @@ pub(crate) fn prepare_tree_transition_allow_local(
     repo: &Repository,
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
-) -> Result<PreparedSwitch> {
+) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
     let mut snapshot = load_worktree_snapshot(repo)?;
     snapshot.head_tree = from_tree.copied();
     let trust_index_for_old_tree =
@@ -437,13 +461,13 @@ pub(crate) fn prepare_tree_transition_allow_local(
         &unstaged,
         &tree_changes,
     )
-    .map_err(|_| {
-        Error::Message("you have uncommitted changes — commit them before switching".into())
-    })?;
+    .map_err(TreeTransitionPrepareError::OverwritePaths)?;
 
-    let work_tree = repo
-        .work_tree()
-        .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
+    let work_tree = repo.work_tree().ok_or_else(|| {
+        TreeTransitionPrepareError::Failed(Error::Message(
+            "this operation must be run in a work tree".into(),
+        ))
+    })?;
     let (untracked, wholesale_ignored, trust_wholesale_dir_removal, traditional_ignore_scan) =
         collect_untracked_and_wholesale_trust_for_tree_changes(
             repo,
@@ -558,7 +582,10 @@ pub(crate) fn verify_tree_transition_allow_local(
     to_tree: &ObjectId,
 ) -> std::result::Result<(), Vec<String>> {
     let mut prepared =
-        prepare_tree_transition_allow_local(repo, from_tree, to_tree).map_err(|_| Vec::new())?;
+        prepare_tree_transition_allow_local(repo, from_tree, to_tree).map_err(|err| match err {
+            TreeTransitionPrepareError::OverwritePaths(paths) => paths,
+            TreeTransitionPrepareError::Failed(_) => Vec::new(),
+        })?;
     let tree_changes = prepared.plan.tree_changes.clone();
     let untracked =
         crate::porcelain::worktree_guard::untracked_would_be_overwritten_by_tree_changes(
@@ -591,7 +618,8 @@ pub(crate) fn checkout_tree_transition_allow_local(
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
 ) -> Result<()> {
-    let prepared = prepare_tree_transition_allow_local(repo, from_tree, to_tree)?;
+    let prepared = prepare_tree_transition_allow_local(repo, from_tree, to_tree)
+        .map_err(tree_transition_prepare_to_error)?;
     checkout_prepared_tree_transition(repo, prepared)
 }
 

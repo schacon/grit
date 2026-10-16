@@ -65,15 +65,20 @@ pub fn apply_rewrite(
                 message: "missing head tree for worktree apply".into(),
             });
         };
-        if let Err(err) = apply_head_tree_to_worktree(repo, Some(&old), &new) {
-            let _ = rollback_ref_updates(repo, &plan.ref_updates, opts);
-            let _ = restore_worktree_after_failed_apply(
+        if let Err(checkout_err) = apply_head_tree_to_worktree(repo, Some(&old), &new) {
+            let ref_rollback = rollback_ref_updates(repo, &plan.ref_updates, opts).err();
+            let worktree_restore = restore_worktree_after_failed_apply(
                 repo,
                 Some(&old),
                 &new,
                 index_snapshot.as_deref(),
-            );
-            return Err(err);
+            )
+            .err();
+            return Err(apply_failure_after_ref_update(
+                checkout_err,
+                ref_rollback,
+                worktree_restore,
+            ));
         }
     }
 
@@ -235,6 +240,27 @@ fn resolve_head_commit(repo: &Repository) -> Result<ObjectId, HistoryError> {
     })
 }
 
+fn apply_failure_after_ref_update(
+    checkout: HistoryError,
+    ref_rollback: Option<HistoryError>,
+    worktree_restore: Option<HistoryError>,
+) -> HistoryError {
+    let checkout_message = match checkout {
+        HistoryError::WorktreeApply { message } => message,
+        other => other.to_string(),
+    };
+    if ref_rollback.is_none() && worktree_restore.is_none() {
+        return HistoryError::WorktreeApply {
+            message: checkout_message,
+        };
+    }
+    HistoryError::ApplyRollbackIncomplete {
+        checkout: checkout_message,
+        ref_rollback: ref_rollback.map(|e| e.to_string()),
+        worktree_restore: worktree_restore.map(|e| e.to_string()),
+    }
+}
+
 fn restore_worktree_after_failed_apply(
     repo: &Repository,
     old_tree: Option<&ObjectId>,
@@ -338,6 +364,124 @@ mod inject_and_apply_tests {
         ) -> crate::error::Result<()> {
             self.inner.for_each_reflog_ref(f)
         }
+    }
+
+    #[test]
+    fn apply_rewrite_checkout_failure_rolls_back_refs_and_index() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        let blob = repo.odb().write(ObjectKind::Blob, b"file\n").expect("blob");
+        let mut index = crate::index::Index::new();
+        index.hash_algo = repo.odb().hash_algo();
+        index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 5,
+            oid: blob,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        let tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
+        repo.write_index(&mut index).expect("write index");
+        fs::write(dir.path().join("file.txt"), "file\n").expect("write");
+        let commit = crate::objects::serialize_commit(&crate::objects::CommitData {
+            tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "root\n".into(),
+            raw_message: None,
+            extra_headers: vec![],
+        });
+        let root = repo
+            .odb()
+            .write(ObjectKind::Commit, &commit)
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &root).expect("ref");
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        let child_tree = crate::index::write_tree::write_tree_from_index(
+            repo.odb(),
+            &{
+                let mut idx = index.clone();
+                let blob2 = repo.odb().write(ObjectKind::Blob, b"two\n").expect("blob");
+                idx.add_or_replace(crate::index::IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: crate::index::MODE_REGULAR,
+                    uid: 0,
+                    gid: 0,
+                    size: 4,
+                    oid: blob2,
+                    flags: 8,
+                    flags_extended: None,
+                    path: b"two.txt".to_vec(),
+                    base_index_pos: 0,
+                });
+                idx
+            },
+            "",
+        )
+        .expect("child tree");
+        let mut edits = HistoryEdits::new();
+        edits.insert(
+            root,
+            CommitEdit::Rewrite {
+                tree: Some(child_tree),
+                message: Some("rewritten\n".into()),
+                author: None,
+                parents: None,
+            },
+        );
+        let plan = plan_rewrite(
+            &repo,
+            &edits,
+            &RewriteOptions {
+                scope: RefScope::Head,
+                empty: EmptyPolicy::Drop,
+                committer: "T <t@t> 1 +0000".into(),
+            },
+        )
+        .expect("plan");
+        let before_index = fs::read(repo.index_path()).expect("index");
+        crate::repo::set_test_inject_index_write_fail(true);
+        let err = apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity: "T <t@t>".into(),
+                reflog_message: "rewrite".into(),
+            },
+        )
+        .expect_err("checkout must fail after refs move");
+        crate::repo::set_test_inject_index_write_fail(false);
+        assert!(matches!(
+            err,
+            HistoryError::WorktreeApply { .. } | HistoryError::ApplyRollbackIncomplete { .. }
+        ));
+        assert_eq!(fs::read(repo.index_path()).expect("index"), before_index);
+        assert_eq!(
+            crate::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
+            root
+        );
     }
 
     #[test]

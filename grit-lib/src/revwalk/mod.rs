@@ -52,6 +52,6 @@ pub mod object_inspect {
     pub use crate::object_inspect::*;
 }
 pub mod history {
-    //! In-memory history rewrite planning (rewrite engine for `grit history` commands).
+    //! In-memory history rewrite planning and apply.
     pub use crate::history::*;
 }

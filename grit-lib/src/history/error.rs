@@ -92,4 +92,15 @@ pub enum HistoryError {
         /// Underlying failure.
         message: String,
     },
+
+    /// Checkout failed after refs were updated; rollback or worktree restore may also have failed.
+    #[error("checkout failed after refs were updated")]
+    ApplyRollbackIncomplete {
+        /// Primary checkout failure.
+        checkout: String,
+        /// Ref rollback error, when rolling back failed.
+        ref_rollback: Option<String>,
+        /// Worktree/index restore error after checkout failed.
+        worktree_restore: Option<String>,
+    },
 }

@@ -16,7 +16,8 @@ use grit_lib::objects::{
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
-    plan_rewrite, CommitEdit, EmptyPolicy, HistoryEdits, RefScope, RewriteOptions,
+    plan_rewrite, test_merge_tree_call_count, test_reset_merge_tree_call_count, CommitEdit,
+    EmptyPolicy, HistoryEdits, RefScope, RewriteOptions,
 };
 use grit_lib::state::resolve_head;
 
