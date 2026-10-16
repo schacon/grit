@@ -1537,7 +1537,37 @@ pub fn diff_trees(
     new_tree_oid: Option<&ObjectId>,
     prefix: &str,
 ) -> Result<Vec<DiffEntry>> {
-    diff_trees_opts(odb, old_tree_oid, new_tree_oid, prefix, false)
+    diff_trees_opts(odb, old_tree_oid, new_tree_oid, prefix, false, None)
+}
+
+/// Like [`diff_trees`], but when `index` matches `old_tree_oid` deleted subtrees are expanded
+/// from sorted index entries instead of reading every tree object from the ODB.
+pub(crate) fn diff_trees_with_index(
+    odb: &Odb,
+    index: &Index,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+    trust_index_for_old_tree: bool,
+) -> Result<Vec<DiffEntry>> {
+    let hint = (trust_index_for_old_tree
+        && old_tree_oid.is_some()
+        && index.entries_sorted
+        && !index.entries.iter().any(|e| e.stage() != 0))
+    .then_some(DiffTreesIndexHint { index });
+    diff_trees_opts(
+        odb,
+        old_tree_oid,
+        new_tree_oid,
+        prefix,
+        false,
+        hint.as_ref(),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct DiffTreesIndexHint<'a> {
+    index: &'a Index,
 }
 
 /// Diff two trees and pair deleted/added paths as renames when content is similar enough.
@@ -1669,7 +1699,7 @@ pub fn diff_trees_show_tree_entries(
     new_tree_oid: Option<&ObjectId>,
     prefix: &str,
 ) -> Result<Vec<DiffEntry>> {
-    diff_trees_opts(odb, old_tree_oid, new_tree_oid, prefix, true)
+    diff_trees_opts(odb, old_tree_oid, new_tree_oid, prefix, true, None)
 }
 
 fn diff_trees_opts(
@@ -1678,6 +1708,7 @@ fn diff_trees_opts(
     new_tree_oid: Option<&ObjectId>,
     prefix: &str,
     show_trees: bool,
+    index_hint: Option<&DiffTreesIndexHint<'_>>,
 ) -> Result<Vec<DiffEntry>> {
     let old_entries = match old_tree_oid {
         Some(oid) => read_tree(odb, oid)?,
@@ -1695,6 +1726,7 @@ fn diff_trees_opts(
         &new_entries,
         prefix,
         show_trees,
+        index_hint,
         &mut result,
     )?;
     Ok(result)
@@ -1741,6 +1773,7 @@ fn diff_tree_entries_opts(
     new: &[TreeEntry],
     prefix: &str,
     show_trees: bool,
+    index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
     let mut oi = 0;
@@ -1758,7 +1791,7 @@ fn diff_tree_entries_opts(
                 match cmp {
                     std::cmp::Ordering::Less => {
                         // Old entry not in new → deleted
-                        emit_deleted_opts(odb, o, prefix, show_trees, result)?;
+                        emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
                         oi += 1;
                     }
                     std::cmp::Ordering::Greater => {
@@ -1792,15 +1825,16 @@ fn diff_tree_entries_opts(
                                     Some(&n.oid),
                                     &path,
                                     show_trees,
+                                    index_hint,
                                 )?;
                                 result.extend(nested);
                             } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
                                 // Tree → blob: delete tree contents, add blob
-                                emit_deleted_opts(odb, o, prefix, show_trees, result)?;
+                                emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
                                 emit_added_opts(odb, n, prefix, show_trees, result)?;
                             } else if !is_tree_mode(o.mode) && is_tree_mode(n.mode) {
                                 // Blob → tree: delete blob, add tree contents
-                                emit_deleted_opts(odb, o, prefix, show_trees, result)?;
+                                emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
                                 emit_added_opts(odb, n, prefix, show_trees, result)?;
                             } else {
                                 // Both blobs — modified.
@@ -1830,7 +1864,7 @@ fn diff_tree_entries_opts(
                 }
             }
             (Some(o), None) => {
-                emit_deleted_opts(odb, o, prefix, show_trees, result)?;
+                emit_deleted_opts(odb, o, prefix, show_trees, index_hint, result)?;
                 oi += 1;
             }
             (None, Some(n)) => {
@@ -1844,11 +1878,85 @@ fn diff_tree_entries_opts(
     Ok(())
 }
 
+fn emit_deleted_tree_from_index(index: &Index, dir_prefix: &str, result: &mut Vec<DiffEntry>) {
+    use crate::index::MODE_GITLINK;
+    let scan_prefix: Vec<u8> = if dir_prefix.is_empty() {
+        Vec::new()
+    } else {
+        format!("{dir_prefix}/").into_bytes()
+    };
+    if index.entries_sorted {
+        let start = if scan_prefix.is_empty() {
+            0
+        } else {
+            index
+                .entries
+                .partition_point(|e| e.path.as_slice() < scan_prefix.as_slice())
+        };
+        for ie in index.entries[start..].iter() {
+            if ie.stage() != 0 {
+                continue;
+            }
+            if !scan_prefix.is_empty() && !ie.path.starts_with(&scan_prefix) {
+                break;
+            }
+            if scan_prefix.is_empty() && ie.path.contains(&b'/') {
+                continue;
+            }
+            if ie.mode == MODE_GITLINK {
+                continue;
+            }
+            let path = String::from_utf8_lossy(&ie.path).into_owned();
+            result.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(path),
+                new_path: None,
+                old_mode: format_mode(ie.mode),
+                new_mode: "000000".to_owned(),
+                old_oid: ie.oid,
+                new_oid: zero_oid(),
+                score: None,
+            });
+        }
+        return;
+    }
+    for ie in &index.entries {
+        if ie.stage() != 0 || ie.mode == MODE_GITLINK {
+            continue;
+        }
+        let Ok(path) = std::str::from_utf8(&ie.path) else {
+            continue;
+        };
+        let under = if dir_prefix.is_empty() {
+            !path.contains('/')
+        } else if path == dir_prefix {
+            false
+        } else {
+            path.strip_prefix(dir_prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+        };
+        if !under {
+            continue;
+        }
+        result.push(DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(path.to_owned()),
+            new_path: None,
+            old_mode: format_mode(ie.mode),
+            new_mode: "000000".to_owned(),
+            old_oid: ie.oid,
+            new_oid: zero_oid(),
+            score: None,
+        });
+    }
+}
+
 fn emit_deleted_opts(
     odb: &Odb,
     entry: &TreeEntry,
     prefix: &str,
     show_trees: bool,
+    index_hint: Option<&DiffTreesIndexHint<'_>>,
     result: &mut Vec<DiffEntry>,
 ) -> Result<()> {
     let name_str = String::from_utf8_lossy(&entry.name);
@@ -1866,8 +1974,11 @@ fn emit_deleted_opts(
                 score: None,
             });
         }
-        // Recurse into deleted tree
-        let nested = diff_trees_opts(odb, Some(&entry.oid), None, &path, show_trees)?;
+        if let Some(hint) = index_hint {
+            emit_deleted_tree_from_index(hint.index, &path, result);
+            return Ok(());
+        }
+        let nested = diff_trees_opts(odb, Some(&entry.oid), None, &path, show_trees, None)?;
         result.extend(nested);
     } else {
         result.push(DiffEntry {
@@ -1907,7 +2018,7 @@ fn emit_added_opts(
             });
         }
         // Recurse into added tree
-        let nested = diff_trees_opts(odb, None, Some(&entry.oid), &path, show_trees)?;
+        let nested = diff_trees_opts(odb, None, Some(&entry.oid), &path, show_trees, None)?;
         result.extend(nested);
     } else {
         result.push(DiffEntry {
@@ -4653,6 +4764,34 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     rel_path: &str,
     filter_process: Option<&crate::filter_process::FilterProcessState>,
 ) -> Result<bool> {
+    path_checkout_skip_blob_write_when_up_to_date_with_config(
+        odb,
+        git_dir,
+        work_tree,
+        index,
+        entry,
+        expected_oid,
+        expected_mode,
+        rel_path,
+        filter_process,
+        None,
+    )
+}
+
+/// Like [`path_checkout_skip_blob_write_when_up_to_date`], with an optional preloaded config.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn path_checkout_skip_blob_write_when_up_to_date_with_config(
+    odb: &Odb,
+    git_dir: &Path,
+    work_tree: &Path,
+    index: &Index,
+    entry: &IndexEntry,
+    expected_oid: &ObjectId,
+    expected_mode: u32,
+    rel_path: &str,
+    filter_process: Option<&crate::filter_process::FilterProcessState>,
+    preloaded_config: Option<&crate::config::ConfigSet>,
+) -> Result<bool> {
     use crate::config::ConfigSet;
     use crate::crlf;
     use crate::index::{MODE_EXECUTABLE, MODE_REGULAR};
@@ -4671,12 +4810,19 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     if !meta.is_file() || !stat_matches(entry, &meta) {
         return Ok(false);
     }
-    let config = ConfigSet::load(
-        &crate::environment::Environment::empty(),
-        Some(git_dir),
-        true,
-    )
-    .unwrap_or_default();
+    let owned_config;
+    let config = match preloaded_config {
+        Some(cfg) => cfg,
+        None => {
+            owned_config = ConfigSet::load(
+                &crate::environment::Environment::empty(),
+                Some(git_dir),
+                true,
+            )
+            .unwrap_or_default();
+            &owned_config
+        }
+    };
     let trust_filemode = config
         .get_bool("core.filemode")
         .and_then(|r| r.ok())
@@ -4688,9 +4834,9 @@ pub fn path_checkout_skip_blob_write_when_up_to_date(
     if !entry_is_racy(entry, index_mtime) {
         return Ok(true);
     }
-    let conv = crlf::ConversionConfig::from_config(&config);
+    let conv = crlf::ConversionConfig::from_config(config);
     let attrs = crlf::load_gitattributes(work_tree);
-    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, config);
     let wt_oid = hash_worktree_file(
         odb,
         &abs_path,

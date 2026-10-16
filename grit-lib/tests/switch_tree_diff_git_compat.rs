@@ -202,6 +202,69 @@ fn switch_preserves_untracked_in_wholesale_deleted_directory() {
 }
 
 #[test]
+fn switch_preserves_ignored_file_in_wholesale_deleted_directory() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+    git(tmp.path(), &["config", "gc.auto", "0"]);
+
+    std::fs::write(tmp.path().join(".gitignore"), "*.log\n").expect("gitignore");
+    std::fs::create_dir_all(tmp.path().join("d")).expect("mkdir d");
+    for i in 0..8 {
+        std::fs::write(
+            tmp.path().join(format!("d/f{i}.txt")),
+            format!("main {i}\n"),
+        )
+        .expect("write");
+    }
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    git(tmp.path(), &["rm", "-r", "d"]);
+    git(tmp.path(), &["commit", "-qm", "drop d"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    std::fs::write(tmp.path().join("d/ignored.log"), b"keep\n").expect("ignored");
+    assert!(
+        std::fs::read(tmp.path().join("d/ignored.log")).is_ok(),
+        "ignored file must exist before switch"
+    );
+
+    git(tmp.path(), &["switch", "-q", "target"]);
+    assert!(
+        std::fs::read(tmp.path().join("d/ignored.log")).is_ok(),
+        "system git must preserve ignored file under wholesale-deleted directory"
+    );
+    git(tmp.path(), &["switch", "-q", "main"]);
+
+    std::fs::write(tmp.path().join("d/ignored.log"), b"keep\n").expect("ignored again");
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+        },
+    )
+    .expect("grit switch to target");
+
+    let kept = std::fs::read_to_string(tmp.path().join("d/ignored.log")).expect("ignored kept");
+    assert_eq!(kept, "keep\n");
+}
+
+#[test]
 fn switch_refuses_racy_same_size_dirty_file_like_git() {
     use std::path::Path;
     use std::process::Command;

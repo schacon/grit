@@ -17,6 +17,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
 use crate::crlf;
 use crate::diff::{diff_trees, format_mode, DiffEntry, DiffStatus};
 use crate::error::{Error, Result};
@@ -26,6 +27,7 @@ use crate::index::{
     MODE_REGULAR, MODE_SYMLINK,
 };
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::path_icase::paths_equal;
 use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
 use crate::repo::Repository;
@@ -39,6 +41,7 @@ use checkout_parallel::{
 };
 
 const CHECKOUT_FILE_PROGRESS_BATCH: u64 = 256;
+const PARALLEL_PER_FILE_DELETE_MIN: usize = 32;
 
 /// Batched file-count progress for the populated-tree checkout path.
 struct CheckoutFileProgress<'a> {
@@ -354,7 +357,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
         }
 
         if let Some(existing) = index.get(te.path.as_slice(), 0) {
-            if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
+            if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                 repo.odb(),
                 repo.git_dir(),
                 work_tree,
@@ -364,6 +367,7 @@ pub fn checkout_hard_to_tree_from_head_tree(
                 mode,
                 &path,
                 Some(rules.filter_process()),
+                Some(config.as_ref()),
             )? {
                 let abs = work_tree.join(&path);
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
@@ -439,7 +443,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
 }
 
 /// Options for [`checkout_tree_changes_with_index_opts`].
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct CheckoutApplyOptions {
     /// Read blob ODB objects in parallel when preparing write jobs.
     ///
@@ -448,6 +452,13 @@ pub(crate) struct CheckoutApplyOptions {
     pub parallel_prepare_blobs: bool,
     /// Override `checkout.thresholdForParallelism` for this apply (switch uses a low threshold).
     pub checkout_parallel_threshold: Option<i64>,
+    /// When true, wholesale directory removal skips the on-disk safety walk (switch already
+    /// verified no untracked paths under those directories).
+    pub trust_wholesale_dir_removal: bool,
+    /// Wholesale delete directories that passed the on-disk safety walk during switch prepare.
+    pub preverified_wholesale_dirs: BTreeSet<String>,
+    /// When true, [`preverified_wholesale_dirs`] is authoritative and checkout skips safety walks.
+    pub wholesale_safety_precomputed: bool,
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -472,7 +483,10 @@ pub(crate) fn checkout_tree_changes_with_index_opts(
 }
 
 /// Top-level directories whose tracked files are entirely removed by `delete_paths`.
-fn wholesale_deleted_directories(index: &Index, delete_paths: &[String]) -> BTreeSet<String> {
+pub(crate) fn wholesale_deleted_directories(
+    index: &Index,
+    delete_paths: &[String],
+) -> BTreeSet<String> {
     use std::collections::BTreeMap;
     if delete_paths.len() < 8 {
         return BTreeSet::new();
@@ -489,20 +503,41 @@ fn wholesale_deleted_directories(index: &Index, delete_paths: &[String]) -> BTre
     }
     let candidate_dirs: BTreeSet<String> = deleted_under.keys().cloned().collect();
     let mut indexed_under: BTreeMap<String, usize> = BTreeMap::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 || entry.mode == MODE_GITLINK {
-            continue;
+    if index.entries_sorted {
+        for dir in &candidate_dirs {
+            let prefix = format!("{dir}/");
+            let start = index
+                .entries
+                .partition_point(|e| e.path.as_slice() < prefix.as_bytes());
+            let mut count = 0usize;
+            for entry in index.entries[start..].iter() {
+                if !entry.path.starts_with(prefix.as_bytes()) {
+                    break;
+                }
+                if entry.stage() == 0 && entry.mode != MODE_GITLINK {
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                indexed_under.insert(dir.clone(), count);
+            }
         }
-        let Ok(path) = std::str::from_utf8(&entry.path) else {
-            continue;
-        };
-        let Some((dir, _rest)) = path.split_once('/') else {
-            continue;
-        };
-        if !candidate_dirs.contains(dir) {
-            continue;
+    } else {
+        for entry in &index.entries {
+            if entry.stage() != 0 || entry.mode == MODE_GITLINK {
+                continue;
+            }
+            let Ok(path) = std::str::from_utf8(&entry.path) else {
+                continue;
+            };
+            let Some((dir, _rest)) = path.split_once('/') else {
+                continue;
+            };
+            if !candidate_dirs.contains(dir) {
+                continue;
+            }
+            *indexed_under.entry(dir.to_owned()).or_default() += 1;
         }
-        *indexed_under.entry(dir.to_owned()).or_default() += 1;
     }
     deleted_under
         .into_iter()
@@ -517,10 +552,20 @@ fn wholesale_deleted_directories(index: &Index, delete_paths: &[String]) -> BTre
 }
 
 /// True when every file under `work_tree`/`dir` is listed in `delete_paths` (Git keeps untracked/ignored extras).
-fn wholesale_directory_safe_to_remove(
+fn delete_path_is_scheduled(rel: &str, delete_paths: &HashSet<String>, ignorecase: bool) -> bool {
+    if ignorecase {
+        delete_paths
+            .iter()
+            .any(|del| paths_equal(rel.as_bytes(), del.as_bytes(), true))
+    } else {
+        delete_paths.contains(rel)
+    }
+}
+
+pub(crate) fn wholesale_directory_safe_to_remove(
     work_tree: &Path,
     dir: &str,
-    delete_paths: &BTreeSet<String>,
+    delete_paths: &HashSet<String>,
     ignorecase: bool,
 ) -> bool {
     let abs_dir = work_tree.join(dir);
@@ -551,10 +596,7 @@ fn wholesale_directory_safe_to_remove(
                 return false;
             };
             let rel = rel.to_string_lossy();
-            if !delete_paths
-                .iter()
-                .any(|del| paths_equal(rel.as_bytes(), del.as_bytes(), ignorecase))
-            {
+            if !delete_path_is_scheduled(rel.as_ref(), delete_paths, ignorecase) {
                 return false;
             }
         }
@@ -562,17 +604,115 @@ fn wholesale_directory_safe_to_remove(
     true
 }
 
-fn wholesale_deleted_directories_on_disk(
+/// On-disk safety walk for wholesale directory removal, parallelized for switch prepare.
+pub(crate) fn precompute_wholesale_safe_directories(
+    repo: &Repository,
     work_tree: &Path,
     index: &Index,
     delete_paths: &[String],
     ignorecase: bool,
 ) -> BTreeSet<String> {
-    let delete_set: BTreeSet<String> = delete_paths.iter().cloned().collect();
-    wholesale_deleted_directories(index, delete_paths)
+    let candidates = wholesale_deleted_directories(index, delete_paths);
+    if candidates.is_empty() {
+        return BTreeSet::new();
+    }
+    let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
+    let needs_walk: Vec<String> = candidates.into_iter().collect();
+    let default_cfg = ConfigSet::new();
+    let config = repo.config().ok();
+    let cfg = config.as_deref().unwrap_or(&default_cfg);
+    let options = repo.thread_policy().resolve(ParallelOp::Checkout, cfg);
+    if needs_walk.len() >= 2 && options.threads.get() > 1 {
+        let wt = work_tree.to_path_buf();
+        let delete_set = delete_set.clone();
+        let safe_flags = try_par_map(&needs_walk, options, 0, |dir| {
+            Ok(wholesale_directory_safe_to_remove(
+                &wt,
+                dir,
+                &delete_set,
+                ignorecase,
+            ))
+        })
+        .unwrap_or_else(|_: ParallelHashError<()>| {
+            needs_walk
+                .iter()
+                .map(|dir| {
+                    wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase)
+                })
+                .collect()
+        });
+        return needs_walk
+            .into_iter()
+            .zip(safe_flags)
+            .filter_map(|(dir, safe)| safe.then_some(dir))
+            .collect();
+    }
+    needs_walk
         .into_iter()
         .filter(|dir| wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase))
         .collect()
+}
+
+fn wholesale_deleted_directories_on_disk(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    delete_paths: &[String],
+    ignorecase: bool,
+    apply: &CheckoutApplyOptions,
+) -> BTreeSet<String> {
+    let candidates = wholesale_deleted_directories(index, delete_paths);
+    if apply.trust_wholesale_dir_removal {
+        return candidates;
+    }
+    if apply.wholesale_safety_precomputed {
+        return candidates
+            .into_iter()
+            .filter(|dir| apply.preverified_wholesale_dirs.contains(dir))
+            .collect();
+    }
+    let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
+    let needs_walk: Vec<String> = candidates.into_iter().collect();
+    let mut trusted = BTreeSet::new();
+    if needs_walk.is_empty() {
+        return trusted;
+    }
+    let config = repo.config().ok();
+    let default_cfg = ConfigSet::new();
+    let cfg = config.as_deref().unwrap_or(&default_cfg);
+    let options = repo.thread_policy().resolve(ParallelOp::Checkout, cfg);
+    if needs_walk.len() >= 4 && options.threads.get() > 1 {
+        let wt = work_tree.to_path_buf();
+        let delete_set = delete_set.clone();
+        let safe_flags = try_par_map(&needs_walk, options, 0, |dir| {
+            Ok(wholesale_directory_safe_to_remove(
+                &wt,
+                dir,
+                &delete_set,
+                ignorecase,
+            ))
+        })
+        .unwrap_or_else(|_: ParallelHashError<()>| {
+            needs_walk
+                .iter()
+                .map(|dir| {
+                    wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase)
+                })
+                .collect()
+        });
+        for (dir, safe) in needs_walk.into_iter().zip(safe_flags) {
+            if safe {
+                trusted.insert(dir);
+            }
+        }
+    } else {
+        for dir in needs_walk {
+            if wholesale_directory_safe_to_remove(work_tree, &dir, &delete_set, ignorecase) {
+                trusted.insert(dir);
+            }
+        }
+    }
+    trusted
 }
 
 fn path_under_wholesale_directory(path: &str, wholesale_dirs: &BTreeSet<String>) -> bool {
@@ -634,8 +774,14 @@ fn checkout_tree_changes_with_progress(
         .filter(|c| c.status == DiffStatus::Deleted)
         .filter_map(|c| c.old_path.clone())
         .collect();
-    let wholesale_candidates =
-        wholesale_deleted_directories_on_disk(work_tree, index, &delete_paths, ignorecase);
+    let wholesale_candidates = wholesale_deleted_directories_on_disk(
+        repo,
+        work_tree,
+        index,
+        &delete_paths,
+        ignorecase,
+        &apply,
+    );
     let mut wholesale_dirs_removed = BTreeSet::new();
     for dir in &wholesale_candidates {
         let abs = work_tree.join(dir);
@@ -645,6 +791,40 @@ fn checkout_tree_changes_with_progress(
         }
     }
 
+    let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
+    let mut per_file_deletes: Vec<String> = Vec::new();
+    for change in changes {
+        if change.status != DiffStatus::Deleted {
+            continue;
+        }
+        let Some(path) = &change.old_path else {
+            continue;
+        };
+        let old_mode = parse_git_mode(&change.old_mode);
+        if old_mode == MODE_GITLINK || path_under_wholesale_directory(path, &wholesale_dirs_removed)
+        {
+            continue;
+        }
+        per_file_deletes.push(path.clone());
+    }
+    if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let wt = work_tree.to_path_buf();
+        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        try_par_map(&abs_paths, options, 0, |abs| {
+            let _ = fs::remove_file(abs);
+            Ok(())
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel checkout delete failed".into())
+            }
+        })?;
+        deleted_abs_paths.extend(abs_paths);
+        parallel_deleted_paths.extend(per_file_deletes);
+    }
+
     for change in changes {
         if change.status == DiffStatus::Deleted {
             if let Some(path) = &change.old_path {
@@ -652,13 +832,15 @@ fn checkout_tree_changes_with_progress(
                 if old_mode == MODE_GITLINK
                     || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
                 {
-                    let abs = work_tree.join(path);
                     if old_mode == MODE_GITLINK {
+                        let abs = work_tree.join(path);
                         remove_uninitialized_gitlink_worktree(&abs);
-                    } else {
+                        deleted_abs_paths.push(abs);
+                    } else if !parallel_deleted_paths.contains(path) {
+                        let abs = work_tree.join(path);
                         let _ = fs::remove_file(&abs);
+                        deleted_abs_paths.push(abs);
                     }
-                    deleted_abs_paths.push(abs);
                 }
                 paths_to_remove.push(path.as_bytes().to_vec());
             }
@@ -696,7 +878,7 @@ fn checkout_tree_changes_with_progress(
             continue;
         }
         if let Some(existing) = index.get(path.as_bytes(), 0) {
-            if crate::diff::path_checkout_skip_blob_write_when_up_to_date(
+            if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                 repo.odb(),
                 repo.git_dir(),
                 work_tree,
@@ -706,6 +888,7 @@ fn checkout_tree_changes_with_progress(
                 mode,
                 path,
                 Some(rules.filter_process()),
+                Some(config.as_ref()),
             )? {
                 let abs = work_tree.join(path);
                 let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
@@ -1700,15 +1883,21 @@ mod tests {
         }
         std::fs::write(wt.join("d/untracked.txt"), b"keep me\n").expect("untracked");
         index.sort();
-        let delete_set: BTreeSet<String> = delete_paths.iter().cloned().collect();
+        let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
         assert!(!super::wholesale_directory_safe_to_remove(
             wt,
             "d",
             &delete_set,
             false
         ));
-        let wholesale =
-            super::wholesale_deleted_directories_on_disk(wt, &index, &delete_paths, false);
+        let wholesale = super::wholesale_deleted_directories_on_disk(
+            &repo,
+            wt,
+            &index,
+            &delete_paths,
+            false,
+            &CheckoutApplyOptions::default(),
+        );
         assert!(wholesale.is_empty());
     }
 

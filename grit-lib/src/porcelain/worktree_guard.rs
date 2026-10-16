@@ -219,6 +219,7 @@ fn worktree_stats_match_index_on_paths(
     use crate::diff::index_entry_worktree_abs;
     use crate::diff::stat_matches_with_policy;
     use crate::index::MODE_GITLINK;
+    use crate::parallel::ParallelOp;
     use crate::worktree_scan::{
         for_each_blob_by_directory_parallel, group_blob_entries_by_dir_for_paths, BlobDiskLookup,
         WorktreeBlobScanOptions,
@@ -245,9 +246,18 @@ fn worktree_stats_match_index_on_paths(
         .as_ref()
         .and_then(|c| c.get_bool("core.preloadIndex").and_then(|r| r.ok()))
         .unwrap_or(true);
+    let stat_parallel_threads = (paths.len() >= 48).then(|| {
+        repo.thread_policy()
+            .resolve(
+                ParallelOp::IndexRefresh,
+                config.as_deref().unwrap_or(&ConfigSet::new()),
+            )
+            .threads
+            .get()
+    });
     let blob_scan = WorktreeBlobScanOptions {
         preload_index,
-        stat_parallel_threads: None,
+        stat_parallel_threads,
     };
     let work_tree_owned = work_tree.to_path_buf();
     let dir_abs = move |dir: &str| {
@@ -445,13 +455,22 @@ pub(crate) fn collect_untracked_for_tree_changes(
     work_tree: &Path,
     tree_changes: &[DiffEntry],
 ) -> Result<Vec<String>> {
-    if !tree_changes.iter().any(|c| c.status == DiffStatus::Added) {
+    let added_specs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
+    if added_specs.is_empty() {
         return Ok(Vec::new());
     }
-    let pathspecs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
     let (untracked, _) =
-        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, true, &pathspecs)?;
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, true, &added_specs)?;
     Ok(untracked)
+}
+
+/// Whether switch checkout may skip the on-disk wholesale safety walk.
+///
+/// Always false when tree deletions are present: ignored and untracked extras under a
+/// candidate directory are only visible with a disk walk (or Traditional ignore scan),
+/// and Git preserves them instead of `remove_dir_all`.
+pub(crate) fn wholesale_removal_trust_for_tree_changes(tree_changes: &[DiffEntry]) -> bool {
+    !tree_changes.iter().any(|c| c.status == DiffStatus::Deleted)
 }
 
 fn ensure_worktree_clean_with_message(
