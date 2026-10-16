@@ -1339,7 +1339,7 @@ impl Repository {
             .ok_or(crate::pack_bitmap::PackBitmapWriteError::InvalidPackPath(
                 "no pack index in object store".to_owned(),
             ))?;
-        self.write_pack_bitmap(&path, options, now)
+        crate::pack_bitmap::PackBitmapWriter::write(self, &path, options, now)
     }
 
     /// Persist the index when the lock can be acquired (Git `repo_update_index_if_able`).
