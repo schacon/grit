@@ -524,7 +524,7 @@ fn write_one_reused(
             } else {
                 Err(Error::CorruptObject(
                     "ofs-delta reuse missing remapped base".to_owned(),
-                ))?
+                ))
             }
         }
         PackedType::OfsDelta if !opts.use_ofs_delta && opts.thin => {

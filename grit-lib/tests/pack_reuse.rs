@@ -394,6 +394,62 @@ fn thin_pack_bitmap_reuse_index_pack_strict_ok() {
 }
 
 #[test]
+fn multi_sidecar_pack_reuse_binds_bitmap_backing_pack() {
+    let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    git_ok(&fx, &["checkout", "-b", "main"]);
+    std::fs::write(fx.path().join("seed.txt"), b"seed").unwrap();
+    git_ok(&fx, &["add", "seed.txt"]);
+    git_ok(&fx, &["commit", "-m", "seed"]);
+    git_ok(&fx, &["repack", "-adb"]);
+    let bitmapped_tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
+
+    for i in 0..100 {
+        std::fs::write(fx.path().join(format!("bulk-{i}.txt")), format!("data-{i}")).unwrap();
+        git_ok(&fx, &["add", &format!("bulk-{i}.txt")]);
+        git_ok(&fx, &["commit", "-m", &format!("bulk {i}")]);
+    }
+    git_ok(
+        &fx,
+        &[
+            "pack-objects",
+            "--all",
+            "--unpacked",
+            &fx.path().join(".git/objects/pack/large").to_string_lossy(),
+        ],
+    );
+
+    let pack_dir = fx.path().join(".git/objects/pack");
+    let bitmap_count = std::fs::read_dir(&pack_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "bitmap"))
+        .count();
+    assert_eq!(
+        bitmap_count, 1,
+        "expected one pack bitmap sidecar with a larger pack without bitmap"
+    );
+
+    let git_dir = fx.path().join(".git");
+    let repo = Repository::open(&git_dir, None).expect("open");
+    let opts = PackBuildOptions {
+        delta: true,
+        use_bitmaps: true,
+        use_ofs_delta: true,
+        thin: false,
+        ..PackBuildOptions::default()
+    };
+    let (pack, stats) = stream_clone_pack(&repo, &[bitmapped_tip], &[], &opts);
+    git_index_pack_strict(&pack, HashAlgo::Sha1, false, None);
+    assert!(
+        stats.verbatim_reuse_bytes > 0,
+        "reuse must bind the bitmap sidecar pack, not the larger pack: {stats:?}"
+    );
+    let objects = git_dir.join("objects");
+    let blob = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD:seed.txt"]).stdout.trim()).unwrap();
+    assert_verbatim_blob_in_pack(&objects, &pack, &blob);
+}
+
+#[test]
 fn thin_pack_ref_delta_conversion() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
     build_history(&fx);

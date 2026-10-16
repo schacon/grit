@@ -39,6 +39,7 @@ fn init_linear_bare(dir: &std::path::Path, commits: usize) -> ObjectId {
 fn two_post_shallow_depth_one_returns_pack_on_done() {
     let dir = std::env::temp_dir().join(format!("grit-shallow-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+<<<<<<< New base: bench: grit-written git.git fixture env and docs update
     Repository::init(
         &dir,
         &InitOptions::new()
@@ -48,6 +49,18 @@ fn two_post_shallow_depth_one_returns_pack_on_done() {
     )
     .expect("init bare");
     let repo = Repository::open(&dir, &RepositoryOptions::default().for_serving()).expect("open");
+||||||| Common ancestor
+    grit_lib::repo::init_bare_clone_minimal(&dir, "main", "files").expect("init bare");
+    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
+=======
+    grit_lib::repo::init_bare_clone_minimal(
+        &dir,
+        "main",
+        grit_lib::ref_storage::RefStorageFormat::Files,
+    )
+    .expect("init bare");
+    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
+>>>>>>> Current commit: fix: grit-lib clippy gate and multi-sidecar pack reuse test
     let tree = grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
         .expect("empty tree");
     let commit_body = format!(

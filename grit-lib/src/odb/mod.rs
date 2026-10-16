@@ -910,7 +910,7 @@ impl Odb {
     /// Returns [`Error::InvalidRef`] when the store is not files-backed.
     pub fn largest_pack_index_path(&self) -> Result<Option<PathBuf>> {
         self.require_files_primary("largest_pack_index_path")?;
-        let mut indexes = pack::read_local_pack_indexes_cached(&self.objects_dir())?;
+        let mut indexes = pack::read_local_pack_indexes_cached(self.objects_dir())?;
         indexes.sort_by_key(|idx| std::cmp::Reverse(idx.len()));
         Ok(indexes.first().map(|idx| idx.idx_path.clone()))
     }
