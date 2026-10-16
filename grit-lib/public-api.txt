@@ -3458,6 +3458,7 @@ pub grit_lib::error::Error::DiffPath(grit_lib::error::DiffPathError)
 pub grit_lib::error::Error::DubiousOwnership(alloc::string::String)
 pub grit_lib::error::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::error::Error::ForbiddenBareRepository(alloc::string::String)
+pub grit_lib::error::Error::History(grit_lib::revwalk::history::HistoryError)
 pub grit_lib::error::Error::Hook(grit_lib::command_runner::hooks::HookError)
 pub grit_lib::error::Error::IndexError(alloc::string::String)
 pub grit_lib::error::Error::IndexFsmonitorExtensionBadVersion(u32)
@@ -3570,6 +3571,8 @@ impl core::convert::From<grit_lib::refs::store::RefStoreError> for grit_lib::err
 pub fn grit_lib::error::Error::from(grit_lib::refs::store::RefStoreError) -> Self
 impl core::convert::From<grit_lib::remote::RemoteError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::remote::RemoteError) -> Self
+impl core::convert::From<grit_lib::revwalk::history::HistoryError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::revwalk::history::HistoryError) -> Self
 impl core::convert::From<grit_lib::revwalk::rev_list_error::RevListError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::revwalk::rev_list_error::RevListError) -> Self
 impl core::convert::From<grit_lib::revwalk::rev_parse_error::RevParseError> for grit_lib::error::Error
@@ -7911,6 +7914,8 @@ impl core::marker::Unpin for grit_lib::objects::TreeEntry
 impl core::marker::UnsafeUnpin for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::TreeEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::TreeEntry
+pub fn grit_lib::objects::find_tree_entry_by_name<'a>(&'a [grit_lib::objects::TreeEntry], &[u8], bool) -> core::option::Option<&'a grit_lib::objects::TreeEntry>
+pub fn grit_lib::objects::find_tree_entry_by_name_dir_or_file<'a>(&'a [grit_lib::objects::TreeEntry], &[u8]) -> core::option::Option<&'a grit_lib::objects::TreeEntry>
 pub fn grit_lib::objects::parse_commit(&[u8]) -> grit_lib::error::Result<grit_lib::objects::CommitData>
 pub fn grit_lib::objects::parse_tag(&[u8]) -> grit_lib::error::Result<grit_lib::objects::TagData>
 pub fn grit_lib::objects::parse_tree(&[u8]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::TreeEntry>>
@@ -9245,6 +9250,7 @@ pub grit_lib::prelude::Error::DiffPath(grit_lib::error::DiffPathError)
 pub grit_lib::prelude::Error::DubiousOwnership(alloc::string::String)
 pub grit_lib::prelude::Error::Filter(grit_lib::error::FilterError)
 pub grit_lib::prelude::Error::ForbiddenBareRepository(alloc::string::String)
+pub grit_lib::prelude::Error::History(grit_lib::revwalk::history::HistoryError)
 pub grit_lib::prelude::Error::Hook(grit_lib::command_runner::hooks::HookError)
 pub grit_lib::prelude::Error::IndexError(alloc::string::String)
 pub grit_lib::prelude::Error::IndexFsmonitorExtensionBadVersion(u32)
@@ -9357,6 +9363,8 @@ impl core::convert::From<grit_lib::refs::store::RefStoreError> for grit_lib::err
 pub fn grit_lib::error::Error::from(grit_lib::refs::store::RefStoreError) -> Self
 impl core::convert::From<grit_lib::remote::RemoteError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::remote::RemoteError) -> Self
+impl core::convert::From<grit_lib::revwalk::history::HistoryError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::revwalk::history::HistoryError) -> Self
 impl core::convert::From<grit_lib::revwalk::rev_list_error::RevListError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::revwalk::rev_list_error::RevListError) -> Self
 impl core::convert::From<grit_lib::revwalk::rev_parse_error::RevParseError> for grit_lib::error::Error
@@ -13796,6 +13804,223 @@ impl<'repo> core::marker::Unpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> core::marker::UnsafeUnpin for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
+pub mod grit_lib::revwalk::history
+pub enum grit_lib::revwalk::history::CommitEdit
+pub grit_lib::revwalk::history::CommitEdit::Drop
+pub grit_lib::revwalk::history::CommitEdit::InsertBefore(grit_lib::revwalk::history::NewCommit)
+pub grit_lib::revwalk::history::CommitEdit::Rewrite
+pub grit_lib::revwalk::history::CommitEdit::Rewrite::author: core::option::Option<alloc::string::String>
+pub grit_lib::revwalk::history::CommitEdit::Rewrite::message: core::option::Option<alloc::string::String>
+pub grit_lib::revwalk::history::CommitEdit::Rewrite::parents: core::option::Option<alloc::vec::Vec<grit_lib::objects::ObjectId>>
+pub grit_lib::revwalk::history::CommitEdit::Rewrite::tree: core::option::Option<grit_lib::objects::ObjectId>
+impl core::clone::Clone for grit_lib::revwalk::history::CommitEdit
+pub fn grit_lib::revwalk::history::CommitEdit::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::CommitEdit
+impl core::cmp::PartialEq for grit_lib::revwalk::history::CommitEdit
+pub fn grit_lib::revwalk::history::CommitEdit::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::CommitEdit
+pub fn grit_lib::revwalk::history::CommitEdit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::CommitEdit
+impl core::marker::Freeze for grit_lib::revwalk::history::CommitEdit
+impl core::marker::Send for grit_lib::revwalk::history::CommitEdit
+impl core::marker::Sync for grit_lib::revwalk::history::CommitEdit
+impl core::marker::Unpin for grit_lib::revwalk::history::CommitEdit
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::CommitEdit
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::CommitEdit
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::CommitEdit
+pub enum grit_lib::revwalk::history::EmptyPolicy
+pub grit_lib::revwalk::history::EmptyPolicy::Abort
+pub grit_lib::revwalk::history::EmptyPolicy::Drop
+pub grit_lib::revwalk::history::EmptyPolicy::Keep
+impl core::clone::Clone for grit_lib::revwalk::history::EmptyPolicy
+pub fn grit_lib::revwalk::history::EmptyPolicy::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::EmptyPolicy
+impl core::cmp::PartialEq for grit_lib::revwalk::history::EmptyPolicy
+pub fn grit_lib::revwalk::history::EmptyPolicy::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::revwalk::history::EmptyPolicy
+pub fn grit_lib::revwalk::history::EmptyPolicy::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::history::EmptyPolicy
+pub fn grit_lib::revwalk::history::EmptyPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::Freeze for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::Send for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::Sync for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::Unpin for grit_lib::revwalk::history::EmptyPolicy
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::EmptyPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::EmptyPolicy
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::EmptyPolicy
+#[non_exhaustive] pub enum grit_lib::revwalk::history::HistoryError
+pub grit_lib::revwalk::history::HistoryError::BecameEmpty
+pub grit_lib::revwalk::history::HistoryError::BecameEmpty::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere
+pub grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere::name: alloc::string::String
+pub grit_lib::revwalk::history::HistoryError::BranchCheckedOutElsewhere::worktree: alloc::string::String
+pub grit_lib::revwalk::history::HistoryError::Conflict
+pub grit_lib::revwalk::history::HistoryError::Conflict::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::Conflict::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::history::HistoryError::DivergentBranch
+pub grit_lib::revwalk::history::HistoryError::DivergentBranch::name: alloc::string::String
+pub grit_lib::revwalk::history::HistoryError::Library(alloc::boxed::Box<grit_lib::error::Error>)
+pub grit_lib::revwalk::history::HistoryError::MergeCommitInReplay
+pub grit_lib::revwalk::history::HistoryError::MergeCommitInReplay::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::NotInHistory
+pub grit_lib::revwalk::history::HistoryError::NotInHistory::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::RootCommit
+pub grit_lib::revwalk::history::HistoryError::RootCommit::commit: grit_lib::objects::ObjectId
+impl core::convert::From<grit_lib::revwalk::history::HistoryError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::revwalk::history::HistoryError) -> Self
+impl core::error::Error for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::revwalk::history::HistoryError
+pub fn grit_lib::revwalk::history::HistoryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::history::HistoryError
+impl core::marker::Send for grit_lib::revwalk::history::HistoryError
+impl core::marker::Sync for grit_lib::revwalk::history::HistoryError
+impl core::marker::Unpin for grit_lib::revwalk::history::HistoryError
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::HistoryError
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::HistoryError
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::HistoryError
+pub enum grit_lib::revwalk::history::RefScope
+pub grit_lib::revwalk::history::RefScope::Branches
+pub grit_lib::revwalk::history::RefScope::Head
+impl core::clone::Clone for grit_lib::revwalk::history::RefScope
+pub fn grit_lib::revwalk::history::RefScope::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RefScope
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RefScope
+pub fn grit_lib::revwalk::history::RefScope::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::revwalk::history::RefScope
+pub fn grit_lib::revwalk::history::RefScope::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::history::RefScope
+pub fn grit_lib::revwalk::history::RefScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::revwalk::history::RefScope
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RefScope
+impl core::marker::Freeze for grit_lib::revwalk::history::RefScope
+impl core::marker::Send for grit_lib::revwalk::history::RefScope
+impl core::marker::Sync for grit_lib::revwalk::history::RefScope
+impl core::marker::Unpin for grit_lib::revwalk::history::RefScope
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RefScope
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RefScope
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RefScope
+pub struct grit_lib::revwalk::history::HeadEffect
+pub grit_lib::revwalk::history::HeadEffect::commit_changes: bool
+pub grit_lib::revwalk::history::HeadEffect::new_tree: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::history::HeadEffect::old_tree: core::option::Option<grit_lib::objects::ObjectId>
+impl core::clone::Clone for grit_lib::revwalk::history::HeadEffect
+pub fn grit_lib::revwalk::history::HeadEffect::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::HeadEffect
+impl core::cmp::PartialEq for grit_lib::revwalk::history::HeadEffect
+pub fn grit_lib::revwalk::history::HeadEffect::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::revwalk::history::HeadEffect
+pub fn grit_lib::revwalk::history::HeadEffect::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::history::HeadEffect
+pub fn grit_lib::revwalk::history::HeadEffect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::HeadEffect
+impl core::marker::Freeze for grit_lib::revwalk::history::HeadEffect
+impl core::marker::Send for grit_lib::revwalk::history::HeadEffect
+impl core::marker::Sync for grit_lib::revwalk::history::HeadEffect
+impl core::marker::Unpin for grit_lib::revwalk::history::HeadEffect
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::HeadEffect
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::HeadEffect
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::HeadEffect
+pub struct grit_lib::revwalk::history::NewCommit
+pub grit_lib::revwalk::history::NewCommit::author: alloc::string::String
+pub grit_lib::revwalk::history::NewCommit::message: alloc::string::String
+pub grit_lib::revwalk::history::NewCommit::tree: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::revwalk::history::NewCommit
+pub fn grit_lib::revwalk::history::NewCommit::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::NewCommit
+impl core::cmp::PartialEq for grit_lib::revwalk::history::NewCommit
+pub fn grit_lib::revwalk::history::NewCommit::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::NewCommit
+pub fn grit_lib::revwalk::history::NewCommit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::NewCommit
+impl core::marker::Freeze for grit_lib::revwalk::history::NewCommit
+impl core::marker::Send for grit_lib::revwalk::history::NewCommit
+impl core::marker::Sync for grit_lib::revwalk::history::NewCommit
+impl core::marker::Unpin for grit_lib::revwalk::history::NewCommit
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::NewCommit
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::NewCommit
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::NewCommit
+pub struct grit_lib::revwalk::history::PlannedRefUpdate
+pub grit_lib::revwalk::history::PlannedRefUpdate::name: alloc::string::String
+pub grit_lib::revwalk::history::PlannedRefUpdate::new: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::PlannedRefUpdate::old: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::revwalk::history::PlannedRefUpdate
+pub fn grit_lib::revwalk::history::PlannedRefUpdate::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::cmp::PartialEq for grit_lib::revwalk::history::PlannedRefUpdate
+pub fn grit_lib::revwalk::history::PlannedRefUpdate::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::PlannedRefUpdate
+pub fn grit_lib::revwalk::history::PlannedRefUpdate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::marker::Freeze for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::marker::Send for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::marker::Sync for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::marker::Unpin for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::PlannedRefUpdate
+pub struct grit_lib::revwalk::history::RewriteOptions
+pub grit_lib::revwalk::history::RewriteOptions::committer: alloc::string::String
+pub grit_lib::revwalk::history::RewriteOptions::empty: grit_lib::revwalk::history::EmptyPolicy
+pub grit_lib::revwalk::history::RewriteOptions::scope: grit_lib::revwalk::history::RefScope
+impl core::clone::Clone for grit_lib::revwalk::history::RewriteOptions
+pub fn grit_lib::revwalk::history::RewriteOptions::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RewriteOptions
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RewriteOptions
+pub fn grit_lib::revwalk::history::RewriteOptions::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::RewriteOptions
+pub fn grit_lib::revwalk::history::RewriteOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RewriteOptions
+impl core::marker::Freeze for grit_lib::revwalk::history::RewriteOptions
+impl core::marker::Send for grit_lib::revwalk::history::RewriteOptions
+impl core::marker::Sync for grit_lib::revwalk::history::RewriteOptions
+impl core::marker::Unpin for grit_lib::revwalk::history::RewriteOptions
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RewriteOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RewriteOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RewriteOptions
+pub struct grit_lib::revwalk::history::RewritePlan
+pub grit_lib::revwalk::history::RewritePlan::commits: alloc::vec::Vec<grit_lib::revwalk::history::RewrittenCommit>
+pub grit_lib::revwalk::history::RewritePlan::head: grit_lib::revwalk::history::HeadEffect
+pub grit_lib::revwalk::history::RewritePlan::ref_updates: alloc::vec::Vec<grit_lib::revwalk::history::PlannedRefUpdate>
+impl core::clone::Clone for grit_lib::revwalk::history::RewritePlan
+pub fn grit_lib::revwalk::history::RewritePlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RewritePlan
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RewritePlan
+pub fn grit_lib::revwalk::history::RewritePlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::RewritePlan
+pub fn grit_lib::revwalk::history::RewritePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RewritePlan
+impl core::marker::Freeze for grit_lib::revwalk::history::RewritePlan
+impl core::marker::Send for grit_lib::revwalk::history::RewritePlan
+impl core::marker::Sync for grit_lib::revwalk::history::RewritePlan
+impl core::marker::Unpin for grit_lib::revwalk::history::RewritePlan
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RewritePlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RewritePlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RewritePlan
+pub struct grit_lib::revwalk::history::RewrittenCommit
+pub grit_lib::revwalk::history::RewrittenCommit::new: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::revwalk::history::RewrittenCommit::old: grit_lib::objects::ObjectId
+impl core::clone::Clone for grit_lib::revwalk::history::RewrittenCommit
+pub fn grit_lib::revwalk::history::RewrittenCommit::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::history::RewrittenCommit
+impl core::cmp::PartialEq for grit_lib::revwalk::history::RewrittenCommit
+pub fn grit_lib::revwalk::history::RewrittenCommit::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::revwalk::history::RewrittenCommit
+pub fn grit_lib::revwalk::history::RewrittenCommit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::history::RewrittenCommit
+impl core::marker::Freeze for grit_lib::revwalk::history::RewrittenCommit
+impl core::marker::Send for grit_lib::revwalk::history::RewrittenCommit
+impl core::marker::Sync for grit_lib::revwalk::history::RewrittenCommit
+impl core::marker::Unpin for grit_lib::revwalk::history::RewrittenCommit
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::history::RewrittenCommit
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::history::RewrittenCommit
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::history::RewrittenCommit
+pub fn grit_lib::revwalk::history::plan_rewrite(&grit_lib::repo::Repository, &grit_lib::revwalk::history::HistoryEdits, &grit_lib::revwalk::history::RewriteOptions) -> core::result::Result<grit_lib::revwalk::history::RewritePlan, grit_lib::revwalk::history::HistoryError>
+pub type grit_lib::revwalk::history::HistoryEdits = alloc::collections::btree::map::BTreeMap<grit_lib::objects::ObjectId, grit_lib::revwalk::history::CommitEdit>
 pub mod grit_lib::revwalk::log_walk
 pub struct grit_lib::revwalk::log_walk::LogWalkCursor
 pub grit_lib::revwalk::log_walk::LogWalkCursor::anchor_head: grit_lib::objects::ObjectId

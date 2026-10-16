@@ -51,3 +51,7 @@ pub mod object_inspect {
     //! Typed revision resolution and object display payloads.
     pub use crate::object_inspect::*;
 }
+pub mod history {
+    //! In-memory history rewrite planning (rewrite engine for `grit history` commands).
+    pub use crate::history::*;
+}
