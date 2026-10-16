@@ -219,6 +219,7 @@ fn worktree_stats_match_index_on_paths(
     use crate::diff::index_entry_worktree_abs;
     use crate::diff::stat_matches_with_policy;
     use crate::index::MODE_GITLINK;
+    use crate::parallel::ParallelOp;
     use crate::worktree_scan::{
         for_each_blob_by_directory_parallel, group_blob_entries_by_dir_for_paths, BlobDiskLookup,
         WorktreeBlobScanOptions,
@@ -245,9 +246,18 @@ fn worktree_stats_match_index_on_paths(
         .as_ref()
         .and_then(|c| c.get_bool("core.preloadIndex").and_then(|r| r.ok()))
         .unwrap_or(true);
+    let stat_parallel_threads = (paths.len() >= 48).then(|| {
+        repo.thread_policy()
+            .resolve(
+                ParallelOp::IndexRefresh,
+                config.as_deref().unwrap_or(&ConfigSet::new()),
+            )
+            .threads
+            .get()
+    });
     let blob_scan = WorktreeBlobScanOptions {
         preload_index,
-        stat_parallel_threads: None,
+        stat_parallel_threads,
     };
     let work_tree_owned = work_tree.to_path_buf();
     let dir_abs = move |dir: &str| {

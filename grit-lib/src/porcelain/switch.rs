@@ -1,18 +1,20 @@
 //! Switch branches or detach `HEAD` at a commit, updating the working tree when needed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::check_ref_format::validate_branch_short_name;
 use crate::diff::{DiffEntry, DiffStatus};
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId};
+use crate::porcelain::checkout::precompute_wholesale_safe_directories;
 use crate::porcelain::checkout::{checkout_tree_changes_with_index_opts, CheckoutApplyOptions};
 use crate::porcelain::checkout_reflog::{
     append_head_checkout_reflog, checkout_reflog_from_label, finish_switch_ref_updates,
     is_already_detached_at, is_already_on_branch, switch_create_reflog_source_label,
 };
 use crate::porcelain::worktree_guard::{
-    ensure_no_untracked_overwrite, load_worktree_snapshot, TreeSwitchPlan,
+    collect_untracked_for_tree_changes, ensure_no_untracked_overwrite, load_worktree_snapshot,
+    TreeSwitchPlan,
 };
 use crate::refs;
 use crate::repo::Repository;
@@ -78,6 +80,8 @@ struct PreparedSwitch {
     index: crate::index::Index,
     /// When true, checkout may remove wholesale directories without an on-disk safety walk.
     trust_wholesale_dir_removal: bool,
+    preverified_wholesale_dirs: BTreeSet<String>,
+    wholesale_safety_precomputed: bool,
 }
 
 /// Resolve `-c <branch> [<start-point>]`.
@@ -366,6 +370,8 @@ fn switch_to_target(
             parallel_prepare_blobs: true,
             checkout_parallel_threshold,
             trust_wholesale_dir_removal: prepared.trust_wholesale_dir_removal,
+            preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
+            wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
         },
     )?;
 
@@ -411,8 +417,19 @@ fn prepare_tree_switch_allow_local(
 ) -> Result<PreparedSwitch> {
     let mut snapshot = load_worktree_snapshot(repo)?;
     let from_tree = snapshot.head_tree.as_ref();
+    let trust_index_for_old_tree = from_tree.is_some()
+        && !snapshot.index.entries.iter().any(|e| e.stage() != 0);
     let tree_changes = if from_tree == Some(to_tree) {
         Vec::new()
+    } else if trust_index_for_old_tree {
+        crate::diff::diff_trees_with_index(
+            repo.odb(),
+            &snapshot.index,
+            from_tree,
+            Some(to_tree),
+            "",
+            true,
+        )?
     } else {
         crate::diff::diff_trees(repo.odb(), from_tree, Some(to_tree), "")?
     };
@@ -433,14 +450,35 @@ fn prepare_tree_switch_allow_local(
     let work_tree = repo
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
-    let untracked = crate::porcelain::worktree_guard::collect_untracked_for_tree_changes(
-        repo,
-        &mut snapshot.index,
-        work_tree,
-        &tree_changes,
-    )?;
+    let untracked =
+        collect_untracked_for_tree_changes(repo, &mut snapshot.index, work_tree, &tree_changes)?;
     let trust_wholesale_dir_removal =
         crate::porcelain::worktree_guard::wholesale_removal_trust_for_tree_changes(&tree_changes);
+    let ignorecase = repo
+        .config()
+        .ok()
+        .and_then(|c| c.get_bool("core.ignorecase").and_then(|r| r.ok()))
+        .unwrap_or(false);
+    let delete_paths: Vec<String> = tree_changes
+        .iter()
+        .filter(|c| c.status == DiffStatus::Deleted)
+        .filter_map(|c| c.old_path.clone())
+        .collect();
+    let (preverified_wholesale_dirs, wholesale_safety_precomputed) =
+        if trust_wholesale_dir_removal || delete_paths.is_empty() {
+            (BTreeSet::new(), false)
+        } else {
+            (
+                precompute_wholesale_safe_directories(
+                    repo,
+                    work_tree,
+                    &snapshot.index,
+                    &delete_paths,
+                    ignorecase,
+                ),
+                true,
+            )
+        };
     Ok(PreparedSwitch {
         plan: TreeSwitchPlan {
             untracked,
@@ -449,6 +487,8 @@ fn prepare_tree_switch_allow_local(
         preserve_worktree_paths,
         index: snapshot.index,
         trust_wholesale_dir_removal,
+        preverified_wholesale_dirs,
+        wholesale_safety_precomputed,
     })
 }
 
