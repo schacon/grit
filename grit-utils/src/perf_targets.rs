@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::schema::ScenarioResult;
+use crate::schema::{BenchReport, ScenarioResult};
 
 /// Default grit/git ratio target when a scenario has no explicit entry.
 pub const DEFAULT_TARGET_RATIO: f64 = 1.1;
@@ -156,6 +156,23 @@ pub fn is_owned_by_item_14(scenario_id: &str) -> bool {
         || scenario_id.contains("revs-count-deep")
 }
 
+/// Load a committed grit-bench JSON report (`schema_version` 1).
+pub fn load_bench_report(path: &Path) -> Result<BenchReport> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read bench report {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse bench report {}", path.display()))
+}
+
+/// Scenario ids classified as `fail` against `targets`.
+pub fn ledger_failures(report: &BenchReport, targets: &PerfTargets) -> Vec<String> {
+    report
+        .scenarios
+        .iter()
+        .filter(|s| targets.classify(s) == LedgerStatus::Fail)
+        .map(|s| s.id.clone())
+        .collect()
+}
+
 /// Render a markdown scorecard table for `report` using `targets`.
 pub fn render_ledger_markdown(
     report: &crate::schema::BenchReport,
@@ -252,6 +269,12 @@ owned_by_item_14 = true
             targets.classify(&scenario("status-clean", 1.2)),
             LedgerStatus::Fail
         );
+        let mut failed = scenario("status-clean", 0.0);
+        failed.grit_failure = Some(crate::schema::BenchFailure {
+            kind: "command_failed".into(),
+            message: "oom".into(),
+        });
+        assert_eq!(targets.classify(&failed), LedgerStatus::Fail);
         Ok(())
     }
 
@@ -312,6 +335,57 @@ documented = "known fsck gap"
             targets.classify(&scenario_with_failure("git-dot-git/fsck", 0.0, failure)),
             LedgerStatus::Documented
         );
+        Ok(())
+    }
+
+    #[test]
+    fn load_committed_campaign_before_report() -> Result<()> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("baselines/campaign-before.json");
+        if !path.is_file() {
+            return Ok(());
+        }
+        let report = load_bench_report(&path)?;
+        assert!(!report.scenarios.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn committed_campaign_after_closes_ledger() -> Result<()> {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let report_path = manifest.join("baselines/campaign-after.json");
+        let targets_path = manifest.join("perf-targets.toml");
+        if !report_path.is_file() {
+            return Ok(());
+        }
+        let targets = load_perf_targets(&targets_path)?;
+        let report = load_bench_report(&report_path)?;
+        assert!(!report.scenarios.is_empty());
+        let fails = ledger_failures(&report, &targets);
+        assert!(
+            fails.is_empty(),
+            "campaign-after ledger has undocumented failures: {:?}",
+            fails
+        );
+        for scenario in &report.scenarios {
+            let status = targets.classify(scenario);
+            assert_ne!(
+                status,
+                LedgerStatus::Fail,
+                "scenario {} classified as fail",
+                scenario.id
+            );
+            if status == LedgerStatus::Documented {
+                let followup = targets
+                    .followup(&scenario.id)
+                    .expect("documented row must have followup");
+                assert!(
+                    followup.contains("ROADMAP item"),
+                    "followup for {} must reference ROADMAP: {}",
+                    scenario.id,
+                    followup
+                );
+            }
+        }
         Ok(())
     }
 }

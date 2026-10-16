@@ -16,7 +16,6 @@ use grit_utils::history_rewrite_suite::run_history_rewrite_suite;
 use grit_utils::history_suite::run_history_suite;
 use grit_utils::ignore_suite::run_ignore_suite;
 use grit_utils::local_clone_suite::run_local_clone_suite;
-use grit_utils::maintenance_prepare::run_prepare_maintenance;
 use grit_utils::maintenance_suite::run_maintenance_suite;
 use grit_utils::network_fixture::NetworkProfile;
 use grit_utils::network_suite::{
@@ -30,7 +29,9 @@ use grit_utils::parallel_suite::{
     prepare_parallel_checkout, prepare_parallel_clone, prepare_parallel_index_pack,
     run_parallel_suite,
 };
-use grit_utils::perf_targets::{load_perf_targets, render_ledger_markdown};
+use grit_utils::perf_targets::{
+    ledger_failures, load_bench_report, load_perf_targets, render_ledger_markdown,
+};
 use grit_utils::refs_driver;
 use grit_utils::refs_fixture::{run_prepare_refs, RefsWorkMode};
 use grit_utils::refs_suite::{run_refs_suite, RefsRunConfig};
@@ -259,6 +260,9 @@ enum Cmd {
         /// Render the 1.1× ledger markdown table (also needs `--format markdown` or `--output`).
         #[arg(long)]
         ledger: bool,
+        /// Classify an existing JSON report instead of re-running benchmarks (requires `--ledger`).
+        #[arg(long, value_name = "JSON")]
+        from: Option<PathBuf>,
         /// Skip the deep-history network scenario block at the end of the run.
         #[arg(long)]
         no_network: bool,
@@ -370,6 +374,8 @@ enum Cmd {
     PrepareMaintenance {
         #[arg(long)]
         git: PathBuf,
+        #[arg(long)]
+        worktree: Option<PathBuf>,
     },
     PrepareHistoryRewrite {
         #[arg(long)]
@@ -1023,9 +1029,12 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_commit(&git);
         }
-        Cmd::PrepareMaintenance { git } => {
+        Cmd::PrepareMaintenance { git, worktree } => {
             let git = resolve_binary("git", Some(git))?;
-            return run_prepare_maintenance(&git);
+            return grit_utils::maintenance_suite::run_prepare_maintenance(
+                &git,
+                worktree.as_deref(),
+            );
         }
         Cmd::PrepareHistoryRewrite { git } => {
             let git = resolve_binary("git", Some(git))?;
@@ -1140,6 +1149,41 @@ fn main() -> Result<()> {
             );
         }
         std::process::exit(1);
+    }
+
+    if let Cmd::Campaign {
+        from: Some(from_path),
+        ledger: true,
+        ..
+    } = &cli.command
+    {
+        let targets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("perf-targets.toml");
+        let targets = load_perf_targets(&targets_path)?;
+        let report = load_bench_report(from_path)?;
+        let fails = ledger_failures(&report, &targets);
+        if !fails.is_empty() {
+            eprintln!(
+                "Ledger: {} scenario(s) above target without documentation:",
+                fails.len()
+            );
+            for id in &fails {
+                eprintln!("  fail: {id}");
+            }
+        }
+        let ledger_md = render_ledger_markdown(&report, &targets);
+        if matches!(cli.format, OutputFormat::Markdown) {
+            write_output(&cli, &ledger_md)?;
+        } else if let Some(path) = &cli.output {
+            let ledger_path = path.with_extension("ledger.md");
+            std::fs::write(&ledger_path, &ledger_md)?;
+            eprintln!("Ledger written to {}", ledger_path.display());
+        } else {
+            eprintln!("{ledger_md}");
+        }
+        if !fails.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let git = resolve_binary("git", cli.git.as_deref())?;
@@ -1423,31 +1467,49 @@ fn main() -> Result<()> {
             smoke,
             with_linux,
             ledger,
+            from,
             no_network,
         } => {
-            eprintln!("Running campaign benchmarks...");
-            let mut cfg = run_config(&cli, true);
-            if cli.warmup == 0 && cli.min_runs == 1 {
-                cfg.exact_runs = Some(1);
-            }
-            let bench_exe = std::env::current_exe().context("current exe")?;
-            let report = run_campaign_suite(
-                &hyperfine,
-                &git,
-                &grit,
-                &bench_exe,
-                &cfg,
-                &CampaignOptions {
-                    smoke: *smoke,
-                    with_linux: *with_linux,
-                    include_network: !no_network,
-                },
-                timestamp,
-            )?;
+            let report = if let Some(from_path) = from {
+                if !*ledger {
+                    anyhow::bail!("campaign --from requires --ledger");
+                }
+                load_bench_report(from_path)?
+            } else {
+                eprintln!("Running campaign benchmarks...");
+                let mut cfg = run_config(&cli, true);
+                if cli.warmup == 0 && cli.min_runs == 1 {
+                    cfg.exact_runs = Some(1);
+                }
+                let bench_exe = std::env::current_exe().context("current exe")?;
+                run_campaign_suite(
+                    &hyperfine,
+                    &git,
+                    &grit,
+                    &bench_exe,
+                    &cfg,
+                    &CampaignOptions {
+                        smoke: *smoke,
+                        with_linux: *with_linux,
+                        include_network: !no_network,
+                    },
+                    timestamp,
+                )?
+            };
             if *ledger {
                 let targets_path =
                     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("perf-targets.toml");
                 let targets = load_perf_targets(&targets_path)?;
+                let fails = ledger_failures(&report, &targets);
+                if !fails.is_empty() {
+                    eprintln!(
+                        "Ledger: {} scenario(s) above target without documentation:",
+                        fails.len()
+                    );
+                    for id in &fails {
+                        eprintln!("  fail: {id}");
+                    }
+                }
                 let ledger_md = render_ledger_markdown(&report, &targets);
                 if matches!(cli.format, OutputFormat::Markdown) {
                     write_output(&cli, &ledger_md)?;
@@ -1457,6 +1519,9 @@ fn main() -> Result<()> {
                     eprintln!("Ledger written to {}", ledger_path.display());
                 } else {
                     eprintln!("{ledger_md}");
+                }
+                if !fails.is_empty() {
+                    std::process::exit(1);
                 }
             }
             report

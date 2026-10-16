@@ -28,10 +28,10 @@ For a given [`Odb`](rustdoc:grit_lib::objects::odb::Odb) handle:
 ```rust
 use std::sync::Arc;
 
-use grit_lib::environment::RepositoryOptions;
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::odb::store::MemoryStore;
-use grit_lib::odb::OdbBuilder;
+use grit_lib::objects::odb::store::MemoryStore;
+use grit_lib::objects::odb::OdbBuilder;
 use grit_lib::repo::{InitOptions, Repository, RepositoryBuilder};
 
 let dir = tempfile::tempdir()?;
@@ -49,7 +49,7 @@ let _blob = repo.odb.write(ObjectKind::Blob, b"hello")?;
 # Ok::<(), grit_lib::error::Error>(())
 ```
 
-Filesystem-only maintenance (`Odb::gc`, `Odb::write_commit_graph`, `Odb::pack_store`, pack install, MIDX write) returns [`Error::UnsupportedObjectStore`](rustdoc:grit_lib::error::Error) when the primary is not the default files backend. Use `Odb::files_objects_dir` when you need the on-disk `objects/` path only for files-backed repos.
+Filesystem-only maintenance (`Odb::gc`, `Odb::write_commit_graph`, `Odb::pack_store`, pack install, MIDX write) returns `Error::UnsupportedObjectStore` when the primary is not the default files backend. Use `Odb::files_objects_dir` when you need the on-disk `objects/` path only for files-backed repos.
 
 ## Conformance tests
 

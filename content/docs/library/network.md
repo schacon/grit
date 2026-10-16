@@ -3,11 +3,11 @@ title: Network
 summary: Remote dispatch, fetch, push, and ls-remote over every transport.
 ---
 
-Network operations in grit-lib center on [`Remote`](rustdoc:grit_lib::remote::Remote): a typed URL ([`RemoteUrl`](rustdoc:grit_lib::remote::RemoteUrl)), configured fetch refspecs, and one dispatcher for **fetch**, **push**, and **list refs**. Wire bytes still flow through the same fetch/push engines as before; `Remote` picks the transport from the URL scheme.
+Network operations in grit-lib center on `Remote`: a typed URL (`RemoteUrl`), configured fetch refspecs, and one dispatcher for **fetch**, **push**, and **list refs**. Wire bytes still flow through the same fetch/push engines as before; `Remote` picks the transport from the URL scheme.
 
 ## Remote URL and config
 
-| Scheme / form | [`RemoteUrl`](rustdoc:grit_lib::remote::RemoteUrl) variant | Transport |
+| Scheme / form | `RemoteUrl` variant | Transport |
 | --- | --- | --- |
 | Path or `file://` | `Local` / `File` | [`fetch_local`](rustdoc:grit_lib::remote::transfer::fetch_local) / [`push_local`](rustdoc:grit_lib::remote::transfer::push_local) |
 | `git://` | `Git` | [`GitDaemonTransport`](rustdoc:grit_lib::remote::transport::GitDaemonTransport) |
@@ -20,7 +20,7 @@ Local paths resolve through [`resolve_local_remote_git_dir`](rustdoc:grit_lib::r
 
 ## list refs
 
-[`Remote::list_refs`](rustdoc:grit_lib::remote::Remote) takes [`ListRefsOptions`](rustdoc:grit_lib::remote::ListRefsOptions) (prefixes, heads, tags, symrefs, peel) and returns [`RemoteRef`](rustdoc:grit_lib::remote::RemoteRef) entries in `git ls-remote` order. On disk it uses [`list_refs_from_git_dir`](rustdoc:grit_lib::remote::list_refs_from_git_dir). Over the wire it uses protocol v2 `ls-refs` when available, otherwise the v0/v1 ref advertisement.
+`Remote::list_refs` takes `ListRefsOptions` (prefixes, heads, tags, symrefs, peel) and returns `RemoteRef` entries in `git ls-remote` order. On disk it uses `list_refs_from_git_dir`. Over the wire it uses protocol v2 `ls-refs` when available, otherwise the v0/v1 ref advertisement.
 
 ## Fetch and push
 
@@ -38,10 +38,10 @@ This example resolves `origin`, lists refs on a **local** bare remote, fetches, 
 
 <!-- include: grit-examples/src/bin/guide_network.rs -->
 
-The `grit-examples` crate also ships `gritx-fetch` and `gritx-push`, which dispatch on URL scheme and print transport/auth discovery lines. Shared wiring lives in `grit-examples/src/remote.rs` (slated to thin over [`Remote`](rustdoc:grit_lib::remote::Remote) in a follow-up step).
+The `grit-examples` crate also ships `gritx-fetch` and `gritx-push`, which dispatch on URL scheme and print transport/auth discovery lines. Shared wiring lives in `grit-examples/src/remote.rs` (slated to thin over `Remote` in a follow-up step).
 
 Integration test `guide_network` builds bare and consumer repos with system Git, runs the binary, then requires clean `git fsck --strict` on both sides and matching `git rev-parse` on the pushed ref.
 
 ## Bundles
 
-Offline bundle files are documented on the [Bundle](../bundle/) guide ([`RepositoryBundles`](rustdoc:grit_lib::repo_handles::RepositoryBundles)). Smart HTTP and local remotes above cover online fetch/push.
+Offline bundle files are documented on the [Bundle](../bundle/) guide (`RepositoryBundles`). Smart HTTP and local remotes above cover online fetch/push.

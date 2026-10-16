@@ -15,6 +15,8 @@ use crate::network_fixture::{ensure_fixture, NetworkFixtureKind, NetworkProfile}
 use crate::scenarios::{run_scenario, Driver, PrepareKind, RunConfig, Scenario};
 use crate::schema::{BenchReport, ToolVersions, SCHEMA_VERSION};
 
+const GC_BASE_MARKER: &str = ".grit-bench-gc-base";
+
 pub(crate) fn git_env(cmd: &mut Command) {
     cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -51,7 +53,11 @@ fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
 }
 
 pub(crate) fn seed_loose_objects(git: &Path, repo: &Path) -> Result<()> {
-    for i in 0..40 {
+    let count = std::env::var("GRIT_BENCH_GC_SEED_COUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    for i in 0..count {
         let mut cmd = Command::new(git);
         cmd.args(["commit", "--allow-empty", "-m", &format!("gc-bench-{i}")])
             .current_dir(repo);
@@ -77,11 +83,64 @@ fn prepare_gc_fixture(git: &Path, bare: &Path) -> Result<PathBuf> {
     Ok(work)
 }
 
+/// Record the current `HEAD` so campaign gc prepare can `reset --hard` without recloning.
+pub fn write_gc_base_marker(git: &Path, repo: &Path) -> Result<()> {
+    let mut cmd = Command::new(git);
+    cmd.args(["rev-parse", "HEAD"]).current_dir(repo);
+    git_env(&mut cmd);
+    let out = cmd.output().context("git rev-parse HEAD for gc base")?;
+    if !out.status.success() {
+        anyhow::bail!("rev-parse failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let oid = String::from_utf8(out.stdout).context("rev-parse stdout")?;
+    fs::write(repo.join(GC_BASE_MARKER), oid.trim().as_bytes()).context("write gc base marker")?;
+    Ok(())
+}
+
+fn restore_gc_worktree(git: &Path, worktree: &Path) -> Result<()> {
+    let base = fs::read_to_string(worktree.join(GC_BASE_MARKER)).context("read gc base marker")?;
+    let mut reset = Command::new(git);
+    reset
+        .args(["reset", "--hard", base.trim()])
+        .current_dir(worktree);
+    git_env(&mut reset);
+    let out = reset.output().context("git reset --hard gc base")?;
+    if !out.status.success() {
+        anyhow::bail!("reset failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut clean = Command::new(git);
+    clean.args(["clean", "-fdx"]).current_dir(worktree);
+    git_env(&mut clean);
+    let out = clean.output().context("git clean")?;
+    if !out.status.success() {
+        anyhow::bail!("clean failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    seed_loose_objects(git, worktree)?;
+    fs::write(worktree.join(GC_BASE_MARKER), base.trim().as_bytes())
+        .context("restore gc base marker after clean")?;
+    Ok(())
+}
+
 /// Hyperfine prepare hook: restore the deep-history worktree with fresh loose objects.
-pub fn run_prepare_maintenance(git: &Path) -> Result<()> {
+pub fn run_prepare_maintenance(git: &Path, worktree: Option<&Path>) -> Result<()> {
     let bare = std::env::var("GRIT_BENCH_MAINTENANCE_BARE")
         .map(PathBuf::from)
         .context("GRIT_BENCH_MAINTENANCE_BARE must be set for prepare-maintenance")?;
+    let campaign_worktree = worktree.map(PathBuf::from).or_else(|| {
+        std::env::var("GRIT_BENCH_CAMPAIGN_CWD")
+            .ok()
+            .map(PathBuf::from)
+    });
+    if let Some(worktree) = campaign_worktree {
+        if !worktree.join(GC_BASE_MARKER).is_file() {
+            anyhow::bail!(
+                "missing {} in {} (write gc base before gc scenarios)",
+                GC_BASE_MARKER,
+                worktree.display()
+            );
+        }
+        return restore_gc_worktree(git, &worktree);
+    }
     let _work = prepare_gc_fixture(git, &bare)?;
     Ok(())
 }

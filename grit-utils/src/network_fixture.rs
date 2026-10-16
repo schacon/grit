@@ -508,17 +508,6 @@ pub fn ensure_campaign_bare_network_meta(
         fetch_base_oid: fetch_base,
         default_branch,
     };
-    if tag_only {
-        let branch_ref = format!("refs/heads/{}", meta.default_branch);
-        let tip = rev_parse(git, bare, &branch_ref).unwrap_or_default();
-        if tip != meta.fetch_base_oid {
-            run_git(
-                git,
-                Some(bare),
-                &["update-ref", &branch_ref, &meta.fetch_base_oid],
-            )?;
-        }
-    }
     fs::write(meta_path(bare), serde_json::to_string_pretty(&meta)?)?;
     Ok(meta)
 }
