@@ -12,8 +12,8 @@ use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
-    apply_tree_merge_output_to_index, merge_trees_three_way, TreeMergeConflictPresentation,
-    WhitespaceMergeOptions,
+    apply_tree_merge_output_to_worktree_index, merge_trees_three_way,
+    TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
@@ -191,7 +191,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
         {
             let mut index = repo.load_index()?;
-            apply_tree_merge_output_to_index(&mut index, &merged);
+            apply_tree_merge_output_to_worktree_index(repo, &mut index, &merged)?;
             repo.write_index(&mut index)?;
         }
 
@@ -215,7 +215,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         checkout_between_trees(repo, Some(&head_tree), &new_tree)?;
         {
             let mut index = repo.load_index()?;
-            apply_tree_merge_output_to_index(&mut index, &merged);
+            apply_tree_merge_output_to_worktree_index(repo, &mut index, &merged)?;
             repo.write_index(&mut index)?;
         }
 

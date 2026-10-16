@@ -10,7 +10,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 mod merge_trees_walk;
 
 use crate::diff::{detect_renames, diff_trees, DiffStatus};
-use crate::index::{Index, IndexEntry};
+use crate::index::{
+    entry_from_stat, worktree_path_from_index_rel, Index, IndexEntry, MODE_REGULAR,
+};
 use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -856,6 +858,55 @@ pub fn apply_tree_merge_output_to_index(index: &mut Index, merged: &TreeMergeOut
         index.push_entry_unsorted(entry.clone());
     }
     index.sort();
+}
+
+/// Refresh stage-0 stat cache for sparse merge index rows after a worktree checkout.
+///
+/// Sparse merge entries are built without reading the work tree; without this pass,
+/// [`apply_tree_merge_output_to_index`] would leave stale zeroed stat fields and
+/// `status` would report clean merge results as modified.
+///
+/// # Errors
+///
+/// Propagates work tree and `stat` failures from [`entry_from_stat`].
+pub fn refresh_tree_merge_index_stat_cache(
+    repo: &Repository,
+    index: &mut Index,
+    merged: &TreeMergeOutput,
+) -> crate::error::Result<()> {
+    let Some(work_tree) = repo.work_tree() else {
+        return Ok(());
+    };
+    for entry in merged.index.entries() {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode != MODE_REGULAR && entry.mode != crate::index::MODE_EXECUTABLE {
+            continue;
+        }
+        let abs = worktree_path_from_index_rel(work_tree, &entry.path);
+        if !abs.is_file() {
+            continue;
+        }
+        let refreshed = entry_from_stat(&abs, &entry.path, entry.oid, entry.mode)?;
+        index.add_or_replace(refreshed);
+    }
+    index.sort();
+    Ok(())
+}
+
+/// Apply sparse merge index rows and sync stat cache from the work tree when present.
+///
+/// # Errors
+///
+/// Propagates errors from [`refresh_tree_merge_index_stat_cache`].
+pub fn apply_tree_merge_output_to_worktree_index(
+    repo: &Repository,
+    index: &mut Index,
+    merged: &TreeMergeOutput,
+) -> crate::error::Result<()> {
+    apply_tree_merge_output_to_index(index, merged);
+    refresh_tree_merge_index_stat_cache(repo, index, merged)
 }
 
 /// Tree OID to record in a commit after a three-way merge (applies conflict-marker policy).

@@ -2550,6 +2550,8 @@ impl core::marker::UnsafeUnpin for grit_lib::diff::merge_trees::WhitespaceMergeO
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::merge_trees::WhitespaceMergeOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::merge_trees::WhitespaceMergeOptions
 pub fn grit_lib::diff::merge_trees::apply_tree_merge_output_to_index(&mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput)
+pub fn grit_lib::diff::merge_trees::apply_tree_merge_output_to_worktree_index(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::merge_trees::refresh_tree_merge_index_stat_cache(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::merge_trees::index_tree_oid_matches_head(&grit_lib::objects::odb::Odb, &grit_lib::index::Index, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::diff::merge_trees::materialized_merge_result_tree(&grit_lib::objects::odb::Odb, &grit_lib::diff::merge_trees::TreeMergeOutput) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::diff::merge_trees::merge_trees_three_way(&grit_lib::repo::Repository, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, grit_lib::diff::merge_file::MergeFavor, grit_lib::diff::merge_trees::WhitespaceMergeOptions, core::option::Option<&str>, grit_lib::diff::merge_trees::TreeMergeConflictPresentation<'_>) -> grit_lib::error::Result<grit_lib::diff::merge_trees::TreeMergeOutput>

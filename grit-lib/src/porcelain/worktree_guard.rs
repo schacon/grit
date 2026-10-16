@@ -1068,6 +1068,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn ensure_worktree_clean_for_pick_passes_on_fresh_commit() {
         let (_dir, repo) = init_repo();
         let wt = repo.work_tree().expect("wt");
