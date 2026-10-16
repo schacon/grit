@@ -38,15 +38,17 @@
 //! # }
 //! ```
 
+mod apply;
 mod error;
 mod plan;
 mod types;
 
+pub use apply::apply_rewrite;
 pub use error::HistoryError;
 pub use plan::plan_rewrite;
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};
 pub use types::{
-    CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit, PlannedRefUpdate, RefScope,
-    RewriteOptions, RewritePlan, RewrittenCommit,
+    AppliedRewrite, ApplyOptions, CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit,
+    PlannedRefUpdate, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,
 };
