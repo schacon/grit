@@ -97,6 +97,7 @@ fn seed_main_commit(repo: &Repository, dir: &Path) -> ObjectId {
             allow_empty: false,
             sign_override: None,
             amend: false,
+            assume_worktree_synced: false,
         },
         &mut NullProgress,
     )
