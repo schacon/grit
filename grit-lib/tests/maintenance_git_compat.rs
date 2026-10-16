@@ -11,6 +11,7 @@ use grit_lib::maintenance::{
     fsck as repo_fsck, gc, prune_loose_objects, repack_all, FsckOptions, GcOptions, PruneOptions,
     RepackOptions,
 };
+use grit_lib::objects::pack::{clear_pack_cache, test_pack_cache_guard};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::commit::{create_commit, CommitRequest};
@@ -52,6 +53,11 @@ fn git_commit_dated(dir: &Path, when: &str, message: &str) {
         "git commit: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Repack/gc and system `git gc` invalidate on-disk packs; grit fsck reads via the process pack cache.
+fn clear_pack_cache_after_disk_maintenance() {
+    clear_pack_cache();
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) {
@@ -99,6 +105,7 @@ fn many_grit_commits(repo: &Repository, n: usize) {
 
 #[test]
 fn repack_after_many_commits_single_pack_and_git_fsck_clean() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     many_grit_commits(&repo, 30);
@@ -117,6 +124,7 @@ fn repack_after_many_commits_single_pack_and_git_fsck_clean() {
     let stats = repack_all(&repo, &RepackOptions::default()).expect("repack");
     assert!(stats.pack_path.is_some());
     assert!(stats.objects_packed.unwrap_or(0) > 0);
+    clear_pack_cache_after_disk_maintenance();
 
     let packs = std::fs::read_dir(git_dir.join("objects/pack"))
         .expect("pack dir")
@@ -138,12 +146,14 @@ fn repack_after_many_commits_single_pack_and_git_fsck_clean() {
 
 #[test]
 fn gc_matches_repack_plus_prune_and_git_fsck() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     many_grit_commits(&repo, 20);
 
     let stats = gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
     assert!(stats.repack.pack_path.is_some());
+    clear_pack_cache_after_disk_maintenance();
 
     git(dir.path(), &["fsck", "--strict"]);
 }
@@ -196,6 +206,7 @@ fn one_commit(repo: &Repository) {
 
 #[test]
 fn gc_preserves_staged_only_blob() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     one_commit(&repo);
@@ -211,6 +222,7 @@ fn gc_preserves_staged_only_blob() {
         .oid;
 
     gc(&repo, &GcOptions::with_reflog_policy(1_700_000_000, false)).expect("gc");
+    clear_pack_cache_after_disk_maintenance();
 
     assert!(
         repo.odb().read(&staged_oid).is_ok(),
@@ -297,6 +309,7 @@ fn fsck_reports_missing_index_blob_after_corruption() {
 
 #[test]
 fn repack_keeps_reflog_only_commit_and_kept_pack() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     many_grit_commits(&repo, 2);
@@ -327,6 +340,7 @@ fn repack_keeps_reflog_only_commit_and_kept_pack() {
     std::fs::write(old_pack.with_extension("keep"), b"keep").expect("keep");
 
     repack_all(&repo, &RepackOptions::default()).expect("repack");
+    clear_pack_cache_after_disk_maintenance();
 
     assert!(
         repo.odb().read(&reflog_only).is_ok(),
@@ -714,6 +728,7 @@ fn gc_reports_kept_unreachable_loose_within_prune_grace() {
 
 #[test]
 fn gc_prune_expire_never_preserves_unreachable_loose_blob() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     one_commit(&repo);
@@ -886,6 +901,7 @@ fn gc_autopacklimit_consolidates_packs_like_git() {
 
 #[test]
 fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
+    let _pack_guard = test_pack_cache_guard();
     let dir = TempDir::new().expect("tempdir");
     let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
     one_commit(&repo);
@@ -903,6 +919,7 @@ fn index_gitlink_absent_commit_does_not_break_repack_or_fsck() {
 
     repack_all(&repo, &RepackOptions::default()).expect("grit repack");
     git(dir.path(), &["gc"]);
+    clear_pack_cache_after_disk_maintenance();
     git(dir.path(), &["fsck", "--strict"]);
 
     let report = repo_fsck(&repo, &FsckOptions::objects_and_refs(true)).expect("grit fsck");

@@ -12,7 +12,7 @@ use grit_lib::bundle::bundle_remote::fetch_from_bundle;
 use grit_lib::bundle::{Bundle, BundleSpec, BundleWriter};
 use grit_lib::command_runner::system_command_runner;
 use grit_lib::commit::signing::verify_tag;
-use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::config::gitmodules::gitdir::{
     compute_default_submodule_gitdir, connect_submodule_work_tree_and_git_dir,
     die_path_inside_submodule_when_disabled, ensure_submodule_gitdir_config, hash_blob_sha1_hex,
@@ -52,7 +52,10 @@ use grit_lib::objects::pack_objects::{
     build_pack_from_send_list_with_write_threads, reachable_closure,
 };
 use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::porcelain::add::stage_for_commit;
 use grit_lib::porcelain::checkout::apply_index_file_mode;
+use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+use grit_lib::progress::NullProgress;
 use grit_lib::porcelain::stash::worktree_bytes_for_index_mode;
 use grit_lib::porcelain::status::{expand_untracked_for_staging, status_path_matches_worktree};
 use grit_lib::porcelain::tag::{creator_date, get_tag_annotation, tag_contains, tag_points_at};
@@ -81,6 +84,26 @@ fn init_repo(dir: &Path) -> Repository {
     .expect("init")
 }
 
+fn seed_main_commit(repo: &Repository, dir: &Path) -> ObjectId {
+    std::fs::write(dir.join("tracked.txt"), b"payload\n").expect("write");
+    stage_for_commit(repo, &mut NullProgress).expect("stage");
+    let ident = "User <u@example.com> 1700000000 +0000".to_owned();
+    create_commit(
+        repo,
+        &CommitRequest {
+            message: "seed".into(),
+            author: ident.clone(),
+            committer: ident,
+            allow_empty: false,
+            sign_override: None,
+            amend: false,
+        },
+        &mut NullProgress,
+    )
+    .expect("commit");
+    grit_lib::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main oid")
+}
+
 fn git_fsck(dir: &Path) {
     let out = Command::new("git")
         .current_dir(dir)
@@ -100,7 +123,7 @@ fn git_fsck(dir: &Path) {
 fn bundle_pack_odb_and_midx_paths() {
     let dir = tempdir().expect("tempdir");
     let repo = init_repo(dir.path());
-    let git_dir = dir.path().join(".git");
+    let tip = seed_main_commit(&repo, dir.path());
     let blob = repo
         .odb()
         .write(ObjectKind::Blob, b"payload\n")
@@ -156,8 +179,6 @@ fn bundle_pack_odb_and_midx_paths() {
     let _ = read_midx_btmp_ranges(repo.odb().objects_dir());
     let _ = midx_sidecar_path_for_midx_file(&idx_path, "bitmap");
 
-    write_ref(git_dir.as_path(), "refs/heads/main", &blob).expect("write main");
-    let tip = grit_lib::refs::resolve_ref(git_dir.as_path(), "refs/heads/main").expect("resolve");
     let bundle_path = dir.path().join("test.bundle");
     {
         let mut f = fs::File::create(&bundle_path).expect("bundle file");
@@ -173,6 +194,24 @@ fn bundle_pack_odb_and_midx_paths() {
     fetch_opts.tags = TagMode::None;
     fetch_opts.dry_run = true;
     let _ = fetch_from_bundle(dest_repo.git_dir(), &bundle_path, &fetch_opts);
+
+    git_fsck(dir.path());
+    let bundle_verify = Command::new("git")
+        .current_dir(dir.path())
+        .args([
+            "bundle",
+            "verify",
+            bundle_path.to_str().expect("bundle path utf8"),
+        ])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git bundle verify");
+    assert!(
+        bundle_verify.status.success(),
+        "git bundle verify: {}",
+        String::from_utf8_lossy(&bundle_verify.stderr)
+    );
 }
 
 fn write_bundle_header_and_pack(repo: &Repository, tip: ObjectId, w: &mut dyn Write) {
@@ -252,7 +291,7 @@ fn refs_state_repo_caches_and_notes() {
     caches.set_promisor_hydrate_hook(None);
 
     let mut entries: Vec<NotesTreeEntry> = Vec::new();
-    remove_note_entry(&mut entries, oid.to_hex().as_str());
+    assert!(!remove_note_entry(&mut entries, oid.to_hex().as_str()));
 
     let head = resolve_head(git_dir.as_path()).expect("head");
     let _ = split_commit_in_progress(git_dir.as_path(), &head);

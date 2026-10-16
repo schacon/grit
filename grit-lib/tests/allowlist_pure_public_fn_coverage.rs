@@ -2,9 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::process::Command;
 
 use grit_lib::blame::build_fuzzy_line_map;
 use grit_lib::command_runner::hooks::{
@@ -143,7 +144,7 @@ fn pkt_line_promisor_push_cert_and_ref_helpers() {
     let mut c2 = Cursor::new(b"0000");
     let _ = read_data_lines_until_flush(&mut c2, "flush").expect("data");
 
-    let _ = parse_advertisement("version https://git-scm.com/docs/pack-protocol/2\n");
+    assert!(parse_advertisement("version https://git-scm.com/docs/pack-protocol/2\n").is_empty());
 
     let check = SignatureCheck::default_none();
     let _ = cert_env_from_check(&check, "oid".to_owned(), None);
@@ -206,10 +207,48 @@ fn transport_http_discover_helpers() {
     let body = sample_smart_advertisement();
     let _ = discover_upload_pack_from_body(&body);
     let _ = discover_upload_pack_for_list_refs_from_body(&body);
-    let client = MockHttp { body };
+    let client = MockHttp {
+        body: body.clone(),
+    };
     let _ = discover_upload_pack(&client, "https://example.com/r.git", None);
     let _ = discover_upload_pack_exact(&client, "https://example.com/r.git", Some("version=2"));
     let _ = discover_upload_pack_for_list_refs(&client, "https://example.com/r.git", None);
+
+    let dir = tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("f.txt"), b"x\n").expect("write");
+    Command::new("git")
+        .current_dir(dir.path())
+        .args(["add", "f.txt"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git add");
+    Command::new("git")
+        .current_dir(dir.path())
+        .args(["commit", "-qm", "c"])
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@e.com")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@e.com")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git commit");
+    let git_advert = Command::new("git")
+        .current_dir(dir.path())
+        .args(["upload-pack", "--advertise-refs", "."])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git upload-pack");
+    assert!(
+        git_advert.status.success(),
+        "git upload-pack: {}",
+        String::from_utf8_lossy(&git_advert.stderr)
+    );
+    discover_upload_pack_from_body(&git_advert.stdout).expect("parse git advertisement");
+    discover_upload_pack_for_list_refs_from_body(&git_advert.stdout).expect("list refs from git");
 }
 
 #[test]
