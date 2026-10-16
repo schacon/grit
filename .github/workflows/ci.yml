@@ -44,6 +44,11 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Install rustfilt and pinned nightly (public-fn rustdoc JSON)
+        run: |
+          cargo install rustfilt --locked
+          ./scripts/public-api.sh ensure-toolchain
+
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: coverage

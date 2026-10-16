@@ -20,6 +20,7 @@ Usage: $(basename "$0") <generate|check|ensure-deps>
   generate     Write ${SNAPSHOT#"$REPO"/} from cargo public-api
   check        Regenerate to a temp file and diff against the committed snapshot
   ensure-deps              Install pinned nightly + cargo-public-api (for tests)
+  ensure-toolchain         Install pinned nightly only (rustdoc JSON / coverage gate)
   ensure-cargo-public-api  Install or replace cargo-public-api when version mismatches
 EOF
 }
@@ -89,6 +90,9 @@ ensure-deps)
 	ensure_toolchain
 	ensure_cargo_public_api
 	cargo public-api --version
+	;;
+ensure-toolchain)
+	ensure_toolchain
 	;;
 ensure-cargo-public-api)
 	ensure_cargo_public_api
