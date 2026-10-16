@@ -411,6 +411,8 @@ pub fn write_upload_pack_stream(
     w: &mut dyn Write,
 ) -> Result<PackStats> {
     if filter.is_some() {
+        let mut shallow_grafts = source_shallow.clone();
+        shallow_grafts.extend(have_shallow.iter().copied());
         let pack = build_pack_with_shallow_and_filter(
             repo.odb(),
             wants,
