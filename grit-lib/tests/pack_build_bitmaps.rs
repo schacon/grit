@@ -153,12 +153,29 @@ fn bitmap_and_walk_honor_explicit_shallow_boundary() {
         delta: false,
         ..PackBuildOptions::default()
     };
+<<<<<<< New base: docs: bitmap acceptance narrative, library guide, upstream mapping, roadmap item
     let pack_on =
         build_pack_with_shallow_and_filter(&odb, &[head], &[], &shallow, &shallow, None, &opts_on)
             .expect("bitmap");
     let pack_off =
         build_pack_with_shallow_and_filter(&odb, &[head], &[], &shallow, &shallow, None, &opts_off)
             .expect("walk");
+||||||| Common ancestor
+    let pack_on = build_pack_with_shallow_and_filter(
+        &odb, &[head], &[], &shallow, None, &opts_on,
+    )
+    .expect("bitmap");
+    let pack_off = build_pack_with_shallow_and_filter(
+        &odb, &[head], &[], &shallow, None, &opts_off,
+    )
+    .expect("walk");
+=======
+    let pack_on = build_pack_with_shallow_and_filter(&odb, &[head], &[], &shallow, None, &opts_on)
+        .expect("bitmap");
+    let pack_off =
+        build_pack_with_shallow_and_filter(&odb, &[head], &[], &shallow, None, &opts_off)
+            .expect("walk");
+>>>>>>> Current commit: style: rustfmt pack_build_bitmaps test
     let on_set = pack_object_set(&pack_on, &odb);
     let off_set = pack_object_set(&pack_off, &odb);
     assert_eq!(
@@ -259,6 +276,7 @@ fn filters_respected_with_bitmaps() {
         delta: false,
         ..PackBuildOptions::default()
     };
+<<<<<<< New base: docs: bitmap acceptance narrative, library guide, upstream mapping, roadmap item
     let pack = build_pack_with_shallow_and_filter(
         &odb,
         &[head],
@@ -269,6 +287,15 @@ fn filters_respected_with_bitmaps() {
         &opts,
     )
     .expect("filtered pack");
+||||||| Common ancestor
+    let pack = build_pack_with_shallow_and_filter(
+        &odb, &[head], &[], &empty, Some(&filter), &opts,
+    )
+    .expect("filtered pack");
+=======
+    let pack = build_pack_with_shallow_and_filter(&odb, &[head], &[], &empty, Some(&filter), &opts)
+        .expect("filtered pack");
+>>>>>>> Current commit: style: rustfmt pack_build_bitmaps test
     let map = pack_bytes_to_object_map(&pack, &odb).expect("parse");
     assert!(
         map.values()
