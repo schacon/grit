@@ -1,4 +1,9 @@
 //! Verbatim pack reuse for bitmap-accelerated upload-pack (streaming PACK v2).
+//!
+//! ```rust
+//! use grit_lib::pack_objects::PackStats;
+//! let _ = std::any::type_name::<PackStats>();
+//! ```
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
