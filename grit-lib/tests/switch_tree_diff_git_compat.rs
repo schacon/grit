@@ -135,6 +135,85 @@ fn switch_nested_gitattributes_crlf_clean_worktree_matches_git() {
 }
 
 #[test]
+fn switch_wholesale_deleted_gitattributes_does_not_apply_stale_eol() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+    git(tmp.path(), &["config", "gc.auto", "0"]);
+    git(tmp.path(), &["config", "core.autocrlf", "false"]);
+
+    std::fs::create_dir_all(tmp.path().join("d")).expect("mkdir d");
+    std::fs::write(tmp.path().join("d/.gitattributes"), "*.txt text eol=crlf\n")
+        .expect("gitattributes");
+    for i in 0..7 {
+        std::fs::write(
+            tmp.path().join(format!("d/f{i}.txt")),
+            format!("main {i}\r\n"),
+        )
+        .expect("tracked");
+    }
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    let _ = std::fs::remove_dir_all(tmp.path().join("d"));
+    std::fs::create_dir_all(tmp.path().join("d")).expect("recreate d");
+    std::fs::write(tmp.path().join("d/new.txt"), "new\n").expect("lf new file");
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "drop d tree and add new"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    git(tmp.path(), &["switch", "-q", "target"]);
+    let git_bytes = std::fs::read(tmp.path().join("d/new.txt")).expect("git new.txt");
+    assert_eq!(
+        git_bytes, b"new\n",
+        "system git must write LF bytes for new.txt after wholesale dir replace"
+    );
+    assert!(
+        git_porcelain(tmp.path()).trim().is_empty(),
+        "system git must stay clean, got:\n{}",
+        git_porcelain(tmp.path())
+    );
+    git(tmp.path(), &["switch", "-q", "main"]);
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+        },
+    )
+    .expect("grit switch");
+
+    let grit_bytes = std::fs::read(tmp.path().join("d/new.txt")).expect("grit new.txt");
+    assert_eq!(
+        grit_bytes, b"new\n",
+        "grit must match git LF worktree bytes (not CRLF-smudged), got {:?}",
+        grit_bytes
+    );
+    assert_eq!(
+        grit_bytes, git_bytes,
+        "grit and git must agree on on-disk bytes"
+    );
+    assert!(
+        git_porcelain(tmp.path()).trim().is_empty(),
+        "git status --porcelain must be empty after grit switch, got:\n{}",
+        git_porcelain(tmp.path())
+    );
+}
+
+#[test]
 fn switch_preserves_untracked_in_wholesale_deleted_directory() {
     let tmp = tempfile::tempdir().expect("tempdir");
     git(tmp.path(), &["init", "-q", "-b", "main", "."]);

@@ -2033,7 +2033,7 @@ impl Index {
     }
 
     /// One index compaction pass: drop entries under `dir_prefixes`, drop exact `paths`, merge `replacements`.
-    pub fn remove_prefixes_paths_and_insert<'a>(
+    pub(crate) fn remove_prefixes_paths_and_insert<'a>(
         &mut self,
         dir_prefixes: &BTreeSet<String>,
         paths: impl IntoIterator<Item = &'a [u8]>,
@@ -2064,21 +2064,14 @@ impl Index {
 
         if self.entries_sorted {
             let mut path_idx = 0usize;
-            let mut prefix_idx = 0usize;
             for entry in self.entries.drain(..) {
                 let ep = entry.path.as_slice();
                 while path_idx < paths.len() && Self::cmp_paths(paths[path_idx], ep).is_lt() {
                     path_idx += 1;
                 }
-                while prefix_idx < prefix_bytes.len()
-                    && Self::directory_prefix_before(prefix_bytes[prefix_idx], ep)
-                {
-                    prefix_idx += 1;
-                }
                 let remove = (path_idx < paths.len()
                     && Self::cmp_paths(paths[path_idx], ep).is_eq())
-                    || (prefix_idx < prefix_bytes.len()
-                        && Self::entry_under_directory_prefix(ep, prefix_bytes[prefix_idx]));
+                    || Self::entry_under_any_directory_prefix(ep, &prefix_bytes);
                 if remove {
                     if entry.stage() != 0 {
                         resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, &entry);
@@ -2124,7 +2117,7 @@ impl Index {
     }
 
     /// Remove every entry whose path equals `dir` or lies under `dir/` for each `dir` in `dirs`.
-    pub fn remove_directory_prefixes(&mut self, dirs: &BTreeSet<String>) {
+    pub(crate) fn remove_directory_prefixes(&mut self, dirs: &BTreeSet<String>) {
         if dirs.is_empty() {
             return;
         }
@@ -2136,16 +2129,9 @@ impl Index {
         let mut kept = Vec::with_capacity(self.entries.len());
 
         if self.entries_sorted {
-            let mut prefix_idx = 0usize;
             for entry in self.entries.drain(..) {
                 let ep = entry.path.as_slice();
-                while prefix_idx < prefixes.len()
-                    && Self::directory_prefix_before(prefixes[prefix_idx], ep)
-                {
-                    prefix_idx += 1;
-                }
-                let remove = prefix_idx < prefixes.len()
-                    && Self::entry_under_directory_prefix(ep, prefixes[prefix_idx]);
+                let remove = Self::entry_under_any_directory_prefix(ep, &prefixes);
                 if remove {
                     if entry.stage() != 0 {
                         resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, &entry);
@@ -2160,9 +2146,8 @@ impl Index {
             self.entries = kept;
         } else {
             for entry in self.entries.drain(..) {
-                let remove = prefixes.iter().any(|prefix| {
-                    Self::entry_under_directory_prefix(entry.path.as_slice(), prefix)
-                });
+                let remove =
+                    Self::entry_under_any_directory_prefix(entry.path.as_slice(), &prefixes);
                 if remove {
                     if entry.stage() != 0 {
                         resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, &entry);
@@ -2198,8 +2183,10 @@ impl Index {
         path.len() == prefix.len() || path[prefix.len()] == b'/'
     }
 
-    fn directory_prefix_before(prefix: &[u8], path: &[u8]) -> bool {
-        Self::cmp_paths(prefix, path).is_lt() && !Self::entry_under_directory_prefix(path, prefix)
+    fn entry_under_any_directory_prefix(path: &[u8], prefixes: &[&[u8]]) -> bool {
+        prefixes
+            .iter()
+            .any(|prefix| Self::entry_under_directory_prefix(path, prefix))
     }
 
     /// Remove many paths (all merge stages per path) in one `O(N + M log M)` compaction pass.
@@ -4549,6 +4536,36 @@ mod tests {
         assert!(idx.get(b"d005/f1.txt", 0).is_none());
         assert!(idx.get(b"d006/f0.txt", 0).is_some());
         assert!(idx.get(b"keep.txt", 0).is_some());
+    }
+
+    #[test]
+    fn remove_prefixes_paths_and_insert_combines_prefix_exact_and_replacements() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("d005/f0.txt"));
+        idx.add_or_replace(make_entry("d005/f1.txt"));
+        idx.add_or_replace(make_entry("d006/f0.txt"));
+        idx.add_or_replace(make_entry("solo.txt"));
+        let mut replacement = make_entry("solo.txt");
+        replacement.oid = dummy_oid();
+        idx.remove_prefixes_paths_and_insert(
+            &BTreeSet::from(["d005".to_owned()]),
+            [b"d006/f0.txt".as_slice()],
+            [replacement.clone()],
+        );
+        assert!(idx.get(b"d005/f0.txt", 0).is_none());
+        assert!(idx.get(b"d005/f1.txt", 0).is_none());
+        assert!(idx.get(b"d006/f0.txt", 0).is_none());
+        assert_eq!(idx.get(b"solo.txt", 0).unwrap().oid, replacement.oid);
+    }
+
+    #[test]
+    fn remove_directory_prefixes_does_not_skip_lexically_later_prefix_children() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("d005/f0.txt"));
+        idx.add_or_replace(make_entry("d005/f1.txt"));
+        idx.remove_directory_prefixes(&BTreeSet::from(["d005".to_owned(), "d0050".to_owned()]));
+        assert!(idx.get(b"d005/f0.txt", 0).is_none());
+        assert!(idx.get(b"d005/f1.txt", 0).is_none());
     }
 
     #[test]

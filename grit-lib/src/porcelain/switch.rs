@@ -356,10 +356,18 @@ fn switch_to_target(
     ensure_no_untracked_overwrite(&prepared.plan.untracked, &prepared.plan.tree_changes)?;
 
     let wholesale_skip = &prepared.preverified_wholesale_dirs;
-    let tree_changes: Vec<DiffEntry> = prepared
+    let attribute_tree_changes: Vec<DiffEntry> = prepared
         .plan
         .tree_changes
-        .into_iter()
+        .iter()
+        .filter(|change| {
+            path_from_diff(change)
+                .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
+        })
+        .cloned()
+        .collect();
+    let apply_tree_changes: Vec<DiffEntry> = attribute_tree_changes
+        .iter()
         .filter(|change| {
             if change.status == DiffStatus::Deleted {
                 if let Some(path) = change.old_path.as_deref() {
@@ -368,19 +376,19 @@ fn switch_to_target(
                     }
                 }
             }
-            path_from_diff(change)
-                .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
+            true
         })
+        .cloned()
         .collect();
-    let delete_count = tree_changes
+    let delete_count = attribute_tree_changes
         .iter()
         .filter(|c| c.status == DiffStatus::Deleted)
         .count();
-    let checkout_parallel_threshold =
-        (tree_changes.len() >= 150 || delete_count >= 150).then_some(0);
+    let checkout_parallel_threshold = (apply_tree_changes.len() >= 150 || delete_count >= 150)
+        .then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
-        &tree_changes,
+        &apply_tree_changes,
         &mut prepared.index,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
@@ -389,6 +397,7 @@ fn switch_to_target(
             preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
         },
+        Some(&attribute_tree_changes),
     )?;
 
     if let Some(from_label) = checkout_reflog_from_label(&head_before) {

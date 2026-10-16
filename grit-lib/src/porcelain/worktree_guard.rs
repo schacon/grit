@@ -246,7 +246,7 @@ fn worktree_stats_match_index_on_paths(
         .as_ref()
         .and_then(|c| c.get_bool("core.preloadIndex").and_then(|r| r.ok()))
         .unwrap_or(true);
-    let stat_parallel_threads = (paths.len() >= 48).then(|| {
+    let stat_parallel_threads = (paths.len() >= 32).then(|| {
         repo.thread_policy()
             .resolve(
                 ParallelOp::IndexRefresh,

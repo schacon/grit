@@ -198,6 +198,7 @@ fn checkout_between_trees_slow(
         progress,
         None,
         CheckoutApplyOptions::default(),
+        None,
     )
 }
 
@@ -439,6 +440,7 @@ pub fn checkout_tree_changes(repo: &Repository, changes: &[DiffEntry]) -> Result
         &mut NullProgress,
         None,
         CheckoutApplyOptions::default(),
+        None,
     )
 }
 
@@ -469,7 +471,13 @@ pub fn checkout_tree_changes_with_index(
     changes: &[DiffEntry],
     index: &mut Index,
 ) -> Result<()> {
-    checkout_tree_changes_with_index_opts(repo, changes, index, CheckoutApplyOptions::default())
+    checkout_tree_changes_with_index_opts(
+        repo,
+        changes,
+        index,
+        CheckoutApplyOptions::default(),
+        None,
+    )
 }
 
 /// Like [`checkout_tree_changes_with_index`], with apply-time tuning for trusted callers.
@@ -478,8 +486,16 @@ pub(crate) fn checkout_tree_changes_with_index_opts(
     changes: &[DiffEntry],
     index: &mut Index,
     apply: CheckoutApplyOptions,
+    attribute_changes: Option<&[DiffEntry]>,
 ) -> Result<()> {
-    checkout_tree_changes_with_progress(repo, changes, &mut NullProgress, Some(index), apply)
+    checkout_tree_changes_with_progress(
+        repo,
+        changes,
+        &mut NullProgress,
+        Some(index),
+        apply,
+        attribute_changes,
+    )
 }
 
 /// Top-level directories whose tracked files are entirely removed by `delete_paths`.
@@ -776,6 +792,7 @@ fn checkout_tree_changes_with_progress(
     progress: &mut dyn ProgressSink,
     reuse_index: Option<&mut Index>,
     apply: CheckoutApplyOptions,
+    attribute_changes: Option<&[DiffEntry]>,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree()
@@ -795,8 +812,9 @@ fn checkout_tree_changes_with_progress(
         .and_then(|r| r.ok())
         .unwrap_or(false);
     let precompose = repo.pathspec_precompose_enabled();
-    let rules = if tree_changes_touch_gitattributes(changes) {
-        let prospective_index = prospective_index_for_checkout(index, changes);
+    let attr_changes = attribute_changes.unwrap_or(changes);
+    let rules = if tree_changes_touch_gitattributes(attr_changes) {
+        let prospective_index = prospective_index_for_checkout(index, attr_changes);
         WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config.clone())?
     } else {
         WorktreeRules::from_parts_index_attributes_only(repo, index, config.clone())?
