@@ -5,9 +5,12 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::pack::packed_full_object_slice;
+use grit_lib::objects::pack_objects::{
+    write_upload_pack_stream, PackBuildOptions, PackProgress, PackStats,
+};
 use grit_lib::objects::ObjectId;
-use grit_lib::pack::packed_full_object_slice;
-use grit_lib::pack_objects::{write_upload_pack_stream, PackBuildOptions, PackProgress, PackStats};
 use grit_lib::repo::Repository;
 use grit_test_support::{HashAlgo, RepoFixture};
 
@@ -161,7 +164,7 @@ fn full_clone_reuses_pack_and_git_index_pack_strict_ok() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
     build_history(&fx);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
         delta: true,
@@ -186,7 +189,7 @@ fn partial_reuse_with_gaps_rewrites_ofs_delta() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
     build_history(&fx);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
@@ -214,7 +217,7 @@ fn midx_preferred_pack_reuse() {
     git_ok(&fx, &["add", "b.txt"]);
     git_ok(&fx, &["commit", "-m", "loose after repack"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
         delta: true,
@@ -237,7 +240,7 @@ fn extended_objects_appended() {
     git_ok(&fx, &["add", "loose.txt"]);
     git_ok(&fx, &["commit", "-m", "add loose"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
         delta: true,
@@ -272,7 +275,7 @@ fn sha256_reuse() {
     git_ok(&fx, &["commit", "-m", "c2"]);
     git_ok(&fx, &["repack", "-adb"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
@@ -302,7 +305,7 @@ fn bitmap_pack_with_haves_git_index_pack_strict() {
     git_ok(&fx, &["add", "post.txt"]);
     git_ok(&fx, &["commit", "-m", "post bitmap"]);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let have = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~2"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {
@@ -326,7 +329,7 @@ fn thin_pack_ref_delta_conversion() {
     let fx = RepoFixture::init(HashAlgo::Sha1).expect("init");
     build_history(&fx);
     let git_dir = fx.path().join(".git");
-    let repo = Repository::open(&git_dir, None).expect("open");
+    let repo = Repository::open(&git_dir, &RepositoryOptions::empty()).expect("open");
     let tip = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD"]).stdout.trim()).unwrap();
     let parent = ObjectId::from_hex(fx.git(&["rev-parse", "HEAD~1"]).stdout.trim()).unwrap();
     let opts = PackBuildOptions {

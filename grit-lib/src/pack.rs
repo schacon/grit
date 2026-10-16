@@ -4061,9 +4061,6 @@ pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Op
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_newest_first(&mut indexes);
     for idx in &indexes {
-        if idx.hash_bytes() != 20 {
-            continue;
-        }
         let Some(entry_offset) = idx.find_offset(oid) else {
             continue;
         };

@@ -6,7 +6,7 @@ use crate::objects::{ObjectId, ObjectKind};
 use crate::repo::Repository;
 use crate::rev_list::{
     shallow_boundary_oids, shallow_grafts_for_upload_pack_deepen,
-    shallow_grafts_for_upload_pack_rev_list, shallow_grafts_for_upload_pack_target_depth,
+    shallow_grafts_for_upload_pack_rev_list,
 };
 use crate::shallow::INFINITE_DEPTH;
 

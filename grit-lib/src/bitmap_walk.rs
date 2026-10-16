@@ -124,12 +124,6 @@ impl ReachableSet {
         out
     }
 
-    /// Borrow the indexed reachability bitmap (bit = pack/MIDX namespace position).
-    #[must_use]
-    pub(crate) fn indexed_bits(&self) -> &Bitmap {
-        &self.bits
-    }
-
     /// Bitmap positions the client still needs (indexed reachability minus haves).
     #[must_use]
     pub(crate) fn reuse_send_bits(&self) -> &Bitmap {

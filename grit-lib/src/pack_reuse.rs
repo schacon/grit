@@ -87,11 +87,6 @@ impl StreamingReuse {
         self.stats.verbatim_reuse_objects += 1;
     }
 
-    fn note_ref_from_ofs(&mut self) {
-        self.stats.pack_ref_from_ofs_objects += 1;
-        self.stats.verbatim_reuse_objects += 1;
-    }
-
     pub(crate) fn record_ofs_fixup(&mut self) {
         self.note_ofs_fixup();
     }
@@ -224,12 +219,18 @@ pub fn try_write_streaming_pack(
     progress(PackProgress::Enumerated { total: send.len() });
 
     let send_bits = send_set.reuse_send_bits();
-    let reuse_bits = compute_reuse_bits(&pack, &send_bits, &send_set, opts)?;
+    let reuse_bits = compute_reuse_bits(&pack, send_bits, &send_set, opts)?;
 
     let blob_name_hashes =
         crate::pack_object_select::blob_name_hashes_for_send(index, &send, &have_closure);
-    let plan =
-        crate::pack_objects::plan_deltas(repo.odb(), &send, &have_closure, opts, &blob_name_hashes)?;
+    let plan = crate::pack_objects::plan_deltas(
+        repo.odb(),
+        &send,
+        &have_closure,
+        opts,
+        &blob_name_hashes,
+        None,
+    )?;
     progress(PackProgress::PlannedDeltas);
 
     let mut reuse = StreamingReuse::new(pack, reuse_bits, &send_set);
@@ -443,6 +444,7 @@ fn write_whole_reused(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_one_reused(
     w: &mut dyn Write,
     stats: &mut ReuseWriteStats,
@@ -500,9 +502,9 @@ fn write_one_reused(
                 stats.verbatim_reuse_bytes += (end - zlib_start) as u64;
                 Ok(n)
             } else {
-                return Err(Error::CorruptObject(
+                Err(Error::CorruptObject(
                     "ofs-delta reuse missing remapped base".to_owned(),
-                ));
+                ))?
             }
         }
         PackedType::OfsDelta if !opts.use_ofs_delta && opts.thin => {
