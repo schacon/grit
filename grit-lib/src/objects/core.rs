@@ -659,6 +659,82 @@ pub fn tree_entry_cmp(
     ac.cmp(&bc)
 }
 
+/// Find a tree entry by name using Git's tree sort order (`O(log n)`).
+#[must_use]
+pub fn find_tree_entry_by_name<'a>(
+    entries: &'a [TreeEntry],
+    name: &[u8],
+    name_is_tree: bool,
+) -> Option<&'a TreeEntry> {
+    let idx = entries
+        .binary_search_by(|e| tree_entry_cmp(&e.name, e.mode == 0o040000, name, name_is_tree));
+    idx.ok().and_then(|i| {
+        let entry = &entries[i];
+        if entry.name.as_slice() == name {
+            Some(entry)
+        } else {
+            None
+        }
+    })
+}
+
+/// Like [`find_tree_entry_by_name`], trying directory ordering first then file.
+#[must_use]
+pub fn find_tree_entry_by_name_dir_or_file<'a>(
+    entries: &'a [TreeEntry],
+    name: &[u8],
+) -> Option<&'a TreeEntry> {
+    if let Some(entry) = find_tree_entry_by_name(entries, name, true) {
+        if entry.mode == 0o040000 {
+            return Some(entry);
+        }
+    }
+    find_tree_entry_by_name(entries, name, false)
+}
+
+/// Find one tree entry by name without building a full [`TreeEntry`] vector.
+///
+/// Scans `data` in on-disk order (trees are small enough that allocation-free scan
+/// beats caching fully parsed trees during blame path walks).
+pub fn find_tree_entry_by_name_in_data(
+    data: &[u8],
+    oid_len: usize,
+    name: &[u8],
+) -> Result<Option<TreeEntry>> {
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let sp = data[pos..]
+            .iter()
+            .position(|&b| b == b' ')
+            .ok_or_else(|| Error::CorruptObject("tree entry missing space".to_owned()))?;
+        let mode_bytes = &data[pos..pos + sp];
+        let mode = std::str::from_utf8(mode_bytes)
+            .ok()
+            .and_then(|s| u32::from_str_radix(s, 8).ok())
+            .ok_or_else(|| Error::CorruptObject("invalid tree mode".to_owned()))?;
+        pos += sp + 1;
+        let nul = data[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::CorruptObject("tree entry missing NUL".to_owned()))?;
+        let entry_name = &data[pos..pos + nul];
+        pos += nul + 1;
+        if pos + oid_len > data.len() {
+            return Err(Error::CorruptObject("tree entry truncated SHA".to_owned()));
+        }
+        let oid = ObjectId::from_bytes(&data[pos..pos + oid_len])?;
+        pos += oid_len;
+        if entry_name == name {
+            return Ok(Some(TreeEntry {
+                mode,
+                name: entry_name.to_vec(),
+                oid,
+            }));
+        }
+    }
+    Ok(None)
+}
+
 /// Parsed representation of a commit object.
 #[derive(Debug, Clone)]
 pub struct CommitData {

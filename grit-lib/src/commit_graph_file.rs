@@ -2061,6 +2061,57 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "local git.git worktree; GRIT_BLAME_BENCH_REPO"]
+    fn first_parent_makefile_bloom_skip_rate_on_git_dot_git() {
+        use crate::bloom::bloom_keyvec_for_path;
+        use crate::environment::RepositoryOptions;
+        use crate::pathspec::bloom_lookup_prefix_with_cwd;
+        use crate::repo::Repository;
+
+        let repo_path = std::env::var("GRIT_BLAME_BENCH_REPO")
+            .unwrap_or_else(|_| "/tmp/grit-bench/git-dot-git-worktree".to_string());
+        if !std::path::Path::new(&repo_path).join(".git").exists() {
+            return;
+        }
+        let git_dir = std::path::Path::new(&repo_path).join(".git");
+        let repo =
+            Repository::open(git_dir.as_path(), &RepositoryOptions::default()).expect("open");
+        let chain = repo
+            .caches()
+            .commit_graph_chain(repo.odb().objects_dir())
+            .expect("graph");
+        let settings = chain.top_layer_bloom_settings().expect("bloom");
+        let norm = bloom_lookup_prefix_with_cwd("Makefile", None).expect("prefix");
+        let keys = bloom_keyvec_for_path(norm.as_str(), &settings);
+        let head = *crate::state::resolve_head(repo.git_dir())
+            .expect("head")
+            .oid()
+            .expect("commit");
+        let mut current = head;
+        let mut bloom_yes = 0usize;
+        let mut bloom_no = 0usize;
+        for _ in 0..10_000 {
+            let Some((parents, _)) = chain.graph_commit(&current) else {
+                break;
+            };
+            let Some(parent) = parents.first().copied() else {
+                break;
+            };
+            if chain.bloom_definitely_not_for_keys(current, keys.as_slice()) {
+                bloom_yes += 1;
+            } else {
+                bloom_no += 1;
+            }
+            current = parent;
+        }
+        eprintln!("Makefile bloom: yes={bloom_yes} no={bloom_no}");
+        assert!(
+            bloom_yes > bloom_no,
+            "expected mostly bloom skips, yes={bloom_yes} no={bloom_no}"
+        );
+    }
+
+    #[test]
     fn bloom_definitely_not_when_directory_key_present_but_not_full_path() {
         use crate::bloom::{
             bloom_filter_contains, bloom_keyvec_for_path, build_bloom_filter_data,
