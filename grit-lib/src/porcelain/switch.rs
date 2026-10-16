@@ -8,9 +8,8 @@ use crate::error::{Error, Result};
 use crate::index::MODE_GITLINK;
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::{
-    checkout_tree_changes_with_index_opts, path_under_wholesale_directory,
-    precompute_wholesale_safe_directories, CheckoutApplyOptions, WholesalePrecomputeResult,
-    WholesaleWorktreeScan,
+    checkout_tree_changes_with_index_opts, precompute_wholesale_safe_directories,
+    CheckoutApplyOptions, WholesalePrecomputeResult, WholesaleWorktreeScan,
 };
 use crate::porcelain::checkout_reflog::{
     append_head_checkout_reflog, checkout_reflog_from_label, finish_switch_ref_updates,
@@ -356,40 +355,24 @@ fn switch_to_target(
     let mut prepared = prepare_tree_switch_allow_local(repo, &target_tree)?;
     ensure_no_untracked_overwrite(&prepared.plan.untracked, &prepared.plan.tree_changes)?;
 
-    let wholesale_skip = &prepared.preverified_wholesale_dirs;
-    let attribute_tree_changes: Vec<DiffEntry> = prepared
+    let tree_changes: Vec<DiffEntry> = prepared
         .plan
         .tree_changes
-        .iter()
+        .into_iter()
         .filter(|change| {
             path_from_diff(change)
                 .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
         })
-        .cloned()
         .collect();
-    let apply_tree_changes: Vec<DiffEntry> = attribute_tree_changes
-        .iter()
-        .filter(|change| {
-            if change.status == DiffStatus::Deleted {
-                if let Some(path) = change.old_path.as_deref() {
-                    if path_under_wholesale_directory(path, wholesale_skip) {
-                        return false;
-                    }
-                }
-            }
-            true
-        })
-        .cloned()
-        .collect();
-    let delete_count = attribute_tree_changes
+    let delete_count = tree_changes
         .iter()
         .filter(|c| c.status == DiffStatus::Deleted)
         .count();
     let checkout_parallel_threshold =
-        (attribute_tree_changes.len() >= 150 || delete_count >= 150).then_some(0);
+        (tree_changes.len() >= 100 || delete_count >= 100).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
-        &apply_tree_changes,
+        &tree_changes,
         &mut prepared.index,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
@@ -398,7 +381,7 @@ fn switch_to_target(
             preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
         },
-        Some(&attribute_tree_changes),
+        Some(&tree_changes),
     )?;
 
     if let Some(from_label) = checkout_reflog_from_label(&head_before) {
@@ -503,17 +486,17 @@ fn prepare_tree_switch_allow_local(
             (mode == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
-    let WholesalePrecomputeResult {
-        safe_directories: preverified_wholesale_dirs,
-    } = if trust_wholesale_dir_removal || delete_paths.is_empty() {
-        WholesalePrecomputeResult::default()
+    let (preverified_wholesale_dirs, wholesale_safety_precomputed) = if trust_wholesale_dir_removal
+        || delete_paths.is_empty()
+    {
+        (BTreeSet::new(), false)
     } else {
         let scan = traditional_ignore_scan.then(|| WholesaleWorktreeScan {
             untracked: &untracked,
             ignored: &wholesale_ignored,
             ignorecase,
         });
-        precompute_wholesale_safe_directories(
+        let WholesalePrecomputeResult { safe_directories } = precompute_wholesale_safe_directories(
             repo,
             work_tree,
             &snapshot.index,
@@ -521,9 +504,9 @@ fn prepare_tree_switch_allow_local(
             ignorecase,
             scan.as_ref(),
             &gitlink_deletes,
-        )
+        );
+        (safe_directories, true)
     };
-    let wholesale_safety_precomputed = !delete_paths.is_empty() && !trust_wholesale_dir_removal;
     Ok(PreparedSwitch {
         plan: TreeSwitchPlan {
             untracked,
@@ -659,6 +642,147 @@ mod tests {
         let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
             .expect("init");
         (dir, repo)
+    }
+
+    #[test]
+    fn switch_wholesale_tree_delete_refuses_tracked_unstaged_edit() {
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        std::fs::create_dir_all(wt.join("d")).expect("mkdir");
+        for i in 0..8 {
+            std::fs::write(wt.join(format!("d/f{i}.txt")), format!("v{i}\n")).expect("write");
+        }
+        let mut index = repo.load_index().expect("index");
+        for i in 0..8 {
+            let rel = format!("d/f{i}.txt");
+            let abs = wt.join(&rel);
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Blob, format!("v{i}\n").as_bytes())
+                .expect("blob");
+            index.add_or_replace(
+                crate::index::entry_from_stat(
+                    &abs,
+                    rel.as_bytes(),
+                    oid,
+                    crate::index::MODE_REGULAR,
+                )
+                .expect("entry"),
+            );
+        }
+        index.sort();
+        repo.write_index(&mut index).expect("write index");
+        let main_tip = {
+            let tree =
+                write_tree_update_index(repo.odb(), &mut index, "", WriteTreeFlags::default())
+                    .expect("tree");
+            let commit_data = CommitData {
+                tree,
+                parents: vec![],
+                author: "Test <t@example.com>".to_owned(),
+                committer: "Test <t@example.com>".to_owned(),
+                author_raw: Vec::new(),
+                committer_raw: Vec::new(),
+                encoding: None,
+                message: "main\n".into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            };
+            let bytes = serialize_commit(&commit_data);
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Commit, &bytes)
+                .expect("commit");
+            refs::write_ref(repo.git_dir(), "refs/heads/main", &oid).expect("main");
+            refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+            oid
+        };
+
+        refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+        refs::write_ref(repo.git_dir(), "refs/heads/target", &main_tip).expect("target");
+        std::fs::remove_dir_all(wt.join("d")).expect("remove d");
+        let mut index_target = repo.load_index().expect("index");
+        index_target
+            .entries
+            .retain(|e| !e.path.starts_with(b"d/") && e.path.as_slice() != b"d");
+        index_target.sort();
+        repo.write_index(&mut index_target).expect("write index");
+        let target_tip = {
+            let tree = write_tree_update_index(
+                repo.odb(),
+                &mut index_target,
+                "",
+                WriteTreeFlags::default(),
+            )
+            .expect("tree");
+            let commit_data = CommitData {
+                tree,
+                parents: vec![main_tip],
+                author: "Test <t@example.com>".to_owned(),
+                committer: "Test <t@example.com>".to_owned(),
+                author_raw: Vec::new(),
+                committer_raw: Vec::new(),
+                encoding: None,
+                message: "target\n".into(),
+                raw_message: None,
+                extra_headers: Vec::new(),
+            };
+            let bytes = serialize_commit(&commit_data);
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Commit, &bytes)
+                .expect("commit");
+            refs::write_ref(repo.git_dir(), "refs/heads/target", &oid).expect("target");
+            oid
+        };
+
+        std::fs::create_dir_all(wt.join("d")).expect("restore d");
+        for i in 0..8 {
+            std::fs::write(wt.join(format!("d/f{i}.txt")), format!("v{i}\n")).expect("restore");
+        }
+        let mut index_main = repo.load_index().expect("index");
+        for i in 0..8 {
+            let rel = format!("d/f{i}.txt");
+            let abs = wt.join(&rel);
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Blob, format!("v{i}\n").as_bytes())
+                .expect("blob");
+            index_main.add_or_replace(
+                crate::index::entry_from_stat(
+                    &abs,
+                    rel.as_bytes(),
+                    oid,
+                    crate::index::MODE_REGULAR,
+                )
+                .expect("entry"),
+            );
+        }
+        index_main.sort();
+        repo.write_index(&mut index_main).expect("write index");
+        refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        std::fs::write(wt.join("d/f0.txt"), "LOCAL EDIT\n").expect("unstaged edit");
+        let head_before = resolve_head(repo.git_dir()).expect("head");
+
+        let err = switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Existing {
+                    branch: "target".into(),
+                    oid: target_tip,
+                },
+            },
+        )
+        .expect_err("must refuse overwrite");
+        assert!(matches!(err, Error::Message(_)));
+
+        let head_after = resolve_head(repo.git_dir()).expect("head");
+        assert_eq!(head_before, head_after);
+        assert_eq!(
+            std::fs::read_to_string(wt.join("d/f0.txt")).expect("read"),
+            "LOCAL EDIT\n"
+        );
     }
 
     fn commit_on_branch(
