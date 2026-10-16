@@ -203,15 +203,33 @@ pub fn progress(mode: OutputMode, msg: &str) {
 // here (not in grit-lib) so the JSON schema stays decoupled from internal types.
 // ---------------------------------------------------------------------------
 
+/// A parsed identity line (`Name <email> <epoch> <tz>`) for stable `--json` output.
+#[derive(Clone, Debug, Serialize, JsonSchema, PartialEq, Eq)]
+pub struct Person {
+    pub name: String,
+    pub email: String,
+    /// Author or committer timestamp in RFC 3339.
+    pub date: String,
+}
+
+impl Person {
+    /// Parse a raw `Name <email> <epoch> <tz>` identity line.
+    pub fn from_identity_line(ident: &str) -> Self {
+        let parsed = crate::context::parse_identity_line(ident);
+        Self {
+            name: parsed.name,
+            email: parsed.email,
+            date: crate::dates::rfc3339_from_identity_when(&parsed.when_suffix),
+        }
+    }
+}
+
 /// A commit in JSON output: full hex `oid`, subject, author, and dates.
 #[derive(Serialize, JsonSchema)]
 pub struct CommitJson {
     pub oid: String,
     pub subject: String,
-    /// Author display name (identity name when present, matching human log).
-    pub author: String,
-    /// Author timestamp in RFC 3339.
-    pub author_date: String,
+    pub author: Person,
     /// Relative author date (e.g. `3 days ago`), when `now` is supplied.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
@@ -224,8 +242,7 @@ impl CommitJson {
         Self {
             oid: commit.oid.to_hex(),
             subject: commit.subject.clone(),
-            author: commit.author.clone(),
-            author_date: commit.author_date.clone(),
+            author: Person::from_identity_line(&commit.author_ident),
             relative_date: Some(crate::context::relative_date_from(commit.timestamp, now)),
         }
     }

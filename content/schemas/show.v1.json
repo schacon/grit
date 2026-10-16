@@ -120,9 +120,10 @@
       "type": "object"
     },
     "Person": {
-      "description": "A parsed identity line (`Name <email> <epoch> <tz>`).",
+      "description": "A parsed identity line (`Name <email> <epoch> <tz>`) for stable `--json` output.",
       "properties": {
         "date": {
+          "description": "Author or committer timestamp in RFC 3339.",
           "type": "string"
         },
         "email": {

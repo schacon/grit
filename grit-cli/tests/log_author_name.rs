@@ -89,12 +89,11 @@ fn log_author_matches_show_and_git() -> TestResult {
 
     let log = grit_json(&repo, &["log"]);
     let show = grit_json(&repo, &["show"]);
-    let expected = show["commit"]["author"]["name"]
-        .as_str()
-        .expect("show author name");
+    let show_author = &show["commit"]["author"];
+    assert_eq!(show_author["name"], "Zed Quartz");
+    assert_eq!(show_author["email"], "zed@q.test");
 
-    assert_eq!(log["commits"][0]["author"], expected);
-    assert_eq!(expected, "Zed Quartz");
+    assert_eq!(log["commits"][0]["author"], *show_author);
     assert_eq!(git_author_name(&repo), "Zed Quartz");
 
     let human = Command::new(GRIT)

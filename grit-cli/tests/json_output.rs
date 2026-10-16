@@ -1571,11 +1571,32 @@ fn rfc3339_author_date_matches_git_for_negative_subhour_tz() -> TestResult {
     assert_eq!(expected, "2023-11-14T21:43:20-00:30");
 
     let log = gs_json(&repo, &["log"]);
-    assert_eq!(log["commits"][0]["author_date"], expected);
+    assert_eq!(log["commits"][0]["author"]["date"], expected);
 
     let show = gs_json(&repo, &["show"]);
     assert_eq!(show["commit"]["author"]["date"], expected);
     assert_eq!(show["commit"]["committer"]["date"], expected);
+    Ok(())
+}
+
+#[test]
+fn log_show_blame_json_author_objects_match() -> TestResult {
+    let scratch = Scratch::new("author-shape")?;
+    let repo = scratch.child("repo");
+    fs::create_dir_all(&repo)?;
+    gs_ok(&repo, &["init", "."]);
+    write_file(&repo.join("a.txt"), "line one\n");
+    gs_ok(&repo, &["commit", "seed"]);
+
+    let show_author = gs_json(&repo, &["show"])["commit"]["author"].clone();
+    let log_author = gs_json(&repo, &["log"])["commits"][0]["author"].clone();
+    assert_eq!(log_author, show_author);
+
+    let blame = gs_json(&repo, &["blame", "a.txt"]);
+    let show = gs_json(&repo, &["show"]);
+    let head = show["commit"]["oid"].as_str().expect("oid");
+    let blame_author = &blame["commits"][head]["author"];
+    assert_eq!(*blame_author, show_author);
     Ok(())
 }
 
@@ -1591,8 +1612,9 @@ fn log_json_includes_author_and_rfc3339_date() -> TestResult {
     let v = gs_json(&repo, &["log"]);
     let commit = &v["commits"][0];
     assert_eq!(commit["subject"], "hello");
-    assert_eq!(commit["author"], "Test User");
-    assert!(commit["author_date"]
+    assert_eq!(commit["author"]["name"], "Test User");
+    assert_eq!(commit["author"]["email"], "test@example.com");
+    assert!(commit["author"]["date"]
         .as_str()
         .is_some_and(|d| d.contains('T')));
     assert!(commit["relative_date"].as_str().is_some());
@@ -1643,7 +1665,7 @@ fn log_json_filters_by_path() -> TestResult {
         .collect();
     assert_eq!(subjects, vec!["keep only", "both"]);
     assert_eq!(v["next"], Value::Null);
-    assert!(v["commits"][0]["author"].as_str().is_some());
+    assert!(v["commits"][0]["author"]["name"].as_str().is_some());
     Ok(())
 }
 

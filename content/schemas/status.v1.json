@@ -35,12 +35,7 @@
       "description": "A commit in JSON output: full hex `oid`, subject, author, and dates.",
       "properties": {
         "author": {
-          "description": "Author display name (identity name when present, matching human log).",
-          "type": "string"
-        },
-        "author_date": {
-          "description": "Author timestamp in RFC 3339.",
-          "type": "string"
+          "$ref": "#/definitions/Person"
         },
         "oid": {
           "type": "string"
@@ -58,9 +53,29 @@
       },
       "required": [
         "author",
-        "author_date",
         "oid",
         "subject"
+      ],
+      "type": "object"
+    },
+    "Person": {
+      "description": "A parsed identity line (`Name <email> <epoch> <tz>`) for stable `--json` output.",
+      "properties": {
+        "date": {
+          "description": "Author or committer timestamp in RFC 3339.",
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "email",
+        "name"
       ],
       "type": "object"
     }

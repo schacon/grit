@@ -18,7 +18,6 @@ use serde::Serialize;
 
 use crate::commands::diff::{diff_of_commit, DiffOutcome, LineKind};
 use crate::context::{self, subject_line};
-use crate::dates::rfc3339_from_identity_when;
 use crate::markdown;
 use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderContext};
 use crate::ui::PathDisplayOptions;
@@ -100,13 +99,7 @@ pub struct TagInfo {
     pub message: String,
 }
 
-/// A parsed identity line (`Name <email> <epoch> <tz>`).
-#[derive(Serialize, JsonSchema)]
-pub struct Person {
-    pub name: String,
-    pub email: String,
-    pub date: String,
-}
+pub use crate::output::Person;
 
 pub fn run(object: Option<String>) -> Result<ShowOutcome> {
     let (repo, sink) = context::discover_with_warnings()?;
@@ -130,8 +123,8 @@ pub fn run(object: Option<String>) -> Result<ShowOutcome> {
             .iter()
             .map(grit_lib::objects::ObjectId::to_hex)
             .collect(),
-        author: Person::parse(&data.author),
-        committer: Person::parse(&data.committer),
+        author: Person::from_identity_line(&data.author),
+        committer: Person::from_identity_line(&data.committer),
         subject: subject_line(&data.message),
         message: data.message.trim_end().to_owned(),
     };
@@ -212,7 +205,7 @@ fn classify(
             let td = parse_tag(&object.data)?;
             let info = TagInfo {
                 name: target.to_owned(),
-                tagger: td.tagger.as_deref().map(Person::parse),
+                tagger: td.tagger.as_deref().map(Person::from_identity_line),
                 message: td.message.trim_end().to_owned(),
             };
             return Ok((ShowKind::AnnotatedTag, Some(target.to_owned()), Some(info)));
@@ -231,18 +224,6 @@ fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
             ObjectKind::Commit => return Ok(oid),
             ObjectKind::Tag => oid = parse_tag(&object.data)?.object,
             _ => bail!("'{}' does not resolve to a commit", oid.to_hex()),
-        }
-    }
-}
-
-impl Person {
-    /// Parse a raw `Name <email> <epoch> <tz>` identity line.
-    fn parse(ident: &str) -> Self {
-        let parsed = context::parse_identity_line(ident);
-        Self {
-            name: parsed.name,
-            email: parsed.email,
-            date: rfc3339_from_identity_when(&parsed.when_suffix),
         }
     }
 }

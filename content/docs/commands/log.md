@@ -91,7 +91,7 @@ Pass `--json` for stable, scripting-friendly output:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `commits` | array | Up to ten commits by default, or up to `--limit` when set, newest first. Each entry has `oid`, `subject`, `author` (same display as human log), `author_date` (RFC 3339), and `relative_date` (e.g. `3 days ago`). |
+| `commits` | array | Up to ten commits by default, or up to `--limit` when set, newest first. Each entry has `oid`, `subject`, `author` (`name`, `email`, `date` in RFC 3339 — same shape as [`grit show`](../show/)), and `relative_date` (e.g. `3 days ago`). |
 | `commits[].stat` | object | Only with `--stat`: `files` (each with `path`, `old_path` for renames, `status`, `insertions`, `deletions`, `binary`), `files_changed`, `insertions` and `deletions`. The same shape as `stat` in [`grit show`](../show/). |
 | `next` | string or null | Opaque continuation cursor (prefix `lw1.`) to pass to `--before` for the next page, or `null` when there is no more history. |
 
@@ -103,15 +103,21 @@ Example:
     {
       "oid": "92501f188ae0815af09a0cef6e121eddda4113cf",
       "subject": "second",
-      "author": "Ada Lovelace",
-      "author_date": "2026-10-07T14:54:02Z",
+      "author": {
+        "name": "Ada Lovelace",
+        "email": "ada@example.com",
+        "date": "2026-10-07T14:54:02Z"
+      },
       "relative_date": "2 days ago"
     },
     {
       "oid": "919c45f33de5e5c0bd05f8ffb089f697f4644976",
       "subject": "initial",
-      "author": "Ada Lovelace",
-      "author_date": "2026-10-05T09:12:00Z",
+      "author": {
+        "name": "Ada Lovelace",
+        "email": "ada@example.com",
+        "date": "2026-10-05T09:12:00Z"
+      },
       "relative_date": "4 days ago"
     }
   ],
