@@ -2043,20 +2043,24 @@ impl ReftableStack {
         let names = self.table_names_for_read()?;
         let readers = self.stack_readers(&cached, &names)?;
         let upper = prefix_upper_exclusive(prefix.trim_end_matches('/'));
-        let mut blocking = None;
+        let mut merged: BTreeMap<String, RefRecord> = BTreeMap::new();
         for reader in readers {
             reader.for_each_ref_in_range(prefix, upper.as_deref(), |rec| {
-                if rec.name.starts_with(prefix) && rec.name.len() > prefix.len() {
-                    blocking = Some(rec.name.clone());
-                    return ControlFlow::Break(());
+                if !rec.name.starts_with(prefix) || rec.name.len() <= prefix.len() {
+                    return ControlFlow::<()>::Continue(());
+                }
+                match &rec.value {
+                    RefValue::Deletion => {
+                        merged.remove(&rec.name);
+                    }
+                    _ => {
+                        merged.insert(rec.name.clone(), rec.clone());
+                    }
                 }
                 ControlFlow::<()>::Continue(())
             })?;
-            if blocking.is_some() {
-                break;
-            }
         }
-        Ok(blocking)
+        Ok(merged.keys().next().cloned())
     }
 
     /// Inject the HEAD symbolic ref into the ref set being compacted, mirroring
@@ -2759,6 +2763,7 @@ impl ReftableStack {
     fn lookup_ref_oids_batch(&self, names: &[String]) -> Result<HashMap<String, ObjectId>> {
         let want: HashSet<String> = names.iter().cloned().collect();
         let mut found = HashMap::with_capacity(want.len());
+        let mut resolved = HashSet::with_capacity(want.len());
         if want.is_empty() {
             return Ok(found);
         }
@@ -2767,24 +2772,25 @@ impl ReftableStack {
         let readers = self.stack_readers(&cached, &table_names)?;
         for reader in readers.iter().rev() {
             reader.for_each_ref(|rec| {
-                if !want.contains(&rec.name) || found.contains_key(&rec.name) {
+                if !want.contains(&rec.name) || resolved.contains(&rec.name) {
                     return ControlFlow::<()>::Continue(());
                 }
                 match rec.value {
                     RefValue::Val1(oid) | RefValue::Val2(oid, _) => {
                         found.insert(rec.name.clone(), oid);
+                        resolved.insert(rec.name.clone());
                     }
-                    RefValue::Deletion => {
+                    RefValue::Deletion | RefValue::Symref(_) => {
                         found.remove(&rec.name);
+                        resolved.insert(rec.name.clone());
                     }
-                    RefValue::Symref(_) => {}
                 }
-                if found.len() == want.len() {
+                if resolved.len() == want.len() {
                     return ControlFlow::Break(());
                 }
                 ControlFlow::<()>::Continue(())
             })?;
-            if found.len() == want.len() {
+            if resolved.len() == want.len() {
                 break;
             }
         }
@@ -3235,11 +3241,6 @@ pub fn verify_ref_transaction_batch_reftable(
     let Ok(stack) = ReftableStack::open(&store_git_dir) else {
         return Ok(());
     };
-
-    let stack_nonempty = stack.table_names_for_read().is_ok_and(|n| !n.is_empty());
-    if stack_nonempty && items.len() > 1 && items.iter().all(|i| i.new_oid.is_some()) {
-        return Ok(());
-    }
 
     let extras: BTreeSet<String> = items.iter().map(|i| i.name.clone()).collect();
     let empty_skip: HashSet<String> = HashSet::new();
