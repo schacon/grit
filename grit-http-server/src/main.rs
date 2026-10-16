@@ -184,6 +184,30 @@ fn protocol_version_from_headers(headers: &HeaderMap) -> Option<u8> {
     None
 }
 
+/// Decode a smart-HTTP POST body (Git may send `Content-Encoding: gzip`).
+fn decode_smart_http_body(headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>, Box<Response>> {
+    use std::io::Read;
+
+    let encoding = headers
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if encoding.eq_ignore_ascii_case("gzip") {
+        let mut decoder = flate2::read::GzDecoder::new(body);
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).map_err(|_| {
+            Box::new((StatusCode::BAD_REQUEST, "invalid gzip request body").into_response())
+        })?;
+        return Ok(decoded);
+    }
+    if !encoding.is_empty() && !encoding.eq_ignore_ascii_case("identity") {
+        return Err(Box::new(
+            (StatusCode::BAD_REQUEST, "unsupported Content-Encoding").into_response(),
+        ));
+    }
+    Ok(body.to_vec())
+}
+
 fn no_cache_headers(builder: axum::http::response::Builder) -> axum::http::response::Builder {
     builder
         .header(header::EXPIRES, "Fri, 01 Jan 1980 00:00:00 GMT")
@@ -269,6 +293,7 @@ async fn upload_pack_rpc(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
     protocol_version: Option<u8>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let repo_path = match state.repo_path(&repo) {
@@ -276,7 +301,10 @@ async fn upload_pack_rpc(
         Err(e) => return *e,
     };
 
-    let request = body.to_vec();
+    let request = match decode_smart_http_body(&headers, &body) {
+        Ok(b) => b,
+        Err(resp) => return *resp,
+    };
     let repository_options = state.repository_options.clone();
     match tokio::task::spawn_blocking(move || {
         grit_protocol::upload_pack::stateless_rpc(
@@ -308,6 +336,7 @@ async fn upload_pack_rpc(
 async fn receive_pack_rpc(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let repo_path = match state.repo_path(&repo) {
@@ -315,7 +344,10 @@ async fn receive_pack_rpc(
         Err(e) => return *e,
     };
 
-    let request = body.to_vec();
+    let request = match decode_smart_http_body(&headers, &body) {
+        Ok(b) => b,
+        Err(resp) => return *resp,
+    };
     let repository_options = state.repository_options.clone();
     match tokio::task::spawn_blocking(move || {
         grit_protocol::receive_pack::stateless_rpc(&repo_path, &request, &repository_options)
@@ -415,13 +447,40 @@ async fn rpc_dispatch(
             return (StatusCode::BAD_REQUEST, "missing repository").into_response();
         }
         let protocol_version = protocol_version_from_headers(&headers);
-        upload_pack_rpc(state, Path(repo.to_string()), protocol_version, body).await
+        upload_pack_rpc(
+            state,
+            Path(repo.to_string()),
+            protocol_version,
+            headers,
+            body,
+        )
+        .await
     } else if let Some(repo) = full_path.strip_suffix("/git-receive-pack") {
         if repo.is_empty() {
             return (StatusCode::BAD_REQUEST, "missing repository").into_response();
         }
-        receive_pack_rpc(state, Path(repo.to_string()), body).await
+        receive_pack_rpc(state, Path(repo.to_string()), headers, body).await
     } else {
         (StatusCode::NOT_FOUND, "not found").into_response()
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    #[test]
+    fn gzip_smart_http_post_body_is_decoded() {
+        let plain = b"0012command=fetch\n";
+        let mut enc = GzEncoder::new(Vec::new(), Compression::fast());
+        enc.write_all(plain).unwrap();
+        let gzip = enc.finish().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+        let out = decode_smart_http_body(&headers, &gzip).expect("decode gzip body");
+        assert_eq!(out, plain);
     }
 }

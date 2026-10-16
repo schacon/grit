@@ -834,6 +834,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
+ "flate2",
  "grit-protocol",
  "serde",
  "tempfile",
