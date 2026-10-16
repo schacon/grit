@@ -28,6 +28,7 @@ use crate::index::{
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
 use crate::path_icase::paths_equal;
 use crate::progress::{NullProgress, ProgressPhase, ProgressSink};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::repo::Repository;
 use crate::worktree_rules::WorktreeRules;
 
@@ -39,6 +40,7 @@ use checkout_parallel::{
 };
 
 const CHECKOUT_FILE_PROGRESS_BATCH: u64 = 256;
+const PARALLEL_PER_FILE_DELETE_MIN: usize = 64;
 
 /// Batched file-count progress for the populated-tree checkout path.
 struct CheckoutFileProgress<'a> {
@@ -542,10 +544,20 @@ fn wholesale_deleted_directories(index: &Index, delete_paths: &[String]) -> BTre
 }
 
 /// True when every file under `work_tree`/`dir` is listed in `delete_paths` (Git keeps untracked/ignored extras).
+fn delete_path_is_scheduled(rel: &str, delete_paths: &HashSet<String>, ignorecase: bool) -> bool {
+    if ignorecase {
+        delete_paths
+            .iter()
+            .any(|del| paths_equal(rel.as_bytes(), del.as_bytes(), true))
+    } else {
+        delete_paths.contains(rel)
+    }
+}
+
 fn wholesale_directory_safe_to_remove(
     work_tree: &Path,
     dir: &str,
-    delete_paths: &BTreeSet<String>,
+    delete_paths: &HashSet<String>,
     ignorecase: bool,
 ) -> bool {
     let abs_dir = work_tree.join(dir);
@@ -576,10 +588,7 @@ fn wholesale_directory_safe_to_remove(
                 return false;
             };
             let rel = rel.to_string_lossy();
-            if !delete_paths
-                .iter()
-                .any(|del| paths_equal(rel.as_bytes(), del.as_bytes(), ignorecase))
-            {
+            if !delete_path_is_scheduled(rel.as_ref(), delete_paths, ignorecase) {
                 return false;
             }
         }
@@ -598,7 +607,7 @@ fn wholesale_deleted_directories_on_disk(
     if trust_wholesale_dir_removal {
         return candidates;
     }
-    let delete_set: BTreeSet<String> = delete_paths.iter().cloned().collect();
+    let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
     candidates
         .into_iter()
         .filter(|dir| wholesale_directory_safe_to_remove(work_tree, dir, &delete_set, ignorecase))
@@ -680,6 +689,39 @@ fn checkout_tree_changes_with_progress(
         }
     }
 
+    let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
+    let mut per_file_deletes: Vec<String> = Vec::new();
+    for change in changes {
+        if change.status != DiffStatus::Deleted {
+            continue;
+        }
+        let Some(path) = &change.old_path else {
+            continue;
+        };
+        let old_mode = parse_git_mode(&change.old_mode);
+        if old_mode == MODE_GITLINK || path_under_wholesale_directory(path, &wholesale_dirs_removed) {
+            continue;
+        }
+        per_file_deletes.push(path.clone());
+    }
+    if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let wt = work_tree.to_path_buf();
+        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        try_par_map(&abs_paths, options, 0, |abs| {
+            let _ = fs::remove_file(abs);
+            Ok(())
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel checkout delete failed".into())
+            }
+        })?;
+        deleted_abs_paths.extend(abs_paths);
+        parallel_deleted_paths.extend(per_file_deletes);
+    }
+
     for change in changes {
         if change.status == DiffStatus::Deleted {
             if let Some(path) = &change.old_path {
@@ -687,13 +729,15 @@ fn checkout_tree_changes_with_progress(
                 if old_mode == MODE_GITLINK
                     || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
                 {
-                    let abs = work_tree.join(path);
                     if old_mode == MODE_GITLINK {
+                        let abs = work_tree.join(path);
                         remove_uninitialized_gitlink_worktree(&abs);
-                    } else {
+                        deleted_abs_paths.push(abs);
+                    } else if !parallel_deleted_paths.contains(path) {
+                        let abs = work_tree.join(path);
                         let _ = fs::remove_file(&abs);
+                        deleted_abs_paths.push(abs);
                     }
-                    deleted_abs_paths.push(abs);
                 }
                 paths_to_remove.push(path.as_bytes().to_vec());
             }
@@ -1736,7 +1780,7 @@ mod tests {
         }
         std::fs::write(wt.join("d/untracked.txt"), b"keep me\n").expect("untracked");
         index.sort();
-        let delete_set: BTreeSet<String> = delete_paths.iter().cloned().collect();
+        let delete_set: HashSet<String> = delete_paths.iter().cloned().collect();
         assert!(!super::wholesale_directory_safe_to_remove(
             wt,
             "d",
