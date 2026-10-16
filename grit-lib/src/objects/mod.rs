@@ -32,6 +32,7 @@ pub mod odb {
 pub mod pack {
     //! Pack files, indexes, and packfile I/O.
     pub use crate::pack::*;
+    pub use crate::pack_reuse::*;
 }
 
 pub mod midx {

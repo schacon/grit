@@ -342,7 +342,7 @@ fn reuse_skips_when_have_shallow_grafts_present() {
     };
     let mut buf = Vec::new();
     let mut progress = |_ev: PackProgress| {};
-    let out = grit_lib::pack_reuse::try_write_streaming_pack(
+    let out = grit_lib::objects::pack::try_write_streaming_pack(
         &repo,
         &[tip],
         &[parent],
