@@ -1260,6 +1260,12 @@ impl CommitGraphChain {
         }
     }
 
+    /// Bloom filter settings stored for `oid`'s commit-graph layer, if any.
+    pub(crate) fn bloom_settings_for_commit(&self, oid: &ObjectId) -> Option<BloomFilterSettings> {
+        let (layer_idx, _) = self.find_commit(oid)?;
+        self.layers[layer_idx].bloom_settings
+    }
+
     /// Lexicographic position in the full chain, or `None` if not in any layer.
     pub fn find_commit(&self, oid: &ObjectId) -> Option<(usize, u32)> {
         for (i, layer) in self.layers.iter().enumerate() {
@@ -1482,6 +1488,49 @@ impl CommitGraphChain {
         }
         Ok(BloomPrecheck::Maybe)
     }
+
+    /// Like [`Self::bloom_precheck_for_paths`], but reuses precomputed Bloom keys for one path.
+    pub(crate) fn bloom_definitely_not_for_keys(
+        &self,
+        oid: ObjectId,
+        path_keys: &[Vec<u32>],
+    ) -> bool {
+        if path_keys.is_empty() {
+            return false;
+        }
+        let Some((layer_idx, lex)) = self.find_commit(&oid) else {
+            return false;
+        };
+        let layer = &self.layers[layer_idx];
+        let Some(settings) = layer.bloom_settings.as_ref() else {
+            return false;
+        };
+        let Some(filter) = layer.bloom_filter_slice(lex) else {
+            return false;
+        };
+        if filter.is_empty() {
+            return false;
+        }
+        bloom_definitely_not_from_filter(filter, settings, path_keys)
+    }
+}
+
+/// Git `bloom_filter_contains_vec` precheck for one path's prefix keys against a filter slice.
+pub(crate) fn bloom_definitely_not_from_filter(
+    filter: &[u8],
+    settings: &crate::bloom::BloomFilterSettings,
+    path_keys: &[Vec<u32>],
+) -> bool {
+    use crate::bloom::bloom_filter_contains;
+
+    for key in path_keys {
+        match bloom_filter_contains(key, filter, settings) {
+            Ok(false) => return true,
+            Ok(true) => {}
+            Err(crate::bloom::BloomFilterInvalid) => return false,
+        }
+    }
+    false
 }
 
 /// Compute changed paths between parent and commit trees (recursive diff, no rename detection).
@@ -1987,5 +2036,32 @@ mod tests {
             .expect("precheck");
         assert_eq!(pre, super::BloomPrecheck::Inapplicable);
         sorted.clear();
+    }
+
+    #[test]
+    fn bloom_definitely_not_when_directory_key_present_but_not_full_path() {
+        use crate::bloom::{
+            bloom_filter_contains, bloom_keyvec_for_path, build_bloom_filter_data,
+            collect_changed_paths_for_bloom,
+        };
+
+        let bloom = BloomFilterSettings::default();
+        let changed = collect_changed_paths_for_bloom(&["builtin/sibling.c".to_owned()]);
+        let (filter, _) = build_bloom_filter_data(&changed, 1, &bloom);
+        let path_keys = bloom_keyvec_for_path("builtin/commit.c", &bloom);
+        assert!(path_keys.len() >= 2);
+        assert_eq!(
+            bloom_filter_contains(&path_keys[0], &filter, &bloom),
+            Ok(false),
+            "full path key must be absent when only a sibling changed"
+        );
+        assert_eq!(
+            bloom_filter_contains(&path_keys[1], &filter, &bloom),
+            Ok(true),
+            "directory prefix key should be present"
+        );
+        assert!(super::bloom_definitely_not_from_filter(
+            &filter, &bloom, &path_keys
+        ));
     }
 }
