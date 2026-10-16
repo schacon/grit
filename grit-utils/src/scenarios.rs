@@ -1117,11 +1117,6 @@ fn sh_script(script: String) -> Vec<String> {
     vec!["-c".into(), script]
 }
 
-/// Shell `-c` argv for hyperfine when the scenario body is a full shell script.
-pub(crate) fn sh_script_internal(script: String) -> Vec<String> {
-    sh_script(script)
-}
-
 fn switch_argv(grit: &Path, git: &Path, meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
     let grit_cmd = chain_shell(
         grit,

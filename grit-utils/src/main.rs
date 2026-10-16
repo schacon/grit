@@ -471,11 +471,6 @@ fn parse_refs_work_mode(s: &str) -> Result<RefsWorkMode, String> {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum RunGroup {
-    Worktree,
-}
-
 #[derive(Clone, Debug, ValueEnum)]
 enum SynthTierArg {
     S,
@@ -1352,29 +1347,6 @@ fn main() -> Result<()> {
             eprintln!("Running ignore check benchmarks...");
             let cfg = run_config(&cli, false);
             run_ignore_suite(&hyperfine, &git, &grit, &cfg, timestamp)?
-        }
-        Cmd::Run {
-            group,
-            fixture,
-            smoke,
-            offline,
-        } => {
-            let mut cfg = run_config(&cli, true);
-            if *smoke {
-                cfg.warmup = 0;
-                cfg.exact_runs = Some(1);
-            }
-            match group {
-                RunGroup::Worktree => {
-                    eprintln!(
-                        "Running worktree scenarios on fixture {} …",
-                        fixture.cache_name()
-                    );
-                    run_worktree_group(
-                        &hyperfine, &git, &grit, &cfg, *fixture, *offline, timestamp,
-                    )?
-                }
-            }
         }
         Cmd::Campaign {
             smoke,

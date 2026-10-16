@@ -26,6 +26,11 @@ fn commit_prepare_resets_to_fixture_base_after_git_commits() {
 
     prepare_commit(&git).expect("first prepare");
     Command::new(&git)
+        .args(["add", "-A"])
+        .current_dir(&repo)
+        .status()
+        .expect("git add");
+    Command::new(&git)
         .args(["commit", "-q", "-m", "advance"])
         .current_dir(&repo)
         .status()

@@ -46,11 +46,12 @@ impl FixtureKind {
         }
     }
 
-    fn cache_name(self) -> &'static str {
+    /// Stable cache directory name (`synth-s`, `git.git`, …).
+    pub fn cache_name(self) -> &'static str {
         self.public_cache_name()
     }
 
-    /// Stable cache directory name (`synth-s`, `git.git`, …).
+    /// Stable cache directory name for reports and paths (same as [`Self::cache_name`]).
     pub fn public_cache_name(self) -> &'static str {
         match self {
             Self::GitGit => "git.git",
