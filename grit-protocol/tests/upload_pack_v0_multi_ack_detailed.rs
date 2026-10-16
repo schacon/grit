@@ -1,11 +1,10 @@
 //! Protocol v0 `multi_ack_detailed`: terminal ACK after `done` must not use `ready`.
 
-use grit_lib::objects::ObjectId;
-use grit_lib::objects::ObjectKind;
-use grit_lib::pkt_line;
-use grit_lib::repo::Repository;
+use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::remote::pkt_line;
+use grit_lib::repo::{InitOptions, Repository};
 use grit_protocol::upload_pack::stateless_rpc;
-use grit_protocol::RepositoryOptions;
 
 fn write_commit(
     repo: &Repository,
@@ -17,7 +16,7 @@ fn write_commit(
     let body = format!(
         "tree {tree}\n{parent_line}author T <t@x> 1 +0000\ncommitter T <t@x> 1 +0000\n\n{msg}\n",
     );
-    repo.odb
+    repo.odb()
         .write_loose_materialize(ObjectKind::Commit, body.as_bytes())
         .expect("commit")
 }
@@ -27,13 +26,15 @@ fn stateless_v0_done_emits_bare_ack_before_sideband_pack() {
     let dir =
         std::env::temp_dir().join(format!("grit-v0-multi-ack-detailed-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    grit_lib::repo::init_bare_clone_minimal(
+    Repository::init(
         &dir,
-        "main",
-        grit_lib::ref_storage::RefStorageFormat::Files,
+        &InitOptions::new()
+            .with_bare(true)
+            .with_initial_branch("main")
+            .with_ref_storage(grit_lib::refs::ref_storage::RefStorageFormat::Files),
     )
     .expect("init bare");
-    let repo = Repository::open_for_serving(&dir, &RepositoryOptions::default()).expect("open");
+    let repo = Repository::open(&dir, &RepositoryOptions::default().for_serving()).expect("open");
     let tree = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").expect("tree");
     let parent = write_commit(&repo, tree, None, "root");
     let tip = write_commit(&repo, tree, Some(parent), "child");
