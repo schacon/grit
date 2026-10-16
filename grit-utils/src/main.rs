@@ -280,7 +280,11 @@ enum Cmd {
         criterion_dir: PathBuf,
     },
     /// Render a saved grit-bench JSON report (text or markdown).
-    Render { input: PathBuf },
+    Render {
+        /// JSON report path (`make bench-scenarios` passes `--input`).
+        #[arg(long, value_name = "INPUT")]
+        input: PathBuf,
+    },
     /// Compare two JSON reports; exit non-zero when ratios differ beyond tolerance
     Compare {
         baseline: PathBuf,

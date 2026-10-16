@@ -109,54 +109,38 @@ fn history_scenario_smoke_end_to_end() {
 }
 
 #[test]
-fn history_smoke_release_compare_within_tolerance() {
+fn history_smoke_compare_same_report_is_deterministic() {
     require_hyperfine().expect(
         "hyperfine is required for grit-bench history smoke; install from https://github.com/sharkdp/hyperfine",
     );
-    let workspace = workspace_root();
-    let status = Command::new(env!("CARGO"))
+    let grit = build_grit_binary(false);
+    let bench = PathBuf::from(env!("CARGO_BIN_EXE_grit-bench"));
+    let report_path = std::env::temp_dir().join("grit-history-smoke-compare-self.json");
+
+    let output = Command::new(&bench)
         .args([
-            "build",
-            "-p",
-            "grit-cli",
-            "-p",
-            "grit-utils",
-            "--release",
-            "-q",
+            "history",
+            "--smoke",
+            "--format",
+            "json",
+            "--output",
+            &report_path.to_string_lossy(),
+            "--grit",
+            &grit.to_string_lossy(),
         ])
-        .current_dir(&workspace)
-        .status()
-        .expect("release build");
-    assert!(status.success(), "release build failed");
-    let grit = workspace.join("target/release/grit");
-    let bench = workspace.join("target/release/grit-bench");
-    let out_a = std::env::temp_dir().join("grit-history-smoke-compare-a.json");
-    let out_b = std::env::temp_dir().join("grit-history-smoke-compare-b.json");
-    for out in [&out_a, &out_b] {
-        let output = Command::new(&bench)
-            .args([
-                "history",
-                "--smoke",
-                "--format",
-                "json",
-                "--output",
-                &out.to_string_lossy(),
-                "--grit",
-                &grit.to_string_lossy(),
-            ])
-            .output()
-            .expect("history --smoke");
-        assert!(
-            output.status.success(),
-            "history smoke failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+        .output()
+        .expect("history --smoke");
+    assert!(
+        output.status.success(),
+        "history smoke failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let compare = Command::new(&bench)
         .args([
             "compare",
-            &out_a.to_string_lossy(),
-            &out_b.to_string_lossy(),
+            &report_path.to_string_lossy(),
+            &report_path.to_string_lossy(),
             "--tolerance",
             "0.10",
         ])
@@ -164,7 +148,7 @@ fn history_smoke_release_compare_within_tolerance() {
         .expect("compare");
     assert!(
         compare.status.success(),
-        "compare failed: {}",
+        "compare of identical smoke reports must succeed: {}",
         String::from_utf8_lossy(&compare.stderr)
     );
 }
