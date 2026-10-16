@@ -391,6 +391,10 @@ fn switch_to_target(
     })
 }
 
+fn tree_changes_contain_additions(tree_changes: &[DiffEntry]) -> bool {
+    tree_changes.iter().any(|c| c.status == DiffStatus::Added)
+}
+
 fn prepare_tree_switch_allow_local(
     repo: &Repository,
     to_tree: &ObjectId,
@@ -635,7 +639,12 @@ fn checkout_prepared_tree_transition(
     repo: &Repository,
     mut prepared: PreparedSwitch,
 ) -> Result<()> {
-    ensure_no_untracked_overwrite(&prepared.plan.untracked, &prepared.plan.tree_changes)?;
+    let overwrite_untracked = if tree_changes_contain_additions(&prepared.plan.tree_changes) {
+        prepared.plan.untracked.as_slice()
+    } else {
+        &[][..]
+    };
+    ensure_no_untracked_overwrite(overwrite_untracked, &prepared.plan.tree_changes)?;
     let tree_changes: Vec<DiffEntry> = prepared
         .plan
         .tree_changes
@@ -661,6 +670,7 @@ fn checkout_prepared_tree_transition(
             trust_wholesale_dir_removal: prepared.trust_wholesale_dir_removal,
             preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
+            skip_bulk_checkout_fast_path: false,
         },
         Some(&tree_changes),
     )
