@@ -95,8 +95,8 @@ pub struct HistoryRewriteOutcome {
 pub struct RewrittenPair {
     /// Commit OID before rewrite (full hex).
     pub old: String,
-    /// Replacement commit OID (full hex).
-    pub new: String,
+    /// Replacement commit OID (full hex), or JSON `null` when the commit was dropped.
+    pub new: Option<String>,
 }
 
 /// One ref tip before and after rewrite.
@@ -139,8 +139,13 @@ impl HumanRender for HistoryRewriteOutcome {
         }
         for pair in &self.rewritten {
             let old_short = pair.old.get(..7).unwrap_or(&pair.old);
-            let new_short = pair.new.get(..7).unwrap_or(&pair.new);
-            outln!(w, "  commit {old_short} → {new_short}");
+            match &pair.new {
+                Some(new) => {
+                    let new_short = new.get(..7).unwrap_or(new);
+                    outln!(w, "  commit {old_short} → {new_short}");
+                }
+                None => outln!(w, "  commit {old_short} → (dropped)"),
+            }
         }
         for update in &self.refs {
             let old_short = update.old.get(..7).unwrap_or(&update.old);
@@ -497,6 +502,7 @@ pub fn run_fixup(
                 scope: shared.update_refs.into(),
                 empty: empty.into(),
                 committer,
+                preserve_committer: false,
             },
         },
     )
@@ -616,11 +622,9 @@ fn outcome_from_plan(
     let rewritten = plan
         .commits
         .iter()
-        .filter_map(|row| {
-            row.new.map(|new| RewrittenPair {
-                old: row.old.to_hex(),
-                new: new.to_hex(),
-            })
+        .map(|row| RewrittenPair {
+            old: row.old.to_hex(),
+            new: row.new.map(|new| new.to_hex()),
         })
         .collect();
     let refs = plan
