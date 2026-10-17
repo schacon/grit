@@ -46,7 +46,9 @@ pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
 
     let index_path = repo.index_path_for_env()?;
     let mut index = repo.load_index_at(&index_path)?;
-    let _ = index.expand_sparse_directory_placeholders(repo.odb());
+    if index.has_sparse_directory_placeholders() {
+        index.expand_sparse_directory_placeholders(repo.odb())?;
+    }
 
     let head = resolve_head(repo.git_dir())?;
     let head_tree = match head.oid() {
@@ -94,6 +96,7 @@ pub(crate) fn local_change_diffs(
             ignore_submodule_untracked: true,
             repository_git_dir: Some(repo.git_dir().to_path_buf()),
             refresh_index_stat_in_pass: false,
+            refresh_fsmonitor: false,
             config,
             worktree_rules,
             command_runner: Some(repo.command_runner()),
@@ -132,16 +135,37 @@ pub(crate) fn local_change_diffs_for_tree_changes(
     let index_path = repo.index_path_for_env()?;
     let index_mtime = index_mtime_for_diff(index, index_file_mtime(&index_path));
     let stat_policy = StatMatchPolicy::from_config(repo.config().ok().as_deref());
-    let paths_for_stat = skip_worktree_stat_paths.map_or_else(
-        || path_filter.as_ref().clone(),
-        |skip| {
-            path_filter
-                .iter()
-                .filter(|path| !skip.contains(*path))
-                .cloned()
-                .collect()
-        },
-    );
+    let paths_for_stat = {
+        let base: BTreeSet<String> = skip_worktree_stat_paths.map_or_else(
+            || path_filter.as_ref().clone(),
+            |skip| {
+                path_filter
+                    .iter()
+                    .filter(|path| !skip.contains(*path))
+                    .cloned()
+                    .collect()
+            },
+        );
+        base.into_iter()
+            .filter(|path| {
+                index.get(path.as_bytes(), 0).is_some()
+                    || tree_changes.iter().any(|change| {
+                        change.status != DiffStatus::Deleted
+                            && change.new_path.as_deref() == Some(path.as_str())
+                    })
+            })
+            .filter(|path| {
+                !delete_path_trusted_without_worktree_stat(
+                    index,
+                    &head_by_path,
+                    tree_changes,
+                    path,
+                    index_mtime,
+                    stat_policy,
+                )
+            })
+            .collect()
+    };
     if staged.is_empty()
         && !touched_paths_include_gitlinks(index, path_filter.as_ref())
         && (paths_for_stat.is_empty()
@@ -186,10 +210,12 @@ pub(crate) fn local_change_diffs_for_tree_changes(
             ignore_submodule_untracked: true,
             repository_git_dir: Some(repo.git_dir().to_path_buf()),
             refresh_index_stat_in_pass: false,
+            refresh_fsmonitor: false,
             for_status: false,
             stat_parallel_threads,
             config,
             worktree_rules,
+            command_runner: Some(repo.command_runner()),
             restrict_to_paths: Some(path_filter),
             ..Default::default()
         },
@@ -407,6 +433,46 @@ fn paths_touched_by_tree_changes(tree_changes: &[DiffEntry]) -> BTreeSet<String>
     paths
 }
 
+fn path_is_tree_scheduled_delete(tree_changes: &[DiffEntry], path: &str) -> bool {
+    tree_changes.iter().any(|change| {
+        change.status == DiffStatus::Deleted && change.old_path.as_deref() == Some(path)
+    })
+}
+
+/// Delete-only tree-diff paths whose index already matches HEAD and are not racy need no stat
+/// before switch: a local edit would change stat data or show up in the staged pass.
+fn delete_path_trusted_without_worktree_stat(
+    index: &Index,
+    head_by_path: &HashMap<String, HeadTreeSide>,
+    tree_changes: &[DiffEntry],
+    path: &str,
+    index_mtime: Option<(u32, u32)>,
+    stat_policy: StatMatchPolicy,
+) -> bool {
+    if !path_is_tree_scheduled_delete(tree_changes, path) {
+        return false;
+    }
+    let HeadTreeSide::Present { oid, mode } = head_by_path
+        .get(path)
+        .copied()
+        .unwrap_or(HeadTreeSide::Absent)
+    else {
+        return false;
+    };
+    let Some(ie) = index.get(path.as_bytes(), 0) else {
+        return false;
+    };
+    if ie.oid != oid || ie.mode != mode {
+        return false;
+    }
+    if indexed_path_needs_worktree_stat_check(ie)
+        && entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+    {
+        return false;
+    }
+    true
+}
+
 fn staged_diff_for_tree_switch_paths(
     index: &Index,
     head_by_path: &HashMap<String, HeadTreeSide>,
@@ -550,6 +616,74 @@ fn delete_path_scheduled_for_removal(
 ///
 /// Every on-disk file under `delete_roots` must appear in `delete_paths` (scheduled removal). Any
 /// other file is classified with the same ignore rules as [`collect_untracked_and_ignored`].
+struct WholesaleDeleteRootScan {
+    untracked: Vec<String>,
+    needs_ignore_rules: Vec<String>,
+}
+
+fn scan_wholesale_delete_root(
+    index: &Index,
+    work_tree: &Path,
+    root: &str,
+    delete_paths: &HashSet<String>,
+    ignorecase: bool,
+) -> WholesaleDeleteRootScan {
+    let mut untracked = Vec::new();
+    let mut needs_ignore_rules = Vec::new();
+    let abs_root = work_tree.join(root);
+    if !abs_root.is_dir() {
+        return WholesaleDeleteRootScan {
+            untracked,
+            needs_ignore_rules,
+        };
+    }
+    let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, root.to_owned())];
+    while let Some((abs, rel_prefix)) = stack.pop() {
+        let read_dir = match fs::read_dir(&abs) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in read_dir.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let rel = if rel_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel_prefix}/{name}")
+            };
+            let file_type = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                stack.push((entry.path(), rel));
+                continue;
+            }
+            if !file_type.is_file() && !file_type.is_symlink() {
+                if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
+                    continue;
+                }
+                if index.get(rel.as_bytes(), 0).is_some() {
+                    continue;
+                }
+                // FIFOs, sockets, and devices are not deleted wholesale; block trusted removal.
+                untracked.push(rel);
+                continue;
+            }
+            if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
+                continue;
+            }
+            if index.get(rel.as_bytes(), 0).is_some() {
+                continue;
+            }
+            needs_ignore_rules.push(rel);
+        }
+    }
+    WholesaleDeleteRootScan {
+        untracked,
+        needs_ignore_rules,
+    }
+}
+
 fn collect_untracked_for_wholesale_delete_roots(
     repo: &Repository,
     index: &Index,
@@ -558,56 +692,34 @@ fn collect_untracked_for_wholesale_delete_roots(
     delete_roots: &BTreeSet<String>,
     ignorecase: bool,
 ) -> Result<(Vec<String>, Vec<String>)> {
+    let scans: Vec<WholesaleDeleteRootScan> = delete_roots
+        .iter()
+        .map(|root| scan_wholesale_delete_root(index, work_tree, root, delete_paths, ignorecase))
+        .collect();
+
+    let mut untracked = Vec::new();
+    let mut needs_ignore_rules = Vec::new();
+    for scan in scans {
+        untracked.extend(scan.untracked);
+        needs_ignore_rules.extend(scan.needs_ignore_rules);
+    }
+
+    if needs_ignore_rules.is_empty() {
+        return Ok((untracked, Vec::new()));
+    }
+
     let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)
         .ok()
         .map(Arc::new)
         .unwrap_or_else(|| Arc::new(ConfigSet::new()));
     let rules = WorktreeRules::from_parts_index_attributes_only(repo, index, config)?;
     let mut matcher = rules.ignore_mut();
-    let mut untracked = Vec::new();
     let mut ignored = Vec::new();
-
-    for root in delete_roots {
-        let abs_root = work_tree.join(root);
-        if !abs_root.is_dir() {
-            continue;
-        }
-        let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, root.clone())];
-        while let Some((abs, rel_prefix)) = stack.pop() {
-            let read_dir = match fs::read_dir(&abs) {
-                Ok(rd) => rd,
-                Err(_) => continue,
-            };
-            for entry in read_dir.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let rel = if rel_prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{rel_prefix}/{name}")
-                };
-                let file_type = match entry.file_type() {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                if file_type.is_dir() {
-                    stack.push((entry.path(), rel));
-                    continue;
-                }
-                if !file_type.is_file() && !file_type.is_symlink() {
-                    continue;
-                }
-                if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
-                    continue;
-                }
-                if index.get(rel.as_bytes(), 0).is_some() {
-                    continue;
-                }
-                if matcher.is_path_ignored(repo, Some(index), &rel, false)? {
-                    ignored.push(rel);
-                } else {
-                    untracked.push(rel);
-                }
-            }
+    for rel in needs_ignore_rules {
+        if matcher.is_path_ignored(repo, Some(index), &rel, false)? {
+            ignored.push(rel);
+        } else {
+            untracked.push(rel);
         }
     }
     Ok((untracked, ignored))
@@ -1438,6 +1550,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn local_change_diffs_for_tree_changes_uses_stat_only_when_racy_but_clean() {
         use crate::objects::{serialize_commit, CommitData, ObjectKind};
         use crate::refs;
@@ -1506,6 +1619,104 @@ mod tests {
             "expected stat-only fast path, got {unstaged:?}"
         );
         assert!(!index_changed, "stat-only fast path must not rewrite index");
+    }
+
+    #[test]
+    fn delete_only_tree_diff_paths_skip_worktree_stat_when_index_matches_head() {
+        use crate::objects::{serialize_commit, CommitData, ObjectKind};
+        use crate::refs;
+        use crate::worktree_scan::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
+        use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+        use std::thread;
+        use std::time::Duration;
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repository(root, false, "main", None, crate::RefStorageFormat::Files)
+            .expect("init");
+        const FILE_COUNT: usize = 120;
+        const DELETE_COUNT: usize = 80;
+        for i in 0..FILE_COUNT {
+            let dir = format!("bulk/d{i:03}");
+            std::fs::create_dir_all(root.join(&dir)).expect("mkdir");
+            std::fs::write(root.join(&dir).join("f.txt"), format!("body {i}\n")).expect("write");
+        }
+        let mut index = repo.load_index().expect("index");
+        for i in 0..FILE_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            let abs = root.join(&rel);
+            let data = std::fs::read(&abs).expect("read");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
+            let entry = crate::index::entry_from_stat(
+                &abs,
+                rel.as_bytes(),
+                oid,
+                crate::index::MODE_REGULAR,
+            )
+            .expect("entry");
+            index.add_or_replace(entry);
+        }
+        index.sort();
+        let head_tree =
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                .expect("head tree");
+        repo.write_index(&mut index).expect("write index");
+        let commit = CommitData {
+            tree: head_tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "seed\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let co = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit))
+            .expect("commit");
+        refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
+        thread::sleep(Duration::from_secs(2));
+        repo.write_index(&mut index).expect("refresh index mtime");
+
+        let mut target_index = index.clone();
+        for i in 0..DELETE_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            target_index.remove(rel.as_bytes());
+        }
+        target_index.sort();
+        let target_tree =
+            write_tree_update_index(&repo.odb(), &mut target_index, "", WriteTreeFlags::silent())
+                .expect("target tree");
+        let tree_changes =
+            diff_trees(repo.odb(), Some(&head_tree), Some(&target_tree), "").expect("diff");
+        assert_eq!(
+            tree_changes
+                .iter()
+                .filter(|c| c.status == DiffStatus::Deleted)
+                .count(),
+            DELETE_COUNT
+        );
+
+        let _probe = reset_worktree_metadata_probe(root);
+        let mut index_probe = repo.load_index().expect("index");
+        let (staged, unstaged, _) = local_change_diffs_for_tree_changes(
+            &repo,
+            &mut index_probe,
+            Some(head_tree),
+            &tree_changes,
+            None,
+        )
+        .expect("scoped diffs");
+        assert!(staged.is_empty(), "expected no staged: {staged:?}");
+        assert!(unstaged.is_empty(), "clean tree: {unstaged:?}");
+        let calls = worktree_metadata_probe_count();
+        assert!(
+            calls <= 8,
+            "delete-only paths with matching index should not stat every file (probes {calls})"
+        );
     }
 
     #[test]

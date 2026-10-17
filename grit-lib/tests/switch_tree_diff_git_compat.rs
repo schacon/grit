@@ -281,6 +281,76 @@ fn switch_preserves_untracked_in_wholesale_deleted_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn switch_preserves_untracked_fifo_under_fast_wholesale_delete_scan() {
+    use std::process::Command;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+    git(tmp.path(), &["config", "gc.auto", "0"]);
+
+    std::fs::create_dir_all(tmp.path().join("bulk")).expect("mkdir bulk");
+    for i in 0..40 {
+        std::fs::write(
+            tmp.path().join(format!("bulk/f{i:02}.txt")),
+            format!("main {i}\n"),
+        )
+        .expect("write");
+    }
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    git(tmp.path(), &["rm", "-r", "bulk"]);
+    git(tmp.path(), &["commit", "-qm", "drop bulk"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    let fifo = tmp.path().join("bulk/untracked.pipe");
+    let status = Command::new("mkfifo").arg(&fifo).status().expect("mkfifo");
+    assert!(status.success(), "mkfifo must succeed on unix");
+
+    git(tmp.path(), &["switch", "-q", "target"]);
+    assert!(
+        fifo.exists(),
+        "system git must preserve untracked FIFO under wholesale-deleted directory"
+    );
+    git(tmp.path(), &["switch", "-q", "main"]);
+
+    let _ = std::fs::remove_file(&fifo);
+    let status = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo again");
+    assert!(status.success());
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+        },
+    )
+    .expect("grit switch to target");
+
+    assert!(
+        fifo.exists(),
+        "grit must preserve untracked FIFO (fast wholesale scan must not trust removal)"
+    );
+}
+
+#[test]
 fn switch_preserves_ignored_file_in_wholesale_deleted_directory() {
     let tmp = tempfile::tempdir().expect("tempdir");
     git(tmp.path(), &["init", "-q", "-b", "main", "."]);

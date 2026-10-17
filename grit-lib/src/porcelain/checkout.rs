@@ -846,20 +846,28 @@ fn checkout_commit_index_update(
     wholesale_dirs_removed: &BTreeSet<String>,
     paths_to_remove: &[Vec<u8>],
     new_entries: Vec<IndexEntry>,
+    bulk_index_rewrite: bool,
 ) -> Result<()> {
-    if !wholesale_dirs_removed.is_empty() {
-        index_mut.drop_derived_index_extensions();
+    index_mut.defer_untracked_cache_invalidation =
+        bulk_index_rewrite || !wholesale_dirs_removed.is_empty();
+    if bulk_index_rewrite || !wholesale_dirs_removed.is_empty() {
+        if index_mut.defer_untracked_cache_invalidation {
+            index_mut.drop_cache_tree_extension();
+        } else {
+            index_mut.drop_derived_index_extensions();
+        }
     }
-    index_mut.defer_untracked_cache_invalidation = !wholesale_dirs_removed.is_empty();
     index_mut.remove_prefixes_paths_and_insert(
         wholesale_dirs_removed,
         paths_to_remove.iter().map(|p| p.as_slice()),
         new_entries,
     );
     index_mut.defer_untracked_cache_invalidation = false;
+    index_mut.suppress_pre_write_index_housekeeping = bulk_index_rewrite;
     index_mut.skip_racy_smudge_on_write = true;
     let result = repo.write_index_with_post_index_change(index_mut, true, false);
     index_mut.skip_racy_smudge_on_write = false;
+    index_mut.suppress_pre_write_index_housekeeping = false;
     result?;
     let index_path = repo.index_path_for_env()?;
     crate::index::advance_index_file_mtime_past_entries(index_mut, &index_path)?;
@@ -991,7 +999,14 @@ fn checkout_bulk_added_tree_changes(
         write_outcomes,
         progress,
     )?;
-    checkout_commit_index_update(repo, index_mut, &BTreeSet::new(), &[], new_entries)?;
+    checkout_commit_index_update(
+        repo,
+        index_mut,
+        &BTreeSet::new(),
+        &[],
+        new_entries,
+        true,
+    )?;
     progress.finish();
     Ok(())
 }
@@ -1200,6 +1215,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         &wholesale_index_prefixes,
         &paths_to_remove,
         new_entries,
+        true,
     )?;
     progress.finish();
     Ok(())
@@ -1283,6 +1299,7 @@ fn checkout_bulk_deleted_tree_changes(
         wholesale_index_prefixes,
         &paths_to_remove,
         Vec::new(),
+        true,
     )?;
     progress.finish();
     Ok(())
@@ -1684,12 +1701,14 @@ fn checkout_tree_changes_with_progress(
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
     drop(rules);
+    let bulk_index_rewrite = changes.len() >= 64;
     checkout_commit_index_update(
         repo,
         index_mut,
         &wholesale_index_prefixes,
         &paths_to_remove,
         new_entries,
+        bulk_index_rewrite,
     )?;
     progress.finish();
     Ok(())
