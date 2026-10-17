@@ -473,7 +473,9 @@ fn commutes_with_all_later_commits(
         let Some(parent) = first_parent(repo, commit).ok().flatten() else {
             return false;
         };
-        let commit_hunks = tree_diff_hunks(repo, parent, commit, path).unwrap_or_default();
+        let Some(commit_hunks) = commit_diff_hunks(repo, parent, commit, path) else {
+            return false;
+        };
         if commit_hunks.is_empty() {
             continue;
         }
@@ -642,9 +644,9 @@ fn commute_hunks(first: &PatchHunk, second: &PatchHunk) -> Option<(PatchHunk, Pa
             .saturating_add(second.removed_lines.len().saturating_sub(1)),
     );
 
-    let (first_above, above, below) = if first_lower <= second_upper {
+    let (first_above, above, below) = if first_lower < second_upper {
         (true, first, second)
-    } else if second_lower <= first_upper {
+    } else if second_lower < first_upper {
         (false, second, first)
     } else if (first.added_lines.is_empty()
         && second.added_lines.is_empty()
@@ -683,6 +685,17 @@ where
     iter.all(|line| line == first)
 }
 
+fn commit_diff_hunks(
+    repo: &Repository,
+    parent: ObjectId,
+    commit: ObjectId,
+    path: &str,
+) -> Option<Vec<PatchHunk>> {
+    let parent_tree = commit_tree(repo, parent).ok()?;
+    let commit_tree_id = commit_tree(repo, commit).ok()?;
+    tree_diff_hunks(repo, parent_tree, commit_tree_id, path)
+}
+
 fn tree_diff_hunks(
     repo: &Repository,
     old_tree: ObjectId,
@@ -690,7 +703,9 @@ fn tree_diff_hunks(
     path: &str,
 ) -> Option<Vec<PatchHunk>> {
     let entries = diff_trees(repo.odb(), Some(&old_tree), Some(&new_tree), "").ok()?;
-    let entry = entries.iter().find(|e| e.path() == path)?;
+    let Some(entry) = entries.iter().find(|e| e.path() == path) else {
+        return Some(Vec::new());
+    };
     if !matches!(
         entry.status,
         DiffStatus::Modified | DiffStatus::Added | DiffStatus::Deleted
@@ -747,7 +762,8 @@ pub(crate) fn remaining_index_blob_for_path(
             )
         })
         .collect();
-    let mut result = post_head_blob;
+    let mut assigned_patches = Vec::new();
+    let mut unassigned_patches = Vec::new();
     for hunk in diff.hunks {
         if !hunk_has_changes(&hunk) {
             continue;
@@ -758,12 +774,18 @@ pub(crate) fn remaining_index_blob_for_path(
             hunk.new_start,
             hunk.new_lines,
         );
+        let patch = hunk_to_patch(&hunk);
         if assigned_keys.contains(&key) {
-            continue;
+            assigned_patches.push(patch);
+        } else {
+            unassigned_patches.push(patch);
         }
-        result = apply_patch_hunk_to_blob(&result, &hunk_to_patch(&hunk));
     }
-    Ok(result)
+    let translated: Vec<PatchHunk> = unassigned_patches
+        .into_iter()
+        .map(|h| translate_hunk_to_post_head(h, &assigned_patches))
+        .collect();
+    Ok(apply_patch_hunks_bottom_up(&post_head_blob, &translated))
 }
 
 fn index_blob_at_path(repo: &Repository, index: &crate::index::Index, path: &str) -> Vec<u8> {
@@ -879,8 +901,7 @@ fn partial_index_for_target(
         let keep = assigned_paths.contains(path.as_str());
         if keep {
             let has_unassigned_on_path = unassigned.iter().any(|u| u.path == path);
-            if has_unassigned_on_path || has_other_assignments_on_path(&path, target, assignments)
-            {
+            if has_unassigned_on_path || has_other_assignments_on_path(&path, target, assignments) {
                 let blob =
                     partial_blob_for_path(repo, head_tree, index, &path, target, assignments)?;
                 write_index_blob(repo, &mut out, &path, &blob)?;
@@ -946,22 +967,14 @@ fn blob_with_assignments_on_path(
         })
         .collect();
 
-    let mut result = head_blob;
-    for hunk in diff.hunks {
-        if !hunk_has_changes(&hunk) {
-            continue;
-        }
-        let key = (
-            hunk.old_start,
-            hunk.old_lines,
-            hunk.new_start,
-            hunk.new_lines,
-        );
-        if target_ranges.contains(&key) {
-            result = apply_patch_hunk_to_blob(&result, &hunk_to_patch(&hunk));
-        }
-    }
-    Ok(result)
+    let selected: Vec<PatchHunk> = diff
+        .hunks
+        .iter()
+        .filter(|h| hunk_has_changes(h))
+        .filter(|h| target_ranges.contains(&(h.old_start, h.old_lines, h.new_start, h.new_lines)))
+        .map(hunk_to_patch)
+        .collect();
+    Ok(apply_patch_hunks_bottom_up(&head_blob, &selected))
 }
 
 fn partial_blob_for_path(
@@ -980,8 +993,52 @@ fn partial_blob_for_path(
     blob_with_assignments_on_path(repo, head_tree, index, path, &selected)
 }
 
+fn apply_patch_hunks_bottom_up(base: &[u8], hunks: &[PatchHunk]) -> Vec<u8> {
+    let mut sorted: Vec<&PatchHunk> = hunks.iter().collect();
+    sorted.sort_by(|a, b| {
+        b.removed_start
+            .cmp(&a.removed_start)
+            .then(b.added_start.cmp(&a.added_start))
+    });
+    let mut result = base.to_vec();
+    for hunk in sorted {
+        result = apply_patch_hunk_to_blob(&result, hunk);
+    }
+    result
+}
+
+fn net_line_delta_before(assigned: &[PatchHunk], pre_head_line: usize) -> i64 {
+    let mut sorted: Vec<&PatchHunk> = assigned.iter().collect();
+    sorted.sort_by_key(|h| h.removed_start);
+    let mut delta = 0i64;
+    for h in sorted {
+        if h.removed_lines.is_empty() {
+            if h.removed_start < pre_head_line {
+                delta += h.added_lines.len() as i64;
+            }
+        } else if h.removed_start < pre_head_line {
+            delta += h.added_lines.len() as i64 - h.removed_lines.len() as i64;
+        }
+    }
+    delta
+}
+
+fn translate_hunk_to_post_head(mut hunk: PatchHunk, assigned: &[PatchHunk]) -> PatchHunk {
+    let shift = net_line_delta_before(assigned, hunk.removed_start);
+    if shift != 0 {
+        hunk.removed_start = (hunk.removed_start as i64 + shift).max(1) as usize;
+        hunk.added_start = (hunk.added_start as i64 + shift).max(1) as usize;
+    }
+    hunk
+}
+
 fn apply_patch_hunk_to_blob(base: &[u8], hunk: &PatchHunk) -> Vec<u8> {
     let mut lines = split_lines(base);
+    if hunk.removed_lines.is_empty() {
+        let insert_at = hunk.removed_start.min(lines.len());
+        lines.splice(insert_at..insert_at, hunk.added_lines.iter().cloned());
+        return join_lines(&lines);
+    }
     let remove_at = hunk.removed_start.saturating_sub(1);
     let remove_count = hunk.removed_lines.len();
     if remove_at <= lines.len() {
@@ -1174,6 +1231,51 @@ fn commit_tree(repo: &Repository, commit: ObjectId) -> Result<ObjectId, HistoryE
 fn first_parent(repo: &Repository, commit: ObjectId) -> Result<Option<ObjectId>, HistoryError> {
     let parents = load_commit(repo, commit)?.parents;
     Ok(parents.into_iter().next())
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::{commute_hunks, PatchHunk};
+
+    #[test]
+    fn overlapping_line_replacements_do_not_commute() {
+        let later = PatchHunk {
+            removed_start: 4,
+            removed_lines: vec![b"target-4\n".to_vec()],
+            added_start: 4,
+            added_lines: vec![b"later-4\n".to_vec()],
+        };
+        let staged = PatchHunk {
+            removed_start: 4,
+            removed_lines: vec![b"later-4\n".to_vec()],
+            added_start: 4,
+            added_lines: vec![b"staged-4\n".to_vec()],
+        };
+        assert!(
+            super::commute_diff_before(&staged, &[later]).is_none(),
+            "replacing the same line in a later commit must not commute"
+        );
+    }
+
+    #[test]
+    fn commute_hunks_shared_endpoint_is_not_disjoint() {
+        let first = PatchHunk {
+            removed_start: 3,
+            removed_lines: vec![b"a\n".to_vec()],
+            added_start: 3,
+            added_lines: vec![b"b\n".to_vec()],
+        };
+        let second = PatchHunk {
+            removed_start: 3,
+            removed_lines: vec![b"b\n".to_vec()],
+            added_start: 3,
+            added_lines: vec![b"c\n".to_vec()],
+        };
+        assert!(
+            commute_hunks(&first, &second).is_none(),
+            "touching inclusive ranges must not commute as disjoint"
+        );
+    }
 }
 
 fn blob_at_path(repo: &Repository, tree: ObjectId, path: &str) -> Result<Vec<u8>, HistoryError> {

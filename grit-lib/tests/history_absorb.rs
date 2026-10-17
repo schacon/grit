@@ -10,6 +10,7 @@ use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::history::{
     absorb, apply_absorb_rewrite, apply_fixup_rewrite, fixup, staged_fixup_paths, AbsorbOptions,
     ApplyOptions, EmptyPolicy, FixupOptions, HistoryError, RefScope, RewriteOptions,
+    UnassignedReason,
 };
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::status::{status, StatusOptions};
@@ -312,9 +313,7 @@ fn absorb_leaves_unassigned_hunks_on_same_path_staged() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     let head_lines = |l2: &str, l4: &str, l7: &str| {
-        format!(
-            "line-1\n{l2}\nline-3\n{l4}\nline-5\nline-6\n{l7}\nline-8\n"
-        )
+        format!("line-1\n{l2}\nline-3\n{l4}\nline-5\nline-6\n{l7}\nline-8\n")
     };
     commit_file(
         wt,
@@ -373,6 +372,58 @@ fn absorb_leaves_unassigned_hunks_on_same_path_staged() {
         index_text.matches("unassigned-five").count(),
         1,
         "index must not duplicate unassigned line-7 text: {index_text}"
+    );
+}
+
+#[test]
+fn absorb_coordinate_safe_insertion_with_unassigned_line8() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let base8 =
+        |l4: &str| format!("line-1\nline-2\nline-3\n{l4}\nline-5\nline-6\nline-7\nline-8\n");
+    commit_file(wt, "file.txt", &base8("line-4"), "root");
+    let base = git_rev_parse(wt, "HEAD").expect("base");
+    commit_file(wt, "file.txt", &base8("changed-4"), "touch line 4");
+    let target = git_rev_parse(wt, "HEAD").expect("target");
+    commit_file(wt, "tail.txt", "t\n", "tail");
+    let staged = format!(
+        "line-1\nline-2\nline-3\nassigned-ins\nline-4\nline-5\nline-6\nline-7\nunassigned-8\n"
+    );
+    fs::write(wt.join("file.txt"), &staged).expect("write");
+    git(wt, &["add", "file.txt"]);
+    let grit = open_grit(wt);
+    let plan = absorb(
+        &grit,
+        &AbsorbOptions {
+            base: Some(base),
+            rewrite: rewrite_opts(),
+        },
+    )
+    .expect("plan");
+    assert_eq!(plan.assignments.len(), 1, "{plan:?}");
+    assert_eq!(plan.unassigned.len(), 1);
+    assert_eq!(plan.unassigned[0].reason, UnassignedReason::NoCandidate);
+    apply_absorb_rewrite(&grit, &plan, &apply_opts()).expect("apply");
+    git_fsck_strict(wt);
+
+    let head_file = fs::read_to_string(wt.join("file.txt")).expect("worktree");
+    assert!(
+        head_file.contains("line-3\nassigned-ins\n"),
+        "insertion must follow line-3 in HEAD: {head_file:?}"
+    );
+    assert!(
+        !head_file.contains("line-2\nassigned-ins"),
+        "insertion must not precede line-3: {head_file:?}"
+    );
+    assert!(
+        !head_file.contains("unassigned-8"),
+        "HEAD must not contain unassigned line-8 edit: {head_file:?}"
+    );
+    assert!(head_file.contains("line-8\n") || head_file.ends_with("line-8"));
+    let index_text = git(wt, &["show", ":file.txt"]);
+    assert_eq!(
+        index_text, staged,
+        "index must retain full staged shape including unassigned line-8"
     );
 }
 
