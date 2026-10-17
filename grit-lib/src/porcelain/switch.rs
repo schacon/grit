@@ -9,7 +9,8 @@ use crate::index::MODE_GITLINK;
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::{
     checkout_tree_changes_with_index_opts, precompute_wholesale_safe_directories,
-    CheckoutApplyOptions, WholesalePrecomputeResult, WholesaleWorktreeScan,
+    trusted_wholesale_directories_for_switch, CheckoutApplyOptions, WholesalePrecomputeResult,
+    WholesaleWorktreeScan,
 };
 use crate::porcelain::checkout_reflog::{
     append_head_checkout_reflog, checkout_reflog_from_label, finish_switch_ref_updates,
@@ -22,6 +23,8 @@ use crate::porcelain::worktree_guard::{
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::expand_at_minus_to_branch_name;
+
+const BULK_SWITCH_PARALLEL_MIN: usize = 32;
 use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use crate::state::resolve_head;
 
@@ -498,10 +501,18 @@ pub(crate) fn prepare_tree_transition_allow_local(
             (mode == MODE_GITLINK).then(|| path.clone())
         })
         .collect();
-    let (preverified_wholesale_dirs, wholesale_safety_precomputed) = if trust_wholesale_dir_removal
-        || delete_paths.is_empty()
-    {
+    let (preverified_wholesale_dirs, wholesale_safety_precomputed) = if delete_paths.is_empty() {
         (BTreeSet::new(), false)
+    } else if trust_wholesale_dir_removal {
+        (
+            trusted_wholesale_directories_for_switch(
+                work_tree,
+                &snapshot.index,
+                &delete_paths,
+                &gitlink_deletes,
+            ),
+            true,
+        )
     } else {
         let scan = traditional_ignore_scan.then(|| WholesaleWorktreeScan {
             untracked: &untracked,
@@ -654,12 +665,8 @@ fn checkout_prepared_tree_transition(
                 .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
         })
         .collect();
-    let delete_count = tree_changes
-        .iter()
-        .filter(|c| c.status == DiffStatus::Deleted)
-        .count();
     let checkout_parallel_threshold =
-        (tree_changes.len() >= 100 || delete_count >= 100).then_some(0);
+        (tree_changes.len() >= BULK_SWITCH_PARALLEL_MIN).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
         &tree_changes,

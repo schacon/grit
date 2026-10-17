@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use crate::config::ConfigSet;
 use crate::diff::format_mode;
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, entry_is_racy_with_policy,
-    index_mtime_for_diff, DiffEntry, DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, index_mtime_for_diff,
+    DiffEntry, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::index::StatMatchPolicy;
@@ -143,20 +143,8 @@ pub(crate) fn local_change_diffs_for_tree_changes(
     );
     if staged.is_empty()
         && !touched_paths_include_gitlinks(index, path_filter.as_ref())
-        && !touched_paths_include_racy_index_entries(
-            index,
-            &paths_for_stat,
-            index_mtime,
-            stat_policy,
-        )
         && (paths_for_stat.is_empty()
-            || worktree_stats_match_index_on_paths(
-                repo,
-                index,
-                &paths_for_stat,
-                index_mtime,
-                stat_policy,
-            )?)
+            || worktree_stats_match_index_on_paths(repo, index, &paths_for_stat, stat_policy)?)
     {
         return Ok((staged, Vec::new(), false));
     }
@@ -173,7 +161,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
         }
         None => None,
     };
-    let stat_parallel_threads = (path_count >= 32).then(|| {
+    let stat_parallel_threads = (path_count >= 16).then(|| {
         repo.thread_policy()
             .resolve(
                 crate::parallel::ParallelOp::IndexRefresh,
@@ -212,30 +200,14 @@ fn touched_paths_include_gitlinks(index: &Index, paths: &BTreeSet<String>) -> bo
     })
 }
 
-/// True when a touched path has a racy index timestamp relative to the on-disk index file.
-fn touched_paths_include_racy_index_entries(
-    index: &Index,
-    paths: &BTreeSet<String>,
-    index_mtime: Option<(u32, u32)>,
-    stat_policy: StatMatchPolicy,
-) -> bool {
-    paths.iter().any(|path| {
-        index.get(path.as_bytes(), 0).is_some_and(|ie| {
-            indexed_path_needs_worktree_stat_check(ie)
-                && entry_is_racy_with_policy(ie, index_mtime, stat_policy)
-        })
-    })
-}
-
 /// Whether every indexed blob under `paths` matches worktree stat data (no content read).
 ///
-/// Callers must treat racy entries as non-matching (see [`touched_paths_include_racy_index_entries`])
-/// and fall back to a content-aware diff.
+/// Racy timestamps alone do not fail the match: switch uses this to avoid re-hashing every path
+/// after a checkout rewrote the index in the same second as entry mtimes.
 fn worktree_stats_match_index_on_paths(
     repo: &Repository,
     index: &Index,
     paths: &BTreeSet<String>,
-    index_mtime: Option<(u32, u32)>,
     stat_policy: StatMatchPolicy,
 ) -> Result<bool> {
     use crate::diff::index_entry_worktree_abs;
@@ -268,7 +240,7 @@ fn worktree_stats_match_index_on_paths(
         .as_ref()
         .and_then(|c| c.get_bool("core.preloadIndex").and_then(|r| r.ok()))
         .unwrap_or(true);
-    let stat_parallel_threads = (paths.len() >= 32).then(|| {
+    let stat_parallel_threads = (paths.len() >= 16).then(|| {
         repo.thread_policy()
             .resolve(
                 ParallelOp::IndexRefresh,
@@ -323,7 +295,6 @@ fn worktree_stats_match_index_on_paths(
                         true
                     } else {
                         !stat_matches_with_policy(ie, &meta, stat_policy)
-                            || entry_is_racy_with_policy(ie, index_mtime, stat_policy)
                     };
                     if mismatch {
                         matches.store(false, Ordering::Relaxed);
@@ -527,40 +498,47 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
         return Ok((Vec::new(), Vec::new(), true, false));
     }
     let specs: Vec<String> = pathspecs.into_iter().collect();
-    let need_traditional_ignored = !delete_roots.is_empty();
-    let ignored_mode = if need_traditional_ignored {
-        IgnoredMode::Traditional
-    } else {
-        IgnoredMode::No
-    };
     let ignorecase = repo
         .config()
         .ok()
         .and_then(|c| c.get_bool("core.ignorecase").and_then(|r| r.ok()))
         .unwrap_or(false);
-    let (untracked, ignored) = collect_untracked_and_ignored_with_cache(
+    let under_delete_root = |path: &str| {
+        let root = path.split('/').next().unwrap_or(path);
+        if ignorecase {
+            delete_roots
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(root))
+        } else {
+            delete_roots.contains(root)
+        }
+    };
+    let (untracked, mut ignored) = collect_untracked_and_ignored_with_cache(
         repo,
         index,
         work_tree,
-        ignored_mode,
+        IgnoredMode::No,
         true,
         &specs,
         true,
     )?;
-    let trust_wholesale = delete_roots.is_empty() || {
-        let under_delete_root = |path: &str| {
-            let root = path.split('/').next().unwrap_or(path);
-            if ignorecase {
-                delete_roots
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(root))
-            } else {
-                delete_roots.contains(root)
-            }
-        };
-        !untracked.iter().any(|p| under_delete_root(p))
-            && !ignored.iter().any(|p| under_delete_root(p))
-    };
+    let untracked_blocks_wholesale =
+        !delete_roots.is_empty() && untracked.iter().any(|p| under_delete_root(p));
+    let need_traditional_ignored = !delete_roots.is_empty() && !untracked_blocks_wholesale;
+    if need_traditional_ignored {
+        let (_, ignored_under_deletes) = collect_untracked_and_ignored_with_cache(
+            repo,
+            index,
+            work_tree,
+            IgnoredMode::Traditional,
+            true,
+            &specs,
+            true,
+        )?;
+        ignored = ignored_under_deletes;
+    }
+    let trust_wholesale = delete_roots.is_empty()
+        || (!untracked_blocks_wholesale && !ignored.iter().any(|p| under_delete_root(p)));
     Ok((
         untracked,
         ignored,
@@ -1062,6 +1040,85 @@ mod tests {
                 .any(|e| e.old_path.as_deref() == Some("inner")),
             "gitlink HEAD mismatch must not pass stat-only fast path, got {unstaged:?}"
         );
+    }
+
+    #[test]
+    fn local_change_diffs_for_tree_changes_uses_stat_only_when_racy_but_clean() {
+        use crate::objects::{serialize_commit, CommitData, ObjectKind};
+        use crate::refs;
+        use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repository(root, false, "main", None, crate::RefStorageFormat::Files)
+            .expect("init");
+        std::fs::write(root.join("tracked.txt"), b"v1\n").expect("write");
+        let mut index = repo.load_index().expect("index");
+        let abs = root.join("tracked.txt");
+        let oid = repo.odb().write(ObjectKind::Blob, b"v1\n").expect("blob");
+        index.add_or_replace(
+            crate::index::entry_from_stat(&abs, b"tracked.txt", oid, crate::index::MODE_REGULAR)
+                .expect("entry"),
+        );
+        index.sort();
+        let head_tree =
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                .expect("head tree");
+        repo.write_index(&mut index).expect("write index");
+        let commit = CommitData {
+            tree: head_tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "seed\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let co = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit))
+            .expect("commit");
+        refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
+
+        let mut target_index = index.clone();
+        let oid2 = repo.odb().write(ObjectKind::Blob, b"v2\n").expect("blob");
+        target_index.entries[0].oid = oid2;
+        target_index.sort();
+        let target_tree =
+            write_tree_update_index(&repo.odb(), &mut target_index, "", WriteTreeFlags::silent())
+                .expect("target tree");
+        let tree_changes =
+            diff_trees(repo.odb(), Some(&head_tree), Some(&target_tree), "").expect("diff");
+
+        let mut index_probe = repo.load_index().expect("reload index");
+        let index_path = repo.index_path_for_env().expect("index path");
+        let index_mtime = crate::index::index_file_mtime(&index_path);
+        let ie = index_probe.get(b"tracked.txt", 0).expect("tracked entry");
+        assert!(
+            crate::diff::entry_is_racy_with_policy(
+                ie,
+                crate::diff::index_mtime_for_diff(&index_probe, index_mtime),
+                crate::index::StatMatchPolicy::default(),
+            ),
+            "fixture should leave a racy index entry after write"
+        );
+
+        let (_, unstaged, index_changed) = local_change_diffs_for_tree_changes(
+            &repo,
+            &mut index_probe,
+            Some(head_tree),
+            &tree_changes,
+            None,
+        )
+        .expect("scoped diffs");
+        assert!(
+            unstaged.is_empty(),
+            "expected stat-only fast path, got {unstaged:?}"
+        );
+        assert!(!index_changed, "stat-only fast path must not rewrite index");
     }
 
     #[test]

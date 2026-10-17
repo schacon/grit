@@ -1289,15 +1289,17 @@ impl Repository {
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
             crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
-            crate::diff::smudge_racily_clean_entries(
-                &self.odb,
-                &self.git_dir,
-                index,
-                work_tree,
-                prev_index_mtime,
-                Some(cfg.as_ref()),
-                Some(self.caches().filters()),
-            );
+            if !index.skip_racy_smudge_on_write {
+                crate::diff::smudge_racily_clean_entries(
+                    &self.odb,
+                    &self.git_dir,
+                    index,
+                    work_tree,
+                    prev_index_mtime,
+                    Some(cfg.as_ref()),
+                    Some(self.caches().filters()),
+                );
+            }
         }
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));
         index.write_to_path_with_config_and_lock_mode(
@@ -1512,15 +1514,17 @@ impl Repository {
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
             crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
-            crate::diff::smudge_racily_clean_entries(
-                &self.odb,
-                &self.git_dir,
-                index,
-                work_tree,
-                prev_index_mtime,
-                Some(cfg.as_ref()),
-                Some(self.caches().filters()),
-            );
+            if !index.skip_racy_smudge_on_write {
+                crate::diff::smudge_racily_clean_entries(
+                    &self.odb,
+                    &self.git_dir,
+                    index,
+                    work_tree,
+                    prev_index_mtime,
+                    Some(cfg.as_ref()),
+                    Some(self.caches().filters()),
+                );
+            }
         }
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));
         write_index_file_split(
