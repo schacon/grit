@@ -1060,16 +1060,26 @@ fn snapshot_worktree_for_tree_transition(
         let Some(path) = tree_transition_path(&change) else {
             continue;
         };
-        out.insert(
-            path.to_owned(),
-            read_worktree_path_snapshot(work_tree, path).map_err(|e| {
-                HistoryError::WorktreeApply {
-                    message: format!("snapshot worktree path '{path}': {e}"),
-                }
-            })?,
-        );
+        let snap = read_worktree_path_snapshot(work_tree, path).map_err(|e| {
+            HistoryError::WorktreeApply {
+                message: format!("snapshot worktree path '{path}': {e}"),
+            }
+        })?;
+        if snap.kind == WorktreePathKind::Directory && worktree_path_is_gitlink(repo, path)? {
+            continue;
+        }
+        out.insert(path.to_owned(), snap);
     }
     Ok(out)
+}
+
+fn worktree_path_is_gitlink(repo: &Repository, path: &str) -> Result<bool, HistoryError> {
+    let index = repo.load_index().map_err(|e| HistoryError::WorktreeApply {
+        message: e.to_string(),
+    })?;
+    Ok(index
+        .get(path.as_bytes(), 0)
+        .is_some_and(|entry| entry.mode == crate::index::MODE_GITLINK))
 }
 
 fn tree_transition_path(change: &crate::diff::DiffEntry) -> Option<&str> {
