@@ -39,6 +39,7 @@
 //! # }
 //! ```
 
+mod absorb;
 mod apply;
 mod drop;
 mod error;
@@ -51,7 +52,11 @@ mod split;
 mod squash;
 mod types;
 
-pub use apply::{apply_fixup_rewrite, apply_rewrite, verify_rewrite_plan};
+pub use absorb::{
+    absorb, default_absorb_base, staged_absorb_paths, AbsorbOptions, AbsorbPlan, HunkAssignment,
+    HunkRange, UnassignedHunk, UnassignedReason, DEFAULT_ABSORB_STACK_LIMIT,
+};
+pub use apply::{apply_absorb_rewrite, apply_fixup_rewrite, apply_rewrite, verify_rewrite_plan};
 pub use drop::drop;
 pub use error::HistoryError;
 pub use fixup::{fixup, staged_fixup_paths, FixupOptions};
