@@ -207,6 +207,7 @@ pub(crate) mod hash;
 pub(crate) mod hide_refs;
 #[path = "history/mod.rs"]
 mod history_root;
+pub(crate) use history_root as history;
 pub(crate) mod hooks;
 pub(crate) mod ident;
 pub(crate) mod ident_config;
@@ -327,11 +328,6 @@ pub(crate) mod ws;
 pub(crate) mod zlib_inflate;
 
 pub use ref_storage::RefStorageFormat;
-
-/// History rewrite planning and apply.
-pub mod history {
-    pub use crate::history_root::*;
-}
 
 pub use objects::bench_fixture;
 pub use objects::pack_reuse;

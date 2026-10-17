@@ -374,7 +374,7 @@ fn plan_rewrite_insert_before_merge_is_rejected() {
     let mut edits = HistoryEdits::new();
     edits.insert(
         merge,
-        CommitEdit::InsertBefore(grit_lib::history::NewCommit {
+        CommitEdit::InsertBefore(grit_lib::revwalk::history::NewCommit {
             tree: insert_tree,
             author: "Insert <i@grit.test> 1 +0000".into(),
             message: "inserted parent\n".into(),
@@ -392,7 +392,7 @@ fn plan_rewrite_insert_before_merge_is_rejected() {
     .expect_err("insert before merge");
     assert!(matches!(
         err,
-        grit_lib::history::HistoryError::InsertBeforeOnMerge { commit } if commit == merge
+        grit_lib::revwalk::history::HistoryError::InsertBeforeOnMerge { commit } if commit == merge
     ));
 }
 
@@ -435,7 +435,7 @@ fn plan_rewrite_non_commit_tip_returns_planning_error() {
     assert!(
         matches!(
             err,
-            grit_lib::history::HistoryError::Library(ref boxed)
+            grit_lib::revwalk::history::HistoryError::Library(ref boxed)
                 if matches!(boxed.as_ref(), grit_lib::error::Error::CorruptObject(_))
         ),
         "expected corrupt-object library error, got {err:?}"
