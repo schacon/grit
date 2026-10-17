@@ -16,7 +16,9 @@ The [`history`](rustdoc:grit_lib::revwalk::history) module supports stateless hi
 
 For a single message change, [`reword`](rustdoc:grit_lib::revwalk::history::reword) builds the [`CommitEdit`](rustdoc:grit_lib::revwalk::history::CommitEdit) and runs [`plan_rewrite`](rustdoc:grit_lib::revwalk::history::plan_rewrite) after [`normalize_rewrite_message`](rustdoc:grit_lib::revwalk::history::normalize_rewrite_message) (stripspace, trailing newline, reject empty).
 
-To remove one commit, [`drop`](rustdoc:grit_lib::history::drop) inserts [`CommitEdit::Drop`](rustdoc:grit_lib::history::CommitEdit) for that OID (rejecting root and merge commits) and plans replay of descendants onto the mapped parent.
+To remove one commit, [`drop`](rustdoc:grit_lib::revwalk::history::drop) inserts [`CommitEdit::Drop`](rustdoc:grit_lib::revwalk::history::CommitEdit) for that OID (rejecting root and merge commits) and plans replay of descendants onto the mapped parent.
+
+To fold a revision range, [`squash`](rustdoc:grit_lib::revwalk::history::squash) resolves the range (connected, single tip), validates fixup/amend/squash markers, builds [`HistoryEdits`](rustdoc:grit_lib::revwalk::history::HistoryEdits) (rewrite oldest with tip tree, drop inner commits), then calls [`plan_rewrite`](rustdoc:grit_lib::revwalk::history::plan_rewrite). Use [`SquashMessage`](rustdoc:grit_lib::revwalk::history::SquashMessage) for oldest, combined, or custom messages.
 
 ## Apply options and result
 

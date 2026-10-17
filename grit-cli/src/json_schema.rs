@@ -154,7 +154,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<PickOutcome>("pick"),
         entry::<HistoryRewriteOutcome>("history.reword"),
         entry::<HistoryRewriteOutcome>("history.drop"),
-        entry::<HistoryRewriteOutcome>("history.rebase"),
+        entry::<HistoryRewriteOutcome>("history.squash"),
         entry::<RevertOutcome>("revert"),
         entry::<StashPushOutcome>("stash"),
         entry::<StashPushOutcome>("stash.push"),
@@ -280,7 +280,7 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         },
         "history" => match positional.get(1).copied() {
             Some("reword") => "history.reword",
-            Some("rebase") => "history.rebase",
+            Some("squash") => "history.squash",
             _ => return None,
         },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
@@ -328,7 +328,7 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         );
         obj.insert("$id".into(), schema_id(command).into());
     }
-    if command == "history.reword" || command == "history.drop" {
+    if command == "history.reword" || command == "history.drop" || command == "history.squash" {
         ensure_required_nullable_head(&mut value);
     }
     canonicalize_json(&mut value);
@@ -536,17 +536,6 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             &["history", "reword", "HEAD~1", "-m", "reworded subject"],
         ),
         ("history_drop", &["history", "drop", "HEAD~1"]),
-        (
-            "history_rebase",
-            &[
-                "history",
-                "rebase",
-                "--onto",
-                "HEAD~2",
-                "--upstream",
-                "HEAD~3",
-            ],
-        ),
         ("revert", &["revert", "HEAD"]),
         ("shortlog", &["shortlog"]),
         ("revs_head", &["revs", "HEAD"]),

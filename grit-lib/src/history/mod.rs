@@ -45,6 +45,7 @@ mod error;
 mod plan;
 mod rebase;
 mod reword;
+mod squash;
 mod types;
 
 pub use apply::{apply_rewrite, verify_rewrite_plan};
@@ -55,6 +56,7 @@ pub use plan::plan_rewrite;
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};
 pub use rebase::{rebase_onto, RebaseOntoOptions};
 pub use reword::{normalize_rewrite_message, reword};
+pub use squash::{squash, SquashMessage, SquashOptions};
 pub use types::{
     AppliedRewrite, ApplyOptions, CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit,
     PlannedRefUpdate, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,

@@ -139,6 +139,7 @@ modules = [
   "diagnostics",
   "diff",
   "error",
+  "history",
   "index",
   "maintenance",
   "notes",

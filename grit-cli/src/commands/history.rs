@@ -9,8 +9,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::revwalk::history::{
-    apply_rewrite, drop as history_drop, rebase_onto, reword, verify_rewrite_plan, ApplyOptions,
-    EmptyPolicy, HistoryError, RebaseOntoOptions, RefScope, RewriteOptions, RewritePlan,
+    apply_rewrite, drop as history_drop, rebase_onto, reword, squash, verify_rewrite_plan, ApplyOptions,
+    EmptyPolicy, HistoryError, RebaseOntoOptions, RefScope, RewriteOptions, RewritePlan, SquashMessage, SquashOptions,
 };
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
@@ -77,7 +77,7 @@ pub struct HistoryRewriteArgs {
 /// Result of `grit history reword`, `grit history drop`, `grit history rebase`, and related rewrite subcommands.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct HistoryRewriteOutcome {
-    /// Operation name (for example `reword` or `drop`).
+    /// Operation name (for example `reword`, `drop`, or `squash`).
     pub operation: String,
     /// Original and replacement commit OIDs for every rewritten commit.
     pub rewritten: Vec<RewrittenPair>,
@@ -370,6 +370,93 @@ fn head_branch_short(repo: &grit_lib::repo::Repository) -> Result<String> {
     }
 }
 
+/// Fold `range` into the oldest selected commit and replay descendants.
+pub fn run_squash(
+    range: &[String],
+    combine: bool,
+    message: Option<String>,
+    message_file: Option<String>,
+    shared: &HistoryRewriteArgs,
+) -> Result<HistoryRewriteOutcome> {
+    if range.is_empty() {
+        bail!("revision range is required");
+    }
+    let squash_message = parse_squash_message(combine, message, message_file)?;
+    let repo = context::discover()?;
+    let env = repo.environment();
+    let config =
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
+    let committer = context::identity(
+        env,
+        &config,
+        IdentRole::Committer,
+        "GIT_COMMITTER_DATE",
+        context::wall_clock_now(env),
+    )?;
+    let range_refs: Vec<&str> = range.iter().map(String::as_str).collect();
+    let plan = squash(
+        &repo,
+        &range_refs,
+        &SquashOptions {
+            message: squash_message,
+            rewrite: RewriteOptions {
+                scope: shared.update_refs.into(),
+                empty: EmptyPolicy::Drop,
+                committer,
+                preserve_committer: false,
+            },
+        },
+    )
+    .map_err(|e| map_history_error(e, "squash", None))?;
+    let reflog_range = range.join(" ");
+    let mut outcome = outcome_from_plan(&repo, &plan, "squash", shared.dry_run)?;
+    if !shared.dry_run {
+        let identity = context::committer_reflog_identity(env, &config)?;
+        apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity,
+                reflog_message: format!("history squash: updating {reflog_range}"),
+            },
+        )
+        .map_err(|e| map_history_error(e, "squash", None))?;
+    }
+    outcome.dry_run = shared.dry_run;
+    Ok(outcome)
+}
+
+fn parse_squash_message(
+    combine: bool,
+    message: Option<String>,
+    message_file: Option<String>,
+) -> Result<SquashMessage> {
+    let custom = match (message, message_file) {
+        (Some(_), Some(_)) => bail!("use either -m/--message or --message-file, not both"),
+        (None, None) => None,
+        (Some(m), None) => Some(m),
+        (None, Some(path)) => {
+            if path == "-" {
+                let mut buf = String::new();
+                io::stdin()
+                    .read_to_string(&mut buf)
+                    .context("could not read message from stdin")?;
+                Some(buf)
+            } else {
+                Some(
+                    std::fs::read_to_string(&path)
+                        .with_context(|| format!("could not read message file '{path}'"))?,
+                )
+            }
+        }
+    };
+    match (combine, custom) {
+        (true, Some(_)) => bail!("use either --combine or -m/--message-file, not both"),
+        (true, None) => Ok(SquashMessage::Combine),
+        (false, Some(text)) => Ok(SquashMessage::Custom(text)),
+        (false, None) => Ok(SquashMessage::Oldest),
+    }
+}
 fn read_message(message: Option<String>, message_file: Option<String>) -> Result<String> {
     match (message, message_file) {
         (Some(_), Some(_)) => bail!("use either -m/--message or --message-file, not both"),
@@ -493,6 +580,24 @@ fn map_history_error(
         HistoryError::Planning { message } => {
             anyhow::anyhow!("history rewrite planning failed: {message}")
         }
+        HistoryError::RangeNotConnected => {
+            anyhow::anyhow!("the selected commits are not a connected revision range")
+        }
+        HistoryError::MultipleTips => {
+            anyhow::anyhow!("the revision range contains more than one tip commit")
+        }
+        HistoryError::MarkerTargetOutsideRange { commit } => {
+            let short = &commit.to_hex()[..7];
+            anyhow::anyhow!(
+                "cannot squash {short}: its fixup/amend/squash target is outside the range"
+            )
+        }
+        HistoryError::SquashDiscardsMessage { commit } => {
+            let short = &commit.to_hex()[..7];
+            anyhow::anyhow!(
+                "squashing {short} would discard its message; use --combine or -m/--message"
+            )
+        }
         HistoryError::InsertBeforeOnMerge { commit } => {
             let short = &commit.to_hex()[..7];
             anyhow::anyhow!("insert-before on merge commit {short} is not supported")
@@ -508,6 +613,9 @@ fn map_history_error(
                     "{short} is a merge commit — grit history {operation} cannot replay merges yet"
                 )
             }
+        }
+        HistoryError::RootCommit { .. } if operation == "squash" => {
+            anyhow::anyhow!("cannot squash down to root commit")
         }
         HistoryError::RootCommit { commit } => {
             let short = &commit.to_hex()[..7];
