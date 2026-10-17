@@ -879,6 +879,12 @@ fn checkout_commit_index_update(
     checkout_result_tree: Option<crate::objects::ObjectId>,
 ) -> Result<()> {
     let change_count = paths_to_remove.len() + new_entries.len();
+    let pre_mtime_max = crate::index::stage0_mtime_max(&index_mut.entries);
+    let new_mtime_max = crate::index::stage0_mtime_max(&new_entries);
+    let index_mtime_hint = Some(crate::index::max_stage0_mtime_pair(
+        pre_mtime_max,
+        new_mtime_max,
+    ));
     index_mut.defer_untracked_cache_invalidation =
         bulk_index_rewrite || !wholesale_dirs_removed.is_empty();
     if bulk_index_rewrite || !wholesale_dirs_removed.is_empty() {
@@ -918,7 +924,7 @@ fn checkout_commit_index_update(
     index_mut.suppress_pre_write_index_housekeeping = false;
     result?;
     let index_path = repo.index_path_for_env()?;
-    crate::index::advance_index_file_mtime_past_entries(index_mut, &index_path, None)?;
+    crate::index::advance_index_file_mtime_past_entries(index_mut, &index_path, index_mtime_hint)?;
     index_mut.source_mtime = crate::index::index_file_mtime(&index_path);
     Ok(())
 }
