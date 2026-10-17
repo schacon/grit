@@ -5,9 +5,9 @@
 //! the index once, refreshes stat data when needed, and computes those slices without rename
 //! detection, ahead/behind, stash counts, or in-progress operation state.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
@@ -522,6 +522,97 @@ pub(crate) fn untracked_scan_pathspecs_for_deletes(tree_changes: &[DiffEntry]) -
     specs.into_iter().collect()
 }
 
+const WHOLESALE_FAST_UNTRACKED_SCAN_MIN: usize = 32;
+
+fn delete_paths_from_tree_changes(tree_changes: &[DiffEntry]) -> HashSet<String> {
+    tree_changes
+        .iter()
+        .filter(|c| c.status == DiffStatus::Deleted)
+        .filter_map(|c| c.old_path.clone())
+        .collect()
+}
+
+fn delete_path_scheduled_for_removal(
+    rel: &str,
+    delete_paths: &HashSet<String>,
+    ignorecase: bool,
+) -> bool {
+    if ignorecase {
+        delete_paths
+            .iter()
+            .any(|del| crate::path_icase::paths_equal(rel.as_bytes(), del.as_bytes(), true))
+    } else {
+        delete_paths.contains(rel)
+    }
+}
+
+/// Scan wholesale-delete directory trees for extra untracked/ignored files without a full status walk.
+///
+/// Every on-disk file under `delete_roots` must appear in `delete_paths` (scheduled removal). Any
+/// other file is classified with the same ignore rules as [`collect_untracked_and_ignored`].
+fn collect_untracked_for_wholesale_delete_roots(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    delete_paths: &HashSet<String>,
+    delete_roots: &BTreeSet<String>,
+    ignorecase: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let config = ConfigSet::load(repo.environment(), Some(repo.git_dir()), true)
+        .ok()
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::new(ConfigSet::new()));
+    let rules = WorktreeRules::from_parts_index_attributes_only(repo, index, config)?;
+    let mut matcher = rules.ignore_mut();
+    let mut untracked = Vec::new();
+    let mut ignored = Vec::new();
+
+    for root in delete_roots {
+        let abs_root = work_tree.join(root);
+        if !abs_root.is_dir() {
+            continue;
+        }
+        let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, root.clone())];
+        while let Some((abs, rel_prefix)) = stack.pop() {
+            let read_dir = match fs::read_dir(&abs) {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            for entry in read_dir.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let rel = if rel_prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{rel_prefix}/{name}")
+                };
+                let file_type = match entry.file_type() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if file_type.is_dir() {
+                    stack.push((entry.path(), rel));
+                    continue;
+                }
+                if !file_type.is_file() && !file_type.is_symlink() {
+                    continue;
+                }
+                if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
+                    continue;
+                }
+                if index.get(rel.as_bytes(), 0).is_some() {
+                    continue;
+                }
+                if matcher.is_path_ignored(repo, Some(index), &rel, false)? {
+                    ignored.push(rel);
+                } else {
+                    untracked.push(rel);
+                }
+            }
+        }
+    }
+    Ok((untracked, ignored))
+}
+
 pub(crate) fn collect_untracked_for_tree_changes(
     repo: &Repository,
     index: &mut Index,
@@ -549,11 +640,11 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
     let delete_specs = untracked_scan_pathspecs_for_deletes(tree_changes);
     let delete_roots: BTreeSet<String> = delete_specs.iter().cloned().collect();
     let mut pathspecs: BTreeSet<String> = added_specs.iter().cloned().collect();
-    pathspecs.extend(delete_specs);
+    pathspecs.extend(delete_specs.iter().cloned());
     if pathspecs.is_empty() {
         return Ok((Vec::new(), Vec::new(), true, false));
     }
-    let specs: Vec<String> = pathspecs.into_iter().collect();
+    let all_specs: Vec<String> = pathspecs.into_iter().collect();
     let ignorecase = repo
         .config()
         .ok()
@@ -569,18 +660,52 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
             delete_roots.contains(root)
         }
     };
-    let (untracked, mut ignored) = collect_untracked_and_ignored_with_cache(
-        repo,
-        index,
-        work_tree,
-        IgnoredMode::No,
-        true,
-        &specs,
-        true,
-    )?;
+    let delete_paths = delete_paths_from_tree_changes(tree_changes);
+    let use_fast_wholesale_scan = !delete_roots.is_empty()
+        && delete_paths.len() >= WHOLESALE_FAST_UNTRACKED_SCAN_MIN
+        && delete_roots
+            .iter()
+            .all(|root| !root.is_empty() && !root.contains('/'));
+    let mut untracked = Vec::new();
+    let mut ignored = Vec::new();
+    if use_fast_wholesale_scan {
+        let (u, i) = collect_untracked_for_wholesale_delete_roots(
+            repo,
+            index,
+            work_tree,
+            &delete_paths,
+            &delete_roots,
+            ignorecase,
+        )?;
+        untracked.extend(u);
+        ignored.extend(i);
+    }
+    let scan_specs: Vec<String> = if use_fast_wholesale_scan {
+        added_specs
+            .into_iter()
+            .filter(|spec| work_tree.join(spec).exists())
+            .collect()
+    } else {
+        all_specs.clone()
+    };
+    if !scan_specs.is_empty() {
+        let (u, mut ign) = collect_untracked_and_ignored_with_cache(
+            repo,
+            index,
+            work_tree,
+            IgnoredMode::No,
+            true,
+            &scan_specs,
+            true,
+        )?;
+        untracked.extend(u);
+        ignored.append(&mut ign);
+    }
     let untracked_blocks_wholesale =
         !delete_roots.is_empty() && untracked.iter().any(|p| under_delete_root(p));
-    let need_traditional_ignored = !delete_roots.is_empty() && !untracked_blocks_wholesale;
+    let need_traditional_ignored = !delete_roots.is_empty()
+        && !untracked_blocks_wholesale
+        && !use_fast_wholesale_scan;
     if need_traditional_ignored {
         let (_, ignored_under_deletes) = collect_untracked_and_ignored_with_cache(
             repo,
@@ -588,7 +713,7 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
             work_tree,
             IgnoredMode::Traditional,
             true,
-            &specs,
+            &all_specs,
             true,
         )?;
         ignored = ignored_under_deletes;
@@ -910,6 +1035,47 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn fast_wholesale_delete_untracked_scan_ignores_scheduled_paths() {
+        let (tmp, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        std::fs::create_dir_all(wt.join("bulk")).expect("mkdir");
+        let mut delete_paths = HashSet::new();
+        for i in 0..40 {
+            let rel = format!("bulk/f{i:02}.txt");
+            std::fs::write(wt.join(&rel), format!("body {i}\n")).expect("write");
+            delete_paths.insert(rel);
+        }
+        let delete_roots: BTreeSet<String> = ["bulk".into()].into_iter().collect();
+        let index = repo.load_index().expect("index");
+        let (untracked, ignored) = collect_untracked_for_wholesale_delete_roots(
+            &repo,
+            &index,
+            wt,
+            &delete_paths,
+            &delete_roots,
+            false,
+        )
+        .expect("scan");
+        assert!(untracked.is_empty(), "got {untracked:?}");
+        assert!(ignored.is_empty(), "got {ignored:?}");
+        std::fs::write(wt.join("bulk/extra.txt"), b"x\n").expect("extra");
+        let (untracked, _) = collect_untracked_for_wholesale_delete_roots(
+            &repo,
+            &index,
+            wt,
+            &delete_paths,
+            &delete_roots,
+            false,
+        )
+        .expect("scan again");
+        assert!(
+            untracked.iter().any(|p| p == "bulk/extra.txt"),
+            "expected extra untracked, got {untracked:?}"
+        );
+        let _ = tmp;
     }
 
     #[test]

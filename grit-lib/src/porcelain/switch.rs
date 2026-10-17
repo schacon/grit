@@ -403,8 +403,13 @@ fn prepare_tree_switch_allow_local(
     to_tree: &ObjectId,
 ) -> Result<PreparedSwitch> {
     let snapshot = load_worktree_snapshot(repo)?;
-    prepare_tree_transition_allow_local(repo, snapshot.head_tree.as_ref(), to_tree, &HashSet::new())
-        .map_err(tree_transition_prepare_to_error)
+    prepare_tree_transition_allow_local(
+        repo,
+        snapshot.head_tree.as_ref(),
+        to_tree,
+        &HashSet::new(),
+    )
+    .map_err(tree_transition_prepare_to_error)
 }
 
 /// Local edits on tree-diff paths block a tree transition.
@@ -438,22 +443,24 @@ pub(crate) fn prepare_tree_transition_allow_local(
     force_preserve_worktree: &HashSet<String>,
 ) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
     let mut snapshot = load_worktree_snapshot(repo)?;
-    snapshot.head_tree = from_tree.copied();
+    let from_tree_oid = from_tree.copied().or(snapshot.head_tree);
+    snapshot.head_tree = from_tree_oid;
     let trust_index_for_old_tree =
-        from_tree.is_some() && !snapshot.index.entries.iter().any(|e| e.stage() != 0);
-    let tree_changes = if from_tree == Some(to_tree) {
+        from_tree_oid.is_some() && !snapshot.index.entries.iter().any(|e| e.stage() != 0);
+    let from_tree_ref = from_tree_oid.as_ref();
+    let tree_changes = if from_tree_ref == Some(to_tree) {
         Vec::new()
     } else if trust_index_for_old_tree {
         crate::diff::diff_trees_with_index(
             repo.odb(),
             &snapshot.index,
-            from_tree,
+            from_tree_ref,
             Some(to_tree),
             "",
             true,
         )?
     } else {
-        crate::diff::diff_trees(repo.odb(), from_tree, Some(to_tree), "")?
+        crate::diff::diff_trees(repo.odb(), from_tree_ref, Some(to_tree), "")?
     };
     let (staged, unstaged, _index_changed) =
         crate::porcelain::worktree_guard::local_change_diffs_for_tree_changes(
