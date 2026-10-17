@@ -323,6 +323,152 @@ fn split_descendants_keep_trees() {
 }
 
 #[test]
+fn split_rename_only_commit_new_pathspec_succeeds() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let _ = commit_file(wt, "old.txt", "v", "add old");
+    git(wt, &["mv", "old.txt", "new.txt"]);
+    git(wt, &["commit", "-m", "rename only"]);
+    let head: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+    let grit = open_grit(wt);
+    let plan = split_plan(
+        &grit,
+        head,
+        &["new.txt"],
+        "split new\n",
+        None,
+        &committer(9),
+    );
+    let new_head = plan
+        .commits
+        .iter()
+        .find(|r| r.old == head)
+        .and_then(|r| r.new)
+        .expect("new head");
+    let parent = parse_commit(&grit.odb().read(&new_head).unwrap().data)
+        .unwrap()
+        .parents[0];
+    let split_tree = parse_commit(&grit.odb().read(&parent).unwrap().data)
+        .unwrap()
+        .tree;
+    assert!(tree_has_path(&grit, split_tree, "old.txt"));
+    assert!(tree_has_path(&grit, split_tree, "new.txt"));
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn split_rename_pathspec_new_side_keeps_old_path() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let _ = commit_file(wt, "old.txt", "v", "add old");
+    git(wt, &["mv", "old.txt", "new.txt"]);
+    std::fs::write(wt.join("other.txt"), b"x").unwrap();
+    git(wt, &["add", "other.txt"]);
+    git(wt, &["commit", "-m", "rename and add"]);
+    let head: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+    let grit = open_grit(wt);
+    let plan = split_plan(
+        &grit,
+        head,
+        &["new.txt"],
+        "split new\n",
+        None,
+        &committer(10),
+    );
+    let new_head = plan
+        .commits
+        .iter()
+        .find(|r| r.old == head)
+        .and_then(|r| r.new)
+        .expect("new head");
+    let parent = parse_commit(&grit.odb().read(&new_head).unwrap().data)
+        .unwrap()
+        .parents[0];
+    let split_tree = parse_commit(&grit.odb().read(&parent).unwrap().data)
+        .unwrap()
+        .tree;
+    assert!(tree_has_path(&grit, split_tree, "old.txt"));
+    assert!(tree_has_path(&grit, split_tree, "new.txt"));
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn split_copy_pathspec_new_side_keeps_source_path() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let _ = commit_file(wt, "source.txt", "v", "add source");
+    std::fs::write(wt.join("copy.txt"), b"v").unwrap();
+    std::fs::write(wt.join("other.txt"), b"x").unwrap();
+    git(wt, &["add", "copy.txt", "other.txt"]);
+    git(wt, &["commit", "-m", "copy and add"]);
+    let head: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+    let grit = open_grit(wt);
+    let plan = split_plan(
+        &grit,
+        head,
+        &["copy.txt"],
+        "split copy\n",
+        None,
+        &committer(12),
+    );
+    let new_head = plan
+        .commits
+        .iter()
+        .find(|r| r.old == head)
+        .and_then(|r| r.new)
+        .expect("new head");
+    let parent = parse_commit(&grit.odb().read(&new_head).unwrap().data)
+        .unwrap()
+        .parents[0];
+    let split_tree = parse_commit(&grit.odb().read(&parent).unwrap().data)
+        .unwrap()
+        .tree;
+    assert!(tree_has_path(&grit, split_tree, "source.txt"));
+    assert!(tree_has_path(&grit, split_tree, "copy.txt"));
+    git_fsck_strict(wt);
+}
+
+#[test]
+fn split_file_to_directory_partial_add_avoids_df_clash() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let _ = commit_file(wt, "foo", "file", "file at foo");
+    std::fs::remove_file(wt.join("foo")).unwrap();
+    std::fs::create_dir_all(wt.join("foo")).unwrap();
+    std::fs::write(wt.join("foo/bar"), b"nested").unwrap();
+    git(wt, &["add", "-A"]);
+    git(wt, &["commit", "-m", "file to dir"]);
+    let head: ObjectId = git(wt, &["rev-parse", "HEAD"]).trim().parse().unwrap();
+
+    let grit = open_grit(wt);
+    let plan = split_plan(
+        &grit,
+        head,
+        &["foo/bar"],
+        "nested only\n",
+        None,
+        &committer(11),
+    );
+    let new_head = plan
+        .commits
+        .iter()
+        .find(|r| r.old == head)
+        .and_then(|r| r.new)
+        .expect("new head");
+    let parent = parse_commit(&grit.odb().read(&new_head).unwrap().data)
+        .unwrap()
+        .parents[0];
+    let split_tree = parse_commit(&grit.odb().read(&parent).unwrap().data)
+        .unwrap()
+        .tree;
+    assert!(tree_has_path(&grit, split_tree, "foo/bar"));
+    git_fsck_strict(wt);
+}
+
+#[test]
 fn history_split_matches_git_commit_tree_reconstruction() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();

@@ -1,7 +1,5 @@
 //! Split one commit by pathspec: peel matching changes into a new parent commit.
 
-use std::collections::HashSet;
-
 use crate::diff::{diff_trees_with_renames, DiffEntry, DiffStatus};
 use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
@@ -103,54 +101,115 @@ fn build_split_tree(
     }
 
     let mut selected = Vec::new();
+    let mut selects_every_change = true;
     for entry in &diff {
-        if diff_entry_matches_pathspec(entry, pathspec, ctx) {
-            selected.push(entry.clone());
+        let sides = pathspec_sides(entry, pathspec, ctx);
+        if sides.any() {
+            selected.push((entry.clone(), sides));
+        }
+        if !diff_entry_fully_selected(entry, sides) {
+            selects_every_change = false;
         }
     }
 
     if selected.is_empty() {
         return Err(HistoryError::SplitSelectsNothing);
     }
-    if selected.len() == diff.len() {
+    if selects_every_change {
         return Err(HistoryError::SplitSelectsEverything);
     }
 
     let mut index = index_from_tree(repo, &parent_tree).map_err(library_err)?;
-    for entry in &selected {
-        apply_diff_entry_to_index(&mut index, entry)?;
+    for (entry, sides) in &selected {
+        apply_diff_entry_to_index(&mut index, entry, *sides)?;
     }
     write_tree_from_index(odb, &index, "").map_err(library_err)
 }
 
-fn diff_entry_matches_pathspec(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PathspecSides {
+    old: bool,
+    new: bool,
+}
+
+impl PathspecSides {
+    fn any(self) -> bool {
+        self.old || self.new
+    }
+}
+
+/// Whether the pathspec covers the whole diff entry (both sides for rename/copy).
+fn diff_entry_fully_selected(entry: &DiffEntry, sides: PathspecSides) -> bool {
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => sides.old && sides.new,
+        DiffStatus::Added => sides.new,
+        DiffStatus::Deleted => sides.old,
+        DiffStatus::Modified | DiffStatus::TypeChanged => sides.old && sides.new,
+        DiffStatus::Unmerged => false,
+    }
+}
+
+fn pathspec_sides(
     entry: &DiffEntry,
     pathspec: Pathspec<'_>,
     ctx: PathspecMatchContext,
-) -> bool {
-    let mut paths = HashSet::new();
-    if let Some(old) = &entry.old_path {
-        paths.insert(old.as_str());
-    }
-    if let Some(new) = &entry.new_path {
-        paths.insert(new.as_str());
-    }
-    paths
-        .into_iter()
-        .any(|path| matches_pathspec_list_with_context(path, pathspec, ctx))
+) -> PathspecSides {
+    let old = entry
+        .old_path
+        .as_deref()
+        .is_some_and(|path| matches_pathspec_list_with_context(path, pathspec, ctx));
+    let new = entry
+        .new_path
+        .as_deref()
+        .is_some_and(|path| matches_pathspec_list_with_context(path, pathspec, ctx));
+    PathspecSides { old, new }
 }
 
-fn apply_diff_entry_to_index(index: &mut Index, entry: &DiffEntry) -> Result<(), HistoryError> {
+/// Drop index entries for proper file prefixes of `path` so adding a nested path cannot
+/// clash with a file left from the parent tree (partial split D/F cases).
+fn prepare_index_for_nested_add(index: &mut Index, path: &str) {
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() < 2 {
+        return;
+    }
+    for i in 1..parts.len() {
+        let prefix = parts[..i].join("/");
+        if index
+            .entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path == prefix.as_bytes())
+        {
+            index.remove_paths([prefix.as_bytes()]);
+        }
+    }
+}
+
+fn add_index_blob(index: &mut Index, path: &str, mode: u32, oid: ObjectId) {
+    prepare_index_for_nested_add(index, path);
+    index.add_or_replace(index_entry(path, mode, oid));
+}
+
+fn apply_diff_entry_to_index(
+    index: &mut Index,
+    entry: &DiffEntry,
+    sides: PathspecSides,
+) -> Result<(), HistoryError> {
     match entry.status {
         DiffStatus::Added | DiffStatus::Copied => {
+            if !sides.new {
+                return Ok(());
+            }
             let path = entry
                 .new_path
                 .as_deref()
                 .ok_or_else(|| planning_err("added diff entry missing new path"))?;
             let mode = mode_from_octal(&entry.new_mode)?;
-            index.add_or_replace(index_entry(path, mode, entry.new_oid));
+            add_index_blob(index, path, mode, entry.new_oid);
         }
         DiffStatus::Deleted => {
+            if !sides.old {
+                return Ok(());
+            }
             let path = entry
                 .old_path
                 .as_deref()
@@ -158,24 +217,42 @@ fn apply_diff_entry_to_index(index: &mut Index, entry: &DiffEntry) -> Result<(),
             index.remove_paths([path.as_bytes()]);
         }
         DiffStatus::Modified | DiffStatus::TypeChanged => {
+            if !sides.any() {
+                return Ok(());
+            }
             let path = entry
                 .new_path
                 .as_deref()
                 .or(entry.old_path.as_deref())
                 .ok_or_else(|| planning_err("modified diff entry missing path"))?;
             let mode = mode_from_octal(&entry.new_mode)?;
-            index.add_or_replace(index_entry(path, mode, entry.new_oid));
+            add_index_blob(index, path, mode, entry.new_oid);
         }
         DiffStatus::Renamed => {
-            if let Some(old) = &entry.old_path {
-                index.remove_paths([old.as_bytes()]);
+            if sides.old && sides.new {
+                if let Some(old) = &entry.old_path {
+                    index.remove_paths([old.as_bytes()]);
+                }
+                let path = entry
+                    .new_path
+                    .as_deref()
+                    .ok_or_else(|| planning_err("rename diff entry missing new path"))?;
+                let mode = mode_from_octal(&entry.new_mode)?;
+                add_index_blob(index, path, mode, entry.new_oid);
+            } else if sides.new {
+                let path = entry
+                    .new_path
+                    .as_deref()
+                    .ok_or_else(|| planning_err("rename diff entry missing new path"))?;
+                let mode = mode_from_octal(&entry.new_mode)?;
+                add_index_blob(index, path, mode, entry.new_oid);
+            } else if sides.old {
+                let path = entry
+                    .old_path
+                    .as_deref()
+                    .ok_or_else(|| planning_err("rename diff entry missing old path"))?;
+                index.remove_paths([path.as_bytes()]);
             }
-            let path = entry
-                .new_path
-                .as_deref()
-                .ok_or_else(|| planning_err("rename diff entry missing new path"))?;
-            let mode = mode_from_octal(&entry.new_mode)?;
-            index.add_or_replace(index_entry(path, mode, entry.new_oid));
         }
         DiffStatus::Unmerged => {
             return Err(planning_err("unexpected unmerged diff entry in split"));
