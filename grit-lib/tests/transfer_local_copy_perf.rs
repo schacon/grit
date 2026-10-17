@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use grit_lib::objects::odb::Odb;
 use grit_lib::objects::ObjectId;
-use grit_lib::remote::transfer::{build_pack, PackBuildOptions};
+use grit_lib::remote::push_report::PushRefStatus;
+use grit_lib::remote::transfer::{
+    build_pack, push_local, PackBuildOptions, PushOptions, PushRefSpec,
+};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -127,4 +130,58 @@ fn cargo_mirror_for_local_copy_build_time_when_fixture_present() {
         elapsed < 240.0,
         "cargo-mirror for_local_copy pack build took {elapsed:.2}s (budget 240s; origin/main ~77s, prior branch ~670s)"
     );
+}
+
+/// Initial local push to an empty bare repo must link packs, not rebuild (~500-commit class).
+#[test]
+fn push_local_empty_bare_links_pack_within_budget() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local = tmp.path().join("local");
+    let dest = tmp.path().join("dest.git");
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+    git(&local, &["init", "-q", "-b", "main", "."]);
+    git(&dest, &["init", "-q", "--bare", "-b", "main", "."]);
+    let local_git = local.join(".git");
+    for i in 0..500 {
+        let name = format!("f{i}.txt");
+        std::fs::write(local.join(&name), format!("payload {i}\n")).unwrap();
+        git(&local, &["add", &name]);
+        git(&local, &["commit", "-qm", &format!("c{i}")]);
+    }
+    git(&local, &["repack", "-q", "-a", "-d", "-f"]);
+    let rev_out = Command::new("git")
+        .current_dir(&local)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("rev-parse");
+    let tip = ObjectId::from_hex(String::from_utf8_lossy(&rev_out.stdout).trim()).expect("tip");
+
+    let t0 = Instant::now();
+    let outcome = push_local(
+        &local_git,
+        &dest,
+        &[PushRefSpec {
+            src: Some(tip),
+            dst: "refs/heads/main".to_owned(),
+            force: false,
+            delete: false,
+            expected_old: None,
+            expect_absent: false,
+        }],
+        &PushOptions::default(),
+    )
+    .expect("push_local");
+    let elapsed = t0.elapsed().as_secs_f64();
+    assert_eq!(outcome.results[0].status, PushRefStatus::Ok);
+    assert!(
+        elapsed < 5.0,
+        "500-commit repacked push to empty bare took {elapsed:.2}s (budget 5s; pre-fix ~31s)"
+    );
+    let packs = std::fs::read_dir(dest.join("objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        .count();
+    assert_eq!(packs, 1, "expected one linked pack on remote");
 }

@@ -796,6 +796,144 @@ fn linked_worktree_resolves_relative_remote_from_worktree_root() {
     assert_eq!(outcome.results[0].status, PushRefStatus::UpToDate);
 }
 
+fn pack_files(git_dir: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(git_dir.join("objects/pack"))
+        .expect("pack dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+        .collect()
+}
+
+#[test]
+fn push_local_into_empty_repo_links_local_pack() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let remote = tmp.path().join("remote.git");
+    let local = tmp.path().join("local");
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&local).unwrap();
+
+    git(&remote, &["init", "-q", "--bare", "-b", "main", "."]);
+    let remote_git = remote.as_path();
+
+    git(&local, &["init", "-q", "-b", "main", "."]);
+    let local_git = local.join(".git");
+    for i in 0..3 {
+        std::fs::write(local.join(format!("f{i}.txt")), format!("payload {i}\n")).unwrap();
+        git(&local, &["add", "."]);
+        git(&local, &["commit", "-q", "-m", &format!("c{i}")]);
+    }
+    git(&local, &["repack", "-a", "-d", "-f"]);
+
+    let local_packs = pack_files(&local_git);
+    assert_eq!(local_packs.len(), 1, "fixture must have one pack");
+    let local_pack_name = local_packs[0].file_name().expect("pack name").to_owned();
+    let tip = rev_parse(&local, "refs/heads/main");
+
+    push_local(
+        &local_git,
+        remote_git,
+        &[PushRefSpec {
+            src: Some(tip),
+            dst: "refs/heads/main".to_owned(),
+            force: false,
+            delete: false,
+            expected_old: None,
+            expect_absent: false,
+        }],
+        &PushOptions::default(),
+    )
+    .expect("push_local");
+
+    let remote_packs = pack_files(remote_git);
+    assert_eq!(remote_packs.len(), 1, "expected one linked pack");
+    assert_eq!(
+        remote_packs[0].file_name().expect("remote pack name"),
+        local_pack_name.as_os_str(),
+        "initial push must link local packfiles instead of rebuilding"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let local_meta = std::fs::metadata(&local_packs[0]).expect("local pack metadata");
+        let remote_meta = std::fs::metadata(&remote_packs[0]).expect("remote pack metadata");
+        assert_eq!(
+            (local_meta.dev(), local_meta.ino()),
+            (remote_meta.dev(), remote_meta.ino()),
+            "linked pack should share device and inode"
+        );
+    }
+    fsck_clean(remote_git);
+}
+
+#[test]
+fn push_local_shallow_repacked_missing_parent_fails() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let origin = tmp.path().join("origin.git");
+    let seed = tmp.path().join("seed");
+    let shallow = tmp.path().join("shallow");
+    let dest = tmp.path().join("dest.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(&seed).unwrap();
+
+    git(&origin, &["init", "-q", "--bare", "-b", "main", "."]);
+    git(&seed, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(seed.join("a.txt"), "one\n").unwrap();
+    git(&seed, &["add", "a.txt"]);
+    git(&seed, &["commit", "-q", "-m", "c1"]);
+    std::fs::write(seed.join("b.txt"), "two\n").unwrap();
+    git(&seed, &["add", "b.txt"]);
+    git(&seed, &["commit", "-q", "-m", "c2"]);
+    git(
+        &seed,
+        &[
+            "push",
+            "-q",
+            origin.to_str().unwrap(),
+            "refs/heads/main:refs/heads/main",
+        ],
+    );
+
+    std::fs::create_dir_all(&shallow).unwrap();
+    let origin_url = format!(
+        "file://{}",
+        origin.canonicalize().expect("origin path").display()
+    );
+    git(&shallow, &["clone", "-q", "--depth", "1", &origin_url, "."]);
+    git(&shallow, &["repack", "-a", "-d", "-f"]);
+    let shallow_git = shallow.join(".git");
+    let tip = rev_parse(&shallow, "refs/heads/main");
+
+    std::fs::create_dir_all(&dest).unwrap();
+    git(&dest, &["init", "-q", "--bare", "-b", "main", "."]);
+    let dest_git = dest.as_path();
+
+    let err = push_local(
+        &shallow_git,
+        dest_git,
+        &[PushRefSpec {
+            src: Some(tip),
+            dst: "refs/heads/main".to_owned(),
+            force: false,
+            delete: false,
+            expected_old: None,
+            expect_absent: false,
+        }],
+        &PushOptions::default(),
+    )
+    .expect_err("shallow push must fail when parent objects are absent");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("missing") || msg.contains("not found") || msg.contains("Object"),
+        "expected missing-object error, got: {msg}"
+    );
+    assert_eq!(
+        remote_ref(dest_git, "refs/heads/main"),
+        None,
+        "ref must not be updated when object copy fails"
+    );
+}
+
 fn git_count_objects(git_dir: &Path) -> (u32, u32) {
     let out = git(git_dir, &["count-objects", "-v"]);
     let mut loose = 0u32;
