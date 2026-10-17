@@ -48,6 +48,7 @@ fn split_plan(
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer_line.to_string(),
+            preserve_committer: false,
         },
     )
     .expect("split plan")
@@ -147,6 +148,7 @@ fn split_rejects_all_or_nothing_selection() {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(3),
+            preserve_committer: false,
         },
     )
     .unwrap_err();
@@ -162,6 +164,7 @@ fn split_rejects_all_or_nothing_selection() {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(4),
+            preserve_committer: false,
         },
     )
     .unwrap_err();
@@ -188,6 +191,7 @@ fn split_rejects_merge_commit() {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(5),
+            preserve_committer: false,
         },
     )
     .unwrap_err();
@@ -282,6 +286,7 @@ fn split_in_bare_repository() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: committer(2),
+            preserve_committer: false,
         },
     )
     .expect("bare split");
