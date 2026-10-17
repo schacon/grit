@@ -322,11 +322,13 @@ fn apply_failure_after_ref_update(
     }
 }
 
-/// Pre-checkout bytes for one path in the forward tree transition (missing = absent).
+/// Pre-checkout state for one path in the forward tree transition (missing = absent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorktreePathSnapshot {
     bytes: Option<Vec<u8>>,
     symlink: bool,
+    #[cfg(unix)]
+    mode: u32,
 }
 
 fn snapshot_worktree_for_tree_transition(
@@ -369,6 +371,8 @@ fn read_worktree_path_snapshot(work_tree: &Path, path: &str) -> WorktreePathSnap
             return WorktreePathSnapshot {
                 bytes: None,
                 symlink: false,
+                #[cfg(unix)]
+                mode: 0o644,
             };
         }
     };
@@ -377,17 +381,34 @@ fn read_worktree_path_snapshot(work_tree: &Path, path: &str) -> WorktreePathSnap
         return WorktreePathSnapshot {
             bytes: target.map(|p| p.as_os_str().as_encoded_bytes().to_vec()),
             symlink: true,
+            #[cfg(unix)]
+            mode: 0,
         };
     }
     if meta.is_file() {
-        return WorktreePathSnapshot {
-            bytes: fs::read(&abs).ok(),
-            symlink: false,
-        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = meta.permissions().mode() & 0o7777;
+            return WorktreePathSnapshot {
+                bytes: fs::read(&abs).ok(),
+                symlink: false,
+                mode,
+            };
+        }
+        #[cfg(not(unix))]
+        {
+            return WorktreePathSnapshot {
+                bytes: fs::read(&abs).ok(),
+                symlink: false,
+            };
+        }
     }
     WorktreePathSnapshot {
         bytes: None,
         symlink: false,
+        #[cfg(unix)]
+        mode: 0o644,
     }
 }
 
@@ -407,7 +428,15 @@ fn restore_worktree_after_failed_apply(
     let Some(snapshot) = worktree_snapshot else {
         return Ok(());
     };
-    for (path, saved) in snapshot {
+    let mut paths: Vec<&String> = snapshot.keys().collect();
+    paths.sort_by(|a, b| {
+        b.matches('/')
+            .count()
+            .cmp(&a.matches('/').count())
+            .then_with(|| b.cmp(a))
+    });
+    for path in paths {
+        let saved = &snapshot[path];
         let abs = work_tree.join(path);
         restore_worktree_path(&abs, saved).map_err(|e| HistoryError::WorktreeApply {
             message: format!("failed to restore '{path}': {e}"),
@@ -416,18 +445,26 @@ fn restore_worktree_after_failed_apply(
     Ok(())
 }
 
+fn remove_existing_worktree_path(abs: &Path) -> std::io::Result<()> {
+    if abs.is_dir() {
+        fs::remove_dir_all(abs)
+    } else if abs.is_symlink() || abs.is_file() {
+        fs::remove_file(abs)
+    } else {
+        Ok(())
+    }
+}
+
 fn restore_worktree_path(abs: &Path, saved: &WorktreePathSnapshot) -> std::io::Result<()> {
     if saved.bytes.is_none() {
-        if abs.is_symlink() || abs.is_file() {
-            fs::remove_file(abs)?;
-        }
+        remove_existing_worktree_path(abs)?;
         return Ok(());
     }
     let Some(bytes) = saved.bytes.as_ref() else {
         return Ok(());
     };
     if saved.symlink {
-        let _ = fs::remove_file(abs);
+        remove_existing_worktree_path(abs)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
@@ -446,10 +483,20 @@ fn restore_worktree_path(abs: &Path, saved: &WorktreePathSnapshot) -> std::io::R
         }
         return Ok(());
     }
+    remove_existing_worktree_path(abs)?;
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(abs, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if saved.mode != 0 {
+            let mut perms = fs::metadata(abs)?.permissions();
+            perms.set_mode(saved.mode);
+            fs::set_permissions(abs, perms)?;
+        }
+    }
     Ok(())
 }
 
@@ -862,6 +909,23 @@ mod inject_and_apply_tests {
             mtime_nsec: 0,
             dev: 0,
             ino: 0,
+            mode: crate::index::MODE_EXECUTABLE,
+            uid: 0,
+            gid: 0,
+            size: 5,
+            oid: blob,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        idx2.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
             mode: crate::index::MODE_REGULAR,
             uid: 0,
             gid: 0,
@@ -897,6 +961,20 @@ mod inject_and_apply_tests {
         .expect("plan");
 
         let before_index = fs::read(repo.index_path()).expect("index");
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+        #[cfg(unix)]
+        let before_file_mode = fs::metadata(dir.path().join("file.txt"))
+            .expect("file meta")
+            .permissions()
+            .mode()
+            & 0o7777;
+        #[cfg(unix)]
+        assert_eq!(
+            before_file_mode & 0o111,
+            0,
+            "precondition: file.txt is not executable"
+        );
         set_test_inject_index_write_fail_remaining(1);
         let err = apply_rewrite(
             &repo,
@@ -927,6 +1005,331 @@ mod inject_and_apply_tests {
         assert!(
             !dir.path().join("two.txt").exists(),
             "partial checkout must be rolled back"
+        );
+        #[cfg(unix)]
+        {
+            let after_file_mode = fs::metadata(dir.path().join("file.txt"))
+                .expect("file meta")
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(
+                after_file_mode, before_file_mode,
+                "rollback must restore pre-apply permission bits"
+            );
+            assert_eq!(
+                after_file_mode & 0o111,
+                0,
+                "partial 100644→100755 checkout must not survive rollback"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_worktree_path_replaces_directory_with_saved_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tracked = dir.path().join("tracked");
+        fs::create_dir_all(&tracked).expect("mkdir");
+        fs::write(tracked.join("child"), "nested\n").expect("child");
+        let saved = WorktreePathSnapshot {
+            bytes: Some(b"original file\n".to_vec()),
+            symlink: false,
+            #[cfg(unix)]
+            mode: 0o100644,
+        };
+        restore_worktree_path(&tracked, &saved).expect("restore regular file");
+        assert!(tracked.is_file());
+        assert!(!tracked.is_dir());
+        assert_eq!(
+            fs::read_to_string(&tracked).expect("read"),
+            "original file\n"
+        );
+        assert!(
+            !tracked.join("child").exists(),
+            "directory subtree from partial checkout must be removed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_worktree_path_replaces_symlink_with_saved_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link_target = dir.path().join("link-target.txt");
+        fs::write(&link_target, "target content\n").expect("target");
+        let tracked = dir.path().join("tracked.txt");
+        std::os::unix::fs::symlink("link-target.txt", &tracked).expect("symlink");
+        let saved = WorktreePathSnapshot {
+            bytes: Some(b"original file\n".to_vec()),
+            symlink: false,
+            mode: 0o100644,
+        };
+        restore_worktree_path(&tracked, &saved).expect("restore");
+        assert!(tracked.is_file());
+        assert!(!tracked.is_symlink());
+        assert_eq!(
+            fs::read_to_string(tracked).expect("read"),
+            "original file\n"
+        );
+        assert_eq!(
+            fs::read_to_string(link_target).expect("read target"),
+            "target content\n",
+            "must not follow symlink and overwrite the external target"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_rewrite_injected_checkout_failure_restores_regular_file_after_symlink_transition() {
+        use crate::repo::set_test_inject_index_write_fail_remaining;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        let blob = repo.odb().write(ObjectKind::Blob, b"file\n").expect("blob");
+        let mut index = crate::index::Index::new();
+        index.hash_algo = repo.odb().hash_algo();
+        index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 5,
+            oid: blob,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        let tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
+        repo.write_index(&mut index).expect("write index");
+        fs::write(dir.path().join("file.txt"), "file\n").expect("write");
+        let link_target_path = dir.path().join("link-target.txt");
+        fs::write(&link_target_path, "target content\n").expect("link target");
+        let commit = crate::objects::serialize_commit(&crate::objects::CommitData {
+            tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "root\n".into(),
+            raw_message: None,
+            extra_headers: vec![],
+        });
+        let root = repo
+            .odb()
+            .write(ObjectKind::Commit, &commit)
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &root).expect("ref");
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        let link_blob = repo
+            .odb()
+            .write(ObjectKind::Blob, b"link-target.txt")
+            .expect("link blob");
+        let mut idx2 = index.clone();
+        idx2.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_SYMLINK,
+            uid: 0,
+            gid: 0,
+            size: 14,
+            oid: link_blob,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        let child_tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &idx2, "").expect("tree");
+        let mut edits = HistoryEdits::new();
+        edits.insert(
+            root,
+            CommitEdit::Rewrite {
+                tree: Some(child_tree),
+                message: Some("rewritten\n".into()),
+                author: None,
+                parents: None,
+            },
+        );
+        let plan = plan_rewrite(
+            &repo,
+            &edits,
+            &RewriteOptions {
+                scope: RefScope::Head,
+                empty: EmptyPolicy::Drop,
+                committer: "T <t@t> 1 +0000".into(),
+            },
+        )
+        .expect("plan");
+
+        set_test_inject_index_write_fail_remaining(1);
+        let err = apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity: "T <t@t>".into(),
+                reflog_message: "rewrite".into(),
+            },
+        )
+        .expect_err("inject checkout failure");
+        crate::repo::set_test_inject_index_write_fail(false);
+        assert!(matches!(err, HistoryError::WorktreeApply { .. }));
+
+        let file_path = dir.path().join("file.txt");
+        assert!(file_path.is_file());
+        assert!(!file_path.is_symlink());
+        assert_eq!(fs::read_to_string(&file_path).expect("read file"), "file\n");
+        assert_eq!(
+            fs::read_to_string(&link_target_path).expect("read target"),
+            "target content\n"
+        );
+    }
+
+    #[test]
+    fn apply_rewrite_injected_checkout_failure_restores_regular_file_after_directory_transition() {
+        use crate::repo::set_test_inject_index_write_fail_remaining;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        let blob = repo.odb().write(ObjectKind::Blob, b"file\n").expect("blob");
+        let mut index = crate::index::Index::new();
+        index.hash_algo = repo.odb().hash_algo();
+        index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 5,
+            oid: blob,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt".to_vec(),
+            base_index_pos: 0,
+        });
+        let tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
+        repo.write_index(&mut index).expect("write index");
+        fs::write(dir.path().join("file.txt"), "file\n").expect("write");
+        let commit = crate::objects::serialize_commit(&crate::objects::CommitData {
+            tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "root\n".into(),
+            raw_message: None,
+            extra_headers: vec![],
+        });
+        let root = repo
+            .odb()
+            .write(ObjectKind::Commit, &commit)
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &root).expect("ref");
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        let nested = repo
+            .odb()
+            .write(ObjectKind::Blob, b"nested\n")
+            .expect("nested blob");
+        let mut idx2 = index.clone();
+        idx2.remove_paths([b"file.txt".as_slice()]);
+        idx2.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: 7,
+            oid: nested,
+            flags: 8,
+            flags_extended: None,
+            path: b"file.txt/child".to_vec(),
+            base_index_pos: 0,
+        });
+        let child_tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &idx2, "").expect("tree");
+        let mut edits = HistoryEdits::new();
+        edits.insert(
+            root,
+            CommitEdit::Rewrite {
+                tree: Some(child_tree),
+                message: Some("rewritten\n".into()),
+                author: None,
+                parents: None,
+            },
+        );
+        let plan = plan_rewrite(
+            &repo,
+            &edits,
+            &RewriteOptions {
+                scope: RefScope::Head,
+                empty: EmptyPolicy::Drop,
+                committer: "T <t@t> 1 +0000".into(),
+            },
+        )
+        .expect("plan");
+
+        let before_index = fs::read(repo.index_path()).expect("index");
+        set_test_inject_index_write_fail_remaining(1);
+        let err = apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity: "T <t@t>".into(),
+                reflog_message: "rewrite".into(),
+            },
+        )
+        .expect_err("inject checkout failure");
+        crate::repo::set_test_inject_index_write_fail(false);
+        assert!(matches!(err, HistoryError::WorktreeApply { .. }));
+
+        let tree_from_index_path = |path: &std::path::Path| {
+            let index = crate::index::Index::load(path).expect("index");
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree")
+        };
+        let before_index_path = dir.path().join(".git/index.before");
+        fs::write(&before_index_path, &before_index).expect("snapshot");
+        assert_eq!(
+            tree_from_index_path(repo.index_path().as_path()),
+            tree_from_index_path(&before_index_path)
+        );
+        assert_eq!(
+            crate::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
+            root
+        );
+
+        let file_path = dir.path().join("file.txt");
+        assert!(file_path.is_file());
+        assert!(!file_path.is_dir());
+        assert_eq!(fs::read_to_string(&file_path).expect("read file"), "file\n");
+        assert!(
+            !file_path.join("child").exists(),
+            "partial file→directory checkout must be rolled back"
         );
     }
 }
