@@ -43,6 +43,7 @@ mod apply;
 mod drop;
 mod error;
 mod fixup;
+mod r#move;
 mod plan;
 mod rebase;
 mod reword;
@@ -54,6 +55,7 @@ pub use apply::{apply_fixup_rewrite, apply_rewrite, verify_rewrite_plan};
 pub use drop::drop;
 pub use error::HistoryError;
 pub use fixup::{fixup, staged_fixup_paths, FixupOptions};
+pub use r#move::{move_commit, Placement};
 pub use plan::plan_rewrite;
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};

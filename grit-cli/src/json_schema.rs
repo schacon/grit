@@ -70,7 +70,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fetch::FetchOutcome,
         fsck::FsckOutcome,
         gc::GcOutcome,
-        history::HistoryRewriteOutcome,
+        history::{HistoryMoveOutcome, HistoryRewordOutcome},
         hooks::HooksOutcome,
         ignore::IgnoreCheckOutcome,
         init::InitOutcome,
@@ -152,11 +152,9 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<NotesOutcome>("notes.add"),
         entry::<NotesOutcome>("notes.remove"),
         entry::<PickOutcome>("pick"),
-        entry::<HistoryRewriteOutcome>("history.reword"),
-        entry::<HistoryRewriteOutcome>("history.drop"),
-        entry::<HistoryRewriteOutcome>("history.split"),
-        entry::<HistoryRewriteOutcome>("history.squash"),
-        entry::<HistoryRewriteOutcome>("history.fixup"),
+        entry::<HistoryRewordOutcome>("history.reword"),
+        entry::<HistoryRewordOutcome>("history.drop"),
+        entry::<HistoryMoveOutcome>("history.move"),
         entry::<RevertOutcome>("revert"),
         entry::<StashPushOutcome>("stash"),
         entry::<StashPushOutcome>("stash.push"),
@@ -282,10 +280,8 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         },
         "history" => match positional.get(1).copied() {
             Some("reword") => "history.reword",
-            Some("split") => "history.split",
             Some("drop") => "history.drop",
-            Some("squash") => "history.squash",
-            Some("fixup") => "history.fixup",
+            Some("move") => "history.move",
             _ => return None,
         },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
@@ -333,46 +329,8 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         );
         obj.insert("$id".into(), schema_id(command).into());
     }
-    if command == "history.reword"
-        || command == "history.drop"
-        || command == "history.split"
-        || command == "history.squash"
-        || command == "history.fixup"
-    {
+    if command == "history.reword" || command == "history.drop" || command == "history.move" {
         ensure_required_nullable_head(&mut value);
-    }
-    if command == "history.fixup" {
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "description".into(),
-                "Result of `grit history fixup`. The `operation` field is always `fixup`. JSON shape matches `grit history reword`.".into(),
-            );
-            obj.insert("title".into(), "HistoryFixupOutcome".into());
-            if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
-                if let Some(op) = props.get_mut("operation").and_then(|o| o.as_object_mut()) {
-                    op.insert(
-                        "description".into(),
-                        "Operation name (always `fixup` for this command).".into(),
-                    );
-                }
-            }
-        }
-    }
-    if command == "history.reword" {
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "description".into(),
-                "Result of `grit history reword`. The `operation` field is always `reword`.".into(),
-            );
-            if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
-                if let Some(op) = props.get_mut("operation").and_then(|o| o.as_object_mut()) {
-                    op.insert(
-                        "description".into(),
-                        "Operation name (always `reword` for this command).".into(),
-                    );
-                }
-            }
-        }
     }
     canonicalize_json(&mut value);
     value

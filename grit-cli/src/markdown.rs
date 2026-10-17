@@ -8,7 +8,7 @@ use crate::commands::add::AddOutcome;
 use crate::commands::auth::{AuthOutcome, LogoutOutcome};
 use crate::commands::commit::CommitOutcome;
 use crate::commands::diff::{FileDiff, Hunk, Line, LineKind, Segment};
-use crate::commands::history::HistoryRewriteOutcome;
+use crate::commands::history::HistoryRewordOutcome;
 use crate::commands::merge::{MergeOutcome, MergeResult};
 use crate::commands::pick::PickOutcome;
 use crate::commands::revert::RevertOutcome;
@@ -485,35 +485,24 @@ pub fn print_revert_outcome(w: &mut dyn Write, outcome: &RevertOutcome) -> anyho
     Ok(())
 }
 
-/// Result of `grit history reword`, `grit history drop`, and related rewrite subcommands.
+/// Result of `grit history reword` or `grit history move`.
 pub fn print_history_rewrite_outcome(
     w: &mut dyn Write,
-    outcome: &HistoryRewriteOutcome,
+    title: &str,
+    outcome: &HistoryRewordOutcome,
 ) -> anyhow::Result<()> {
-    let title = match outcome.operation.as_str() {
-        "drop" => "History drop",
-        "reword" => "History reword",
-        "fixup" => "History fixup",
-        "squash" => "History squash",
-        "rebase" => "History rebase",
-        "split" => "History split",
-        other => return Err(anyhow::anyhow!("unknown history operation {other}")),
-    };
     outln!(w, "## {title}");
     outln!(w);
     if outcome.dry_run {
         outln!(w, "- Dry run (refs unchanged)");
     }
     for pair in &outcome.rewritten {
-        match &pair.new {
-            Some(new) => outln!(
-                w,
-                "- commit `{}` → `{}`",
-                short_hex(&pair.old),
-                short_hex(new)
-            ),
-            None => outln!(w, "- commit `{}` → (dropped)", short_hex(&pair.old)),
-        }
+        outln!(
+            w,
+            "- commit `{}` → `{}`",
+            short_hex(&pair.old),
+            short_hex(&pair.new)
+        );
     }
     for update in &outcome.refs {
         outln!(

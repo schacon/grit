@@ -187,36 +187,6 @@ enum StashAction {
 /// Subcommands of `grit history`.
 #[derive(Debug, Subcommand)]
 enum HistoryAction {
-    /// Peel pathspec-selected changes into a new parent commit and replay descendants.
-    Split {
-        /// Commit to split (revision spec).
-        commit: String,
-        /// Message for the new parent commit (conflicts with `--message-file`).
-        #[arg(short = 'm', long = "message", conflicts_with = "message_file")]
-        message: Option<String>,
-        /// Read the split commit message from a file (`-` for stdin).
-        #[arg(
-            long = "message-file",
-            value_name = "PATH|-",
-            conflicts_with = "message"
-        )]
-        message_file: Option<String>,
-        /// Replace the remaining commit's message (conflicts with `--message-rest-file`).
-        #[arg(long = "message-rest", conflicts_with = "message_rest_file")]
-        message_rest: Option<String>,
-        /// Read the remaining commit message from a file (`-` for stdin).
-        #[arg(
-            long = "message-rest-file",
-            value_name = "PATH|-",
-            conflicts_with = "message_rest"
-        )]
-        message_rest_file: Option<String>,
-        /// Limit the split to paths matching these pathspecs (at least one required).
-        #[arg(value_name = "PATHSPEC", required = true)]
-        pathspec: Vec<String>,
-        #[command(flatten)]
-        shared: commands::history::HistoryRewriteArgs,
-    },
     /// Remove a commit and replay descendants onto its parent.
     Drop {
         /// Commit to remove (revision spec).
@@ -224,24 +194,16 @@ enum HistoryAction {
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
-    /// Fold a revision range into the oldest commit and replay descendants.
-    Squash {
-        /// Revision range (`base..tip`, exclusions, and multiple tips like `git rev-list`).
-        #[arg(required = true)]
-        range: Vec<String>,
-        /// Combine commit messages autosquash-style instead of keeping the oldest message.
-        #[arg(long = "combine", conflicts_with_all = ["message", "message_file"])]
-        combine: bool,
-        /// Explicit commit message for the squashed commit.
-        #[arg(short = 'm', long = "message", conflicts_with = "message_file")]
-        message: Option<String>,
-        /// Read the squashed commit message from a file (`-` for stdin).
-        #[arg(
-            long = "message-file",
-            value_name = "PATH|-",
-            conflicts_with = "message"
-        )]
-        message_file: Option<String>,
+    /// Reorder a commit on the first-parent chain of `HEAD`.
+    Move {
+        /// Commit to move (revision spec).
+        commit: String,
+        /// Place the commit immediately before this revision.
+        #[arg(long = "before", conflicts_with = "after")]
+        before: Option<String>,
+        /// Place the commit immediately after this revision.
+        #[arg(long = "after", conflicts_with = "before")]
+        after: Option<String>,
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
@@ -259,45 +221,6 @@ enum HistoryAction {
             conflicts_with = "message"
         )]
         message_file: Option<String>,
-        #[command(flatten)]
-        shared: commands::history::HistoryRewriteArgs,
-    },
-    /// Apply staged changes onto a commit and replay descendants.
-    Fixup {
-        /// Commit to fix up (revision spec).
-        commit: String,
-        /// Replace the target commit message.
-        #[arg(short = 'm', long = "message", conflicts_with = "message_file")]
-        message: Option<String>,
-        /// Read the replacement message from a file (`-` for stdin).
-        #[arg(
-            long = "message-file",
-            value_name = "PATH|-",
-            conflicts_with = "message"
-        )]
-        message_file: Option<String>,
-        /// When a commit would become empty after the fixup.
-        #[arg(long = "empty", value_enum, default_value_t = commands::history::EmptyPolicyArg::Drop)]
-        empty: commands::history::EmptyPolicyArg,
-        #[command(flatten)]
-        shared: commands::history::HistoryRewriteArgs,
-    },
-    /// Replay commits not in `upstream` onto `onto` (stateless rebase).
-    Rebase {
-        /// Branch to rebase (defaults to the current branch).
-        branch: Option<String>,
-        /// New base for the replayed commits.
-        #[arg(long = "onto", value_name = "REV")]
-        onto: String,
-        /// Exclude commits reachable from this revision (defaults to upstream tracking, else `--onto`).
-        #[arg(long = "upstream", value_name = "REV")]
-        upstream: Option<String>,
-        /// Replay commits even when the same patch already exists on `onto`.
-        #[arg(long = "keep-applied")]
-        keep_applied: bool,
-        /// How to handle commits that become empty during replay.
-        #[arg(long = "empty", value_enum, default_value_t = commands::history::EmptyPolicyArg::Drop)]
-        empty: commands::history::EmptyPolicyArg,
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
@@ -1380,38 +1303,16 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Pick { commit } => emit(&commands::pick::run(&commit)?, opts, ctx),
         Command::Revert { commit } => emit(&commands::revert::run(&commit)?, opts, ctx),
         Command::History { action } => match action {
-            HistoryAction::Split {
-                commit,
-                message,
-                message_file,
-                message_rest,
-                message_rest_file,
-                pathspec,
-                shared,
-            } => emit(
-                &commands::history::run_split(
-                    &commit,
-                    message,
-                    message_file,
-                    message_rest,
-                    message_rest_file,
-                    pathspec,
-                    &shared,
-                )?,
-                opts,
-                ctx,
-            ),
             HistoryAction::Drop { commit, shared } => {
                 emit(&commands::history::run_drop(&commit, &shared)?, opts, ctx)
             }
-            HistoryAction::Squash {
-                range,
-                combine,
-                message,
-                message_file,
+            HistoryAction::Move {
+                commit,
+                before,
+                after,
                 shared,
             } => emit(
-                &commands::history::run_squash(&range, combine, message, message_file, &shared)?,
+                &commands::history::run_move(&commit, before, after, &shared)?,
                 opts,
                 ctx,
             ),
@@ -1422,36 +1323,6 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 shared,
             } => emit(
                 &commands::history::run_reword(&commit, message, message_file, &shared)?,
-                opts,
-                ctx,
-            ),
-            HistoryAction::Fixup {
-                commit,
-                message,
-                message_file,
-                empty,
-                shared,
-            } => emit(
-                &commands::history::run_fixup(&commit, message, message_file, empty, &shared)?,
-                opts,
-                ctx,
-            ),
-            HistoryAction::Rebase {
-                branch,
-                onto,
-                upstream,
-                keep_applied,
-                empty,
-                shared,
-            } => emit(
-                &commands::history::run_rebase(
-                    branch,
-                    onto,
-                    upstream,
-                    keep_applied,
-                    empty,
-                    &shared,
-                )?,
                 opts,
                 ctx,
             ),
