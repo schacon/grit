@@ -7,7 +7,7 @@ mod support;
 use std::fs;
 
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::history::{
+use grit_lib::revwalk::history::{
     absorb, apply_absorb_rewrite, apply_fixup_rewrite, fixup, staged_fixup_paths, AbsorbOptions,
     ApplyOptions, EmptyPolicy, FixupOptions, HistoryError, RefScope, RewriteOptions,
     UnassignedReason,
@@ -28,6 +28,7 @@ fn rewrite_opts() -> RewriteOptions {
         scope: RefScope::Head,
         empty: EmptyPolicy::Drop,
         committer: "Absorb <a@grit.test> 1 +0000".into(),
+        preserve_committer: false,
     }
 }
 
@@ -173,7 +174,7 @@ fn absorb_ignores_new_files() {
     assert_eq!(plan.unassigned.len(), 1);
     assert_eq!(
         plan.unassigned[0].reason.as_str(),
-        grit_lib::history::UnassignedReason::FileAdded.as_str()
+        UnassignedReason::FileAdded.as_str()
     );
 }
 
@@ -463,5 +464,5 @@ fn absorb_nothing_staged_errors() {
         },
     )
     .unwrap_err();
-    assert_eq!(err, HistoryError::NothingStaged);
+    assert!(matches!(err, HistoryError::NothingStaged));
 }
