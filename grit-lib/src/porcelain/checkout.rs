@@ -831,6 +831,42 @@ pub(crate) fn path_under_wholesale_directory(
 const BULK_ADD_CHECKOUT_MIN: usize = 32;
 const BULK_DELETE_CHECKOUT_MIN: usize = 32;
 
+fn remove_wholesale_directories_on_disk(
+    repo: &Repository,
+    work_tree: &Path,
+    wholesale_index_prefixes: &BTreeSet<String>,
+    config: &std::sync::Arc<ConfigSet>,
+) -> Result<BTreeSet<String>> {
+    let mut wholesale_dirs_removed = BTreeSet::new();
+    if wholesale_index_prefixes.is_empty() {
+        return Ok(wholesale_dirs_removed);
+    }
+    if wholesale_index_prefixes.len() >= 2 {
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let wt = work_tree.to_path_buf();
+        let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+        let removed = try_par_map(&dirs, options, 0, |dir| {
+            let abs = wt.join(dir);
+            Ok(fs::remove_dir_all(&abs).is_ok().then_some(dir.clone()))
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel wholesale directory removal failed".into())
+            }
+        })?;
+        wholesale_dirs_removed.extend(removed.into_iter().flatten());
+    } else {
+        for dir in wholesale_index_prefixes {
+            let abs = work_tree.join(dir);
+            if fs::remove_dir_all(&abs).is_ok() {
+                wholesale_dirs_removed.insert(dir.clone());
+            }
+        }
+    }
+    Ok(wholesale_dirs_removed)
+}
+
 fn checkout_commit_index_update(
     repo: &Repository,
     index_mut: &mut Index,
@@ -990,7 +1026,24 @@ fn checkout_bulk_added_tree_changes(
         write_outcomes,
         progress,
     )?;
-    checkout_commit_index_update(repo, index_mut, &BTreeSet::new(), &[], new_entries, true)?;
+    let wholesale_dirs_removed = if apply.wholesale_safety_precomputed {
+        remove_wholesale_directories_on_disk(
+            repo,
+            work_tree,
+            &apply.preverified_wholesale_dirs,
+            config,
+        )?
+    } else {
+        BTreeSet::new()
+    };
+    checkout_commit_index_update(
+        repo,
+        index_mut,
+        &wholesale_dirs_removed,
+        &[],
+        new_entries,
+        true,
+    )?;
     progress.finish();
     Ok(())
 }
@@ -3066,5 +3119,74 @@ mod tests {
             syscall_probe::max_per_written_file() <= 1,
             "each written file should incur at most one post-write metadata call"
         );
+    }
+
+    #[test]
+    fn bulk_added_checkout_applies_preverified_wholesale_removals() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let wt = repo.work_tree().expect("wt");
+        std::fs::create_dir_all(wt.join("old")).expect("mkdir old");
+        std::fs::create_dir_all(wt.join("new")).expect("mkdir new");
+        let mut index = repo.load_index().expect("index");
+        let mut changes = Vec::new();
+        for i in 0..40 {
+            let old_rel = format!("old/f{i:02}.txt");
+            let new_rel = format!("new/f{i:02}.txt");
+            let old_abs = wt.join(&old_rel);
+            let new_abs = wt.join(&new_rel);
+            std::fs::write(&old_abs, format!("old {i}\n")).expect("write old");
+            let old_data = fs::read(&old_abs).expect("read old");
+            let old_oid = repo.odb().write(ObjectKind::Blob, &old_data).expect("blob");
+            index.add_or_replace(
+                entry_from_stat(&old_abs, old_rel.as_bytes(), old_oid, MODE_REGULAR)
+                    .expect("old entry"),
+            );
+            std::fs::write(&new_abs, format!("new {i}\n")).expect("write new");
+            let new_data = fs::read(&new_abs).expect("read new");
+            let new_oid = repo.odb().write(ObjectKind::Blob, &new_data).expect("blob");
+            changes.push(DiffEntry {
+                status: DiffStatus::Added,
+                old_path: None,
+                new_path: Some(new_rel),
+                old_mode: String::new(),
+                new_mode: "100644".into(),
+                old_oid: ObjectId::zero(),
+                new_oid,
+                score: None,
+            });
+        }
+        index.sort();
+        let mut preverified = BTreeSet::new();
+        preverified.insert("old".into());
+        checkout_tree_changes_with_index_opts(
+            &repo,
+            &changes,
+            &mut index,
+            CheckoutApplyOptions {
+                parallel_prepare_blobs: true,
+                checkout_parallel_threshold: Some(0),
+                trust_wholesale_dir_removal: true,
+                preverified_wholesale_dirs: preverified,
+                wholesale_safety_precomputed: true,
+                skip_bulk_checkout_fast_path: false,
+            },
+            None,
+        )
+        .expect("checkout");
+        assert!(
+            !wt.join("old").exists(),
+            "wholesale directory should be removed during bulk-add checkout"
+        );
+        for i in 0..40 {
+            assert!(wt.join(format!("new/f{i:02}.txt")).is_file());
+        }
     }
 }

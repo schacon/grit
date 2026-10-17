@@ -707,29 +707,35 @@ fn checkout_prepared_tree_transition(
         &[][..]
     };
     ensure_no_untracked_overwrite(overwrite_untracked, &prepared.plan.tree_changes)?;
-    let attribute_tree_changes: Vec<DiffEntry> = prepared
-        .plan
-        .tree_changes
-        .iter()
-        .filter(|change| {
-            path_from_diff(change)
-                .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
-        })
-        .cloned()
-        .collect();
-    let tree_changes: Vec<DiffEntry> = attribute_tree_changes
-        .iter()
-        .filter(|change| {
-            change.status != DiffStatus::Deleted
-                || change.old_path.as_ref().is_none_or(|path| {
-                    !crate::porcelain::checkout::path_under_wholesale_directory(
-                        path,
-                        &prepared.preverified_wholesale_dirs,
-                    )
-                })
-        })
-        .cloned()
-        .collect();
+    let touches_gitattributes = crate::porcelain::checkout::tree_changes_touch_gitattributes(
+        &prepared.plan.tree_changes,
+    );
+    let mut tree_changes = Vec::with_capacity(prepared.plan.tree_changes.len());
+    let mut attribute_tree_changes = if touches_gitattributes {
+        Vec::with_capacity(prepared.plan.tree_changes.len())
+    } else {
+        Vec::new()
+    };
+    for change in &prepared.plan.tree_changes {
+        if path_from_diff(change)
+            .is_some_and(|path| prepared.preserve_worktree_paths.contains(path))
+        {
+            continue;
+        }
+        if touches_gitattributes {
+            attribute_tree_changes.push(change.clone());
+        }
+        if change.status != DiffStatus::Deleted
+            || change.old_path.as_ref().is_none_or(|path| {
+                !crate::porcelain::checkout::path_under_wholesale_directory(
+                    path,
+                    &prepared.preverified_wholesale_dirs,
+                )
+            })
+        {
+            tree_changes.push(change.clone());
+        }
+    }
     let checkout_parallel_threshold = (tree_changes.len() >= BULK_SWITCH_PARALLEL_MIN).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
@@ -743,7 +749,7 @@ fn checkout_prepared_tree_transition(
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
             skip_bulk_checkout_fast_path: false,
         },
-        Some(&attribute_tree_changes),
+        touches_gitattributes.then_some(attribute_tree_changes.as_slice()),
     )
 }
 

@@ -2135,6 +2135,7 @@ impl Index {
             self.entries = merge_sorted_index_entries(kept, replacements);
             self.entries_sorted = true;
             if skip_per_path_extension_inval {
+                self.untracked_cache = None;
                 self.touch_fsmonitor_after_entry_change();
                 return;
             }

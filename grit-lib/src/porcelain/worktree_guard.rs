@@ -712,9 +712,10 @@ fn scan_wholesale_delete_root(
     }
     let mut rel_buf = String::with_capacity(root.len() + 64);
     rel_buf.push_str(root);
-    let mut stack: Vec<(PathBuf, usize)> = vec![(abs_root, rel_buf.len())];
-    while let Some((abs, parent_end)) = stack.pop() {
-        rel_buf.truncate(parent_end);
+    let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, rel_buf.clone())];
+    while let Some((abs, parent_rel)) = stack.pop() {
+        rel_buf.clear();
+        rel_buf.push_str(&parent_rel);
         let read_dir = match fs::read_dir(&abs) {
             Ok(rd) => rd,
             Err(_) => continue,
@@ -728,6 +729,9 @@ fn scan_wholesale_delete_root(
             rel_buf.push_str(&name);
             let rel = rel_buf.as_str();
             if index_aligned && delete_path_scheduled_for_removal(rel, delete_paths, ignorecase) {
+                if entry.path().is_dir() {
+                    stack.push((entry.path(), rel.to_owned()));
+                }
                 rel_buf.truncate(rel_start);
                 continue;
             }
@@ -739,7 +743,7 @@ fn scan_wholesale_delete_root(
                 }
             };
             if file_type.is_dir() {
-                stack.push((entry.path(), rel_buf.len()));
+                stack.push((entry.path(), rel.to_owned()));
                 rel_buf.truncate(rel_start);
                 continue;
             }
@@ -1969,5 +1973,51 @@ mod tests {
             .expect("commit");
         crate::refs::write_ref(&repo.git_dir(), "HEAD", &co).expect("head");
         ensure_worktree_clean_for_pick(&repo).expect("clean");
+    }
+
+    #[test]
+    fn scan_wholesale_delete_root_walks_directory_marked_for_delete() {
+        use crate::index::entry_from_stat;
+        use crate::objects::ObjectKind;
+
+        let (_dir, repo) = init_repo();
+        let wt = repo.work_tree().expect("wt");
+        let root = "wh";
+        std::fs::create_dir_all(wt.join(root).join("nested")).expect("mkdir");
+        let mut delete_paths = HashSet::new();
+        let mut index = repo.load_index().expect("index");
+        for i in 0..31 {
+            let rel = format!("{root}/f{i:02}.txt");
+            let abs = wt.join(&rel);
+            std::fs::write(&abs, format!("v{i}\n")).expect("write");
+            let oid = repo
+                .odb()
+                .write(ObjectKind::Blob, format!("v{i}\n").as_bytes())
+                .expect("blob");
+            index.add_or_replace(
+                entry_from_stat(&abs, rel.as_bytes(), oid, crate::index::MODE_REGULAR)
+                    .expect("entry"),
+            );
+            if i < 30 {
+                delete_paths.insert(rel);
+            }
+        }
+        std::fs::create_dir_all(wt.join(format!("{root}/nested"))).expect("mkdir nested");
+        delete_paths.insert(format!("{root}/nested"));
+        let fifo = wt.join(format!("{root}/nested/block.pipe"));
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo");
+        assert!(status.success(), "mkfifo must succeed on unix");
+        index.sort();
+        let indexed = count_indexed_paths_under_root(&index, root);
+        let deletes = count_delete_paths_under_root(&delete_paths, root, false);
+        assert_eq!(indexed, deletes, "fixture must be index-aligned");
+        let scan = scan_wholesale_delete_root(&index, wt, root, &delete_paths, false);
+        assert!(
+            scan.untracked.iter().any(|p| p == "wh/nested/block.pipe"),
+            "special files under a scheduled-delete directory must be discovered"
+        );
     }
 }
