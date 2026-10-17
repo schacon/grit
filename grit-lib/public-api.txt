@@ -196,6 +196,8 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::bench_fixture::synth::Tier
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::bench_fixture::synth::TierSpec
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::bench_fixture::synth::TierSpec
 pub fn grit_lib::bench_fixture::synth::generate_synth_repo(&std::path::Path, grit_lib::objects::bench_fixture::synth::SynthTier) -> grit_lib::error::Result<grit_lib::objects::bench_fixture::synth::SynthReport>
+pub fn grit_lib::bench_fixture::synth::generate_synth_repo_with_spec(&std::path::Path, grit_lib::objects::bench_fixture::synth::TierSpec) -> grit_lib::error::Result<grit_lib::objects::bench_fixture::synth::SynthReport>
+pub fn grit_lib::bench_fixture::synth::history_rewrite_bench_spec() -> grit_lib::objects::bench_fixture::synth::TierSpec
 pub mod grit_lib::blame
 pub enum grit_lib::blame::BlameDiffAlgorithm
 pub grit_lib::blame::BlameDiffAlgorithm::Histogram
@@ -5197,6 +5199,8 @@ impl core::marker::UnsafeUnpin for grit_lib::objects::bench_fixture::synth::Tier
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::bench_fixture::synth::TierSpec
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::bench_fixture::synth::TierSpec
 pub fn grit_lib::objects::bench_fixture::synth::generate_synth_repo(&std::path::Path, grit_lib::objects::bench_fixture::synth::SynthTier) -> grit_lib::error::Result<grit_lib::objects::bench_fixture::synth::SynthReport>
+pub fn grit_lib::objects::bench_fixture::synth::generate_synth_repo_with_spec(&std::path::Path, grit_lib::objects::bench_fixture::synth::TierSpec) -> grit_lib::error::Result<grit_lib::objects::bench_fixture::synth::SynthReport>
+pub fn grit_lib::objects::bench_fixture::synth::history_rewrite_bench_spec() -> grit_lib::objects::bench_fixture::synth::TierSpec
 pub mod grit_lib::objects::bitmap
 #[non_exhaustive] pub enum grit_lib::objects::bitmap::BitmapError
 pub grit_lib::objects::bitmap::BitmapError::Corrupt
