@@ -24,8 +24,6 @@ To apply staged index changes onto an earlier commit, [`fixup`](rustdoc:grit_lib
 
 [`split`](rustdoc:grit_lib::revwalk::history::split) peels pathspec-selected changes from one commit into a new parent commit via [`CommitEdit::SplitBefore`](rustdoc:grit_lib::revwalk::history::CommitEdit::SplitBefore). The original commit keeps its tree; descendants replay with parent-only updates when their trees are unchanged. Interactive hunk selection is not supported — use pathspecs only. [`SplitOptions`](rustdoc:grit_lib::revwalk::history::SplitOptions) supplies an optional [`rest_message`](rustdoc:grit_lib::revwalk::history::SplitOptions::rest_message) for the remaining commit.
 
-To fold a revision range, [`squash`](rustdoc:grit_lib::history::squash) resolves the range (connected, single tip), validates fixup/amend/squash markers, builds [`HistoryEdits`](rustdoc:grit_lib::history::HistoryEdits) (rewrite oldest with tip tree, drop inner commits), then calls [`plan_rewrite`](rustdoc:grit_lib::history::plan_rewrite). Use [`SquashMessage`](rustdoc:grit_lib::history::SquashMessage) for oldest, combined, or custom messages.
-
 ## Apply options and result
 
 [`ApplyOptions`](rustdoc:grit_lib::revwalk::history::ApplyOptions) supplies the reflog identity and message written for every ref update in the batch.
