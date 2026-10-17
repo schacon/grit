@@ -55,8 +55,9 @@ fn canonical_layout_script_covers_workspace_imports() {
 
 /// Maximum root-level `pub mod` declarations in `grit-lib/src/lib.rs` (excluding `prelude`).
 ///
-/// Raise only when adding a new top-level domain module. `origin/main` before the history
-/// rewrite API landed: 30; `history` as a dedicated rewrite surface: 31.
+/// Raise only when adding a new top-level domain module. The canonical layout on
+/// `origin/main` currently declares **24** root `pub mod` lines; this budget leaves
+/// headroom without reintroducing flat compatibility roots.
 const ROOT_PUB_MOD_BUDGET: usize = 31;
 
 #[test]
