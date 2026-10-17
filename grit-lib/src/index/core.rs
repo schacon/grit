@@ -3875,6 +3875,46 @@ pub fn index_file_mtime(path: &Path) -> Option<(u32, u32)> {
     Some((secs as u32, ft.nanoseconds()))
 }
 
+/// Advance the on-disk index mtime to be strictly newer than every stage-0 entry mtime.
+///
+/// Checkout writes blob timestamps first, then the index in the same second; without this bump the
+/// next switch would treat every touched path as racy. Git usually ends up with a newer index second.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the index timestamp cannot be updated.
+pub(crate) fn advance_index_file_mtime_past_entries(
+    index: &Index,
+    index_path: &Path,
+) -> Result<()> {
+    use filetime::FileTime;
+    let mut max_sec = 0u32;
+    let mut max_nsec = 0u32;
+    for ie in &index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        if ie.mtime_sec > max_sec || (ie.mtime_sec == max_sec && ie.mtime_nsec > max_nsec) {
+            max_sec = ie.mtime_sec;
+            max_nsec = ie.mtime_nsec;
+        }
+    }
+    if max_sec == 0 && max_nsec == 0 {
+        return Ok(());
+    }
+    let needs_bump = index_file_mtime(index_path)
+        .is_none_or(|(sec, nsec)| sec < max_sec || (sec == max_sec && nsec <= max_nsec));
+    if !needs_bump {
+        return Ok(());
+    }
+    let ft = if max_nsec < 999_999_999 {
+        FileTime::from_unix_time(i64::from(max_sec), max_nsec + 1)
+    } else {
+        FileTime::from_unix_time(i64::from(max_sec) + 1, 0)
+    };
+    filetime::set_file_mtime(index_path, ft).map_err(Error::Io)
+}
+
 /// Join a repository work tree root with an index-relative path stored as raw bytes.
 ///
 /// Index paths may be non-UTF-8 on Unix; this preserves bytes when building the absolute path.

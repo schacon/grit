@@ -665,8 +665,7 @@ fn checkout_prepared_tree_transition(
                 .is_none_or(|path| !prepared.preserve_worktree_paths.contains(path))
         })
         .collect();
-    let checkout_parallel_threshold =
-        (tree_changes.len() >= BULK_SWITCH_PARALLEL_MIN).then_some(0);
+    let checkout_parallel_threshold = (tree_changes.len() >= BULK_SWITCH_PARALLEL_MIN).then_some(0);
     checkout_tree_changes_with_index_opts(
         repo,
         &tree_changes,

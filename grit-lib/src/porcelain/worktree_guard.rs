@@ -6,21 +6,22 @@
 //! detection, ahead/behind, stash counts, or in-progress operation state.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::config::ConfigSet;
 use crate::diff::format_mode;
 use crate::diff::{
-    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, index_mtime_for_diff,
-    DiffEntry, DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree_with_options, diff_trees, entry_is_racy_with_policy,
+    hash_worktree_file, index_mtime_for_diff, DiffEntry, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::index::StatMatchPolicy;
 use crate::index::{index_file_mtime, Index, IndexEntry};
 use crate::objects::{parse_commit, ObjectId};
 use crate::porcelain::checkout::tree_changes_touch_gitattributes;
-use crate::porcelain::status::{collect_untracked_and_ignored, IgnoredMode};
+use crate::porcelain::status::{collect_untracked_and_ignored_with_cache, IgnoredMode};
 use crate::repo::Repository;
 use crate::state::resolve_head;
 use crate::worktree_rules::WorktreeRules;
@@ -144,7 +145,13 @@ pub(crate) fn local_change_diffs_for_tree_changes(
     if staged.is_empty()
         && !touched_paths_include_gitlinks(index, path_filter.as_ref())
         && (paths_for_stat.is_empty()
-            || worktree_stats_match_index_on_paths(repo, index, &paths_for_stat, stat_policy)?)
+            || worktree_clean_for_switch_paths(
+                repo,
+                index,
+                &paths_for_stat,
+                index_mtime,
+                stat_policy,
+            )?)
     {
         return Ok((staged, Vec::new(), false));
     }
@@ -200,16 +207,15 @@ fn touched_paths_include_gitlinks(index: &Index, paths: &BTreeSet<String>) -> bo
     })
 }
 
-/// Whether every indexed blob under `paths` matches worktree stat data (no content read).
-///
-/// Racy timestamps alone do not fail the match: switch uses this to avoid re-hashing every path
-/// after a checkout rewrote the index in the same second as entry mtimes.
-fn worktree_stats_match_index_on_paths(
+/// Whether indexed blobs under `paths` match the worktree for switch (stat-only, plus content when racy).
+fn worktree_clean_for_switch_paths(
     repo: &Repository,
     index: &Index,
     paths: &BTreeSet<String>,
+    index_mtime: Option<(u32, u32)>,
     stat_policy: StatMatchPolicy,
 ) -> Result<bool> {
+    use crate::crlf;
     use crate::diff::index_entry_worktree_abs;
     use crate::diff::stat_matches_with_policy;
     use crate::index::MODE_GITLINK;
@@ -236,6 +242,12 @@ fn worktree_stats_match_index_on_paths(
     if blob_dirs.is_empty() {
         return Ok(true);
     }
+    let needs_racy_content = paths.iter().any(|path| {
+        index.get(path.as_bytes(), 0).is_some_and(|ie| {
+            indexed_path_needs_worktree_stat_check(ie)
+                && entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+        })
+    });
     let preload_index = config
         .as_ref()
         .and_then(|c| c.get_bool("core.preloadIndex").and_then(|r| r.ok()))
@@ -304,7 +316,51 @@ fn worktree_stats_match_index_on_paths(
             Ok(())
         },
     )?;
-    Ok(matches.load(Ordering::Relaxed))
+    if !matches.load(Ordering::Relaxed) {
+        return Ok(false);
+    }
+    if !needs_racy_content {
+        return Ok(true);
+    }
+    let cfg = config.unwrap_or_else(|| Arc::new(ConfigSet::new()));
+    let conv = crlf::ConversionConfig::from_config(cfg.as_ref());
+    let rules = WorktreeRules::from_parts_index_attributes_only(repo, index, cfg)?;
+    let filters = repo.caches().filters();
+    let odb = repo.odb();
+    for path in paths {
+        let Some(ie) = index.get(path.as_bytes(), 0) else {
+            continue;
+        };
+        if !indexed_path_needs_worktree_stat_check(ie)
+            || !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+        {
+            continue;
+        }
+        let abs = index_entry_worktree_abs(work_tree, path, precompose_unicode, ignorecase);
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => return Ok(false),
+        };
+        if !stat_matches_with_policy(ie, &meta, stat_policy) {
+            return Ok(false);
+        }
+        let attrs = rules.file_attrs(path, false);
+        let content_ok = hash_worktree_file(
+            odb,
+            &abs,
+            &meta,
+            &conv,
+            &attrs,
+            path,
+            Some(ie),
+            Some(filters),
+        )
+        .is_ok_and(|oid| oid == ie.oid);
+        if !content_ok {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn indexed_path_needs_worktree_stat_check(ie: &IndexEntry) -> bool {
@@ -1043,6 +1099,179 @@ mod tests {
     }
 
     #[test]
+    fn switch_dirty_racy_same_size_content_is_not_clean() {
+        use crate::objects::{serialize_commit, CommitData, ObjectKind};
+        use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
+        use crate::refs;
+        use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repository(root, false, "main", None, crate::RefStorageFormat::Files)
+            .expect("init");
+        std::fs::write(root.join("tracked.txt"), b"AAAA\n").expect("write a");
+        let mut index = repo.load_index().expect("index");
+        let abs = root.join("tracked.txt");
+        let oid_a = repo.odb().write(ObjectKind::Blob, b"AAAA\n").expect("blob");
+        let entry_a =
+            crate::index::entry_from_stat(&abs, b"tracked.txt", oid_a, crate::index::MODE_REGULAR)
+                .expect("entry");
+        index.add_or_replace(entry_a.clone());
+        index.sort();
+        let tree_a = write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+            .expect("tree a");
+        repo.write_index(&mut index).expect("write index");
+        let commit_a = CommitData {
+            tree: tree_a,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "a\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let tip_a = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit_a))
+            .expect("commit a");
+        refs::write_ref(&repo.git_dir(), "refs/heads/first", &tip_a).expect("first");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/first").expect("head");
+
+        let mut index_on_first = repo.load_index().expect("reload first");
+        std::fs::write(&abs, b"AAAA\n").expect("restore a on disk");
+        index_on_first.entries[0].oid = oid_a;
+        index_on_first.sort();
+        repo.write_index(&mut index_on_first)
+            .expect("sync index to first");
+
+        std::fs::write(&abs, b"BBBB\n").expect("write b on other branch");
+        let oid_b = repo
+            .odb()
+            .write(ObjectKind::Blob, b"BBBB\n")
+            .expect("blob b");
+        let mut index_b = repo.load_index().expect("index for b");
+        index_b.add_or_replace(
+            crate::index::entry_from_stat(&abs, b"tracked.txt", oid_b, crate::index::MODE_REGULAR)
+                .expect("entry b"),
+        );
+        index_b.sort();
+        let tree_b =
+            write_tree_update_index(&repo.odb(), &mut index_b, "", WriteTreeFlags::silent())
+                .expect("tree b");
+        assert_ne!(tree_a, tree_b, "branch trees must differ");
+        let commit_b = CommitData {
+            tree: tree_b,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "b\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let tip_b = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&commit_b))
+            .expect("commit b");
+        refs::write_ref(&repo.git_dir(), "refs/heads/other", &tip_b).expect("other");
+        std::fs::write(&abs, b"AAAA\n").expect("back to first branch content");
+        let mut index_back = repo.load_index().expect("index back on first");
+        index_back.add_or_replace(
+            crate::index::entry_from_stat(&abs, b"tracked.txt", oid_a, crate::index::MODE_REGULAR)
+                .expect("entry a again"),
+        );
+        index_back.sort();
+        repo.write_index(&mut index_back)
+            .expect("index synced to first");
+
+        let index_path = repo.index_path_for_env().expect("index path");
+        let pinned = filetime::FileTime::from_unix_time(1_700_000_000, 0);
+        filetime::set_file_mtime(&abs, pinned).expect("pin file");
+        filetime::set_file_mtime(&index_path, pinned).expect("pin index");
+        std::fs::write(&abs, b"DIRT\n").expect("same-size dirty");
+        filetime::set_file_mtime(&abs, pinned).expect("forge file stat to match index");
+        let mut index_dirty = repo.load_index().expect("reload");
+        index_dirty.entries[0].oid = oid_a;
+        index_dirty.entries[0].mtime_sec = 1_700_000_000;
+        index_dirty.entries[0].mtime_nsec = 0;
+        index_dirty.entries[0].size = 5;
+        index_dirty.skip_racy_smudge_on_write = true;
+        repo.write_index(&mut index_dirty)
+            .expect("write dirty index");
+        index_dirty.skip_racy_smudge_on_write = false;
+        filetime::set_file_mtime(&index_path, pinned).expect("re-pin index");
+        let index_probe = repo.load_index().expect("probe index");
+        let index_mtime = crate::index::index_file_mtime(&index_path);
+        let ie = index_probe.get(b"tracked.txt", 0).expect("entry");
+        assert!(
+            crate::diff::entry_is_racy_with_policy(
+                ie,
+                crate::diff::index_mtime_for_diff(&index_probe, index_mtime),
+                crate::index::StatMatchPolicy::default(),
+            ),
+            "fixture must be racy relative to the on-disk index"
+        );
+
+        let git_status = std::process::Command::new("git")
+            .args(["-C", &root.to_string_lossy(), "status", "--porcelain"])
+            .output()
+            .expect("git status");
+        assert!(
+            String::from_utf8_lossy(&git_status.stdout).contains("tracked.txt"),
+            "git must see dirty tracked.txt"
+        );
+
+        assert_ne!(tree_a, tree_b, "branch trees must differ for this scenario");
+        let tree_changes = diff_trees(repo.odb(), Some(&tree_a), Some(&tree_b), "").expect("diff");
+        assert!(
+            tree_changes
+                .iter()
+                .any(|c| c.old_path.as_deref() == Some("tracked.txt")),
+            "tree diff must touch tracked.txt, got {tree_changes:?}"
+        );
+        let mut index_for_diff = repo.load_index().expect("index for diff");
+        assert_eq!(
+            index_for_diff.get(b"tracked.txt", 0).expect("ie").oid,
+            oid_a,
+            "index must still describe AAAA at switch time"
+        );
+        let (_, unstaged, _) = local_change_diffs_for_tree_changes(
+            &repo,
+            &mut index_for_diff,
+            Some(tree_a),
+            &tree_changes,
+            None,
+        )
+        .expect("local diffs");
+        assert!(
+            !unstaged.is_empty(),
+            "expected unstaged dirty tracked.txt before switch, got {unstaged:?}"
+        );
+
+        let switch_err = switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Existing {
+                    branch: "other".into(),
+                    oid: tip_b,
+                },
+            },
+        );
+        assert!(
+            switch_err.is_err(),
+            "grit must refuse switch over same-size racy dirty content"
+        );
+        assert!(
+            std::fs::read(&abs).expect("read").starts_with(b"DIRT"),
+            "worktree must not be overwritten"
+        );
+    }
+
     fn local_change_diffs_for_tree_changes_uses_stat_only_when_racy_but_clean() {
         use crate::objects::{serialize_commit, CommitData, ObjectKind};
         use crate::refs;
@@ -1065,6 +1294,9 @@ mod tests {
             write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
                 .expect("head tree");
         repo.write_index(&mut index).expect("write index");
+        let index_path = repo.index_path_for_env().expect("index path");
+        crate::index::advance_index_file_mtime_past_entries(&index, &index_path)
+            .expect("advance index mtime");
         let commit = CommitData {
             tree: head_tree,
             parents: vec![],
@@ -1094,17 +1326,6 @@ mod tests {
             diff_trees(repo.odb(), Some(&head_tree), Some(&target_tree), "").expect("diff");
 
         let mut index_probe = repo.load_index().expect("reload index");
-        let index_path = repo.index_path_for_env().expect("index path");
-        let index_mtime = crate::index::index_file_mtime(&index_path);
-        let ie = index_probe.get(b"tracked.txt", 0).expect("tracked entry");
-        assert!(
-            crate::diff::entry_is_racy_with_policy(
-                ie,
-                crate::diff::index_mtime_for_diff(&index_probe, index_mtime),
-                crate::index::StatMatchPolicy::default(),
-            ),
-            "fixture should leave a racy index entry after write"
-        );
 
         let (_, unstaged, index_changed) = local_change_diffs_for_tree_changes(
             &repo,
