@@ -70,7 +70,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         fetch::FetchOutcome,
         fsck::FsckOutcome,
         gc::GcOutcome,
-        history::{HistoryMoveOutcome, HistoryRewordOutcome},
+        history::{HistoryAbsorbOutcome, HistoryMoveOutcome, HistoryRewordOutcome},
         hooks::HooksOutcome,
         ignore::IgnoreCheckOutcome,
         init::InitOutcome,
@@ -155,6 +155,8 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<HistoryRewordOutcome>("history.reword"),
         entry::<HistoryRewordOutcome>("history.drop"),
         entry::<HistoryMoveOutcome>("history.move"),
+        entry::<HistoryRewordOutcome>("history.fixup"),
+        entry::<HistoryAbsorbOutcome>("history.absorb"),
         entry::<RevertOutcome>("revert"),
         entry::<StashPushOutcome>("stash"),
         entry::<StashPushOutcome>("stash.push"),
@@ -282,6 +284,8 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
             Some("reword") => "history.reword",
             Some("drop") => "history.drop",
             Some("move") => "history.move",
+            Some("fixup") => "history.fixup",
+            Some("absorb") => "history.absorb",
             _ => return None,
         },
         cmd if NO_JSON_COMMANDS.contains(&cmd) => return None,
@@ -329,7 +333,12 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
         );
         obj.insert("$id".into(), schema_id(command).into());
     }
-    if command == "history.reword" || command == "history.drop" || command == "history.move" {
+    if command == "history.reword"
+        || command == "history.drop"
+        || command == "history.move"
+        || command == "history.fixup"
+        || command == "history.absorb"
+    {
         ensure_required_nullable_head(&mut value);
     }
     canonicalize_json(&mut value);

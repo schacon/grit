@@ -224,6 +224,34 @@ enum HistoryAction {
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
+    /// Apply staged changes onto a commit and replay descendants.
+    Fixup {
+        /// Commit to fix up (revision spec).
+        commit: String,
+        /// Replace the target commit message.
+        #[arg(short = 'm', long = "message", conflicts_with = "message_file")]
+        message: Option<String>,
+        /// Read the replacement message from a file (`-` for stdin).
+        #[arg(
+            long = "message-file",
+            value_name = "PATH|-",
+            conflicts_with = "message"
+        )]
+        message_file: Option<String>,
+        /// When a commit would become empty after the fixup.
+        #[arg(long = "empty", value_enum, default_value_t = commands::history::EmptyPolicyArg::Drop)]
+        empty: commands::history::EmptyPolicyArg,
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
+    },
+    /// Assign staged hunks into recent commits and replay descendants once.
+    Absorb {
+        /// Oldest commit boundary (exclusive) for candidate commits.
+        #[arg(long = "base")]
+        base: Option<String>,
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
+    },
 }
 
 /// Subcommands of `grit notes`.
@@ -1323,6 +1351,22 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 shared,
             } => emit(
                 &commands::history::run_reword(&commit, message, message_file, &shared)?,
+                opts,
+                ctx,
+            ),
+            HistoryAction::Fixup {
+                commit,
+                message,
+                message_file,
+                empty,
+                shared,
+            } => emit(
+                &commands::history::run_fixup(&commit, message, message_file, empty, &shared)?,
+                opts,
+                ctx,
+            ),
+            HistoryAction::Absorb { base, shared } => emit(
+                &commands::history::run_absorb(base.as_deref(), &shared)?,
                 opts,
                 ctx,
             ),

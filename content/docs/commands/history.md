@@ -12,7 +12,9 @@ grit history drop <commit>
 grit history move <commit> (--before <anchor> | --after <anchor>)
 grit history reword <commit> -m <message>
 grit history reword <commit> --message-file <path|->
-grit history drop|move|reword … [--dry-run] [--update-refs=(branches|head)]
+grit history drop|move|reword|fixup|absorb … [--dry-run] [--update-refs=(branches|head)]
+grit history fixup <commit> [--empty=(drop|keep|abort)] [-m|--message-file]
+grit history absorb [--base <rev>]
 ```
 
 ## Description
@@ -45,6 +47,12 @@ Provide exactly one of `-m` / `--message` or `--message-file` (use `-` to read f
 
 If any descendant commit is a **merge**, planning refuses with an error (merge replay is not supported yet). Use a linear range or wait for later `grit history` subcommands that handle merges.
 
+### `absorb`
+
+Assign **staged** hunks into the commits that last touched overlapping lines (between `--base` and `HEAD`), then replay descendants in **one** rewrite. Grit uses blame line mapping to find candidate commits and checks that each hunk commutes with commits after its target. Assigned hunks are folded into target commits via the same three-way merge as [`fixup`](#fixup); unassigned hunks stay staged.
+
+`--base` is exclusive: commits at and before the base are not considered. When omitted, grit hides other local branch tips, applies an upstream fork-point when configured, and caps the stack at ten commits.
+
 ## Options
 
 | Option | Description |
@@ -58,6 +66,14 @@ If any descendant commit is a **merge**, planning refuses with an error (merge r
 | `--update-refs` | `branches` (default) or `head`. |
 
 ## Examples
+
+### `absorb` options
+
+| Option | Description |
+| --- | --- |
+| `--base` | Oldest commit boundary (exclusive) for absorb targets. |
+| `--dry-run` | List assignments and ref updates without moving refs. |
+| `--update-refs` | `branches` (default) or `head`. |
 
 Move a commit before its parent on a linear branch:
 
@@ -86,11 +102,30 @@ Dry run — refs would change:
   refs/heads/main f6a7b89 → c0ffee0
 ```
 
+Fix up the parent of `HEAD` using staged edits:
+
+```console
+$ grit add file.txt
+$ grit history fixup HEAD~1
+Fixed up 2 commit(s)
+  commit a1b2c3d → d4e5f60
+  refs/heads/main f6a7b89 → c0ffee0
+```
+
+Absorb staged fixes on a linear branch:
+
+```console
+$ grit add file.txt
+$ grit history absorb
+Absorbed 1 hunk(s) into 2 commit(s)
+  file.txt → commit a1b2c3d
+```
+
 ## JSON output
 
-Schemas: [drop v1](/schemas/history.drop/v1.json), [move v1](/schemas/history.move/v1.json), [reword v1](/schemas/history.reword/v1.json)
+Schemas: [drop v1](/schemas/history.drop/v1.json), [move v1](/schemas/history.move/v1.json), [reword v1](/schemas/history.reword/v1.json), [fixup v1](/schemas/history.fixup/v1.json), [absorb v1](/schemas/history.absorb/v1.json)
 
-Pass `--json` on `grit history drop`, `grit history move`, or `grit history reword`:
+Pass `--json` on `grit history drop`, `grit history move`, `grit history reword`, `grit history fixup`, or `grit history absorb`:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
@@ -99,6 +134,13 @@ Pass `--json` on `grit history drop`, `grit history move`, or `grit history rewo
 | `refs` | array | `{name,old,new}` for each ref that would move or moved. |
 | `head` | object or null | `{old,new}` when `HEAD`'s commit OID changes; `null` when unchanged. |
 | `dry_run` | boolean | `true` when `--dry-run` was set. |
+
+For `absorb`, the object also includes:
+
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `assignments` | array | `{path,hunk_range,commit}` for hunks assigned to historical commits. |
+| `unassigned` | array | `{path,hunk_range,reason}` for hunks left staged (`reason` is a stable code). |
 
 Example:
 

@@ -194,6 +194,15 @@ fn apply_absorb_refs_and_worktree(
             None
         }
     });
+    let worktree_snapshot = if needs_worktree {
+        match (old_tree.as_ref(), new_tree.as_ref()) {
+            (Some(old), Some(new)) => Some(snapshot_worktree_for_tree_transition(repo, old, new)?),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     let old_head_commit = if needs_worktree {
         Some(resolve_head_commit(repo)?)
     } else {
@@ -225,9 +234,8 @@ fn apply_absorb_refs_and_worktree(
             let ref_rollback = rollback_ref_updates(repo, &plan.ref_updates, opts);
             let restore = restore_worktree_after_failed_apply(
                 repo,
-                Some(&old),
-                &new,
                 index_snapshot_owned.as_deref(),
+                worktree_snapshot.as_ref(),
             );
             if let Some(pre) = prestate {
                 let _ = pre.restore(repo);
