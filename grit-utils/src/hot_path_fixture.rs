@@ -282,6 +282,9 @@ pub fn setup_switch_fixture_in(
         assert_fsmonitor_index_ready(git, dir)?;
     }
 
+    // Single-pack layout lets grit use monotonic pack reads during bulk checkout (switch hot paths).
+    run_git(git, dir, &["repack", "-adf", "-q"])?;
+
     let base_commit = tip_a;
     let meta = HotPathMeta {
         branch_a: branch_a.clone(),

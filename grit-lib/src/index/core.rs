@@ -2345,7 +2345,7 @@ impl Index {
             return;
         }
         const BULK_MERGE_MIN: usize = 64;
-        if replacements.len() >= BULK_MERGE_MIN {
+        if replacements.len() >= BULK_MERGE_MIN || self.defer_untracked_cache_invalidation {
             self.drop_derived_index_extensions();
             let kept = std::mem::take(&mut self.entries);
             self.entries = merge_sorted_index_entries(kept, replacements);

@@ -730,35 +730,42 @@ fn checkout_prepared_tree_transition(
     ensure_no_untracked_overwrite(overwrite_untracked, &prepared.plan.tree_changes)?;
     let touches_gitattributes =
         crate::porcelain::checkout::tree_changes_touch_gitattributes(&prepared.plan.tree_changes);
-    let mut tree_changes = Vec::with_capacity(prepared.plan.tree_changes.len());
-    let mut attribute_tree_changes = if touches_gitattributes {
-        Vec::with_capacity(prepared.plan.tree_changes.len())
-    } else {
-        Vec::new()
-    };
     let wholesale_dirs = &prepared.preverified_wholesale_dirs;
     let filter_wholesale_deletes = !wholesale_dirs.is_empty();
-    for change in &prepared.plan.tree_changes {
-        if path_from_diff(change)
-            .is_some_and(|path| prepared.preserve_worktree_paths.contains(path))
-        {
-            continue;
+    let attribute_changes = touches_gitattributes.then_some(prepared.plan.tree_changes.as_slice());
+
+    let filtered_tree_changes;
+    let checkout_changes: &[DiffEntry] = if prepared.preserve_worktree_paths.is_empty()
+        && !filter_wholesale_deletes
+        && !touches_gitattributes
+    {
+        &prepared.plan.tree_changes
+    } else {
+        let mut tree_changes = Vec::with_capacity(prepared.plan.tree_changes.len());
+        for change in &prepared.plan.tree_changes {
+            if path_from_diff(change)
+                .is_some_and(|path| prepared.preserve_worktree_paths.contains(path))
+            {
+                continue;
+            }
+            let include_in_checkout = change.status != DiffStatus::Deleted
+                || !filter_wholesale_deletes
+                || change.old_path.as_ref().is_none_or(|path| {
+                    !crate::porcelain::checkout::path_under_wholesale_directory(
+                        path,
+                        wholesale_dirs,
+                    )
+                });
+            if include_in_checkout {
+                tree_changes.push(change.clone());
+            }
         }
-        if touches_gitattributes {
-            attribute_tree_changes.push(change.clone());
-        }
-        let include_in_checkout = change.status != DiffStatus::Deleted
-            || !filter_wholesale_deletes
-            || change.old_path.as_ref().is_none_or(|path| {
-                !crate::porcelain::checkout::path_under_wholesale_directory(path, wholesale_dirs)
-            });
-        if include_in_checkout {
-            tree_changes.push(change.clone());
-        }
-    }
+        filtered_tree_changes = tree_changes;
+        &filtered_tree_changes
+    };
     checkout_tree_changes_with_index_opts(
         repo,
-        &tree_changes,
+        checkout_changes,
         &mut prepared.index,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
@@ -769,7 +776,7 @@ fn checkout_prepared_tree_transition(
             skip_bulk_checkout_fast_path: false,
             checkout_result_tree: Some(prepared.target_tree),
         },
-        touches_gitattributes.then_some(attribute_tree_changes.as_slice()),
+        attribute_changes,
     )
 }
 
