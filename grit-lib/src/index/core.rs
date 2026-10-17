@@ -2056,10 +2056,25 @@ impl Index {
         self.untracked_cache = None;
     }
 
-    /// Drop only the cache-tree extension; keep UNTR when invalidation is deferred.
-    pub(crate) fn drop_cache_tree_extension(&mut self) {
-        self.cache_tree = None;
-        self.cache_tree_root = None;
+    /// Partially invalidate cache-tree nodes for a bulk checkout without dropping the whole extension.
+    pub(crate) fn invalidate_cache_tree_for_bulk_checkout<'a>(
+        &mut self,
+        dir_prefixes: &BTreeSet<String>,
+        paths: impl IntoIterator<Item = &'a [u8]>,
+        replacements: &[IndexEntry],
+    ) {
+        if self.cache_tree.is_none() {
+            return;
+        }
+        for dir in dir_prefixes {
+            self.invalidate_cache_tree_for_path(dir.as_bytes());
+        }
+        for path in paths {
+            self.invalidate_cache_tree_for_path(path);
+        }
+        for entry in replacements {
+            self.invalidate_cache_tree_for_path(&entry.path);
+        }
     }
 
     fn invalidate_after_path_removal(&mut self, path: &[u8]) {

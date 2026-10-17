@@ -465,6 +465,8 @@ pub(crate) struct CheckoutApplyOptions {
     pub wholesale_safety_precomputed: bool,
     /// Skip bulk add/delete fast paths (used when bulk checkout hits a delayed filter).
     pub skip_bulk_checkout_fast_path: bool,
+    /// When set, the index should match this tree after checkout (updates cache-tree root).
+    pub checkout_result_tree: Option<crate::objects::ObjectId>,
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -874,12 +876,26 @@ fn checkout_commit_index_update(
     paths_to_remove: &[Vec<u8>],
     new_entries: Vec<IndexEntry>,
     bulk_index_rewrite: bool,
+    checkout_result_tree: Option<crate::objects::ObjectId>,
 ) -> Result<()> {
+    let change_count = paths_to_remove.len() + new_entries.len();
     index_mut.defer_untracked_cache_invalidation =
         bulk_index_rewrite || !wholesale_dirs_removed.is_empty();
     if bulk_index_rewrite || !wholesale_dirs_removed.is_empty() {
         if index_mut.defer_untracked_cache_invalidation {
-            index_mut.drop_cache_tree_extension();
+            const CACHE_TREE_PARTIAL_INVALIDATE_MAX: usize = 128;
+            if wholesale_dirs_removed.is_empty()
+                && change_count <= CACHE_TREE_PARTIAL_INVALIDATE_MAX
+            {
+                index_mut.invalidate_cache_tree_for_bulk_checkout(
+                    wholesale_dirs_removed,
+                    paths_to_remove.iter().map(|p| p.as_slice()),
+                    &new_entries,
+                );
+            } else {
+                index_mut.cache_tree = None;
+                index_mut.cache_tree_root = None;
+            }
         } else {
             index_mut.drop_derived_index_extensions();
         }
@@ -889,6 +905,11 @@ fn checkout_commit_index_update(
         paths_to_remove.iter().map(|p| p.as_slice()),
         new_entries,
     );
+    if let Some(tree) = checkout_result_tree {
+        if index_mut.cache_tree.is_some() {
+            index_mut.cache_tree_root = Some(tree);
+        }
+    }
     index_mut.defer_untracked_cache_invalidation = false;
     index_mut.suppress_pre_write_index_housekeeping = bulk_index_rewrite;
     index_mut.skip_racy_smudge_on_write = true;
@@ -1054,6 +1075,7 @@ fn checkout_bulk_added_tree_changes(
         &[],
         new_entries,
         true,
+        apply.checkout_result_tree,
     )?;
     progress.finish();
     Ok(())
@@ -1242,6 +1264,7 @@ fn checkout_bulk_mod_delete_tree_changes(
         &paths_to_remove,
         new_entries,
         true,
+        apply.checkout_result_tree,
     )?;
     progress.finish();
     Ok(())
@@ -1257,6 +1280,7 @@ fn checkout_bulk_deleted_tree_changes(
     wholesale_dirs_removed: &BTreeSet<String>,
     deleted_abs_paths: &mut Vec<PathBuf>,
     progress: &mut dyn ProgressSink,
+    checkout_result_tree: Option<crate::objects::ObjectId>,
 ) -> Result<()> {
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     let mut per_file_deletes: Vec<String> = Vec::new();
@@ -1326,6 +1350,7 @@ fn checkout_bulk_deleted_tree_changes(
         &paths_to_remove,
         Vec::new(),
         true,
+        checkout_result_tree,
     )?;
     progress.finish();
     Ok(())
@@ -1480,6 +1505,7 @@ fn checkout_tree_changes_with_progress(
                 &wholesale_dirs_removed,
                 &mut deleted_abs_paths,
                 progress,
+                apply.checkout_result_tree,
             );
         }
     }
@@ -1797,6 +1823,7 @@ fn checkout_tree_changes_with_progress(
         &paths_to_remove,
         new_entries,
         bulk_index_rewrite,
+        apply.checkout_result_tree,
     )?;
     progress.finish();
     Ok(())
@@ -3166,6 +3193,7 @@ mod tests {
                 preverified_wholesale_dirs: preverified,
                 wholesale_safety_precomputed: true,
                 skip_bulk_checkout_fast_path: false,
+                checkout_result_tree: None,
             },
             None,
         )
@@ -3244,6 +3272,7 @@ mod tests {
                 preverified_wholesale_dirs: preverified,
                 wholesale_safety_precomputed: true,
                 skip_bulk_checkout_fast_path: false,
+                checkout_result_tree: None,
             },
             None,
         )

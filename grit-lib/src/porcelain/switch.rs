@@ -83,6 +83,8 @@ pub(crate) struct PreparedSwitch {
     preserve_worktree_paths: HashSet<String>,
     /// Index loaded for switch guards; reused for checkout to avoid a second disk read.
     index: crate::index::Index,
+    /// Commit tree being checked out (updates cache-tree root after index write).
+    target_tree: ObjectId,
     /// When true, checkout may remove wholesale directories without an on-disk safety walk.
     trust_wholesale_dir_removal: bool,
     preverified_wholesale_dirs: BTreeSet<String>,
@@ -587,6 +589,7 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
         },
         preserve_worktree_paths,
         index: snapshot.index,
+        target_tree: *to_tree,
         trust_wholesale_dir_removal,
         preverified_wholesale_dirs,
         wholesale_safety_precomputed,
@@ -764,6 +767,7 @@ fn checkout_prepared_tree_transition(
             preverified_wholesale_dirs: prepared.preverified_wholesale_dirs,
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
             skip_bulk_checkout_fast_path: false,
+            checkout_result_tree: Some(prepared.target_tree),
         },
         touches_gitattributes.then_some(attribute_tree_changes.as_slice()),
     )
