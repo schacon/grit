@@ -69,7 +69,7 @@ fn reword_changes_only_message_and_replays_descendants() {
 #[test]
 fn reword_rejects_empty_message() {
     let err = normalize_rewrite_message("   \n\n  ").unwrap_err();
-    assert_eq!(err, HistoryError::EmptyMessage);
+    assert!(matches!(err, HistoryError::EmptyMessage));
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     let oids = build_commit_dag(wt, &[("b", "a")], &[("b", "refs/heads/main")]);
@@ -85,7 +85,7 @@ fn reword_rejects_empty_message() {
         },
     )
     .unwrap_err();
-    assert_eq!(err, HistoryError::EmptyMessage);
+    assert!(matches!(err, HistoryError::EmptyMessage));
 }
 
 #[test]
