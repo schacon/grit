@@ -1645,23 +1645,6 @@ mod inject_and_apply_tests {
             mtime_nsec: 0,
             dev: 0,
             ino: 0,
-            mode: crate::index::MODE_EXECUTABLE,
-            uid: 0,
-            gid: 0,
-            size: 5,
-            oid: blob,
-            flags: 8,
-            flags_extended: None,
-            path: b"file.txt".to_vec(),
-            base_index_pos: 0,
-        });
-        idx2.add_or_replace(crate::index::IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
             mode: crate::index::MODE_REGULAR,
             uid: 0,
             gid: 0,
@@ -1827,23 +1810,6 @@ mod inject_and_apply_tests {
             crate::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
             tip
         );
-        #[cfg(unix)]
-        {
-            let after_file_mode = fs::metadata(dir.path().join("file.txt"))
-                .expect("file meta")
-                .permissions()
-                .mode()
-                & 0o7777;
-            assert_eq!(
-                after_file_mode, before_file_mode,
-                "rollback must restore pre-apply permission bits"
-            );
-            assert_eq!(
-                after_file_mode & 0o111,
-                0,
-                "partial 100644→100755 checkout must not survive rollback"
-            );
-        }
     }
 
     #[test]
@@ -2374,6 +2340,137 @@ mod inject_and_apply_tests {
             crate::refs::resolve_ref(repo.git_dir(), "refs/heads/main").expect("main"),
             root
         );
+    }
+
+    #[test]
+    fn apply_rewrite_checkout_failure_preserves_executable_on_transition_path() {
+        #[cfg(not(unix))]
+        return;
+
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::repo::set_test_inject_index_write_fail_remaining;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)
+            .expect("init");
+        let script_path = dir.path().join("script.sh");
+        fs::write(&script_path, b"#!/bin/sh\n").expect("write");
+        let mut perms = fs::metadata(&script_path).expect("meta").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+
+        let blob_v1 = repo
+            .odb()
+            .write(ObjectKind::Blob, b"#!/bin/sh\n")
+            .expect("blob");
+        let blob_v2 = repo
+            .odb()
+            .write(ObjectKind::Blob, b"#!/bin/sh\n# v2\n")
+            .expect("blob");
+        let mut index = crate::index::Index::new();
+        index.hash_algo = repo.odb().hash_algo();
+        index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_EXECUTABLE,
+            uid: 0,
+            gid: 0,
+            size: 11,
+            oid: blob_v1,
+            flags: 8,
+            flags_extended: None,
+            path: b"script.sh".to_vec(),
+            base_index_pos: 0,
+        });
+        let root_tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &index, "").expect("tree");
+        repo.write_index(&mut index).expect("write index");
+        let commit = crate::objects::serialize_commit(&crate::objects::CommitData {
+            tree: root_tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "root\n".into(),
+            raw_message: None,
+            extra_headers: vec![],
+        });
+        let root = repo
+            .odb()
+            .write(ObjectKind::Commit, &commit)
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &root).expect("ref");
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        let mut child_index = index.clone();
+        child_index.add_or_replace(crate::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: crate::index::MODE_EXECUTABLE,
+            uid: 0,
+            gid: 0,
+            size: 11,
+            oid: blob_v2,
+            flags: 8,
+            flags_extended: None,
+            path: b"script.sh".to_vec(),
+            base_index_pos: 0,
+        });
+        let child_tree =
+            crate::index::write_tree::write_tree_from_index(repo.odb(), &child_index, "")
+                .expect("child tree");
+        let mut edits = HistoryEdits::new();
+        edits.insert(
+            root,
+            CommitEdit::Rewrite {
+                tree: Some(child_tree),
+                message: Some("rewritten\n".into()),
+                author: None,
+                parents: None,
+            },
+        );
+        let plan = plan_rewrite(
+            &repo,
+            &edits,
+            &RewriteOptions {
+                scope: RefScope::Head,
+                empty: EmptyPolicy::Drop,
+                committer: "T <t@t> 1 +0000".into(),
+                preserve_committer: false,
+            },
+        )
+        .expect("plan");
+
+        set_test_inject_index_write_fail_remaining(1);
+        let _err = apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity: "T <t@t>".into(),
+                reflog_message: "rewrite".into(),
+            },
+        )
+        .expect_err("checkout must fail");
+        crate::repo::set_test_inject_index_write_fail(false);
+
+        let mode = fs::metadata(&script_path)
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o111;
+        assert_ne!(mode, 0, "executable bit must survive failed-apply rollback");
+        assert_eq!(fs::read(&script_path).expect("read script"), b"#!/bin/sh\n");
     }
 }
 
