@@ -435,10 +435,9 @@ fn plan_rewrite_non_commit_tip_returns_planning_error() {
     assert!(
         matches!(
             err,
-            grit_lib::revwalk::history::HistoryError::Library(ref boxed)
-                if matches!(boxed.as_ref(), grit_lib::error::Error::CorruptObject(_))
+            grit_lib::revwalk::history::HistoryError::Planning { .. }
         ),
-        "expected corrupt-object library error, got {err:?}"
+        "expected planning error, got {err:?}"
     );
 }
 

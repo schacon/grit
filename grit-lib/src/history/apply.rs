@@ -322,11 +322,13 @@ fn apply_failure_after_ref_update(
     }
 }
 
-/// Pre-checkout bytes for one path in the forward tree transition (missing = absent).
+/// Pre-checkout state for one path in the forward tree transition (missing = absent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorktreePathSnapshot {
     bytes: Option<Vec<u8>>,
     symlink: bool,
+    #[cfg(unix)]
+    mode: u32,
 }
 
 fn snapshot_worktree_for_tree_transition(
@@ -369,6 +371,8 @@ fn read_worktree_path_snapshot(work_tree: &Path, path: &str) -> WorktreePathSnap
             return WorktreePathSnapshot {
                 bytes: None,
                 symlink: false,
+                #[cfg(unix)]
+                mode: 0o644,
             };
         }
     };
@@ -377,17 +381,34 @@ fn read_worktree_path_snapshot(work_tree: &Path, path: &str) -> WorktreePathSnap
         return WorktreePathSnapshot {
             bytes: target.map(|p| p.as_os_str().as_encoded_bytes().to_vec()),
             symlink: true,
+            #[cfg(unix)]
+            mode: 0,
         };
     }
     if meta.is_file() {
-        return WorktreePathSnapshot {
-            bytes: fs::read(&abs).ok(),
-            symlink: false,
-        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = meta.permissions().mode() & 0o7777;
+            return WorktreePathSnapshot {
+                bytes: fs::read(&abs).ok(),
+                symlink: false,
+                mode,
+            };
+        }
+        #[cfg(not(unix))]
+        {
+            return WorktreePathSnapshot {
+                bytes: fs::read(&abs).ok(),
+                symlink: false,
+            };
+        }
     }
     WorktreePathSnapshot {
         bytes: None,
         symlink: false,
+        #[cfg(unix)]
+        mode: 0o644,
     }
 }
 
@@ -467,6 +488,15 @@ fn restore_worktree_path(abs: &Path, saved: &WorktreePathSnapshot) -> std::io::R
         fs::create_dir_all(parent)?;
     }
     fs::write(abs, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if saved.mode != 0 {
+            let mut perms = fs::metadata(abs)?.permissions();
+            perms.set_mode(saved.mode);
+            fs::set_permissions(abs, perms)?;
+        }
+    }
     Ok(())
 }
 
