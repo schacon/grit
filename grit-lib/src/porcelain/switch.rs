@@ -403,13 +403,8 @@ fn prepare_tree_switch_allow_local(
     to_tree: &ObjectId,
 ) -> Result<PreparedSwitch> {
     let snapshot = load_worktree_snapshot(repo)?;
-    prepare_tree_transition_allow_local(
-        repo,
-        snapshot.head_tree.as_ref(),
-        to_tree,
-        &HashSet::new(),
-    )
-    .map_err(tree_transition_prepare_to_error)
+    prepare_tree_transition_allow_local(repo, snapshot.head_tree.as_ref(), to_tree, &HashSet::new())
+        .map_err(tree_transition_prepare_to_error)
 }
 
 /// Local edits on tree-diff paths block a tree transition.
@@ -612,18 +607,15 @@ pub(crate) fn verify_tree_transition_allow_local(
     from_tree: Option<&ObjectId>,
     to_tree: &ObjectId,
 ) -> std::result::Result<(), TreeTransitionVerifyError> {
-    let mut prepared = prepare_tree_transition_allow_local(
-        repo,
-        from_tree,
-        to_tree,
-        &HashSet::new(),
-    )
-    .map_err(|err| match err {
-            TreeTransitionPrepareError::Failed(e) => TreeTransitionVerifyError::Failed(e),
-            TreeTransitionPrepareError::OverwritePaths(paths) => {
-                TreeTransitionVerifyError::WouldOverwrite(paths)
-            }
-        })?;
+    let mut prepared =
+        prepare_tree_transition_allow_local(repo, from_tree, to_tree, &HashSet::new()).map_err(
+            |err| match err {
+                TreeTransitionPrepareError::Failed(e) => TreeTransitionVerifyError::Failed(e),
+                TreeTransitionPrepareError::OverwritePaths(paths) => {
+                    TreeTransitionVerifyError::WouldOverwrite(paths)
+                }
+            },
+        )?;
     let tree_changes = prepared.plan.tree_changes.clone();
     let untracked =
         crate::porcelain::worktree_guard::untracked_would_be_overwritten_by_tree_changes(
@@ -669,13 +661,9 @@ pub(crate) fn checkout_tree_transition_allow_local_with_preserved(
     to_tree: &ObjectId,
     force_preserve_worktree: &HashSet<String>,
 ) -> Result<()> {
-    let prepared = prepare_tree_transition_allow_local(
-        repo,
-        from_tree,
-        to_tree,
-        force_preserve_worktree,
-    )
-    .map_err(tree_transition_prepare_to_error)?;
+    let prepared =
+        prepare_tree_transition_allow_local(repo, from_tree, to_tree, force_preserve_worktree)
+            .map_err(tree_transition_prepare_to_error)?;
     checkout_prepared_tree_transition(repo, prepared)
 }
 
