@@ -407,6 +407,8 @@ pub struct Index {
     pub source_mtime: Option<(u32, u32)>,
     /// When set, [`Self::invalidate_untracked_cache_for_path`] is a no-op (bulk staging defers invalidation).
     pub(crate) defer_untracked_cache_invalidation: bool,
+    /// Skip the pre-write racy smudge walk (checkout just aligned worktree and index entries).
+    pub(crate) skip_racy_smudge_on_write: bool,
     /// In-memory only: Git `istate->fsmonitor_has_run_once`.
     pub(crate) fsmonitor_refresh_ran: bool,
 }
@@ -777,6 +779,7 @@ impl Index {
             hash_algo: HashAlgo::Sha1,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
         }
     }
@@ -826,6 +829,7 @@ impl Index {
             hash_algo: HashAlgo::Sha1,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
         }
     }
@@ -855,6 +859,7 @@ impl Index {
                 hash_algo: HashAlgo::default(),
                 source_mtime: None,
                 defer_untracked_cache_invalidation: false,
+                skip_racy_smudge_on_write: false,
                 fsmonitor_refresh_ran: false,
             };
         }
@@ -892,6 +897,7 @@ impl Index {
             hash_algo: HashAlgo::default(),
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
         }
     }
@@ -919,6 +925,7 @@ impl Index {
                 hash_algo: HashAlgo::default(),
                 source_mtime: None,
                 defer_untracked_cache_invalidation: false,
+                skip_racy_smudge_on_write: false,
                 fsmonitor_refresh_ran: false,
             };
         }
@@ -959,6 +966,7 @@ impl Index {
             hash_algo: HashAlgo::default(),
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
         }
     }
@@ -1323,6 +1331,7 @@ impl Index {
             hash_algo,
             source_mtime: None,
             defer_untracked_cache_invalidation: false,
+            skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
         })
     }
@@ -2103,22 +2112,37 @@ impl Index {
                 .collect::<Vec<_>>();
             self.entries = merge_sorted_index_entries(kept, replacements);
             self.entries_sorted = true;
-            for dir in dir_prefixes {
-                self.invalidate_after_path_removal(dir.as_bytes());
-            }
-            for path in invalidated_paths {
+            const BULK_INDEX_EXTENSION_INVALIDATE_MIN: usize = 64;
+            let mut invalidations = dir_prefixes.len();
+            for path in &invalidated_paths {
                 if dir_prefixes
                     .iter()
                     .all(|d| !Self::entry_under_directory_prefix(path.as_slice(), d.as_bytes()))
                 {
-                    self.invalidate_after_path_removal(&path);
+                    invalidations += 1;
                 }
             }
-            for path in repl_for_inval {
-                if let Ok(p) = std::str::from_utf8(&path) {
-                    self.invalidate_untracked_cache_for_path(p);
+            invalidations += repl_for_inval.len();
+            if invalidations >= BULK_INDEX_EXTENSION_INVALIDATE_MIN {
+                self.drop_derived_index_extensions();
+            } else {
+                for dir in dir_prefixes {
+                    self.invalidate_after_path_removal(dir.as_bytes());
                 }
-                self.invalidate_cache_tree_for_path(&path);
+                for path in invalidated_paths {
+                    if dir_prefixes
+                        .iter()
+                        .all(|d| !Self::entry_under_directory_prefix(path.as_slice(), d.as_bytes()))
+                    {
+                        self.invalidate_after_path_removal(&path);
+                    }
+                }
+                for path in repl_for_inval {
+                    if let Ok(p) = std::str::from_utf8(&path) {
+                        self.invalidate_untracked_cache_for_path(p);
+                    }
+                    self.invalidate_cache_tree_for_path(&path);
+                }
             }
             self.touch_fsmonitor_after_entry_change();
             return;
@@ -2276,6 +2300,15 @@ impl Index {
             for entry in replacements {
                 self.add_or_replace(entry);
             }
+            return;
+        }
+        const BULK_MERGE_MIN: usize = 64;
+        if replacements.len() >= BULK_MERGE_MIN {
+            self.drop_derived_index_extensions();
+            let kept = std::mem::take(&mut self.entries);
+            self.entries = merge_sorted_index_entries(kept, replacements);
+            self.entries_sorted = true;
+            self.touch_fsmonitor_after_entry_change();
             return;
         }
         let repl_for_inval: Vec<Vec<u8>> = replacements
@@ -3840,6 +3873,46 @@ pub fn index_file_mtime(path: &Path) -> Option<(u32, u32)> {
         return Some((0, 0));
     }
     Some((secs as u32, ft.nanoseconds()))
+}
+
+/// Advance the on-disk index mtime to be strictly newer than every stage-0 entry mtime.
+///
+/// Checkout writes blob timestamps first, then the index in the same second; without this bump the
+/// next switch would treat every touched path as racy. Git usually ends up with a newer index second.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the index timestamp cannot be updated.
+pub(crate) fn advance_index_file_mtime_past_entries(
+    index: &Index,
+    index_path: &Path,
+) -> Result<()> {
+    use filetime::FileTime;
+    let mut max_sec = 0u32;
+    let mut max_nsec = 0u32;
+    for ie in &index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        if ie.mtime_sec > max_sec || (ie.mtime_sec == max_sec && ie.mtime_nsec > max_nsec) {
+            max_sec = ie.mtime_sec;
+            max_nsec = ie.mtime_nsec;
+        }
+    }
+    if max_sec == 0 && max_nsec == 0 {
+        return Ok(());
+    }
+    let needs_bump = index_file_mtime(index_path)
+        .is_none_or(|(sec, nsec)| sec < max_sec || (sec == max_sec && nsec <= max_nsec));
+    if !needs_bump {
+        return Ok(());
+    }
+    let ft = if max_nsec < 999_999_999 {
+        FileTime::from_unix_time(i64::from(max_sec), max_nsec + 1)
+    } else {
+        FileTime::from_unix_time(i64::from(max_sec) + 1, 0)
+    };
+    filetime::set_file_mtime(index_path, ft).map_err(Error::Io)
 }
 
 /// Join a repository work tree root with an index-relative path stored as raw bytes.
