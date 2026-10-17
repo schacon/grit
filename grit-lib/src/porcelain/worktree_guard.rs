@@ -44,21 +44,42 @@ pub fn load_worktree_snapshot(repo: &Repository) -> Result<WorktreeSnapshot> {
         .work_tree()
         .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
 
+    let head = resolve_head(repo.git_dir())?;
+    let head_tree = head_tree_from_head_commit(repo, head.oid())?;
+    let index = load_worktree_index(repo)?;
+    Ok(WorktreeSnapshot { index, head_tree })
+}
+
+/// Load the index for worktree guards without resolving `HEAD`.
+pub(crate) fn load_worktree_index(repo: &Repository) -> Result<Index> {
+    let _work_tree = repo
+        .work_tree()
+        .ok_or_else(|| Error::Message("this operation must be run in a work tree".into()))?;
     let index_path = repo.index_path_for_env()?;
     let mut index = repo.load_index_at(&index_path)?;
     if index.has_sparse_directory_placeholders() {
         index.expand_sparse_directory_placeholders(repo.odb())?;
     }
+    Ok(index)
+}
 
-    let head = resolve_head(repo.git_dir())?;
-    let head_tree = match head.oid() {
-        Some(oid) => {
-            let obj = repo.odb().read(oid)?;
-            Some(parse_commit(&obj.data)?.tree)
-        }
-        None => None,
+fn head_tree_from_head_commit(
+    repo: &Repository,
+    head_oid: Option<&ObjectId>,
+) -> Result<Option<ObjectId>> {
+    let Some(oid) = head_oid else {
+        return Ok(None);
     };
+    let obj = repo.odb().read(oid)?;
+    Ok(Some(parse_commit(&obj.data)?.tree))
+}
 
+/// Build a snapshot when `HEAD`'s tree is already known (avoids re-resolving `HEAD`).
+pub(crate) fn worktree_snapshot_with_head_tree(
+    repo: &Repository,
+    head_tree: Option<ObjectId>,
+) -> Result<WorktreeSnapshot> {
+    let index = load_worktree_index(repo)?;
     Ok(WorktreeSnapshot { index, head_tree })
 }
 
@@ -135,7 +156,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
     let index_path = repo.index_path_for_env()?;
     let index_mtime = index_mtime_for_diff(index, index_file_mtime(&index_path));
     let stat_policy = StatMatchPolicy::from_config(repo.config().ok().as_deref());
-    let paths_for_stat = {
+    let paths_for_stat: BTreeSet<String> = {
         let base: BTreeSet<String> = skip_worktree_stat_paths.map_or_else(
             || path_filter.as_ref().clone(),
             |skip| {
@@ -164,6 +185,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
                     stat_policy,
                 )
             })
+            .filter(|path| !added_tree_path_missing_on_disk(work_tree, tree_changes, path))
             .collect()
     };
     if staged.is_empty()
@@ -192,7 +214,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
         }
         None => None,
     };
-    let stat_parallel_threads = (path_count >= 16).then(|| {
+    let stat_parallel_threads = (path_count >= 128).then(|| {
         repo.thread_policy()
             .resolve(
                 crate::parallel::ParallelOp::IndexRefresh,
@@ -441,6 +463,21 @@ fn path_is_tree_scheduled_delete(tree_changes: &[DiffEntry], path: &str) -> bool
 
 /// Delete-only tree-diff paths whose index already matches HEAD and are not racy need no stat
 /// before switch: a local edit would change stat data or show up in the staged pass.
+/// Added tree-diff paths with no worktree file yet cannot have local edits to preserve.
+fn added_tree_path_missing_on_disk(
+    work_tree: &Path,
+    tree_changes: &[DiffEntry],
+    path: &str,
+) -> bool {
+    let is_added = tree_changes.iter().any(|change| {
+        change.status == DiffStatus::Added && change.new_path.as_deref() == Some(path)
+    });
+    if !is_added {
+        return false;
+    }
+    !work_tree.join(path).exists()
+}
+
 fn delete_path_trusted_without_worktree_stat(
     index: &Index,
     head_by_path: &HashMap<String, HeadTreeSide>,
@@ -621,6 +658,38 @@ struct WholesaleDeleteRootScan {
     needs_ignore_rules: Vec<String>,
 }
 
+fn count_indexed_paths_under_root(index: &Index, root: &str) -> usize {
+    let prefix = format!("{root}/");
+    index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .filter(|e| e.path.starts_with(prefix.as_bytes()) || e.path.as_slice() == root.as_bytes())
+        .count()
+}
+
+fn delete_path_under_root(path: &str, root: &str, ignorecase: bool) -> bool {
+    if ignorecase {
+        path.eq_ignore_ascii_case(root)
+            || path
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('/'))
+    } else {
+        path == root || path.starts_with(&format!("{root}/"))
+    }
+}
+
+fn count_delete_paths_under_root(
+    delete_paths: &HashSet<String>,
+    root: &str,
+    ignorecase: bool,
+) -> usize {
+    delete_paths
+        .iter()
+        .filter(|p| delete_path_under_root(p, root, ignorecase))
+        .count()
+}
+
 fn scan_wholesale_delete_root(
     index: &Index,
     work_tree: &Path,
@@ -628,6 +697,9 @@ fn scan_wholesale_delete_root(
     delete_paths: &HashSet<String>,
     ignorecase: bool,
 ) -> WholesaleDeleteRootScan {
+    let indexed = count_indexed_paths_under_root(index, root);
+    let deletes = count_delete_paths_under_root(delete_paths, root, ignorecase);
+    let index_aligned = indexed > 0 && indexed == deletes;
     let mut untracked = Vec::new();
     let mut needs_ignore_rules = Vec::new();
     let abs_root = work_tree.join(root);
@@ -637,45 +709,64 @@ fn scan_wholesale_delete_root(
             needs_ignore_rules,
         };
     }
-    let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, root.to_owned())];
-    while let Some((abs, rel_prefix)) = stack.pop() {
+    let mut rel_buf = String::with_capacity(root.len() + 64);
+    rel_buf.push_str(root);
+    let mut stack: Vec<(PathBuf, usize)> = vec![(abs_root, rel_buf.len())];
+    while let Some((abs, parent_end)) = stack.pop() {
+        rel_buf.truncate(parent_end);
         let read_dir = match fs::read_dir(&abs) {
             Ok(rd) => rd,
             Err(_) => continue,
         };
         for entry in read_dir.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let rel = if rel_prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{rel_prefix}/{name}")
-            };
+            let rel_start = rel_buf.len();
+            if rel_start > 0 {
+                rel_buf.push('/');
+            }
+            rel_buf.push_str(&name);
+            let rel = rel_buf.as_str();
             let file_type = match entry.file_type() {
                 Ok(t) => t,
-                Err(_) => continue,
+                Err(_) => {
+                    rel_buf.truncate(rel_start);
+                    continue;
+                }
             };
             if file_type.is_dir() {
-                stack.push((entry.path(), rel));
+                stack.push((entry.path(), rel_buf.len()));
+                rel_buf.truncate(rel_start);
                 continue;
             }
             if !file_type.is_file() && !file_type.is_symlink() {
-                if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
+                if delete_path_scheduled_for_removal(rel, delete_paths, ignorecase) {
+                    rel_buf.truncate(rel_start);
                     continue;
                 }
-                if index.get(rel.as_bytes(), 0).is_some() {
+                if !index_aligned && index.get(rel.as_bytes(), 0).is_some() {
+                    rel_buf.truncate(rel_start);
                     continue;
                 }
                 // FIFOs, sockets, and devices are not deleted wholesale; block trusted removal.
-                untracked.push(rel);
+                untracked.push(rel.to_owned());
+                rel_buf.truncate(rel_start);
                 continue;
             }
-            if delete_path_scheduled_for_removal(&rel, delete_paths, ignorecase) {
+            if delete_path_scheduled_for_removal(rel, delete_paths, ignorecase) {
+                rel_buf.truncate(rel_start);
+                continue;
+            }
+            if index_aligned {
+                needs_ignore_rules.push(rel.to_owned());
+                rel_buf.truncate(rel_start);
                 continue;
             }
             if index.get(rel.as_bytes(), 0).is_some() {
+                rel_buf.truncate(rel_start);
                 continue;
             }
-            needs_ignore_rules.push(rel);
+            needs_ignore_rules.push(rel.to_owned());
+            rel_buf.truncate(rel_start);
         }
     }
     WholesaleDeleteRootScan {
@@ -815,9 +906,8 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
     }
     let untracked_blocks_wholesale =
         !delete_roots.is_empty() && untracked.iter().any(|p| under_delete_root(p));
-    let need_traditional_ignored = !delete_roots.is_empty()
-        && !untracked_blocks_wholesale
-        && !use_fast_wholesale_scan;
+    let need_traditional_ignored =
+        !delete_roots.is_empty() && !untracked_blocks_wholesale && !use_fast_wholesale_scan;
     if need_traditional_ignored {
         let (_, ignored_under_deletes) = collect_untracked_and_ignored_with_cache(
             repo,

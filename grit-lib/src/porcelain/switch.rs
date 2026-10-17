@@ -18,7 +18,7 @@ use crate::porcelain::checkout_reflog::{
 };
 use crate::porcelain::worktree_guard::{
     collect_untracked_and_wholesale_trust_for_tree_changes, ensure_no_untracked_overwrite,
-    load_worktree_snapshot, TreeSwitchPlan,
+    load_worktree_snapshot, worktree_snapshot_with_head_tree, TreeSwitchPlan, WorktreeSnapshot,
 };
 use crate::refs;
 use crate::repo::Repository;
@@ -353,9 +353,15 @@ fn switch_to_target(
     reflog_to_label: &str,
 ) -> Result<SwitchOutcome> {
     let head_before = resolve_head(repo.git_dir())?;
+    let head_tree = head_before
+        .oid()
+        .copied()
+        .map(|oid| commit_tree(repo, &oid))
+        .transpose()?;
     let target_tree = commit_tree(repo, &target_oid)?;
+    let snapshot = worktree_snapshot_with_head_tree(repo, head_tree)?;
 
-    let prepared = prepare_tree_switch_allow_local(repo, &target_tree)?;
+    let prepared = prepare_tree_switch_allow_local_with_snapshot(repo, &target_tree, snapshot)?;
     checkout_prepared_tree_transition(repo, prepared)?;
 
     if let Some(from_label) = checkout_reflog_from_label(&head_before) {
@@ -398,15 +404,16 @@ fn tree_changes_contain_additions(tree_changes: &[DiffEntry]) -> bool {
     tree_changes.iter().any(|c| c.status == DiffStatus::Added)
 }
 
-fn prepare_tree_switch_allow_local(
+fn prepare_tree_switch_allow_local_with_snapshot(
     repo: &Repository,
     to_tree: &ObjectId,
+    snapshot: WorktreeSnapshot,
 ) -> Result<PreparedSwitch> {
-    let snapshot = load_worktree_snapshot(repo)?;
-    prepare_tree_transition_allow_local(
+    prepare_tree_transition_allow_local_with_snapshot(
         repo,
-        snapshot.head_tree.as_ref(),
+        None,
         to_tree,
+        snapshot,
         &HashSet::new(),
     )
     .map_err(tree_transition_prepare_to_error)
@@ -442,7 +449,23 @@ pub(crate) fn prepare_tree_transition_allow_local(
     to_tree: &ObjectId,
     force_preserve_worktree: &HashSet<String>,
 ) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
-    let mut snapshot = load_worktree_snapshot(repo)?;
+    let snapshot = load_worktree_snapshot(repo)?;
+    prepare_tree_transition_allow_local_with_snapshot(
+        repo,
+        from_tree,
+        to_tree,
+        snapshot,
+        force_preserve_worktree,
+    )
+}
+
+pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
+    repo: &Repository,
+    from_tree: Option<&ObjectId>,
+    to_tree: &ObjectId,
+    mut snapshot: WorktreeSnapshot,
+    force_preserve_worktree: &HashSet<String>,
+) -> std::result::Result<PreparedSwitch, TreeTransitionPrepareError> {
     let from_tree_oid = from_tree.copied().or(snapshot.head_tree);
     snapshot.head_tree = from_tree_oid;
     let trust_index_for_old_tree =

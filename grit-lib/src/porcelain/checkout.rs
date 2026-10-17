@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::ConfigSet;
-use crate::crlf;
+use crate::crlf::{self, ConversionConfig};
 use crate::diff::{diff_trees, format_mode, DiffEntry, DiffStatus};
 use crate::error::{Error, Result};
 use crate::filter_process::{DelayedCheckoutError, DelayedProcessCheckout, FilterSmudgeMeta};
@@ -498,17 +498,6 @@ pub(crate) fn checkout_tree_changes_with_index_opts(
         apply,
         attribute_changes,
     )
-}
-
-/// Wholesale delete directories for a trusted switch prepare pass (index-only + gitlink safety).
-pub(crate) fn trusted_wholesale_remove_dirs(
-    index: &Index,
-    delete_paths: &[String],
-    work_tree: &Path,
-    gitlink_deletes: &HashSet<String>,
-) -> BTreeSet<String> {
-    let candidates = wholesale_deleted_directories(index, delete_paths);
-    filter_wholesale_dirs_with_populated_gitlinks(work_tree, candidates, gitlink_deletes)
 }
 
 /// Top-level directories whose tracked files are entirely removed by `delete_paths`.
@@ -999,14 +988,7 @@ fn checkout_bulk_added_tree_changes(
         write_outcomes,
         progress,
     )?;
-    checkout_commit_index_update(
-        repo,
-        index_mut,
-        &BTreeSet::new(),
-        &[],
-        new_entries,
-        true,
-    )?;
+    checkout_commit_index_update(repo, index_mut, &BTreeSet::new(), &[], new_entries, true)?;
     progress.finish();
     Ok(())
 }
@@ -1331,120 +1313,146 @@ fn checkout_tree_changes_with_progress(
         .unwrap_or(false);
     let precompose = repo.pathspec_precompose_enabled();
     let attr_changes = attribute_changes.unwrap_or(changes);
-    let rules = if tree_changes_touch_gitattributes(attr_changes) {
-        let prospective_index = prospective_index_for_checkout(index_mut, attr_changes);
-        WorktreeRules::from_checkout_prospective_index(repo, &prospective_index, config.clone())?
-    } else {
-        WorktreeRules::from_parts_index_attributes_only(repo, index_mut, config.clone())?
-    };
-    let conv = rules.conversion().clone();
 
     progress.start(
         ProgressPhase::CheckingOutFiles,
         Some(u64::try_from(changes.len()).unwrap_or(u64::MAX)),
     );
 
-    if !apply.skip_bulk_checkout_fast_path && bulk_mod_delete_checkout_eligible(changes, &rules) {
-        return checkout_bulk_mod_delete_tree_changes(
-            repo, work_tree, changes, index_mut, &rules, &config, &conv, apply, precompose,
-            ignorecase, progress,
-        );
-    }
-    if !apply.skip_bulk_checkout_fast_path
-        && bulk_write_checkout_eligible(changes, &rules)
-        && (tree_changes_are_all_additions(changes) || tree_changes_are_all_modifications(changes))
-    {
-        return checkout_bulk_added_tree_changes(
-            repo, work_tree, changes, index_mut, &rules, &config, &conv, apply, precompose,
-            ignorecase, progress,
-        );
-    }
-    if !apply.skip_bulk_checkout_fast_path
-        && changes.len() >= BULK_DELETE_CHECKOUT_MIN
-        && tree_changes_are_all_deletions(changes)
-    {
-        let index: &Index = index_mut;
-        let delete_paths: Vec<String> = changes
-            .iter()
-            .filter(|c| c.status == DiffStatus::Deleted)
-            .filter_map(|c| c.old_path.clone())
-            .collect();
-        let gitlink_deletes: HashSet<String> = changes
-            .iter()
-            .filter(|c| c.status == DiffStatus::Deleted)
-            .filter_map(|c| {
-                let path = c.old_path.as_ref()?;
-                (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
-            })
-            .collect();
-        let wholesale_candidates = if apply.wholesale_safety_precomputed {
-            apply.preverified_wholesale_dirs.clone()
+    if !apply.skip_bulk_checkout_fast_path {
+        let bulk_rules = if tree_changes_touch_gitattributes(attr_changes) {
+            let prospective_index = prospective_index_for_checkout(index_mut, attr_changes);
+            WorktreeRules::from_checkout_prospective_index(
+                repo,
+                &prospective_index,
+                config.clone(),
+            )?
         } else {
-            wholesale_deleted_directories_on_disk(
+            WorktreeRules::from_parts_index_attributes_only(repo, index_mut, config.clone())?
+        };
+        let conv = bulk_rules.conversion().clone();
+
+        if bulk_mod_delete_checkout_eligible(changes, &bulk_rules) {
+            return checkout_bulk_mod_delete_tree_changes(
                 repo,
                 work_tree,
-                index,
-                &delete_paths,
+                changes,
+                index_mut,
+                &bulk_rules,
+                &config,
+                &conv,
+                apply,
+                precompose,
                 ignorecase,
-                &apply,
-                &gitlink_deletes,
-            )
-        };
-        let wholesale_index_prefixes = wholesale_candidates;
-        let mut wholesale_dirs_removed = BTreeSet::new();
-        let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
-        if !wholesale_index_prefixes.is_empty() {
-            if wholesale_index_prefixes.len() >= 2 {
-                let policy = repo.thread_policy();
-                let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-                let wt = work_tree.to_path_buf();
-                let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-                let removed = try_par_map(&dirs, options, 0, |dir| {
-                    let abs = wt.join(dir);
-                    Ok(fs::remove_dir_all(&abs)
-                        .is_ok()
-                        .then_some((dir.clone(), abs)))
+                progress,
+            );
+        }
+        if bulk_write_checkout_eligible(changes, &bulk_rules)
+            && (tree_changes_are_all_additions(changes)
+                || tree_changes_are_all_modifications(changes))
+        {
+            return checkout_bulk_added_tree_changes(
+                repo,
+                work_tree,
+                changes,
+                index_mut,
+                &bulk_rules,
+                &config,
+                &conv,
+                apply,
+                precompose,
+                ignorecase,
+                progress,
+            );
+        }
+        if changes.len() >= BULK_DELETE_CHECKOUT_MIN && tree_changes_are_all_deletions(changes) {
+            let index: &Index = index_mut;
+            let delete_paths: Vec<String> = changes
+                .iter()
+                .filter(|c| c.status == DiffStatus::Deleted)
+                .filter_map(|c| c.old_path.clone())
+                .collect();
+            let gitlink_deletes: HashSet<String> = changes
+                .iter()
+                .filter(|c| c.status == DiffStatus::Deleted)
+                .filter_map(|c| {
+                    let path = c.old_path.as_ref()?;
+                    (parse_git_mode(&c.old_mode) == MODE_GITLINK).then(|| path.clone())
                 })
-                .map_err(|e: ParallelHashError<()>| match e {
-                    ParallelHashError::Task(()) => {
-                        Error::PathError("parallel wholesale directory removal failed".into())
-                    }
-                })?;
-                for (dir, abs) in removed.into_iter().flatten() {
-                    wholesale_dirs_removed.insert(dir);
-                    deleted_abs_paths.push(abs);
-                }
+                .collect();
+            let wholesale_candidates = if apply.wholesale_safety_precomputed {
+                apply.preverified_wholesale_dirs.clone()
             } else {
-                for dir in &wholesale_index_prefixes {
-                    let abs = work_tree.join(dir);
-                    if fs::remove_dir_all(&abs).is_ok() {
-                        wholesale_dirs_removed.insert(dir.clone());
+                wholesale_deleted_directories_on_disk(
+                    repo,
+                    work_tree,
+                    index,
+                    &delete_paths,
+                    ignorecase,
+                    &apply,
+                    &gitlink_deletes,
+                )
+            };
+            let wholesale_index_prefixes = wholesale_candidates;
+            let mut wholesale_dirs_removed = BTreeSet::new();
+            let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
+            if !wholesale_index_prefixes.is_empty() {
+                if wholesale_index_prefixes.len() >= 2 {
+                    let policy = repo.thread_policy();
+                    let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+                    let wt = work_tree.to_path_buf();
+                    let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+                    let removed = try_par_map(&dirs, options, 0, |dir| {
+                        let abs = wt.join(dir);
+                        Ok(fs::remove_dir_all(&abs)
+                            .is_ok()
+                            .then_some((dir.clone(), abs)))
+                    })
+                    .map_err(|e: ParallelHashError<()>| match e {
+                        ParallelHashError::Task(()) => {
+                            Error::PathError("parallel wholesale directory removal failed".into())
+                        }
+                    })?;
+                    for (dir, abs) in removed.into_iter().flatten() {
+                        wholesale_dirs_removed.insert(dir);
                         deleted_abs_paths.push(abs);
+                    }
+                } else {
+                    for dir in &wholesale_index_prefixes {
+                        let abs = work_tree.join(dir);
+                        if fs::remove_dir_all(&abs).is_ok() {
+                            wholesale_dirs_removed.insert(dir.clone());
+                            deleted_abs_paths.push(abs);
+                        }
                     }
                 }
             }
+            return checkout_bulk_deleted_tree_changes(
+                repo,
+                work_tree,
+                changes,
+                index_mut,
+                &wholesale_index_prefixes,
+                &wholesale_dirs_removed,
+                &mut deleted_abs_paths,
+                progress,
+            );
         }
-        return checkout_bulk_deleted_tree_changes(
-            repo,
-            work_tree,
-            changes,
-            index_mut,
-            &wholesale_index_prefixes,
-            &wholesale_dirs_removed,
-            &mut deleted_abs_paths,
-            progress,
-        );
     }
 
     let index: &Index = index_mut;
     let checkout_smudge_ctx = crate::filter_process::checkout_smudge_context(repo);
-    let mut delayed = DelayedProcessCheckout::default();
-    let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
     let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(changes.len() / 8);
     let mut deleted_abs_paths: Vec<PathBuf> = Vec::with_capacity(changes.len() / 8);
     let mut dir_cache = LeadingDirCache::new();
     let mut plan: Vec<CheckoutPlanSlot> = Vec::with_capacity(changes.len());
     let mut write_jobs: Vec<CheckoutWriteJob> = Vec::new();
+    let mut rules: Option<WorktreeRules> = None;
+    let mut conv: Option<ConversionConfig> = None;
+    let mut delayed = DelayedProcessCheckout::default();
+    let mut pending_delayed: Vec<DelayedCheckoutTarget> = Vec::new();
+    let attr_changes = attribute_changes.unwrap_or(changes);
+    let precompose = repo.pathspec_precompose_enabled();
 
     let delete_paths: Vec<String> = changes
         .iter()
@@ -1569,6 +1577,24 @@ fn checkout_tree_changes_with_progress(
             progress.inc(1);
             continue;
         };
+        if rules.is_none() {
+            rules = Some(if tree_changes_touch_gitattributes(attr_changes) {
+                let prospective_index = prospective_index_for_checkout(index, attr_changes);
+                WorktreeRules::from_checkout_prospective_index(
+                    repo,
+                    &prospective_index,
+                    config.clone(),
+                )?
+            } else {
+                WorktreeRules::from_parts_index_attributes_only(repo, index, config.clone())?
+            });
+        }
+        let rules = rules.as_ref().ok_or_else(|| {
+            Error::PathError("internal error: missing checkout rules for write".into())
+        })?;
+        if conv.is_none() {
+            conv = Some(rules.conversion().clone());
+        }
         let mode = parse_git_mode(&change.new_mode);
         if mode == MODE_GITLINK {
             if let Some(existing) = index.get(path.as_bytes(), 0) {
@@ -1647,23 +1673,37 @@ fn checkout_tree_changes_with_progress(
         .map(|(i, _)| i)
         .collect();
 
-    for job in &write_jobs {
-        dir_cache.ensure_parents(work_tree, &job.path)?;
+    if write_jobs.len() >= 64 {
+        precreate_checkout_parent_dirs(work_tree, &write_jobs, &mut dir_cache);
+    } else {
+        for job in &write_jobs {
+            dir_cache.ensure_parents(work_tree, &job.path)?;
+        }
     }
 
-    let write_outcomes = execute_write_jobs(
-        repo,
-        &rules,
-        &config,
-        &conv,
-        work_tree,
-        &mut dir_cache,
-        &mut delayed,
-        &write_jobs,
-        &parallel_indices,
-        apply.parallel_prepare_blobs,
-        apply.checkout_parallel_threshold,
-    )?;
+    let write_outcomes = if write_jobs.is_empty() {
+        Vec::new()
+    } else {
+        let rules = rules.as_ref().ok_or_else(|| {
+            Error::PathError("internal error: missing checkout rules for write jobs".into())
+        })?;
+        let conv = conv.as_ref().ok_or_else(|| {
+            Error::PathError("internal error: missing conversion config for write jobs".into())
+        })?;
+        execute_write_jobs(
+            repo,
+            rules,
+            &config,
+            conv,
+            work_tree,
+            &mut dir_cache,
+            &mut delayed,
+            &write_jobs,
+            &parallel_indices,
+            apply.parallel_prepare_blobs,
+            apply.checkout_parallel_threshold,
+        )?
+    };
 
     let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(plan.len());
     let mut write_iter = write_outcomes.into_iter();
@@ -1687,25 +1727,29 @@ fn checkout_tree_changes_with_progress(
         }
     }
 
-    finish_delayed_checkouts(
-        repo,
-        &rules,
-        work_tree,
-        &mut delayed,
-        &pending_delayed,
-        &mut dir_cache,
-        &mut new_entries,
-        None,
-    )?;
+    if !pending_delayed.is_empty() {
+        let rules = rules.as_ref().ok_or_else(|| {
+            Error::PathError("internal error: missing checkout rules for delayed writes".into())
+        })?;
+        finish_delayed_checkouts(
+            repo,
+            rules,
+            work_tree,
+            &mut delayed,
+            &pending_delayed,
+            &mut dir_cache,
+            &mut new_entries,
+            None,
+        )?;
+    }
 
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
-
     drop(rules);
     let bulk_index_rewrite = changes.len() >= 64;
     checkout_commit_index_update(
         repo,
         index_mut,
-        &wholesale_index_prefixes,
+        &wholesale_dirs_removed,
         &paths_to_remove,
         new_entries,
         bulk_index_rewrite,
@@ -2188,6 +2232,30 @@ fn apply_in_place_git_mode_transition_at_path(
 /// Tracks leading directories already verified or created during one checkout pass.
 pub(crate) struct LeadingDirCache {
     ready: HashSet<PathBuf>,
+}
+
+fn precreate_checkout_parent_dirs(
+    work_tree: &Path,
+    jobs: &[CheckoutWriteJob],
+    cache: &mut LeadingDirCache,
+) {
+    let mut dirs = BTreeSet::new();
+    for job in jobs {
+        let Some(parent) = Path::new(&job.path).parent() else {
+            continue;
+        };
+        if parent.as_os_str().is_empty() {
+            continue;
+        }
+        dirs.insert(work_tree.join(parent));
+    }
+    for dir in dirs {
+        if cache.ready.contains(&dir) {
+            continue;
+        }
+        let _ = fs::create_dir_all(&dir);
+        cache.ready.insert(dir);
+    }
 }
 
 impl LeadingDirCache {

@@ -411,6 +411,8 @@ pub struct Index {
     pub(crate) skip_racy_smudge_on_write: bool,
     /// In-memory only: Git `istate->fsmonitor_has_run_once`.
     pub(crate) fsmonitor_refresh_ran: bool,
+    /// Skip racy smudge and UNTR shell setup on the next index write (checkout fast path).
+    pub(crate) suppress_pre_write_index_housekeeping: bool,
 }
 
 impl Default for Index {
@@ -781,6 +783,7 @@ impl Index {
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         }
     }
 
@@ -831,6 +834,7 @@ impl Index {
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         }
     }
 
@@ -861,6 +865,7 @@ impl Index {
                 defer_untracked_cache_invalidation: false,
                 skip_racy_smudge_on_write: false,
                 fsmonitor_refresh_ran: false,
+                suppress_pre_write_index_housekeeping: false,
             };
         }
 
@@ -899,6 +904,7 @@ impl Index {
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         }
     }
 
@@ -927,6 +933,7 @@ impl Index {
                 defer_untracked_cache_invalidation: false,
                 skip_racy_smudge_on_write: false,
                 fsmonitor_refresh_ran: false,
+                suppress_pre_write_index_housekeeping: false,
             };
         }
 
@@ -968,6 +975,7 @@ impl Index {
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         }
     }
 
@@ -1333,6 +1341,7 @@ impl Index {
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         })
     }
 
@@ -2045,6 +2054,12 @@ impl Index {
         self.cache_tree = None;
         self.cache_tree_root = None;
         self.untracked_cache = None;
+    }
+
+    /// Drop only the cache-tree extension; keep UNTR when invalidation is deferred.
+    pub(crate) fn drop_cache_tree_extension(&mut self) {
+        self.cache_tree = None;
+        self.cache_tree_root = None;
     }
 
     fn invalidate_after_path_removal(&mut self, path: &[u8]) {

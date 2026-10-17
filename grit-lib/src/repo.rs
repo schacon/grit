@@ -1288,17 +1288,23 @@ impl Repository {
         let prev_index_mtime = crate::index::index_file_mtime(&path);
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
-            crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
-            if !index.skip_racy_smudge_on_write {
-                crate::diff::smudge_racily_clean_entries(
-                    &self.odb,
-                    &self.git_dir,
+            if !index.suppress_pre_write_index_housekeeping {
+                crate::untracked_cache::ensure_untracked_cache_shell(
                     index,
                     work_tree,
-                    prev_index_mtime,
-                    Some(cfg.as_ref()),
-                    Some(self.caches().filters()),
+                    cfg.as_ref(),
                 );
+                if !index.skip_racy_smudge_on_write {
+                    crate::diff::smudge_racily_clean_entries(
+                        &self.odb,
+                        &self.git_dir,
+                        index,
+                        work_tree,
+                        prev_index_mtime,
+                        Some(cfg.as_ref()),
+                        Some(self.caches().filters()),
+                    );
+                }
             }
         }
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));
@@ -1513,17 +1519,23 @@ impl Repository {
         let prev_index_mtime = crate::index::index_file_mtime(path);
         let cfg = self.config()?;
         if let Some(work_tree) = self.work_tree.as_deref() {
-            crate::untracked_cache::ensure_untracked_cache_shell(index, work_tree, cfg.as_ref());
-            if !index.skip_racy_smudge_on_write {
-                crate::diff::smudge_racily_clean_entries(
-                    &self.odb,
-                    &self.git_dir,
+            if !index.suppress_pre_write_index_housekeeping {
+                crate::untracked_cache::ensure_untracked_cache_shell(
                     index,
                     work_tree,
-                    prev_index_mtime,
-                    Some(cfg.as_ref()),
-                    Some(self.caches().filters()),
+                    cfg.as_ref(),
                 );
+                if !index.skip_racy_smudge_on_write {
+                    crate::diff::smudge_racily_clean_entries(
+                        &self.odb,
+                        &self.git_dir,
+                        index,
+                        work_tree,
+                        prev_index_mtime,
+                        Some(cfg.as_ref()),
+                        Some(self.caches().filters()),
+                    );
+                }
             }
         }
         let skip_hash = crate::index::index_skip_hash_for_write(Some(cfg.as_ref()));

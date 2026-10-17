@@ -7,15 +7,15 @@ mod support;
 use std::fs;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::porcelain::status::{status, StatusOptions};
+use grit_lib::progress::NullProgress;
+use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
     absorb, apply_absorb_rewrite, apply_fixup_rewrite, fixup, staged_fixup_paths, AbsorbOptions,
     ApplyOptions, EmptyPolicy, FixupOptions, HistoryError, RefScope, RewriteOptions,
     UnassignedReason,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
-use grit_lib::porcelain::status::{status, StatusOptions};
-use grit_lib::progress::NullProgress;
-use grit_lib::repo::Repository;
 
 use support::{commit_file, git, git_fsck_strict, git_rev_parse, HistoryRepo};
 

@@ -683,6 +683,7 @@ pub(crate) fn write_index_file_split(
             defer_untracked_cache_invalidation: false,
             skip_racy_smudge_on_write: false,
             fsmonitor_refresh_ran: false,
+            suppress_pre_write_index_housekeeping: false,
         };
         let tmp = match tempfile::NamedTempFile::new_in(git_dir) {
             Ok(t) => t,
@@ -837,6 +838,7 @@ pub(crate) fn write_index_file_split(
         defer_untracked_cache_invalidation: false,
         skip_racy_smudge_on_write: false,
         fsmonitor_refresh_ran: index.fsmonitor_refresh_ran,
+        suppress_pre_write_index_housekeeping: index.suppress_pre_write_index_housekeeping,
     };
 
     out_index.write_to_path_with_config_and_policy(path, skip_hash, Some(cfg), thread_policy)?;
