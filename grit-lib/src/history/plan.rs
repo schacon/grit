@@ -299,6 +299,229 @@ pub fn plan_rewrite(
     })
 }
 
+/// Replay a contiguous first-parent segment in a custom order (each commit onto the previous).
+///
+/// `oldest` must be the first commit in the segment on the original first-parent chain;
+/// `replay_order` lists the same commits in the desired new order.
+///
+/// # Errors
+///
+/// Same as [`plan_rewrite`], including [`HistoryError::MergeCommitInReplay`] when the segment
+/// contains a merge commit.
+pub fn plan_replay_linear_segment(
+    repo: &Repository,
+    oldest: ObjectId,
+    replay_order: &[ObjectId],
+    opts: &RewriteOptions,
+) -> Result<RewritePlan, HistoryError> {
+    if replay_order.is_empty() {
+        return Ok(RewritePlan {
+            commits: Vec::new(),
+            ref_updates: Vec::new(),
+            head: HeadEffect::default(),
+        });
+    }
+
+    let scoped_refs = collect_scoped_refs(repo, opts, oldest)?;
+    ensure_branches_not_checked_out_elsewhere(repo, &scoped_refs)?;
+
+    let parents_of_oldest = commit_parents(repo, oldest)?;
+    let (commits_to_replay, segment_tip_old) =
+        validate_replay_order_segment(repo, oldest, replay_order)?;
+    let segment_set: HashSet<ObjectId> = commits_to_replay.iter().copied().collect();
+
+    if matches!(opts.scope, RefScope::Head) {
+        let head_oid = head_oid(repo)?;
+        if !is_ancestor(repo, oldest, head_oid).map_err(library_err)? {
+            return Err(HistoryError::NotInHistory { commit: oldest });
+        }
+    }
+
+    if let Some(main_segment) = first_parent_segment_between(repo, oldest, segment_tip_old)? {
+        let main_line: HashSet<ObjectId> = main_segment.iter().copied().collect();
+        for (name, tip) in &scoped_refs {
+            if segment_set.contains(tip) {
+                continue;
+            }
+            if main_line.contains(tip) {
+                return Err(HistoryError::DivergentBranch { name: name.clone() });
+            }
+        }
+    }
+
+    for &oid in &commits_to_replay {
+        let old = load_commit(repo, oid)?;
+        if old.parents.len() > 1 {
+            return Err(HistoryError::MergeCommitInReplay { commit: oid });
+        }
+    }
+
+    let mut mapping: HashMap<ObjectId, ObjectId> = HashMap::new();
+    let mut parent: Option<ObjectId> = parents_of_oldest.first().copied();
+
+    for &old_oid in replay_order {
+        let old = load_commit(repo, old_oid)?;
+        let parent_list: Vec<ObjectId> = parent.into_iter().collect();
+        let new_oid = replay_edited_commit(
+            repo,
+            &old,
+            old_oid,
+            &parent_list,
+            &old.author,
+            &opts.committer,
+            &old.message,
+            opts,
+        )?;
+        mapping.insert(old_oid, new_oid);
+        parent = Some(new_oid);
+    }
+
+    let rewritten = commits_to_replay
+        .iter()
+        .map(|&old| RewrittenCommit {
+            old,
+            new: Some(mapping.get(&old).copied().unwrap_or(old)),
+        })
+        .collect();
+
+    let replay_tip = *replay_order.last().ok_or(HistoryError::Planning {
+        message: "empty replay order".into(),
+    })?;
+    let segment_tip_new = mapping
+        .get(&replay_tip)
+        .copied()
+        .ok_or(HistoryError::Planning {
+            message: "replay tip missing from mapping".into(),
+        })?;
+    let ref_updates =
+        plan_ref_updates_reordered(&scoped_refs, &mapping, segment_tip_old, segment_tip_new);
+    let mut head_mapping = mapping.clone();
+    if let Ok(head_oid) = head_oid(repo) {
+        if head_oid == segment_tip_old {
+            head_mapping.insert(segment_tip_old, segment_tip_new);
+        }
+    }
+    let head = head_effect(repo, &head_mapping)?;
+
+    Ok(RewritePlan {
+        commits: rewritten,
+        ref_updates,
+        head,
+    })
+}
+
+fn validate_replay_order_segment(
+    repo: &Repository,
+    oldest: ObjectId,
+    replay_order: &[ObjectId],
+) -> Result<(Vec<ObjectId>, ObjectId), HistoryError> {
+    if replay_order.is_empty() {
+        return Err(HistoryError::Planning {
+            message: "replay order must not be empty".into(),
+        });
+    }
+    let set: HashSet<ObjectId> = replay_order.iter().copied().collect();
+    if set.len() != replay_order.len() {
+        return Err(HistoryError::Planning {
+            message: "replay order must not list the same commit twice".into(),
+        });
+    }
+    let segment_tip = segment_tip_in_replay_order(repo, replay_order)?;
+    let Some(canonical) = first_parent_segment_between(repo, oldest, segment_tip)? else {
+        return Err(HistoryError::Planning {
+            message: "replay order is not a first-parent segment from oldest".into(),
+        });
+    };
+    if canonical.first() != Some(&oldest) {
+        return Err(HistoryError::Planning {
+            message: "oldest does not start the replay segment".into(),
+        });
+    }
+    if canonical.iter().copied().collect::<HashSet<_>>() != set {
+        return Err(HistoryError::Planning {
+            message: "replay order must cover exactly one first-parent segment".into(),
+        });
+    }
+    Ok((canonical, segment_tip))
+}
+
+fn segment_tip_in_replay_order(
+    repo: &Repository,
+    replay_order: &[ObjectId],
+) -> Result<ObjectId, HistoryError> {
+    let set: HashSet<ObjectId> = replay_order.iter().copied().collect();
+    let mut tips = Vec::new();
+    for &oid in replay_order {
+        let is_parent_of_other = replay_order.iter().any(|&child| {
+            child != oid
+                && commit_parents(repo, child)
+                    .ok()
+                    .and_then(|parents| parents.first().copied())
+                    == Some(oid)
+        });
+        if !is_parent_of_other {
+            tips.push(oid);
+        }
+    }
+    if tips.len() != 1 {
+        return Err(HistoryError::Planning {
+            message: "replay order must have exactly one segment tip".into(),
+        });
+    }
+    let tip = tips[0];
+    if !set.contains(&tip) {
+        return Err(HistoryError::Planning {
+            message: "replay segment tip missing from replay order".into(),
+        });
+    }
+    Ok(tip)
+}
+
+/// First-parent commits from `oldest` through `tip`, inclusive; `None` when `tip` is not reachable.
+fn first_parent_segment_between(
+    repo: &Repository,
+    oldest: ObjectId,
+    tip: ObjectId,
+) -> Result<Option<Vec<ObjectId>>, HistoryError> {
+    let mut newest_first = Vec::new();
+    let mut current = Some(tip);
+    while let Some(oid) = current {
+        newest_first.push(oid);
+        if oid == oldest {
+            newest_first.reverse();
+            return Ok(Some(newest_first));
+        }
+        let parents = commit_parents(repo, oid)?;
+        current = parents.first().copied();
+    }
+    Ok(None)
+}
+
+fn plan_ref_updates_reordered(
+    scoped_refs: &[(String, ObjectId)],
+    mapping: &HashMap<ObjectId, ObjectId>,
+    segment_tip_old: ObjectId,
+    segment_tip_new: ObjectId,
+) -> Vec<PlannedRefUpdate> {
+    let mut updates = Vec::new();
+    for (name, old_tip) in scoped_refs {
+        let new_tip = if *old_tip == segment_tip_old {
+            segment_tip_new
+        } else {
+            resolve_mapped_tip(*old_tip, mapping)
+        };
+        if new_tip != *old_tip {
+            updates.push(PlannedRefUpdate {
+                name: name.clone(),
+                old: *old_tip,
+                new: new_tip,
+            });
+        }
+    }
+    updates.sort_by(|a, b| a.name.cmp(&b.name));
+    updates
+}
+
 fn library_err(err: Error) -> HistoryError {
     if let Error::History(inner) = err {
         return inner;

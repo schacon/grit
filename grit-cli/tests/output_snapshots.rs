@@ -253,33 +253,6 @@ fn snapshot_history_drop() {
 }
 
 #[test]
-fn snapshot_history_rebase() {
-    snapshot_fresh(
-        "history_rebase",
-        &[
-            "history",
-            "rebase",
-            "--onto",
-            "HEAD~2",
-            "--upstream",
-            "HEAD~3",
-            "--dry-run",
-        ],
-        |fixture| {
-            fixture.write_repo_file("f.txt", "1\n");
-            fixture.run_ok(&["add", "f.txt"]);
-            fixture.run_ok(&["commit", "-m", "one"]);
-            fixture.write_repo_file("f.txt", "2\n");
-            fixture.run_ok(&["add", "f.txt"]);
-            fixture.run_ok(&["commit", "-m", "two"]);
-            fixture.write_repo_file("f.txt", "3\n");
-            fixture.run_ok(&["add", "f.txt"]);
-            fixture.run_ok(&["commit", "-m", "three"]);
-        },
-    );
-}
-
-#[test]
 fn snapshot_revert() {
     snapshot_fresh("revert", &["revert", "HEAD"], |fixture| {
         fixture
