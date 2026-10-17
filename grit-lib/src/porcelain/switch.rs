@@ -592,10 +592,10 @@ pub(crate) fn verify_tree_transition_allow_local(
 ) -> std::result::Result<(), TreeTransitionVerifyError> {
     let mut prepared =
         prepare_tree_transition_allow_local(repo, from_tree, to_tree).map_err(|err| match err {
+            TreeTransitionPrepareError::Failed(e) => TreeTransitionVerifyError::Failed(e),
             TreeTransitionPrepareError::OverwritePaths(paths) => {
                 TreeTransitionVerifyError::WouldOverwrite(paths)
             }
-            TreeTransitionPrepareError::Failed(e) => TreeTransitionVerifyError::Failed(e),
         })?;
     let tree_changes = prepared.plan.tree_changes.clone();
     let untracked =

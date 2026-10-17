@@ -231,8 +231,7 @@ pub(crate) mod midx;
 pub(crate) mod midx_error;
 pub(crate) mod net_trace;
 pub mod notes;
-#[path = "object_inspect.rs"]
-mod object_inspect_root;
+pub mod object_inspect;
 pub mod objects;
 pub(crate) mod odb;
 pub(crate) mod pack;
@@ -333,7 +332,6 @@ pub use objects::bench_fixture;
 pub use objects::pack_reuse;
 pub use objects::pack_write;
 pub use porcelain::quote_path;
-pub use revwalk::object_inspect;
 pub use worktree::fsmonitor;
 
 #[cfg(test)]

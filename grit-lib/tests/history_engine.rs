@@ -392,7 +392,7 @@ fn plan_rewrite_insert_before_merge_is_rejected() {
     .expect_err("insert before merge");
     assert!(matches!(
         err,
-        grit_lib::revwalk::history::HistoryError::InsertBeforeOnMerge { commit } if commit == merge
+        grit_lib::revwalk::history::HistoryError::InsertBeforeOnMerge { commit: m } if m == merge
     ));
 }
 
