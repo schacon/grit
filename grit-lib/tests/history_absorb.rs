@@ -308,6 +308,97 @@ fn absorb_result_equals_manual_fixups() {
 }
 
 #[test]
+fn absorb_leaves_unassigned_hunks_on_same_path_staged() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let head_lines = |l2: &str, l4: &str, l7: &str| {
+        format!(
+            "line-1\n{l2}\nline-3\n{l4}\nline-5\nline-6\n{l7}\nline-8\n"
+        )
+    };
+    commit_file(
+        wt,
+        "file.txt",
+        &head_lines("line-2", "line-4", "line-7"),
+        "root",
+    );
+    let base = git_rev_parse(wt, "HEAD").expect("base");
+    commit_file(
+        wt,
+        "file.txt",
+        &head_lines("line-2", "changed-4", "line-7"),
+        "touch line 4",
+    );
+    let target = git_rev_parse(wt, "HEAD").expect("target");
+    commit_file(wt, "tail.txt", "t\n", "tail");
+    let staged = head_lines("unassigned-two", "fixed-4", "unassigned-five");
+    fs::write(wt.join("file.txt"), &staged).expect("write");
+    git(wt, &["add", "file.txt"]);
+    let grit = open_grit(wt);
+    let plan = absorb(
+        &grit,
+        &AbsorbOptions {
+            base: Some(base),
+            rewrite: rewrite_opts(),
+        },
+    )
+    .expect("plan");
+    assert_eq!(plan.assignments.len(), 1);
+    assert_eq!(plan.assignments[0].commit, target);
+    assert_eq!(plan.unassigned.len(), 2);
+    apply_absorb_rewrite(&grit, &plan, &apply_opts()).expect("apply");
+    git_fsck_strict(wt);
+
+    let head_file = fs::read_to_string(wt.join("file.txt")).expect("worktree");
+    assert!(
+        head_file.contains("line-2\n") && !head_file.contains("unassigned-two"),
+        "committed/worktree HEAD must not include unassigned line-2 edit: {head_file:?}"
+    );
+    assert!(
+        head_file.contains("line-7\n") && !head_file.contains("unassigned-five"),
+        "committed/worktree HEAD must not include unassigned line-7 edit: {head_file:?}"
+    );
+    assert!(head_file.contains("fixed-4"));
+
+    let index_text = git(wt, &["show", ":file.txt"]);
+    assert!(
+        index_text.contains("unassigned-two"),
+        "index must retain unassigned line-2 hunk: {index_text}"
+    );
+    assert!(
+        index_text.contains("unassigned-five"),
+        "index must retain unassigned line-7 hunk: {index_text}"
+    );
+    assert_eq!(
+        index_text.matches("unassigned-five").count(),
+        1,
+        "index must not duplicate unassigned line-7 text: {index_text}"
+    );
+}
+
+#[test]
+fn absorb_empty_stack_leaves_hunks_unassigned() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "solo.txt", "only\n", "solo");
+    let tip = git_rev_parse(wt, "HEAD").expect("tip");
+    fs::write(wt.join("solo.txt"), "only\nstaged\n").expect("write");
+    git(wt, &["add", "solo.txt"]);
+    let grit = open_grit(wt);
+    let plan = absorb(
+        &grit,
+        &AbsorbOptions {
+            base: Some(tip),
+            rewrite: rewrite_opts(),
+        },
+    )
+    .expect("plan");
+    assert!(plan.assignments.is_empty());
+    assert_eq!(plan.unassigned.len(), 1);
+    assert!(plan.plan.commits.is_empty());
+}
+
+#[test]
 fn absorb_nothing_staged_errors() {
     let repo = HistoryRepo::init();
     let wt = repo.worktree();

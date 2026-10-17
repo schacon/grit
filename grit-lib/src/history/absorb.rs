@@ -150,9 +150,6 @@ pub fn absorb(repo: &Repository, opts: &AbsorbOptions) -> Result<AbsorbPlan, His
             .unwrap_or_else(|| ObjectId::null(repo.odb().hash_algo()));
         (stack, base)
     };
-    if stack.is_empty() {
-        return Ok(empty_absorb_plan());
-    }
     let stack_set: HashSet<ObjectId> = stack.iter().copied().collect();
 
     let mut assignments = Vec::new();
@@ -170,6 +167,14 @@ pub fn absorb(repo: &Repository, opts: &AbsorbOptions) -> Result<AbsorbPlan, His
             &mut assignments,
             &mut unassigned,
         )?;
+    }
+
+    if stack.is_empty() {
+        return Ok(AbsorbPlan {
+            plan: empty_absorb_plan().plan,
+            assignments,
+            unassigned,
+        });
     }
 
     if assignments.is_empty() {
@@ -334,11 +339,20 @@ fn classify_path_hunks(
         },
     );
 
+    let mut claimed_new_lines: Vec<(usize, usize)> = Vec::new();
     for hunk in diff.hunks {
         if !hunk_has_changes(&hunk) {
             continue;
         }
         let range = hunk_to_range(&hunk);
+        if hunk_ranges_overlap_on_new_side(&range, &claimed_new_lines) {
+            unassigned.push(UnassignedHunk {
+                path: path.clone(),
+                hunk_range: range,
+                reason: UnassignedReason::DoesNotCommute,
+            });
+            continue;
+        }
         let stack_newest_first: Vec<ObjectId> = stack.iter().rev().copied().collect();
         match assign_hunk(
             repo,
@@ -350,20 +364,40 @@ fn classify_path_hunks(
             &range,
             &hunk,
         ) {
-            Ok(Some(commit)) => assignments.push(HunkAssignment {
-                path: path.clone(),
-                hunk_range: range,
-                commit,
-            }),
+            Ok(Some(commit)) => {
+                claimed_new_lines.push(new_line_span(&range));
+                assignments.push(HunkAssignment {
+                    path: path.clone(),
+                    hunk_range: range,
+                    commit,
+                });
+            }
             Ok(None) => {}
-            Err(reason) => unassigned.push(UnassignedHunk {
-                path: path.clone(),
-                hunk_range: range,
-                reason,
-            }),
+            Err(reason) => {
+                claimed_new_lines.push(new_line_span(&range));
+                unassigned.push(UnassignedHunk {
+                    path: path.clone(),
+                    hunk_range: range,
+                    reason,
+                });
+            }
         }
     }
     Ok(())
+}
+
+fn new_line_span(range: &HunkRange) -> (usize, usize) {
+    let end = range
+        .new_start
+        .saturating_add(range.new_lines.saturating_sub(1));
+    (range.new_start, end)
+}
+
+fn hunk_ranges_overlap_on_new_side(range: &HunkRange, others: &[(usize, usize)]) -> bool {
+    let (start, end) = new_line_span(range);
+    others
+        .iter()
+        .any(|&(other_start, other_end)| start <= other_end && end >= other_start)
 }
 
 fn synthetic_whole_file_hunks(entry: &DiffEntry) -> Result<Vec<HunkRange>, HistoryError> {
@@ -844,7 +878,9 @@ fn partial_index_for_target(
     for path in staged_paths_union(assignments, unassigned) {
         let keep = assigned_paths.contains(path.as_str());
         if keep {
-            if has_other_assignments_on_path(&path, target, assignments) {
+            let has_unassigned_on_path = unassigned.iter().any(|u| u.path == path);
+            if has_unassigned_on_path || has_other_assignments_on_path(&path, target, assignments)
+            {
                 let blob =
                     partial_blob_for_path(repo, head_tree, index, &path, target, assignments)?;
                 write_index_blob(repo, &mut out, &path, &blob)?;
@@ -1050,6 +1086,11 @@ fn build_absorb_stack(
     }
 
     let negative: Vec<String> = hidden.iter().map(ObjectId::to_hex).collect();
+    let max_count = if explicit_base.is_some() {
+        None
+    } else {
+        Some(DEFAULT_ABSORB_STACK_LIMIT)
+    };
     let walk = rev_list(
         repo,
         &[head.to_hex()],
@@ -1058,7 +1099,7 @@ fn build_absorb_stack(
             ordering: OrderingMode::Topo,
             reverse: false,
             first_parent: true,
-            max_count: Some(DEFAULT_ABSORB_STACK_LIMIT),
+            max_count,
             ..RevListOptions::default()
         },
     )

@@ -496,6 +496,13 @@ pub fn print_history_rewrite_outcome(
     if outcome.dry_run {
         outln!(w, "- Dry run (refs unchanged)");
     }
+    print_history_rewrite_outcome_body(w, outcome)
+}
+
+fn print_history_rewrite_outcome_body(
+    w: &mut dyn Write,
+    outcome: &HistoryRewordOutcome,
+) -> anyhow::Result<()> {
     for pair in &outcome.rewritten {
         match &pair.new {
             Some(new) => outln!(
@@ -549,9 +556,8 @@ pub fn print_history_absorb_outcome(
     for row in &outcome.unassigned {
         outln!(w, "- unassigned `{}` ({})", row.path, row.reason);
     }
-    print_history_rewrite_outcome(
+    print_history_rewrite_outcome_body(
         w,
-        "History absorb",
         &HistoryRewordOutcome {
             operation: outcome.operation.clone(),
             rewritten: outcome.rewritten.clone(),

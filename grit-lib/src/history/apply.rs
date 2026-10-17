@@ -264,6 +264,11 @@ fn apply_absorb_worktree_after_refs(
     staged_paths: &[String],
     prestate: Option<&FixupApplyPrestate>,
 ) -> Result<(), HistoryError> {
+    if !staged_paths.is_empty() {
+        clear_fixup_staging_after_apply(repo, old_head_commit, staged_paths)?;
+        let old_head_tree = commit_tree_for_apply(repo, old_head_commit)?;
+        align_worktree_to_head_for_paths(repo, old_head_tree, staged_paths)?;
+    }
     checkout_tree_transition_allow_local(repo, from_tree, to_tree).map_err(|e| {
         HistoryError::WorktreeApply {
             message: e.to_string(),
