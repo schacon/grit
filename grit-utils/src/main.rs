@@ -38,10 +38,10 @@ use grit_utils::scenario_suite::{self, ScenarioSuiteOptions};
 use grit_utils::scenarios::{
     run_add_suite, run_blame_suite, run_commit_suite, run_deep_leaf_worktree_suite,
     run_dense_leaf_worktree_suite, run_diff_suite, run_hot_path_suite, run_log_suite,
-    run_prepare_add, run_prepare_commit, run_prepare_dense_leaf_add, run_prepare_merge,
-    run_prepare_pick, run_prepare_pick_series, run_prepare_restore, run_prepare_revert,
-    run_prepare_stash, run_prepare_switch, run_restore_suite, run_stash_suite, run_status_suite,
-    RunConfig,
+    run_merge_only_suite, run_prepare_add, run_prepare_commit, run_prepare_dense_leaf_add,
+    run_prepare_merge, run_prepare_pick, run_prepare_pick_series, run_prepare_restore,
+    run_prepare_revert, run_prepare_stash, run_prepare_switch, run_restore_suite, run_stash_suite,
+    run_status_suite, RunConfig,
 };
 use grit_utils::schema::BenchReport;
 use grit_utils::synth::{generate_synth_repo, SynthReport, SynthTier};
@@ -168,6 +168,11 @@ enum Cmd {
         /// Enable `core.fsmonitor` with a trivial hook v2 script in the fixture.
         #[arg(long)]
         fsmonitor_fixture: bool,
+    },
+    /// Isolated merge scenario (dashboard git control; no pick/revert in the same run).
+    Merge {
+        #[arg(long, value_delimiter = ',', default_values_t = vec![10_000])]
+        sizes: Vec<usize>,
     },
     /// Run status (dirty + clean) and add benchmarks
     All {
@@ -1402,6 +1407,11 @@ fn main() -> Result<()> {
                 *fsmonitor_fixture,
                 timestamp,
             )?
+        }
+        Cmd::Merge { sizes } => {
+            eprintln!("Running isolated merge benchmarks...");
+            let cfg = run_config(&cli, true);
+            run_merge_only_suite(&hyperfine, &git, &grit, &cfg, sizes, false, timestamp)?
         }
         Cmd::All { sizes } => {
             eprintln!("Running all benchmarks...");
