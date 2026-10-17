@@ -496,6 +496,7 @@ pub fn print_history_rewrite_outcome(
         "fixup" => "History fixup",
         "squash" => "History squash",
         "rebase" => "History rebase",
+        "split" => "History split",
         other => return Err(anyhow::anyhow!("unknown history operation {other}")),
     };
     outln!(w, "## {title}");

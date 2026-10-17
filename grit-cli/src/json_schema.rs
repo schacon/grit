@@ -154,6 +154,7 @@ fn build_schema_registry() -> Vec<SchemaRegistryEntry> {
         entry::<PickOutcome>("pick"),
         entry::<HistoryRewriteOutcome>("history.reword"),
         entry::<HistoryRewriteOutcome>("history.drop"),
+        entry::<HistoryRewriteOutcome>("history.split"),
         entry::<HistoryRewriteOutcome>("history.squash"),
         entry::<HistoryRewriteOutcome>("history.fixup"),
         entry::<RevertOutcome>("revert"),
@@ -281,6 +282,8 @@ pub fn schema_command_key(args: &[&str]) -> Option<String> {
         },
         "history" => match positional.get(1).copied() {
             Some("reword") => "history.reword",
+            Some("split") => "history.split",
+            Some("drop") => "history.drop",
             Some("squash") => "history.squash",
             Some("fixup") => "history.fixup",
             _ => return None,
@@ -332,6 +335,7 @@ fn root_schema_to_document(command: &str, root: RootSchema) -> serde_json::Value
     }
     if command == "history.reword"
         || command == "history.drop"
+        || command == "history.split"
         || command == "history.squash"
         || command == "history.fixup"
     {

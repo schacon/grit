@@ -22,6 +22,8 @@ To fold a revision range, [`squash`](rustdoc:grit_lib::revwalk::history::squash)
 
 To apply staged index changes onto an earlier commit, [`fixup`](rustdoc:grit_lib::history::fixup) three-way merges `HEAD`'s tree, the target tree, and the index tree, then plans descendant replay. Call [`apply_fixup_rewrite`](rustdoc:grit_lib::history::apply_fixup_rewrite) (not [`apply_rewrite`](rustdoc:grit_lib::history::apply_rewrite)) so staged paths are consumed and the worktree is updated without treating the fixup staging as conflicting local edits.
 
+[`split`](rustdoc:grit_lib::revwalk::history::split) peels pathspec-selected changes from one commit into a new parent commit via [`CommitEdit::SplitBefore`](rustdoc:grit_lib::revwalk::history::CommitEdit::SplitBefore). The original commit keeps its tree; descendants replay with parent-only updates when their trees are unchanged. Interactive hunk selection is not supported — use pathspecs only. [`SplitOptions`](rustdoc:grit_lib::revwalk::history::SplitOptions) supplies an optional [`rest_message`](rustdoc:grit_lib::revwalk::history::SplitOptions::rest_message) for the remaining commit.
+
 ## Apply options and result
 
 [`ApplyOptions`](rustdoc:grit_lib::revwalk::history::ApplyOptions) supplies the reflog identity and message written for every ref update in the batch.
@@ -42,6 +44,7 @@ To apply staged index changes onto an earlier commit, [`fixup`](rustdoc:grit_lib
 - [`RefApply`](rustdoc:grit_lib::revwalk::history::HistoryError::RefApply) / [`WorktreeApply`](rustdoc:grit_lib::revwalk::history::HistoryError::WorktreeApply) — ref batch or post-ref checkout failed (apply rolls back ref updates when checkout fails).
 - [`ApplyRollbackIncomplete`](rustdoc:grit_lib::revwalk::history::HistoryError::ApplyRollbackIncomplete) — checkout failed after refs moved and ref rollback or worktree restore also failed.
 - [`EmptyMessage`](rustdoc:grit_lib::revwalk::history::HistoryError::EmptyMessage) — reword message cleanup left an empty body.
+- [`SplitSelectsNothing`](rustdoc:grit_lib::revwalk::history::HistoryError::SplitSelectsNothing) / [`SplitSelectsEverything`](rustdoc:grit_lib::revwalk::history::HistoryError::SplitSelectsEverything) — pathspec split covered no changes or every change in the commit.
 
 ## Example
 

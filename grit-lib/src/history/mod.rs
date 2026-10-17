@@ -46,6 +46,7 @@ mod fixup;
 mod plan;
 mod rebase;
 mod reword;
+mod split;
 mod squash;
 mod types;
 
@@ -58,8 +59,10 @@ pub use plan::plan_rewrite;
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};
 pub use rebase::{rebase_onto, RebaseOntoOptions};
 pub use reword::{normalize_rewrite_message, reword};
+pub use split::split;
 pub use squash::{squash, SquashMessage, SquashOptions};
 pub use types::{
     AppliedRewrite, ApplyOptions, CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit,
-    PlannedRefUpdate, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,
+    Pathspec, PlannedRefUpdate, RefScope, RewriteOptions, RewritePlan, RewrittenCommit,
+    SplitOptions,
 };

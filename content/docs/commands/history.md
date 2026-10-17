@@ -12,6 +12,10 @@ grit history drop <commit> [--dry-run] [--update-refs=(branches|head)]
 grit history reword <commit> -m <message>
 grit history reword <commit> --message-file <path|->
 grit history reword <commit> [--dry-run] [--update-refs=(branches|head)]
+grit history split <commit> -m <message> [--] <pathspec>...
+grit history split <commit> --message-file <path|-> [--] <pathspec>...
+grit history split <commit> ... [--message-rest <message>|--message-rest-file <path|->]
+grit history split <commit> ... [--dry-run] [--update-refs=(branches|head)]
 grit history squash <revision-range>... [--combine | -m <message> | --message-file <path|->]
 grit history squash <revision-range>... [--dry-run] [--update-refs=(branches|head)]
 ```
@@ -40,6 +44,14 @@ Provide exactly one of `-m` / `--message` or `--message-file` (use `-` to read f
 
 If any descendant commit is a **merge**, planning refuses with an error (merge replay is not supported yet). Use a linear range or wait for later `grit history` subcommands that handle merges.
 
+### `split`
+
+Move changes that match at least one **pathspec** into a new parent commit, then replay descendants. The edited commit keeps its tree (and author); only its first parent becomes the new commit. The split commit uses the original author and your `-m` / `--message-file` message. Use `--message-rest` when the remaining commit should get a new message.
+
+At least one pathspec is required (pass `--` before pathspecs when they might look like flags). Interactive hunk selection is **not** supported — pathspecs only.
+
+Splitting **merge commits** is refused. Selecting no changes (`SplitSelectsNothing`) or every change in the commit (`SplitSelectsEverything`) is an error.
+
 ### `squash`
 
 Fold a **revision range** into the oldest commit in that range, keep that commit’s author and parents (including merge parents when the oldest commit is a merge), take the range tip’s tree, and replay commits above the range unchanged. Range syntax matches `git rev-list` (`base..tip`, `^excl`, multiple tips).
@@ -61,16 +73,15 @@ Requires a working tree with at least one staged change relative to `HEAD`. Bare
 
 After a successful apply, staged changes on the paths you fixed are consumed: the index matches the new `HEAD` for those paths, and unrelated unstaged edits stay in the worktree.
 
-
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `<commit>` | Commit to drop or reword (revision spec). |
+| `<commit>` | Commit to drop, reword, or split (revision spec). |
 | `<revision-range>` | One or more rev-list tokens (`A..B`, `^A`, tips) for `squash`. |
 | `--dry-run` | List ref updates without moving refs. |
 | `--update-refs` | `branches` (default) or `head`. |
-| `-m`, `--message` | New commit message (`reword` / `squash`; conflicts with `--message-file`; on `squash`, conflicts with `--combine`). |
+| `-m`, `--message` | New commit message (`reword` / `squash` / `split`; conflicts with `--message-file`; on `squash`, conflicts with `--combine`). |
 | `--message-file` | Read the new message from a file, or `-` for stdin. |
 | `--combine` | (`squash` only) Combine messages autosquash-style. |
 
@@ -81,6 +92,18 @@ After a successful apply, staged changes on the paths you fixed are consumed: th
 | `<commit>` | Commit to reword (revision spec). |
 | `-m`, `--message` | New commit message (conflicts with `--message-file`). |
 | `--message-file` | Read the new message from a file, or `-` for stdin. |
+
+### `split` options
+
+| Option | Description |
+| --- | --- |
+| `<commit>` | Commit to split (revision spec). |
+| `-m`, `--message` | Message for the new parent commit (conflicts with `--message-file`). |
+| `--message-file` | Read the split message from a file, or `-` for stdin. |
+| `--message-rest` | New message for the remaining commit (conflicts with `--message-rest-file`). |
+| `--message-rest-file` | Read the remaining message from a file, or `-` for stdin. |
+| `<pathspec>…` | One or more pathspecs (required). |
+
 ## Examples
 
 Drop the parent of `HEAD` on a linear branch:
@@ -110,11 +133,22 @@ Dry run — refs would change:
   refs/heads/main f6a7b89 → c0ffee0
 ```
 
+Split one file out of the tip commit:
+
+```console
+$ grit history split HEAD -m "add foo only" -- foo
+History split: 1 commit(s) rewritten
+  commit a1b2c3d → d4e5f60
+  refs/heads/main a1b2c3d → d4e5f60
+```
+
 ## JSON output
 
 Drop schema: [v1](/schemas/history.drop/v1.json) — pass `--json` on `grit history drop`.
 
 Reword schema: [v1](/schemas/history.reword/v1.json) — pass `--json` on `grit history reword`.
+
+Split schema: [v1](/schemas/history.split/v1.json) — pass `--json` on `grit history split`.
 
 Squash schema: [v1](/schemas/history.squash/v1.json) — pass `--json` on `grit history squash`.
 
@@ -122,7 +156,7 @@ These subcommands emit the same object shape:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `operation` | string | `"drop"`, `"reword"`, or `"squash"`. |
+| `operation` | string | `"drop"`, `"reword"`, `"split"`, or `"squash"`. |
 | `rewritten` | array | `{old,new}` full hex OIDs for each replayed commit (`drop` omits the removed commit). |
 | `refs` | array | `{name,old,new}` for each ref that would move or moved. |
 | `head` | object or null | `{old,new}` when `HEAD`'s commit OID changes; `null` when unchanged. |
@@ -158,9 +192,9 @@ On replay conflicts, stdout is a single JSON object (exit code 1) with `error`, 
 
 ## Markdown output
 
-Schemas: [drop v1](/schemas/history.drop/v1.json), [reword v1](/schemas/history.reword/v1.json), [squash v1](/schemas/history.squash/v1.json)
+Schemas: [drop v1](/schemas/history.drop/v1.json), [reword v1](/schemas/history.reword/v1.json), [split v1](/schemas/history.split/v1.json), [squash v1](/schemas/history.squash/v1.json)
 
-Pass [`--markdown`](../global-options/) for a `History drop`, `History reword`, or `History squash` heading, replayed commits, ref updates, and optional `HEAD` movement.
+Pass [`--markdown`](../global-options/) for a `History drop`, `History reword`, `History split`, or `History squash` heading, replayed commits, ref updates, and optional `HEAD` movement.
 
 ## See also
 

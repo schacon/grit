@@ -9,9 +9,10 @@ use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::revwalk::history::{
-    apply_fixup_rewrite, apply_rewrite, drop as history_drop, fixup, rebase_onto, reword, squash,
-    staged_fixup_paths, verify_rewrite_plan, ApplyOptions, EmptyPolicy, FixupOptions, HistoryError,
-    RebaseOntoOptions, RefScope, RewriteOptions, RewritePlan, SquashMessage, SquashOptions,
+    apply_fixup_rewrite, apply_rewrite, drop as history_drop, fixup, rebase_onto, reword, split,
+    squash, staged_fixup_paths, verify_rewrite_plan, ApplyOptions, EmptyPolicy, FixupOptions,
+    HistoryError, RebaseOntoOptions, RefScope, RewriteOptions, RewritePlan, SplitOptions,
+    SquashMessage, SquashOptions,
 };
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
@@ -129,6 +130,12 @@ impl HumanRender for HistoryRewriteOutcome {
                 "Dropped 1 commit, replayed {} descendant commit(s)",
                 self.rewritten.len()
             );
+        } else if self.operation == "split" {
+            outln!(
+                w,
+                "History split: {} commit(s) rewritten",
+                self.rewritten.len()
+            );
         } else {
             let verb = if self.operation == "fixup" {
                 "Fixed up"
@@ -161,6 +168,67 @@ impl MarkdownRender for HistoryRewriteOutcome {
         markdown::print_history_rewrite_outcome(w, self)?;
         Ok(())
     }
+}
+
+/// Split `commit` by pathspec and replay descendants.
+pub fn run_split(
+    commit: &str,
+    message: Option<String>,
+    message_file: Option<String>,
+    message_rest: Option<String>,
+    message_rest_file: Option<String>,
+    pathspec: Vec<String>,
+    shared: &HistoryRewriteArgs,
+) -> Result<HistoryRewriteOutcome> {
+    if pathspec.is_empty() {
+        bail!("at least one pathspec is required after `--`");
+    }
+    let message = read_message(message, message_file)?;
+    let rest_message = read_optional_message(message_rest, message_rest_file)?;
+    let repo = context::discover()?;
+    let commit_oid = resolve_revision_as_commit(&repo, commit)
+        .with_context(|| format!("could not resolve commit '{commit}'"))?;
+    let env = repo.environment();
+    let config =
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
+    let committer = context::identity(
+        env,
+        &config,
+        IdentRole::Committer,
+        "GIT_COMMITTER_DATE",
+        context::wall_clock_now(env),
+    )?;
+    let plan = split(
+        &repo,
+        commit_oid,
+        &pathspec,
+        message,
+        &SplitOptions { rest_message },
+        &RewriteOptions {
+            scope: shared.update_refs.into(),
+            empty: EmptyPolicy::Drop,
+            committer,
+            preserve_committer: false,
+        },
+    )
+    .map_err(|e| map_history_error(e, "split", None))?;
+    verify_rewrite_plan(&repo, &plan).map_err(|e| map_history_error(e, "split", None))?;
+    let subject = rewritten_subject(&repo, &plan, commit_oid)?;
+    let mut outcome = outcome_from_plan(&repo, &plan, "split", shared.dry_run)?;
+    if !shared.dry_run {
+        let identity = context::committer_reflog_identity(env, &config)?;
+        apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity,
+                reflog_message: format!("history split: {subject}"),
+            },
+        )
+        .map_err(|e| map_history_error(e, "split", None))?;
+    }
+    outcome.dry_run = shared.dry_run;
+    Ok(outcome)
 }
 
 /// Rewrite `commit`'s message to `message` and replay descendants.
@@ -526,30 +594,6 @@ pub fn run_fixup(
     Ok(outcome)
 }
 
-fn read_optional_message(
-    message: Option<String>,
-    message_file: Option<String>,
-) -> Result<Option<String>> {
-    match (message, message_file) {
-        (Some(_), Some(_)) => bail!("use either -m/--message or --message-file, not both"),
-        (None, None) => Ok(None),
-        (Some(m), None) => Ok(Some(m)),
-        (None, Some(path)) => {
-            if path == "-" {
-                let mut buf = String::new();
-                io::stdin()
-                    .read_to_string(&mut buf)
-                    .context("could not read message from stdin")?;
-                Ok(Some(buf))
-            } else {
-                Ok(Some(std::fs::read_to_string(&path).with_context(|| {
-                    format!("could not read message file '{path}'")
-                })?))
-            }
-        }
-    }
-}
-
 fn fixup_reflog_subject(
     repo: &grit_lib::repo::Repository,
     plan: &RewritePlan,
@@ -578,18 +622,32 @@ fn read_message(message: Option<String>, message_file: Option<String>) -> Result
         (Some(_), Some(_)) => bail!("use either -m/--message or --message-file, not both"),
         (None, None) => bail!("a new message is required (-m/--message or --message-file)"),
         (Some(m), None) => Ok(m),
-        (None, Some(path)) => {
-            if path == "-" {
-                let mut buf = String::new();
-                io::stdin()
-                    .read_to_string(&mut buf)
-                    .context("could not read message from stdin")?;
-                Ok(buf)
-            } else {
-                std::fs::read_to_string(&path)
-                    .with_context(|| format!("could not read message file '{path}'"))
-            }
-        }
+        (None, Some(path)) => read_message_file(path),
+    }
+}
+
+fn read_optional_message(
+    message: Option<String>,
+    message_file: Option<String>,
+) -> Result<Option<String>> {
+    match (message, message_file) {
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => bail!("use either --message-rest or --message-rest-file, not both"),
+        (Some(m), None) => Ok(Some(m)),
+        (None, Some(path)) => read_message_file(path).map(Some),
+    }
+}
+
+fn read_message_file(path: String) -> Result<String> {
+    if path == "-" {
+        let mut buf = String::new();
+        io::stdin()
+            .read_to_string(&mut buf)
+            .context("could not read message from stdin")?;
+        Ok(buf)
+    } else {
+        std::fs::read_to_string(&path)
+            .with_context(|| format!("could not read message file '{path}'"))
     }
 }
 
@@ -693,6 +751,12 @@ fn map_history_error(
         HistoryError::FixupMakesTargetEmpty { commit } => {
             let short = &commit.to_hex()[..7];
             anyhow::anyhow!("fixup makes commit {short} empty")
+        }
+        HistoryError::SplitSelectsNothing => {
+            anyhow::anyhow!("pathspec did not select any changes from the commit")
+        }
+        HistoryError::SplitSelectsEverything => {
+            anyhow::anyhow!("pathspec selected every change in the commit")
         }
         HistoryError::Conflict { mut paths, .. } => {
             paths.sort();
