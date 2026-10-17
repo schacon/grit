@@ -846,7 +846,10 @@ fn checkout_commit_index_update(
         new_entries,
     );
     index_mut.defer_untracked_cache_invalidation = false;
-    repo.write_index(index_mut)
+    index_mut.skip_racy_smudge_on_write = true;
+    let result = repo.write_index_with_post_index_change(index_mut, true, false);
+    index_mut.skip_racy_smudge_on_write = false;
+    result
 }
 
 fn tree_changes_are_all_additions(changes: &[DiffEntry]) -> bool {
@@ -964,27 +967,15 @@ fn checkout_bulk_added_tree_changes(
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
     )?;
-    let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(write_outcomes.len());
-    for outcome in write_outcomes {
-        match outcome {
-            WriteJobOutcome::Index(entry) => {
-                new_entries.push(entry);
-                progress.inc(1);
-            }
-            WriteJobOutcome::Delayed(_) => {
-                let mut fallback = apply.clone();
-                fallback.skip_bulk_checkout_fast_path = true;
-                return checkout_tree_changes_with_progress(
-                    repo,
-                    changes,
-                    progress,
-                    Some(index_mut),
-                    fallback,
-                    Some(changes),
-                );
-            }
-        }
-    }
+    let new_entries = finish_bulk_write_jobs(
+        repo,
+        rules,
+        work_tree,
+        &mut dir_cache,
+        &mut delayed,
+        write_outcomes,
+        progress,
+    )?;
     checkout_commit_index_update(repo, index_mut, &BTreeSet::new(), &[], new_entries)?;
     progress.finish();
     Ok(())
@@ -1039,94 +1030,6 @@ fn checkout_bulk_mod_delete_tree_changes(
         )
     };
     let wholesale_index_prefixes = wholesale_candidates;
-    let mut wholesale_dirs_removed = BTreeSet::new();
-    let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
-    if !wholesale_index_prefixes.is_empty() {
-        if wholesale_index_prefixes.len() >= 2 {
-            let policy = repo.thread_policy();
-            let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-            let wt = work_tree.to_path_buf();
-            let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
-            let removed = try_par_map(&dirs, options, 0, |dir| {
-                let abs = wt.join(dir);
-                Ok(fs::remove_dir_all(&abs)
-                    .is_ok()
-                    .then_some((dir.clone(), abs)))
-            })
-            .map_err(|e: ParallelHashError<()>| match e {
-                ParallelHashError::Task(()) => {
-                    Error::PathError("parallel wholesale directory removal failed".into())
-                }
-            })?;
-            for (dir, abs) in removed.into_iter().flatten() {
-                wholesale_dirs_removed.insert(dir);
-                deleted_abs_paths.push(abs);
-            }
-        } else {
-            for dir in &wholesale_index_prefixes {
-                let abs = work_tree.join(dir);
-                if fs::remove_dir_all(&abs).is_ok() {
-                    wholesale_dirs_removed.insert(dir.clone());
-                    deleted_abs_paths.push(abs);
-                }
-            }
-        }
-    }
-    let mut per_file_deletes: Vec<String> = Vec::new();
-    for change in &delete_changes {
-        let Some(path) = &change.old_path else {
-            continue;
-        };
-        if parse_git_mode(&change.old_mode) == MODE_GITLINK
-            || path_under_wholesale_directory(path, &wholesale_dirs_removed)
-        {
-            continue;
-        }
-        per_file_deletes.push(path.clone());
-    }
-    let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
-    if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
-        let policy = repo.thread_policy();
-        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
-        let wt = work_tree.to_path_buf();
-        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
-        try_par_map(&abs_paths, options, 0, |abs| {
-            let _ = fs::remove_file(abs);
-            Ok(())
-        })
-        .map_err(|e: ParallelHashError<()>| match e {
-            ParallelHashError::Task(()) => {
-                Error::PathError("parallel checkout delete failed".into())
-            }
-        })?;
-        deleted_abs_paths.extend(abs_paths);
-        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
-    }
-    let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(delete_changes.len());
-    for change in &delete_changes {
-        let Some(path) = &change.old_path else {
-            continue;
-        };
-        let old_mode = parse_git_mode(&change.old_mode);
-        if old_mode == MODE_GITLINK
-            || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
-        {
-            if old_mode == MODE_GITLINK {
-                let abs = work_tree.join(path);
-                remove_uninitialized_gitlink_worktree(&abs);
-                deleted_abs_paths.push(abs);
-            } else if !parallel_deleted_paths.contains(path) {
-                let abs = work_tree.join(path);
-                let _ = fs::remove_file(&abs);
-                deleted_abs_paths.push(abs);
-            }
-        }
-        if !path_under_wholesale_directory(path, &wholesale_index_prefixes) {
-            paths_to_remove.push(path.as_bytes().to_vec());
-        }
-        progress.inc(1);
-    }
-    remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
 
     let checkout_smudge_ctx = crate::filter_process::checkout_smudge_context(repo);
     let mut dir_cache = LeadingDirCache::new();
@@ -1177,27 +1080,105 @@ fn checkout_bulk_mod_delete_tree_changes(
         apply.parallel_prepare_blobs,
         apply.checkout_parallel_threshold,
     )?;
-    let mut new_entries: Vec<IndexEntry> = Vec::with_capacity(write_outcomes.len());
-    for outcome in write_outcomes {
-        match outcome {
-            WriteJobOutcome::Index(entry) => {
-                new_entries.push(entry);
-                progress.inc(1);
+    let new_entries = finish_bulk_write_jobs(
+        repo,
+        rules,
+        work_tree,
+        &mut dir_cache,
+        &mut delayed,
+        write_outcomes,
+        progress,
+    )?;
+
+    let mut wholesale_dirs_removed = BTreeSet::new();
+    let mut deleted_abs_paths: Vec<PathBuf> = Vec::new();
+    if !wholesale_index_prefixes.is_empty() {
+        if wholesale_index_prefixes.len() >= 2 {
+            let policy = repo.thread_policy();
+            let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+            let wt = work_tree.to_path_buf();
+            let dirs: Vec<String> = wholesale_index_prefixes.iter().cloned().collect();
+            let removed = try_par_map(&dirs, options, 0, |dir| {
+                let abs = wt.join(dir);
+                Ok(fs::remove_dir_all(&abs)
+                    .is_ok()
+                    .then_some((dir.clone(), abs)))
+            })
+            .map_err(|e: ParallelHashError<()>| match e {
+                ParallelHashError::Task(()) => {
+                    Error::PathError("parallel wholesale directory removal failed".into())
+                }
+            })?;
+            for (dir, abs) in removed.into_iter().flatten() {
+                wholesale_dirs_removed.insert(dir);
+                deleted_abs_paths.push(abs);
             }
-            WriteJobOutcome::Delayed(_) => {
-                let mut fallback = apply.clone();
-                fallback.skip_bulk_checkout_fast_path = true;
-                return checkout_tree_changes_with_progress(
-                    repo,
-                    changes,
-                    progress,
-                    Some(index_mut),
-                    fallback,
-                    Some(changes),
-                );
+        } else {
+            for dir in &wholesale_index_prefixes {
+                let abs = work_tree.join(dir);
+                if fs::remove_dir_all(&abs).is_ok() {
+                    wholesale_dirs_removed.insert(dir.clone());
+                    deleted_abs_paths.push(abs);
+                }
             }
         }
     }
+    let mut per_file_deletes: Vec<String> = Vec::new();
+    for change in &delete_changes {
+        let Some(path) = &change.old_path else {
+            continue;
+        };
+        if parse_git_mode(&change.old_mode) == MODE_GITLINK
+            || path_under_wholesale_directory(path, &wholesale_index_prefixes)
+        {
+            continue;
+        }
+        per_file_deletes.push(path.clone());
+    }
+    let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
+    if per_file_deletes.len() >= PARALLEL_PER_FILE_DELETE_MIN {
+        let policy = repo.thread_policy();
+        let options = policy.resolve(ParallelOp::Checkout, config.as_ref());
+        let wt = work_tree.to_path_buf();
+        let abs_paths: Vec<PathBuf> = per_file_deletes.iter().map(|p| wt.join(p)).collect();
+        try_par_map(&abs_paths, options, 0, |abs| {
+            let _ = fs::remove_file(abs);
+            Ok(())
+        })
+        .map_err(|e: ParallelHashError<()>| match e {
+            ParallelHashError::Task(()) => {
+                Error::PathError("parallel checkout delete failed".into())
+            }
+        })?;
+        deleted_abs_paths.extend(abs_paths);
+        parallel_deleted_paths.extend(per_file_deletes.iter().cloned());
+    }
+    let mut paths_to_remove: Vec<Vec<u8>> = Vec::with_capacity(delete_changes.len());
+    for change in &delete_changes {
+        let Some(path) = &change.old_path else {
+            continue;
+        };
+        let old_mode = parse_git_mode(&change.old_mode);
+        if old_mode == MODE_GITLINK
+            || !path_under_wholesale_directory(path, &wholesale_dirs_removed)
+        {
+            if old_mode == MODE_GITLINK {
+                let abs = work_tree.join(path);
+                remove_uninitialized_gitlink_worktree(&abs);
+                deleted_abs_paths.push(abs);
+            } else if !parallel_deleted_paths.contains(path) {
+                let abs = work_tree.join(path);
+                let _ = fs::remove_file(&abs);
+                deleted_abs_paths.push(abs);
+            }
+        }
+        if !path_under_wholesale_directory(path, &wholesale_index_prefixes) {
+            paths_to_remove.push(path.as_bytes().to_vec());
+        }
+        progress.inc(1);
+    }
+    remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
+
     checkout_commit_index_update(
         repo,
         index_mut,
@@ -1842,6 +1823,42 @@ pub(crate) fn worktree_bytes_from_index_blob(
     .map_err(Error::from)
 }
 
+fn finish_bulk_write_jobs(
+    repo: &Repository,
+    rules: &WorktreeRules,
+    work_tree: &Path,
+    dir_cache: &mut LeadingDirCache,
+    delayed: &mut DelayedProcessCheckout,
+    write_outcomes: Vec<WriteJobOutcome>,
+    progress: &mut dyn ProgressSink,
+) -> Result<Vec<IndexEntry>> {
+    let mut new_entries = Vec::with_capacity(write_outcomes.len());
+    let mut pending_delayed = Vec::new();
+    for outcome in write_outcomes {
+        match outcome {
+            WriteJobOutcome::Index(entry) => {
+                new_entries.push(entry);
+                progress.inc(1);
+            }
+            WriteJobOutcome::Delayed(target) => {
+                pending_delayed.push(target);
+                progress.inc(1);
+            }
+        }
+    }
+    finish_delayed_checkouts(
+        repo,
+        rules,
+        work_tree,
+        delayed,
+        &pending_delayed,
+        dir_cache,
+        &mut new_entries,
+        None,
+    )?;
+    Ok(new_entries)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn finish_delayed_checkouts(
     repo: &Repository,
@@ -1972,6 +1989,17 @@ fn gitlink_worktree_is_populated(path: &Path) -> bool {
 }
 
 /// Drop wholesale-removal candidates when a deleted gitlink under `dir` still has a worktree.
+/// Index-derived wholesale directory candidates when switch prepare already trusts removal.
+pub(crate) fn trusted_wholesale_directories_for_switch(
+    work_tree: &Path,
+    index: &Index,
+    delete_paths: &[String],
+    gitlink_deletes: &HashSet<String>,
+) -> BTreeSet<String> {
+    let candidates = wholesale_deleted_directories(index, delete_paths);
+    filter_wholesale_dirs_with_populated_gitlinks(work_tree, candidates, gitlink_deletes)
+}
+
 fn filter_wholesale_dirs_with_populated_gitlinks(
     work_tree: &Path,
     dir_candidates: BTreeSet<String>,
@@ -2650,6 +2678,48 @@ mod tests {
     }
 
     #[test]
+    fn bulk_mod_delete_checkout_eligible_accepts_mixed_mod_and_delete() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let config = repo.config().expect("config");
+        let index = repo.load_index().expect("index");
+        let rules = WorktreeRules::from_parts_index_attributes_only(&repo, &index, config.clone())
+            .expect("rules");
+        let mut changes = Vec::new();
+        for i in 0..40 {
+            changes.push(DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(format!("f{i:03}.txt")),
+                new_path: Some(format!("f{i:03}.txt")),
+                old_mode: "100644".into(),
+                new_mode: "100644".into(),
+                old_oid: ObjectId::zero(),
+                new_oid: ObjectId::zero(),
+                score: None,
+            });
+        }
+        for i in 0..40 {
+            changes.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(format!("gone{i:03}.txt")),
+                new_path: None,
+                old_mode: "100644".into(),
+                new_mode: String::new(),
+                old_oid: ObjectId::zero(),
+                new_oid: ObjectId::zero(),
+                score: None,
+            });
+        }
+        assert!(bulk_mod_delete_checkout_eligible(&changes, &rules));
+    }
+
     fn wholesale_deleted_directories_detects_full_top_level_dir() {
         let tmp = TempDir::new().expect("tempdir");
         let repo = init_repository(
