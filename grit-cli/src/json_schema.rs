@@ -445,6 +445,7 @@ pub const SNAPSHOT_FILE_PREFIX: &str = "grit_test_support__cli_fixture__";
 /// output snapshot coverage still requires human/json/markdown sections for render stems.
 pub const SNAPSHOT_JSON_SCHEMA_SKIP: &[&str] = &[
     "auth_render",
+    "history_rebase",
     "log_json_filter_commits_oid",
     "update_render",
 ];
