@@ -813,15 +813,9 @@ fn scan_wholesale_delete_root(
                 // Scheduled file deletes need no scan work. Only directory paths in the delete
                 // set require descending to discover blocking special files.
                 let scheduled_dir = delete_paths.contains(rel)
-                    || (ignorecase
-                        && delete_paths
-                            .iter()
-                            .any(|del| del.eq_ignore_ascii_case(rel)));
+                    || (ignorecase && delete_paths.iter().any(|del| del.eq_ignore_ascii_case(rel)));
                 if scheduled_dir {
-                    let is_dir = entry
-                        .file_type()
-                        .map(|t| t.is_dir())
-                        .unwrap_or(false);
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                     if is_dir {
                         stack.push(entry.path());
                     }
@@ -895,7 +889,7 @@ fn collect_untracked_for_wholesale_delete_roots(
     let roots: Vec<String> = delete_roots.iter().cloned().collect();
     let work_tree_owned = work_tree.to_path_buf();
     let delete_paths_shared = Arc::new(delete_paths.clone());
-    let scans: Vec<WholesaleDeleteRootScan> = if roots.len() >= 4 {
+    let scans: Vec<WholesaleDeleteRootScan> = if roots.len() >= 8 {
         let config = repo.config().ok();
         let default_cfg = ConfigSet::new();
         let cfg = config.as_deref().unwrap_or(&default_cfg);
