@@ -353,12 +353,29 @@ fn switch_to_target(
     reflog_to_label: &str,
 ) -> Result<SwitchOutcome> {
     let head_before = resolve_head(repo.git_dir())?;
-    let head_tree = head_before
-        .oid()
-        .copied()
-        .map(|oid| commit_tree(repo, &oid))
-        .transpose()?;
-    let target_tree = commit_tree(repo, &target_oid)?;
+    let head_oid = head_before.oid().copied();
+    let (target_tree, head_tree) = match head_oid {
+        None => (commit_tree(repo, &target_oid)?, None),
+        Some(head) if head == target_oid => {
+            let tree = commit_tree(repo, &target_oid)?;
+            (tree, Some(tree))
+        }
+        Some(head) => {
+            let (target_res, head_res) = std::thread::scope(|scope| {
+                let target = scope.spawn(|| commit_tree(repo, &target_oid));
+                let head = scope.spawn(|| commit_tree(repo, &head));
+                (target.join(), head.join())
+            });
+            (
+                target_res
+                    .map_err(|_| Error::Message("parallel commit tree read failed".into()))??,
+                Some(
+                    head_res
+                        .map_err(|_| Error::Message("parallel commit tree read failed".into()))??,
+                ),
+            )
+        }
+    };
     let snapshot = worktree_snapshot_with_head_tree(repo, head_tree)?;
 
     let prepared = prepare_tree_switch_allow_local_with_snapshot(repo, &target_tree, snapshot)?;
@@ -507,23 +524,25 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
             "this operation must be run in a work tree".into(),
         ))
     })?;
+    let ignorecase = repo
+        .config()
+        .ok()
+        .and_then(|c| c.get_bool("core.ignorecase").and_then(|r| r.ok()))
+        .unwrap_or(false);
+    let delete_paths_set: HashSet<String> = tree_changes
+        .iter()
+        .filter(|c| c.status == DiffStatus::Deleted)
+        .filter_map(|c| c.old_path.clone())
+        .collect();
     let (untracked, wholesale_ignored, trust_wholesale_dir_removal, traditional_ignore_scan) =
         collect_untracked_and_wholesale_trust_for_tree_changes(
             repo,
             &mut snapshot.index,
             work_tree,
             &tree_changes,
+            Some(&delete_paths_set),
         )?;
-    let ignorecase = repo
-        .config()
-        .ok()
-        .and_then(|c| c.get_bool("core.ignorecase").and_then(|r| r.ok()))
-        .unwrap_or(false);
-    let delete_paths: Vec<String> = tree_changes
-        .iter()
-        .filter(|c| c.status == DiffStatus::Deleted)
-        .filter_map(|c| c.old_path.clone())
-        .collect();
+    let delete_paths: Vec<String> = delete_paths_set.into_iter().collect();
     let gitlink_deletes: HashSet<String> = tree_changes
         .iter()
         .filter(|c| c.status == DiffStatus::Deleted)
@@ -707,15 +726,16 @@ fn checkout_prepared_tree_transition(
         &[][..]
     };
     ensure_no_untracked_overwrite(overwrite_untracked, &prepared.plan.tree_changes)?;
-    let touches_gitattributes = crate::porcelain::checkout::tree_changes_touch_gitattributes(
-        &prepared.plan.tree_changes,
-    );
+    let touches_gitattributes =
+        crate::porcelain::checkout::tree_changes_touch_gitattributes(&prepared.plan.tree_changes);
     let mut tree_changes = Vec::with_capacity(prepared.plan.tree_changes.len());
     let mut attribute_tree_changes = if touches_gitattributes {
         Vec::with_capacity(prepared.plan.tree_changes.len())
     } else {
         Vec::new()
     };
+    let wholesale_dirs = &prepared.preverified_wholesale_dirs;
+    let filter_wholesale_deletes = !wholesale_dirs.is_empty();
     for change in &prepared.plan.tree_changes {
         if path_from_diff(change)
             .is_some_and(|path| prepared.preserve_worktree_paths.contains(path))
@@ -725,14 +745,12 @@ fn checkout_prepared_tree_transition(
         if touches_gitattributes {
             attribute_tree_changes.push(change.clone());
         }
-        if change.status != DiffStatus::Deleted
+        let include_in_checkout = change.status != DiffStatus::Deleted
+            || !filter_wholesale_deletes
             || change.old_path.as_ref().is_none_or(|path| {
-                !crate::porcelain::checkout::path_under_wholesale_directory(
-                    path,
-                    &prepared.preverified_wholesale_dirs,
-                )
-            })
-        {
+                !crate::porcelain::checkout::path_under_wholesale_directory(path, wholesale_dirs)
+            });
+        if include_in_checkout {
             tree_changes.push(change.clone());
         }
     }

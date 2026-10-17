@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::index::StatMatchPolicy;
 use crate::index::{index_file_mtime, Index, IndexEntry};
 use crate::objects::{parse_commit, ObjectId};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp};
 use crate::porcelain::checkout::tree_changes_touch_gitattributes;
 use crate::porcelain::status::{collect_untracked_and_ignored_with_cache, IgnoredMode};
 use crate::repo::Repository;
@@ -220,7 +221,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
         }
         None => None,
     };
-    let stat_parallel_threads = (path_count >= 128).then(|| {
+    let stat_parallel_threads = (path_count >= 32).then(|| {
         repo.thread_policy()
             .resolve(
                 crate::parallel::ParallelOp::IndexRefresh,
@@ -676,8 +677,84 @@ fn delete_path_under_root(path: &str, root: &str, ignorecase: bool) -> bool {
                 .strip_prefix(root)
                 .is_some_and(|rest| rest.starts_with('/'))
     } else {
-        path == root || path.starts_with(&format!("{root}/"))
+        path == root
+            || (path.len() > root.len()
+                && path.as_bytes().get(root.len()) == Some(&b'/')
+                && path.starts_with(root))
     }
+}
+
+fn rel_path_under_worktree(work_tree: &Path, abs: &Path, rel_buf: &mut String) {
+    rel_buf.clear();
+    let Ok(rest) = abs.strip_prefix(work_tree) else {
+        return;
+    };
+    let mut first = true;
+    for component in rest.components() {
+        if let std::path::Component::Normal(part) = component {
+            if !first {
+                rel_buf.push('/');
+            }
+            rel_buf.push_str(&part.to_string_lossy());
+            first = false;
+        }
+    }
+}
+
+fn precompute_wholesale_root_index_delete_counts(
+    index: &Index,
+    delete_paths: &HashSet<String>,
+    delete_roots: &BTreeSet<String>,
+    ignorecase: bool,
+) -> HashMap<String, (usize, usize)> {
+    let mut counts: HashMap<String, (usize, usize)> = delete_roots
+        .iter()
+        .map(|root| (root.clone(), (0usize, 0usize)))
+        .collect();
+    for entry in index.entries.iter().filter(|e| e.stage() == 0) {
+        let Ok(path) = std::str::from_utf8(&entry.path) else {
+            continue;
+        };
+        let root = path.split('/').next().unwrap_or(path);
+        if let Some(slot) = counts.get_mut(root) {
+            if path == root || path.as_bytes().get(root.len()).is_some_and(|b| *b == b'/') {
+                slot.0 += 1;
+            }
+        } else if ignorecase {
+            if let Some(key) = counts
+                .keys()
+                .find(|candidate| candidate.eq_ignore_ascii_case(root))
+                .cloned()
+            {
+                if path.eq_ignore_ascii_case(&key)
+                    || path
+                        .strip_prefix(key.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+                {
+                    if let Some(slot) = counts.get_mut(&key) {
+                        slot.0 += 1;
+                    }
+                }
+            }
+        }
+    }
+    for del in delete_paths {
+        let root = del.split('/').next().unwrap_or(del.as_str());
+        if let Some(slot) = counts.get_mut(root) {
+            slot.1 += 1;
+        } else if ignorecase {
+            if let Some(key) = counts
+                .keys()
+                .find(|candidate| candidate.eq_ignore_ascii_case(root))
+                .cloned()
+            {
+                if let Some(slot) = counts.get_mut(&key) {
+                    slot.1 += 1;
+                }
+            }
+        }
+    }
+    counts
 }
 
 fn count_delete_paths_under_root(
@@ -697,9 +774,14 @@ fn scan_wholesale_delete_root(
     root: &str,
     delete_paths: &HashSet<String>,
     ignorecase: bool,
+    precomputed_counts: Option<(usize, usize)>,
 ) -> WholesaleDeleteRootScan {
-    let indexed = count_indexed_paths_under_root(index, root);
-    let deletes = count_delete_paths_under_root(delete_paths, root, ignorecase);
+    let (indexed, deletes) = precomputed_counts.unwrap_or_else(|| {
+        (
+            count_indexed_paths_under_root(index, root),
+            count_delete_paths_under_root(delete_paths, root, ignorecase),
+        )
+    });
     let index_aligned = indexed > 0 && indexed == deletes;
     let mut untracked = Vec::new();
     let mut needs_ignore_rules = Vec::new();
@@ -712,10 +794,9 @@ fn scan_wholesale_delete_root(
     }
     let mut rel_buf = String::with_capacity(root.len() + 64);
     rel_buf.push_str(root);
-    let mut stack: Vec<(PathBuf, String)> = vec![(abs_root, rel_buf.clone())];
-    while let Some((abs, parent_rel)) = stack.pop() {
-        rel_buf.clear();
-        rel_buf.push_str(&parent_rel);
+    let mut stack: Vec<PathBuf> = vec![abs_root];
+    while let Some(abs) = stack.pop() {
+        rel_path_under_worktree(work_tree, &abs, &mut rel_buf);
         let read_dir = match fs::read_dir(&abs) {
             Ok(rd) => rd,
             Err(_) => continue,
@@ -729,8 +810,21 @@ fn scan_wholesale_delete_root(
             rel_buf.push_str(&name);
             let rel = rel_buf.as_str();
             if index_aligned && delete_path_scheduled_for_removal(rel, delete_paths, ignorecase) {
-                if entry.path().is_dir() {
-                    stack.push((entry.path(), rel.to_owned()));
+                // Scheduled file deletes need no scan work. Only directory paths in the delete
+                // set require descending to discover blocking special files.
+                let scheduled_dir = delete_paths.contains(rel)
+                    || (ignorecase
+                        && delete_paths
+                            .iter()
+                            .any(|del| del.eq_ignore_ascii_case(rel)));
+                if scheduled_dir {
+                    let is_dir = entry
+                        .file_type()
+                        .map(|t| t.is_dir())
+                        .unwrap_or(false);
+                    if is_dir {
+                        stack.push(entry.path());
+                    }
                 }
                 rel_buf.truncate(rel_start);
                 continue;
@@ -743,7 +837,7 @@ fn scan_wholesale_delete_root(
                 }
             };
             if file_type.is_dir() {
-                stack.push((entry.path(), rel.to_owned()));
+                stack.push(entry.path());
                 rel_buf.truncate(rel_start);
                 continue;
             }
@@ -792,10 +886,62 @@ fn collect_untracked_for_wholesale_delete_roots(
     delete_roots: &BTreeSet<String>,
     ignorecase: bool,
 ) -> Result<(Vec<String>, Vec<String>)> {
-    let scans: Vec<WholesaleDeleteRootScan> = delete_roots
-        .iter()
-        .map(|root| scan_wholesale_delete_root(index, work_tree, root, delete_paths, ignorecase))
-        .collect();
+    let root_counts = precompute_wholesale_root_index_delete_counts(
+        index,
+        delete_paths,
+        delete_roots,
+        ignorecase,
+    );
+    let roots: Vec<String> = delete_roots.iter().cloned().collect();
+    let work_tree_owned = work_tree.to_path_buf();
+    let delete_paths_shared = Arc::new(delete_paths.clone());
+    let scans: Vec<WholesaleDeleteRootScan> = if roots.len() >= 4 {
+        let config = repo.config().ok();
+        let default_cfg = ConfigSet::new();
+        let cfg = config.as_deref().unwrap_or(&default_cfg);
+        let options = repo.thread_policy().resolve(ParallelOp::Checkout, cfg);
+        let scan_outcomes = try_par_map(&roots, options, 0, |root| {
+            let counts = root_counts.get(root).copied();
+            Ok(scan_wholesale_delete_root(
+                index,
+                &work_tree_owned,
+                root,
+                delete_paths_shared.as_ref(),
+                ignorecase,
+                counts,
+            ))
+        })
+        .unwrap_or_else(|_: ParallelHashError<()>| {
+            roots
+                .iter()
+                .map(|root| {
+                    scan_wholesale_delete_root(
+                        index,
+                        work_tree,
+                        root,
+                        delete_paths,
+                        ignorecase,
+                        root_counts.get(root).copied(),
+                    )
+                })
+                .collect()
+        });
+        scan_outcomes
+    } else {
+        roots
+            .iter()
+            .map(|root| {
+                scan_wholesale_delete_root(
+                    index,
+                    work_tree,
+                    root,
+                    delete_paths,
+                    ignorecase,
+                    root_counts.get(root).copied(),
+                )
+            })
+            .collect()
+    };
 
     let mut untracked = Vec::new();
     let mut needs_ignore_rules = Vec::new();
@@ -836,6 +982,7 @@ pub(crate) fn collect_untracked_for_tree_changes(
         index,
         work_tree,
         tree_changes,
+        None,
     )?;
     Ok(untracked)
 }
@@ -847,6 +994,7 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
     index: &mut Index,
     work_tree: &Path,
     tree_changes: &[DiffEntry],
+    precomputed_delete_paths: Option<&HashSet<String>>,
 ) -> Result<(Vec<String>, Vec<String>, bool, bool)> {
     let added_specs = untracked_scan_pathspecs_for_tree_changes(tree_changes);
     let delete_specs = untracked_scan_pathspecs_for_deletes(tree_changes);
@@ -872,7 +1020,14 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
             delete_roots.contains(root)
         }
     };
-    let delete_paths = delete_paths_from_tree_changes(tree_changes);
+    let delete_paths_owned;
+    let delete_paths = match precomputed_delete_paths {
+        Some(set) => set,
+        None => {
+            delete_paths_owned = delete_paths_from_tree_changes(tree_changes);
+            &delete_paths_owned
+        }
+    };
     let use_fast_wholesale_scan = !delete_roots.is_empty()
         && delete_paths.len() >= WHOLESALE_FAST_UNTRACKED_SCAN_MIN
         && delete_roots
@@ -885,7 +1040,7 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
             repo,
             index,
             work_tree,
-            &delete_paths,
+            delete_paths,
             &delete_roots,
             ignorecase,
         )?;
@@ -2014,7 +2169,7 @@ mod tests {
         let indexed = count_indexed_paths_under_root(&index, root);
         let deletes = count_delete_paths_under_root(&delete_paths, root, false);
         assert_eq!(indexed, deletes, "fixture must be index-aligned");
-        let scan = scan_wholesale_delete_root(&index, wt, root, &delete_paths, false);
+        let scan = scan_wholesale_delete_root(&index, wt, root, &delete_paths, false, None);
         assert!(
             scan.untracked.iter().any(|p| p == "wh/nested/block.pipe"),
             "special files under a scheduled-delete directory must be discovered"
