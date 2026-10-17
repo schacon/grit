@@ -11840,7 +11840,7 @@ impl grit_lib::remote::credentials::CredentialProvider for grit_lib::remote::cre
 pub fn grit_lib::remote::credentials::HelperCredentialProvider::approve(&self, &grit_lib::remote::credentials::Credential) -> grit_lib::error::Result<()>
 pub fn grit_lib::remote::credentials::HelperCredentialProvider::fill(&self, &grit_lib::remote::credentials::Credential) -> grit_lib::error::Result<grit_lib::remote::credentials::Credential>
 pub fn grit_lib::remote::credentials::HelperCredentialProvider::reject(&self, &grit_lib::remote::credentials::Credential) -> grit_lib::error::Result<()>
-impl core::marker::Freeze for grit_lib::remote::credentials::HelperCredentialProvider
+impl !core::marker::Freeze for grit_lib::remote::credentials::HelperCredentialProvider
 impl core::marker::Send for grit_lib::remote::credentials::HelperCredentialProvider
 impl core::marker::Sync for grit_lib::remote::credentials::HelperCredentialProvider
 impl core::marker::Unpin for grit_lib::remote::credentials::HelperCredentialProvider
