@@ -24,7 +24,19 @@ pub fn run_prepare_maintenance(git: &Path) -> Result<()> {
             crate::campaign_prep::restore_campaign_worktree_to_main(git, &repo, &meta)?;
         } else {
             run_git(git, &repo, &["reset", "--hard", "HEAD"])?;
-            run_git(git, &repo, &["clean", "-fd", "-q"])?;
+            run_git(
+                git,
+                &repo,
+                &[
+                    "clean",
+                    "-fd",
+                    "-q",
+                    "-e",
+                    ".grit-bench-worktree-ready",
+                    "-e",
+                    ".grit-bench-hot-path.json",
+                ],
+            )?;
         }
         return seed_loose_objects(git, &repo);
     }

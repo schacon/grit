@@ -773,8 +773,9 @@ fn append_empty_commit_on_bare(
     default_branch: &str,
     message: &str,
 ) -> Result<()> {
+    let branch_ref = format!("refs/heads/{default_branch}");
     let tree = run_git_output(git, Some(bare), &["rev-parse", "HEAD^{tree}"])?;
-    let parent = run_git_output(git, Some(bare), &["rev-parse", "HEAD"])?;
+    let parent = run_git_output(git, Some(bare), &["rev-parse", &branch_ref])?;
     let mut cmd = Command::new(git);
     cmd.args(["commit-tree", &tree, "-p", &parent, "-m", message])
         .current_dir(bare);
@@ -792,8 +793,8 @@ fn append_empty_commit_on_bare(
         );
     }
     let new_oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let branch_ref = format!("refs/heads/{default_branch}");
     run_git_cmd(git, Some(bare), &["update-ref", &branch_ref, &new_oid])?;
+    run_git_cmd(git, Some(bare), &["symbolic-ref", "HEAD", &branch_ref])?;
     Ok(())
 }
 

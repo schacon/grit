@@ -53,3 +53,7 @@ followup = "ROADMAP maintenance API"
 [scenario."chromium-synth/repack"]
 documented = "grit repack requires a worktree; bare remotes are measured with git repack only"
 followup = "ROADMAP maintenance API"
+
+[scenario."chromium-synth/blame"]
+documented = "grit blame fails on deep synthetic .bin paths while git blame succeeds"
+followup = "ROADMAP blame compatibility"
