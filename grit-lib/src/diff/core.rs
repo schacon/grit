@@ -3327,7 +3327,12 @@ fn push_index_blob_worktree_diff(
 
     if stat_same
         && (!trust_filemode || worktree_mode == ie.mode)
-        && !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+        && index_entry_skips_worktree_content_hash_after_stat_match(
+            ie,
+            index_mtime,
+            stat_policy,
+            trust_filemode,
+        )
     {
         return Ok(());
     }
@@ -3816,17 +3821,8 @@ fn diff_index_to_worktree_inner(
         preload_index,
         stat_parallel_threads: options.stat_parallel_threads,
     };
-    let trusted_stat_skip = !materialize_dirty_blobs && index_stat_cache_trustworthy(index_mtime);
     let blob_dirs = if let Some(limit) = options.restrict_to_paths.as_ref() {
         crate::worktree_scan::group_blob_entries_by_dir_for_paths(index, limit)
-    } else if trusted_stat_skip {
-        crate::worktree_scan::group_blob_entries_by_dir_filtered(
-            index,
-            honor_fsmonitor_valid,
-            Some(|ie: &IndexEntry| {
-                index_entry_skips_worktree_stat_io(ie, index_mtime, stat_policy, trust_filemode)
-            }),
-        )
     } else {
         group_blob_entries_by_dir(index, honor_fsmonitor_valid)
     };
@@ -3850,13 +3846,6 @@ fn diff_index_to_worktree_inner(
         && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
     let mut stat_refresh_verified = vec![false; index.entries.len()];
-    if trusted_stat_skip && options.refresh_index_stat_in_pass {
-        for (entry_index, ie) in index.entries.iter().enumerate() {
-            if index_entry_skips_worktree_stat_io(ie, index_mtime, stat_policy, trust_filemode) {
-                stat_refresh_verified[entry_index] = true;
-            }
-        }
-    }
     let paths_by_entry_index =
         crate::worktree_scan::blob_scan_paths_by_entry_index(&blob_dirs, index.entries.len());
     // Parallel preload must lstat ancestor directories without following symlinks. When a
@@ -3963,7 +3952,16 @@ fn diff_index_to_worktree_inner(
                         let worktree_mode = mode_from_metadata(&meta);
                         let stat_same = stat_matches_with_policy(ie, &meta, stat_policy);
                         let racy = entry_is_racy_with_policy(ie, index_mtime, stat_policy);
-                        if stat_same && !racy && (!trust_filemode || worktree_mode == ie.mode) {
+                        if stat_same
+                            && !racy
+                            && (!trust_filemode || worktree_mode == ie.mode)
+                            && index_entry_skips_worktree_content_hash_after_stat_match(
+                                ie,
+                                index_mtime,
+                                stat_policy,
+                                trust_filemode,
+                            )
+                        {
                             return Ok(());
                         }
                         if trust_filemode && stat_same && worktree_mode != ie.mode {
@@ -4454,11 +4452,12 @@ pub(crate) fn index_stat_cache_trustworthy(index_mtime: Option<(u32, u32)>) -> b
     }
 }
 
-/// When true, a tracked blob entry may skip worktree stat I/O during index↔worktree diff.
+/// When true, after worktree metadata has been read and matches the index entry, blob content
+/// hashing may be skipped (Git `diff-files` / `update-index --refresh` style).
 ///
-/// Matches Git's trust of cached stat on clean, non-racy entries when `core.filemode` is enabled.
+/// Does not permit skipping worktree observation; fsmonitor-valid entries use a separate path.
 #[must_use]
-pub(crate) fn index_entry_skips_worktree_stat_io(
+pub(crate) fn index_entry_skips_worktree_content_hash_after_stat_match(
     ie: &IndexEntry,
     index_mtime: Option<(u32, u32)>,
     stat_policy: crate::index::StatMatchPolicy,
@@ -10456,7 +10455,7 @@ mod smudge_racily_clean_tests {
     }
 
     #[test]
-    fn index_entry_skips_worktree_stat_io_when_trusted_and_not_racy() {
+    fn index_entry_skips_content_hash_after_stat_match_when_trusted_and_not_racy() {
         use crate::index::StatMatchPolicy;
         let td = tempfile::tempdir().expect("tempdir");
         let wt = td.path();
@@ -10466,21 +10465,25 @@ mod smudge_racily_clean_tests {
         let mut entry = staged_entry_for_file(&odb, wt, rel, b"payload\n", file_mtime);
         let index_mtime = (file_mtime.0 + 1, 0);
         let policy = StatMatchPolicy::from_config(None);
-        assert!(super::index_entry_skips_worktree_stat_io(
-            &entry,
-            Some(index_mtime),
-            policy,
-            true
-        ));
+        assert!(
+            super::index_entry_skips_worktree_content_hash_after_stat_match(
+                &entry,
+                Some(index_mtime),
+                policy,
+                true
+            )
+        );
         entry.size = 0;
         entry.mtime_sec = 0;
         entry.mtime_nsec = 0;
-        assert!(!super::index_entry_skips_worktree_stat_io(
-            &entry,
-            Some(index_mtime),
-            policy,
-            true
-        ));
+        assert!(
+            !super::index_entry_skips_worktree_content_hash_after_stat_match(
+                &entry,
+                Some(index_mtime),
+                policy,
+                true
+            )
+        );
         let _ = git_dir;
     }
 

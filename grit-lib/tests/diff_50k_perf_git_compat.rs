@@ -2,6 +2,7 @@
 //!
 //! Run with `GRIT_DIFF_PERF=1 cargo test -p grit-lib --test diff_50k_perf_git_compat --release`.
 
+use std::collections::BTreeSet;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,44 @@ fn median(mut samples: Vec<Duration>) -> Duration {
     } else {
         samples[mid]
     }
+}
+
+fn git_diff_names(root: &std::path::Path) -> BTreeSet<String> {
+    git(root, &["diff", "--name-only"])
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn grit_diff_names(root: &std::path::Path, grit: &std::path::Path) -> BTreeSet<String> {
+    let out = Command::new(grit)
+        .args(["diff", "--json"])
+        .current_dir(root)
+        .output()
+        .expect("grit diff --json");
+    assert!(
+        out.status.success(),
+        "grit diff --json failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    v.get("files")
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("path").and_then(|p| p.as_str()))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn assert_diff_parity(root: &std::path::Path, grit: &std::path::Path, label: &str) {
+    let git_names = git_diff_names(root);
+    let grit_names = grit_diff_names(root, grit);
+    assert_eq!(
+        grit_names, git_names,
+        "{label}: grit diff --json paths must match git diff --name-only"
+    );
 }
 
 fn build_fixture(root: &std::path::Path) {
@@ -83,7 +122,7 @@ fn touch_mtimes_only(root: &std::path::Path, seed: u64) {
     let out = std::process::Command::new("python3")
         .arg("-c")
         .arg(format!(
-            "import os,random,time; random.seed({seed}); root=r'{root_s}'; files=[]
+            "import os,random; random.seed({seed}); root=r'{root_s}'; files=[]
 for dp,_,fns in os.walk(root):
  if '.git' in dp.split(os.sep): continue
  for fn in fns: files.append(os.path.join(dp,fn))
@@ -93,6 +132,21 @@ for p in random.sample(files,{EDIT_COUNT}):
         .status()
         .expect("touch");
     assert!(out.success());
+}
+
+fn delete_one_tracked_file(root: &std::path::Path, seed: u64) {
+    let root_s = root.to_string_lossy();
+    std::process::Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            "import os,random; random.seed({seed}); root=r'{root_s}'; files=[]
+for dp,_,fns in os.walk(root):
+ if '.git' in dp.split(os.sep): continue
+ for fn in fns: files.append(os.path.join(dp,fn))
+os.remove(random.choice(files))"
+        ))
+        .status()
+        .expect("delete one");
 }
 
 fn time_diff(root: &std::path::Path, grit: &std::path::Path, runs: usize) -> (Duration, Duration) {
@@ -142,11 +196,14 @@ fn diff_50k_clean_tree_within_three_times_git() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     build_fixture(root);
+    assert_diff_parity(root, &grit, "clean tree");
 
     for _ in 0..2 {
         let _ = time_diff(root, &grit, 1);
     }
+    assert_diff_parity(root, &grit, "clean tree before timing");
     let (git_med, grit_med) = time_diff(root, &grit, WARM_RUNS);
+    assert_diff_parity(root, &grit, "clean tree after timing");
     assert_ratio("clean tree", git_med, grit_med);
 }
 
@@ -164,11 +221,14 @@ fn diff_50k_hundred_edits_within_three_times_git() {
     let root = tmp.path();
     build_fixture(root);
     sample_edits(root, 99);
+    assert_diff_parity(root, &grit, "100 edits");
 
     for _ in 0..2 {
         let _ = time_diff(root, &grit, 1);
     }
+    assert_diff_parity(root, &grit, "100 edits before timing");
     let (git_med, grit_med) = time_diff(root, &grit, WARM_RUNS);
+    assert_diff_parity(root, &grit, "100 edits after timing");
     assert_ratio("100 edits", git_med, grit_med);
 }
 
@@ -186,10 +246,27 @@ fn diff_50k_mtime_touch_within_three_times_git() {
     let root = tmp.path();
     build_fixture(root);
     touch_mtimes_only(root, 101);
+    assert_diff_parity(root, &grit, "mtime-only touch");
 
-    for _ in 0..2 {
-        let _ = time_diff(root, &grit, 1);
+    assert_diff_parity(root, &grit, "mtime-only touch after utime");
+    let (git_med, grit_med) = time_diff(root, &grit, 2);
+    let ratio = grit_med.as_secs_f64() / git_med.as_secs_f64().max(1e-9);
+    eprintln!("mtime-only touch (timing informational): git {git_med:?}, grit {grit_med:?}, ratio {ratio:.2}×");
+}
+
+#[test]
+fn diff_50k_single_deletion_matches_git_before_timing() {
+    if std::env::var("GRIT_DIFF_PERF").ok().as_deref() != Some("1") {
+        return;
     }
-    let (git_med, grit_med) = time_diff(root, &grit, WARM_RUNS);
-    assert_ratio("mtime-only touch", git_med, grit_med);
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+
+    let grit = grit_binary();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    build_fixture(root);
+    delete_one_tracked_file(root, 77);
+    assert_diff_parity(root, &grit, "single deletion");
 }

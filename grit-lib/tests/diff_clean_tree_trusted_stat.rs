@@ -1,11 +1,79 @@
 //! Index↔worktree diff on a clean tree matches system `git diff-files`.
 
+use std::collections::BTreeSet;
 use std::process::Command;
 
+use filetime::FileTime;
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::{diff_index_to_worktree_with_options, DiffIndexToWorktreeOptions};
 use grit_lib::repo::Repository;
 use grit_test_support::git;
+
+const PINNED_MTIME: (u32, u32) = (1_577_836_800, 0);
+
+fn pin_mtime(path: &std::path::Path, sec: u32, nsec: u32) {
+    filetime::set_file_mtime(path, FileTime::from_unix_time(i64::from(sec), nsec))
+        .expect("set mtime");
+}
+
+fn git_diff_names(root: &std::path::Path) -> BTreeSet<String> {
+    git(root, &["diff", "--name-only"])
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn grit_diff_names_cli(root: &std::path::Path, grit_bin: &std::path::Path) -> BTreeSet<String> {
+    let out = Command::new(grit_bin)
+        .args(["diff", "--json"])
+        .current_dir(root)
+        .output()
+        .expect("grit diff --json");
+    assert!(
+        out.status.success(),
+        "grit diff --json failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    v.get("files")
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("path").and_then(|p| p.as_str()))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn library_unstaged_paths(root: &std::path::Path) -> BTreeSet<String> {
+    let repo = Repository::open(
+        &root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(root),
+    )
+    .expect("open");
+    let mut index = repo.index_handle().load().expect("index");
+    let index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
+    let config = repo.config().expect("config");
+    let (entries, _) = diff_index_to_worktree_with_options(
+        repo.odb(),
+        &mut index,
+        root,
+        DiffIndexToWorktreeOptions {
+            repository_git_dir: Some(repo.git_dir().to_path_buf()),
+            index_mtime,
+            refresh_index_stat_in_pass: false,
+            for_status: true,
+            config: Some(config),
+            thread_policy: Some(repo.thread_policy()),
+            ..DiffIndexToWorktreeOptions::default()
+        },
+    )
+    .expect("diff");
+    entries
+        .into_iter()
+        .filter_map(|e| e.old_path.or(e.new_path))
+        .collect()
+}
 
 fn assert_git_diff_files_clean(repo_root: &std::path::Path) {
     let root = repo_root.to_str().expect("utf-8 path");
@@ -68,6 +136,72 @@ fn grit_diff_index_worktree_empty_on_deep_clean_tree() {
         entries.len()
     );
     assert_git_diff_files_clean(root);
+}
+
+#[test]
+fn grit_diff_matches_git_after_non_racy_post_index_edit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "Test"]);
+
+    let tracked = root.join("tracked.txt");
+    std::fs::write(&tracked, b"version one\n").expect("write");
+    pin_mtime(&tracked, PINNED_MTIME.0, PINNED_MTIME.1);
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["commit", "-qm", "init"]);
+
+    std::fs::write(&tracked, b"version two\n").expect("rewrite");
+
+    let expected = git_diff_names(root);
+    assert_eq!(
+        expected,
+        BTreeSet::from([String::from("tracked.txt")]),
+        "git must report the post-index edit"
+    );
+    assert_eq!(
+        library_unstaged_paths(root),
+        expected,
+        "library diff must match git --name-only"
+    );
+    if let Ok(grit_bin) = std::env::var("CARGO_BIN_EXE_grit") {
+        let grit = std::path::PathBuf::from(grit_bin);
+        assert_eq!(
+            grit_diff_names_cli(root, &grit),
+            expected,
+            "grit diff --json must match git --name-only"
+        );
+    }
+}
+
+#[test]
+fn grit_diff_matches_git_after_non_racy_post_index_deletion() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "Test"]);
+
+    let tracked = root.join("tracked.txt");
+    std::fs::write(&tracked, b"payload\n").expect("write");
+    pin_mtime(&tracked, PINNED_MTIME.0, PINNED_MTIME.1);
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["commit", "-qm", "init"]);
+
+    std::fs::remove_file(&tracked).expect("delete");
+
+    let expected = git_diff_names(root);
+    assert_eq!(
+        expected,
+        BTreeSet::from([String::from("tracked.txt")]),
+        "git must report the deletion"
+    );
+    assert_eq!(library_unstaged_paths(root), expected);
+    if let Ok(grit_bin) = std::env::var("CARGO_BIN_EXE_grit") {
+        let grit = std::path::PathBuf::from(grit_bin);
+        assert_eq!(grit_diff_names_cli(root, &grit), expected);
+    }
 }
 
 #[test]

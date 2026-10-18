@@ -173,6 +173,7 @@ harness = false
 [dev-dependencies]
 criterion.workspace = true
 grit-test-support = { path = "../grit-test-support" }
+serde_json.workspace = true
 
 [[test]]
 name = "clone_layout"
