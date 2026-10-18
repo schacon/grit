@@ -382,6 +382,8 @@ enum Cmd {
         mode: RefsWorkMode,
     },
     #[command(hide = true)]
+    TruncatePackedRefs { repo: PathBuf, keep: usize },
+    #[command(hide = true)]
     ServeGitHttp {
         #[arg(long)]
         root: PathBuf,
@@ -972,6 +974,10 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_refs(&git, source, work, *mode);
         }
+        Cmd::TruncatePackedRefs { repo, keep } => {
+            grit_utils::refs_fixture::truncate_packed_refs(repo, *keep)?;
+            return Ok(());
+        }
         Cmd::PrepareAdd { git } => {
             let git = resolve_binary("git", Some(git))?;
             return run_prepare_add(&git);
@@ -1491,6 +1497,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareMaintenance { .. }
         | Cmd::PrepareHistoryRewrite { .. }
         | Cmd::PrepareRefs { .. }
+        | Cmd::TruncatePackedRefs { .. }
         | Cmd::PrepareNetworkClone { .. }
         | Cmd::PrepareNetworkFetchIncr { .. }
         | Cmd::PrepareNetworkFetchNoop { .. }
