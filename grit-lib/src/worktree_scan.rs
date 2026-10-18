@@ -242,15 +242,114 @@ pub(crate) enum BlobDiskLookup {
     Io(io::Error),
 }
 
-/// Collect scannable blob `(entry_index, rel_path)` pairs in ascending index order.
+/// Repository-relative paths keyed by [`Index::entries`] index (empty when unused).
 #[must_use]
-fn index_ordered_blob_paths(by_dir: &HashMap<String, Vec<BlobInDir>>) -> Vec<(usize, String)> {
-    let mut blobs: Vec<(usize, String)> = by_dir
+pub(crate) fn blob_scan_paths_by_entry_index(
+    by_dir: &HashMap<String, Vec<BlobInDir>>,
+    entry_slots: usize,
+) -> Vec<&str> {
+    let mut paths = vec![""; entry_slots];
+    for blobs in by_dir.values() {
+        for blob in blobs {
+            if blob.entry_index < entry_slots {
+                paths[blob.entry_index] = blob.rel_path.as_str();
+            }
+        }
+    }
+    paths
+}
+
+/// Index entry indices for grouped blobs, sorted for deterministic visits.
+#[must_use]
+fn index_ordered_blob_entry_indices(by_dir: &HashMap<String, Vec<BlobInDir>>) -> Vec<usize> {
+    let mut indices: Vec<usize> = by_dir
         .values()
-        .flat_map(|v| v.iter().map(|b| (b.entry_index, b.rel_path.clone())))
+        .flat_map(|v| v.iter().map(|b| b.entry_index))
         .collect();
-    blobs.sort_by_key(|(entry_index, _)| *entry_index);
-    blobs
+    indices.sort_unstable();
+    indices
+}
+
+fn collect_blob_lookups_in_directory(
+    dir: &str,
+    blobs: &[BlobInDir],
+    dir_abs: &Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
+    file_abs: &Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
+    symlink_missing: &HashSet<String>,
+    out: &mut Vec<(usize, BlobDiskLookup)>,
+) -> Result<()> {
+    for_each_blob_in_one_directory(
+        dir,
+        blobs,
+        &|d| dir_abs(d),
+        &|rel| file_abs(rel),
+        &mut |rel| symlink_missing.contains(rel),
+        &mut |entry_index, _path, lookup| {
+            out.push((entry_index, lookup));
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn for_each_blob_in_one_directory<F, H>(
+    dir: &str,
+    blobs: &[BlobInDir],
+    dir_abs: &dyn Fn(&str) -> PathBuf,
+    file_abs: &dyn Fn(&str) -> PathBuf,
+    has_symlink_ancestor: &mut H,
+    visit: &mut F,
+) -> Result<()>
+where
+    F: FnMut(usize, &str, BlobDiskLookup) -> Result<()>,
+    H: FnMut(&str) -> bool,
+{
+    if blobs.is_empty() {
+        return Ok(());
+    }
+    if blobs.iter().all(|b| has_symlink_ancestor(&b.rel_path)) {
+        for blob in blobs {
+            visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
+        }
+        return Ok(());
+    }
+
+    if blobs.len() < READ_DIR_AMORTIZE_MIN {
+        for blob in blobs {
+            if has_symlink_ancestor(&blob.rel_path) {
+                visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
+                continue;
+            }
+            let target = file_abs(&blob.rel_path);
+            let lookup = match symlink_metadata_path(&target) {
+                Ok(meta) => BlobDiskLookup::Present(meta),
+                Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+                    BlobDiskLookup::Missing
+                }
+                Err(e) => return Err(Error::Io(e)),
+            };
+            visit(blob.entry_index, &blob.rel_path, lookup)?;
+        }
+        return Ok(());
+    }
+
+    let abs_dir = dir_abs(dir);
+    let (dir_readable, on_disk) = read_directory_map(&abs_dir)?;
+    for blob in blobs {
+        if has_symlink_ancestor(&blob.rel_path) {
+            visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
+            continue;
+        }
+        let target = file_abs(&blob.rel_path);
+        let lookup = if !dir_readable {
+            BlobDiskLookup::Missing
+        } else {
+            lookup_blob_in_directory(&on_disk, &blob.file_name, &target)
+        };
+        visit(blob.entry_index, &blob.rel_path, lookup)?;
+    }
+    Ok(())
 }
 
 fn preload_blob_lookups_parallel(
@@ -271,29 +370,25 @@ fn preload_blob_lookups_parallel(
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for dir_chunk in dirs.chunks(chunk_size) {
-            let mut partial_dirs = HashMap::new();
-            for dir in dir_chunk {
-                if let Some(blobs) = by_dir.get(dir) {
-                    partial_dirs.insert(dir.clone(), blobs.clone());
-                }
-            }
             let symlink_missing = symlink_missing.clone();
             let dir_abs = Arc::clone(&dir_abs);
             let file_abs = Arc::clone(&file_abs);
             handles.push(
                 scope.spawn(move || -> Result<Vec<(usize, BlobDiskLookup)>> {
-                    let mut local =
-                        Vec::with_capacity(partial_dirs.values().map(|v| v.len()).sum::<usize>());
-                    for_each_blob_by_directory(
-                        &partial_dirs,
-                        |dir| dir_abs(dir),
-                        |rel| file_abs(rel),
-                        |rel| symlink_missing.contains(rel),
-                        |entry_index, _path, lookup| {
-                            local.push((entry_index, lookup));
-                            Ok(())
-                        },
-                    )?;
+                    let mut local = Vec::new();
+                    for dir in dir_chunk {
+                        let Some(blobs) = by_dir.get(dir) else {
+                            continue;
+                        };
+                        collect_blob_lookups_in_directory(
+                            dir,
+                            blobs,
+                            &dir_abs,
+                            &file_abs,
+                            &symlink_missing,
+                            &mut local,
+                        )?;
+                    }
                     Ok(local)
                 }),
             );
@@ -327,15 +422,16 @@ fn preload_blob_lookups_parallel(
 ///
 /// When `has_symlink_ancestor(rel_path)` is true, the entry is reported as [`BlobDiskLookup::Missing`]
 /// without extra I/O (symlink replaced a directory on the path).
-pub(crate) fn for_each_blob_by_directory<F>(
+pub(crate) fn for_each_blob_by_directory<F, H>(
     by_dir: &HashMap<String, Vec<BlobInDir>>,
     dir_abs: impl Fn(&str) -> PathBuf,
     file_abs: impl Fn(&str) -> PathBuf,
-    mut has_symlink_ancestor: impl FnMut(&str) -> bool,
+    mut has_symlink_ancestor: H,
     mut visit: F,
 ) -> Result<()>
 where
     F: FnMut(usize, &str, BlobDiskLookup) -> Result<()>,
+    H: FnMut(&str) -> bool,
 {
     let mut dirs: Vec<_> = by_dir.keys().cloned().collect();
     dirs.sort();
@@ -343,51 +439,14 @@ where
         let Some(blobs) = by_dir.get(&dir) else {
             continue;
         };
-        // When a tracked directory is replaced by a symlink, Git reports indexed paths as
-        // deleted without traversing the link target (even if the target is unreadable).
-        if blobs.iter().all(|b| has_symlink_ancestor(&b.rel_path)) {
-            for blob in blobs {
-                visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
-            }
-            continue;
-        }
-
-        if blobs.len() < READ_DIR_AMORTIZE_MIN {
-            for blob in blobs {
-                if has_symlink_ancestor(&blob.rel_path) {
-                    visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
-                    continue;
-                }
-                let target = file_abs(&blob.rel_path);
-                let lookup = match symlink_metadata_path(&target) {
-                    Ok(meta) => BlobDiskLookup::Present(meta),
-                    Err(e)
-                        if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) =>
-                    {
-                        BlobDiskLookup::Missing
-                    }
-                    Err(e) => BlobDiskLookup::Io(e),
-                };
-                visit(blob.entry_index, &blob.rel_path, lookup)?;
-            }
-            continue;
-        }
-
-        let abs_dir = dir_abs(&dir);
-        let (dir_readable, on_disk) = read_directory_map(&abs_dir)?;
-        for blob in blobs {
-            if has_symlink_ancestor(&blob.rel_path) {
-                visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
-                continue;
-            }
-            let target = file_abs(&blob.rel_path);
-            let lookup = if !dir_readable {
-                BlobDiskLookup::Missing
-            } else {
-                lookup_blob_in_directory(&on_disk, &blob.file_name, &target)
-            };
-            visit(blob.entry_index, &blob.rel_path, lookup)?;
-        }
+        for_each_blob_in_one_directory(
+            &dir,
+            blobs,
+            &dir_abs,
+            &file_abs,
+            &mut has_symlink_ancestor,
+            &mut visit,
+        )?;
     }
     Ok(())
 }
@@ -395,6 +454,7 @@ where
 /// Like [`for_each_blob_by_directory`], optionally preloading disk lookups in parallel.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn for_each_blob_by_directory_parallel<F>(
+    paths_by_entry_index: &[&str],
     by_dir: &HashMap<String, Vec<BlobInDir>>,
     scan_options: WorktreeBlobScanOptions,
     thread_policy: &crate::parallel::ThreadPolicy,
@@ -408,7 +468,7 @@ pub(crate) fn for_each_blob_by_directory_parallel<F>(
 where
     F: FnMut(usize, &str, BlobDiskLookup) -> Result<()>,
 {
-    let ordered = index_ordered_blob_paths(by_dir);
+    let ordered = index_ordered_blob_entry_indices(by_dir);
     let mut symlink_missing = HashSet::new();
     if scan_symlink_ancestors {
         // One ancestor probe per distinct parent directory (not per indexed file).
@@ -432,11 +492,7 @@ where
         // Always partition parallel preload by directory groups so multi-file parents use
         // one read_dir per directory (Git preload-index style). A flat per-file stat loop
         // regresses deep leaf-dir layouts (~50k paths, few files per directory).
-        let entry_slots = ordered
-            .iter()
-            .map(|(entry_index, _)| *entry_index)
-            .max()
-            .map_or(0, |i| i + 1);
+        let entry_slots = ordered.iter().copied().max().map_or(0, |i| i + 1);
         let mut preloaded = preload_blob_lookups_parallel(
             by_dir,
             entry_slots,
@@ -445,13 +501,19 @@ where
             Arc::clone(&dir_abs_arc),
             Arc::clone(&file_abs_arc),
         )?;
-        for (entry_index, rel_path) in &ordered {
-            let lookup = preloaded[*entry_index].take().ok_or_else(|| {
+        for entry_index in ordered {
+            let rel_path = paths_by_entry_index.get(entry_index).copied().unwrap_or("");
+            if rel_path.is_empty() {
+                return Err(Error::Message(format!(
+                    "blob stat scan missing path for index entry {entry_index}"
+                )));
+            }
+            let lookup = preloaded[entry_index].take().ok_or_else(|| {
                 Error::Message(format!(
                     "parallel blob stat preload missing index entry {entry_index}"
                 ))
             })?;
-            visit(*entry_index, rel_path, lookup)?;
+            visit(entry_index, rel_path, lookup)?;
         }
         return Ok(());
     }
@@ -719,8 +781,10 @@ mod tests {
         let file_abs = move |rel: &str| wt_file.join(rel);
         let policy = crate::parallel::ThreadPolicy::default();
         let config = crate::config::ConfigSet::new();
+        let paths_by_entry = blob_scan_paths_by_entry_index(&grouped, index.entries.len());
         let mut seen = 0;
         for_each_blob_by_directory_parallel(
+            &paths_by_entry,
             &grouped,
             WorktreeBlobScanOptions {
                 preload_index: true,
@@ -785,8 +849,10 @@ mod tests {
         let file_abs = move |rel: &str| wt_file.join(rel);
         let policy = crate::parallel::ThreadPolicy::default();
         let config = crate::config::ConfigSet::new();
+        let paths_by_entry = blob_scan_paths_by_entry_index(&grouped, index.entries.len());
         let mut seen = 0;
         for_each_blob_by_directory_parallel(
+            &paths_by_entry,
             &grouped,
             WorktreeBlobScanOptions {
                 preload_index: true,

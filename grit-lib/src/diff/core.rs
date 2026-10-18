@@ -2264,7 +2264,7 @@ pub fn apply_rename_detection_to_diff_entries(
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
-    if rename_threshold >= 100 {
+    if entries.is_empty() || rename_threshold >= 100 {
         return Ok(entries);
     }
     if work_root.is_some() {
@@ -3613,6 +3613,11 @@ fn worktree_diff_pass1_index_entry(
     Ok(())
 }
 
+#[inline]
+fn index_entry_needs_worktree_diff_pass1(ie: &IndexEntry) -> bool {
+    ie.mode == crate::index::MODE_GITLINK || ie.intent_to_add()
+}
+
 fn diff_index_to_worktree_inner(
     odb: &Odb,
     index: &mut Index,
@@ -3751,6 +3756,9 @@ fn diff_index_to_worktree_inner(
             let Some(ie) = index.get(path.as_bytes(), 0) else {
                 continue;
             };
+            if !index_entry_needs_worktree_diff_pass1(ie) {
+                continue;
+            }
             worktree_diff_pass1_index_entry(
                 odb,
                 work_tree,
@@ -3771,6 +3779,9 @@ fn diff_index_to_worktree_inner(
     } else {
         for ie in &index.entries {
             if ie.stage() != 0 {
+                continue;
+            }
+            if !index_entry_needs_worktree_diff_pass1(ie) {
                 continue;
             }
             let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
@@ -3830,12 +3841,16 @@ fn diff_index_to_worktree_inner(
         && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
     let mut stat_refresh_verified = vec![false; index.entries.len()];
+    let paths_by_entry_index =
+        crate::worktree_scan::blob_scan_paths_by_entry_index(&blob_dirs, index.entries.len());
+    let scan_symlink_ancestors = refresh_index_stat_in_pass || materialize_dirty_blobs;
     for_each_blob_by_directory_parallel(
+        &paths_by_entry_index,
         &blob_dirs,
         blob_scan,
         &thread_policy,
         &config,
-        true,
+        scan_symlink_ancestors,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -3848,8 +3863,6 @@ fn diff_index_to_worktree_inner(
                     return Ok(());
                 }
             }
-            let file_path =
-                index_entry_worktree_abs(work_tree, path_str_ref, precompose_unicode, ignorecase);
             match lookup {
                 BlobDiskLookup::Missing => {
                     let ie = &index.entries[entry_index];
@@ -3890,6 +3903,12 @@ fn diff_index_to_worktree_inner(
                             stat_refresh_verified[entry_index] = true;
                         }
                         if !skip_refresh_for_status_diff && !skip_refresh_clean_status {
+                            let file_path = index_entry_worktree_abs(
+                                work_tree,
+                                path_str_ref,
+                                precompose_unicode,
+                                ignorecase,
+                            );
                             let ie = &mut index.entries[entry_index];
                             let refresh = refresh_index_blob_stat_from_metadata(
                                 odb,
@@ -3924,10 +3943,12 @@ fn diff_index_to_worktree_inner(
                     let ie = &index.entries[entry_index];
                     if parallel_blob_work {
                         let worktree_mode = mode_from_metadata(&meta);
-                        if trust_filemode
-                            && stat_matches_with_policy(ie, &meta, stat_policy)
-                            && worktree_mode != ie.mode
-                        {
+                        let stat_same = stat_matches_with_policy(ie, &meta, stat_policy);
+                        let racy = entry_is_racy_with_policy(ie, index_mtime, stat_policy);
+                        if stat_same && !racy && (!trust_filemode || worktree_mode == ie.mode) {
+                            return Ok(());
+                        }
+                        if trust_filemode && stat_same && worktree_mode != ie.mode {
                             let path_owned = path_str_ref.to_owned();
                             result.push(DiffEntry {
                                 status: DiffStatus::Modified,
@@ -3946,11 +3967,17 @@ fn diff_index_to_worktree_inner(
                             options.for_status,
                             &mut result,
                         ) {
-                        } else if !(stat_matches_with_policy(ie, &meta, stat_policy)
+                        } else if !(stat_same
                             && (!trust_filemode || worktree_mode == ie.mode)
-                            && !entry_is_racy_with_policy(ie, index_mtime, stat_policy))
+                            && !racy)
                             && !stat_refresh_verified[entry_index]
                         {
+                            let file_path = index_entry_worktree_abs(
+                                work_tree,
+                                path_str_ref,
+                                precompose_unicode,
+                                ignorecase,
+                            );
                             staging_hash_jobs.push(StagingHashJob {
                                 entry_index,
                                 rel_path: path_str_ref.to_owned(),
@@ -3961,6 +3988,12 @@ fn diff_index_to_worktree_inner(
                             });
                         }
                     } else {
+                        let file_path = index_entry_worktree_abs(
+                            work_tree,
+                            path_str_ref,
+                            precompose_unicode,
+                            ignorecase,
+                        );
                         push_index_blob_worktree_diff(
                             odb,
                             ie,
@@ -4709,7 +4742,10 @@ pub fn refresh_index_stat_content_verified_with_rules(
     let mut changed = false;
     let filter_fp = rules_lock.as_ref().map(|r| r.filter_process());
     let thread_policy = crate::parallel::ThreadPolicy::default();
+    let paths_by_entry_index =
+        crate::worktree_scan::blob_scan_paths_by_entry_index(&blob_dirs, index.entries.len());
     for_each_blob_by_directory_parallel(
+        &paths_by_entry_index,
         &blob_dirs,
         blob_scan,
         &thread_policy,

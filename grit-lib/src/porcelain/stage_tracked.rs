@@ -355,7 +355,10 @@ fn stage_tracked_modifications_in_index_body(
         )
         .parallelism();
     let mut deferred_restage: Vec<DeferredRestageJob> = Vec::new();
+    let paths_by_entry_index =
+        crate::worktree_scan::blob_scan_paths_by_entry_index(&blob_dirs, index.entries.len());
     for_each_blob_by_directory_parallel(
+        &paths_by_entry_index,
         &blob_dirs,
         blob_scan_opts,
         &thread_policy,

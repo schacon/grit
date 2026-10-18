@@ -379,7 +379,10 @@ fn worktree_clean_for_switch_paths(
             index_entry_worktree_abs(&work_tree_for_files, rel, precompose_unicode, ignorecase)
         };
         let matches = AtomicBool::new(true);
+        let paths_by_entry_index =
+            crate::worktree_scan::blob_scan_paths_by_entry_index(&blob_dirs, index.entries.len());
         for_each_blob_by_directory_parallel(
+            &paths_by_entry_index,
             &blob_dirs,
             blob_scan,
             &Default::default(),

@@ -56,6 +56,12 @@ enum FsmonitorMode {
     Ipc,
 }
 
+/// Whether `core.fsmonitor` is configured (hook path, `true`, or IPC mode).
+#[must_use]
+pub fn fsmonitor_enabled(config: &ConfigSet) -> bool {
+    !matches!(fsmonitor_mode(config), FsmonitorMode::Disabled)
+}
+
 fn fsmonitor_mode(config: &ConfigSet) -> FsmonitorMode {
     let Some(raw) = config.get("core.fsmonitor") else {
         return FsmonitorMode::Disabled;

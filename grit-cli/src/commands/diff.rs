@@ -693,10 +693,11 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
     let diff_opts = DiffIndexToWorktreeOptions {
         repository_git_dir: Some(repo.git_dir().to_path_buf()),
         index_mtime: diff_index_mtime,
-        config: Some(config_arc),
+        config: Some(config_arc.clone()),
         thread_policy: Some(repo.thread_policy()),
         refresh_index_stat_in_pass: false,
         for_status: true,
+        refresh_fsmonitor: grit_lib::fsmonitor::fsmonitor_enabled(config_arc.as_ref()),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
         command_runner: Some(repo.command_runner()),
         ..DiffIndexToWorktreeOptions::default()
@@ -899,6 +900,7 @@ fn worktree_against_tree(
                 thread_policy: Some(repo.thread_policy()),
                 refresh_index_stat_in_pass: false,
                 for_status: true,
+                refresh_fsmonitor: grit_lib::fsmonitor::fsmonitor_enabled(config.as_ref()),
                 worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
                 command_runner: Some(repo.command_runner()),
                 ..DiffIndexToWorktreeOptions::default()
