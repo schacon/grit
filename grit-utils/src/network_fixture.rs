@@ -510,7 +510,8 @@ pub fn ensure_campaign_bare_network_meta(
     };
     if tag_only {
         let branch_ref = format!("refs/heads/{}", meta.default_branch);
-        if rev_parse(git, bare, &branch_ref).is_err() {
+        let tip = rev_parse(git, bare, &branch_ref).unwrap_or_default();
+        if tip != meta.fetch_base_oid {
             run_git(
                 git,
                 Some(bare),
@@ -661,6 +662,13 @@ mod tests {
         let meta = ensure_campaign_bare_network_meta(&git, &bare, false)?;
         assert!(meta_path(&bare).is_file());
         assert!(!meta.fetch_base_oid.is_empty());
+        let tag_commit = meta.fetch_base_oid.clone();
+        run_git(
+            &git,
+            Some(&bare),
+            &["update-ref", "refs/heads/master", &tag_commit],
+        )?;
+        assert_eq!(rev_parse(&git, &bare, "refs/heads/master")?, tag_commit);
 
         let client = crate::network_suite::ensure_network_client_repo(&git, &bare)?;
         assert!(client.join(".git").exists());

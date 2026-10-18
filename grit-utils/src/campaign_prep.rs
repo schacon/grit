@@ -6,7 +6,6 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::binary::resolve_binary;
 use crate::campaign_worktree::{dirty_tracked_worktree, list_tracked_files};
 use crate::hot_path_fixture::{meta_path, HotPathMeta};
 use crate::real_repo_fixture::git_env;
@@ -132,10 +131,8 @@ pub fn reset_campaign_worktree_clean(git: &Path, repo: &Path) -> Result<()> {
 pub fn run_prepare_campaign_status_dirty(git: &Path) -> Result<()> {
     let repo =
         PathBuf::from(std::env::var("GRIT_BENCH_CAMPAIGN_CWD").context("GRIT_BENCH_CAMPAIGN_CWD")?);
-    let grit = resolve_binary("grit", None)?;
     reset_campaign_worktree_clean(git, &repo)?;
     dirty_tracked_worktree(git, &repo)?;
-    sync_grit_index_to_git(&grit, &repo)?;
     Ok(())
 }
 
@@ -322,6 +319,20 @@ mod tests {
         }
         run_git(git, dir, &["add", "-A"])?;
         run_git(git, dir, &["commit", "-qm", "initial"])?;
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_status_dirty_leaves_tracked_modifications() -> Result<()> {
+        let git = resolve_binary("git", None)?;
+        let tmp = TempDir::new()?;
+        let dir = tmp.path().join("repo");
+        init_repo_with_files(&git, &dir, 20)?;
+        std::env::set_var("GRIT_BENCH_CAMPAIGN_CWD", dir.display().to_string());
+        run_prepare_campaign_status_dirty(&git)?;
+        let content = fs::read_to_string(dir.join("f0.txt"))?;
+        assert!(content.contains("campaign bench line"));
+        std::env::remove_var("GRIT_BENCH_CAMPAIGN_CWD");
         Ok(())
     }
 

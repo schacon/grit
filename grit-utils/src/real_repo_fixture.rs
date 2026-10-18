@@ -228,9 +228,22 @@ pub fn ensure_worktree_clone(
     if marker.is_file() {
         let stored = fs::read_to_string(&marker).context("read worktree marker")?;
         if stored.trim() == tag && dest.join(".git").exists() {
-            // Reuse cached worktrees but always return a named branch: prior campaign
-            // scenarios may leave detached HEAD or topic branches behind.
+            // Reuse cached worktrees: return to campaign-main at branch tip, not leftover HEAD/tree state.
             run_git(git, &dest, &["checkout", "-f", "-B", "campaign-main"])?;
+            run_git(git, &dest, &["reset", "--hard", "HEAD"])?;
+            run_git(
+                git,
+                &dest,
+                &[
+                    "clean",
+                    "-fd",
+                    "-q",
+                    "-e",
+                    WORKTREE_READY,
+                    "-e",
+                    ".grit-bench-hot-path.json",
+                ],
+            )?;
             return Ok(dest);
         }
     }

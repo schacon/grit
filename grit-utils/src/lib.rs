@@ -59,5 +59,5 @@ pub mod synth;
 pub mod worktree_fixture;
 pub mod worktree_suite;
 
-pub use compare::compare_reports;
+pub use compare::{compare_reports, CompareOutcome};
 pub use schema::{BenchReport, ScenarioResult};

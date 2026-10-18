@@ -1104,13 +1104,21 @@ fn main() -> Result<()> {
         tolerance,
     } = &cli.command
     {
-        let mismatches = compare_files(baseline, candidate, *tolerance)?;
-        if mismatches.is_empty() {
+        let outcome = compare_files(baseline, candidate, *tolerance)?;
+        if outcome.is_success() {
             eprintln!("All scenario ratios within tolerance {tolerance}");
+            eprintln!(
+                "Compared {} scenario rows; skipped {} grit hyperfine failures, {} git median drift, {} grit median drift; {} missing in candidate",
+                outcome.compared,
+                outcome.skipped_grit_failure,
+                outcome.skipped_git_median_drift,
+                outcome.skipped_grit_median_drift,
+                outcome.missing_in_candidate
+            );
             return Ok(());
         }
         eprintln!("Ratio drift exceeds tolerance {tolerance}:");
-        for m in &mismatches {
+        for m in &outcome.mismatches {
             eprintln!(
                 "  {}: {:.4} vs {:.4} (delta {:.4})",
                 m.scenario_id, m.ratio_a, m.ratio_b, m.delta

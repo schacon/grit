@@ -18,7 +18,7 @@ echo "Run 2 → ${RUN2}"
 "$BENCH" campaign --warmup 0 --min-runs 5 --no-network --format json --output "$RUN2" --ledger
 
 echo "Compare consecutive runs (±10% tolerance)"
-"$BENCH" compare "$RUN1" "$RUN2" --tolerance 0.10 | tee "${BASELINE_DIR}/campaign-consecutive-compare.txt"
+"$BENCH" compare "$RUN1" "$RUN2" --tolerance 0.10 2>&1 | tee "${BASELINE_DIR}/campaign-consecutive-compare.txt"
 
 cp "$RUN1" "${BASELINE_DIR}/campaign-before.json"
 cp "$RUN2" "${BASELINE_DIR}/campaign-after.json"

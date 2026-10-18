@@ -35,3 +35,6 @@ Cloning /tmp/grit-bench-odb-cache/git.git-bitmaps into worktree /tmp/grit-bench-
 Cloning /tmp/grit-bench-odb-cache/chromium-synth-f400000-d40000-c100000-r50000-s1129466183.git into worktree /tmp/grit-bench-odb-cache/chromium-synth-f400000-d40000-c100000-r50000-s1129466183-worktree …
 Ledger written to /tmp/campaign-production-run3.ledger.md
 Results written to /tmp/campaign-production-run3.json
+
+--- Regenerated compare from committed campaign-before/after (review fix) ---
+exit=0
