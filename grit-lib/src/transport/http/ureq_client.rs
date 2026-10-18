@@ -489,10 +489,12 @@ impl<R: Read> LowSpeedReader<R> {
 
 impl<R: Read> Read for LowSpeedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.check_global()?;
-        self.finish_window()?;
+        if self.settings.is_some() || self.global_deadline.is_some() {
+            self.check_global()?;
+            self.finish_window()?;
+        }
         let n = self.inner.read(buf)?;
-        if n > 0 {
+        if n > 0 && self.settings.is_some() {
             self.window_bytes += n as u64;
             self.finish_window()?;
         }
@@ -1036,7 +1038,7 @@ fn open_response_body(
 }
 
 fn drain_response_body(mut reader: LowSpeedReader<Box<dyn Read + Send>>) {
-    let _ = std::io::copy(&mut reader, &mut std::io::sink());
+    let _ = crate::pack_receive::copy_reader_to_writer(&mut reader, &mut io::sink());
 }
 
 /// Collect all values for a header as owned UTF-8 strings (skipping any that
