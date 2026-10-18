@@ -5,7 +5,6 @@ mod pack_delta_scenarios;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use grit_lib::error::Error;
 use grit_lib::objects::delta_encode::{
     encode_delta, encode_lcp_delta, encode_prefix_extension_delta,
 };

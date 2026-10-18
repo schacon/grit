@@ -173,6 +173,25 @@ fn has_msg_id(report: &fsck::FsckReport, id: &str) -> bool {
     report.issues.iter().any(|i| fsck::issue_msg_id(i) == id)
 }
 
+/// Git fsck wording for a commit whose `tree` line points at a non-tree object varies by version.
+fn git_reports_wrong_commit_tree_kind(git_text: &str) -> bool {
+    let lower = git_text.to_lowercase();
+    [
+        "not a tree",
+        "bad tree",
+        "tree, not a blob",
+        "blob, not a tree",
+        "not a blob",
+        "missing tree",
+        "could not be parsed",
+        "does not point to a valid object",
+        "invalid sha1 pointer",
+        "invalid sha256 pointer",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 #[test]
 fn clean_repo_has_no_issues_and_git_agrees() {
     let (dir, repo) = init_repo();
@@ -1113,14 +1132,7 @@ fn commit_tree_wrong_kind_matches_git() {
     );
 
     let git_text = git(dir.path(), &["fsck"]);
-    assert!(
-        git_text.contains("not a tree")
-            || git_text.contains("bad tree")
-            || git_text.contains("not a blob")
-            || git_text.contains("missing tree")
-            || git_text.contains("could not be parsed"),
-        "{git_text}"
-    );
+    assert!(git_reports_wrong_commit_tree_kind(&git_text), "{git_text}");
     let report = grit_fsck(&repo, &FsckOptions::full_repository(false));
     assert!(
         report.issues.iter().any(|i| {
