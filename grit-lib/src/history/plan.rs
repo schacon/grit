@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::commit::signing::extra_headers_without_commit_signatures;
 use crate::commit_encoding::identity_raw_for_serialized_commit;
 use crate::error::Error;
-use crate::merge_base::{is_ancestor, merge_bases_octopus};
+use crate::merge_base::is_ancestor;
 use crate::merge_file::MergeFavor;
 use crate::merge_trees::{
     merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
@@ -218,17 +218,29 @@ pub fn plan_rewrite(
                 (oid, Some(oid))
             }
             Some(CommitEdit::Reparent { parent }) => {
-                let parent_list = vec![*parent];
-                let oid = replay_edited_commit(
-                    repo,
-                    &old,
-                    old_oid,
-                    &parent_list,
-                    &old.author,
-                    &opts.committer,
-                    &old.message,
-                    opts,
-                )?;
+                let parent_list = reparent_parent_list(&old, *parent, &mapping);
+                let oid = if old.parents.len() > 1 {
+                    replay_merge_descendant(
+                        repo,
+                        &mapping,
+                        &old,
+                        old_oid,
+                        None,
+                        opts,
+                        Some(&parent_list),
+                    )?
+                } else {
+                    replay_edited_commit(
+                        repo,
+                        &old,
+                        old_oid,
+                        &parent_list,
+                        &old.author,
+                        &opts.committer,
+                        &old.message,
+                        opts,
+                    )?
+                };
                 (oid, Some(oid))
             }
             Some(CommitEdit::Rewrite {
@@ -672,7 +684,15 @@ fn replay_commit_descendant(
     opts: &RewriteOptions,
 ) -> Result<ObjectId, HistoryError> {
     if old.parents.len() > 1 {
-        return replay_merge_descendant(repo, mapping, old, old_oid, extra_parent, opts);
+        return replay_merge_descendant(
+            repo,
+            mapping,
+            old,
+            old_oid,
+            extra_parent,
+            opts,
+            None,
+        );
     }
     replay_descendant(repo, mapping, old, old_oid, extra_parent, opts)
 }
@@ -705,9 +725,12 @@ fn replay_merge_descendant(
     old_oid: ObjectId,
     extra_parent: Option<ObjectId>,
     opts: &RewriteOptions,
+    parent_list_override: Option<&[ObjectId]>,
 ) -> Result<ObjectId, HistoryError> {
-    let parent_list = mapped_merge_parents(old, mapping, extra_parent);
-    let result_tree = replay_merge_tree(repo, old, old_oid, &parent_list, mapping)?;
+    let parent_list = parent_list_override
+        .map(<[_]>::to_vec)
+        .unwrap_or_else(|| mapped_merge_parents(old, mapping, extra_parent));
+    let result_tree = replay_merge_tree(repo, old, old_oid, &parent_list)?;
 
     let committer = if opts.preserve_committer {
         old.committer.as_str()
@@ -775,88 +798,50 @@ fn mapped_merge_parents(
         .collect()
 }
 
-fn merge_secondary_parents_unchanged(
+fn reparent_parent_list(
     old: &CommitData,
+    new_first_parent: ObjectId,
     mapping: &HashMap<ObjectId, ObjectId>,
-) -> bool {
-    old.parents[1..]
-        .iter()
-        .all(|parent| mapping.get(parent).is_none_or(|mapped| mapped == parent))
+) -> Vec<ObjectId> {
+    if old.parents.len() <= 1 {
+        return vec![new_first_parent];
+    }
+    std::iter::once(new_first_parent)
+        .chain(
+            old.parents[1..]
+                .iter()
+                .map(|parent| mapping.get(parent).copied().unwrap_or(*parent)),
+        )
+        .collect()
 }
 
+/// Rebuild a merge commit tree after parent OIDs move, preserving merge-only changes and resolutions.
 fn replay_merge_tree(
     repo: &Repository,
     old: &CommitData,
     old_oid: ObjectId,
     new_parents: &[ObjectId],
-    mapping: &HashMap<ObjectId, ObjectId>,
 ) -> Result<ObjectId, HistoryError> {
-    if merge_secondary_parents_unchanged(old, mapping) {
-        let empty = empty_tree_oid(repo)?;
-        let old_first = old.parents.first().copied().unwrap_or(empty);
-        let new_first = new_parents.first().copied().unwrap_or(empty);
-        let old_first_tree = if old.parents.is_empty() {
-            empty
-        } else {
-            commit_tree(repo, old_first)?
-        };
-        let new_first_tree = if new_parents.is_empty() {
-            empty
-        } else {
-            commit_tree(repo, new_first)?
-        };
-        return compute_replayed_tree(repo, old, old_oid, old_first_tree, new_first_tree);
-    }
-
-    merge_trees_for_replayed_parents(repo, old_oid, new_parents)
-}
-
-fn merge_trees_for_replayed_parents(
-    repo: &Repository,
-    commit: ObjectId,
-    parents: &[ObjectId],
-) -> Result<ObjectId, HistoryError> {
-    if parents.len() < 2 {
+    if old.parents.len() != new_parents.len() {
         return Err(HistoryError::Planning {
-            message: "merge replay requires at least two parents".into(),
+            message: "merge replay parent count mismatch".into(),
         });
     }
 
-    let bases = merge_bases_octopus(repo, parents).map_err(library_err)?;
-    let empty = empty_tree_oid(repo)?;
-    let base_tree = if bases.is_empty() {
-        empty
-    } else if bases.len() == 1 {
-        commit_tree(repo, bases[0])?
-    } else {
-        return Err(HistoryError::Conflict {
-            commit,
-            paths: vec!["<multiple merge bases>".into()],
-        });
-    };
-
-    let mut result_tree = commit_tree(repo, parents[0])?;
-    for &other in &parents[1..] {
-        let theirs_tree = commit_tree(repo, other)?;
-        record_merge_call();
-        let merge = merge_trees_three_way(
-            repo,
-            base_tree,
-            result_tree,
-            theirs_tree,
-            MergeFavor::default(),
-            WhitespaceMergeOptions::default(),
-            None,
-            TreeMergeConflictPresentation::default(),
-        )
-        .map_err(library_err)?;
-        if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
-            return Err(HistoryError::Conflict {
-                commit,
-                paths: conflict_paths(&merge),
-            });
+    let mut result_tree = old.tree;
+    for (&old_parent, &new_parent) in old.parents.iter().zip(new_parents.iter()) {
+        if old_parent == new_parent {
+            continue;
         }
-        result_tree = merge.result_tree;
+        let old_parent_tree = commit_tree(repo, old_parent)?;
+        let new_parent_tree = commit_tree(repo, new_parent)?;
+        result_tree = transplant_tree_across_parent_move(
+            repo,
+            old_oid,
+            result_tree,
+            old_parent_tree,
+            new_parent_tree,
+        )?;
     }
     Ok(result_tree)
 }
@@ -949,15 +934,25 @@ fn compute_replayed_tree(
     old_parent_tree: ObjectId,
     new_parent_tree: ObjectId,
 ) -> Result<ObjectId, HistoryError> {
+    transplant_tree_across_parent_move(repo, old_oid, old.tree, old_parent_tree, new_parent_tree)
+}
+
+fn transplant_tree_across_parent_move(
+    repo: &Repository,
+    commit: ObjectId,
+    subject_tree: ObjectId,
+    old_parent_tree: ObjectId,
+    new_parent_tree: ObjectId,
+) -> Result<ObjectId, HistoryError> {
     if old_parent_tree == new_parent_tree {
-        return Ok(old.tree);
+        return Ok(subject_tree);
     }
     record_merge_call();
     let merge = merge_trees_three_way(
         repo,
         old_parent_tree,
         new_parent_tree,
-        old.tree,
+        subject_tree,
         MergeFavor::default(),
         WhitespaceMergeOptions::default(),
         None,
@@ -967,7 +962,7 @@ fn compute_replayed_tree(
 
     if merge.index.has_unmerged_entries() || !merge.conflict_content.is_empty() {
         return Err(HistoryError::Conflict {
-            commit: old_oid,
+            commit,
             paths: conflict_paths(&merge),
         });
     }

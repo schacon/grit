@@ -4,13 +4,23 @@
 
 mod support;
 
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::history::{
-    normalize_rewrite_message, reword, EmptyPolicy, HistoryError, RefScope, RewriteOptions,
+    apply_rewrite, normalize_rewrite_message, reword, ApplyOptions, EmptyPolicy, HistoryError,
+    RefScope, RewriteOptions,
 };
+use grit_lib::state::resolve_head;
 
-use support::{build_commit_dag, git, git_fsck_strict, HistoryRepo};
+use support::{build_commit_dag, git, git_fsck_strict, git_rev_parse, HistoryRepo};
+
+fn tree_contains_path(repo: &Repository, tree: ObjectId, path: &str) -> bool {
+    let raw = repo.odb().read(&tree).expect("read tree");
+    parse_tree(&raw.data)
+        .expect("parse tree")
+        .iter()
+        .any(|e| e.name.as_slice() == path.as_bytes())
+}
 
 fn open_grit(wt: &std::path::Path) -> Repository {
     Repository::discover(
@@ -145,4 +155,87 @@ fn reword_in_bare_repository() {
     let parsed = parse_commit(&grit.odb().read(&new).expect("read").data).expect("parse");
     assert_eq!(parsed.message, "bare reword\n");
     let _unused: ObjectId = new;
+}
+
+#[test]
+fn reword_root_replays_merge_with_merge_only_tree_content() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    git(wt, &["config", "user.email", "rewriter@test"]);
+    git(wt, &["config", "user.name", "Rewriter"]);
+    std::fs::write(wt.join("root.txt"), "root\n").expect("root file");
+    git(wt, &["add", "root.txt"]);
+    git(wt, &["commit", "-m", "root"]);
+    let root = git_rev_parse(wt, "HEAD").expect("root");
+
+    std::fs::write(wt.join("main.txt"), "main\n").expect("main file");
+    git(wt, &["add", "main.txt"]);
+    git(wt, &["commit", "-m", "mainline"]);
+
+    git(wt, &["branch", "side"]);
+    git(wt, &["checkout", "side"]);
+    std::fs::write(wt.join("side.txt"), "side\n").expect("side file");
+    git(wt, &["add", "side.txt"]);
+    git(wt, &["commit", "-m", "side branch"]);
+
+    git(wt, &["checkout", "main"]);
+    git(wt, &["merge", "side", "--no-ff", "-m", "merge side"]);
+    std::fs::write(wt.join("merge-only.txt"), "merge-only\n").expect("merge-only");
+    git(wt, &["add", "merge-only.txt"]);
+    git(wt, &["commit", "--amend", "--no-edit"]);
+
+    let merge_before = parse_commit(
+        &open_grit(wt)
+            .odb()
+            .read(&git_rev_parse(wt, "HEAD").expect("head"))
+            .expect("read")
+            .data,
+    )
+    .expect("parse merge");
+    assert!(
+        tree_contains_path(&open_grit(wt), merge_before.tree, "merge-only.txt"),
+        "fixture merge must contain merge-only.txt"
+    );
+
+    let grit = open_grit(wt);
+    let plan = reword(
+        &grit,
+        root,
+        "rewritten root\n".into(),
+        &RewriteOptions {
+            scope: RefScope::Branches,
+            empty: EmptyPolicy::Drop,
+            committer: committer(10),
+            preserve_committer: false,
+        },
+    )
+    .expect("reword root");
+    apply_rewrite(
+        &grit,
+        &plan,
+        &ApplyOptions {
+            identity: "Rewriter <rewriter@test>".into(),
+            reflog_message: "history reword".into(),
+        },
+    )
+    .expect("apply");
+
+    let head = resolve_head(grit.git_dir()).expect("head");
+    let head_oid = head.oid().copied().expect("head oid");
+    let head_tree = parse_commit(&grit.odb().read(&head_oid).expect("read").data)
+        .expect("parse head")
+        .tree;
+    assert!(
+        tree_contains_path(&grit, head_tree, "merge-only.txt"),
+        "replayed merge must retain merge-only.txt"
+    );
+    assert!(
+        tree_contains_path(&grit, head_tree, "main.txt"),
+        "mainline content must remain"
+    );
+    assert!(
+        tree_contains_path(&grit, head_tree, "side.txt"),
+        "side branch content must remain"
+    );
+    git_fsck_strict(wt);
 }
