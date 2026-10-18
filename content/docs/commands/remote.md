@@ -19,7 +19,7 @@ A remote is another copy of the repository that you fetch from and push to, usua
 
 `grit remote add` adds a remote. [`grit fetch`](../fetch/) then stores the remote's branches as remote-tracking branches named `<name>/<branch>`, such as `origin/main`. [`grit clone`](../clone/) adds a remote called `origin` for you.
 
-`grit remote refs` lists references on a configured remote name or a literal URL/path (same transports as [`grit clone`](../clone/)), matching `git ls-remote` ordering.
+`grit remote refs` lists references on a configured remote name or a literal URL/path (same transports as [`grit clone`](../clone/)), matching `git ls-remote` ordering. SSH URLs use the same `GIT_SSH_COMMAND`, `GIT_SSH`, and `core.sshCommand` resolution as [`grit clone`](../clone/) and [`grit fetch`](../fetch/).
 
 ## Options
 

@@ -267,3 +267,102 @@ fn remote_refs_smart_http_matches_git() {
     assert_eq!(parse_git_ls_remote(&stdout), git_map);
     assert!(git_map.keys().any(|k| k.ends_with("^{}")));
 }
+
+#[cfg(unix)]
+mod ssh_env {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_fake_ssh(dir: &Path, log: &Path) -> PathBuf {
+        let script = dir.join("fake-ssh.sh");
+        let body = format!(
+            r#"#!/bin/sh
+echo "$*" >> {log}
+cmd=
+for cmd in "$@"; do :; done
+case "$cmd" in
+  "git-upload-pack "*) cmd="git upload-pack ${{cmd#git-upload-pack }}" ;;
+esac
+eval "exec $cmd"
+"#,
+            log = log.display()
+        );
+        std::fs::write(&script, body).unwrap();
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+        script
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        prior: Option<OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prior = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn remote_refs_literal_ssh_url_honors_git_ssh_command_outside_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(Some(&work), &["init", "-q", "-b", "main"]);
+        git(
+            Some(&work),
+            &[
+                "-c",
+                "user.email=t@e.com",
+                "-c",
+                "user.name=T",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "init",
+            ],
+        );
+        let bare = tmp.path().join("upstream.git");
+        git(
+            Some(&work),
+            &["clone", "-q", "--bare", ".", bare.to_str().unwrap()],
+        );
+        let log = tmp.path().join("ssh.log");
+        let script = write_fake_ssh(tmp.path(), &log);
+        let url = format!("ssh://localhost{}", bare.display());
+        let _ssh = EnvRestore::set("GIT_SSH_COMMAND", script.to_str().unwrap());
+        let out = Command::new(GRIT)
+            .current_dir(tmp.path())
+            .args(["remote", "refs", &url])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .expect("grit");
+        assert!(
+            out.status.success(),
+            "grit remote refs: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            !calls.trim().is_empty(),
+            "GIT_SSH_COMMAND must be used for literal ssh:// URLs outside a repository"
+        );
+        assert!(parse_git_ls_remote(&String::from_utf8(out.stdout).unwrap())
+            .contains_key("refs/heads/main"));
+    }
+}

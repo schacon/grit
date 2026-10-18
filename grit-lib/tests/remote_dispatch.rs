@@ -569,6 +569,26 @@ fn list_refs_ssh_matches_git_ls_remote() {
     assert_refs_match_git(&url, &refs, &opts, &[("GIT_SSH_COMMAND", ssh_cmd)]);
 }
 
+#[test]
+fn list_refs_ssh_without_repo_uses_git_ssh_command() {
+    let (_tmp, bare) = bare_fixture();
+    let script = write_fake_ssh(_tmp.path()).expect("fake ssh script");
+    let ssh_cmd = script.to_str().unwrap();
+    let _env = EnvRestore::set("GIT_SSH_COMMAND", ssh_cmd);
+    let url = format!("git@localhost:{}", bare.display());
+    let remote = Remote::from_url(&url).unwrap();
+    let opts = ListRefsOptions {
+        symrefs: true,
+        peel: true,
+        ..Default::default()
+    };
+    let refs = remote
+        .list_refs(None, &opts, None)
+        .expect("ssh list_refs without repository context");
+    assert!(!refs.is_empty());
+    assert_refs_match_git(&url, &refs, &opts, &[("GIT_SSH_COMMAND", ssh_cmd)]);
+}
+
 #[cfg(feature = "http-ureq")]
 #[test]
 fn list_refs_smart_http_matches_git_ls_remote() {

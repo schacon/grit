@@ -157,19 +157,15 @@ pub fn run_refs(
         ..Default::default()
     };
     let factory = DefaultHttpClientFactory;
-    let repo = if remote_or_url.contains("://") {
-        None
-    } else {
-        context::discover().ok()
+    let repo = context::discover().ok();
+    let env = crate::context::environment();
+    let config = match repo.as_ref() {
+        Some(r) => {
+            ConfigSet::load(&env, Some(r.git_dir()), true).context("could not load config")?
+        }
+        None => ConfigSet::load(&env, None, true).context("could not load config")?,
     };
-    let config = repo
-        .as_ref()
-        .map(|r| {
-            ConfigSet::load(&crate::context::environment(), Some(r.git_dir()), true)
-                .context("could not load config")
-        })
-        .transpose()?;
-    let remote = resolve_remote_or_url(config.as_ref(), remote_or_url)?;
+    let remote = resolve_remote_or_url(Some(&config), remote_or_url)?;
     let raw = remote
         .list_refs(repo.as_ref(), &opts, Some(&factory))
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;

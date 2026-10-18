@@ -11,8 +11,30 @@ use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::remote::clone::{clone, CloneOptions};
 use grit_lib::remote::fetch::NoProgress;
 use grit_lib::remote::transfer::{FetchOptions, TagMode};
-use grit_lib::remote::Remote;
+use grit_lib::remote::{ListRefsOptions, Remote};
 use grit_lib::repo::Repository;
+
+struct EnvRestore {
+    key: &'static str,
+    prior: Option<std::ffi::OsString>,
+}
+
+impl EnvRestore {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prior = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, prior }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 fn git(dir: Option<&Path>, args: &[&str]) {
     let mut cmd = Command::new("git");
@@ -227,5 +249,30 @@ fn fetch_honors_core_ssh_command_when_env_unset() {
     assert!(
         !calls.trim().is_empty(),
         "core.sshCommand wrapper must be invoked when GIT_SSH_* are unset"
+    );
+}
+
+#[test]
+fn list_refs_literal_ssh_url_uses_git_ssh_command_without_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = bare_upstream(tmp.path());
+    let log = tmp.path().join("ssh-calls.log");
+    let script = write_logging_fake_ssh(tmp.path(), &log).expect("fake ssh");
+    let url = format!("git@localhost:{}", bare.display());
+
+    let _ssh = EnvRestore::set("GIT_SSH_COMMAND", script.to_str().unwrap());
+    let _global = EnvRestore::set("GIT_CONFIG_GLOBAL", "/dev/null");
+    let _system = EnvRestore::set("GIT_CONFIG_SYSTEM", "/dev/null");
+
+    let remote = Remote::from_url(&url).unwrap();
+    let refs = remote
+        .list_refs(None, &ListRefsOptions::default(), None)
+        .expect("list_refs");
+    assert!(!refs.is_empty());
+
+    let calls = std::fs::read_to_string(&log).expect("log");
+    assert!(
+        !calls.trim().is_empty(),
+        "GIT_SSH_COMMAND wrapper must be invoked for literal-URL list_refs without a repository"
     );
 }

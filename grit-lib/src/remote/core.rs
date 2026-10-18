@@ -544,11 +544,13 @@ fn ssh_transport(
         transport = transport.with_command_runner(r.command_runner());
     }
     let env = ssh_wire_environment(repo, fetch_env);
-    transport = transport.with_ssh_environment(std::sync::Arc::new(env));
+    transport = transport.with_ssh_environment(std::sync::Arc::new(env.clone()));
     if let Some(r) = repo {
         if let Ok(config) = r.config() {
             transport = transport.with_ssh_config(config);
         }
+    } else if let Ok(config) = ConfigSet::load(&env, None, true) {
+        transport = transport.with_ssh_config(Arc::new(config));
     }
     transport
 }
@@ -565,7 +567,7 @@ fn ssh_wire_environment(
         }
     }
     repo.map(|r| r.environment().clone())
-        .unwrap_or_else(crate::environment::Environment::empty)
+        .unwrap_or_else(crate::environment::Environment::capture_process)
 }
 
 fn http_client(
