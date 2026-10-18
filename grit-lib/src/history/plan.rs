@@ -684,15 +684,7 @@ fn replay_commit_descendant(
     opts: &RewriteOptions,
 ) -> Result<ObjectId, HistoryError> {
     if old.parents.len() > 1 {
-        return replay_merge_descendant(
-            repo,
-            mapping,
-            old,
-            old_oid,
-            extra_parent,
-            opts,
-            None,
-        );
+        return replay_merge_descendant(repo, mapping, old, old_oid, extra_parent, opts, None);
     }
     replay_descendant(repo, mapping, old, old_oid, extra_parent, opts)
 }
