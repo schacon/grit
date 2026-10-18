@@ -550,6 +550,10 @@ pub fn snapshot_command_args() -> &'static [(&'static str, &'static [&'static st
             &["history", "reword", "HEAD~1", "-m", "reworded subject"],
         ),
         ("history_drop", &["history", "drop", "HEAD~1"]),
+        (
+            "history_squash",
+            &["history", "squash", "HEAD~2..HEAD", "--update-refs", "head"],
+        ),
         ("revert", &["revert", "HEAD"]),
         ("shortlog", &["shortlog"]),
         ("revs_head", &["revs", "HEAD"]),
