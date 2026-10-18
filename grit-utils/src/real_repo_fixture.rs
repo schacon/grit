@@ -167,6 +167,14 @@ pub fn list_branch_head_refs(repo: &Path) -> Result<Vec<String>> {
     Ok(refs.into_iter().map(|(name, _)| name).collect())
 }
 
+/// Remove `refs/heads/*` from a tag-pinned bare fixture (file transport may add a synthetic branch).
+pub fn clear_branch_head_refs(git: &Path, bare: &Path) -> Result<()> {
+    for head in list_branch_head_refs(bare)? {
+        run_git(git, bare, &["update-ref", "-d", &head])?;
+    }
+    Ok(())
+}
+
 /// A tag-only bitmap fixture must not retain upstream branch tips.
 pub fn assert_tag_pinned_fixture_refs(repo: &Path) -> Result<()> {
     let heads = list_branch_head_refs(repo)?;
@@ -197,6 +205,12 @@ pub fn ensure_git_git_bitmaps(git: &Path) -> Result<PathBuf> {
         return Ok(dest);
     }
     if dest.exists() {
+        if stored_marker(&dest, BITMAP_READY)?.as_deref() == Some(tag.as_str()) {
+            clear_branch_head_refs(git, &dest).ok();
+            if git_git_bitmaps_current(&dest, &tag)? {
+                return Ok(dest);
+            }
+        }
         remove_dir_robust(&dest);
     }
     let parent = dest.parent().unwrap_or(Path::new("/tmp"));
@@ -474,6 +488,44 @@ mod tests {
         assert_eq!(fs::read_to_string(dest2.join("tracked.txt"))?, "base\n");
 
         std::env::remove_var("GRIT_BENCH_ODB_CACHE");
+        Ok(())
+    }
+
+    #[test]
+    fn clear_branch_head_refs_deletes_full_ref_names() -> Result<()> {
+        let bare = TempDir::new()?;
+        git_init_bare_with_branches(bare.path())?;
+        let work = TempDir::new()?;
+        Command::new("git")
+            .args(["clone", bare.path().to_str().unwrap(), "w"])
+            .current_dir(work.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()?;
+        let w = work.path().join("w");
+        fs::write(w.join("f"), b"x")?;
+        Command::new("git")
+            .args(["add", "f"])
+            .current_dir(&w)
+            .status()?;
+        Command::new("git")
+            .args(["commit", "-m", "c"])
+            .current_dir(&w)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()?;
+        Command::new("git")
+            .args(["push", "origin", "master:synthetic-main"])
+            .current_dir(&w)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()?;
+        let before = list_branch_head_refs(bare.path())?;
+        assert_eq!(before, vec!["refs/heads/synthetic-main".to_owned()]);
+        clear_branch_head_refs(Path::new("git"), bare.path())?;
+        assert_tag_pinned_fixture_refs(bare.path())?;
         Ok(())
     }
 
