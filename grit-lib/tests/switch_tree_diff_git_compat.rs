@@ -1266,3 +1266,170 @@ fn switch_tracked_deletes_match_git_when_wholesale_dir_removal_fails() {
         "grit must leave the same tracked remnants as git when wholesale removal fails"
     );
 }
+
+fn setup_issue_1160_side_worktree(root: &std::path::Path) {
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.email", "t@t"]);
+    git(root, &["config", "user.name", "t"]);
+    std::fs::write(root.join("a.txt"), b"a\n").expect("a");
+    git(root, &["add", "a.txt"]);
+    git(root, &["commit", "-qm", "base"]);
+
+    git(root, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(root.join("extra.txt"), b"e\n").expect("extra");
+    git(root, &["add", "extra.txt"]);
+    git(root, &["commit", "-qm", "extra"]);
+
+    std::fs::remove_file(root.join("extra.txt")).expect("unstaged delete extra");
+    std::fs::write(root.join("new.txt"), b"n\n").expect("new");
+    git(root, &["add", "new.txt"]);
+    std::fs::remove_file(root.join("new.txt")).expect("staged add then delete new");
+}
+
+fn assert_issue_1160_combined_porcelain(root: &std::path::Path) {
+    let porcelain = git_porcelain(root);
+    assert!(
+        porcelain.contains(" D extra.txt") && porcelain.contains("AD new.txt"),
+        "expected git status D extra + AD new, got:\n{porcelain}"
+    );
+}
+
+/// Regression for <https://github.com/gitbutlerapp/grit/issues/1160>.
+#[test]
+fn issue_1160_unstaged_delete_with_staged_add_deleted_allows_switch() {
+    let git_tmp = tempfile::tempdir().expect("tempdir");
+    let git_root = git_tmp.path();
+    setup_issue_1160_side_worktree(git_root);
+    assert_issue_1160_combined_porcelain(git_root);
+
+    let git_switch = Command::new("git")
+        .current_dir(git_root)
+        .args(["switch", "main"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git switch");
+    assert!(git_switch.success(), "system git must allow switch to main");
+    let git_after = git_porcelain(git_root);
+
+    let grit_tmp = tempfile::tempdir().expect("tempdir");
+    let grit_root = grit_tmp.path();
+    setup_issue_1160_side_worktree(grit_root);
+    assert_issue_1160_combined_porcelain(grit_root);
+
+    let grit_repo = Repository::open(
+        &grit_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_root),
+    )
+    .expect("open grit repo");
+    let main_oid =
+        ObjectId::from_hex(git(grit_root, &["rev-parse", "main"]).trim()).expect("main oid");
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "main".into(),
+                oid: main_oid,
+            },
+        },
+    )
+    .expect("grit switch main with unstaged delete + AD path");
+
+    assert_eq!(
+        git_porcelain(grit_root),
+        git_after,
+        "post-switch porcelain must match git"
+    );
+    assert_eq!(
+        git_diff_index_head(grit_root),
+        git(grit_root, &["diff-index", "HEAD"]),
+        "post-switch diff-index must match git"
+    );
+    git_fsck(grit_root);
+}
+
+fn setup_issue_1160_dangling_symlink_side_worktree(root: &std::path::Path) {
+    use std::os::unix::fs::symlink;
+
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.email", "t@t"]);
+    git(root, &["config", "user.name", "t"]);
+    std::fs::write(root.join("a.txt"), b"a\n").expect("a");
+    git(root, &["add", "a.txt"]);
+    git(root, &["commit", "-qm", "base"]);
+
+    git(root, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(root.join("original-target"), b"o\n").expect("target");
+    symlink("original-target", root.join("extra-link")).expect("symlink");
+    git(root, &["add", "extra-link", "original-target"]);
+    git(root, &["commit", "-qm", "extra link"]);
+
+    std::fs::remove_file(root.join("extra-link")).expect("remove link");
+    symlink("changed-target", root.join("extra-link")).expect("dangling link");
+    std::fs::write(root.join("new.txt"), b"n\n").expect("new");
+    git(root, &["add", "new.txt"]);
+    std::fs::remove_file(root.join("new.txt")).expect("staged add then delete new");
+}
+
+/// Dangling symlink retarget must not be treated as a missing scheduled-delete path.
+#[cfg(unix)]
+#[test]
+fn issue_1160_dangling_symlink_with_staged_add_deleted_refuses_switch() {
+    let git_tmp = tempfile::tempdir().expect("tempdir");
+    let git_root = git_tmp.path();
+    setup_issue_1160_dangling_symlink_side_worktree(git_root);
+    let link_before = std::fs::read_link(git_root.join("extra-link")).expect("readlink");
+
+    let git_switch = Command::new("git")
+        .current_dir(git_root)
+        .args(["switch", "main"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git switch");
+    assert!(
+        !git_switch.success(),
+        "system git must refuse switch when extra-link was retargeted"
+    );
+    assert_eq!(
+        std::fs::read_link(git_root.join("extra-link")).expect("readlink"),
+        link_before
+    );
+
+    let grit_tmp = tempfile::tempdir().expect("tempdir");
+    let grit_root = grit_tmp.path();
+    setup_issue_1160_dangling_symlink_side_worktree(grit_root);
+    let porcelain = git_porcelain(grit_root);
+    assert!(
+        porcelain.contains("AD new.txt")
+            && (porcelain.contains(" M extra-link") || porcelain.contains(" T extra-link")),
+        "expected AD new and local extra-link change, got:\n{porcelain}"
+    );
+
+    let grit_repo = Repository::open(
+        &grit_root.join(".git"),
+        &RepositoryOptions::empty().with_work_tree(grit_root),
+    )
+    .expect("open grit repo");
+    let main_oid =
+        ObjectId::from_hex(git(grit_root, &["rev-parse", "main"]).trim()).expect("main oid");
+    let grit_err = switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "main".into(),
+                oid: main_oid,
+            },
+        },
+    )
+    .expect_err("grit must refuse switch for retargeted dangling symlink");
+    assert!(
+        grit_err.to_string().contains("uncommitted changes"),
+        "unexpected error: {grit_err}"
+    );
+    assert_eq!(
+        std::fs::read_link(grit_root.join("extra-link")).expect("readlink"),
+        std::path::PathBuf::from("changed-target")
+    );
+}

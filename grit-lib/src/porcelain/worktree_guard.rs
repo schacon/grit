@@ -184,6 +184,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
             })
             .filter(|path| {
                 !delete_path_trusted_without_worktree_stat(
+                    work_tree,
                     index,
                     &head_by_path,
                     &scheduled_delete_paths,
@@ -230,7 +231,7 @@ pub(crate) fn local_change_diffs_for_tree_changes(
             .threads
             .get()
     });
-    let (unstaged, index_changed) = diff_index_to_worktree_with_options(
+    let (mut unstaged, index_changed) = diff_index_to_worktree_with_options(
         repo.odb(),
         index,
         work_tree,
@@ -249,6 +250,20 @@ pub(crate) fn local_change_diffs_for_tree_changes(
             ..Default::default()
         },
     )?;
+    unstaged.retain(|entry| {
+        let Some(path) = entry.old_path.as_deref().or(entry.new_path.as_deref()) else {
+            return true;
+        };
+        !delete_path_trusted_without_worktree_stat(
+            work_tree,
+            index,
+            &head_by_path,
+            &scheduled_delete_paths,
+            path,
+            index_mtime,
+            stat_policy,
+        )
+    });
     Ok((staged, unstaged, index_changed))
 }
 
@@ -513,13 +528,27 @@ fn added_tree_path_missing_on_disk(
     !work_tree.join(path).exists()
 }
 
-fn index_matches_head_without_worktree_stat(
+/// True when the path has no directory entry in the work tree (symlinks are not followed).
+pub(crate) fn worktree_path_absent_for_trusted_delete(work_tree: &Path, path: &str) -> bool {
+    match fs::symlink_metadata(work_tree.join(path)) {
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+        Ok(_) => false,
+    }
+}
+
+fn delete_path_trusted_without_worktree_stat(
+    work_tree: &Path,
     index: &Index,
     head_by_path: &HashMap<String, HeadTreeSide>,
+    scheduled_delete_paths: &HashSet<String>,
     path: &str,
     index_mtime: Option<(u32, u32)>,
     stat_policy: StatMatchPolicy,
 ) -> bool {
+    let _ = (index_mtime, stat_policy);
+    if !path_is_tree_scheduled_delete(scheduled_delete_paths, path) {
+        return false;
+    }
     let HeadTreeSide::Present { oid, mode } = head_by_path
         .get(path)
         .copied()
@@ -533,28 +562,7 @@ fn index_matches_head_without_worktree_stat(
     if ie.oid != oid || ie.mode != mode {
         return false;
     }
-    if entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
-        return false;
-    }
-    true
-}
-
-fn delete_path_trusted_without_worktree_stat(
-    index: &Index,
-    head_by_path: &HashMap<String, HeadTreeSide>,
-    scheduled_delete_paths: &HashSet<String>,
-    path: &str,
-    index_mtime: Option<(u32, u32)>,
-    stat_policy: StatMatchPolicy,
-) -> bool {
-    path_is_tree_scheduled_delete(scheduled_delete_paths, path)
-        && index_matches_head_without_worktree_stat(
-            index,
-            head_by_path,
-            path,
-            index_mtime,
-            stat_policy,
-        )
+    worktree_path_absent_for_trusted_delete(work_tree, path)
 }
 
 fn staged_diff_for_tree_switch_paths(

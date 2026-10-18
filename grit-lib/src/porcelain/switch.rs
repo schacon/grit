@@ -511,7 +511,13 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
             &tree_changes,
             None,
         )?;
+    let work_tree = repo.work_tree().ok_or_else(|| {
+        TreeTransitionPrepareError::Failed(Error::Message(
+            "this operation must be run in a work tree".into(),
+        ))
+    })?;
     let preserve_worktree_paths = ensure_local_changes_compatible_with_switch(
+        work_tree,
         &snapshot.index,
         &staged,
         &unstaged,
@@ -519,12 +525,6 @@ pub(crate) fn prepare_tree_transition_allow_local_with_snapshot(
         force_preserve_worktree,
     )
     .map_err(TreeTransitionPrepareError::OverwritePaths)?;
-
-    let work_tree = repo.work_tree().ok_or_else(|| {
-        TreeTransitionPrepareError::Failed(Error::Message(
-            "this operation must be run in a work tree".into(),
-        ))
-    })?;
     let ignorecase = repo
         .config()
         .ok()
@@ -685,7 +685,13 @@ pub(crate) fn verify_tree_transition_allow_local(
             None,
         )
         .map_err(TreeTransitionVerifyError::Failed)?;
+    let work_tree = repo.work_tree().ok_or_else(|| {
+        TreeTransitionVerifyError::Failed(Error::Message(
+            "this operation must be run in a work tree".into(),
+        ))
+    })?;
     ensure_local_changes_compatible_with_switch(
+        work_tree,
         &prepared.index,
         &staged,
         &unstaged,
@@ -781,6 +787,7 @@ fn checkout_prepared_tree_transition(
 }
 
 pub(crate) fn ensure_local_changes_compatible_with_switch(
+    work_tree: &std::path::Path,
     index: &crate::index::Index,
     staged: &[DiffEntry],
     unstaged: &[DiffEntry],
@@ -828,6 +835,21 @@ pub(crate) fn ensure_local_changes_compatible_with_switch(
         if force_preserve_worktree.contains(path) {
             preserve_worktree_paths.insert(path.to_owned());
             continue;
+        }
+        if entry.status == DiffStatus::Deleted {
+            let scheduled = tree_changes.iter().find(|change| {
+                change.status == DiffStatus::Deleted && change.old_path.as_deref() == Some(path)
+            });
+            if scheduled.is_some_and(|change| {
+                index
+                    .get(path.as_bytes(), 0)
+                    .is_some_and(|ie| ie.oid == change.old_oid)
+                    && crate::porcelain::worktree_guard::worktree_path_absent_for_trusted_delete(
+                        work_tree, path,
+                    )
+            }) {
+                continue;
+            }
         }
         if let Some(target) = target_by_path.get(path) {
             if index_matches_target_tree_entry(index, path, *target)
