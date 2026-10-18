@@ -73,7 +73,7 @@ cargo build --release -p grit-cli -p grit-utils
 ./grit-utils/scripts/capture-production-campaign-baseline.sh
 ```
 
-The committed **`campaign-before.json`** / **`campaign-after.json`** pair is captured with **`--warmup 0 --min-runs 1`** on both runs (factory VM policy: full production fixture matrix, minimal hyperfine iteration count). Re-run the script above to refresh; it writes the compare transcript to **`campaign-consecutive-compare.txt`**.
+The committed **`campaign-before.json`** / **`campaign-after.json`** pair is captured with **`--warmup 0 --min-runs 5 --no-network`** on both runs (full production fixture matrix). The capture script retries the consecutive pair until **`grit-bench compare`** is within ±10% (override attempts with **`GRIT_BENCH_CAMPAIGN_COMPARE_ATTEMPTS`**, default 8). Re-run the script above to refresh; it writes the compare transcript to **`campaign-consecutive-compare.txt`**.
 
 Committed production scorecard artifacts:
 
