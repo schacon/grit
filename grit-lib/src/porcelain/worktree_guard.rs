@@ -291,8 +291,8 @@ fn worktree_clean_for_switch_paths(
     use crate::index::MODE_GITLINK;
     use crate::parallel::ParallelOp;
     use crate::worktree_scan::{
-        for_each_blob_by_directory_parallel, group_blob_entries_by_dir_for_paths, BlobDiskLookup,
-        WorktreeBlobScanOptions,
+        for_each_blob_by_directory, for_each_blob_by_directory_parallel,
+        group_blob_entries_by_dir_for_paths, BlobDiskLookup, WorktreeBlobScanOptions,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -320,7 +320,7 @@ fn worktree_clean_for_switch_paths(
             let Some(ie) = index.get(path.as_bytes(), 0) else {
                 continue;
             };
-            if !indexed_path_needs_worktree_stat_check(ie) {
+            if !indexed_path_needs_worktree_stat_check(ie) || ie.mode != MODE_GITLINK {
                 continue;
             }
             let abs = index_entry_worktree_abs(work_tree, path, precompose_unicode, ignorecase);
@@ -331,19 +331,49 @@ fn worktree_clean_for_switch_paths(
                     break;
                 }
             };
-            let mismatch = if ie.mode == MODE_GITLINK {
-                !meta.is_dir()
-            } else if !meta.is_file() && !meta.is_symlink() {
-                true
-            } else {
-                !stat_matches_with_policy(ie, &meta, stat_policy)
-            };
-            if mismatch {
+            if !meta.is_dir() {
                 stat_clean = false;
                 break;
             }
         }
-    } else if paths.len() >= SWITCH_TREE_DIFF_STAT_SKIP_MIN {
+        if stat_clean {
+            let blob_dirs = group_blob_entries_by_dir_for_paths(index, paths);
+            let work_tree_owned = work_tree.to_path_buf();
+            let dir_abs = |dir: &str| {
+                if dir.is_empty() {
+                    work_tree_owned.clone()
+                } else {
+                    index_entry_worktree_abs(&work_tree_owned, dir, precompose_unicode, ignorecase)
+                }
+            };
+            let work_tree_for_files = work_tree.to_path_buf();
+            let file_abs = move |rel: &str| {
+                index_entry_worktree_abs(&work_tree_for_files, rel, precompose_unicode, ignorecase)
+            };
+            for_each_blob_by_directory(
+                &blob_dirs,
+                dir_abs,
+                file_abs,
+                |_| false,
+                |entry_index, _path, lookup| {
+                    if !stat_clean {
+                        return Ok(());
+                    }
+                    let ie = &index.entries[entry_index];
+                    match lookup {
+                        BlobDiskLookup::Missing => stat_clean = false,
+                        BlobDiskLookup::Io(e) => return Err(Error::Io(e)),
+                        BlobDiskLookup::Present(meta) => {
+                            if !stat_matches_with_policy(ie, &meta, stat_policy) {
+                                stat_clean = false;
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+    } else {
         let blob_dirs = group_blob_entries_by_dir_for_paths(index, paths);
         if blob_dirs.is_empty() {
             return Ok(true);
