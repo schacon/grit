@@ -10454,6 +10454,123 @@ mod smudge_racily_clean_tests {
     }
 
     #[test]
+    fn status_reports_modified_when_ctime_differs_but_mtime_sec_and_size_match_non_racy() {
+        let td = tempfile::tempdir().expect("tempdir");
+        let wt = td.path();
+        let (git_dir, odb) = minimal_repo(wt, "[core]\n");
+        let rel = "tracked.txt";
+        let original = b"original\n";
+        let modified = b"modified\n";
+        assert_eq!(original.len(), modified.len());
+
+        let entry_mtime = (1_700_000_000u32, 0u32);
+        let index_file_mtime = (1_700_000_100u32, 0u32);
+
+        std::process::Command::new("git")
+            .args(["-C", &wt.to_string_lossy(), "init", "-q"])
+            .status()
+            .expect("git init");
+        std::process::Command::new("git")
+            .args([
+                "-C",
+                &wt.to_string_lossy(),
+                "config",
+                "user.email",
+                "t@example.com",
+            ])
+            .status()
+            .expect("git config email");
+        std::process::Command::new("git")
+            .args(["-C", &wt.to_string_lossy(), "config", "user.name", "T"])
+            .status()
+            .expect("git config name");
+
+        fs::write(wt.join(rel), original).expect("write original");
+        pin_mtime_and_sample(&wt.join(rel), entry_mtime.0, entry_mtime.1);
+        std::process::Command::new("git")
+            .args(["-C", &wt.to_string_lossy(), "add", rel])
+            .status()
+            .expect("git add");
+        std::process::Command::new("git")
+            .args([
+                "-C",
+                &wt.to_string_lossy(),
+                "commit",
+                "-qm",
+                "seed",
+                "--no-gpg-sign",
+            ])
+            .status()
+            .expect("git commit");
+
+        let mut index = Index::new();
+        index.source_mtime = Some(index_file_mtime);
+        let staged = staged_entry_for_file(&odb, wt, rel, original, entry_mtime);
+        let oid_original = staged.oid;
+        index.entries.push(staged);
+
+        fs::write(wt.join(rel), modified).expect("modify worktree");
+        let git_dirty = std::process::Command::new("git")
+            .args([
+                "-C",
+                &wt.to_string_lossy(),
+                "--no-optional-locks",
+                "status",
+                "--short",
+            ])
+            .output()
+            .expect("git status");
+        assert!(
+            git_dirty.status.success(),
+            "git status failed: {}",
+            String::from_utf8_lossy(&git_dirty.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&git_dirty.stdout).contains("tracked.txt"),
+            "system git must see modification before mtime pin: {}",
+            String::from_utf8_lossy(&git_dirty.stdout)
+        );
+
+        pin_mtime_and_sample(&wt.join(rel), entry_mtime.0, entry_mtime.1);
+
+        let meta = fs::symlink_metadata(wt.join(rel)).expect("stat");
+        let ie = &mut index.entries[0];
+        assert_eq!(ie.oid, oid_original);
+        if stat_matches(ie, &meta) {
+            ie.ctime_sec = ie.ctime_sec.wrapping_sub(3600);
+        }
+        assert!(
+            !stat_matches(ie, &meta),
+            "ctime/inode change must fail full stat match"
+        );
+        let stat_policy = crate::index::StatMatchPolicy::default();
+        assert!(
+            !entry_is_racy_with_policy(ie, Some(index_file_mtime), stat_policy),
+            "fixture must be non-racy"
+        );
+
+        let (entries, index_changed) = super::diff_index_to_worktree_with_options(
+            &odb,
+            &mut index,
+            wt,
+            super::DiffIndexToWorktreeOptions {
+                index_mtime: Some(index_file_mtime),
+                repository_git_dir: Some(git_dir),
+                refresh_index_stat_in_pass: true,
+                for_status: true,
+                ..Default::default()
+            },
+        )
+        .expect("diff");
+        assert_eq!(
+            entries.len(),
+            1,
+            "must report modified, not refresh stat clean: {entries:?}, index_changed={index_changed}"
+        );
+        assert_eq!(entries[0].path(), rel);
+    }
+
+    #[test]
     fn status_diff_skips_hash_when_worktree_size_differs() {
         let td = tempfile::tempdir().expect("tempdir");
         let wt = td.path();

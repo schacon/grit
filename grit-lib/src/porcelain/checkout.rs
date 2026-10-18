@@ -941,11 +941,14 @@ fn tree_changes_are_all_deletions(changes: &[DiffEntry]) -> bool {
     !changes.is_empty() && changes.iter().all(|c| c.status == DiffStatus::Deleted)
 }
 
-fn tree_changes_are_modifications_and_deletions(changes: &[DiffEntry]) -> bool {
+fn tree_changes_are_bulk_mod_add_delete(changes: &[DiffEntry]) -> bool {
     !changes.is_empty()
-        && changes
-            .iter()
-            .all(|c| matches!(c.status, DiffStatus::Modified | DiffStatus::Deleted))
+        && changes.iter().all(|c| {
+            matches!(
+                c.status,
+                DiffStatus::Modified | DiffStatus::Deleted | DiffStatus::Added
+            )
+        })
 }
 
 fn bulk_write_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRules) -> bool {
@@ -966,17 +969,17 @@ fn bulk_write_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRules) ->
 
 fn bulk_mod_delete_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRules) -> bool {
     if changes.len() < BULK_ADD_CHECKOUT_MIN
-        || !tree_changes_are_modifications_and_deletions(changes)
+        || !tree_changes_are_bulk_mod_add_delete(changes)
         || tree_changes_touch_gitattributes(changes)
     {
         return false;
     }
-    let mut saw_mod = false;
+    let mut saw_write = false;
     for change in changes {
-        if change.status != DiffStatus::Modified {
+        if !matches!(change.status, DiffStatus::Modified | DiffStatus::Added) {
             continue;
         }
-        saw_mod = true;
+        saw_write = true;
         let Some(path) = change.new_path.as_deref() else {
             return false;
         };
@@ -987,7 +990,7 @@ fn bulk_mod_delete_checkout_eligible(changes: &[DiffEntry], rules: &WorktreeRule
             return false;
         }
     }
-    saw_mod
+    saw_write
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1106,9 +1109,9 @@ fn checkout_bulk_mod_delete_tree_changes(
         .iter()
         .filter(|c| c.status == DiffStatus::Deleted)
         .collect();
-    let mod_changes: Vec<DiffEntry> = changes
+    let write_changes: Vec<DiffEntry> = changes
         .iter()
-        .filter(|c| c.status == DiffStatus::Modified)
+        .filter(|c| matches!(c.status, DiffStatus::Modified | DiffStatus::Added))
         .cloned()
         .collect();
     let delete_paths: Vec<String> = delete_changes
@@ -1140,8 +1143,8 @@ fn checkout_bulk_mod_delete_tree_changes(
 
     let checkout_smudge_ctx = crate::filter_process::checkout_smudge_context(repo);
     let mut dir_cache = LeadingDirCache::new();
-    let mut write_jobs: Vec<CheckoutWriteJob> = Vec::with_capacity(mod_changes.len());
-    for change in &mod_changes {
+    let mut write_jobs: Vec<CheckoutWriteJob> = Vec::with_capacity(write_changes.len());
+    for change in &write_changes {
         let Some(path) = change.new_path.as_deref() else {
             continue;
         };
@@ -1159,47 +1162,6 @@ fn checkout_bulk_mod_delete_tree_changes(
             ),
         });
     }
-    let write_paths: Vec<String> = write_jobs.iter().map(|j| j.path.clone()).collect();
-    let serial_paths = paths_needing_serial_checkout(&write_paths, ignorecase, precompose);
-    let parallel_indices: HashSet<usize> = write_jobs
-        .iter()
-        .enumerate()
-        .filter(|(_, job)| {
-            is_eligible_for_parallel_checkout(job.mode, &job.file_attrs)
-                && !serial_paths.contains(&job.path)
-        })
-        .map(|(i, _)| i)
-        .collect();
-    if write_jobs.len() >= BULK_ADD_CHECKOUT_MIN {
-        precreate_checkout_parent_dirs(work_tree, &write_jobs, &mut dir_cache);
-    } else {
-        for job in &write_jobs {
-            dir_cache.ensure_parents(work_tree, &job.path)?;
-        }
-    }
-    let mut delayed = DelayedProcessCheckout::default();
-    let write_outcomes = execute_write_jobs(
-        repo,
-        rules,
-        config,
-        conv,
-        work_tree,
-        &mut dir_cache,
-        &mut delayed,
-        &write_jobs,
-        &parallel_indices,
-        apply.parallel_prepare_blobs,
-        apply.checkout_parallel_threshold,
-    )?;
-    let new_entries = finish_bulk_write_jobs(
-        repo,
-        rules,
-        work_tree,
-        &mut dir_cache,
-        &mut delayed,
-        write_outcomes,
-        progress,
-    )?;
 
     let wholesale_dirs_removed =
         remove_wholesale_directories_on_disk(repo, work_tree, wholesale_index_prefixes, config)?;
@@ -1262,6 +1224,48 @@ fn checkout_bulk_mod_delete_tree_changes(
         progress.inc(1);
     }
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
+
+    let write_paths: Vec<String> = write_jobs.iter().map(|j| j.path.clone()).collect();
+    let serial_paths = paths_needing_serial_checkout(&write_paths, ignorecase, precompose);
+    let parallel_indices: HashSet<usize> = write_jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, job)| {
+            is_eligible_for_parallel_checkout(job.mode, &job.file_attrs)
+                && !serial_paths.contains(&job.path)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if write_jobs.len() >= BULK_ADD_CHECKOUT_MIN {
+        precreate_checkout_parent_dirs(work_tree, &write_jobs, &mut dir_cache);
+    } else {
+        for job in &write_jobs {
+            dir_cache.ensure_parents(work_tree, &job.path)?;
+        }
+    }
+    let mut delayed = DelayedProcessCheckout::default();
+    let write_outcomes = execute_write_jobs(
+        repo,
+        rules,
+        config,
+        conv,
+        work_tree,
+        &mut dir_cache,
+        &mut delayed,
+        &write_jobs,
+        &parallel_indices,
+        apply.parallel_prepare_blobs,
+        apply.checkout_parallel_threshold,
+    )?;
+    let new_entries = finish_bulk_write_jobs(
+        repo,
+        rules,
+        work_tree,
+        &mut dir_cache,
+        &mut delayed,
+        write_outcomes,
+        progress,
+    )?;
 
     checkout_commit_index_update(
         repo,
@@ -2893,6 +2897,61 @@ mod tests {
             });
         }
         for i in 0..40 {
+            changes.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(format!("gone{i:03}.txt")),
+                new_path: None,
+                old_mode: "100644".into(),
+                new_mode: String::new(),
+                old_oid: ObjectId::zero(),
+                new_oid: ObjectId::zero(),
+                score: None,
+            });
+        }
+        assert!(bulk_mod_delete_checkout_eligible(&changes, &rules));
+    }
+
+    #[test]
+    fn bulk_mod_delete_checkout_eligible_accepts_mixed_add_mod_and_delete() {
+        let tmp = TempDir::new().expect("tempdir");
+        let repo = init_repository(
+            tmp.path(),
+            false,
+            "main",
+            None,
+            crate::RefStorageFormat::Files,
+        )
+        .expect("init");
+        let config = repo.config().expect("config");
+        let index = repo.load_index().expect("index");
+        let rules = WorktreeRules::from_parts_index_attributes_only(&repo, &index, config.clone())
+            .expect("rules");
+        let mut changes = Vec::new();
+        for i in 0..20 {
+            changes.push(DiffEntry {
+                status: DiffStatus::Added,
+                old_path: None,
+                new_path: Some(format!("new{i:03}.txt")),
+                old_mode: String::new(),
+                new_mode: "100644".into(),
+                old_oid: ObjectId::zero(),
+                new_oid: ObjectId::zero(),
+                score: None,
+            });
+        }
+        for i in 0..20 {
+            changes.push(DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(format!("f{i:03}.txt")),
+                new_path: Some(format!("f{i:03}.txt")),
+                old_mode: "100644".into(),
+                new_mode: "100644".into(),
+                old_oid: ObjectId::zero(),
+                new_oid: ObjectId::zero(),
+                score: None,
+            });
+        }
+        for i in 0..20 {
             changes.push(DiffEntry {
                 status: DiffStatus::Deleted,
                 old_path: Some(format!("gone{i:03}.txt")),

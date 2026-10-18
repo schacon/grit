@@ -1433,3 +1433,96 @@ fn issue_1160_dangling_symlink_with_staged_add_deleted_refuses_switch() {
         std::path::PathBuf::from("changed-target")
     );
 }
+
+#[test]
+fn switch_bulk_add_mod_delete_leaves_git_clean() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+    git(tmp.path(), &["config", "gc.auto", "0"]);
+
+    const N: usize = 40;
+    std::fs::create_dir_all(tmp.path().join("tracked")).expect("mkdir tracked");
+    for i in 0..N {
+        std::fs::write(
+            tmp.path().join(format!("tracked/f{i:02}.txt")),
+            format!("main {i}\n"),
+        )
+        .expect("write tracked");
+    }
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    for i in 0..N / 2 {
+        std::fs::write(
+            tmp.path().join(format!("tracked/f{i:02}.txt")),
+            format!("target mod {i}\n"),
+        )
+        .expect("modify");
+    }
+    for i in 0..N / 2 {
+        std::fs::remove_file(tmp.path().join(format!("tracked/f{:02}.txt", N - 1 - i)))
+            .expect("delete");
+    }
+    std::fs::create_dir_all(tmp.path().join("added")).expect("mkdir added");
+    for i in 0..N / 2 {
+        std::fs::write(
+            tmp.path().join(format!("added/f{i:02}.txt")),
+            format!("new {i}\n"),
+        )
+        .expect("add");
+    }
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-qm", "target"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+    let main_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "main"]).trim()).expect("main oid");
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+        },
+    )
+    .expect("grit switch to target");
+    assert!(
+        git_porcelain(tmp.path()).trim().is_empty(),
+        "git must be clean after grit switch to target:\n{}",
+        git_porcelain(tmp.path())
+    );
+    for i in 0..N / 2 {
+        let body = std::fs::read_to_string(tmp.path().join(format!("added/f{i:02}.txt")))
+            .expect("added file");
+        assert_eq!(body, format!("new {i}\n"));
+    }
+
+    switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "main".into(),
+                oid: main_oid,
+            },
+        },
+    )
+    .expect("grit switch back to main");
+    assert!(
+        git_porcelain(tmp.path()).trim().is_empty(),
+        "git must be clean after grit switch back to main:\n{}",
+        git_porcelain(tmp.path())
+    );
+    git_fsck(tmp.path());
+}
