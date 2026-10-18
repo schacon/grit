@@ -3238,10 +3238,10 @@ pub fn grit_lib::diff::diff_index_to_worktree_for_staging(&grit_lib::objects::od
 pub fn grit_lib::diff::diff_index_to_worktree_with_options(&grit_lib::objects::odb::Odb, &mut grit_lib::index::Index, &std::path::Path, grit_lib::diff::DiffIndexToWorktreeOptions) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::diff::DiffEntry>, bool)>
 pub fn grit_lib::diff::diff_index_to_worktree_with_renames(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::diff::DiffIndexToWorktreeOptions, u32) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::diff::DiffEntry>, bool)>
 pub fn grit_lib::diff::diff_slice_ops_compacted(&[&str], &[&str], similar::types::Algorithm, bool) -> alloc::vec::Vec<similar::types::DiffOp>
+pub fn grit_lib::diff::diff_tree_path_change_count(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str) -> grit_lib::error::Result<usize>
 pub fn grit_lib::diff::diff_tree_to_worktree(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, &std::path::Path, &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_tree_to_worktree_with_git_dir(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, &std::path::Path, &std::path::Path, &grit_lib::index::Index, core::option::Option<&grit_lib::config::ConfigSet>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_tree_to_worktree_with_git_dir_and_rules(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, &std::path::Path, &std::path::Path, &grit_lib::index::Index, core::option::Option<&grit_lib::config::ConfigSet>, core::option::Option<&grit_lib::worktree::worktree_rules::WorktreeRules>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
-pub fn grit_lib::diff::diff_tree_path_change_count(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str) -> grit_lib::error::Result<usize>
 pub fn grit_lib::diff::diff_trees(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_trees_show_tree_entries(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
 pub fn grit_lib::diff::diff_trees_with_renames(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str, u32) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
@@ -3836,6 +3836,7 @@ impl core::marker::UnsafeUnpin for grit_lib::worktree::fsmonitor::FsmonitorRefre
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::fsmonitor::FsmonitorRefreshResult
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::fsmonitor::FsmonitorRefreshResult
 pub fn grit_lib::fsmonitor::entry_skips_worktree_stat(&grit_lib::index::IndexEntry, &grit_lib::index::Index) -> bool
+pub fn grit_lib::fsmonitor::fsmonitor_enabled(&grit_lib::config::ConfigSet) -> bool
 pub fn grit_lib::fsmonitor::git_style_windows_pipe_name_from_absolute_ipc(&str) -> alloc::string::String
 pub fn grit_lib::fsmonitor::refresh_index(&mut grit_lib::index::Index, &std::path::Path, &std::path::Path, &grit_lib::config::ConfigSet, core::option::Option<&dyn grit_lib::command_runner::CommandRunner>, &grit_lib::worktree::fsmonitor::FsmonitorRefreshOptions) -> grit_lib::error::Result<grit_lib::worktree::fsmonitor::FsmonitorRefreshResult>
 pub fn grit_lib::fsmonitor::v1_hook_token(grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary) -> alloc::string::String
@@ -4523,7 +4524,7 @@ pub grit_lib::maintenance::repository_fsck::FsckIssue::MidxInvalid
 pub grit_lib::maintenance::repository_fsck::FsckIssue::MidxInvalid::details: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject
 pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject::oid: grit_lib::objects::ObjectId
-pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject::referenced_by: grit_lib::objects::ObjectId
+pub grit_lib::maintenance::repository_fsck::FsckIssue::MissingObject::referrer: grit_lib::maintenance::repository_fsck::MissingObjectReferrer
 pub grit_lib::maintenance::repository_fsck::FsckIssue::PackChecksum
 pub grit_lib::maintenance::repository_fsck::FsckIssue::PackChecksum::pack: std::path::PathBuf
 impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckIssue
@@ -4539,8 +4540,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::reposito
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckIssue
 pub enum grit_lib::maintenance::repository_fsck::FsckSeverity
 pub grit_lib::maintenance::repository_fsck::FsckSeverity::Error
-pub grit_lib::maintenance::repository_fsck::FsckSeverity::Warning
 pub grit_lib::maintenance::repository_fsck::FsckSeverity::Info
+pub grit_lib::maintenance::repository_fsck::FsckSeverity::Warning
 impl core::clone::Clone for grit_lib::maintenance::repository_fsck::FsckSeverity
 pub fn grit_lib::maintenance::repository_fsck::FsckSeverity::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::FsckSeverity
@@ -4557,6 +4558,26 @@ impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::FsckSeverit
 impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::FsckSeverity
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::FsckSeverity
+pub enum grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Index
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Object(grit_lib::objects::ObjectId)
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Pack
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::cmp::PartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
 #[non_exhaustive] pub struct grit_lib::maintenance::repository_fsck::FsckOptions
 pub grit_lib::maintenance::repository_fsck::FsckOptions::check_connectivity: bool
 pub grit_lib::maintenance::repository_fsck::FsckOptions::check_dangling: bool
@@ -4607,32 +4628,12 @@ pub fn grit_lib::maintenance::repository_fsck::index_object_roots(&grit_lib::rep
 pub fn grit_lib::maintenance::repository_fsck::issue_msg_id(&grit_lib::maintenance::repository_fsck::FsckIssue) -> &'static str
 pub fn grit_lib::maintenance::repository_fsck::issue_severity(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> grit_lib::maintenance::repository_fsck::FsckSeverity
 pub fn grit_lib::maintenance::repository_fsck::issue_visible_by_default(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> bool
-pub fn grit_lib::maintenance::repository_fsck::missing_object_detail(&grit_lib::objects::ObjectId, grit_lib::maintenance::repository_fsck::MissingObjectReferrer) -> alloc::string::String
-pub enum grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Index
-pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Pack
-pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Object
-impl core::clone::Clone for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::cmp::PartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::eq(&self, &Self) -> bool
-impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::StructuralPartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::Send for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::Sync for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::missing_object_detail(grit_lib::objects::ObjectId, grit_lib::maintenance::repository_fsck::MissingObjectReferrer) -> alloc::string::String
 pub fn grit_lib::maintenance::repository_fsck::reachability_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub enum grit_lib::maintenance::FsckSeverity
 pub grit_lib::maintenance::FsckSeverity::Error
-pub grit_lib::maintenance::FsckSeverity::Warning
 pub grit_lib::maintenance::FsckSeverity::Info
+pub grit_lib::maintenance::FsckSeverity::Warning
 impl core::clone::Clone for grit_lib::maintenance::FsckSeverity
 pub fn grit_lib::maintenance::FsckSeverity::clone(&self) -> Self
 impl core::cmp::Eq for grit_lib::maintenance::FsckSeverity
@@ -8501,7 +8502,6 @@ pub struct grit_lib::porcelain::commit::CommitRequest
 pub grit_lib::porcelain::commit::CommitRequest::allow_empty: bool
 pub grit_lib::porcelain::commit::CommitRequest::amend: bool
 pub grit_lib::porcelain::commit::CommitRequest::assume_worktree_synced: bool
-pub grit_lib::porcelain::commit::CommitRequest::skip_pre_commit_tree_match: bool
 pub grit_lib::porcelain::commit::CommitRequest::author: alloc::string::String
 pub grit_lib::porcelain::commit::CommitRequest::committer: alloc::string::String
 pub grit_lib::porcelain::commit::CommitRequest::message: alloc::string::String
@@ -11738,7 +11738,7 @@ pub fn grit_lib::refs::verify_ref_transaction_batch(&std::path::Path, &[grit_lib
 pub fn grit_lib::refs::verify_refname_available_for_create(&std::path::Path, &str, &alloc::collections::btree::set::BTreeSet<alloc::string::String>, &std::collections::hash::set::HashSet<alloc::string::String>) -> core::result::Result<(), grit_lib::refs::RefnameUnavailable>
 pub fn grit_lib::refs::write_packed_refs_file(&std::path::Path, &[grit_lib::refs::PackedRefRecord]) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::write_ref(&std::path::Path, &str, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
-pub fn grit_lib::refs::write_ref_cached(&std::path::Path, &str, &grit_lib::objects::ObjectId, &grit_lib::refs::PackedRefs) -> grit_lib::error::Result<()>
+pub fn grit_lib::refs::write_ref_cached(&std::path::Path, &str, &grit_lib::objects::ObjectId, &mut grit_lib::refs::PackedRefs) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::write_ref_cas(&std::path::Path, &str, &grit_lib::objects::ObjectId, grit_lib::objects::ObjectId) -> grit_lib::error::Result<()>
 pub fn grit_lib::refs::write_symbolic_ref(&std::path::Path, &str, &str) -> grit_lib::error::Result<()>
 pub mod grit_lib::remote
@@ -16035,6 +16035,7 @@ impl core::marker::UnsafeUnpin for grit_lib::worktree::fsmonitor::FsmonitorRefre
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::worktree::fsmonitor::FsmonitorRefreshResult
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::worktree::fsmonitor::FsmonitorRefreshResult
 pub fn grit_lib::worktree::fsmonitor::entry_skips_worktree_stat(&grit_lib::index::IndexEntry, &grit_lib::index::Index) -> bool
+pub fn grit_lib::worktree::fsmonitor::fsmonitor_enabled(&grit_lib::config::ConfigSet) -> bool
 pub fn grit_lib::worktree::fsmonitor::git_style_windows_pipe_name_from_absolute_ipc(&str) -> alloc::string::String
 pub fn grit_lib::worktree::fsmonitor::refresh_index(&mut grit_lib::index::Index, &std::path::Path, &std::path::Path, &grit_lib::config::ConfigSet, core::option::Option<&dyn grit_lib::command_runner::CommandRunner>, &grit_lib::worktree::fsmonitor::FsmonitorRefreshOptions) -> grit_lib::error::Result<grit_lib::worktree::fsmonitor::FsmonitorRefreshResult>
 pub fn grit_lib::worktree::fsmonitor::v1_hook_token(grit_lib::worktree::fsmonitor::FsmonitorQueryBoundary) -> alloc::string::String
