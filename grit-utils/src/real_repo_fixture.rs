@@ -51,6 +51,79 @@ pub(crate) fn run_git(git: &Path, dir: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+fn rev_parse(git: &Path, dir: &Path, rev: &str) -> Result<String> {
+    let mut cmd = Command::new(git);
+    cmd.args(["rev-parse", rev]).current_dir(dir);
+    git_env(&mut cmd);
+    let out = cmd
+        .output()
+        .with_context(|| format!("git rev-parse {rev}"))?;
+    if !out.status.success() {
+        bail!(
+            "git rev-parse {rev} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn parse_worktree_marker(contents: &str) -> Result<(String, Option<String>)> {
+    let lines: Vec<&str> = contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    match lines.as_slice() {
+        [tag] => Ok(((*tag).to_string(), None)),
+        [tag, oid] if oid.len() >= 40 => Ok(((*tag).to_string(), Some((*oid).to_string()))),
+        _ => bail!("invalid worktree marker format"),
+    }
+}
+
+fn write_worktree_marker(marker: &Path, tag: &str, tip_oid: &str) -> Result<()> {
+    fs::write(marker, format!("{tag}\n{tip_oid}")).context("write worktree marker")
+}
+
+fn bare_default_head_oid(git: &Path, bare: &Path) -> Result<String> {
+    rev_parse(git, bare, "HEAD")
+}
+
+fn restore_cached_worktree_to_fixture_tip(
+    git: &Path,
+    bare: &Path,
+    dest: &Path,
+    tag: &str,
+    marker_contents: &str,
+) -> Result<()> {
+    let (stored_tag, stored_oid) = parse_worktree_marker(marker_contents)?;
+    if stored_tag != tag {
+        bail!("worktree marker tag mismatch");
+    }
+    let tip = match stored_oid {
+        Some(oid) => oid,
+        None => bare_default_head_oid(git, bare)?,
+    };
+    run_git(
+        git,
+        dest,
+        &["checkout", "-f", "-B", "campaign-main", tip.as_str()],
+    )?;
+    run_git(
+        git,
+        dest,
+        &[
+            "clean",
+            "-fd",
+            "-q",
+            "-e",
+            WORKTREE_READY,
+            "-e",
+            ".grit-bench-hot-path.json",
+        ],
+    )?;
+    Ok(())
+}
+
 fn pinned_git_git_tag() -> String {
     std::env::var("GRIT_BENCH_GIT_GIT_TAG").unwrap_or_else(|_| DEFAULT_GIT_GIT_TAG.to_owned())
 }
@@ -227,24 +300,16 @@ pub fn ensure_worktree_clone(
     let marker = dest.join(WORKTREE_READY);
     if marker.is_file() {
         let stored = fs::read_to_string(&marker).context("read worktree marker")?;
-        if stored.trim() == tag && dest.join(".git").exists() {
-            // Reuse cached worktrees: return to campaign-main at branch tip, not leftover HEAD/tree state.
-            run_git(git, &dest, &["checkout", "-f", "-B", "campaign-main"])?;
-            run_git(git, &dest, &["reset", "--hard", "HEAD"])?;
-            run_git(
-                git,
-                &dest,
-                &[
-                    "clean",
-                    "-fd",
-                    "-q",
-                    "-e",
-                    WORKTREE_READY,
-                    "-e",
-                    ".grit-bench-hot-path.json",
-                ],
-            )?;
-            return Ok(dest);
+        if dest.join(".git").exists() {
+            if let Ok((stored_tag, _)) = parse_worktree_marker(&stored) {
+                if stored_tag == tag {
+                    restore_cached_worktree_to_fixture_tip(git, bare, &dest, tag, &stored)?;
+                    return Ok(dest);
+                }
+            } else if stored.trim() == tag {
+                restore_cached_worktree_to_fixture_tip(git, bare, &dest, tag, &stored)?;
+                return Ok(dest);
+            }
         }
     }
     if dest.exists() {
@@ -264,7 +329,8 @@ pub fn ensure_worktree_clone(
         &["clone", "-q", "--single-branch", bare_str, name],
     )?;
     run_git(git, &dest, &["checkout", "-B", "campaign-main"])?;
-    fs::write(&marker, tag.as_bytes()).context("write worktree marker")?;
+    let tip = rev_parse(git, &dest, "HEAD")?;
+    write_worktree_marker(&marker, tag, &tip)?;
     Ok(dest)
 }
 
@@ -350,6 +416,85 @@ mod tests {
         assert_tag_pinned_fixture_refs(&clone_path)?;
         let heads = list_branch_head_refs(&clone_path)?;
         assert!(heads.is_empty(), "unexpected heads: {heads:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn cached_worktree_reuse_restores_fixture_tip_not_leftover_head() -> Result<()> {
+        let git = PathBuf::from("git");
+        let scratch = TempDir::new()?;
+        std::env::set_var("GRIT_BENCH_ODB_CACHE", scratch.path());
+
+        let origin = TempDir::new()?;
+        run_git(&git, origin.path(), &["init", "-q", "-b", "campaign-main"])?;
+        fs::write(origin.path().join("tracked.txt"), b"base\n")?;
+        run_git(&git, origin.path(), &["add", "tracked.txt"])?;
+        run_git_with_identity(&git, origin.path(), &["commit", "-qm", "base"])?;
+        let base_oid = rev_parse(&git, origin.path(), "HEAD")?;
+
+        run_git(&git, origin.path(), &["checkout", "-B", "topic"])?;
+        fs::write(origin.path().join("tracked.txt"), b"topic\n")?;
+        run_git(&git, origin.path(), &["add", "tracked.txt"])?;
+        run_git_with_identity(&git, origin.path(), &["commit", "-qm", "topic"])?;
+        let topic_oid = rev_parse(&git, origin.path(), "HEAD")?;
+        assert_ne!(base_oid, topic_oid);
+        run_git(&git, origin.path(), &["checkout", "-f", "campaign-main"])?;
+
+        let bare = scratch.path().join("fixture.git");
+        run_git(
+            &git,
+            scratch.path(),
+            &[
+                "clone",
+                "--bare",
+                "-q",
+                origin.path().to_str().unwrap(),
+                "fixture.git",
+            ],
+        )?;
+
+        let tag = "fixture-v1";
+        let dest = ensure_worktree_clone(&git, &bare, "reuse-wt", tag)?;
+        assert_eq!(rev_parse(&git, &dest, "HEAD")?, base_oid);
+        assert_eq!(rev_parse(&git, &dest, "campaign-main")?, base_oid);
+
+        run_git(&git, &dest, &["checkout", "-f", "campaign-main"])?;
+        run_git(&git, &dest, &["checkout", "--detach", topic_oid.as_str()])?;
+        assert_eq!(rev_parse(&git, &dest, "HEAD")?, topic_oid);
+        assert_eq!(
+            rev_parse(&git, &dest, "campaign-main")?,
+            base_oid,
+            "campaign-main must stay on base before reuse"
+        );
+
+        let dest2 = ensure_worktree_clone(&git, &bare, "reuse-wt", tag)?;
+        assert_eq!(dest, dest2);
+        assert_eq!(rev_parse(&git, &dest2, "HEAD")?, base_oid);
+        assert_eq!(rev_parse(&git, &dest2, "campaign-main")?, base_oid);
+        assert_eq!(fs::read_to_string(dest2.join("tracked.txt"))?, "base\n");
+
+        std::env::remove_var("GRIT_BENCH_ODB_CACHE");
+        Ok(())
+    }
+
+    fn run_git_with_identity(git: &Path, dir: &Path, args: &[&str]) -> Result<()> {
+        let mut cmd = Command::new(git);
+        cmd.args(args).current_dir(dir);
+        git_env(&mut cmd);
+        cmd.env("GIT_AUTHOR_NAME", "Bench")
+            .env("GIT_AUTHOR_EMAIL", "b@example.com")
+            .env("GIT_COMMITTER_NAME", "Bench")
+            .env("GIT_COMMITTER_EMAIL", "b@example.com");
+        let out = cmd
+            .output()
+            .with_context(|| format!("git {}", args.join(" ")))?;
+        if !out.status.success() {
+            bail!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
         Ok(())
     }
 }
