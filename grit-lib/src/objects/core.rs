@@ -759,7 +759,31 @@ pub(crate) fn find_tree_entry_by_name_in_data(
         }
         return Ok(None);
     }
-    let name_is_tree = name.ends_with(b"/");
+    if let Some(entry) = find_tree_entry_by_name_in_spans(data, &spans, oid_len, name, true)? {
+        if entry.mode == 0o040000 {
+            return Ok(Some(entry));
+        }
+    }
+    find_tree_entry_by_name_in_spans(data, &spans, oid_len, name, false)
+}
+
+fn tree_entry_from_span(data: &[u8], span: &TreeEntrySpan, oid_len: usize) -> Result<TreeEntry> {
+    let entry_name = &data[span.name_off..span.name_off + span.name_len];
+    let oid = ObjectId::from_bytes(&data[span.oid_off..span.oid_off + oid_len])?;
+    Ok(TreeEntry {
+        mode: span.mode,
+        name: entry_name.to_vec(),
+        oid,
+    })
+}
+
+fn find_tree_entry_by_name_in_spans(
+    data: &[u8],
+    spans: &[TreeEntrySpan],
+    oid_len: usize,
+    name: &[u8],
+    name_is_tree: bool,
+) -> Result<Option<TreeEntry>> {
     let idx = spans.binary_search_by(|span| {
         let entry_name = &data[span.name_off..span.name_off + span.name_len];
         tree_entry_cmp(entry_name, span.mode == 0o040000, name, name_is_tree)
@@ -768,12 +792,7 @@ pub(crate) fn find_tree_entry_by_name_in_data(
         let span = &spans[i];
         let entry_name = &data[span.name_off..span.name_off + span.name_len];
         if entry_name == name {
-            let oid = ObjectId::from_bytes(&data[span.oid_off..span.oid_off + oid_len])?;
-            return Ok(Some(TreeEntry {
-                mode: span.mode,
-                name: entry_name.to_vec(),
-                oid,
-            }));
+            return Ok(Some(tree_entry_from_span(data, span, oid_len)?));
         }
     }
     Ok(None)
@@ -1460,5 +1479,32 @@ mod commit_parse_tests {
         assert_eq!(oid.loose_suffix().len(), 38);
         assert!(ObjectId::is_hex_len(40));
         assert!(ObjectId::is_loose_suffix_len(38));
+    }
+
+    #[test]
+    fn find_tree_entry_by_name_in_data_locates_directory_in_large_tree() -> Result<()> {
+        let dummy = ObjectId::from_hex("0123456789012345678901234567890123456789")?;
+        let mut entries: Vec<TreeEntry> = (1..=60)
+            .map(|i| TreeEntry {
+                mode: 0o100644,
+                name: format!("f{i}.txt").into_bytes(),
+                oid: dummy,
+            })
+            .collect();
+        entries.push(TreeEntry {
+            mode: 0o040000,
+            name: b"sub".to_vec(),
+            oid: dummy,
+        });
+        entries.sort_by(|a, b| {
+            tree_entry_cmp(&a.name, a.mode == 0o040000, &b.name, b.mode == 0o040000)
+        });
+        let data = serialize_tree(&entries);
+        assert!(entries.len() >= 48);
+        let found = find_tree_entry_by_name_in_data(&data, HashAlgo::Sha1.len(), b"sub")?
+            .expect("sub directory in wide tree");
+        assert_eq!(found.mode, 0o040000);
+        assert_eq!(found.name, b"sub");
+        Ok(())
     }
 }

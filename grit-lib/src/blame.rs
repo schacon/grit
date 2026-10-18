@@ -3336,6 +3336,60 @@ mod tests {
     }
 
     #[test]
+    fn blame_file_resolves_nested_path_in_wide_root_tree() -> Result<()> {
+        use crate::objects::{serialize_tree, tree_entry_cmp, ObjectKind, TreeEntry};
+        use crate::repo::init_repository;
+        use crate::RefStorageFormat;
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().map_err(crate::error::Error::Io)?;
+        let repo = init_repository(dir.path(), false, "main", None, RefStorageFormat::Files)?;
+        let hello = repo.odb().write(ObjectKind::Blob, b"hello\n")?;
+        let mut sub_body = b"100644 inner.txt\0".to_vec();
+        sub_body.extend_from_slice(hello.as_bytes());
+        let sub_tree = repo.odb().write(ObjectKind::Tree, &sub_body)?;
+        let filler = repo.odb().write(ObjectKind::Blob, b"1\n")?;
+        let mut entries: Vec<TreeEntry> = (1..=60)
+            .map(|i| TreeEntry {
+                mode: 0o100644,
+                name: format!("f{i}.txt").into_bytes(),
+                oid: filler,
+            })
+            .collect();
+        entries.push(TreeEntry {
+            mode: 0o040000,
+            name: b"sub".to_vec(),
+            oid: sub_tree,
+        });
+        entries.sort_by(|a, b| {
+            tree_entry_cmp(&a.name, a.mode == 0o040000, &b.name, b.mode == 0o040000)
+        });
+        let root_tree = repo
+            .odb()
+            .write(ObjectKind::Tree, &serialize_tree(&entries))?;
+        let commit_body = format!(
+            "tree {root_tree}\nauthor T <t@t.com> 1 +0000\ncommitter T <t@t.com> 1 +0000\n\ninit\n"
+        );
+        let tip = repo
+            .odb()
+            .write(ObjectKind::Commit, commit_body.as_bytes())?;
+        fs::write(repo.git_dir().join("refs/heads/main"), format!("{tip}\n"))
+            .map_err(crate::error::Error::Io)?;
+        let result = blame_file(
+            &repo,
+            "sub/inner.txt",
+            &BlameOptions {
+                start: Some(tip),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(result.lines.len(), 1);
+        assert_eq!(result.lines[0].content, "hello");
+        Ok(())
+    }
+
+    #[test]
     fn blame_file_walks_linear_history() -> Result<()> {
         use crate::objects::ObjectKind;
         use crate::repo::init_repository;
