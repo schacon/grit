@@ -4607,6 +4607,27 @@ pub fn grit_lib::maintenance::repository_fsck::index_object_roots(&grit_lib::rep
 pub fn grit_lib::maintenance::repository_fsck::issue_msg_id(&grit_lib::maintenance::repository_fsck::FsckIssue) -> &'static str
 pub fn grit_lib::maintenance::repository_fsck::issue_severity(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> grit_lib::maintenance::repository_fsck::FsckSeverity
 pub fn grit_lib::maintenance::repository_fsck::issue_visible_by_default(&grit_lib::maintenance::repository_fsck::FsckIssue, &grit_lib::config::ConfigSet, bool) -> bool
+pub fn grit_lib::maintenance::repository_fsck::missing_object_detail(&grit_lib::objects::ObjectId, grit_lib::maintenance::repository_fsck::MissingObjectReferrer) -> alloc::string::String
+pub enum grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Index
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Pack
+pub grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Object
+impl core::clone::Clone for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::cmp::PartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+pub fn grit_lib::maintenance::repository_fsck::MissingObjectReferrer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::StructuralPartialEq for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Freeze for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Send for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Sync for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::Unpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::marker::UnsafeUnpin for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::maintenance::repository_fsck::MissingObjectReferrer
 pub fn grit_lib::maintenance::repository_fsck::reachability_roots(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
 pub enum grit_lib::maintenance::FsckSeverity
 pub grit_lib::maintenance::FsckSeverity::Error

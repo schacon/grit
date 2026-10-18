@@ -6,7 +6,8 @@ use std::io::Write;
 use anyhow::Result;
 use grit_lib::config::ConfigSet;
 use grit_lib::maintenance::repository_fsck::{
-    issue_msg_id, issue_severity, FsckIssue, FsckOptions, FsckReport, FsckSeverity,
+    issue_msg_id, issue_severity, issue_visible_by_default, missing_object_detail, FsckIssue,
+    FsckOptions, FsckReport, FsckSeverity,
 };
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::progress::{NeverCancel, ProgressSink};
@@ -59,6 +60,9 @@ pub struct FsckIssueJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub detail: String,
+    /// Whether default human output lists this issue (not serialized).
+    #[serde(skip)]
+    pub show_in_human_default: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -105,9 +109,15 @@ impl FsckOutcome {
         }
         self.issues
             .iter()
-            .filter(|issue| issue.severity != "info")
+            .filter(|issue| issue.show_in_human_default)
             .collect()
     }
+}
+
+fn visible_has_warning_or_error(issues: &[&FsckIssueJson]) -> bool {
+    issues
+        .iter()
+        .any(|issue| issue.severity == "error" || issue.severity == "warning")
 }
 
 fn object_kind_label(kind: ObjectKind) -> &'static str {
@@ -160,17 +170,7 @@ fn issue_detail(issue: &FsckIssue) -> String {
         FsckIssue::IdxMismatch { pack } => {
             format!("index checksum mismatch for {}", pack.display())
         }
-        FsckIssue::MissingObject { oid, referenced_by } => {
-            if referenced_by.is_zero() {
-                format!("object {} missing (staged in index)", oid.to_hex())
-            } else {
-                format!(
-                    "object {} referenced by {}",
-                    oid.to_hex(),
-                    referenced_by.to_hex()
-                )
-            }
-        }
+        FsckIssue::MissingObject { oid, referrer } => missing_object_detail(*oid, *referrer),
         FsckIssue::BrokenLink {
             tree,
             name,
@@ -204,6 +204,7 @@ fn issue_to_json(issue: &FsckIssue, config: &ConfigSet, strict: bool) -> FsckIss
         oid: issue_oid(issue).map(|o| o.to_hex()),
         path: issue_path(issue),
         detail: issue_detail(issue),
+        show_in_human_default: issue_visible_by_default(issue, config, strict),
     }
 }
 
@@ -251,7 +252,7 @@ impl HumanRender for FsckOutcome {
 
         if self.has_errors {
             outln!(w, "\nIntegrity check failed.");
-        } else if !visible.is_empty() {
+        } else if visible_has_warning_or_error(&visible) {
             outln!(w, "\nCompleted with warnings only.");
         }
 
@@ -294,13 +295,17 @@ impl MarkdownRender for FsckOutcome {
                 outln!(w, "- `{}` `{}`", d.kind, d.oid);
             }
         }
-        let has_visible_warnings = self
-            .issues
-            .iter()
-            .any(|i| i.severity == "warning" || i.severity == "error");
+        let human_visible: Vec<&FsckIssueJson> = if self.verbose {
+            self.issues.iter().collect()
+        } else {
+            self.issues
+                .iter()
+                .filter(|i| i.show_in_human_default)
+                .collect()
+        };
         if self.has_errors {
             outln!(w, "\n**Integrity check failed.**");
-        } else if has_visible_warnings {
+        } else if visible_has_warning_or_error(&human_visible) {
             outln!(w, "\n**Completed with warnings only.**");
         }
         Ok(())
@@ -346,13 +351,15 @@ pub fn exit_code(outcome: &FsckOutcome) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use grit_lib::maintenance::repository_fsck::MissingObjectReferrer;
 
     #[test]
     fn json_issue_maps_missing_object() {
         let issue = FsckIssue::MissingObject {
             oid: ObjectId::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234").expect("oid"),
-            referenced_by: ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                .expect("oid"),
+            referrer: MissingObjectReferrer::Object(
+                ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").expect("oid"),
+            ),
         };
         let config = ConfigSet::default();
         let json = issue_to_json(&issue, &config, false);
@@ -365,8 +372,9 @@ mod tests {
     fn missing_object_kind_is_stable() {
         let issue = FsckIssue::MissingObject {
             oid: ObjectId::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234").expect("oid"),
-            referenced_by: ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                .expect("oid"),
+            referrer: MissingObjectReferrer::Object(
+                ObjectId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").expect("oid"),
+            ),
         };
         assert_eq!(issue_msg_id(&issue), "missingObject");
     }
@@ -375,10 +383,15 @@ mod tests {
     fn index_missing_object_detail_omits_zero_referrer() {
         let issue = FsckIssue::MissingObject {
             oid: ObjectId::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234").expect("oid"),
-            referenced_by: ObjectId::zero(),
+            referrer: MissingObjectReferrer::Index,
         };
         let detail = issue_detail(&issue);
         assert!(detail.contains("staged in index"));
-        assert!(!detail.contains("0000000"));
+
+        let pack = FsckIssue::MissingObject {
+            oid: ObjectId::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234").expect("oid"),
+            referrer: MissingObjectReferrer::Pack,
+        };
+        assert!(issue_detail(&pack).contains("missing from pack"));
     }
 }

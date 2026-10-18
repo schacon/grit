@@ -1132,13 +1132,9 @@ fn fsck_issue_from_repo(issue: RepoFsckIssue, config: &ConfigSet, strict: bool) 
                 .to_owned(),
             format!("index checksum mismatch for {}", pack.display()),
         ),
-        RepoFsckIssue::MissingObject { oid, referenced_by } => (
+        RepoFsckIssue::MissingObject { oid, referrer } => (
             oid.to_hex(),
-            if referenced_by.is_zero() {
-                "missing (staged in index)".to_owned()
-            } else {
-                format!("referenced by {}", referenced_by.to_hex())
-            },
+            repo_fsck::missing_object_detail(*oid, *referrer),
         ),
         RepoFsckIssue::BrokenLink {
             tree,

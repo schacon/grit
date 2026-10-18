@@ -105,6 +105,34 @@ impl FsckOptions {
     }
 }
 
+/// Where a missing-object diagnostic was discovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingObjectReferrer {
+    /// Staged in the index but absent from the object database.
+    Index,
+    /// Pack index lists the oid but the object bytes are absent.
+    Pack,
+    /// Another object referenced this oid during connectivity or tree walks.
+    Object(ObjectId),
+}
+
+/// Human-readable detail for [`FsckIssue::MissingObject`].
+#[must_use]
+pub fn missing_object_detail(oid: ObjectId, referrer: MissingObjectReferrer) -> String {
+    match referrer {
+        MissingObjectReferrer::Index => {
+            format!("object {} missing (staged in index)", oid.to_hex())
+        }
+        MissingObjectReferrer::Pack => format!("object {} missing from pack", oid.to_hex()),
+        MissingObjectReferrer::Object(parent) if parent.is_zero() => {
+            format!("object {} missing during reachability walk", oid.to_hex())
+        }
+        MissingObjectReferrer::Object(parent) => {
+            format!("object {} referenced by {}", oid.to_hex(), parent.to_hex())
+        }
+    }
+}
+
 /// One repository fsck finding with a stable, typed shape.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -144,8 +172,8 @@ pub enum FsckIssue {
     MissingObject {
         /// Missing object id.
         oid: ObjectId,
-        /// Object id that referenced the missing object.
-        referenced_by: ObjectId,
+        /// Where the missing oid was discovered.
+        referrer: MissingObjectReferrer,
     },
     /// Tree entry points at an object of the wrong kind (or an invalid link).
     BrokenLink {
@@ -243,8 +271,8 @@ fn object_fsck_default_level(msg_id: &str) -> ObjectFsckDefaultLevel {
         | "gitignoreSymlink"
         | "gitattributesSymlink"
         | "mailmapSymlink"
-        | "badTagName" => ObjectFsckDefaultLevel::Info,
-        "missingTaggerEntry" => ObjectFsckDefaultLevel::Warn,
+        | "badTagName"
+        | "missingTaggerEntry" => ObjectFsckDefaultLevel::Info,
         "extraHeaderEntry" => ObjectFsckDefaultLevel::Ignore,
         _ => ObjectFsckDefaultLevel::Error,
     }
@@ -272,10 +300,17 @@ fn object_buffer_fsck_severity(msg_id: &str, config: &ConfigSet, strict: bool) -
     }
 }
 
-/// Whether default human fsck output should list this issue (matches Git omitting INFO by default).
+/// Whether default human fsck output should list this issue (matches Git omitting most INFO by default).
 #[must_use]
 pub fn issue_visible_by_default(issue: &FsckIssue, config: &ConfigSet, strict: bool) -> bool {
-    issue_severity(issue, config, strict) != FsckSeverity::Info
+    let severity = issue_severity(issue, config, strict);
+    if severity != FsckSeverity::Info {
+        return true;
+    }
+    if let FsckIssue::BadObject { error, .. } = issue {
+        return matches!(error.id, "missingTaggerEntry");
+    }
+    false
 }
 
 /// Resolve severity using `fsck.<msg-id>` and `strict`.
@@ -334,10 +369,9 @@ fn issue_display_paths(issue: &FsckIssue) -> (String, String) {
                 .to_owned(),
             format!("index checksum mismatch for {}", pack.display()),
         ),
-        FsckIssue::MissingObject { oid, referenced_by } => (
-            oid.to_hex(),
-            format!("referenced by {}", referenced_by.to_hex()),
-        ),
+        FsckIssue::MissingObject { oid, referrer } => {
+            (oid.to_hex(), missing_object_detail(*oid, *referrer))
+        }
         FsckIssue::BrokenLink {
             tree,
             name,
@@ -602,8 +636,8 @@ fn dedupe_issues(issues: &mut Vec<FsckIssue>) {
         }
         let key = match issue {
             FsckIssue::BadObject { oid, error } => format!("bad:{}:{}", oid, error.id),
-            FsckIssue::MissingObject { oid, referenced_by } => {
-                format!("missing:{}:{}", oid, referenced_by)
+            FsckIssue::MissingObject { oid, referrer } => {
+                format!("missing:{}:{referrer:?}", oid)
             }
             FsckIssue::BrokenLink {
                 tree, name, target, ..
@@ -756,7 +790,7 @@ fn pack_object_read_issue(oid: ObjectId, pack: &Path, err: Error) -> FsckIssue {
         }
         Error::ObjectNotFound(_) => FsckIssue::MissingObject {
             oid,
-            referenced_by: ObjectId::zero(),
+            referrer: MissingObjectReferrer::Pack,
         },
         Error::CorruptObject(_) | Error::Zlib(_) => FsckIssue::BadObject {
             oid,
@@ -1023,7 +1057,7 @@ fn walk_connectivity(
                 } else if should_emit(config, strict, "missingObject") {
                     issues.push(FsckIssue::MissingObject {
                         oid,
-                        referenced_by: parent,
+                        referrer: MissingObjectReferrer::Object(parent),
                     });
                 }
                 continue;
@@ -1206,7 +1240,7 @@ fn walk_tree_entries(
                     if should_emit(config, strict, "missingObject") {
                         issues.push(FsckIssue::MissingObject {
                             oid: entry.oid,
-                            referenced_by: tree_oid,
+                            referrer: MissingObjectReferrer::Object(tree_oid),
                         });
                     }
                 }
@@ -1332,7 +1366,7 @@ fn follow_typed_link(
             if should_emit(config, strict, "missingObject") {
                 issues.push(FsckIssue::MissingObject {
                     oid: target,
-                    referenced_by: parent,
+                    referrer: MissingObjectReferrer::Object(parent),
                 });
             }
         }
@@ -1397,7 +1431,7 @@ fn fsck_index_missing_blobs(
             already_reported.insert(entry.oid);
             issues.push(FsckIssue::MissingObject {
                 oid: entry.oid,
-                referenced_by: ObjectId::zero(),
+                referrer: MissingObjectReferrer::Index,
             });
         }
     }
@@ -1409,12 +1443,19 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
-    use std::path::PathBuf;
     use crate::porcelain::add::stage_for_commit;
     use crate::porcelain::commit::{create_commit, CommitRequest};
     use crate::progress::{NeverCancel, NullProgress};
     use crate::repo::InitOptions;
+    use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn missing_object_detail_distinguishes_index_and_pack() {
+        let oid = ObjectId::from_hex("1212121212121212121212121212121212121212").unwrap();
+        assert!(missing_object_detail(oid, MissingObjectReferrer::Index).contains("index"));
+        assert!(missing_object_detail(oid, MissingObjectReferrer::Pack).contains("pack"));
+    }
 
     #[test]
     fn dedupe_drops_missing_when_corrupt_reported() {
@@ -1426,8 +1467,9 @@ mod tests {
             },
             FsckIssue::MissingObject {
                 oid,
-                referenced_by: ObjectId::from_hex("abababababababababababababababababababab")
-                    .unwrap(),
+                referrer: MissingObjectReferrer::Object(
+                    ObjectId::from_hex("abababababababababababababababababababab").unwrap(),
+                ),
             },
         ];
         dedupe_issues(&mut issues);

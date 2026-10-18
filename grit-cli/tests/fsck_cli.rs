@@ -201,8 +201,8 @@ fn fsck_missing_tagger_warning_exits_zero_like_git() {
     );
     assert_eq!(
         grit_fsck(&fix, &["--strict"]),
-        1,
-        "strict promotes warning-level missingTaggerEntry to a failing exit"
+        0,
+        "strict does not promote info-level missingTaggerEntry to a failing exit"
     );
 }
 

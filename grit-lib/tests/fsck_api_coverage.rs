@@ -37,7 +37,7 @@ fn issue_msg_id_and_severity_and_format() {
     let oid = ObjectId::from_hex("1212121212121212121212121212121212121212").expect("oid");
     let issue = FsckIssue::MissingObject {
         oid,
-        referenced_by: oid,
+        referrer: grit_lib::maintenance::repository_fsck::MissingObjectReferrer::Object(oid),
     };
     assert_eq!(issue_msg_id(&issue), "missingObject");
     assert_eq!(issue_severity(&issue, &config, false), FsckSeverity::Error);
@@ -76,11 +76,15 @@ fn issue_msg_id_and_severity_and_format() {
     };
     assert_eq!(
         issue_severity(&missing_tagger, &config, false),
-        FsckSeverity::Warning
+        FsckSeverity::Info
     );
     assert_eq!(
         issue_severity(&missing_tagger, &config, true),
-        FsckSeverity::Error
+        FsckSeverity::Info
+    );
+    assert!(
+        issue_visible_by_default(&missing_tagger, &config, false),
+        "missingTaggerEntry stays visible in default human output"
     );
 
     let bad_mode = FsckIssue::BadObject {
