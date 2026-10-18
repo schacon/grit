@@ -83,7 +83,7 @@ pub(crate) struct PreparedSwitch {
     preserve_worktree_paths: HashSet<String>,
     /// Index loaded for switch guards; reused for checkout to avoid a second disk read.
     index: crate::index::Index,
-    /// Commit tree being checked out (updates cache-tree root after index write).
+    /// Tree OID after checkout completes (cache-tree root on the written index).
     target_tree: ObjectId,
     /// When true, checkout may remove wholesale directories without an on-disk safety walk.
     trust_wholesale_dir_removal: bool,

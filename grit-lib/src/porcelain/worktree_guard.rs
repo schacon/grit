@@ -533,9 +533,7 @@ fn index_matches_head_without_worktree_stat(
     if ie.oid != oid || ie.mode != mode {
         return false;
     }
-    if indexed_path_needs_worktree_stat_check(ie)
-        && entry_is_racy_with_policy(ie, index_mtime, stat_policy)
-    {
+    if entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
         return false;
     }
     true

@@ -11,7 +11,6 @@ use crate::crlf::{self, ConversionConfig};
 use crate::error::{Error, Result};
 use crate::filter_process::{DelayedProcessCheckout, FilterSmudgeMeta};
 use crate::index::{IndexEntry, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
-use crate::objects::pack::SingleLocalPackReader;
 use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::ObjectId;
 use crate::parallel::{try_par_map_with_local, ParallelHashError, ParallelOp, ParallelOptions};
@@ -213,42 +212,6 @@ fn prepare_write_job(
     worktree_bytes_for_parallel_job(conv, job, &object.data)
 }
 
-const SINGLE_PACK_PREPARE_MIN: usize = 8;
-
-/// OID-sorted monotonic reads from the sole local pack; falls back when layout or objects differ.
-fn prepare_batch_single_pack_sorted(
-    repo: &Repository,
-    conv: &ConversionConfig,
-    jobs: &[CheckoutWriteJob],
-    batch: &[usize],
-) -> Result<Option<Vec<PreparedWrite>>> {
-    if batch.len() < SINGLE_PACK_PREPARE_MIN {
-        return Ok(None);
-    }
-    repo.odb().with_pack_read_context(|| {
-        let Some(mut reader) = SingleLocalPackReader::open(repo.odb().objects_dir())? else {
-            return Ok(None);
-        };
-        let mut sorted = batch.to_vec();
-        sorted.sort_by_key(|&i| jobs[i].oid.as_bytes());
-        let mut prepared = Vec::with_capacity(sorted.len());
-        for idx in sorted {
-            let job = &jobs[idx];
-            let object = match reader.read_object(&job.oid) {
-                Ok(object) => object,
-                Err(_) => return Ok(None),
-            };
-            let bytes = worktree_bytes_for_parallel_job(conv, job, &object.data)?;
-            prepared.push(PreparedWrite { idx, bytes });
-        }
-        Ok(Some(prepared))
-    })
-}
-
-fn sort_prepared_by_input_order(prepared: &mut [PreparedWrite]) {
-    prepared.sort_by_key(|p| p.idx);
-}
-
 fn write_prepared_job(
     work_tree: &Path,
     jobs: &[CheckoutWriteJob],
@@ -387,59 +350,35 @@ fn flush_parallel_batch(
     let use_parallel = options.threads.get() > 1 && checkout_pool_worthwhile(batch.len(), options);
     let pack_store = repo.odb().pack_store_for(repo.odb().objects_dir());
 
-    let mut prepared: Vec<PreparedWrite> = if parallel_prepare_blobs {
-        if let Some(sorted_prepared) = prepare_batch_single_pack_sorted(repo, conv, jobs, batch)? {
-            sorted_prepared
-        } else if options.threads.get() > 1 && batch.len() > 1 {
-            try_par_map_with_local(
-                batch,
-                options,
-                0,
-                || PackReadContextGuard::install(Arc::clone(&pack_store)),
-                |_, &idx| {
-                    prepare_write_job(repo, conv, &jobs[idx])
-                        .map(|bytes| PreparedWrite { idx, bytes })
-                },
-            )
-            .map_err(|e: ParallelHashError<Error>| match e {
-                ParallelHashError::Task(err) => err,
-            })?
-        } else {
-            let mut prepared = Vec::with_capacity(batch.len());
-            let prepare_result = repo.odb().with_pack_read_context(|| {
-                for &idx in batch {
-                    match prepare_write_job(repo, conv, &jobs[idx]) {
-                        Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
-                        Err(err) => return Err(err),
-                    }
-                }
-                Ok(())
-            });
-            if let Err(err) = prepare_result {
-                flush_prepared_writes_serial(work_tree, jobs, &prepared, dir_cache, outcomes)?;
-                return Err(err);
-            }
-            prepared
-        }
+    let prepared: Vec<PreparedWrite> = if parallel_prepare_blobs
+        && options.threads.get() > 1
+        && batch.len() > 1
+    {
+        try_par_map_with_local(
+            batch,
+            options,
+            0,
+            || PackReadContextGuard::install(Arc::clone(&pack_store)),
+            |_, &idx| {
+                prepare_write_job(repo, conv, &jobs[idx]).map(|bytes| PreparedWrite { idx, bytes })
+            },
+        )
+        .map_err(|e: ParallelHashError<Error>| match e {
+            ParallelHashError::Task(err) => err,
+        })?
     } else {
         let mut prepared = Vec::with_capacity(batch.len());
-        let prepare_result = repo.odb().with_pack_read_context(|| {
-            for &idx in batch {
-                match prepare_write_job(repo, conv, &jobs[idx]) {
-                    Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
-                    Err(err) => return Err(err),
+        for &idx in batch {
+            match prepare_write_job(repo, conv, &jobs[idx]) {
+                Ok(bytes) => prepared.push(PreparedWrite { idx, bytes }),
+                Err(err) => {
+                    flush_prepared_writes_serial(work_tree, jobs, &prepared, dir_cache, outcomes)?;
+                    return Err(err);
                 }
             }
-            Ok(())
-        });
-        if let Err(err) = prepare_result {
-            flush_prepared_writes_serial(work_tree, jobs, &prepared, dir_cache, outcomes)?;
-            return Err(err);
         }
         prepared
     };
-
-    sort_prepared_by_input_order(&mut prepared);
 
     if use_parallel {
         let parent_snapshot = LeadingDirCache::with_ready_from(&*dir_cache);
