@@ -1397,4 +1397,41 @@ mod tests {
         assert!(report.ok(&config, &FsckOptions::full_repository(true)));
         assert!(report.issues.is_empty());
     }
+
+    #[test]
+    fn commit_tree_pointing_at_blob_is_broken_link() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let blob = repo
+            .odb()
+            .write(ObjectKind::Blob, b"not-a-tree")
+            .expect("blob");
+        let commit_body = format!(
+            "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\n",
+            blob.to_hex()
+        );
+        let bad_commit = repo
+            .odb()
+            .write(ObjectKind::Commit, commit_body.as_bytes())
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &bad_commit).expect("update ref");
+
+        let report = fsck(
+            &repo,
+            &FsckOptions::full_repository(false),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("fsck");
+        assert!(
+            report.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    FsckIssue::BrokenLink { target, .. } if *target == blob
+                )
+            }),
+            "commit tree must not accept a blob oid: {:?}",
+            report.issues
+        );
+    }
 }
