@@ -24,6 +24,8 @@ fn sample_log() -> ReflogUpdate {
         identity: "Test User <test@example.com>".to_owned(),
         message: "commit: msg".to_owned(),
         time: time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("valid timestamp"),
+        old_oid: None,
+        new_oid: None,
     }
 }
 

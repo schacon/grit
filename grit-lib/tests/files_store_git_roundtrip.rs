@@ -36,6 +36,8 @@ fn files_store_git_roundtrip() {
         identity: "Store Test <store@test.example> 1700000000 +0000".to_owned(),
         message: "grit: batch".to_owned(),
         time: time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("ts"),
+        old_oid: None,
+        new_oid: None,
     };
 
     let mut txn = RefTransaction::new();

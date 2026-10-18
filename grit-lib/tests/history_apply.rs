@@ -403,6 +403,7 @@ fn apply_rewrite_writes_reflog_entries() {
     let branch_entry = branch_log.last().expect("branch reflog entry");
     assert_eq!(head_entry.new_oid, tip);
     assert_eq!(head_entry.new_oid, branch_entry.new_oid);
+    assert_eq!(head_entry.old_oid, branch_entry.old_oid);
     assert_eq!(head_entry.message, branch_entry.message);
 }
 
@@ -419,9 +420,11 @@ fn apply_rewrite_checked_out_branch_reflog_single_entry_per_update() {
             &format!("c{i}"),
         ));
     }
+    let pre_rewrite_tip = tips[2];
     let plan = plan_reword(wt, tips[1], "reworded");
     let grit = open_grit(wt);
     apply_rewrite(&grit, &plan, &apply_opts()).expect("apply");
+    let new_tip = resolve_ref(grit.git_dir(), "refs/heads/main").expect("main tip");
     let head_log = read_reflog(grit.git_dir(), "HEAD").expect("HEAD reflog");
     let branch_log = read_reflog(grit.git_dir(), "refs/heads/main").expect("main reflog");
     assert_eq!(
@@ -434,13 +437,30 @@ fn apply_rewrite_checked_out_branch_reflog_single_entry_per_update() {
         4,
         "branch reflog: three commits plus one history rewrite"
     );
-    let last = branch_log.last().expect("last branch entry");
+    let head_entry = head_log.last().expect("last HEAD entry");
+    let branch_entry = branch_log.last().expect("last branch entry");
+    assert_eq!(head_entry.old_oid, pre_rewrite_tip);
+    assert_eq!(head_entry.new_oid, new_tip);
+    assert_eq!(head_entry.old_oid, branch_entry.old_oid);
+    assert_eq!(head_entry.new_oid, branch_entry.new_oid);
     let prev = branch_log
         .get(branch_log.len() - 2)
         .expect("previous branch entry");
     assert!(
-        last.old_oid != prev.old_oid || last.new_oid != prev.new_oid,
+        branch_entry.old_oid != prev.old_oid || branch_entry.new_oid != prev.new_oid,
         "branch reflog must not append the same old->new pair twice"
+    );
+    let head_at_1 = git(wt, &["rev-parse", "HEAD@{1}"]).trim().to_string();
+    let main_at_1 = git(wt, &["rev-parse", "main@{1}"]).trim().to_string();
+    assert_eq!(
+        head_at_1,
+        pre_rewrite_tip.to_hex(),
+        "system git HEAD@{{1}} must be pre-rewrite branch tip"
+    );
+    assert_eq!(
+        main_at_1,
+        pre_rewrite_tip.to_hex(),
+        "system git main@{{1}} must be pre-rewrite branch tip"
     );
 }
 
@@ -489,6 +509,7 @@ fn apply_rewrite_head_reflog_reftable_backend() {
     let head_entry = head_log.last().expect("HEAD reflog entry");
     let branch_entry = branch_log.last().expect("branch reflog entry");
     assert_eq!(head_entry.new_oid, branch_entry.new_oid);
+    assert_eq!(head_entry.old_oid, branch_entry.old_oid);
     assert_eq!(head_entry.message, branch_entry.message);
     git_fsck_strict(wt);
 }

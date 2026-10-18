@@ -93,6 +93,10 @@ pub struct ReflogUpdate {
     pub message: String,
     /// Timestamp recorded in the reflog line.
     pub time: time::OffsetDateTime,
+    /// When set, recorded as the reflog old OID instead of resolving from ref state.
+    pub old_oid: Option<crate::objects::ObjectId>,
+    /// When set, recorded as the reflog new OID instead of deriving from the update.
+    pub new_oid: Option<crate::objects::ObjectId>,
 }
 
 /// Per-update flags (Git `REF_NO_DEREF` / `REF_LOG_ONLY` semantics).

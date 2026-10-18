@@ -31,6 +31,8 @@ fn repository_with_memory_ref_store() {
                         identity: "Test User <test@example.com>".to_owned(),
                         message: "create injected".to_owned(),
                         time: OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("time"),
+                        old_oid: None,
+                        new_oid: None,
                     }),
                     flags: grit_lib::refs::store::RefUpdateFlags::default(),
                 })
@@ -80,6 +82,8 @@ fn repository_injected_head_reflog_uses_ref_store() {
                         identity: "Test User <test@example.com>".to_owned(),
                         message: "branch create".to_owned(),
                         time: OffsetDateTime::from_unix_timestamp(1_700_000_001).expect("time"),
+                        old_oid: None,
+                        new_oid: None,
                     }),
                     flags: grit_lib::refs::store::RefUpdateFlags::default(),
                 })

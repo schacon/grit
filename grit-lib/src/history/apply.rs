@@ -1094,9 +1094,11 @@ fn commit_planned_ref_updates(
             opts,
         );
         if head_target.as_deref() == Some(planned.name.as_str()) {
-            if let Some(head_reflog) =
+            if let Some(mut head_reflog) =
                 reflog_for_update(config.as_ref().map(|c| c.as_ref()), git_dir, "HEAD", opts)
             {
+                head_reflog.old_oid = Some(planned.old);
+                head_reflog.new_oid = Some(planned.new);
                 let head_update = RefUpdate {
                     name: "HEAD".into(),
                     new_value: Some(RawRef::Direct(planned.new)),
@@ -1169,6 +1171,8 @@ fn reflog_for_update(
             identity: opts.identity.clone(),
             message: opts.reflog_message.clone(),
             time: time::OffsetDateTime::now_utc(),
+            old_oid: None,
+            new_oid: None,
         })
     } else {
         None

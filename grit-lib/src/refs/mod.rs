@@ -1331,6 +1331,8 @@ pub fn create_ref_with_reflog(
             identity: identity.to_owned(),
             message: message.to_owned(),
             time: time::OffsetDateTime::now_utc(),
+            old_oid: None,
+            new_oid: None,
         })
     } else {
         None

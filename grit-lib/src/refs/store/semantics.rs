@@ -134,6 +134,9 @@ pub(crate) fn reflog_old_oid_before(
     baseline: &BTreeMap<String, RawRef>,
     update: &RefUpdate,
 ) -> ObjectId {
+    if let Some(oid) = update.reflog.as_ref().and_then(|log| log.old_oid) {
+        return oid;
+    }
     resolved_oid_at_name(trial, baseline, &update.name, update.flags).unwrap_or_else(|_| zero_oid())
 }
 
@@ -142,6 +145,9 @@ pub(crate) fn reflog_new_oid_before(
     baseline: &BTreeMap<String, RawRef>,
     update: &RefUpdate,
 ) -> ObjectId {
+    if let Some(oid) = update.reflog.as_ref().and_then(|log| log.new_oid) {
+        return oid;
+    }
     if update.flags.log_only {
         if let Some(RawRef::Direct(oid)) = &update.new_value {
             return *oid;

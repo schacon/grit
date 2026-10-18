@@ -310,6 +310,8 @@ fn files_store_reflog_identity_with_digits_in_name_gets_timestamp() {
                 identity: identity.to_owned(),
                 message: String::new(),
                 time,
+                old_oid: None,
+                new_oid: None,
             }),
             flags: Default::default(),
         })
@@ -388,6 +390,8 @@ fn files_store_symref_expected_oid_update_reflog_old_oid() {
                 identity: "Tester <t@example.com>".to_owned(),
                 message: "update through symref".to_owned(),
                 time,
+                old_oid: None,
+                new_oid: None,
             }),
             flags: Default::default(),
         })
@@ -466,6 +470,8 @@ fn files_store_partial_batch_symref_packed_target_reflog_old_oid() {
                 identity: "Tester <t@example.com>".to_owned(),
                 message: "move head".to_owned(),
                 time,
+                old_oid: None,
+                new_oid: None,
             }),
             flags: Default::default(),
         })

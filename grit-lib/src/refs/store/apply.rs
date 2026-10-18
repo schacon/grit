@@ -288,10 +288,16 @@ pub(crate) fn ref_lock_names_for_updates(
 }
 
 fn reflog_old_oid_before(state: &RefBatchState, update: &RefUpdate) -> ObjectId {
+    if let Some(oid) = update.reflog.as_ref().and_then(|log| log.old_oid) {
+        return oid;
+    }
     resolved_oid_at_name(state, &update.name, update.flags).unwrap_or_else(|_| zero_oid())
 }
 
 fn reflog_new_oid_before(state: &RefBatchState, update: &RefUpdate) -> ObjectId {
+    if let Some(oid) = update.reflog.as_ref().and_then(|log| log.new_oid) {
+        return oid;
+    }
     if update.flags.log_only {
         if let Some(RawRef::Direct(oid)) = &update.new_value {
             return *oid;
@@ -444,6 +450,8 @@ mod tests {
                     identity: "T <t@t>".into(),
                     message: "mirror".into(),
                     time: time::OffsetDateTime::UNIX_EPOCH,
+                    old_oid: None,
+                    new_oid: None,
                 }),
                 flags: RefUpdateFlags {
                     log_only: true,
@@ -480,13 +488,19 @@ mod tests {
             identity: "T <t@t>".into(),
             message: "history rewrite".into(),
             time: time::OffsetDateTime::UNIX_EPOCH,
+            old_oid: None,
+            new_oid: None,
         };
         let updates = vec![
             RefUpdate {
                 name: "HEAD".to_owned(),
                 new_value: Some(RawRef::Direct(oid(2))),
                 expected: Expected::Any,
-                reflog: Some(log.clone()),
+                reflog: Some(ReflogUpdate {
+                    old_oid: Some(oid(1)),
+                    new_oid: Some(oid(2)),
+                    ..log.clone()
+                }),
                 flags: RefUpdateFlags {
                     log_only: true,
                     no_deref: true,
@@ -507,5 +521,9 @@ mod tests {
         assert_eq!(branch_log.len(), 1);
         let head_log = state.reflogs.get("HEAD").expect("head log");
         assert_eq!(head_log.len(), 1);
+        assert_eq!(head_log[0].old_oid, oid(1));
+        assert_eq!(head_log[0].new_oid, oid(2));
+        assert_eq!(branch_log[0].old_oid, head_log[0].old_oid);
+        assert_eq!(branch_log[0].new_oid, head_log[0].new_oid);
     }
 }

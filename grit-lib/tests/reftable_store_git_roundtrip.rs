@@ -28,6 +28,8 @@ fn sample_log(n: u8) -> ReflogUpdate {
         message: format!("commit: batch {n}"),
         time: time::OffsetDateTime::from_unix_timestamp(1_700_000_000 + i64::from(n))
             .expect("valid timestamp"),
+        old_oid: None,
+        new_oid: None,
     }
 }
 
@@ -218,6 +220,8 @@ fn reftable_reflog_identity_with_digits_in_name_visible_to_git() {
                 identity: identity.to_owned(),
                 message: String::new(),
                 time,
+                old_oid: None,
+                new_oid: None,
             }),
             flags: RefUpdateFlags::default(),
         })
