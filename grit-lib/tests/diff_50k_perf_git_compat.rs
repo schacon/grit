@@ -82,7 +82,6 @@ fn build_fixture(root: &std::path::Path) {
     git(root, &["init", "-q", "-b", "main", "."]);
     git(root, &["config", "user.email", "t@example.com"]);
     git(root, &["config", "user.name", "Test"]);
-    git(root, &["config", "index.threads", "1"]);
 
     let mut script = String::from("import os,random\nrandom.seed(42)\nroot=r'''");
     script.push_str(&root.to_string_lossy());
