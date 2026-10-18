@@ -148,3 +148,36 @@ fn allow_empty_still_stages_tracked_edits_before_commit() -> TestResult {
 
     Ok(())
 }
+
+#[test]
+fn allow_empty_still_stages_modified_tracked_file() -> TestResult {
+    let scratch = Scratch::new("allow-empty-dirty-wt")?;
+    let root = scratch.path();
+    gs(root, ["init"]);
+    fs::write(root.join("tracked.txt"), b"v1\n")?;
+    let first = gs(root, ["commit", "-m", "one"]);
+    assert_eq!(first.status, Some(0), "{}", first.dump());
+
+    fs::write(root.join("tracked.txt"), b"v2\n")?;
+
+    let empty = gs(root, ["commit", "--allow-empty", "-m", "stage-dirty"]);
+    assert_eq!(empty.status, Some(0), "{}", empty.dump());
+    assert!(
+        !empty.stdout.contains("0 change"),
+        "expected staged worktree edit in commit: {}",
+        empty.dump()
+    );
+
+    let status = gs(root, ["status"]);
+    assert_eq!(status.status, Some(0), "{}", status.dump());
+    assert!(
+        !status.stdout.contains("modified:") && !status.stdout.contains("untracked:"),
+        "worktree must be clean after allow-empty with dirty file: {}",
+        status.dump()
+    );
+
+    let on_disk = fs::read_to_string(root.join("tracked.txt"))?;
+    assert_eq!(on_disk, "v2\n");
+
+    Ok(())
+}

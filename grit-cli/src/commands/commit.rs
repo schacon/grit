@@ -5,7 +5,7 @@ use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
 use grit_lib::objects::parse_commit;
 use grit_lib::porcelain::add::stage_for_commit;
-use grit_lib::porcelain::commit::{commit_worktree, index_matches_head_tree, CommitRequest};
+use grit_lib::porcelain::commit::{commit_worktree, CommitRequest};
 use grit_lib::progress::NullProgress;
 use grit_lib::state::{resolve_head, HeadState};
 use schemars::JsonSchema;
@@ -61,11 +61,7 @@ pub fn run(message: Option<String>, amend: bool, allow_empty: bool) -> Result<Co
         HeadState::Invalid => bail!("HEAD is in an unknown state"),
     }
 
-    let skip_staging =
-        allow_empty && index_matches_head_tree(&repo).map_err(|e| anyhow::anyhow!("{e}"))?;
-    if !skip_staging {
-        stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
+    stage_for_commit(&repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if repo.index_handle().load()?.has_unmerged_entries() {
         return Err(map_commit_error(Error::IndexUnmerged));
