@@ -314,9 +314,8 @@ fn worktree_clean_for_switch_paths(
                 && entry_is_racy_with_policy(ie, index_mtime, stat_policy)
         })
     });
-    const SWITCH_STAT_PARALLEL_MIN: usize = 128;
     let mut stat_clean = true;
-    if paths.len() < SWITCH_STAT_PARALLEL_MIN {
+    if paths.len() < SWITCH_TREE_DIFF_STAT_SKIP_MIN {
         for path in paths {
             let Some(ie) = index.get(path.as_bytes(), 0) else {
                 continue;
@@ -344,7 +343,7 @@ fn worktree_clean_for_switch_paths(
                 break;
             }
         }
-    } else {
+    } else if paths.len() >= SWITCH_TREE_DIFF_STAT_SKIP_MIN {
         let blob_dirs = group_blob_entries_by_dir_for_paths(index, paths);
         if blob_dirs.is_empty() {
             return Ok(true);
@@ -683,7 +682,38 @@ pub(crate) fn untracked_scan_pathspecs_for_deletes(tree_changes: &[DiffEntry]) -
     specs.into_iter().collect()
 }
 
+/// Exact added paths (and ancestor directories) for untracked overwrite checks during fast wholesale scan.
+///
+/// Top-level pathspec roots would walk entire trees under each root; this list stays proportional to
+/// the number of added paths in the tree diff.
+#[must_use]
+pub(crate) fn untracked_scan_paths_for_added_tree_changes(
+    tree_changes: &[DiffEntry],
+) -> Vec<String> {
+    let mut specs = BTreeSet::new();
+    for change in tree_changes {
+        if change.status != DiffStatus::Added {
+            continue;
+        }
+        let Some(added) = &change.new_path else {
+            continue;
+        };
+        let trimmed = added.trim_end_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+        specs.insert(trimmed.to_owned());
+        let mut rest = trimmed;
+        while let Some((prefix, _)) = rest.rsplit_once('/') {
+            specs.insert(prefix.to_owned());
+            rest = prefix;
+        }
+    }
+    specs.into_iter().collect()
+}
+
 const WHOLESALE_FAST_UNTRACKED_SCAN_MIN: usize = 32;
+const SWITCH_TREE_DIFF_STAT_SKIP_MIN: usize = 128;
 
 fn delete_paths_from_tree_changes(tree_changes: &[DiffEntry]) -> HashSet<String> {
     tree_changes
@@ -1136,7 +1166,7 @@ pub(crate) fn collect_untracked_and_wholesale_trust_for_tree_changes(
         ignored.extend(i);
     }
     let scan_specs: Vec<String> = if use_fast_wholesale_scan {
-        added_specs
+        untracked_scan_paths_for_added_tree_changes(tree_changes)
             .into_iter()
             .filter(|spec| work_tree.join(spec).exists())
             .collect()
@@ -1475,6 +1505,21 @@ mod tests {
         let specs = super::untracked_scan_pathspecs_for_tree_changes(&changes);
         assert!(specs.contains(&"dir".to_owned()));
         assert!(!specs.contains(&"dir/sub/new.txt".to_owned()));
+        assert!(specs.contains(&"top".to_owned()));
+        assert!(!specs.contains(&"tracked.txt".to_owned()));
+    }
+
+    #[test]
+    fn untracked_scan_paths_for_added_include_path_and_ancestors() {
+        let changes = vec![
+            added_entry("dir/sub/new.txt"),
+            modified_entry("tracked.txt"),
+            added_entry("top"),
+        ];
+        let specs = super::untracked_scan_paths_for_added_tree_changes(&changes);
+        assert!(specs.contains(&"dir/sub/new.txt".to_owned()));
+        assert!(specs.contains(&"dir/sub".to_owned()));
+        assert!(specs.contains(&"dir".to_owned()));
         assert!(specs.contains(&"top".to_owned()));
         assert!(!specs.contains(&"tracked.txt".to_owned()));
     }
@@ -2058,6 +2103,193 @@ mod tests {
         assert!(
             calls <= 8,
             "delete-only paths with matching index should not stat every file (probes {calls})"
+        );
+    }
+
+    #[test]
+    fn switch_large_tree_diff_refuses_dirty_modified_path() {
+        use crate::objects::{serialize_commit, CommitData, ObjectKind};
+        use crate::porcelain::switch::{switch_repository, SwitchMode, SwitchOptions};
+        use crate::refs;
+        use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
+        use std::thread;
+        use std::time::Duration;
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repository(root, false, "main", None, crate::RefStorageFormat::Files)
+            .expect("init");
+        const FILE_COUNT: usize = 160;
+        const MODIFY_COUNT: usize = 140;
+        const DIRTY_REL: &str = "bulk/d000/f.txt";
+        for i in 0..FILE_COUNT {
+            let dir = format!("bulk/d{i:03}");
+            std::fs::create_dir_all(root.join(&dir)).expect("mkdir");
+            std::fs::write(root.join(&dir).join("f.txt"), format!("body {i}\n")).expect("write");
+        }
+        let mut index = repo.load_index().expect("index");
+        for i in 0..FILE_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            let abs = root.join(&rel);
+            let data = std::fs::read(&abs).expect("read");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
+            let entry = crate::index::entry_from_stat(
+                &abs,
+                rel.as_bytes(),
+                oid,
+                crate::index::MODE_REGULAR,
+            )
+            .expect("entry");
+            index.add_or_replace(entry);
+        }
+        index.sort();
+        let head_tree =
+            write_tree_update_index(&repo.odb(), &mut index, "", WriteTreeFlags::silent())
+                .expect("head tree");
+        repo.write_index(&mut index).expect("write index");
+        let head_commit = CommitData {
+            tree: head_tree,
+            parents: vec![],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "head\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let head_co = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&head_commit))
+            .expect("commit");
+        refs::write_ref(&repo.git_dir(), "refs/heads/main", &head_co).expect("main");
+        refs::write_symbolic_ref(&repo.git_dir(), "HEAD", "refs/heads/main").expect("head");
+
+        let mut target_index = index.clone();
+        for i in 0..MODIFY_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            let abs = root.join(&rel);
+            std::fs::write(&abs, format!("changed {i}\n")).expect("write touched");
+            let data = std::fs::read(&abs).expect("read touched");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
+            let entry = crate::index::entry_from_stat(
+                &abs,
+                rel.as_bytes(),
+                oid,
+                crate::index::MODE_REGULAR,
+            )
+            .expect("entry");
+            target_index.add_or_replace(entry);
+        }
+        target_index.sort();
+        let target_tree =
+            write_tree_update_index(&repo.odb(), &mut target_index, "", WriteTreeFlags::silent())
+                .expect("target tree");
+        let target_commit = CommitData {
+            tree: target_tree,
+            parents: vec![head_co],
+            author: "T <t@t> 0 +0000".into(),
+            committer: "T <t@t> 0 +0000".into(),
+            author_raw: vec![],
+            committer_raw: vec![],
+            encoding: None,
+            message: "target\n".into(),
+            raw_message: None,
+            extra_headers: Vec::new(),
+        };
+        let target_co = repo
+            .odb()
+            .write(ObjectKind::Commit, &serialize_commit(&target_commit))
+            .expect("target commit");
+        refs::write_ref(&repo.git_dir(), "refs/heads/target", &target_co).expect("target");
+
+        for i in 0..FILE_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            std::fs::write(root.join(&rel), format!("body {i}\n")).expect("restore worktree");
+        }
+        let mut index_on_main = repo.load_index().expect("index on main");
+        for i in 0..FILE_COUNT {
+            let rel = format!("bulk/d{i:03}/f.txt");
+            let abs = root.join(&rel);
+            let data = std::fs::read(&abs).expect("read");
+            let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
+            let entry = crate::index::entry_from_stat(
+                &abs,
+                rel.as_bytes(),
+                oid,
+                crate::index::MODE_REGULAR,
+            )
+            .expect("entry");
+            index_on_main.add_or_replace(entry);
+        }
+        index_on_main.sort();
+        repo.write_index(&mut index_on_main)
+            .expect("sync index to main worktree");
+
+        thread::sleep(Duration::from_secs(2));
+        repo.write_index(&mut index_on_main)
+            .expect("advance index mtime past entry mtimes");
+
+        let dirty_bytes = b"unsaved edit after non-racy index\n";
+        std::fs::write(root.join(DIRTY_REL), dirty_bytes).expect("dirty write");
+        let index_path = repo.index_path_for_env().expect("index path");
+        let index_probe = repo.load_index().expect("probe index");
+        let index_mtime = crate::diff::index_mtime_for_diff(
+            &index_probe,
+            crate::index::index_file_mtime(&index_path),
+        );
+        let ie = index_probe.get(DIRTY_REL.as_bytes(), 0).expect("dirty ie");
+        assert!(
+            !crate::diff::entry_is_racy_with_policy(
+                ie,
+                index_mtime,
+                crate::index::StatMatchPolicy::default(),
+            ),
+            "fixture must use non-racy index entry with stale content"
+        );
+
+        let tree_changes =
+            diff_trees(repo.odb(), Some(&head_tree), Some(&target_tree), "").expect("diff");
+        assert!(
+            tree_changes.len() >= MODIFY_COUNT,
+            "expected large modified tree diff, got {}",
+            tree_changes.len()
+        );
+
+        let mut index_for_diff = repo.load_index().expect("index for diff");
+        let (_, unstaged, _) = local_change_diffs_for_tree_changes(
+            &repo,
+            &mut index_for_diff,
+            Some(head_tree),
+            &tree_changes,
+            None,
+        )
+        .expect("local diffs");
+        assert!(
+            unstaged
+                .iter()
+                .any(|e| e.old_path.as_deref() == Some(DIRTY_REL)),
+            "expected unstaged dirty {DIRTY_REL}, got {unstaged:?}"
+        );
+
+        let switch_err = switch_repository(
+            &repo,
+            &SwitchOptions {
+                mode: SwitchMode::Existing {
+                    branch: "target".into(),
+                    oid: target_co,
+                },
+            },
+        );
+        assert!(
+            switch_err.is_err(),
+            "grit must refuse switch with local edits across a large tree diff"
+        );
+        assert_eq!(
+            std::fs::read(root.join(DIRTY_REL)).expect("read dirty"),
+            dirty_bytes,
+            "worktree edit must survive refused switch"
         );
     }
 
