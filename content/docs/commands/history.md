@@ -181,7 +181,7 @@ On replay conflicts, stdout is a single JSON object (exit code 1) with `error`, 
 
 Schema: [v1](/schemas/history.reword/v1.json)
 
-Pass [`--markdown`](../global-options/) for a `History reword` heading, rewritten commits, ref updates, and optional `HEAD` movement.
+Pass [`--markdown`](../global-options/) for a heading such as `History squash` or `History reword` (matching `operation`), plus rewritten commits, ref updates, and optional `HEAD` movement.
 
 ## See also
 

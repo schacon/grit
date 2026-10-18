@@ -203,9 +203,23 @@ impl HumanRender for HistoryRewordOutcome {
     }
 }
 
+fn history_rewrite_markdown_title(operation: &str) -> &'static str {
+    match operation {
+        "drop" => "History drop",
+        "fixup" => "History fixup",
+        "squash" => "History squash",
+        "reword" => "History reword",
+        _ => "History rewrite",
+    }
+}
+
 impl MarkdownRender for HistoryRewordOutcome {
     fn render_markdown(&self, w: &mut dyn Write, _ctx: &RenderContext) -> Result<()> {
-        markdown::print_history_rewrite_outcome(w, "History reword", self)?;
+        markdown::print_history_rewrite_outcome(
+            w,
+            history_rewrite_markdown_title(&self.operation),
+            self,
+        )?;
         Ok(())
     }
 }
