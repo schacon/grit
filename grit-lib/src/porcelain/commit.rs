@@ -20,7 +20,7 @@ use crate::signing::{
 use crate::state::{finish_merge_state, read_merge_heads, resolve_head, HeadState};
 use crate::worktree_rules::WorktreeRules;
 use crate::write_tree::{
-    cache_tree_fully_valid, is_empty_tree_oid, write_tree_update_index, WriteTreeFlags,
+    cache_tree_extension_valid, is_empty_tree_oid, write_tree_update_index, WriteTreeFlags,
 };
 use std::fs;
 use std::path::Path;
@@ -110,6 +110,22 @@ pub fn commit_worktree(
     progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
     let mut index = repo.load_index()?;
+    if req.allow_empty && req.assume_worktree_synced && req.skip_pre_commit_tree_match {
+        if let HeadState::Branch {
+            oid: Some(parent_oid),
+            ..
+        } = resolve_head(repo.git_dir())?
+        {
+            let parent_tree = commit_tree_oid(repo, &parent_oid)?;
+            if index.cache_tree_root == Some(parent_tree)
+                && cache_tree_extension_valid(index.cache_tree.as_ref())
+            {
+                let mut req = req.clone();
+                req.staged_change_count = Some(0);
+                return create_commit_with_index(repo, &mut index, &req, progress);
+            }
+        }
+    }
     let staged = crate::porcelain::add::stage_for_commit_on_index(repo, &mut index, progress)?;
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
@@ -119,6 +135,10 @@ pub fn commit_worktree(
         req.staged_change_count = Some(staged.total());
     }
     create_commit_with_index(repo, &mut index, &req, progress)
+}
+
+fn skip_redundant_index_persist(req: &CommitRequest) -> bool {
+    req.assume_worktree_synced && req.staged_change_count == Some(0) && !req.amend
 }
 
 fn create_commit_with_index(
@@ -191,7 +211,9 @@ fn create_commit_with_index(
         }
     }
 
-    repo.write_index(index)?;
+    if !skip_redundant_index_persist(req) {
+        repo.write_index(index)?;
+    }
 
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
@@ -309,7 +331,9 @@ fn create_commit_with_index(
             )?;
         }
     }
-    repo.write_index(index)?;
+    if !skip_redundant_index_persist(req) {
+        repo.write_index(index)?;
+    }
 
     let changes = if parent_tree.as_ref() == Some(&tree) {
         0
@@ -405,7 +429,7 @@ fn index_staged_tree_matches(
     tree_oid: &ObjectId,
 ) -> bool {
     if index.cache_tree_root == Some(*tree_oid)
-        && cache_tree_fully_valid(odb, index.cache_tree.as_ref())
+        && cache_tree_extension_valid(index.cache_tree.as_ref())
     {
         return true;
     }

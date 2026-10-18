@@ -158,7 +158,7 @@ pub fn write_tree_update_index(
     ensure_empty_blob_for_intent_to_add(odb, index)?;
 
     let was_valid =
-        !flags.ignore_cache_tree && cache_tree_fully_valid(odb, index.cache_tree.as_ref());
+        !flags.ignore_cache_tree && cache_tree_extension_valid(index.cache_tree.as_ref());
 
     if !was_valid {
         cache_tree_update(odb, index, flags)?;

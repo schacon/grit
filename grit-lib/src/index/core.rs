@@ -2345,14 +2345,6 @@ impl Index {
             return;
         }
         const BULK_MERGE_MIN: usize = 64;
-        if replacements.len() >= BULK_MERGE_MIN || self.defer_untracked_cache_invalidation {
-            self.drop_derived_index_extensions();
-            let kept = std::mem::take(&mut self.entries);
-            self.entries = merge_sorted_index_entries(kept, replacements);
-            self.entries_sorted = true;
-            self.touch_fsmonitor_after_entry_change();
-            return;
-        }
         let repl_for_inval: Vec<Vec<u8>> = replacements
             .iter()
             .filter(|e| e.stage() == 0)
@@ -2361,6 +2353,22 @@ impl Index {
         let kept = std::mem::take(&mut self.entries);
         self.entries = merge_sorted_index_entries(kept, replacements);
         self.entries_sorted = true;
+        if self.defer_untracked_cache_invalidation {
+            // Campaign-scale tracked restage: merge in bulk but keep UNTR and invalidate only
+            // touched cache-tree paths (issue #1184).
+            for path in &repl_for_inval {
+                self.invalidate_cache_tree_for_path(path);
+            }
+            self.touch_fsmonitor_after_entry_change();
+            return;
+        }
+        if repl_for_inval.len() >= BULK_MERGE_MIN {
+            self.cache_tree = None;
+            self.cache_tree_root = None;
+            self.untracked_cache = None;
+            self.touch_fsmonitor_after_entry_change();
+            return;
+        }
         for path in repl_for_inval {
             if let Ok(p) = std::str::from_utf8(&path) {
                 self.invalidate_untracked_cache_for_path(p);
