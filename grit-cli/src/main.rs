@@ -1553,9 +1553,22 @@ mod tests {
     }
 
     fn h2_headings(body: &str) -> Vec<String> {
-        body.lines()
-            .filter_map(|line| line.strip_prefix("## ").map(str::trim).map(String::from))
-            .collect()
+        let mut headings = Vec::new();
+        let mut in_fenced_block = false;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                in_fenced_block = !in_fenced_block;
+                continue;
+            }
+            if in_fenced_block {
+                continue;
+            }
+            if let Some(heading) = line.strip_prefix("## ") {
+                headings.push(heading.trim().to_owned());
+            }
+        }
+        headings
     }
 
     fn section_body(body: &str, heading: &str) -> Option<String> {
@@ -1738,6 +1751,32 @@ mod tests {
                 .iter()
                 .any(|p| p.contains("unexpected ## Markdown output")),
             "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn h2_headings_ignores_headings_inside_fenced_blocks() {
+        let body = r##"## Synopsis
+
+## Markdown output
+
+Example:
+
+```markdown
+## Garbage collection
+
+### Tasks
+```
+
+## See also
+"##;
+        assert_eq!(
+            h2_headings(body),
+            vec![
+                "Synopsis".to_owned(),
+                "Markdown output".to_owned(),
+                "See also".to_owned(),
+            ]
         );
     }
 
