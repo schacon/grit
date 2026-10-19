@@ -10321,6 +10321,8 @@ pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::patch_id(&self, &grit_lib::objects::ObjectId, grit_lib::diff::patch_ids::PatchIdMode) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
 pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> bool
+pub fn grit_lib::repo::Repository::pathspec_argv_prefix<'a>(&'a self, &str) -> core::option::Option<&'a str>
+pub fn grit_lib::repo::Repository::pathspec_cwd_prefix(&self) -> core::option::Option<&str>
 pub fn grit_lib::repo::Repository::reference_unix_time(&self) -> i64
 pub fn grit_lib::repo::Repository::references(&self) -> grit_lib::refs::handle::References<'_>
 pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::RepositoryReflogs<'_>
@@ -10328,6 +10330,7 @@ pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::Re
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
 pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
+pub fn grit_lib::repo::Repository::resolve_rev_walk_pathspecs(&self, &[alloc::string::String]) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
@@ -13534,6 +13537,8 @@ pub fn grit_lib::repo::Repository::odb(&self) -> &grit_lib::objects::odb::Odb
 pub fn grit_lib::repo::Repository::open(&std::path::Path, &grit_lib::config::environment::RepositoryOptions) -> grit_lib::error::Result<Self>
 pub fn grit_lib::repo::Repository::patch_id(&self, &grit_lib::objects::ObjectId, grit_lib::diff::patch_ids::PatchIdMode) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
 pub fn grit_lib::repo::Repository::paths_match_pathspecs(&self, &str, &[alloc::string::String]) -> bool
+pub fn grit_lib::repo::Repository::pathspec_argv_prefix<'a>(&'a self, &str) -> core::option::Option<&'a str>
+pub fn grit_lib::repo::Repository::pathspec_cwd_prefix(&self) -> core::option::Option<&str>
 pub fn grit_lib::repo::Repository::reference_unix_time(&self) -> i64
 pub fn grit_lib::repo::Repository::references(&self) -> grit_lib::refs::handle::References<'_>
 pub fn grit_lib::repo::Repository::reflogs(&self) -> grit_lib::repo_handles::RepositoryReflogs<'_>
@@ -13541,6 +13546,7 @@ pub fn grit_lib::repo::Repository::refs(&self) -> &dyn grit_lib::refs::store::Re
 pub fn grit_lib::repo::Repository::reload_config(&self) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo::Repository::remotes(&self) -> grit_lib::repo_handles::RepositoryRemotes<'_>
 pub fn grit_lib::repo::Repository::repack(&self, &grit_lib::maintenance::RepackOptions) -> grit_lib::error::Result<grit_lib::maintenance::RepackReport>
+pub fn grit_lib::repo::Repository::resolve_rev_walk_pathspecs(&self, &[alloc::string::String]) -> grit_lib::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub fn grit_lib::repo::Repository::rev_walk(&self) -> grit_lib::revwalk::handle::RevWalk<'_>
 pub fn grit_lib::repo::Repository::set_diagnostics(&mut self, grit_lib::diagnostics::DiagnosticsHandle)
 pub fn grit_lib::repo::Repository::set_network_trace(&mut self, bool)
@@ -15086,6 +15092,7 @@ pub grit_lib::revwalk::rev_list::RevListOptions::output_mode: grit_lib::revwalk:
 pub grit_lib::revwalk::rev_list::RevListOptions::parent_rewrite: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::path_graph_reorder: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::paths: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::revwalk::rev_list::RevListOptions::paths_resolved_from_argv: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::preserve_simplify_merges_graph_merges: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::quiet: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::reverse: bool
