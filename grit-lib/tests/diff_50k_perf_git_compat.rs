@@ -1,6 +1,9 @@
-//! Issue #1185: warm `grit diff` on a 50k-file clean tree should stay within ~3× of `git diff`.
+//! Issue #1185: warm `grit diff` on a 50k-file tree should stay within ~3× of `git diff`.
 //!
-//! Run with `GRIT_DIFF_PERF=1 cargo test -p grit-lib --test diff_50k_perf_git_compat --release`.
+//! Fixture matches dogfood #1184/#1185: depth 3..8, fanout 0..6 per level, 50_000 files.
+//!
+//! Build the CLI first, then run:
+//! `cargo build --release -p grit-cli && GRIT_DIFF_PERF=1 cargo test -p grit-lib --test diff_50k_perf_git_compat --release`
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -14,20 +17,38 @@ const WARM_RUNS: usize = 5;
 const MAX_GIT_RATIO: f64 = 3.0;
 
 fn grit_binary() -> std::path::PathBuf {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest.parent().expect("workspace root");
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_grit") {
-        let path = std::path::PathBuf::from(&p);
-        if path.is_absolute() {
+    if let Ok(p) = std::env::var("GRIT_BIN") {
+        let path = std::path::PathBuf::from(p);
+        if path.is_file() {
             return path;
         }
-        let from_workspace = workspace.join(&p);
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().expect("workspace root");
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| workspace.join("target"));
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_grit") {
+        let path = std::path::PathBuf::from(&p);
+        if path.is_absolute() && path.is_file() {
+            return path;
+        }
+        let from_workspace = workspace.join(&path);
         if from_workspace.is_file() {
             return from_workspace;
         }
-        return path;
+        let from_target = target_dir.join("release/grit");
+        if from_target.is_file() {
+            return from_target;
+        }
     }
-    workspace.join("target/release/grit")
+    let release = target_dir.join("release/grit");
+    assert!(
+        release.is_file(),
+        "grit binary not found at {} — run `cargo build --release -p grit-cli` or set GRIT_BIN",
+        release.display()
+    );
+    release
 }
 
 fn median(mut samples: Vec<Duration>) -> Duration {
@@ -87,7 +108,7 @@ fn build_fixture(root: &std::path::Path) {
     script.push_str(&root.to_string_lossy());
     script.push_str("'''\n");
     script.push_str(&format!(
-        "for i in range({FILE_COUNT}):\n d=random.randint(1,10)\n p='/'.join([f'd{{random.randint(0,879)}}' for _ in range(d)])+f'/f{{i}}.txt'\n path=os.path.join(root,p); os.makedirs(os.path.dirname(path),exist_ok=True); open(path,'w').write(f'content {{i}}\\n'*3)\n"
+        "for i in range({FILE_COUNT}):\n depth=random.randint(3,8)\n p='/'.join([f'd{{random.randint(0,6)}}' for _ in range(depth)])+f'/f{{i}}.txt'\n path=os.path.join(root,p); os.makedirs(os.path.dirname(path),exist_ok=True); open(path,'w').write(f'content {{i}}\\n'*3)\n"
     ));
     std::process::Command::new("python3")
         .arg("-c")
@@ -247,10 +268,13 @@ fn diff_50k_mtime_touch_within_three_times_git() {
     touch_mtimes_only(root, 101);
     assert_diff_parity(root, &grit, "mtime-only touch");
 
-    assert_diff_parity(root, &grit, "mtime-only touch after utime");
-    let (git_med, grit_med) = time_diff(root, &grit, 2);
-    let ratio = grit_med.as_secs_f64() / git_med.as_secs_f64().max(1e-9);
-    eprintln!("mtime-only touch (timing informational): git {git_med:?}, grit {grit_med:?}, ratio {ratio:.2}×");
+    for _ in 0..2 {
+        let _ = time_diff(root, &grit, 1);
+    }
+    assert_diff_parity(root, &grit, "mtime-only touch before timing");
+    let (git_med, grit_med) = time_diff(root, &grit, WARM_RUNS);
+    assert_diff_parity(root, &grit, "mtime-only touch after timing");
+    assert_ratio("mtime-only touch", git_med, grit_med);
 }
 
 #[test]
