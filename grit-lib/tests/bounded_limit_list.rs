@@ -221,6 +221,7 @@ fn large_max_count_without_paths_matches_git() {
     assert!(!result.commits.is_empty());
 }
 
+#[test]
 fn bounded_path_limit_extreme_max_count_does_not_panic() {
     let repo = support::HistoryRepo::init();
     let wt = repo.worktree();
