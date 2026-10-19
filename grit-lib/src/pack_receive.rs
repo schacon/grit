@@ -411,10 +411,41 @@ fn read_sideband_pack_tail_read_exact_loop(
     Ok(())
 }
 
+/// Removes the spool path on drop unless [`Self::disarm`] ran (ownership handed off).
+struct SpoolFileGuard {
+    path: PathBuf,
+    delete_on_drop: bool,
+}
+
+impl SpoolFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            delete_on_drop: true,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn disarm(&mut self) {
+        self.delete_on_drop = false;
+    }
+}
+
+impl Drop for SpoolFileGuard {
+    fn drop(&mut self) {
+        if self.delete_on_drop {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// A temp pack file (system temp dir) for streaming clone/fetch receive.
 pub struct TempPackReceive {
     file: BufWriter<File>,
-    path: PathBuf,
+    spool: SpoolFileGuard,
     seen_pack: bool,
     sideband_payload: Vec<u8>,
 }
@@ -422,7 +453,75 @@ pub struct TempPackReceive {
 fn pack_receive_spool_dir(_objects_dir: &Path) -> PathBuf {
     // Keep partial packs out of `.git/objects/pack/` so real-time AV has a shorter
     // window to quarantine in-progress clone receives (#1194).
+    #[cfg(test)]
+    if let Some(dir) = test_pack_spool_dir_override() {
+        return dir;
+    }
+    if let Ok(dir) = std::env::var("GRIT_PACK_RECEIVE_SPOOL_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     std::env::temp_dir()
+}
+
+#[cfg(test)]
+mod pack_receive_test_support {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+
+    thread_local! {
+        static TEST_PACK_SPOOL_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn spool_dir_override() -> Option<PathBuf> {
+        TEST_PACK_SPOOL_DIR.with(|slot| slot.borrow().clone())
+    }
+
+    pub struct TestPackSpoolDirGuard;
+
+    impl TestPackSpoolDirGuard {
+        pub fn set(dir: PathBuf) -> Self {
+            TEST_PACK_SPOOL_DIR.with(|slot| *slot.borrow_mut() = Some(dir));
+            Self
+        }
+    }
+
+    impl Drop for TestPackSpoolDirGuard {
+        fn drop(&mut self) {
+            TEST_PACK_SPOOL_DIR.with(|slot| slot.borrow_mut().take());
+        }
+    }
+}
+
+#[cfg(test)]
+use pack_receive_test_support::TestPackSpoolDirGuard;
+
+#[cfg(test)]
+fn test_pack_spool_dir_override() -> Option<PathBuf> {
+    pack_receive_test_support::spool_dir_override()
+}
+
+fn create_private_spool_file(path: &Path) -> Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(Error::Io)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(Error::Io)
+    }
 }
 
 fn assert_received_pack_durable(path: &Path, expected_len: u64) -> Result<()> {
@@ -441,8 +540,14 @@ fn assert_received_pack_durable(path: &Path, expected_len: u64) -> Result<()> {
                 path: path.to_path_buf(),
             });
         }
-        if meta.len() != expected_len && attempt + 1 < MAX_ATTEMPTS {
-            continue;
+        if meta.len() != expected_len {
+            if attempt + 1 < MAX_ATTEMPTS {
+                continue;
+            }
+            return Err(Error::CorruptObject(format!(
+                "received pack size mismatch: expected {expected_len}, got {}",
+                meta.len()
+            )));
         }
         let mut header = [0u8; 4];
         let mut f = match File::open(path) {
@@ -483,17 +588,17 @@ impl TempPackReceive {
         for _ in 0..64 {
             let seq = SEQ.fetch_add(1, Ordering::Relaxed);
             let path = spool_dir.join(format!("grit_tmp_pack_{}_{seq}", std::process::id()));
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            match create_private_spool_file(&path) {
                 Ok(file) => {
                     return Ok(Self {
                         file: BufWriter::with_capacity(4 * 1024 * 1024, file),
-                        path,
+                        spool: SpoolFileGuard::new(path),
                         seen_pack: false,
                         sideband_payload: Vec::with_capacity(65520),
                     });
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(Error::Io(e)),
+                Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
             }
         }
         Err(Error::Io(io::Error::new(
@@ -547,19 +652,19 @@ impl TempPackReceive {
         let len = self.file.get_ref().metadata().map_err(Error::Io)?.len();
         if !self.seen_pack || len == 0 {
             drop(self.file);
-            let _ = std::fs::remove_file(&self.path);
             return Ok(None);
         }
-        let path = self.path.clone();
+        let path = self.spool.path().to_path_buf();
         drop(self.file);
         assert_received_pack_durable(&path, len)?;
+        self.spool.disarm();
         Ok(Some(path))
     }
 
     /// Path to the temp file (for debugging and install).
     #[must_use]
     pub fn path(&self) -> &Path {
-        &self.path
+        self.spool.path()
     }
 }
 
@@ -855,6 +960,70 @@ mod tests {
             !path.starts_with(objects.join("pack")),
             "temp pack must not live under objects/pack during receive"
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn temp_pack_drop_after_partial_receive_removes_spool() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool_dir = dir.path().join("spool");
+        std::fs::create_dir_all(&spool_dir).expect("spool dir");
+        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
+        let objects = dir.path().join("objects");
+        let mut recv = TempPackReceive::create(&objects).expect("create");
+        let path = recv.path().to_path_buf();
+        use std::io::Write;
+        recv.write_all(b"PACKpartial").expect("write");
+        recv.flush().expect("flush");
+        assert!(path.is_file());
+        drop(recv);
+        assert!(
+            !path.exists(),
+            "partial spool must be removed when TempPackReceive drops without finish"
+        );
+    }
+
+    #[test]
+    fn temp_pack_drop_after_sideband_error_removes_spool() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool_dir = dir.path().join("spool");
+        std::fs::create_dir_all(&spool_dir).expect("spool dir");
+        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
+        let objects = dir.path().join("objects");
+        let mut recv = TempPackReceive::create(&objects).expect("create");
+        let path = recv.path().to_path_buf();
+        let mut stream = sideband_pkt(1, b"PACKaaaa");
+        stream.extend_from_slice(&sideband_pkt(3, b"network interrupted"));
+        let mut rec = ReceiveRecorder::default();
+        let err = recv
+            .read_sideband(&mut Cursor::new(stream), &mut rec)
+            .expect_err("remote side-band error");
+        assert!(matches!(err, Error::Message(_)));
+        drop(recv);
+        assert!(
+            !path.exists(),
+            "spool must be removed after failed read_sideband"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_pack_spool_file_is_private_to_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let spool_dir = dir.path().join("spool");
+        std::fs::create_dir_all(&spool_dir).expect("spool dir");
+        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
+        let objects = dir.path().join("objects");
+        let recv = TempPackReceive::create(&objects).expect("create");
+        let mode = std::fs::metadata(recv.path())
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "spool file must not be world-readable");
+        let path = recv.path().to_path_buf();
+        drop(recv);
         let _ = std::fs::remove_file(path);
     }
 

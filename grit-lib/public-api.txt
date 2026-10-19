@@ -3515,6 +3515,8 @@ pub grit_lib::error::Error::ReflogIndexOutOfRange::index: usize
 pub grit_lib::error::Error::ReflogIndexOutOfRange::refname: alloc::string::String
 pub grit_lib::error::Error::ReflogUnknownRef
 pub grit_lib::error::Error::ReflogUnknownRef::refname: alloc::string::String
+pub grit_lib::error::Error::ReceivedPackTempMissing
+pub grit_lib::error::Error::ReceivedPackTempMissing::path: std::path::PathBuf
 pub grit_lib::error::Error::RemoteReadFailed
 pub grit_lib::error::Error::ReplaySourceAtHead
 pub grit_lib::error::Error::RevList(grit_lib::revwalk::rev_list_error::RevListError)
@@ -9482,6 +9484,8 @@ pub grit_lib::prelude::Error::ReflogIndexOutOfRange::index: usize
 pub grit_lib::prelude::Error::ReflogIndexOutOfRange::refname: alloc::string::String
 pub grit_lib::prelude::Error::ReflogUnknownRef
 pub grit_lib::prelude::Error::ReflogUnknownRef::refname: alloc::string::String
+pub grit_lib::prelude::Error::ReceivedPackTempMissing
+pub grit_lib::prelude::Error::ReceivedPackTempMissing::path: std::path::PathBuf
 pub grit_lib::prelude::Error::RemoteReadFailed
 pub grit_lib::prelude::Error::ReplaySourceAtHead
 pub grit_lib::prelude::Error::RevList(grit_lib::revwalk::rev_list_error::RevListError)

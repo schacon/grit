@@ -1574,6 +1574,9 @@ fn http_fetch_rss_child_process() {
     std::fs::create_dir_all(&work).expect("work dir");
     git(&work, &["init", "-q", "-b", "main", "."]);
     let git_dir = work.join(".git");
+    if let Ok(spool) = std::env::var("GRIT_PACK_RECEIVE_SPOOL_DIR") {
+        std::fs::create_dir_all(&spool).expect("GRIT_PACK_RECEIVE_SPOOL_DIR");
+    }
     let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         initial_remote_fetch: true,
@@ -1666,6 +1669,8 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
 
     let url = format!("http://127.0.0.1:{port}/repo.git");
     let work = tmp.path().join("fetch-work");
+    let spool_dir = tmp.path().join("pack_spool");
+    std::fs::create_dir_all(&spool_dir).expect("pack spool dir");
     let measure_cmd = format!(
         "{} http_fetch_rss_child_process --ignored --exact --nocapture",
         test_exe.display()
@@ -1678,6 +1683,7 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
         .env("GRIT_HTTP_RSS_URL", &url)
         .env("GRIT_HTTP_RSS_WORK", "fetch-work")
         .env("GRIT_HTTP_RSS_INDEX_THREADS", "1")
+        .env("GRIT_PACK_RECEIVE_SPOOL_DIR", &spool_dir)
         .output()
         .expect("measure-rss");
     assert!(
@@ -1695,22 +1701,22 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
     );
     let git_dir = work.join(".git");
     assert!(git_dir.is_dir(), "fetch must create a git dir");
-    let spool_dir = std::env::temp_dir();
-    let spooled = std::fs::read_dir(&spool_dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|e| {
+    let spooled: Vec<_> = std::fs::read_dir(&spool_dir)
+        .expect("pack spool dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
             e.path()
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("grit_tmp_pack_"))
-        });
-    assert!(
-        spooled,
-        "pack_spool_only fetch must leave a grit_tmp_pack spool file in the system temp dir"
+        })
+        .collect();
+    assert_eq!(
+        spooled.len(),
+        1,
+        "pack_spool_only fetch must leave exactly one grit_tmp_pack spool file"
     );
+    let _ = std::fs::remove_file(spooled[0].path());
 }
 
 /// `git http-backend` behind the grit-bench CGI wrapper (not grit-http-server).
