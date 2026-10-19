@@ -269,14 +269,17 @@ fn abbrev_index_pair(
 #[allow(clippy::too_many_arguments)]
 fn write_parsed_commit_log_patch<W: Write>(
     out: &mut W,
-    repo: &Repository,
-    odb: &Odb,
-    oid: &ObjectId,
-    commit: &CommitData,
-    parent_tree: Option<ObjectId>,
-    opts: &LogPatchOptions,
-    abbrev_cache: &mut OidAbbrevCache,
+    ctx: &mut ParsedCommitLogPatch<'_>,
 ) -> Result<()> {
+    let ParsedCommitLogPatch {
+        repo,
+        odb,
+        oid,
+        commit,
+        parent_tree,
+        opts,
+        abbrev_cache,
+    } = ctx;
     match opts.commit_header {
         LogPatchCommitHeader::Full => {
             writeln!(out, "commit {oid}")?;
@@ -423,6 +426,17 @@ pub fn write_diff_entry_log_patch<W: Write>(
 fn write_diff_entry_log_patch_with_tree<W: Write>(
     out: &mut W,
     repo: &Repository,
+    odb: &Odb,
+    entry: &DiffEntry,
+    opts: &LogPatchOptions,
+) -> Result<()> {
+    let mut abbrev_cache = OidAbbrevCache::new(opts.abbrev_len);
+    write_diff_entry_log_patch_with_cache(out, _repo, odb, entry, opts, &mut abbrev_cache)
+}
+
+fn write_diff_entry_log_patch_with_cache<W: Write>(
+    out: &mut W,
+    _repo: &Repository,
     odb: &Odb,
     entry: &DiffEntry,
     opts: &LogPatchOptions,
