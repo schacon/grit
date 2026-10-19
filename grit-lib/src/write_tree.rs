@@ -98,21 +98,23 @@ pub fn cache_tree_extension_valid(node: Option<&CacheTreeNode>) -> bool {
 /// Returns whether every node in `node` is valid and its tree object exists in `odb`.
 #[must_use]
 pub fn cache_tree_fully_valid(odb: &Odb, node: Option<&CacheTreeNode>) -> bool {
-    let Some(it) = node else {
+    let Some(root) = node else {
         return false;
     };
-    if !cache_tree_extension_valid(Some(it)) {
+    if !cache_tree_extension_valid(Some(root)) {
         return false;
     }
-    let Some(oid) = it.oid else {
-        return false;
-    };
-    if !odb.exists(&oid) {
-        return false;
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        let Some(oid) = n.oid else {
+            return false;
+        };
+        if !odb.exists_local(&oid) {
+            return false;
+        }
+        stack.extend(&n.children);
     }
-    it.children
-        .iter()
-        .all(|child| cache_tree_fully_valid(odb, Some(child)))
+    true
 }
 
 /// Update the index cache-tree extension and write any missing tree objects.
@@ -158,7 +160,7 @@ pub fn write_tree_update_index(
     ensure_empty_blob_for_intent_to_add(odb, index)?;
 
     let was_valid =
-        !flags.ignore_cache_tree && cache_tree_extension_valid(index.cache_tree.as_ref());
+        !flags.ignore_cache_tree && cache_tree_fully_valid(odb, index.cache_tree.as_ref());
 
     if !was_valid {
         cache_tree_update(odb, index, flags)?;
