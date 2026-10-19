@@ -47,7 +47,7 @@ pub fn append_pack_data(
         return Ok(n);
     }
     pending.extend_from_slice(data);
-    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+    if let Some(pos) = find_pack_magic(pending) {
         *seen_pack = true;
         let chunk = &pending[pos..];
         let n = chunk.len() as u64;
@@ -63,6 +63,10 @@ pub fn append_pack_data(
     }
 }
 
+fn find_pack_magic(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"PACK")
+}
+
 fn note_received_pack_bytes(progress: &mut dyn Progress, active: &mut bool, nbytes: u64) {
     if nbytes == 0 {
         return;
@@ -72,6 +76,30 @@ fn note_received_pack_bytes(progress: &mut dyn Progress, active: &mut bool, nbyt
         *active = true;
     }
     progress.inc(nbytes);
+}
+
+fn note_received_pack_bytes_coalesced(
+    progress: &mut dyn Progress,
+    active: &mut bool,
+    pending: &mut u64,
+    nbytes: u64,
+) {
+    if nbytes == 0 {
+        return;
+    }
+    *pending += nbytes;
+    const COALESCE: u64 = 256 * 1024;
+    if *pending >= COALESCE {
+        note_received_pack_bytes(progress, active, *pending);
+        *pending = 0;
+    }
+}
+
+fn flush_coalesced_progress(progress: &mut dyn Progress, active: &mut bool, pending: &mut u64) {
+    if *pending > 0 {
+        note_received_pack_bytes(progress, active, *pending);
+        *pending = 0;
+    }
 }
 
 fn finish_receiving(progress: &mut dyn Progress, active: bool) {
@@ -109,12 +137,26 @@ fn pkt_line_payload_len(len_buf: &[u8; 4]) -> Result<usize> {
     Ok(len)
 }
 
-/// Copy `reader` to `writer` with a large stack buffer (faster than [`io::copy`]'s 8 KiB default).
+fn read_interrupted(reader: &mut dyn Read, buf: &mut [u8]) -> Result<usize> {
+    const ATTEMPTS: usize = 3;
+    let mut attempt = 0usize;
+    loop {
+        match reader.read(buf) {
+            Ok(n) => return Ok(n),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted && attempt + 1 < ATTEMPTS => {
+                attempt += 1;
+            }
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+}
+
+/// Copy `reader` to `writer` with a large buffer (faster than [`io::copy`]'s 8 KiB default).
 pub fn copy_reader_to_writer(reader: &mut dyn Read, writer: &mut dyn Write) -> Result<u64> {
     let mut buf = vec![0u8; 1024 * 1024];
     let mut total = 0u64;
     loop {
-        let n = reader.read(&mut buf).map_err(Error::Io)?;
+        let n = read_interrupted(reader, &mut buf)?;
         if n == 0 {
             break;
         }
@@ -122,6 +164,54 @@ pub fn copy_reader_to_writer(reader: &mut dyn Read, writer: &mut dyn Write) -> R
         total += n as u64;
     }
     Ok(total)
+}
+
+fn sideband_unexpected_eof() -> Error {
+    Error::Io(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "unexpected end of side-band stream",
+    ))
+}
+
+const SIDEBAND_IO_CHUNK: usize = 1024 * 1024;
+
+struct SidebandStreamBuf {
+    storage: Vec<u8>,
+    pos: usize,
+    end: usize,
+}
+
+impl SidebandStreamBuf {
+    fn new() -> Self {
+        Self {
+            storage: vec![0; SIDEBAND_IO_CHUNK],
+            pos: 0,
+            end: 0,
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.pos == 0 {
+            return;
+        }
+        self.storage.copy_within(self.pos..self.end, 0);
+        self.end -= self.pos;
+        self.pos = 0;
+    }
+
+    fn refill(&mut self, r: &mut dyn Read) -> Result<bool> {
+        self.compact();
+        if self.end >= self.storage.len() {
+            return Ok(false);
+        }
+        let n = read_interrupted(r, &mut self.storage[self.end..])?;
+        self.end += n;
+        Ok(n > 0)
+    }
+
+    fn available(&self) -> usize {
+        self.end.saturating_sub(self.pos)
+    }
 }
 
 /// `read_sideband_pack_tail` function.
@@ -132,6 +222,129 @@ pub fn read_sideband_pack_tail(
     pending: &mut Vec<u8>,
     seen_pack: &mut bool,
     payload_buf: &mut Vec<u8>,
+) -> Result<()> {
+    read_sideband_pack_tail_buffered(
+        r,
+        target,
+        progress,
+        pending,
+        seen_pack,
+        payload_buf,
+        &mut SidebandStreamBuf::new(),
+    )
+}
+
+fn read_sideband_pack_tail_buffered(
+    r: &mut dyn Read,
+    target: &mut PackReceiveTarget<'_>,
+    progress: &mut dyn Progress,
+    pending: &mut Vec<u8>,
+    seen_pack: &mut bool,
+    _payload_buf: &mut Vec<u8>,
+    stream: &mut SidebandStreamBuf,
+) -> Result<()> {
+    let mut receiving = false;
+    let mut progress_pending = 0u64;
+    loop {
+        while stream.available() < 4 {
+            if !stream.refill(r)? {
+                if stream.available() == 0 {
+                    flush_coalesced_progress(progress, &mut receiving, &mut progress_pending);
+                    finish_receiving(progress, receiving);
+                    return Ok(());
+                }
+                break;
+            }
+        }
+        if stream.available() < 4 {
+            flush_coalesced_progress(progress, &mut receiving, &mut progress_pending);
+            finish_receiving(progress, receiving);
+            if stream.available() == 0 {
+                return Ok(());
+            }
+            return Err(sideband_unexpected_eof());
+        }
+        let mut len_buf = [0u8; 4];
+        len_buf.copy_from_slice(&stream.storage[stream.pos..stream.pos + 4]);
+        let len = pkt_line_payload_len(&len_buf)?;
+        match len {
+            0 => {
+                stream.pos += 4;
+                if *seen_pack {
+                    flush_coalesced_progress(progress, &mut receiving, &mut progress_pending);
+                    finish_receiving(progress, receiving);
+                    return Ok(());
+                }
+                continue;
+            }
+            1 | 2 => {
+                stream.pos += 4;
+                continue;
+            }
+            n if n <= 4 => {
+                return Err(Error::Message(format!(
+                    "invalid pkt-line length in side-band stream: {n}"
+                )))
+            }
+            _ => {}
+        }
+        let payload_len = len - 4;
+        while stream.available() < 4 + payload_len {
+            if !stream.refill(r)? {
+                return Err(sideband_unexpected_eof());
+            }
+        }
+        let payload = &stream.storage[stream.pos + 4..stream.pos + 4 + payload_len];
+        stream.pos += 4 + payload_len;
+        if payload.is_empty() {
+            continue;
+        }
+        match payload[0] {
+            1 => {
+                let data = &payload[1..];
+                let nbytes = if *seen_pack {
+                    target.append(data)?;
+                    data.len() as u64
+                } else {
+                    append_pack_data(data, target, pending, seen_pack)?
+                };
+                note_received_pack_bytes_coalesced(
+                    progress,
+                    &mut receiving,
+                    &mut progress_pending,
+                    nbytes,
+                );
+            }
+            2 => progress.message(&payload[1..]),
+            3 => {
+                return Err(Error::Message(format!(
+                    "remote error: {}",
+                    String::from_utf8_lossy(&payload[1..]).trim_end()
+                )))
+            }
+            _ => {
+                let nbytes = append_pack_data(payload, target, pending, seen_pack)?;
+                note_received_pack_bytes_coalesced(
+                    progress,
+                    &mut receiving,
+                    &mut progress_pending,
+                    nbytes,
+                );
+            }
+        }
+    }
+}
+
+/// Per-packet `read_exact` side-band demux (pre-#1188 path). Used only by regression tests.
+#[cfg(test)]
+fn read_sideband_pack_tail_read_exact_loop(
+    r: &mut dyn Read,
+    target: &mut PackReceiveTarget<'_>,
+    progress: &mut dyn Progress,
+    pending: &mut Vec<u8>,
+    seen_pack: &mut bool,
+    payload_buf: &mut Vec<u8>,
+    staging_bytes: &mut u64,
 ) -> Result<()> {
     let mut receiving = false;
     loop {
@@ -162,6 +375,7 @@ pub fn read_sideband_pack_tail(
             payload_buf.resize(payload_len, 0);
         }
         payload_buf.truncate(payload_len);
+        *staging_bytes += payload_len as u64;
         r.read_exact(payload_buf)?;
         if payload_buf.is_empty() {
             continue;
@@ -449,9 +663,104 @@ mod tests {
 
         assert!(rec.started);
         assert_eq!(rec.total, None);
-        assert_eq!(rec.increments, vec![pack1.len() as u64, pack2.len() as u64]);
+        assert_eq!(
+            rec.increments.iter().sum::<u64>(),
+            (pack1.len() + pack2.len()) as u64
+        );
         assert!(rec.finished);
         assert_eq!(target_buf, b"PACKaaaabbbbbbbb");
+    }
+
+    fn synthetic_band1_sideband_stream(packets: usize, payload_bytes: usize) -> Vec<u8> {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&sideband_pkt(1, b"PACK"));
+        let payload = vec![0xcd_u8; payload_bytes];
+        for _ in 0..packets {
+            stream.extend_from_slice(&sideband_pkt(1, &payload));
+        }
+        stream.extend_from_slice(b"0000");
+        stream
+    }
+
+    /// Regression for #1188: the legacy per-packet `read_exact` loop copies every
+    /// side-band payload through a staging `Vec` (~2× memory traffic before PACK
+    /// is found). The buffered demux writes channel-1 bytes directly from its
+    /// read window and never touches the staging buffer on this stream.
+    #[test]
+    fn buffered_sideband_demux_avoids_per_packet_staging_buffer() {
+        const PACKETS: usize = 64;
+        const PAYLOAD: usize = 65_515;
+        let stream = synthetic_band1_sideband_stream(PACKETS, PAYLOAD);
+
+        let mut legacy_out = Vec::new();
+        let mut legacy_target = PackReceiveTarget::Memory(&mut legacy_out);
+        let mut legacy_pending = Vec::new();
+        let mut legacy_seen = false;
+        let mut legacy_scratch = Vec::with_capacity(65520);
+        let mut legacy_staging = 0u64;
+        let mut legacy_rec = ReceiveRecorder::default();
+        read_sideband_pack_tail_read_exact_loop(
+            &mut Cursor::new(stream.clone()),
+            &mut legacy_target,
+            &mut legacy_rec,
+            &mut legacy_pending,
+            &mut legacy_seen,
+            &mut legacy_scratch,
+            &mut legacy_staging,
+        )
+        .expect("legacy demux");
+
+        let mut opt_out = Vec::new();
+        let mut opt_target = PackReceiveTarget::Memory(&mut opt_out);
+        let mut opt_pending = Vec::new();
+        let mut opt_seen = false;
+        let mut opt_scratch = Vec::with_capacity(65520);
+        let mut opt_rec = ReceiveRecorder::default();
+        read_sideband_pack_tail(
+            &mut Cursor::new(stream),
+            &mut opt_target,
+            &mut opt_rec,
+            &mut opt_pending,
+            &mut opt_seen,
+            &mut opt_scratch,
+        )
+        .expect("buffered demux");
+
+        assert_eq!(legacy_out, opt_out);
+        let min_legacy_staging = PACKETS as u64 * (PAYLOAD as u64 + 1);
+        assert!(
+            legacy_staging >= min_legacy_staging,
+            "legacy path should stage every pkt payload (>= {min_legacy_staging}), got {legacy_staging}"
+        );
+        assert!(
+            opt_scratch.is_empty(),
+            "buffered demux should not use the staging Vec on band-1-only streams"
+        );
+    }
+
+    #[test]
+    fn truncated_sideband_payload_is_unexpected_eof() {
+        // First pkt: band-1 "PACK" (0009 = 4 + 5 payload bytes). Second pkt declares 12
+        // payload bytes but the stream ends after "truncated" (11 bytes) — must not Ok().
+        let stream = b"0009\x01PACK0010\x01truncated";
+        let mut target_buf = Vec::new();
+        let mut target = PackReceiveTarget::Memory(&mut target_buf);
+        let mut pending = Vec::new();
+        let mut seen = false;
+        let mut scratch = Vec::new();
+        let err = read_sideband_pack_tail(
+            &mut Cursor::new(stream),
+            &mut target,
+            &mut ReceiveRecorder::default(),
+            &mut pending,
+            &mut seen,
+            &mut scratch,
+        )
+        .expect_err("truncated side-band payload");
+        match err {
+            Error::Io(e) => assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof),
+            other => panic!("expected Io UnexpectedEof, got {other:?}"),
+        }
     }
 
     #[test]
