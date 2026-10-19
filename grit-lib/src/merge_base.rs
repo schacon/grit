@@ -903,6 +903,43 @@ const MARK_PRUNED: u8 = 1 << 2;
 const MARK_BASE: u8 = 1 << 3;
 const MARK_QUEUED: u8 = 1 << 4;
 
+#[cfg(test)]
+mod intersect_walk_test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static INTERSECT_WALK_STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset_intersect_walk_steps() {
+        INTERSECT_WALK_STEPS.with(|c| c.set(0));
+    }
+
+    pub fn intersect_walk_steps() -> usize {
+        INTERSECT_WALK_STEPS.with(|c| c.get())
+    }
+
+    pub(crate) fn record_intersect_walk_step() {
+        INTERSECT_WALK_STEPS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+
+    thread_local! {
+        static COMMIT_PARENT_LOOKUPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset_commit_parent_lookups() {
+        COMMIT_PARENT_LOOKUPS.with(|c| c.set(0));
+    }
+
+    pub fn commit_parent_lookups() -> usize {
+        COMMIT_PARENT_LOOKUPS.with(|c| c.get())
+    }
+
+    pub(crate) fn record_commit_parent_lookup() {
+        COMMIT_PARENT_LOOKUPS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+}
+
 #[derive(Eq, PartialEq)]
 struct RankedCommit {
     rank: u64,
@@ -969,19 +1006,42 @@ fn try_direct_ancestor_merge_base(
     }
     let desc_gen = commit_rank_for_walk(cache, descendant);
     let anc_gen = commit_rank_for_walk(cache, ancestor);
-    if desc_gen == UNRANKED_COMMIT || anc_gen == UNRANKED_COMMIT || desc_gen <= anc_gen {
-        return Ok(None);
-    }
-    let mut cur = descendant;
-    let mut gen = desc_gen;
-    while gen > anc_gen {
-        cur = first_parent_oid(cache, cur)?;
-        gen = commit_rank_for_walk(cache, cur);
-        if gen == UNRANKED_COMMIT {
+    if desc_gen != UNRANKED_COMMIT && anc_gen != UNRANKED_COMMIT {
+        if desc_gen <= anc_gen {
+            // Ranked commits: cannot be a strict first-parent ancestor; avoid scanning to root.
             return Ok(None);
         }
+        let mut cur = descendant;
+        let mut gen = desc_gen;
+        while gen > anc_gen {
+            cur = first_parent_oid(cache, cur)?;
+            gen = commit_rank_for_walk(cache, cur);
+            if gen == UNRANKED_COMMIT {
+                return Ok(None);
+            }
+        }
+        return Ok((cur == ancestor).then_some(ancestor));
     }
-    Ok((cur == ancestor).then_some(ancestor))
+    try_direct_first_parent_chain_merge_base(cache, ancestor, descendant)
+}
+
+/// When commit-graph generations are unavailable, test whether `ancestor` lies on
+/// `descendant`'s first-parent chain (common for linear history without a graph file).
+fn try_direct_first_parent_chain_merge_base(
+    cache: &mut CommitGraphCache<'_>,
+    ancestor: ObjectId,
+    descendant: ObjectId,
+) -> Result<Option<ObjectId>> {
+    let mut cur = descendant;
+    loop {
+        if cur == ancestor {
+            return Ok(Some(ancestor));
+        }
+        cur = match first_parent_oid(cache, cur) {
+            Ok(parent) => parent,
+            Err(_) => return Ok(None),
+        };
+    }
 }
 
 fn commit_rank_for_walk(cache: &mut CommitGraphCache<'_>, oid: ObjectId) -> u64 {
@@ -1107,6 +1167,8 @@ fn walk_intersecting_histories(
         &mut labels,
         !collect_every_base,
     ) {
+        #[cfg(test)]
+        intersect_walk_test_hooks::record_intersect_walk_step();
         let mut propagate =
             labels.get(&oid).copied().unwrap_or(0) & (MARK_TIP_A | MARK_TIP_B | MARK_PRUNED);
         if propagate == MARK_TIP_A | MARK_TIP_B {
@@ -1249,6 +1311,8 @@ impl<'r> CommitGraphCache<'r> {
         if let Some(parents) = self.parents.get(&oid) {
             return Ok(parents.clone());
         }
+        #[cfg(test)]
+        intersect_walk_test_hooks::record_commit_parent_lookup();
         if self.promisor_stop.contains(&oid) {
             self.parents.insert(oid, Vec::new());
             self.times.insert(oid, 0);
@@ -1443,7 +1507,9 @@ mod tests {
 
     #[test]
     fn merge_base_unranked_deep_linear_finds_base_without_full_history_scan() -> Result<()> {
-        use std::time::Instant;
+        use super::intersect_walk_test_hooks::{
+            commit_parent_lookups, reset_commit_parent_lookups, reset_intersect_walk_steps,
+        };
 
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;
@@ -1456,13 +1522,95 @@ mod tests {
         for _ in 0..1500 {
             old = first_parent_oid(&mut CommitGraphCache::new(&repo), old)?;
         }
-        let start = Instant::now();
+        reset_intersect_walk_steps();
+        reset_commit_parent_lookups();
         let bases = merge_bases_first_vs_rest(&repo, tip, &[old])?;
-        let elapsed = start.elapsed();
         assert_eq!(bases, vec![old]);
+        let parent_reads = commit_parent_lookups();
         assert!(
-            elapsed.as_millis() < 750,
-            "unranked intersect walk should stop at stale-only, took {elapsed:?}"
+            parent_reads <= 1600,
+            "merge-base should not parse every commit on a 3000-commit chain \
+             (parent lookups {parent_reads}, intersect dequeue steps {})",
+            super::intersect_walk_test_hooks::intersect_walk_steps()
+        );
+        assert!(
+            parent_reads >= 1400,
+            "sanity: should walk from tip toward merge base (parent lookups {parent_reads})"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_base_ranked_sibling_tips_do_not_scan_trunk_on_direct_probe() -> Result<()> {
+        use super::intersect_walk_test_hooks::{
+            commit_parent_lookups, reset_commit_parent_lookups,
+        };
+
+        const TRUNK_LEN: usize = 2001;
+        const BRANCH_LEN: usize = 20;
+
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let mut parent = write_commit_same_time(&repo.odb(), &[], "root", 100)?;
+        for i in 1..TRUNK_LEN {
+            parent = write_commit_same_time(
+                &repo.odb(),
+                &[parent],
+                &format!("trunk{i}"),
+                100 + i as i64,
+            )?;
+        }
+        let fork = parent;
+        let mut tip_a = fork;
+        for i in 0..BRANCH_LEN {
+            tip_a = write_commit_same_time(
+                &repo.odb(),
+                &[tip_a],
+                &format!("a{i}"),
+                100 + TRUNK_LEN as i64 + i as i64,
+            )?;
+        }
+        let mut tip_b = fork;
+        for i in 0..BRANCH_LEN {
+            tip_b = write_commit_same_time(
+                &repo.odb(),
+                &[tip_b],
+                &format!("b{i}"),
+                100 + TRUNK_LEN as i64 + BRANCH_LEN as i64 + i as i64,
+            )?;
+        }
+        use crate::refs::write_ref;
+        write_ref(&repo.git_dir(), "refs/heads/branch-a", &tip_a)?;
+        write_ref(&repo.git_dir(), "refs/heads/branch-b", &tip_b)?;
+        write_ref(&repo.git_dir(), "refs/heads/main", &fork)?;
+        repo.odb().write_commit_graph()?;
+        assert!(
+            dir.path().join("objects/info/commit-graph").is_file(),
+            "test fixture must write a commit-graph file"
+        );
+        let repo = open_test_bare(&dir)?;
+        {
+            let mut cache = CommitGraphCache::new(&repo);
+            assert_ne!(
+                commit_rank_for_walk(&mut cache, tip_a),
+                UNRANKED_COMMIT,
+                "commit-graph must supply generations for ranked merge-base probes"
+            );
+            assert_ne!(commit_rank_for_walk(&mut cache, tip_b), UNRANKED_COMMIT);
+            assert_ne!(commit_rank_for_walk(&mut cache, fork), UNRANKED_COMMIT);
+        }
+
+        reset_commit_parent_lookups();
+        for _ in 0..10 {
+            let bases = merge_bases_first_vs_rest(&repo, tip_a, &[tip_b])?;
+            assert_eq!(bases, vec![fork]);
+        }
+        let parent_reads = commit_parent_lookups();
+        assert!(
+            parent_reads < 600,
+            "ranked direct-ancestor probes must not walk the {TRUNK_LEN}-commit trunk \
+             (parent lookups {parent_reads} across 10 calls; full trunk scan would be \
+             ~{TRUNK_LEN} per failed probe)"
         );
         Ok(())
     }
