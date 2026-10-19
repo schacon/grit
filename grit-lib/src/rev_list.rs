@@ -4854,7 +4854,8 @@ struct DenseBloomCtx<'a> {
 struct DenseWalkCache {
     literal_tree_diff: HashMap<(ObjectId, ObjectId, u64), bool>,
     component_child: HashMap<(ObjectId, Arc<str>, bool), CachedTreeChild>,
-    component_lru: VecDeque<(ObjectId, Arc<str>, bool)>,
+    /// FIFO eviction order; stale keys are skipped when popping (O(1) insert, no scan on hit).
+    component_evict_order: VecDeque<(ObjectId, Arc<str>, bool)>,
     component_hits: u64,
     component_misses: u64,
     tree_reads: u64,
@@ -4885,17 +4886,6 @@ impl DenseWalkCache {
         self.tree_reads
     }
 
-    fn touch_component_lru(&mut self, key: (ObjectId, Arc<str>, bool)) {
-        if let Some(pos) = self
-            .component_lru
-            .iter()
-            .position(|k| k.0 == key.0 && k.1 == key.1 && k.2 == key.2)
-        {
-            self.component_lru.remove(pos);
-        }
-        self.component_lru.push_back(key);
-    }
-
     fn insert_component(
         &mut self,
         tree: ObjectId,
@@ -4904,14 +4894,18 @@ impl DenseWalkCache {
         value: CachedTreeChild,
     ) {
         let key = (tree, Arc::clone(&component), as_tree);
+        if let Some(slot) = self.component_child.get_mut(&key) {
+            *slot = value;
+            return;
+        }
         while self.component_child.len() >= COMPONENT_CACHE_MAX_ENTRIES {
-            let Some(evict) = self.component_lru.pop_front() else {
+            let Some(evict) = self.component_evict_order.pop_front() else {
                 break;
             };
             self.component_child.remove(&evict);
         }
         self.component_child.insert(key.clone(), value);
-        self.touch_component_lru(key);
+        self.component_evict_order.push_back(key);
     }
 
     /// Resolve one path component under `tree` using Git tree directory ordering when `as_tree`.
