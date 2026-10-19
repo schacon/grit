@@ -522,6 +522,15 @@ fn blame_pass_whole_when_sibling_parent_lacks_path_matches_git() {
     assert_blame_matches(&repo, dir, "shared.txt", None, None);
 }
 
+/// Pad a short reorder fixture so the file exceeds internal heuristics thresholds.
+fn write_padded_reorder_fixture(root: &Path, file: &str, body: &str) {
+    let mut lines: Vec<String> = body.lines().map(|line| format!("{line}\n")).collect();
+    while lines.len() < 65 {
+        lines.insert(0, format!("pad {}\n", lines.len()));
+    }
+    std::fs::write(root.join(file), lines.join("")).unwrap();
+}
+
 #[test]
 fn blame_matches_git_porcelain_after_adcb_permutation() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -542,6 +551,50 @@ fn blame_matches_git_porcelain_after_adcb_permutation() {
     let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
     let dir = repo.work_tree().expect("worktree");
     assert_blame_matches(&repo, dir, file, None, None);
+}
+
+#[test]
+fn blame_matches_git_adcb_permutation_on_padded_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    let file = "f.txt";
+    write_padded_reorder_fixture(root, file, "a\nb\nc\nd\n");
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "init"]);
+
+    write_padded_reorder_fixture(root, file, "a\nd\nc\nb\n");
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "move"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    assert_blame_matches(&repo, dir, file, None, None);
+}
+
+#[test]
+fn blame_matches_git_adcb_permutation_line_range() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git_run(root, &["init", "-q", "-b", "main"]);
+    git_run(root, &["config", "user.name", "Blame Test"]);
+    git_run(root, &["config", "user.email", "blame@example.com"]);
+
+    let file = "f.txt";
+    std::fs::write(root.join(file), "a\nb\nc\nd\n").unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "init"]);
+
+    std::fs::write(root.join(file), "a\nd\nc\nb\n").unwrap();
+    git_run(root, &["add", file]);
+    git_run(root, &["commit", "-m", "move"]);
+
+    let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).expect("open");
+    let dir = repo.work_tree().expect("worktree");
+    assert_blame_matches(&repo, dir, file, None, Some((3, 3)));
 }
 
 #[test]
