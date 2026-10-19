@@ -39,6 +39,8 @@ Working-tree materialization after fetch uses the same parallel checkout path as
 
 On failure, `grit clone` exits **1** for most errors (destination not empty, checkout failure, and so on). When the remote cannot be read — for example SSH cannot connect or the repository path on the server is missing — grit exits **128** with `could not read from remote repository`. That is distinct from a reachable empty remote, which exits **0** after configuring `origin` and the default branch without checking out files (see above).
 
+If a large receive fails with `received pack file missing` pointing at a `pack-receive-*.tmp` path under `.git/objects/incoming/`, real-time antivirus or disk cleanup may have removed the in-progress pack before index-pack ran; retry the clone or check that nothing else is deleting files under the repository directory during the receive.
+
 ## Options
 
 | Option | Description |

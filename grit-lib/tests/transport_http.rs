@@ -1670,16 +1670,16 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
         "{} http_fetch_rss_child_process --ignored --exact --nocapture",
         test_exe.display()
     );
-    let out = Command::new(&bench_bin)
-        .arg("measure-rss")
+    let tmp_cwd = tmp.path().to_path_buf();
+    let mut cmd = Command::new(&bench_bin);
+    cmd.arg("measure-rss")
         .arg("--cwd")
-        .arg(tmp.path())
+        .arg(&tmp_cwd)
         .env(MEASURE_CMD_ENV, &measure_cmd)
         .env("GRIT_HTTP_RSS_URL", &url)
         .env("GRIT_HTTP_RSS_WORK", "fetch-work")
-        .env("GRIT_HTTP_RSS_INDEX_THREADS", "1")
-        .output()
-        .expect("measure-rss");
+        .env("GRIT_HTTP_RSS_INDEX_THREADS", "1");
+    let out = cmd.output().expect("measure-rss");
     assert!(
         out.status.success(),
         "measure-rss failed: {}",
@@ -1695,22 +1695,23 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
     );
     let git_dir = work.join(".git");
     assert!(git_dir.is_dir(), "fetch must create a git dir");
-    let pack_dir = git_dir.join("objects/pack");
-    let spooled = std::fs::read_dir(&pack_dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|e| {
+    let incoming_dir = git_dir.join("objects/incoming");
+    let spooled: Vec<_> = std::fs::read_dir(&incoming_dir)
+        .expect("objects/incoming spool dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
             e.path()
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("tmp_pack_"))
-        });
-    assert!(
-        spooled,
-        "pack_spool_only fetch must leave a tmp_pack under objects/pack"
+                .is_some_and(|n| n.starts_with("pack-receive-") && n.ends_with(".tmp"))
+        })
+        .collect();
+    assert_eq!(
+        spooled.len(),
+        1,
+        "pack_spool_only fetch must leave exactly one pack-receive temp file under the repo"
     );
+    let _ = std::fs::remove_file(spooled[0].path());
 }
 
 /// `git http-backend` behind the grit-bench CGI wrapper (not grit-http-server).

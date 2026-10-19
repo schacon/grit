@@ -3508,6 +3508,8 @@ pub grit_lib::error::Error::PathspecIgnored::paths: alloc::vec::Vec<alloc::strin
 pub grit_lib::error::Error::PathspecNoMatch
 pub grit_lib::error::Error::PathspecNoMatch::spec: alloc::string::String
 pub grit_lib::error::Error::PushOptionsUnsupported
+pub grit_lib::error::Error::ReceivedPackTempMissing
+pub grit_lib::error::Error::ReceivedPackTempMissing::path: std::path::PathBuf
 pub grit_lib::error::Error::RefLock(grit_lib::error::RefLockError)
 pub grit_lib::error::Error::RefStore(grit_lib::refs::store::RefStoreError)
 pub grit_lib::error::Error::ReflogIndexOutOfRange
@@ -9475,6 +9477,8 @@ pub grit_lib::prelude::Error::PathspecIgnored::paths: alloc::vec::Vec<alloc::str
 pub grit_lib::prelude::Error::PathspecNoMatch
 pub grit_lib::prelude::Error::PathspecNoMatch::spec: alloc::string::String
 pub grit_lib::prelude::Error::PushOptionsUnsupported
+pub grit_lib::prelude::Error::ReceivedPackTempMissing
+pub grit_lib::prelude::Error::ReceivedPackTempMissing::path: std::path::PathBuf
 pub grit_lib::prelude::Error::RefLock(grit_lib::error::RefLockError)
 pub grit_lib::prelude::Error::RefStore(grit_lib::refs::store::RefStoreError)
 pub grit_lib::prelude::Error::ReflogIndexOutOfRange

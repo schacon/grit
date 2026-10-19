@@ -8,6 +8,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::fetch::Progress;
@@ -17,7 +19,7 @@ use crate::progress::{ProgressPhase, ProgressUnit};
 pub enum PackReceiveTarget<'a> {
     /// Accumulate in a `Vec` (local transports and tests).
     Memory(&'a mut Vec<u8>),
-    /// Append to an open temp pack under `objects/pack/`.
+    /// Append to an open temp pack under `objects/incoming/`.
     File(&'a mut dyn Write),
 }
 
@@ -409,43 +411,161 @@ fn read_sideband_pack_tail_read_exact_loop(
     Ok(())
 }
 
-/// A temp pack file under `objects/pack/` for streaming clone/fetch receive.
+/// Removes the spool path on drop unless [`Self::disarm`] ran (ownership handed off).
+struct SpoolFileGuard {
+    path: PathBuf,
+    delete_on_drop: bool,
+}
+
+impl SpoolFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            delete_on_drop: true,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn disarm(&mut self) {
+        self.delete_on_drop = false;
+    }
+}
+
+impl Drop for SpoolFileGuard {
+    fn drop(&mut self) {
+        if self.delete_on_drop {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// A temp pack file under `objects/incoming/` for streaming clone/fetch receive.
 pub struct TempPackReceive {
     file: BufWriter<File>,
-    path: PathBuf,
+    spool: SpoolFileGuard,
     seen_pack: bool,
     sideband_payload: Vec<u8>,
 }
 
+fn pack_receive_incoming_dir(objects_dir: &Path) -> PathBuf {
+    objects_dir.join("incoming")
+}
+
+fn ensure_pack_receive_incoming_dir(objects_dir: &Path) -> Result<PathBuf> {
+    let dir = pack_receive_incoming_dir(objects_dir);
+    std::fs::create_dir_all(&dir).map_err(Error::Io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(Error::Io)?;
+    }
+    Ok(dir)
+}
+
+fn create_private_spool_file(path: &Path) -> Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(Error::Io)
+    }
+    #[cfg(not(unix))]
+    {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(Error::Io)
+    }
+}
+
+fn assert_received_pack_durable(path: &Path, expected_len: u64) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 8;
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            thread::sleep(Duration::from_millis(25_u64.saturating_mul(attempt as u64)));
+        }
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::Io(e)),
+        };
+        if !meta.is_file() {
+            return Err(Error::ReceivedPackTempMissing {
+                path: path.to_path_buf(),
+            });
+        }
+        if meta.len() != expected_len {
+            if attempt + 1 < MAX_ATTEMPTS {
+                continue;
+            }
+            return Err(Error::CorruptObject(format!(
+                "received pack size mismatch: expected {expected_len}, got {}",
+                meta.len()
+            )));
+        }
+        let mut header = [0u8; 4];
+        let mut f = match File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(Error::Io(e)),
+        };
+        match f.read_exact(&mut header) {
+            Ok(()) => {}
+            Err(_) if attempt + 1 < MAX_ATTEMPTS => continue,
+            Err(e) => return Err(Error::Io(e)),
+        }
+        if &header != b"PACK" {
+            return Err(Error::CorruptObject(
+                "received data is not a pack stream".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    Err(Error::ReceivedPackTempMissing {
+        path: path.to_path_buf(),
+    })
+}
+
 impl TempPackReceive {
-    /// Create `tmp_pack_*` under `objects_dir/pack/`.
+    /// Create a `pack-receive-*.tmp` file under `objects_dir/incoming/`.
+    ///
+    /// Spool files stay inside the repository object store (same filesystem as
+    /// `objects/pack/`) but outside published pack names until index-pack runs.
     ///
     /// # Errors
     ///
     /// Returns an I/O error when the directory or file cannot be created.
     pub fn create(objects_dir: &Path) -> Result<Self> {
         static SEQ: AtomicU64 = AtomicU64::new(0);
-        let pack_dir = objects_dir.join("pack");
-        std::fs::create_dir_all(&pack_dir).map_err(Error::Io)?;
+        let spool_dir = ensure_pack_receive_incoming_dir(objects_dir)?;
         for _ in 0..64 {
             let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-            let path = pack_dir.join(format!("tmp_pack_{}_{seq}", std::process::id()));
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let path = spool_dir.join(format!("pack-receive-{}_{seq}.tmp", std::process::id()));
+            match create_private_spool_file(&path) {
                 Ok(file) => {
                     return Ok(Self {
                         file: BufWriter::with_capacity(4 * 1024 * 1024, file),
-                        path,
+                        spool: SpoolFileGuard::new(path),
                         seen_pack: false,
                         sideband_payload: Vec::with_capacity(65520),
                     });
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(Error::Io(e)),
+                Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
             }
         }
         Err(Error::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "could not allocate tmp_pack file name under objects/pack",
+            "could not allocate pack-receive temp file name under objects/incoming",
         )))
     }
 
@@ -478,6 +598,7 @@ impl TempPackReceive {
         )?;
         self.seen_pack = seen;
         self.file.flush().map_err(Error::Io)?;
+        self.file.get_ref().sync_all().map_err(Error::Io)?;
         Ok(())
     }
 
@@ -489,20 +610,23 @@ impl TempPackReceive {
     /// Returns I/O errors from metadata or removal.
     pub fn finish(mut self) -> Result<Option<PathBuf>> {
         self.file.flush().map_err(Error::Io)?;
+        self.file.get_ref().sync_all().map_err(Error::Io)?;
         let len = self.file.get_ref().metadata().map_err(Error::Io)?.len();
         if !self.seen_pack || len == 0 {
             drop(self.file);
-            let _ = std::fs::remove_file(&self.path);
             return Ok(None);
         }
+        let path = self.spool.path().to_path_buf();
         drop(self.file);
-        Ok(Some(self.path))
+        assert_received_pack_durable(&path, len)?;
+        self.spool.disarm();
+        Ok(Some(path))
     }
 
     /// Path to the temp file (for debugging and install).
     #[must_use]
     pub fn path(&self) -> &Path {
-        &self.path
+        self.spool.path()
     }
 }
 
@@ -510,7 +634,7 @@ impl TempPackReceive {
 pub enum PackReceiveOutcome {
     /// Pack bytes held in memory (fresh clone fast path).
     Memory(Vec<u8>),
-    /// Pack written to `objects/pack/tmp_pack_*`.
+    /// Pack written under `objects/incoming/` (not yet installed as `objects/pack/*.pack`).
     File(PathBuf),
 }
 
@@ -547,7 +671,7 @@ impl MemoryPackReceive {
 pub struct PackReceiveSink(PackReceiveInner);
 
 impl PackReceiveSink {
-    /// Create `tmp_pack_*` under `objects_dir/pack/`.
+    /// Create a temp pack spool file (see [`TempPackReceive::create`]).
     pub fn create(objects_dir: &Path) -> Result<Self> {
         Ok(Self(PackReceiveInner::File(TempPackReceive::create(
             objects_dir,
@@ -771,7 +895,6 @@ mod tests {
         let header = b"PACK";
         use std::io::Write;
         recv.write_all(header).expect("write");
-        assert!(recv.path().is_file(), "path must exist before finish");
         let path = recv.finish().expect("finish").expect("some pack");
         assert!(path.is_file(), "finish must return an on-disk path");
         assert_eq!(std::fs::read(&path).expect("read"), header);
@@ -786,5 +909,89 @@ mod tests {
         let path = recv.path().to_path_buf();
         assert!(recv.finish().expect("finish").is_none());
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn temp_pack_spools_under_objects_incoming_not_pack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects = dir.path().join("objects");
+        std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
+        let recv = TempPackReceive::create(&objects).expect("create");
+        let path = recv.path().to_path_buf();
+        assert!(
+            path.starts_with(objects.join("incoming")),
+            "temp pack must live under objects/incoming during receive"
+        );
+        assert!(
+            !path.starts_with(objects.join("pack")),
+            "temp pack must not live under objects/pack during receive"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn temp_pack_drop_after_partial_receive_removes_spool() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects = dir.path().join("objects");
+        let mut recv = TempPackReceive::create(&objects).expect("create");
+        let path = recv.path().to_path_buf();
+        use std::io::Write;
+        recv.write_all(b"PACKpartial").expect("write");
+        recv.flush().expect("flush");
+        assert!(path.is_file());
+        drop(recv);
+        assert!(
+            !path.exists(),
+            "partial spool must be removed when TempPackReceive drops without finish"
+        );
+    }
+
+    #[test]
+    fn temp_pack_drop_after_sideband_error_removes_spool() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects = dir.path().join("objects");
+        let mut recv = TempPackReceive::create(&objects).expect("create");
+        let path = recv.path().to_path_buf();
+        let mut stream = sideband_pkt(1, b"PACKaaaa");
+        stream.extend_from_slice(&sideband_pkt(3, b"network interrupted"));
+        let mut rec = ReceiveRecorder::default();
+        let err = recv
+            .read_sideband(&mut Cursor::new(stream), &mut rec)
+            .expect_err("remote side-band error");
+        assert!(matches!(err, Error::Message(_)));
+        drop(recv);
+        assert!(
+            !path.exists(),
+            "spool must be removed after failed read_sideband"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_pack_spool_file_is_private_to_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let objects = dir.path().join("objects");
+        let recv = TempPackReceive::create(&objects).expect("create");
+        let mode = std::fs::metadata(recv.path())
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "spool file must not be world-readable");
+        let path = recv.path().to_path_buf();
+        drop(recv);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn received_pack_durable_check_missing_file_is_typed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("removed.pack");
+        std::fs::write(&path, b"PACK").expect("write");
+        let len = std::fs::metadata(&path).expect("meta").len();
+        std::fs::remove_file(&path).expect("remove");
+        let err = assert_received_pack_durable(&path, len).expect_err("missing pack");
+        assert!(matches!(err, Error::ReceivedPackTempMissing { .. }));
     }
 }
