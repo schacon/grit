@@ -677,7 +677,9 @@ struct AllModesSnapshot<'a> {
 const CRATE_VERSION_SNAPSHOT_FILTERS: &[(&str, &str)] = &[
     (r"grit \d+\.\d+\.\d+", "grit [VERSION]"),
     // Insta JSON snapshots escape inner quotes; replace only the semver token.
+    (r#"(\\"version\\":\\")([\d.]+)(\\")"#, r#"$1[VERSION]$3"#),
     (r#"(\\"version\\": \\")([\d.]+)(\\")"#, r#"$1[VERSION]$3"#),
+    (r#"("version":")([\d.]+)(")"#, r#"$1[VERSION]$3"#),
     (r#"("version": ")([\d.]+)(")"#, r#"$1[VERSION]$3"#),
     (r"(previous version \*\*)([\d.]+)(\*\*)", r"$1[VERSION]$3"),
 ];
@@ -735,7 +737,10 @@ pub fn register_network_snapshot_filters(
     settings.add_filter(r" \([\d.]+s\)", " ([ELAPSED])");
     // Clone summary: throughput, per-phase timings and the time bar vary run to run.
     settings.add_filter(r"[\d.]+ (?:B|KiB|MiB|GiB)/s", "[RATE]");
+    settings.add_filter(r#"\\"seconds\\":[\d.e-]+"#, r#"\"seconds\":0"#);
     settings.add_filter(r#"\\"seconds\\": [\d.e-]+"#, r#"\"seconds\": 0"#);
+    settings.add_filter(r#""seconds":[\d.e-]+"#, r#""seconds":0"#);
+    settings.add_filter(r#""seconds": [\d.e-]+"#, r#""seconds": 0"#);
     settings.add_filter(r"\| [\d.]+ \|\\n", "| [SECONDS] |\\n");
     settings.add_filter(r"(  time {6})[^\\]*", "$1[TIME BAR]");
     settings.add_filter(r"(\\n {12})[^\\]*", "$1[TIMELINE]");
@@ -905,7 +910,7 @@ mod snapshot_filter_tests {
     #[test]
     fn crate_version_filters_redact_live_output_before_snapshot() {
         let pkg_version = env!("CARGO_PKG_VERSION");
-        let live_json = format!("{{\n  \"updated\": true,\n  \"version\": \"{pkg_version}\"\n}}\n");
+        let live_json = format!("{{\"updated\":true,\"version\":\"{pkg_version}\"}}\n");
         let live_md = format!(
             "## Update\n\n- Updated grit (ran installer; previous version **{pkg_version}**)\n"
         );
@@ -921,7 +926,7 @@ mod snapshot_filter_tests {
         let md = redact(&live_md);
         assert!(!json.contains(pkg_version));
         assert!(!md.contains(pkg_version));
-        assert!(json.contains(r#""version": "[VERSION]""#));
+        assert!(json.contains(r#""version":"[VERSION]""#));
         assert!(md.contains("previous version **[VERSION]**"));
     }
 }

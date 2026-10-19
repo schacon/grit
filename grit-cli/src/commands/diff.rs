@@ -425,7 +425,7 @@ pub fn diff_of_commit(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Resu
     let thread_policy = repo.thread_policy();
     let diff_options = StructuredDiffOptions {
         context_lines: CONTEXT_LINES,
-        word_level_inline: diff_word_level_inline_for_output(),
+        word_level_inline: false,
     };
     Ok(attach_path_display(
         repo,
@@ -457,7 +457,7 @@ pub fn outcome_from_tree_entries(
     let thread_policy = repo.thread_policy();
     let diff_options = StructuredDiffOptions {
         context_lines: CONTEXT_LINES,
-        word_level_inline: diff_word_level_inline_for_output(),
+        word_level_inline: false,
     };
     Ok(attach_path_display(
         repo,

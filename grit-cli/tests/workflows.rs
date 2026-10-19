@@ -370,12 +370,16 @@ fn diff_worktree_shows_retargeted_symlink_both_sides() -> TestResult {
 
     let grit_json = gs_ok(&repo, ["diff", "--json"])?;
     assert!(
-        grit_json.stdout.contains("\"kind\": \"add\"") && grit_json.stdout.contains("g.txt"),
+        (grit_json.stdout.contains("\"kind\":\"add\"")
+            || grit_json.stdout.contains("\"kind\": \"add\""))
+            && grit_json.stdout.contains("g.txt"),
         "json diff should count an addition for the new target:\n{}",
         grit_json.dump()
     );
     assert!(
-        grit_json.stdout.contains("\"kind\": \"del\"") && grit_json.stdout.contains("f.txt"),
+        (grit_json.stdout.contains("\"kind\":\"del\"")
+            || grit_json.stdout.contains("\"kind\": \"del\""))
+            && grit_json.stdout.contains("f.txt"),
         "json diff should count a deletion for the old target:\n{}",
         grit_json.dump()
     );
