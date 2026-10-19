@@ -8010,11 +8010,11 @@ fn append_with_whole_function_added(
             j += 1;
             continue;
         }
-        let looks_like_new_function = match matcher {
-            Some(m) => m.match_line(line).is_some(),
-            None => inserted_block_starts_with_c_like_function_definition(line),
-        };
-        if looks_like_new_function {
+        if let Some(m) = matcher {
+            if m.match_line(line).is_some() {
+                return true;
+            }
+        } else if inserted_block_starts_with_c_like_function_definition(line) {
             return true;
         }
         j += 1;

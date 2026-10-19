@@ -34,25 +34,14 @@ fn git_in(dir: &std::path::Path, args: &[&str]) -> Vec<u8> {
 
 fn two_blobs_sharing_seven_hex_prefix() -> (ObjectId, ObjectId, Vec<u8>, Vec<u8>) {
     use std::collections::HashMap;
-    use std::process::Stdio;
+
+    use grit_lib::objects::{HashAlgo, ObjectKind};
+
     let mut first_by_prefix: HashMap<String, (ObjectId, Vec<u8>)> = HashMap::new();
     for n in 0_u64..2_000_000 {
         let data = n.to_string().into_bytes();
-        let mut child = Command::new("git")
-            .args(["hash-object", "--stdin"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("git hash-object");
-        std::io::Write::write_all(&mut child.stdin.take().expect("stdin"), &data).expect("write");
-        let out = child.wait_with_output().expect("wait");
-        assert!(out.status.success());
-        let hex = String::from_utf8(out.stdout)
-            .expect("utf8")
-            .trim()
-            .to_string();
-        let oid = ObjectId::from_hex(&hex).expect("oid");
-        let prefix = hex[..7].to_string();
+        let oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, &data);
+        let prefix = oid.to_hex()[..7].to_string();
         if let Some((other, _)) = first_by_prefix.get(&prefix) {
             if *other != oid {
                 let (first_oid, first_data) = first_by_prefix.remove(&prefix).expect("prefix");

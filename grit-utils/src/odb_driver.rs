@@ -247,8 +247,9 @@ pub fn log_patch(repo: &Repository, limit: usize) -> Result<()> {
         if std::env::var_os("GRIT_BENCH_LOG_PATCH_PERCENT_H").is_some() {
             patch_opts.commit_header = LogPatchCommitHeader::FormatPercentH;
         }
-        let mut stdout = io::stdout().lock();
+        let mut stdout = io::BufWriter::with_capacity(1 << 20, io::stdout().lock());
         write_commits_log_patch(repo, &mut stdout, &result.commits, &patch_opts)?;
+        stdout.flush()?;
         Ok(())
     })
 }

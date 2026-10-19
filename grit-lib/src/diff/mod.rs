@@ -14,7 +14,6 @@
 //! ```
 mod core;
 pub mod handle;
-mod hunk_groups;
 mod patch_log;
 mod tree_content;
 mod unified_emit;
