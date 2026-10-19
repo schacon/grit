@@ -394,12 +394,12 @@ fn format_log_date(ident: &str) -> String {
         time::Month::December => "Dec",
     };
     format!(
-        "{weekday} {month} {} {:02}:{:02}:{:02} {} {offset_str}",
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second(),
-        dt.year()
+        "{weekday} {month} {day:>2} {hour:02}:{minute:02}:{second:02} {year} {offset_str}",
+        day = dt.day(),
+        hour = dt.hour(),
+        minute = dt.minute(),
+        second = dt.second(),
+        year = dt.year(),
     )
 }
 
@@ -547,6 +547,10 @@ fn write_diff_entry_log_patch_with_cache<W: Write>(
         }
     }
 
+    if entry.old_oid == entry.new_oid {
+        return Ok(());
+    }
+
     let old_bytes = read_blob_side(odb, entry.old_oid, old_mode == 0)?;
     let new_bytes = read_blob_side(odb, entry.new_oid, new_mode == 0)?;
     if old_bytes == new_bytes {
@@ -568,6 +572,9 @@ fn write_diff_entry_log_patch_with_cache<W: Write>(
         return Ok(());
     }
 
+    let old_path = if old_mode == 0 { "/dev/null" } else { git_old };
+    let new_path = if new_mode == 0 { "/dev/null" } else { git_new };
+    let d = &opts.diff;
     let byte_oriented = !crate::commit_encoding::is_strict_utf8(&old_bytes)
         || !crate::commit_encoding::is_strict_utf8(&new_bytes);
     let (old_text, new_text) = if byte_oriented {
@@ -600,13 +607,15 @@ fn write_diff_entry_log_patch_with_cache<W: Write>(
     };
     let funcname_ref = funcname_matcher.as_ref();
     if byte_oriented {
+        let old_text = crate::commit_encoding::decode_latin1(&old_bytes);
+        let new_text = crate::commit_encoding::decode_latin1(&new_bytes);
         let mut patch_buf = Vec::new();
         write_unified_diff_with_prefix_and_funcname_and_algorithm(
             &mut patch_buf,
             &old_text,
             &new_text,
-            &old_path,
-            &new_path,
+            old_path,
+            new_path,
             d.context_lines,
             d.inter_hunk_context,
             "a/",
@@ -622,12 +631,16 @@ fn write_diff_entry_log_patch_with_cache<W: Write>(
             .map_err(|_| crate::error::Error::CorruptObject("patch re-encoding failed".into()))?;
         out.write_all(&crate::commit_encoding::encode_latin1_lossy(patch_str))?;
     } else {
+        let old_text = std::str::from_utf8(&old_bytes)
+            .map_err(|_| crate::error::Error::CorruptObject("blob is not valid UTF-8".into()))?;
+        let new_text = std::str::from_utf8(&new_bytes)
+            .map_err(|_| crate::error::Error::CorruptObject("blob is not valid UTF-8".into()))?;
         write_unified_diff_with_prefix_and_funcname_and_algorithm(
             out,
-            &old_text,
-            &new_text,
-            &old_path,
-            &new_path,
+            old_text,
+            new_text,
+            old_path,
+            new_path,
             d.context_lines,
             d.inter_hunk_context,
             "a/",

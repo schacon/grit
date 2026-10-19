@@ -10,72 +10,90 @@ pub(crate) struct LineEdit {
     pub ignorable: bool,
 }
 
-/// Unchanged old-side lines between the end of `left` and the start of `right`.
-#[inline]
-fn unchanged_old_gap(left: &LineEdit, right: &LineEdit) -> i64 {
-    right.old_at - (left.old_at + left.old_run)
+#[derive(Clone, Copy)]
+struct FuseLimits {
+    fuse: i64,
+    nearby: i64,
 }
 
-/// Drop leading ignorable edits that sit too far from the next substantive edit.
-fn skip_detached_prefix(edits: &[LineEdit], start: usize, nearby_limit: i64) -> Option<usize> {
-    let mut head = start;
-    while head < edits.len() && edits[head].ignorable {
-        let successor = head + 1;
-        let far_from_next = successor >= edits.len()
-            || unchanged_old_gap(&edits[head], &edits[successor]) >= nearby_limit;
-        if far_from_next {
-            head = successor;
-        } else {
-            break;
-        }
-    }
-    (head < edits.len()).then_some(head)
+#[derive(Clone, Copy)]
+struct OpenHunk {
+    tail: usize,
+    last_substantive: usize,
+    /// Old-side slack from ignorable-only inserts absorbed after `last_substantive`.
+    slack_new_lines: i64,
 }
 
-/// Index of the last edit included when fusing from `head`.
-fn fused_tail_index(edits: &[LineEdit], head: usize, fuse_limit: i64, nearby_limit: i64) -> usize {
-    let mut tail = head;
-    let mut last_kept = head;
-    let mut pending_ignored_new: i64 = 0;
-
-    for idx in head + 1..edits.len() {
-        let gap = unchanged_old_gap(&edits[tail], &edits[idx]);
-        if gap > fuse_limit {
-            break;
+impl OpenHunk {
+    fn new(head: usize) -> Self {
+        Self {
+            tail: head,
+            last_substantive: head,
+            slack_new_lines: 0,
         }
-
-        let edit = &edits[idx];
-        let nearby = gap < nearby_limit;
-
-        if nearby && (!edit.ignorable || last_kept == tail) {
-            last_kept = idx;
-            pending_ignored_new = 0;
-        } else if nearby && edit.ignorable {
-            pending_ignored_new += edit.new_run;
-        } else if last_kept != tail {
-            let anchor = &edits[last_kept];
-            let virtual_old_end = edit.old_at + pending_ignored_new;
-            let span = virtual_old_end - (anchor.old_at + anchor.old_run);
-            if span > fuse_limit {
-                break;
-            }
-            if !edit.ignorable {
-                last_kept = idx;
-                pending_ignored_new = 0;
-            } else {
-                pending_ignored_new += edit.new_run;
-            }
-        } else if !edit.ignorable {
-            last_kept = idx;
-            pending_ignored_new = 0;
-        } else {
-            pending_ignored_new += edit.new_run;
-        }
-
-        tail = idx;
     }
 
-    last_kept
+    fn old_gap_to(&self, edits: &[LineEdit], idx: usize) -> i64 {
+        edits[idx].old_at - (edits[self.tail].old_at + edits[self.tail].old_run)
+    }
+
+    fn absorb(&mut self, idx: usize, edit: LineEdit) {
+        self.tail = idx;
+        if edit.ignorable {
+            self.slack_new_lines += edit.new_run;
+        } else {
+            self.last_substantive = idx;
+            self.slack_new_lines = 0;
+        }
+    }
+}
+
+fn may_join(hunk: &OpenHunk, edits: &[LineEdit], next: usize, limits: FuseLimits) -> bool {
+    let gap = hunk.old_gap_to(edits, next);
+    if gap > limits.fuse {
+        return false;
+    }
+    let edit = edits[next];
+    if gap < limits.nearby {
+        return true;
+    }
+
+    if hunk.last_substantive != hunk.tail {
+        let anchor = edits[hunk.last_substantive];
+        let virtual_old_end = edit.old_at + hunk.slack_new_lines;
+        let span = virtual_old_end - (anchor.old_at + anchor.old_run);
+        if span > limits.fuse {
+            return false;
+        }
+    }
+    true
+}
+
+fn skip_orphan_ignorable_head(edits: &[LineEdit], mut idx: usize, nearby: i64) -> Option<usize> {
+    while idx < edits.len() && edits[idx].ignorable {
+        let far = idx + 1 >= edits.len()
+            || edits[idx + 1].old_at - (edits[idx].old_at + edits[idx].old_run) >= nearby;
+        if far {
+            idx += 1;
+        } else {
+            return Some(idx);
+        }
+    }
+    (idx < edits.len()).then_some(idx)
+}
+
+fn grow_hunk(edits: &[LineEdit], head: usize, limits: FuseLimits) -> usize {
+    let mut open = OpenHunk::new(head);
+    let mut cursor = head;
+    while cursor + 1 < edits.len() {
+        let next = cursor + 1;
+        if !may_join(&open, edits, next, limits) {
+            break;
+        }
+        open.absorb(next, edits[next]);
+        cursor = next;
+    }
+    open.tail
 }
 
 /// `(first_edit_index, last_edit_index)` for each hunk, in file order.
@@ -84,15 +102,41 @@ pub(crate) fn hunk_edit_spans(
     fuse_limit: i64,
     nearby_limit: i64,
 ) -> Vec<(usize, usize)> {
+    let limits = FuseLimits {
+        fuse: fuse_limit,
+        nearby: nearby_limit,
+    };
     let mut spans = Vec::new();
-    let mut at = 0usize;
-    while at < edits.len() {
-        let Some(head) = skip_detached_prefix(edits, at, nearby_limit) else {
+    let mut cursor = 0usize;
+    while cursor < edits.len() {
+        let Some(head) = skip_orphan_ignorable_head(edits, cursor, nearby_limit) else {
             break;
         };
-        let tail = fused_tail_index(edits, head, fuse_limit, nearby_limit);
+        let tail = grow_hunk(edits, head, limits);
         spans.push((head, tail));
-        at = tail + 1;
+        cursor = tail + 1;
     }
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edit(old_at: i64, old_run: i64, new_run: i64, ignorable: bool) -> LineEdit {
+        LineEdit {
+            old_at,
+            old_run,
+            new_at: old_at,
+            new_run,
+            ignorable,
+        }
+    }
+
+    #[test]
+    fn orphan_ignorable_prefix_is_skipped() {
+        let edits = vec![edit(0, 0, 1, true), edit(10, 1, 1, false)];
+        let spans = hunk_edit_spans(&edits, 6, 3);
+        assert_eq!(spans, vec![(1, 1)]);
+    }
 }

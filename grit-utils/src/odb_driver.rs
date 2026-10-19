@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use grit_lib::config::environment::RepositoryOptions;
-use grit_lib::diff::{write_commits_log_patch, LogPatchOptions};
+use grit_lib::diff::{write_commits_log_patch, LogPatchCommitHeader, LogPatchOptions};
 use grit_lib::error::Error;
 use grit_lib::maintenance::{write_commit_graph, CommitGraphOptions};
 use grit_lib::objects::pack::{
@@ -243,7 +243,10 @@ pub fn log_patch(repo: &Repository, limit: usize) -> Result<()> {
         let result =
             rev_list(repo, &["HEAD".to_owned()], &[], &opts).context("rev-list for log")?;
         let config = repo.config().map(|c| (*c).clone()).unwrap_or_default();
-        let patch_opts = LogPatchOptions::git_default(&config);
+        let mut patch_opts = LogPatchOptions::git_default(&config);
+        if std::env::var_os("GRIT_BENCH_LOG_PATCH_PERCENT_H").is_some() {
+            patch_opts.commit_header = LogPatchCommitHeader::FormatPercentH;
+        }
         let mut stdout = io::stdout().lock();
         write_commits_log_patch(repo, &mut stdout, &result.commits, &patch_opts)?;
         Ok(())

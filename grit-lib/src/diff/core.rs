@@ -8010,9 +8010,10 @@ fn append_with_whole_function_added(
             j += 1;
             continue;
         }
-        let looks_like_new_function = matcher
-            .and_then(|m| m.match_line(line).map(|_| true))
-            .unwrap_or_else(|| inserted_block_starts_with_c_like_function_definition(line));
+        let looks_like_new_function = match matcher {
+            Some(m) => m.match_line(line).is_some(),
+            None => inserted_block_starts_with_c_like_function_definition(line),
+        };
         if looks_like_new_function {
             return true;
         }
