@@ -100,6 +100,72 @@ pub fn skip_unless_git_at_least(major: u32, minor: u32) -> bool {
     false
 }
 
+/// True when `git history` stderr means the command or subcommand is absent (not a usage error).
+#[must_use]
+pub fn git_history_stderr_indicates_unavailable(stderr: &str) -> bool {
+    stderr.contains("is not a git command") || stderr.contains("unknown subcommand")
+}
+
+/// Whether the system git implements the `git history` command (Git >= 2.54 and help succeeds).
+#[must_use]
+pub fn git_history_command_available() -> bool {
+    if !git_version_at_least(2, 54) {
+        return false;
+    }
+    let Ok(out) = Command::new("git").args(["help", "history"]).output() else {
+        return false;
+    };
+    if out.status.success() {
+        return true;
+    }
+    let Ok(out) = Command::new("git").args(["history"]).output() else {
+        return false;
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    !git_history_stderr_indicates_unavailable(&stderr)
+}
+
+/// Whether `git history <subcommand>` exists (positive `-h` check after command probe).
+#[must_use]
+pub fn git_history_subcommand_available(subcommand: &str) -> bool {
+    if !git_history_command_available() {
+        return false;
+    }
+    let Ok(out) = Command::new("git")
+        .args(["history", subcommand, "-h"])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success()
+}
+
+#[cfg(test)]
+mod git_history_probe_tests {
+    use super::git_history_stderr_indicates_unavailable;
+
+    #[test]
+    fn stderr_missing_history_command() {
+        assert!(git_history_stderr_indicates_unavailable(
+            "git: 'history' is not a git command. See 'git --help'."
+        ));
+    }
+
+    #[test]
+    fn stderr_unknown_subcommand() {
+        assert!(git_history_stderr_indicates_unavailable(
+            "error: unknown subcommand: `drop'"
+        ));
+    }
+
+    #[test]
+    fn stderr_usage_error_is_not_unavailable() {
+        assert!(!git_history_stderr_indicates_unavailable(
+            "error: command expects a single revision"
+        ));
+    }
+}
+
 /// Temporary repository initialized with system `git`.
 pub struct HistoryRepo {
     _root: tempfile::TempDir,
