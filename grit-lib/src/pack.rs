@@ -307,26 +307,6 @@ pub(crate) mod pack_cache {
         PACK_HIT_INDEX.with(|cell| {
             *cell.borrow_mut() = Some((objects_dir.to_path_buf(), Arc::clone(idx)));
         });
-        promote_pack_index(objects_dir, &idx.idx_path);
-    }
-
-    pub(crate) fn find_offset_for_batch(
-        idx: &PackIndex,
-        oid: &crate::objects::ObjectId,
-    ) -> Option<u64> {
-        if !crate::pack_store::PackStore::has_context() {
-            return idx.find_offset(oid);
-        }
-        PACK_MONOTONIC_CURSOR.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.as_ref().is_none_or(|(path, _)| path != &idx.idx_path) {
-                *slot = Some((idx.idx_path.clone(), 0));
-            }
-            let Some((_, cursor)) = slot.as_mut() else {
-                return idx.find_offset(oid);
-            };
-            idx.find_offset_monotonic(oid, cursor)
-        })
     }
 
     pub(crate) fn try_read_from_hinted_pack(

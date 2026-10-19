@@ -8616,14 +8616,12 @@ fn extract_function_context(
         // remainder of the source line continues with normal text (t2021-style
         // shell tests), but keeps it when the next token is a string delimiter
         // (gettext `.po` msgstr lines).
-        if !tail.is_empty()
-            && !tail.starts_with('"')
-            && !tail.starts_with('\'')
-            && !line.starts_with("msgstr")
-            && !line.starts_with("msgid")
+        if tail.is_empty()
+            || (!tail.starts_with('"')
+                && !tail.starts_with('\'')
+                && !line.starts_with("msgstr")
+                && !line.starts_with("msgid"))
         {
-            out = out.trim_end().to_owned();
-        } else if tail.is_empty() {
             out = out.trim_end().to_owned();
         }
         out

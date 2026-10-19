@@ -266,6 +266,7 @@ fn abbrev_index_pair(
     Ok((pad(old_oid, old), pad(new_oid, new)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_parsed_commit_log_patch<W: Write>(
     out: &mut W,
     repo: &Repository,
