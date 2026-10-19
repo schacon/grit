@@ -13,7 +13,6 @@ use crate::campaign_prep::{
 use crate::campaign_worktree::{blame_target_path, list_tracked_files};
 use crate::fixture::prepare_commit_iteration;
 use crate::hot_path_fixture::HotPathMeta;
-use crate::maintenance_suite::seed_loose_objects;
 use crate::network_fixture::{ensure_campaign_bare_network_meta, file_url};
 use crate::network_suite::{ensure_network_client_repo, prepare_network_command};
 use crate::real_repo_fixture::git_env;
@@ -269,8 +268,7 @@ pub fn run_fixture_cli_matrix(
     } else {
         (sh_script(grit_log_pages_shell(grit, log_pages)), true)
     };
-    let log_allows_grit_failure =
-        !smoke && matches!(fixture.id, "git-dot-git" | "chromium-synth" | "linux");
+    let log_allows_grit_failure = !smoke;
     out.push(run_matrix_scenario(
         hyperfine,
         git,
@@ -403,36 +401,23 @@ pub fn run_fixture_cli_matrix(
         grit_via_shell: false,
         git_via_shell: false,
     };
-    if fixture.id == "git-dot-git" {
-        let grit_args = [
-            "merge-base",
-            meta.main_tip.as_str(),
-            meta.pick_commit.as_str(),
-        ];
-        if let Some(failure) = probe_grit_cli(grit, &fixture.worktree, &grit_args) {
-            out.push(run_scenario_git_only_with_grit_failure(
-                hyperfine,
-                git,
-                grit,
-                cfg,
-                &merge_base,
-                &fixture.worktree,
-                failure,
-            )?);
-        } else {
-            out.push(run_matrix_scenario(
-                hyperfine,
-                git,
-                grit,
-                cfg,
-                &merge_base,
-                &fixture.worktree,
-                false,
-            )?);
-        }
+    let grit_args = [
+        "merge-base",
+        meta.main_tip.as_str(),
+        meta.pick_commit.as_str(),
+    ];
+    let merge_base_allows_grit_failure = !smoke;
+    if let Some(failure) = probe_grit_cli(grit, &fixture.worktree, &grit_args) {
+        out.push(run_scenario_git_only_with_grit_failure(
+            hyperfine,
+            git,
+            grit,
+            cfg,
+            &merge_base,
+            &fixture.worktree,
+            failure,
+        )?);
     } else {
-        // Chromium-class synth can OOM grit during timed merge-base; record grit_failure and continue.
-        let merge_allows_grit_failure = fixture.id == "chromium-synth";
         out.push(run_matrix_scenario(
             hyperfine,
             git,
@@ -440,7 +425,7 @@ pub fn run_fixture_cli_matrix(
             cfg,
             &merge_base,
             &fixture.worktree,
-            merge_allows_grit_failure,
+            merge_base_allows_grit_failure,
         )?);
     }
 
@@ -759,8 +744,9 @@ fn append_fsck_gc_repack(
         "GRIT_BENCH_MAINTENANCE_BARE",
         fixture.bare.display().to_string(),
     );
+    std::env::set_var("GRIT_BENCH_GC_SEED_COUNT", "8");
     if !smoke {
-        seed_loose_objects(git, &fixture.worktree)?;
+        crate::maintenance_suite::write_gc_base_marker(git, &fixture.worktree)?;
     }
     let gc_scenario = Scenario {
         id: sid(fixture.id, "gc"),

@@ -60,7 +60,7 @@ pub struct Scenario {
     pub git_via_shell: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrepareKind {
     AddIteration,
     DenseLeafAddIteration,
@@ -123,7 +123,7 @@ fn bench_tool(
     Ok(timing_from_hyperfine(&entry))
 }
 
-fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind) -> String {
+fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind, repo: &Path) -> String {
     let sub = match kind {
         PrepareKind::AddIteration => "prepare-add",
         PrepareKind::DenseLeafAddIteration => "prepare-dense-leaf-add",
@@ -147,14 +147,25 @@ fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind) -> String {
         PrepareKind::HistoryRewriteReset => "prepare-history-rewrite",
         PrepareKind::CampaignStatusDirty => "prepare-campaign-status-dirty",
     };
-    shell_command(
-        &cfg.prepare_bin,
-        &[
-            sub.to_string(),
-            "--git".to_string(),
-            git.display().to_string(),
-        ],
-    )
+    let mut args = vec![
+        sub.to_string(),
+        "--git".to_string(),
+        git.display().to_string(),
+    ];
+    if kind == PrepareKind::MaintenanceReset {
+        args.push("--worktree".to_string());
+        args.push(repo.display().to_string());
+    }
+    let inner = shell_command(&cfg.prepare_bin, &args);
+    if kind == PrepareKind::MaintenanceReset {
+        if let Ok(bare) = std::env::var("GRIT_BENCH_MAINTENANCE_BARE") {
+            return format!(
+                "GRIT_BENCH_MAINTENANCE_BARE='{}' {inner}",
+                bare.replace('\'', "'\\''")
+            );
+        }
+    }
+    inner
 }
 
 /// Run one scenario at the given repo path.
@@ -168,7 +179,7 @@ pub fn run_scenario(
 ) -> Result<ScenarioResult> {
     let prepare = scenario
         .prepare_kind
-        .map(|kind| prepare_command(cfg, git, kind));
+        .map(|kind| prepare_command(cfg, git, kind, repo));
 
     let git_prog = if scenario.git_via_shell {
         PathBuf::from("/bin/sh")
@@ -230,7 +241,7 @@ pub fn run_scenario_git_only_with_grit_failure(
 ) -> Result<ScenarioResult> {
     let prepare = scenario
         .prepare_kind
-        .map(|kind| prepare_command(cfg, git, kind));
+        .map(|kind| prepare_command(cfg, git, kind, repo));
 
     let git_prog = if scenario.git_via_shell {
         PathBuf::from("/bin/sh")
@@ -273,7 +284,7 @@ pub fn run_scenario_allow_grit_failure(
 ) -> Result<ScenarioResult> {
     let prepare = scenario
         .prepare_kind
-        .map(|kind| prepare_command(cfg, git, kind));
+        .map(|kind| prepare_command(cfg, git, kind, repo));
 
     let git_prog = if scenario.git_via_shell {
         PathBuf::from("/bin/sh")

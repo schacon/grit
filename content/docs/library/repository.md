@@ -21,15 +21,15 @@ Hooks, clean/smudge filters, credential helpers, signing, SSH transport, and sim
 
 Call [`Repository::discover`](rustdoc:grit_lib::repo::Repository) when you have a working directory and want Git-style upward search. Call [`Repository::open`](rustdoc:grit_lib::repo::Repository) when you already know the git directory; set [`RepositoryOptions::work_tree`](rustdoc:grit_lib::config::environment::RepositoryOptions) for non-bare layouts, [`RepositoryOptions::for_serving`](rustdoc:grit_lib::config::environment::RepositoryOptions) for smart-HTTP paths, and [`RepositoryOptions::without_format_validation`](rustdoc:grit_lib::config::environment::RepositoryOptions) when discovery must open before format checks.
 
-Bare repositories return `None` from [`Repository::work_tree`](rustdoc:grit_lib::repo::Repository). Linked worktrees and gitfile indirection are handled during discovery so [`Repository::git_dir`](rustdoc:grit_lib::repo::Repository) always points at the directory that contains `objects/`.
+Bare repositories return `None` from `Repository::work_tree`. Linked worktrees and gitfile indirection are handled during discovery so `Repository::git_dir` always points at the directory that contains `objects/`.
 
 ## Config
 
-[`Repository::config`](rustdoc:grit_lib::repo::Repository) returns a lazily loaded snapshot of the merged cascade (system / global / local / worktree / environment overrides). Prefer it on hot paths instead of calling `ConfigSet::load` repeatedly. Keys use Git’s dotted names (`user.name`, `core.bare`, …).
+`Repository::config` returns a lazily loaded snapshot of the merged cascade (system / global / local / worktree / environment overrides). Prefer it on hot paths instead of calling `ConfigSet::load` repeatedly. Keys use Git’s dotted names (`user.name`, `core.bare`, …).
 
 ## Typed handles
 
-Core engine areas use thin handles on [`Repository`](rustdoc:grit_lib::repo::Repository) (no duplicated logic):
+Core engine areas use thin handles on `Repository` (no duplicated logic):
 
 | Method | Handle | Role |
 | --- | --- | --- |
@@ -41,23 +41,23 @@ Core engine areas use thin handles on [`Repository`](rustdoc:grit_lib::repo::Rep
 | [`rev_walk`](rustdoc:grit_lib::repo::Repository) | [`RevWalk`](rustdoc:grit_lib::revwalk::handle::RevWalk) | rev-parse specs; rev-list walks |
 | [`diff`](rustdoc:grit_lib::repo::Repository) | [`Diff`](rustdoc:grit_lib::diff::handle::Diff) | tree↔tree, index↔tree, worktree↔index |
 
-[`Repository::refs`](rustdoc:grit_lib::repo::Repository) still returns the pluggable [`RefStore`](rustdoc:grit_lib::refs::store::RefStore) trait object for embedders and low-level ref backends.
+`Repository::refs` still returns the pluggable `RefStore` trait object for embedders and low-level ref backends.
 
 Larger subsystems use [`repo_handles`](rustdoc:grit_lib::repo_handles):
 
 | Method | Handle | Role |
 | --- | --- | --- |
-| [`Repository::remotes`](rustdoc:grit_lib::repo::Repository) | [`RepositoryRemotes`](rustdoc:grit_lib::repo_handles::RepositoryRemotes) | List/get remotes, `ls-remote`, fetch, push |
-| [`Repository::worktrees`](rustdoc:grit_lib::repo::Repository) | [`RepositoryWorktrees`](rustdoc:grit_lib::repo_handles::RepositoryWorktrees) | List/add/remove/lock/unlock linked worktrees |
-| [`Repository::stash`](rustdoc:grit_lib::repo::Repository) | [`RepositoryStash`](rustdoc:grit_lib::repo_handles::RepositoryStash) | Stash list/push/apply/pop/drop |
-| [`Repository::notes`](rustdoc:grit_lib::repo::Repository) | [`RepositoryNotes`](rustdoc:grit_lib::repo_handles::RepositoryNotes) | Notes list/read/add/remove via [`NotesRef`](rustdoc:grit_lib::notes::NotesRef) |
-| [`Repository::bundles`](rustdoc:grit_lib::repo::Repository) | [`RepositoryBundles`](rustdoc:grit_lib::repo_handles::RepositoryBundles) | Bundle create/verify/list-heads/unbundle |
+| `Repository::remotes` | `RepositoryRemotes` | List/get remotes, `ls-remote`, fetch, push |
+| `Repository::worktrees` | `RepositoryWorktrees` | List/add/remove/lock/unlock linked worktrees |
+| `Repository::stash` | `RepositoryStash` | Stash list/push/apply/pop/drop |
+| `Repository::notes` | `RepositoryNotes` | Notes list/read/add/remove via `NotesRef` |
+| `Repository::bundles` | `RepositoryBundles` | Bundle create/verify/list-heads/unbundle |
 
 Transport options, stash identity, and notes author/committer lines are passed in as arguments on those methods (no hidden wall-clock reads in the handle layer).
 
 ## Errors
 
-Library operations return [`grit_lib::error::Result`](rustdoc:grit_lib::error::Result). The [`Error`](rustdoc:grit_lib::error::Error) enum covers I/O, missing objects, bad repository layout, and invalid user input. Match on variants in application code; the `grit` CLI maps them to exit codes and messages separately.
+Library operations return `grit_lib::error::Result`. The `Error` enum covers I/O, missing objects, bad repository layout, and invalid user input. Match on variants in application code; the `grit` CLI maps them to exit codes and messages separately.
 
 ## Example
 
