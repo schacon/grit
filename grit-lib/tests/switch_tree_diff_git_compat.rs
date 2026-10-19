@@ -838,6 +838,112 @@ fn switch_refuses_dirty_conflicting_path_and_leaves_file() {
     assert_eq!(before, after, "conflicting dirty file must be untouched");
 }
 
+/// Non-racy index entry must not skip worktree validation when the target tree deletes the path.
+#[test]
+fn switch_refuses_dirty_file_deleted_on_target_like_git() {
+    use std::thread;
+    use std::time::Duration;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    git(tmp.path(), &["init", "-q", "-b", "main", "."]);
+    git(tmp.path(), &["config", "user.email", "t@example.com"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+
+    std::fs::write(tmp.path().join("victim.txt"), b"tracked\n").expect("write");
+    git(tmp.path(), &["add", "victim.txt"]);
+    git(tmp.path(), &["commit", "-qm", "main"]);
+
+    git(tmp.path(), &["checkout", "-q", "-b", "target"]);
+    git(tmp.path(), &["rm", "victim.txt"]);
+    git(tmp.path(), &["commit", "-qm", "drop victim"]);
+    git(tmp.path(), &["checkout", "-q", "main"]);
+
+    thread::sleep(Duration::from_secs(2));
+    let refresh = Command::new("git")
+        .current_dir(tmp.path())
+        .args(["update-index", "--refresh"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git update-index --refresh");
+    assert!(
+        refresh.success() || refresh.code() == Some(1),
+        "git update-index --refresh failed: {refresh:?}"
+    );
+    std::fs::write(tmp.path().join("victim.txt"), b"dirty local\n").expect("dirty");
+    let before = std::fs::read(tmp.path().join("victim.txt")).expect("read before");
+
+    let git_switch = Command::new("git")
+        .current_dir(tmp.path())
+        .args(["switch", "target"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git switch");
+    assert!(
+        !git_switch.success(),
+        "system git must refuse switch when victim.txt is dirty but deleted on target"
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("victim.txt")).expect("read after git"),
+        before,
+        "git must preserve dirty victim.txt"
+    );
+    let head_after_git = git(tmp.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert!(
+        head_after_git.trim() == "main",
+        "git must stay on main, got {head_after_git}"
+    );
+
+    git(tmp.path(), &["checkout", "-q", "main"]);
+    thread::sleep(Duration::from_secs(2));
+    let refresh = Command::new("git")
+        .current_dir(tmp.path())
+        .args(["update-index", "--refresh"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git update-index --refresh");
+    assert!(
+        refresh.success() || refresh.code() == Some(1),
+        "git update-index --refresh failed: {refresh:?}"
+    );
+    std::fs::write(tmp.path().join("victim.txt"), b"dirty local\n").expect("dirty again");
+
+    let grit_repo = Repository::open(
+        &tmp.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(tmp.path()),
+    )
+    .expect("open grit repo");
+    let target_oid =
+        ObjectId::from_hex(git(tmp.path(), &["rev-parse", "target"]).trim()).expect("target oid");
+
+    let err = switch_repository(
+        &grit_repo,
+        &SwitchOptions {
+            mode: SwitchMode::Existing {
+                branch: "target".into(),
+                oid: target_oid,
+            },
+        },
+    )
+    .expect_err("grit must refuse switch like git");
+    assert!(
+        err.to_string().contains("uncommitted changes"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        std::fs::read(tmp.path().join("victim.txt")).expect("read after grit"),
+        before,
+        "grit must preserve dirty victim.txt"
+    );
+    let head_after_grit = git(tmp.path(), &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert!(
+        head_after_grit.trim() == "main",
+        "grit must stay on main, got {head_after_grit}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn switch_tree_diff_type_and_mode_round_trip_git_clean() {

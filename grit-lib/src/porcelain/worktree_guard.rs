@@ -612,14 +612,7 @@ fn delete_path_trusted_without_worktree_stat(
     ) {
         return false;
     }
-    if worktree_path_absent_for_trusted_delete(work_tree, path) {
-        return true;
-    }
-    let Some(ie) = index.get(path.as_bytes(), 0) else {
-        return false;
-    };
-    use crate::index::{MODE_GITLINK, MODE_SYMLINK};
-    ie.mode != MODE_SYMLINK && ie.mode != MODE_GITLINK
+    worktree_path_absent_for_trusted_delete(work_tree, path)
 }
 
 fn staged_diff_for_tree_switch_paths(
@@ -2067,7 +2060,10 @@ mod tests {
     fn delete_only_tree_diff_paths_skip_worktree_stat_when_index_matches_head() {
         use crate::objects::{serialize_commit, CommitData, ObjectKind};
         use crate::refs;
-        use crate::worktree_scan::{reset_worktree_metadata_probe, worktree_metadata_probe_count};
+        use crate::worktree_scan::{
+            reset_worktree_metadata_probe, worktree_metadata_probe_count,
+            worktree_read_dir_probe_count,
+        };
         use crate::write_tree::{write_tree_update_index, WriteTreeFlags};
         use std::thread;
         use std::time::Duration;
@@ -2078,14 +2074,28 @@ mod tests {
             .expect("init");
         const FILE_COUNT: usize = 120;
         const DELETE_COUNT: usize = 80;
+        const DIR_GROUPS: usize = 8;
+        const FILES_PER_DIR: usize = DELETE_COUNT / DIR_GROUPS;
         for i in 0..FILE_COUNT {
-            let dir = format!("bulk/d{i:03}");
+            let dir = if i < DELETE_COUNT {
+                format!("bulk/p{:02}", i / FILES_PER_DIR)
+            } else {
+                format!("keep/d{i:03}")
+            };
             std::fs::create_dir_all(root.join(&dir)).expect("mkdir");
-            std::fs::write(root.join(&dir).join("f.txt"), format!("body {i}\n")).expect("write");
+            std::fs::write(
+                root.join(&dir).join(format!("f{i:03}.txt")),
+                format!("body {i}\n"),
+            )
+            .expect("write");
         }
         let mut index = repo.load_index().expect("index");
         for i in 0..FILE_COUNT {
-            let rel = format!("bulk/d{i:03}/f.txt");
+            let rel = if i < DELETE_COUNT {
+                format!("bulk/p{:02}/f{i:03}.txt", i / FILES_PER_DIR)
+            } else {
+                format!("keep/d{i:03}/f{i:03}.txt")
+            };
             let abs = root.join(&rel);
             let data = std::fs::read(&abs).expect("read");
             let oid = repo.odb().write(ObjectKind::Blob, &data).expect("blob");
@@ -2125,7 +2135,7 @@ mod tests {
 
         let mut target_index = index.clone();
         for i in 0..DELETE_COUNT {
-            let rel = format!("bulk/d{i:03}/f.txt");
+            let rel = format!("bulk/p{:02}/f{i:03}.txt", i / FILES_PER_DIR);
             target_index.remove(rel.as_bytes());
         }
         target_index.sort();
@@ -2154,10 +2164,15 @@ mod tests {
         .expect("scoped diffs");
         assert!(staged.is_empty(), "expected no staged: {staged:?}");
         assert!(unstaged.is_empty(), "clean tree: {unstaged:?}");
-        let calls = worktree_metadata_probe_count();
+        let metadata = worktree_metadata_probe_count();
+        let read_dirs = worktree_read_dir_probe_count();
         assert!(
-            calls <= 8,
-            "delete-only paths with matching index should not stat every file (probes {calls})"
+            read_dirs <= DIR_GROUPS + 2,
+            "expected directory-grouped scan ({DIR_GROUPS} groups), read_dir probes {read_dirs}"
+        );
+        assert!(
+            metadata <= DELETE_COUNT + DIR_GROUPS + 4,
+            "expected ~one metadata probe per deleted file via readdir, got {metadata}"
         );
     }
 
