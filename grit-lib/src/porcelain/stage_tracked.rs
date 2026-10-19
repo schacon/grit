@@ -269,7 +269,8 @@ fn stage_tracked_modifications_in_index_body(
     let mut dir_symlinks = SymlinkDirCache::default();
 
     for raw_path in &unmerged_paths {
-        let abs_path = abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode);
+        let abs_path =
+            abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
         refresh_unmerged_tracked_path(repo, index, raw_path, &abs_path, rules, &mut summary)?;
     }
 
@@ -283,6 +284,7 @@ fn stage_tracked_modifications_in_index_body(
             index_mtime,
             trust_filemode,
             precompose_unicode,
+            ignorecase,
             &mut symlink_parent_cache,
             rules,
             &mut summary,
@@ -379,7 +381,8 @@ fn stage_tracked_modifications_in_index_body(
                 return Ok(());
             }
             let raw_path = idx_e.path.clone();
-            let abs_path = abs_path_for_stage_tracked(work_tree, &raw_path, precompose_unicode);
+            let abs_path =
+                abs_path_for_stage_tracked(work_tree, &raw_path, precompose_unicode, ignorecase);
             match lookup {
                 BlobDiskLookup::Missing => {
                     if idx_e.skip_worktree() {
@@ -504,14 +507,15 @@ fn abs_path_for_stage_tracked(
     work_tree: &Path,
     raw_path: &[u8],
     precompose_unicode: bool,
+    ignorecase: bool,
 ) -> PathBuf {
-    std::str::from_utf8(raw_path)
-        .ok()
-        .filter(|_| precompose_unicode)
-        .map_or_else(
-            || worktree_path_from_index_rel(work_tree, raw_path),
-            |rel| resolve_worktree_path_for_staging(work_tree, rel, true).abs,
-        )
+    let Some(rel) = std::str::from_utf8(raw_path).ok() else {
+        return worktree_path_from_index_rel(work_tree, raw_path);
+    };
+    if precompose_unicode {
+        return resolve_worktree_path_for_staging(work_tree, rel, true).abs;
+    }
+    index_entry_worktree_abs(work_tree, rel, false, ignorecase)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -524,11 +528,12 @@ fn stage_tracked_path_individual(
     index_mtime: Option<(u32, u32)>,
     trust_filemode: bool,
     precompose_unicode: bool,
+    ignorecase: bool,
     symlink_parent_cache: &mut HashMap<PathBuf, bool>,
     rules: &mut WorktreeRules,
     summary: &mut StageTrackedSummary,
 ) -> Result<()> {
-    let abs_path = abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode);
+    let abs_path = abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
     if path_has_symlink_parent_cached(work_tree, &abs_path, symlink_parent_cache) {
         if index.remove(raw_path) {
             summary.removed.push(raw_path.to_vec());

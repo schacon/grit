@@ -211,6 +211,38 @@ fn stage_for_commit_ignorecase_autocrlf_uses_tracked_scan_on_deep_tree() {
 }
 
 #[test]
+fn stage_for_commit_ignorecase_tracked_scan_updates_case_only_spelling() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    init_windows_like_repo(root);
+    write_deep_tree(root, 8, 8, 3);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "base"]);
+
+    let old = root.join("b00/d00/f0.txt");
+    let new = root.join("b00/d00/F0.txt");
+    fs::rename(&old, &new).expect("case-only rename");
+
+    let repo = open_repo(root);
+    let outcome = stage_for_commit(&repo, &mut NullProgress).expect("stage case rename");
+    assert_eq!(outcome.added, 0);
+    assert!(
+        outcome.modified >= 1,
+        "case-only rename must refresh index spelling via tracked scan + icase update"
+    );
+
+    let index = repo.index_handle().load().expect("index");
+    assert!(
+        index.get(b"b00/d00/F0.txt", 0).is_some(),
+        "index must store on-disk spelling after case-only rename"
+    );
+    assert!(
+        index.get(b"b00/d00/f0.txt", 0).is_none(),
+        "old spelling must not remain as a duplicate stage-0 entry"
+    );
+}
+
+#[test]
 fn commit_worktree_allow_empty_clean_tree_single_staging_pass() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
