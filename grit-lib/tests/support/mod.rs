@@ -17,9 +17,11 @@ pub use attributes_harness::*;
 pub use config_oracle::*;
 pub use diff_harness::*;
 pub use history_harness::{
-    assert_grit_commits_match_git, assert_rev_list_commits_match_git, build_commit_dag,
-    commit_file, commit_labeled_with_dates, expand_revision_tokens, expand_token_for_rev_list, git,
-    git_commit_graph_write, git_history_command_available, git_history_fixup_or_legacy,
+    assert_fixup_tip_matches_git_oracle, assert_fixup_tip_structure_matches,
+    assert_grit_commits_match_git,
+    assert_rev_list_commits_match_git, build_commit_dag, commit_file, commit_labeled_with_dates,
+    expand_revision_tokens, expand_token_for_rev_list, git, git_commit_graph_write,
+    git_history_command_available, git_history_fixup_legacy_oracle, git_history_fixup_or_legacy,
     git_history_stderr_indicates_unavailable, git_history_subcommand_available, git_ls_files_stage,
     git_ls_files_stage0_map, git_merge_base, git_merge_base_is_ancestor, git_merge_expect_conflict,
     git_rev_list, git_rev_list_lines, git_rev_list_object_set, git_rev_list_with_boundary,

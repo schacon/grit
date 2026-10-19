@@ -210,12 +210,11 @@ fn git_status_has_unstaged_changes(dir: &Path) -> bool {
         .any(|line| line.len() >= 2 && line.as_bytes()[1] != b' ')
 }
 
-/// Run system `git history fixup` when available, else `commit --fixup` + autosquash rebase.
-pub fn git_history_fixup_or_legacy(dir: &Path, target: &str) {
-    if git_history_subcommand_available("fixup") {
-        git(dir, &["history", "fixup", target]);
-        return;
-    }
+/// Git 2.45 fallback: `commit --fixup` and autosquash rebase without rewriting unchanged ancestors.
+pub fn git_history_fixup_legacy_oracle(dir: &Path, target: &str) {
+    let upstream = git_rev_parse(dir, &format!("{target}^"))
+        .map(|parent| parent.to_string())
+        .unwrap_or_else(|| "--root".to_owned());
     git(dir, &["commit", "--fixup", target]);
     let stashed = if git_status_has_unstaged_changes(dir) {
         git(dir, &["stash", "push", "-m", "grit-fixup-parity"]);
@@ -231,11 +230,51 @@ pub fn git_history_fixup_or_legacy(dir: &Path, target: &str) {
             "rebase",
             "-i",
             "--autosquash",
-            "--root",
+            &upstream,
         ],
     );
     if stashed {
         git(dir, &["stash", "pop"]);
+    }
+}
+
+/// Run system `git history fixup` when available, else [`git_history_fixup_legacy_oracle`].
+pub fn git_history_fixup_or_legacy(dir: &Path, target: &str) {
+    if git_history_subcommand_available("fixup") {
+        git(dir, &["history", "fixup", target]);
+        return;
+    }
+    git_history_fixup_legacy_oracle(dir, target);
+}
+
+/// Assert fixup `HEAD` tree, subject, and parent OIDs match between two repos.
+pub fn assert_fixup_tip_structure_matches(grit_dir: &Path, git_dir: &Path) {
+    assert_eq!(
+        git(grit_dir, &["rev-parse", "HEAD^{tree}"]).trim(),
+        git(git_dir, &["rev-parse", "HEAD^{tree}"]).trim(),
+        "fixup HEAD tree"
+    );
+    assert_eq!(
+        git(grit_dir, &["log", "-1", "--format=%s"]).trim(),
+        git(git_dir, &["log", "-1", "--format=%s"]).trim(),
+        "fixup HEAD subject"
+    );
+    assert_eq!(
+        git(grit_dir, &["log", "-1", "--format=%P"]).trim(),
+        git(git_dir, &["log", "-1", "--format=%P"]).trim(),
+        "fixup HEAD parents"
+    );
+}
+
+/// Assert grit and git fixup results match; full commit OID only when `git history fixup` exists.
+pub fn assert_fixup_tip_matches_git_oracle(grit_dir: &Path, git_dir: &Path) {
+    assert_fixup_tip_structure_matches(grit_dir, git_dir);
+    if git_history_subcommand_available("fixup") {
+        assert_eq!(
+            git_rev_parse(grit_dir, "HEAD").expect("grit HEAD"),
+            git_rev_parse(git_dir, "HEAD").expect("git HEAD"),
+            "fixup HEAD oid (git history fixup)"
+        );
     }
 }
 
