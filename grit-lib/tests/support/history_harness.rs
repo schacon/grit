@@ -2,11 +2,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use grit_lib::config::environment::RepositoryOptions;
@@ -20,15 +20,58 @@ use grit_lib::revwalk::{parse_rev_walk_tokens, RevWalkParsedSpecs};
 
 use super::refs_harness::{git as refs_git, null_device_for_tests, AUTHOR_EMAIL, AUTHOR_NAME};
 
-static COMMIT_TIME: AtomicU64 = AtomicU64::new(1_700_000_000);
+thread_local! {
+    static COMMIT_TIME: Cell<u64> = const { Cell::new(1_700_000_000) };
+}
+
+/// Reset the monotonic harness author/committer clock (for paired git/grit repo fixtures).
+pub fn reset_harness_commit_clock() {
+    COMMIT_TIME.with(|t| t.set(1_700_000_000));
+}
 
 fn next_commit_date() -> String {
-    let secs = COMMIT_TIME.fetch_add(60, Ordering::SeqCst);
-    format!("{secs} +0000")
+    COMMIT_TIME.with(|t| {
+        let secs = t.get();
+        t.set(secs.saturating_add(60));
+        format!("{secs} +0000")
+    })
+}
+
+fn git_command_advances_harness_clock(args: &[&str]) -> bool {
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "-c" | "-C" | "--git-dir" | "--work-tree" => {
+                i += 2;
+            }
+            cmd => {
+                return !matches!(
+                    cmd,
+                    "rev-parse"
+                        | "cat-file"
+                        | "fsck"
+                        | "log"
+                        | "show"
+                        | "status"
+                        | "diff"
+                        | "ls-files"
+                        | "ls-tree"
+                        | "help"
+                        | "merge-base"
+                        | "symbolic-ref"
+                );
+            }
+        }
+    }
+    true
 }
 
 fn hermetic_git(dir: &Path, args: &[&str]) -> std::process::Output {
-    let date = next_commit_date();
+    let date = if git_command_advances_harness_clock(args) {
+        next_commit_date()
+    } else {
+        peek_commit_date()
+    };
     Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -137,7 +180,63 @@ pub fn git_history_subcommand_available(subcommand: &str) -> bool {
     else {
         return false;
     };
-    out.status.success()
+    if out.status.success() {
+        return true;
+    }
+    // Git prints usage to stdout for `-h` but may exit 129.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.contains("usage: git history") && stdout.contains(subcommand)
+}
+
+fn peek_commit_date() -> String {
+    COMMIT_TIME.with(|t| format!("{} +0000", t.get()))
+}
+
+/// Committer line for the next [`git`] invocation without advancing the harness clock.
+///
+/// Pair with [`git_history_fixup_or_legacy`] so grit fixup and system git use the same committer timestamp.
+#[must_use]
+pub fn harness_committer_line() -> String {
+    format!("{AUTHOR_NAME} <{AUTHOR_EMAIL}> {}", peek_commit_date())
+}
+
+fn git_status_has_unstaged_changes(dir: &Path) -> bool {
+    let out = hermetic_git(dir, &["status", "--porcelain"]);
+    if !out.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|line| line.len() >= 2 && line.as_bytes()[1] != b' ')
+}
+
+/// Run system `git history fixup` when available, else `commit --fixup` + autosquash rebase.
+pub fn git_history_fixup_or_legacy(dir: &Path, target: &str) {
+    if git_history_subcommand_available("fixup") {
+        git(dir, &["history", "fixup", target]);
+        return;
+    }
+    git(dir, &["commit", "--fixup", target]);
+    let stashed = if git_status_has_unstaged_changes(dir) {
+        git(dir, &["stash", "push", "-m", "grit-fixup-parity"]);
+        true
+    } else {
+        false
+    };
+    git(
+        dir,
+        &[
+            "-c",
+            "sequence.editor=true",
+            "rebase",
+            "-i",
+            "--autosquash",
+            "--root",
+        ],
+    );
+    if stashed {
+        git(dir, &["stash", "pop"]);
+    }
 }
 
 #[cfg(test)]

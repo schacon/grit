@@ -17,7 +17,11 @@ use grit_lib::revwalk::history::{
     HistoryError, RefScope, RewriteOptions,
 };
 
-use support::{commit_file, git, git_fsck_strict, git_rev_parse, HistoryRepo};
+use support::{
+    commit_file, git, git_fsck_strict, git_history_fixup_or_legacy,
+    git_history_subcommand_available, git_rev_parse, harness_committer_line,
+    reset_harness_commit_clock, HistoryRepo,
+};
 
 fn open_grit(wt: &std::path::Path) -> Repository {
     Repository::discover(Some(wt), &RepositoryOptions::empty()).expect("discover")
@@ -35,6 +39,19 @@ fn fixup_opts(scope: RefScope, empty: EmptyPolicy) -> FixupOptions {
             scope,
             empty,
             committer: committer(1),
+            preserve_committer: false,
+        },
+    }
+}
+
+fn harness_fixup_opts(scope: RefScope, empty: EmptyPolicy) -> FixupOptions {
+    FixupOptions {
+        message: None,
+        empty,
+        rewrite: RewriteOptions {
+            scope,
+            empty,
+            committer: harness_committer_line(),
             preserve_committer: false,
         },
     }
@@ -233,21 +250,6 @@ fn fixup_conflict_changes_nothing() {
     assert_eq!(git_rev_parse(wt, "HEAD"), Some(before));
 }
 
-fn git_fixup_autosquash_from_head_minus_two(wt: &std::path::Path) {
-    git(wt, &["commit", "--fixup", "HEAD~1"]);
-    git(
-        wt,
-        &[
-            "-c",
-            "sequence.editor=true",
-            "rebase",
-            "-i",
-            "--autosquash",
-            "HEAD~2",
-        ],
-    );
-}
-
 #[test]
 fn fixup_preserves_unstaged_deletion_after_partial_staging() {
     let repo = HistoryRepo::init();
@@ -280,6 +282,7 @@ fn fixup_preserves_unstaged_deletion_matches_git_fixup_autosquash() {
     if !support::skip_unless_git_at_least(2, 45) {
         return;
     }
+    reset_harness_commit_clock();
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     fs::write(wt.join("file.txt"), "committed\n").expect("write");
@@ -293,11 +296,12 @@ fn fixup_preserves_unstaged_deletion_matches_git_fixup_autosquash() {
         &grit,
         wt,
         git_rev_parse(wt, "HEAD").expect("head"),
-        &fixup_opts(RefScope::Head, EmptyPolicy::Drop),
+        &harness_fixup_opts(RefScope::Head, EmptyPolicy::Drop),
     );
     let grit_tip = git_rev_parse(wt, "HEAD").expect("grit tip");
     assert!(!wt.join("file.txt").exists());
 
+    reset_harness_commit_clock();
     let repo2 = HistoryRepo::init();
     let wt2 = repo2.worktree();
     fs::write(wt2.join("file.txt"), "committed\n").expect("write");
@@ -306,7 +310,7 @@ fn fixup_preserves_unstaged_deletion_matches_git_fixup_autosquash() {
     fs::write(wt2.join("file.txt"), "staged\n").expect("write");
     git(wt2, &["add", "file.txt"]);
     fs::remove_file(wt2.join("file.txt")).expect("remove");
-    git_fixup_autosquash_from_head_minus_two(wt2);
+    git_history_fixup_or_legacy(wt2, "HEAD");
     let git_tip = git_rev_parse(wt2, "HEAD").expect("git tip");
     assert!(!wt2.join("file.txt").exists());
     assert_eq!(grit_tip, git_tip);
@@ -451,11 +455,11 @@ fn history_fixup_matches_git_commit_fixup_autosquash() {
     if !support::skip_unless_git_at_least(2, 45) {
         return;
     }
+    reset_harness_commit_clock();
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     commit_file(wt, "first.t", "1\n", "first");
-    commit_file(wt, "second.t", "2\n", "second");
-    let target = git_rev_parse(wt, "HEAD").expect("target");
+    let target = commit_file(wt, "second.t", "2\n", "second");
     fs::write(wt.join("second.t"), "2\npatched\n").expect("write");
     git(wt, &["add", "second.t"]);
     let grit = open_grit(wt);
@@ -463,44 +467,29 @@ fn history_fixup_matches_git_commit_fixup_autosquash() {
         &grit,
         wt,
         target,
-        &fixup_opts(RefScope::Head, EmptyPolicy::Drop),
+        &harness_fixup_opts(RefScope::Head, EmptyPolicy::Drop),
     );
     let grit_tip = git_rev_parse(wt, "HEAD").expect("grit tip");
 
+    reset_harness_commit_clock();
     let repo2 = HistoryRepo::init();
     let wt2 = repo2.worktree();
     commit_file(wt2, "first.t", "1\n", "first");
     commit_file(wt2, "second.t", "2\n", "second");
     fs::write(wt2.join("second.t"), "2\npatched\n").expect("write");
     git(wt2, &["add", "second.t"]);
-    git(wt2, &["commit", "--fixup", "HEAD~1"]);
-    git(
-        wt2,
-        &[
-            "-c",
-            "sequence.editor=true",
-            "rebase",
-            "-i",
-            "--autosquash",
-            "HEAD~2",
-        ],
-    );
+    git_history_fixup_or_legacy(wt2, "HEAD");
     let git_tip = git_rev_parse(wt2, "HEAD").expect("git tip");
     assert_eq!(grit_tip, git_tip);
 }
 
 #[test]
 fn history_fixup_matches_git_history_when_available() {
-    use std::process::Command;
-    let has_git_history = Command::new("git")
-        .args(["history", "fixup", "-h"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !has_git_history {
+    if !git_history_subcommand_available("fixup") {
         eprintln!("SKIP: system git has no `history fixup` subcommand");
         return;
     }
+    reset_harness_commit_clock();
     let repo = HistoryRepo::init();
     let wt = repo.worktree();
     commit_file(wt, "file.txt", "base\n", "add file");
@@ -512,16 +501,17 @@ fn history_fixup_matches_git_history_when_available() {
         &grit,
         wt,
         target,
-        &fixup_opts(RefScope::Head, EmptyPolicy::Drop),
+        &harness_fixup_opts(RefScope::Head, EmptyPolicy::Drop),
     );
     let grit_tip = git_rev_parse(wt, "HEAD").expect("grit tip");
 
+    reset_harness_commit_clock();
     let repo2 = HistoryRepo::init();
     let wt2 = repo2.worktree();
     commit_file(wt2, "file.txt", "base\n", "add file");
     fs::write(wt2.join("file.txt"), "base\nfix\n").expect("write");
     git(wt2, &["add", "file.txt"]);
-    git(wt2, &["history", "fixup", "HEAD"]);
+    git_history_fixup_or_legacy(wt2, "HEAD");
     let git_tip = git_rev_parse(wt2, "HEAD").expect("git tip");
     assert_eq!(grit_tip, git_tip);
 }
