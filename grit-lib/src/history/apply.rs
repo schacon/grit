@@ -1447,7 +1447,9 @@ fn restore_worktree_path(abs: &Path, saved: &WorktreePathSnapshot) -> std::io::R
             let Some(bytes) = saved.bytes.as_ref() else {
                 return Ok(());
             };
-            if abs.is_symlink() || abs.is_file() {
+            if abs.is_dir() {
+                fs::remove_dir_all(abs)?;
+            } else if abs.is_symlink() || abs.is_file() {
                 fs::remove_file(abs)?;
             }
             if let Some(parent) = abs.parent() {

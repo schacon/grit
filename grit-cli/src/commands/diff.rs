@@ -37,6 +37,7 @@ use grit_lib::revwalk::rev_parse::{
     split_double_dot_range, split_triple_dot_range,
 };
 use grit_lib::state::resolve_head;
+use grit_lib::worktree::fsmonitor::fsmonitor_enabled;
 use grit_lib::worktree::pathspec::{
     pathdiff, resolve_pathspec, resolve_pathspec_in_worktree_with_git_dir,
 };
@@ -697,7 +698,7 @@ fn unstaged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>
         thread_policy: Some(repo.thread_policy()),
         refresh_index_stat_in_pass: false,
         for_status: true,
-        refresh_fsmonitor: grit_lib::fsmonitor::fsmonitor_enabled(config_arc.as_ref()),
+        refresh_fsmonitor: fsmonitor_enabled(config_arc.as_ref()),
         worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
         command_runner: Some(repo.command_runner()),
         ..DiffIndexToWorktreeOptions::default()
@@ -900,7 +901,7 @@ fn worktree_against_tree(
                 thread_policy: Some(repo.thread_policy()),
                 refresh_index_stat_in_pass: false,
                 for_status: true,
-                refresh_fsmonitor: grit_lib::fsmonitor::fsmonitor_enabled(config.as_ref()),
+                refresh_fsmonitor: fsmonitor_enabled(config.as_ref()),
                 worktree_rules: Some(std::sync::Arc::clone(&rules_arc)),
                 command_runner: Some(repo.command_runner()),
                 ..DiffIndexToWorktreeOptions::default()

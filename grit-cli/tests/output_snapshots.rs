@@ -252,6 +252,21 @@ fn snapshot_history_drop() {
     );
 }
 
+fn prepare_history_squash(fixture: &CliFixture) {
+    fixture
+        .run(&["commit", "-m", "third on main"])
+        .expect_success("commit third on main for history squash snapshot");
+}
+
+#[test]
+fn snapshot_history_squash() {
+    snapshot_fresh(
+        "history_squash",
+        &["history", "squash", "HEAD~2..HEAD", "--update-refs", "head"],
+        prepare_history_squash,
+    );
+}
+
 #[test]
 fn snapshot_revert() {
     snapshot_fresh("revert", &["revert", "HEAD"], |fixture| {
