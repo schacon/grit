@@ -19,7 +19,7 @@ use crate::progress::{ProgressPhase, ProgressUnit};
 pub enum PackReceiveTarget<'a> {
     /// Accumulate in a `Vec` (local transports and tests).
     Memory(&'a mut Vec<u8>),
-    /// Append to an open temp pack under `objects/pack/`.
+    /// Append to an open temp pack under `objects/incoming/`.
     File(&'a mut dyn Write),
 }
 
@@ -442,7 +442,7 @@ impl Drop for SpoolFileGuard {
     }
 }
 
-/// A temp pack file (system temp dir) for streaming clone/fetch receive.
+/// A temp pack file under `objects/incoming/` for streaming clone/fetch receive.
 pub struct TempPackReceive {
     file: BufWriter<File>,
     spool: SpoolFileGuard,
@@ -450,51 +450,20 @@ pub struct TempPackReceive {
     sideband_payload: Vec<u8>,
 }
 
-fn pack_receive_spool_dir(_objects_dir: &Path) -> PathBuf {
-    // Keep partial packs out of `.git/objects/pack/` so real-time AV has a shorter
-    // window to quarantine in-progress clone receives (#1194).
-    #[cfg(test)]
-    if let Some(dir) = test_pack_spool_dir_override() {
-        return dir;
-    }
-    std::env::temp_dir()
+fn pack_receive_incoming_dir(objects_dir: &Path) -> PathBuf {
+    objects_dir.join("incoming")
 }
 
-#[cfg(test)]
-mod pack_receive_test_support {
-    use std::cell::RefCell;
-    use std::path::PathBuf;
-
-    thread_local! {
-        static TEST_PACK_SPOOL_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+fn ensure_pack_receive_incoming_dir(objects_dir: &Path) -> Result<PathBuf> {
+    let dir = pack_receive_incoming_dir(objects_dir);
+    std::fs::create_dir_all(&dir).map_err(Error::Io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(Error::Io)?;
     }
-
-    pub(super) fn spool_dir_override() -> Option<PathBuf> {
-        TEST_PACK_SPOOL_DIR.with(|slot| slot.borrow().clone())
-    }
-
-    pub struct TestPackSpoolDirGuard;
-
-    impl TestPackSpoolDirGuard {
-        pub fn set(dir: PathBuf) -> Self {
-            TEST_PACK_SPOOL_DIR.with(|slot| *slot.borrow_mut() = Some(dir));
-            Self
-        }
-    }
-
-    impl Drop for TestPackSpoolDirGuard {
-        fn drop(&mut self) {
-            TEST_PACK_SPOOL_DIR.with(|slot| slot.borrow_mut().take());
-        }
-    }
-}
-
-#[cfg(test)]
-use pack_receive_test_support::TestPackSpoolDirGuard;
-
-#[cfg(test)]
-fn test_pack_spool_dir_override() -> Option<PathBuf> {
-    pack_receive_test_support::spool_dir_override()
+    Ok(dir)
 }
 
 fn create_private_spool_file(path: &Path) -> Result<File> {
@@ -567,21 +536,20 @@ fn assert_received_pack_durable(path: &Path, expected_len: u64) -> Result<()> {
 }
 
 impl TempPackReceive {
-    /// Create a `grit_tmp_pack_*` file under the system temp directory.
+    /// Create a `pack-receive-*.tmp` file under `objects_dir/incoming/`.
     ///
-    /// `objects_dir` is reserved for callers that already hold the ODB layout; the
-    /// spool path intentionally avoids `objects_dir/pack/` during network receive.
+    /// Spool files stay inside the repository object store (same filesystem as
+    /// `objects/pack/`) but outside published pack names until index-pack runs.
     ///
     /// # Errors
     ///
     /// Returns an I/O error when the directory or file cannot be created.
     pub fn create(objects_dir: &Path) -> Result<Self> {
         static SEQ: AtomicU64 = AtomicU64::new(0);
-        let spool_dir = pack_receive_spool_dir(objects_dir);
-        std::fs::create_dir_all(&spool_dir).map_err(Error::Io)?;
+        let spool_dir = ensure_pack_receive_incoming_dir(objects_dir)?;
         for _ in 0..64 {
             let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-            let path = spool_dir.join(format!("grit_tmp_pack_{}_{seq}", std::process::id()));
+            let path = spool_dir.join(format!("pack-receive-{}_{seq}.tmp", std::process::id()));
             match create_private_spool_file(&path) {
                 Ok(file) => {
                     return Ok(Self {
@@ -597,7 +565,7 @@ impl TempPackReceive {
         }
         Err(Error::Io(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "could not allocate grit_tmp_pack file name in pack spool directory",
+            "could not allocate pack-receive temp file name under objects/incoming",
         )))
     }
 
@@ -666,7 +634,7 @@ impl TempPackReceive {
 pub enum PackReceiveOutcome {
     /// Pack bytes held in memory (fresh clone fast path).
     Memory(Vec<u8>),
-    /// Pack written to a temp path (system temp dir, not `objects/pack/`).
+    /// Pack written under `objects/incoming/` (not yet installed as `objects/pack/*.pack`).
     File(PathBuf),
 }
 
@@ -944,12 +912,16 @@ mod tests {
     }
 
     #[test]
-    fn temp_pack_spools_outside_objects_pack_dir() {
+    fn temp_pack_spools_under_objects_incoming_not_pack() {
         let dir = tempfile::tempdir().expect("tempdir");
         let objects = dir.path().join("objects");
         std::fs::create_dir_all(objects.join("pack")).expect("pack dir");
         let recv = TempPackReceive::create(&objects).expect("create");
         let path = recv.path().to_path_buf();
+        assert!(
+            path.starts_with(objects.join("incoming")),
+            "temp pack must live under objects/incoming during receive"
+        );
         assert!(
             !path.starts_with(objects.join("pack")),
             "temp pack must not live under objects/pack during receive"
@@ -960,9 +932,6 @@ mod tests {
     #[test]
     fn temp_pack_drop_after_partial_receive_removes_spool() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let spool_dir = dir.path().join("spool");
-        std::fs::create_dir_all(&spool_dir).expect("spool dir");
-        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
         let objects = dir.path().join("objects");
         let mut recv = TempPackReceive::create(&objects).expect("create");
         let path = recv.path().to_path_buf();
@@ -980,9 +949,6 @@ mod tests {
     #[test]
     fn temp_pack_drop_after_sideband_error_removes_spool() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let spool_dir = dir.path().join("spool");
-        std::fs::create_dir_all(&spool_dir).expect("spool dir");
-        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
         let objects = dir.path().join("objects");
         let mut recv = TempPackReceive::create(&objects).expect("create");
         let path = recv.path().to_path_buf();
@@ -1005,9 +971,6 @@ mod tests {
     fn temp_pack_spool_file_is_private_to_owner() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("tempdir");
-        let spool_dir = dir.path().join("spool");
-        std::fs::create_dir_all(&spool_dir).expect("spool dir");
-        let _spool_guard = TestPackSpoolDirGuard::set(spool_dir);
         let objects = dir.path().join("objects");
         let recv = TempPackReceive::create(&objects).expect("create");
         let mode = std::fs::metadata(recv.path())
