@@ -3377,7 +3377,7 @@ pub fn grit_lib::diff::worktree_differs_from_index_entry(&grit_lib::objects::odb
 pub fn grit_lib::diff::write_commit_header_and_message<W: core::io::write::Write>(&mut W, &str, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_commit_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &grit_lib::objects::ObjectId, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_commits_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &[grit_lib::objects::ObjectId], &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
-pub fn grit_lib::diff::write_diff_entry_log_patch<W: core::io::write::Write>(&mut W, &grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::diff::DiffEntry, &grit_lib::diff::LogPatchOptions, &mut grit_lib::oid_abbrev_cache::OidAbbrevCache) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_diff_entry_log_patch<W: core::io::write::Write>(&mut W, &grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::diff::DiffEntry, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_unified_diff_with_prefix_and_funcname_and_algorithm<W: core::io::write::Write>(&mut W, &str, &str, &str, &str, usize, usize, &str, &str, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, similar::types::Algorithm, bool, bool, bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::zero_oid() -> grit_lib::objects::ObjectId
 pub mod grit_lib::error
@@ -7400,7 +7400,6 @@ impl core::marker::Unpin for grit_lib::objects::pack::StreamingReuse
 impl core::marker::UnsafeUnpin for grit_lib::objects::pack::StreamingReuse
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::pack::StreamingReuse
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::pack::StreamingReuse
-||||||| Common ancestor
 pub struct grit_lib::objects::pack::VerifyObjectRecord
 pub grit_lib::objects::pack::VerifyObjectRecord::base_oid: core::option::Option<alloc::vec::Vec<u8>>
 pub grit_lib::objects::pack::VerifyObjectRecord::base_pack_offset: core::option::Option<u64>
