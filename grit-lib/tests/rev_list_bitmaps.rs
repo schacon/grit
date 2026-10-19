@@ -237,6 +237,105 @@ fn incompatible_options_fall_back() {
     }
 }
 
+fn git_rev_list_output_lines(fixture: &RepoFixture, args: &[&str]) -> Vec<String> {
+    let mut cmd_args = vec!["rev-list"];
+    cmd_args.extend_from_slice(args);
+    let out = Command::new("git")
+        .current_dir(fixture.path())
+        .args(&cmd_args)
+        .output()
+        .expect("git rev-list");
+    assert!(
+        out.status.success(),
+        "git rev-list {:?}: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::str::from_utf8(&out.stdout)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+#[test]
+fn objects_max_count_one_use_bitmap_index_matches_git_and_skips_bitmap() {
+    let fixture = RepoFixture::init(HashAlgo::Sha1).expect("init");
+    build_history(&fixture);
+    repack_with_bitmap(&fixture);
+    write_commit_graph(&fixture);
+    let repo = open_repo(fixture.path());
+    let git_lines = git_rev_list_output_lines(
+        &fixture,
+        &["--objects", "--max-count=1", "--use-bitmap-index", "HEAD"],
+    );
+    let git_n = git_lines.len();
+    let unlimited = rev_list(
+        &repo,
+        &["HEAD".into()],
+        &[],
+        &RevListOptions {
+            objects: true,
+            use_bitmap_index: true,
+            use_commit_graph: true,
+            ..Default::default()
+        },
+    )
+    .expect("rev-list unlimited");
+    assert!(
+        unlimited.bitmap_object_format,
+        "fixture should exercise bitmap for unlimited object walk"
+    );
+    let unlimited_n = unlimited.commits.len() + unlimited.objects.len();
+    assert!(
+        unlimited_n > git_n,
+        "unlimited bitmap walk should emit more lines than git --max-count=1 (git_n={git_n}, unlimited_n={unlimited_n})"
+    );
+
+    let opts = RevListOptions {
+        objects: true,
+        max_count: Some(1),
+        use_bitmap_index: true,
+        use_commit_graph: true,
+        ..Default::default()
+    };
+    let result = rev_list(&repo, &["HEAD".into()], &[], &opts).expect("rev-list");
+    assert!(
+        !result.bitmap_object_format,
+        "limited --objects walk must not use pack bitmap acceleration"
+    );
+    let limited_n = result.commits.len() + result.objects.len();
+    assert!(
+        limited_n < unlimited_n,
+        "limited walk ({limited_n}) must not return the full bitmap reachable set ({unlimited_n})"
+    );
+    assert!(
+        limited_n <= git_n,
+        "limited walk must not emit more objects than git --max-count=1 (git={git_n}, grit={limited_n})"
+    );
+    let git_oids: HashSet<ObjectId> = git_lines
+        .iter()
+        .map(|l| ObjectId::from_hex(l.split_whitespace().next().unwrap()).unwrap())
+        .collect();
+    let mut grit_oids = HashSet::new();
+    grit_oids.extend(result.commits.iter().copied());
+    grit_oids.extend(result.objects.iter().map(|(o, _)| *o));
+    for segment in &result.object_segments {
+        grit_oids.extend(segment.iter().map(|(o, _)| *o));
+    }
+    assert!(
+        grit_oids.is_subset(&git_oids),
+        "limited grit object set must not be a strict superset of git --max-count=1 (bitmap regression)"
+    );
+    assert!(
+        grit_oids.len() <= git_oids.len(),
+        "regression guard: bitmap acceleration must not inflate --max-count=1 output (git={}, grit={})",
+        git_oids.len(),
+        grit_oids.len()
+    );
+}
+
 fn git_rev_list_object_set(
     fixture: &RepoFixture,
     positive: &[&str],

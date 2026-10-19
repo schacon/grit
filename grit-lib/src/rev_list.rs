@@ -5958,8 +5958,19 @@ fn try_rev_list_accelerated(
     }))
 }
 
+/// When `--max-count` (plus `--skip`) is at least this large, prefer the commit-graph
+/// rev-list path and truncate after ordering instead of the per-commit bounded walk.
+const BOUNDED_LIMIT_LIST_EARLY_STOP_MAX: usize = 4096;
+
+fn bounded_limit_list_need(options: &RevListOptions) -> usize {
+    options
+        .skip
+        .saturating_add(options.max_count.unwrap_or(usize::MAX))
+}
+
 fn can_use_bounded_limit_list(options: &RevListOptions) -> bool {
     (options.max_count.is_some() || options.skip > 0)
+        && bounded_limit_list_need(options) < BOUNDED_LIMIT_LIST_EARLY_STOP_MAX
         && !options.all_refs
         && !options.first_parent
         && !options.objects
