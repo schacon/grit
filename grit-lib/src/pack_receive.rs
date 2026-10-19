@@ -457,12 +457,6 @@ fn pack_receive_spool_dir(_objects_dir: &Path) -> PathBuf {
     if let Some(dir) = test_pack_spool_dir_override() {
         return dir;
     }
-    if let Ok(dir) = std::env::var("GRIT_PACK_RECEIVE_SPOOL_DIR") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
     std::env::temp_dir()
 }
 

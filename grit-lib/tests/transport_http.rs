@@ -1574,9 +1574,6 @@ fn http_fetch_rss_child_process() {
     std::fs::create_dir_all(&work).expect("work dir");
     git(&work, &["init", "-q", "-b", "main", "."]);
     let git_dir = work.join(".git");
-    if let Ok(spool) = std::env::var("GRIT_PACK_RECEIVE_SPOOL_DIR") {
-        std::fs::create_dir_all(&spool).expect("GRIT_PACK_RECEIVE_SPOOL_DIR");
-    }
     let mut opts = FetchOptions {
         refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".to_owned()],
         initial_remote_fetch: true,
@@ -1675,7 +1672,8 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
         "{} http_fetch_rss_child_process --ignored --exact --nocapture",
         test_exe.display()
     );
-    let out = Command::new(&bench_bin)
+    let spool_path = spool_dir.to_str().expect("spool path utf-8");
+    let mut measure = Command::new(&bench_bin)
         .arg("measure-rss")
         .arg("--cwd")
         .arg(tmp.path())
@@ -1683,9 +1681,12 @@ fn http_clone_peak_rss_bounded_for_large_pack() {
         .env("GRIT_HTTP_RSS_URL", &url)
         .env("GRIT_HTTP_RSS_WORK", "fetch-work")
         .env("GRIT_HTTP_RSS_INDEX_THREADS", "1")
-        .env("GRIT_PACK_RECEIVE_SPOOL_DIR", &spool_dir)
-        .output()
-        .expect("measure-rss");
+        .env("TMPDIR", spool_path);
+    #[cfg(windows)]
+    {
+        measure = measure.env("TEMP", spool_path).env("TMP", spool_path);
+    }
+    let out = measure.output().expect("measure-rss");
     assert!(
         out.status.success(),
         "measure-rss failed: {}",
