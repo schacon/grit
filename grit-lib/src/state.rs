@@ -185,9 +185,16 @@ pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
 
     if let Some(refname) = trimmed.strip_prefix("ref: ") {
         let refname = if refname == "refs/heads/.invalid" {
-            match crate::refs::read_ref_file(&git_dir.join("refs").join("heads")) {
-                Ok(crate::refs::Ref::Symbolic(target)) => target,
-                _ => refname.to_owned(),
+            if let Ok(Some(target)) = crate::refs::read_symbolic_ref(git_dir, "HEAD") {
+                target
+            } else if let Ok(oid) = crate::refs::resolve_ref(git_dir, "HEAD") {
+                // Detached HEAD: Git keeps the `.invalid` stub on disk while the OID lives in reftable.
+                return Ok(HeadState::Detached { oid });
+            } else {
+                match crate::refs::read_ref_file(&git_dir.join("refs").join("heads")) {
+                    Ok(crate::refs::Ref::Symbolic(target)) => target,
+                    _ => refname.to_owned(),
+                }
             }
         } else {
             refname.to_owned()

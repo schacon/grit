@@ -3065,17 +3065,17 @@ fn reftable_resolve_ref_depth(git_dir: &Path, refname: &str, depth: usize) -> Re
         )));
     }
 
-    // HEAD is special — stored as a file even in reftable repos
+    // On-disk `.git/HEAD` is often a `.invalid` stub; the live symref or OID is in the stack.
     if refname == "HEAD" {
         let head_path = git_dir.join("HEAD");
         if head_path.exists() {
             let content = fs::read_to_string(&head_path).map_err(Error::Io)?;
             let content = content.trim();
             if let Some(target) = content.strip_prefix("ref: ") {
-                if target.trim() == "refs/heads/.invalid" {
-                    return reftable_resolve_ref_depth(git_dir, "refs/worktree/HEAD", depth + 1);
+                if target.trim() != "refs/heads/.invalid" {
+                    return reftable_resolve_ref_depth(git_dir, target.trim(), depth + 1);
                 }
-                return reftable_resolve_ref_depth(git_dir, target.trim(), depth + 1);
+                // Git keeps a `.invalid` stub on disk; the symref lives in the reftable stack.
             }
             // Detached HEAD
             if content.len() == 40 && content.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -3353,27 +3353,7 @@ pub fn reftable_delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
 
 /// Read the symbolic target of a ref in a reftable repo.
 pub fn reftable_read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>> {
-    if refname == "HEAD" {
-        let head_path = git_dir.join("HEAD");
-        let content = match fs::read_to_string(&head_path) {
-            Ok(content) => content,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(Error::Io(err)),
-        };
-        return Ok(content
-            .trim()
-            .strip_prefix("ref: ")
-            .map(|target| target.trim().to_owned()));
-    }
-    let (store_git_dir, storage_refname) = reftable_storage_location(git_dir, refname);
-    let stack = ReftableStack::open(&store_git_dir)?;
-    match stack.lookup_ref(&storage_refname)? {
-        Some(rec) => match rec.value {
-            RefValue::Symref(target) => Ok(Some(target)),
-            _ => Ok(None),
-        },
-        None => Ok(None),
-    }
+    crate::refs::read_symbolic_ref(git_dir, refname)
 }
 
 fn push_list_ref_entry(git_dir: &Path, rec: &RefRecord, out: &mut Vec<(String, ObjectId)>) {

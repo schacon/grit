@@ -16,15 +16,18 @@ use grit_lib::refs::reflog::ReflogEntry;
 use grit_lib::refs::reftable::{
     read_write_options, reftable_append_reflog, reftable_create_reflog, reftable_delete_ref,
     reftable_delete_reflog, reftable_list_reflog_refs, reftable_log_record_for_commit,
-    reftable_read_reflog, reftable_reflog_exists, reftable_replace_reflog, reftable_resolve_ref,
-    reftable_write_ref, reftable_write_ref_with_write_options, reftable_write_symref,
-    reftable_write_transaction, RefValue, ReftableStack, ReftableTransactionUpdate,
+    reftable_read_reflog, reftable_read_symbolic_ref, reftable_reflog_exists,
+    reftable_replace_reflog, reftable_resolve_ref, reftable_write_ref,
+    reftable_write_ref_with_write_options, reftable_write_symref, reftable_write_transaction,
+    RefValue, ReftableStack, ReftableTransactionUpdate,
 };
+use grit_lib::refs::{read_head, resolve_ref};
+use grit_lib::state::{resolve_head, HeadState};
 
 use support::{
-    git, git_empty_commit_oid, git_for_each_ref_peeled, git_fsck_strict, git_init_reftable_repo,
-    git_reflog_lines, git_refs_verify, git_show_ref, git_supports_refs_verify,
-    grit_reflog_identity, require_reftable_git,
+    build_commit_dag, git, git_empty_commit_oid, git_for_each_ref_peeled, git_fsck_strict,
+    git_init_reftable_repo, git_reflog_lines, git_refs_verify, git_show_ref,
+    git_supports_refs_verify, grit_reflog_identity, require_reftable_git,
 };
 
 fn write_ref_with_autocompaction(
@@ -609,5 +612,62 @@ fn concurrent_grit_writers_serialize_and_preserve_updates() {
     assert!(git_fsck_strict(root.path()));
     if git_supports_refs_verify() {
         git_refs_verify(root.path());
+    }
+}
+
+#[test]
+fn resolve_head_after_git_commit_tree_on_reftable() {
+    if !require_reftable_git() {
+        return;
+    }
+    let root = git_init_reftable_repo("main");
+    let wt = root.path();
+    let oids = build_commit_dag(wt, &[("b", "a"), ("c", "b")], &[("c", "refs/heads/main")]);
+    let git_dir = wt.join(".git");
+    let tip = oids["c"];
+    assert_eq!(resolve_ref(&git_dir, "refs/heads/main").expect("main"), tip);
+    assert_eq!(reftable_resolve_ref(&git_dir, "HEAD").expect("HEAD"), tip);
+    assert_eq!(
+        read_head(&git_dir).expect("read_head").as_deref(),
+        Some("refs/heads/main")
+    );
+    match resolve_head(&git_dir).expect("resolve_head") {
+        HeadState::Branch {
+            refname,
+            oid: Some(oid),
+            ..
+        } => {
+            assert_eq!(refname, "refs/heads/main");
+            assert_eq!(oid, tip);
+        }
+        other => panic!("expected branch head, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_detached_head_after_git_checkout_detach_on_reftable() {
+    if !require_reftable_git() {
+        return;
+    }
+    let root = git_init_reftable_repo("main");
+    let wt = root.path();
+    git(wt, &["commit", "--allow-empty", "-q", "-m", "seed"]);
+    git(wt, &["checkout", "-q", "--detach"]);
+    let tip = git(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .parse::<ObjectId>()
+        .expect("oid");
+    let git_dir = wt.join(".git");
+    assert_eq!(
+        reftable_read_symbolic_ref(&git_dir, "HEAD").expect("sym"),
+        None
+    );
+    assert_eq!(
+        reftable_resolve_ref(&git_dir, "HEAD").expect("resolve HEAD"),
+        tip
+    );
+    match resolve_head(&git_dir).expect("resolve_head") {
+        HeadState::Detached { oid } => assert_eq!(oid, tip),
+        other => panic!("expected detached head, got {other:?}"),
     }
 }
