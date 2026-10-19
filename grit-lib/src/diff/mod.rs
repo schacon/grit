@@ -15,12 +15,8 @@
 mod core;
 pub mod handle;
 mod patch_log;
-<<<<<<< New base: fix(log-patch): Git parity for abbrevs, funcnames, and diff-tree
 mod tree_content;
-||||||| Common ancestor
-=======
 mod unified_emit;
->>>>>>> Current commit: diff: independent unified emitter with LF/CRLF/EOF state
 
 pub use core::*;
 pub use handle::Diff;
