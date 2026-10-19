@@ -568,19 +568,13 @@ pub(crate) fn worktree_path_absent_for_trusted_delete(work_tree: &Path, path: &s
     }
 }
 
-fn delete_path_trusted_without_worktree_stat(
-    work_tree: &Path,
+fn index_matches_head_without_worktree_stat(
     index: &Index,
     head_by_path: &HashMap<String, HeadTreeSide>,
-    scheduled_delete_paths: &HashSet<String>,
     path: &str,
     index_mtime: Option<(u32, u32)>,
     stat_policy: StatMatchPolicy,
 ) -> bool {
-    let _ = (index_mtime, stat_policy);
-    if !path_is_tree_scheduled_delete(scheduled_delete_paths, path) {
-        return false;
-    }
     let HeadTreeSide::Present { oid, mode } = head_by_path
         .get(path)
         .copied()
@@ -594,7 +588,38 @@ fn delete_path_trusted_without_worktree_stat(
     if ie.oid != oid || ie.mode != mode {
         return false;
     }
-    worktree_path_absent_for_trusted_delete(work_tree, path)
+    !entry_is_racy_with_policy(ie, index_mtime, stat_policy)
+}
+
+fn delete_path_trusted_without_worktree_stat(
+    work_tree: &Path,
+    index: &Index,
+    head_by_path: &HashMap<String, HeadTreeSide>,
+    scheduled_delete_paths: &HashSet<String>,
+    path: &str,
+    index_mtime: Option<(u32, u32)>,
+    stat_policy: StatMatchPolicy,
+) -> bool {
+    if !path_is_tree_scheduled_delete(scheduled_delete_paths, path) {
+        return false;
+    }
+    if !index_matches_head_without_worktree_stat(
+        index,
+        head_by_path,
+        path,
+        index_mtime,
+        stat_policy,
+    ) {
+        return false;
+    }
+    if worktree_path_absent_for_trusted_delete(work_tree, path) {
+        return true;
+    }
+    let Some(ie) = index.get(path.as_bytes(), 0) else {
+        return false;
+    };
+    use crate::index::{MODE_GITLINK, MODE_SYMLINK};
+    ie.mode != MODE_SYMLINK && ie.mode != MODE_GITLINK
 }
 
 fn staged_diff_for_tree_switch_paths(
