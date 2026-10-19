@@ -121,10 +121,6 @@ pub fn commit_worktree(
     create_commit_with_index(repo, &mut index, &req, progress)
 }
 
-fn skip_redundant_index_persist(req: &CommitRequest) -> bool {
-    req.assume_worktree_synced && req.staged_change_count == Some(0) && !req.amend
-}
-
 fn create_commit_with_index(
     repo: &Repository,
     index: &mut Index,
@@ -195,9 +191,7 @@ fn create_commit_with_index(
         }
     }
 
-    if !skip_redundant_index_persist(req) {
-        repo.write_index(index)?;
-    }
+    repo.write_index(index)?;
 
     let commit_env = CommitHookEnv {
         index_file: Some(index_path.as_path()),
@@ -315,9 +309,7 @@ fn create_commit_with_index(
             )?;
         }
     }
-    if !skip_redundant_index_persist(req) {
-        repo.write_index(index)?;
-    }
+    repo.write_index(index)?;
 
     let changes = if parent_tree.as_ref() == Some(&tree) {
         0
