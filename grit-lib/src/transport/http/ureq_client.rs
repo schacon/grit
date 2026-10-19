@@ -689,7 +689,7 @@ impl UreqHttpClient {
         });
         match result {
             Ok(resp) => open_response_body(resp, &self.transport_timeouts),
-            Err(e) => Err(Error::Message(format!("http transport error: {e}"))),
+            Err(e) => Err(http_transport_error(&e)),
         }
     }
 
@@ -987,7 +987,7 @@ fn finish(
 ) -> Result<RawResponse> {
     match result {
         Ok(resp) => read_response(resp, timeouts),
-        Err(e) => Err(Error::Message(format!("http transport error: {e}"))),
+        Err(e) => Err(http_transport_error(&e)),
     }
 }
 
@@ -1062,6 +1062,11 @@ fn finalize_status(
         return Err(http_status_error(url, status));
     }
     Ok((body, final_url))
+}
+
+fn http_transport_error(err: impl std::fmt::Display) -> Error {
+    let msg = credentials::redact_embedded_url_credentials(&err.to_string());
+    Error::Message(format!("http transport error: {msg}"))
 }
 
 fn http_status_error(url: &str, status: u16) -> Error {
@@ -1616,5 +1621,25 @@ mod tests {
             .read_to_end(&mut sink)
             .expect_err("slow read should abort");
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn http_status_error_omits_url_credentials() {
+        let url =
+            "https://x-access-token:SECRET@github.com/o/r.git/info/refs?service=git-upload-pack";
+        let err = super::http_status_error(url, 404);
+        let msg = format!("{err}");
+        assert!(msg.contains("HTTP 404 from https://github.com/o/r.git"));
+        assert!(!msg.contains("SECRET"));
+        assert!(!msg.contains("x-access-token"));
+    }
+
+    #[test]
+    fn http_status_error_preserves_at_in_path() {
+        let url = "http://user:pass@127.0.0.1:9/org/repo@v1.git/info/refs?service=git-upload-pack";
+        let err = super::http_status_error(url, 404);
+        let msg = format!("{err}");
+        assert!(msg.contains("org/repo@v1.git"));
+        assert!(!msg.contains("user:pass"));
     }
 }
