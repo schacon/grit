@@ -12,7 +12,7 @@ use grit_lib::maintenance::{write_commit_graph, CommitGraphOptions};
 use grit_lib::objects::pack::{
     read_object_from_pack_at_offset, read_pack_index_cached, PackIndex, SingleLocalPackReader,
 };
-use grit_lib::objects::{Object, ObjectId};
+use grit_lib::objects::{parse_commit, Object, ObjectId};
 use grit_lib::remote::serve::{upload_pack, ProtocolVersion, ServeOptions};
 use grit_lib::repo::Repository;
 use grit_lib::revwalk::rev_list::{rev_list, RevListOptions, RevListResult};
