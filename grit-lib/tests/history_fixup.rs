@@ -19,9 +19,9 @@ use grit_lib::revwalk::history::{
 
 use support::{
     assert_fixup_tip_matches_git_oracle, assert_fixup_tip_structure_matches, commit_file, git,
-    git_fsck_strict,
-    git_history_fixup_legacy_oracle, git_history_fixup_or_legacy, git_history_subcommand_available,
-    git_rev_parse, harness_committer_line, reset_harness_commit_clock, HistoryRepo,
+    git_fsck_strict, git_history_fixup_legacy_oracle, git_history_fixup_or_legacy,
+    git_history_subcommand_available, git_rev_parse, harness_committer_line,
+    reset_harness_commit_clock, HistoryRepo,
 };
 
 fn open_grit(wt: &std::path::Path) -> Repository {
