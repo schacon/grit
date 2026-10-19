@@ -329,7 +329,6 @@ pub(crate) mod pack_cache {
         })
     }
 
-
     pub(crate) fn try_read_from_hinted_pack(
         objects_dir: &Path,
         oid: &crate::objects::ObjectId,
