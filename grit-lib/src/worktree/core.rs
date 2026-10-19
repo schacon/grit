@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use crate::check_ref_format::validate_branch_short_name;
 use crate::config::ConfigSet;
-use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::environment::RepositoryOptions;
+use crate::error::{Error, Result};
 use crate::git_path::{absolute_path_for_gitfile_stored_path, path_for_disk_compare};
 use crate::objects::{parse_commit, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
