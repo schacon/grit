@@ -5,7 +5,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::binary::{grit_source_commit, tool_version};
-use crate::history_compat::verify_history_lib_ops;
+use crate::fixture::create_blame_large_tail_churn_repo;
+use crate::history_compat::{
+    verify_blame_porcelain, verify_blame_porcelain_line_range, verify_history_lib_ops,
+};
 use crate::history_fixture::{ensure_head_oid_list, ensure_synth_history_repo, load_history_meta};
 use crate::machine::{collect_machine_info, format_timestamp};
 use crate::odb_suite::{run_odb_scenario, OdbRunConfig};
@@ -17,6 +20,9 @@ use crate::synth::SynthTier;
 /// Target grit `log` page passes per hyperfine sample (~512 keeps ratios stable without extreme runtime).
 const TARGET_LOG_PAGE_PASSES: usize = 512;
 pub const HISTORY_SHOW_SAMPLE_BATCH: usize = 128;
+const HISTORY_BLAME_LARGE_LINES: usize = 5_000;
+const HISTORY_BLAME_LARGE_COMMITS: usize = 150;
+const HISTORY_BLAME_LARGE_PATH: &str = "large.txt";
 
 /// Batched repetitions for a log workload with `pages` grit log invocations per repetition.
 #[must_use]
@@ -113,6 +119,23 @@ pub fn run_history_suite(
     let oids = ensure_head_oid_list(git, &repo)?;
 
     verify_history_lib_ops(git, bench_exe, &repo, &meta.blame_path)?;
+    if !smoke {
+        let large = create_blame_large_tail_churn_repo(
+            git,
+            HISTORY_BLAME_LARGE_LINES,
+            HISTORY_BLAME_LARGE_COMMITS,
+        )
+        .context("large tail-churn blame fixture")?;
+        verify_blame_porcelain(git, bench_exe, &large, HISTORY_BLAME_LARGE_PATH)?;
+        verify_blame_porcelain_line_range(
+            git,
+            bench_exe,
+            &large,
+            HISTORY_BLAME_LARGE_PATH,
+            100,
+            120,
+        )?;
+    }
 
     let fixture = format!("synth-{}", tier_label(tier));
     let mut scenarios = Vec::new();
@@ -224,6 +247,73 @@ pub fn run_history_suite(
         },
         &repo,
     )?);
+
+    if !smoke {
+        let large = create_blame_large_tail_churn_repo(
+            git,
+            HISTORY_BLAME_LARGE_LINES,
+            HISTORY_BLAME_LARGE_COMMITS,
+        )
+        .context("large tail-churn blame fixture")?;
+        let large_fixture =
+            format!("blame-large-{HISTORY_BLAME_LARGE_LINES}x{HISTORY_BLAME_LARGE_COMMITS}");
+        scenarios.push(run_scenario(
+            hyperfine,
+            git,
+            grit_cli,
+            cfg,
+            &Scenario {
+                id: "history-blame-large-full".into(),
+                group: "history".into(),
+                fixture: large_fixture.clone(),
+                description: format!(
+                    "full-file blame on {HISTORY_BLAME_LARGE_LINES}-line tail-churn file"
+                ),
+                grit_argv: vec!["blame".into(), HISTORY_BLAME_LARGE_PATH.into()],
+                git_argv: vec![
+                    "blame".into(),
+                    "--porcelain".into(),
+                    HISTORY_BLAME_LARGE_PATH.into(),
+                ],
+                driver: Driver::Cli,
+                prepare_kind: None,
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            &large,
+        )?);
+        scenarios.push(run_scenario(
+            hyperfine,
+            git,
+            grit_cli,
+            cfg,
+            &Scenario {
+                id: "history-blame-large-range".into(),
+                group: "history".into(),
+                fixture: large_fixture,
+                description: format!(
+                    "blame -L 100,120 on {HISTORY_BLAME_LARGE_LINES}-line tail-churn file"
+                ),
+                grit_argv: vec![
+                    "blame".into(),
+                    "-L".into(),
+                    "100,120".into(),
+                    HISTORY_BLAME_LARGE_PATH.into(),
+                ],
+                git_argv: vec![
+                    "blame".into(),
+                    "-L100,120".into(),
+                    "--porcelain".into(),
+                    HISTORY_BLAME_LARGE_PATH.into(),
+                ],
+                driver: Driver::Cli,
+                prepare_kind: None,
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            &large,
+        )?);
+    }
 
     let show_batch = HISTORY_SHOW_SAMPLE_BATCH;
     scenarios.push(run_scenario(

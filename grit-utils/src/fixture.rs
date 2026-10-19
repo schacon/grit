@@ -484,6 +484,32 @@ pub fn modify_rs_files_for_diff(dir: &Path, count: usize) -> Result<()> {
     Ok(())
 }
 
+/// Large file with deep history where each commit only changes the last line (cargo-like churn).
+pub fn create_blame_large_tail_churn_repo(
+    git: &Path,
+    line_count: usize,
+    commit_count: usize,
+) -> Result<PathBuf> {
+    let dir = scratch_dir();
+    remove_dir_robust(&dir);
+    fs::create_dir_all(&dir).context("create scratch dir")?;
+    run_git(git, &dir, &["init", "-q"])?;
+    let path = "large.txt";
+    let mut lines: Vec<String> = (0..line_count).map(|i| format!("line {i}\n")).collect();
+    fs::write(dir.join(path), lines.join(""))?;
+    run_git(git, &dir, &["add", path])?;
+    run_git(git, &dir, &["commit", "-qm", "init"])?;
+    for i in 1..commit_count {
+        if let Some(last) = lines.last_mut() {
+            *last = format!("tail {i}\n");
+        }
+        fs::write(dir.join(path), lines.join(""))?;
+        run_git(git, &dir, &["add", path])?;
+        run_git(git, &dir, &["commit", "-qm", &format!("tail {i}")])?;
+    }
+    Ok(dir)
+}
+
 /// Repository with many sequential edits to a single tracked file (for blame benches).
 pub fn create_blame_deep_history_repo(git: &Path, commit_count: usize) -> Result<PathBuf> {
     let dir = scratch_dir();

@@ -108,21 +108,49 @@ fn should_drop_tail_match_for_myers_blob(
         >= 2
 }
 
-/// True when every focused child line index lies in the unchanged prefix or suffix
-/// after affix trimming (middle xdiff can be skipped for those lines).
-fn child_lines_only_in_affix(
-    focus: &[usize],
-    new_len: usize,
+/// Parent line index for a child line known to lie in an unchanged affix region.
+fn affix_parent_index(
+    child_idx: usize,
     prefix: usize,
     suffix: usize,
-) -> bool {
-    if focus.is_empty() {
-        return false;
-    }
+    old_len: usize,
+    new_len: usize,
+) -> usize {
     let suffix_start = new_len.saturating_sub(suffix);
-    focus
-        .iter()
-        .all(|&idx| idx < prefix || (suffix > 0 && idx >= suffix_start))
+    if child_idx < prefix {
+        child_idx
+    } else {
+        debug_assert!(suffix > 0 && child_idx >= suffix_start);
+        let off = child_idx - suffix_start;
+        old_len.saturating_sub(suffix) + off
+    }
+}
+
+/// Split pending lines into those mappable through unchanged affix vs those in the edited middle.
+fn partition_pending_by_affix(
+    par: &BlobLines,
+    cur: &BlobLines,
+    pending: Vec<TrackedLine>,
+) -> (Vec<TrackedLine>, Vec<TrackedLine>) {
+    let (prefix, suffix, _, _, _, _) = common_affix_trim_blob_lines(par, cur);
+    let new_len = cur.len();
+    let suffix_start = new_len.saturating_sub(suffix);
+    let mut affix_mapped = Vec::new();
+    let mut need_diff = Vec::new();
+    for t in pending {
+        let i = t.current_idx;
+        if i < prefix || (suffix > 0 && i >= suffix_start) {
+            affix_mapped.push(TrackedLine {
+                final_lineno: t.final_lineno,
+                current_idx: affix_parent_index(i, prefix, suffix, par.len(), new_len),
+                ignored: t.ignored,
+                source_path: t.source_path,
+            });
+        } else {
+            need_diff.push(t);
+        }
+    }
+    (affix_mapped, need_diff)
 }
 
 fn common_affix_trim_blob_lines(
@@ -184,7 +212,6 @@ fn build_line_map_with_changed_flags_owned(
     diff_algorithm: BlameDiffAlgorithm,
     indent_heuristic: bool,
     with_changed_flags: bool,
-    child_focus: Option<&[usize]>,
 ) -> (Vec<Option<usize>>, Vec<bool>) {
     let (prefix, suffix, old_lo, old_hi, new_lo, new_hi) = common_affix_trim_blob_lines(old, new);
     let mut map = vec![None; new.len()];
@@ -197,14 +224,6 @@ fn build_line_map_with_changed_flags_owned(
         map[new_idx] = Some(old_idx);
     }
     if old_lo >= old_hi && new_lo >= new_hi {
-        return if with_changed_flags {
-            (map, vec![false; new.len()])
-        } else {
-            (map, Vec::new())
-        };
-    }
-    if child_focus.is_some_and(|focus| child_lines_only_in_affix(focus, new.len(), prefix, suffix))
-    {
         return if with_changed_flags {
             (map, vec![false; new.len()])
         } else {
@@ -1550,7 +1569,6 @@ impl<'a> BlameSession<'a> {
         indent_heuristic: bool,
         is_ignored: bool,
         include_stop_blame: bool,
-        child_focus: Option<&[usize]>,
     ) -> PairMapCacheValue {
         let key = PairMapCacheKey {
             parent: parent_oid,
@@ -1564,10 +1582,8 @@ impl<'a> BlameSession<'a> {
             fuzzy: is_ignored,
             include_stop_blame,
         };
-        if child_focus.is_none() {
-            if let Some(maps) = self.pair_maps.get(&key) {
-                return maps.clone();
-            }
+        if let Some(maps) = self.pair_maps.get(&key) {
+            return maps.clone();
         }
 
         let identity_map = parent_oid == child_oid && par_lines.len() == cur_lines.len();
@@ -1583,7 +1599,6 @@ impl<'a> BlameSession<'a> {
                 diff_algorithm,
                 indent_heuristic,
                 true,
-                child_focus,
             )
         } else {
             (
@@ -1593,7 +1608,6 @@ impl<'a> BlameSession<'a> {
                     diff_algorithm,
                     indent_heuristic,
                     false,
-                    child_focus,
                 )
                 .0,
                 Vec::new(),
@@ -1636,9 +1650,7 @@ impl<'a> BlameSession<'a> {
             line_map: Arc::new(line_map),
             stop_blame_on_current: Arc::new(stop_blame_on_current),
         };
-        if child_focus.is_none() {
-            self.pair_maps.insert(key, value.clone());
-        }
+        self.pair_maps.insert(key, value.clone());
         value
     }
 }
@@ -2186,7 +2198,6 @@ fn compute_blame_with_session(
                     indent_heuristic,
                     false,
                     false,
-                    None,
                 );
                 par_lines_vec[i] = Some(pl_arc);
                 maps[i] = Some(pair.diff_line_map);
@@ -2499,12 +2510,24 @@ fn compute_blame_with_session(
                 };
                 let par_lines_arc =
                     session.load_blob_lines(p_blob_oid, &parent_blob_path, p_blob_mode)?;
-                let child_focus_vec = line_range.as_ref().map(|_| {
-                    pending
-                        .iter()
-                        .map(|t| t.current_idx)
-                        .collect::<Vec<usize>>()
-                });
+                let (affix_mapped, need_diff) = partition_pending_by_affix(
+                    par_lines_arc.as_ref(),
+                    cur_lines_arc.as_ref(),
+                    std::mem::take(&mut pending),
+                );
+                if need_diff.is_empty() {
+                    pending = affix_mapped;
+                    current_oid = parent_oid;
+                    current_blob_oid = p_blob_oid;
+                    current_blob_mode = p_blob_mode;
+                    walk_lines = Some((p_blob_oid, Arc::clone(&par_lines_arc)));
+                    if parent_blob_path != current_path {
+                        current_path = parent_blob_path;
+                        session.set_bloom_path(&current_path);
+                    }
+                    continue 'blame_loop;
+                }
+                pending = need_diff;
                 let maps = session.parent_child_line_maps(
                     p_blob_oid,
                     &parent_blob_path,
@@ -2518,7 +2541,6 @@ fn compute_blame_with_session(
                     indent_heuristic,
                     is_ignored,
                     true,
-                    child_focus_vec.as_deref(),
                 );
                 let line_map = maps.line_map.as_slice();
                 let stop_blame_on_current = maps.stop_blame_on_current.as_slice();
@@ -2553,7 +2575,7 @@ fn compute_blame_with_session(
                     }
                 }
 
-                let mut still_pending = Vec::new();
+                let mut still_pending = affix_mapped;
                 for t in pending.drain(..) {
                     if t.current_idx < line_map.len() {
                         if let Some(parent_idx) = line_map[t.current_idx] {
@@ -3364,10 +3386,28 @@ mod tests {
     }
 
     #[test]
-    fn child_lines_only_in_affix_detects_prefix_and_suffix() {
-        assert!(child_lines_only_in_affix(&[0, 1, 2], 10, 3, 2));
-        assert!(child_lines_only_in_affix(&[8, 9], 10, 3, 2));
-        assert!(!child_lines_only_in_affix(&[5], 10, 3, 2));
+    fn partition_pending_by_affix_maps_prefix_and_suffix() {
+        let old = BlobLines::from_content("a\nb\nc\nd\ne\n".to_owned());
+        let new = BlobLines::from_content("a\nb\nx\nd\ne\n".to_owned());
+        let pending = vec![TrackedLine {
+            final_lineno: 1,
+            current_idx: 0,
+            ignored: false,
+            source_path: None,
+        }];
+        let (affix, need) = partition_pending_by_affix(&old, &new, pending);
+        assert!(need.is_empty());
+        assert_eq!(affix[0].current_idx, 0);
+
+        let pending_mid = vec![TrackedLine {
+            final_lineno: 3,
+            current_idx: 2,
+            ignored: false,
+            source_path: None,
+        }];
+        let (affix, need) = partition_pending_by_affix(&old, &new, pending_mid);
+        assert!(affix.is_empty());
+        assert_eq!(need.len(), 1);
     }
 
     #[test]

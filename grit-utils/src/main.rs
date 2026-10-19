@@ -688,9 +688,21 @@ enum RefsDriveCmd {
 
 #[derive(Subcommand)]
 enum LibOpCmd {
-    RevListCountHead { repo: PathBuf },
-    BlamePorcelain { repo: PathBuf, path: String },
-    CatFileBatch { repo: PathBuf },
+    RevListCountHead {
+        repo: PathBuf,
+    },
+    BlamePorcelain {
+        repo: PathBuf,
+        path: String,
+    },
+    BlamePorcelainRange {
+        repo: PathBuf,
+        path: String,
+        range: String,
+    },
+    CatFileBatch {
+        repo: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -822,6 +834,11 @@ fn run_lib_op(workload: &LibOpCmd) -> Result<()> {
         LibOpCmd::BlamePorcelain { repo, path } => {
             let repo = open_repo(repo)?;
             odb_driver::blame_porcelain(&repo, path)?;
+        }
+        LibOpCmd::BlamePorcelainRange { repo, path, range } => {
+            let repo = open_repo(repo)?;
+            let line_range = odb_driver::parse_blame_line_range(range)?;
+            odb_driver::blame_porcelain_with_range(&repo, path, Some(line_range))?;
         }
         LibOpCmd::CatFileBatch { repo } => {
             let repo = open_repo(repo)?;

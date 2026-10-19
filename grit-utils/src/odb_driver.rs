@@ -268,24 +268,51 @@ pub fn rev_list_count_head(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-/// Emit `git blame --porcelain` for one worktree path at `HEAD`.
-pub fn blame_porcelain(repo: &Repository, path: &str) -> Result<()> {
-    use grit_lib::blame::{blame_file, BlameOptions};
+fn blame_head_start(repo: &Repository) -> Result<grit_lib::objects::ObjectId> {
     use grit_lib::state::{resolve_head, HeadState};
-    use std::io::{BufWriter, Write};
-
-    let start = match resolve_head(repo.git_dir())? {
-        HeadState::Detached { oid } => oid,
-        HeadState::Branch { oid: Some(oid), .. } => oid,
+    match resolve_head(repo.git_dir())? {
+        HeadState::Detached { oid } => Ok(oid),
+        HeadState::Branch { oid: Some(oid), .. } => Ok(oid),
         HeadState::Branch { oid: None, .. } | HeadState::Invalid => {
             anyhow::bail!("cannot blame: HEAD does not resolve to a commit");
         }
-    };
+    }
+}
+
+/// Parse a `START,END` inclusive 1-based line range for blame.
+pub fn parse_blame_line_range(spec: &str) -> Result<std::ops::RangeInclusive<usize>> {
+    let (start, end) = spec
+        .split_once(',')
+        .ok_or_else(|| anyhow::anyhow!("expected START,END line range, got {spec:?}"))?;
+    let start: usize = start.trim().parse().context("range start")?;
+    let end: usize = end.trim().parse().context("range end")?;
+    if start == 0 || end < start {
+        anyhow::bail!("invalid blame line range {spec}");
+    }
+    Ok(start..=end)
+}
+
+/// Emit `git blame --porcelain` for one worktree path at `HEAD`.
+pub fn blame_porcelain(repo: &Repository, path: &str) -> Result<()> {
+    blame_porcelain_with_range(repo, path, None)
+}
+
+/// Emit porcelain blame for `path` at `HEAD`, optionally limited to a 1-based line range.
+pub fn blame_porcelain_with_range(
+    repo: &Repository,
+    path: &str,
+    line_range: Option<std::ops::RangeInclusive<usize>>,
+) -> Result<()> {
+    use grit_lib::blame::{blame_file, BlameOptions};
+    use std::io::{BufWriter, Write};
+
+    let start = blame_head_start(repo)?;
     let result = blame_file(
         repo,
         path,
         &BlameOptions {
             start: Some(start),
+            line_range,
             ..Default::default()
         },
     )

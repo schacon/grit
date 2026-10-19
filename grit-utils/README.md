@@ -194,6 +194,8 @@ Mutating scenarios should take a **`git clone --local`** copy via [`fixture_regi
 | `history-log-all` | history | Full `main` history on the synthetic fixture; **`driver: cli`** |
 | `history-rev-list-count` | history | `git rev-list --count HEAD` vs `grit-bench lib-op rev-list-count-head`; **`driver: lib`** |
 | `history-blame` | history | High-churn path: `git blame --porcelain` vs `grit-bench lib-op blame-porcelain`; **`driver: lib`** |
+| `history-blame-large-full` | history | Full-file blame on 5000-line tail-churn fixture vs `git blame --porcelain`; **`driver: cli`** (non-smoke) |
+| `history-blame-large-range` | history | `blame -L 100,120` on the same fixture vs git; **`driver: cli`** (non-smoke) |
 | `history-show` | history | One commit (`git show` vs `grit show`); **`driver: cli`** |
 | `history-cat-file-batch` | history | Sorted OIDs reachable from `HEAD` fed to `cat-file --batch`; grit side uses **`lib-op cat-file-batch`**; **`driver: lib`** |
 

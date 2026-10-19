@@ -8,11 +8,12 @@ use anyhow::{Context, Result};
 use crate::bench_env::isolated_env_prefix;
 use crate::binary::{grit_source_commit, tool_version};
 use crate::fixture::{
-    bench_work_dir, create_blame_deep_history_repo, create_deep_leaf_dogfood_repo,
-    create_dense_leaf_dogfood_repo, create_repo, create_repo_with_history, dirty_repo,
-    modify_files_for_diff, modify_rs_files_for_diff, modify_txt_files_for_diff,
-    prepare_add_iteration, prepare_commit_iteration, prepare_dense_leaf_add_iteration,
-    prepare_restore_iteration, scratch_dir, DeepLeafDogfoodSpec, DenseLeafDogfoodSpec,
+    bench_work_dir, create_blame_deep_history_repo, create_blame_large_tail_churn_repo,
+    create_deep_leaf_dogfood_repo, create_dense_leaf_dogfood_repo, create_repo,
+    create_repo_with_history, dirty_repo, modify_files_for_diff, modify_rs_files_for_diff,
+    modify_txt_files_for_diff, prepare_add_iteration, prepare_commit_iteration,
+    prepare_dense_leaf_add_iteration, prepare_restore_iteration, scratch_dir, DeepLeafDogfoodSpec,
+    DenseLeafDogfoodSpec,
 };
 use crate::hot_path_fixture::{
     load_meta, prepare_merge, prepare_pick, prepare_pick_series, prepare_revert, prepare_switch,
@@ -928,7 +929,11 @@ pub fn run_commit_suite(
     Ok(build_report(git, grit, timestamp, scenarios))
 }
 
-/// `grit blame` vs `git blame --porcelain` on a file with deep linear history.
+const BLAME_LARGE_LINES: usize = 5_000;
+const BLAME_LARGE_COMMITS: usize = 150;
+const BLAME_LARGE_PATH: &str = "large.txt";
+
+/// `grit blame` vs `git blame --porcelain` on deep linear and large tail-churn fixtures.
 pub fn run_blame_suite(
     hyperfine: &Path,
     git: &Path,
@@ -937,8 +942,9 @@ pub fn run_blame_suite(
     commit_count: usize,
     timestamp: time::OffsetDateTime,
 ) -> Result<BenchReport> {
+    let mut scenarios = Vec::new();
     let repo = create_blame_deep_history_repo(git, commit_count)?;
-    let scenario = run_scenario(
+    scenarios.push(run_scenario(
         hyperfine,
         git,
         grit,
@@ -956,8 +962,67 @@ pub fn run_blame_suite(
             git_via_shell: false,
         },
         &repo,
-    )?;
-    Ok(build_report(git, grit, timestamp, vec![scenario]))
+    )?);
+
+    let large = create_blame_large_tail_churn_repo(git, BLAME_LARGE_LINES, BLAME_LARGE_COMMITS)?;
+    scenarios.push(run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "blame-large-tail-full".into(),
+            group: "blame".into(),
+            fixture: format!("blame-large-{BLAME_LARGE_LINES}x{BLAME_LARGE_COMMITS}"),
+            description: format!(
+                "full-file blame on {BLAME_LARGE_LINES}-line file with {BLAME_LARGE_COMMITS} tail-only commits"
+            ),
+            grit_argv: vec!["blame".into(), BLAME_LARGE_PATH.into()],
+            git_argv: vec![
+                "blame".into(),
+                "--porcelain".into(),
+                BLAME_LARGE_PATH.into(),
+            ],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &large,
+    )?);
+    scenarios.push(run_scenario(
+        hyperfine,
+        git,
+        grit,
+        cfg,
+        &Scenario {
+            id: "blame-large-tail-range".into(),
+            group: "blame".into(),
+            fixture: format!("blame-large-{BLAME_LARGE_LINES}x{BLAME_LARGE_COMMITS}"),
+            description: format!(
+                "blame -L 100,120 on {BLAME_LARGE_LINES}-line file with tail-only commits"
+            ),
+            grit_argv: vec![
+                "blame".into(),
+                "-L".into(),
+                "100,120".into(),
+                BLAME_LARGE_PATH.into(),
+            ],
+            git_argv: vec![
+                "blame".into(),
+                "-L100,120".into(),
+                "--porcelain".into(),
+                BLAME_LARGE_PATH.into(),
+            ],
+            driver: Driver::Cli,
+            prepare_kind: None,
+            grit_via_shell: false,
+            git_via_shell: false,
+        },
+        &large,
+    )?);
+
+    Ok(build_report(git, grit, timestamp, scenarios))
 }
 
 /// `grit stash` + `grit stash pop` vs `git stash push` + `git stash pop`.

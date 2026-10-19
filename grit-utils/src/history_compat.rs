@@ -176,6 +176,52 @@ pub fn verify_rev_list_count_head(git: &Path, bench_exe: &Path, repo: &Path) -> 
     Ok(())
 }
 
+/// Blame porcelain for an inclusive 1-based line range must match system git.
+pub fn verify_blame_porcelain_line_range(
+    git: &Path,
+    bench_exe: &Path,
+    repo: &Path,
+    path: &str,
+    start: usize,
+    end: usize,
+) -> Result<()> {
+    let spec = format!("{start},{end}");
+    let git_out = git_output(
+        git,
+        repo,
+        &["blame", "--porcelain", "-L", &spec, "HEAD", "--", path],
+    )?;
+    let grit_out = lib_op_out(
+        bench_exe,
+        "blame-porcelain-range",
+        repo,
+        &[path, spec.as_str()],
+    )?;
+    let git_lines = parse_git_blame_porcelain(&git_out)?;
+    let grit_lines = parse_git_blame_porcelain(&grit_out)?;
+    if git_lines.len() != grit_lines.len() {
+        bail!(
+            "blame -L line count mismatch for {path}: git={} lib={}",
+            git_lines.len(),
+            grit_lines.len()
+        );
+    }
+    for (g, r) in git_lines.iter().zip(grit_lines.iter()) {
+        if g.final_line != r.final_line
+            || g.commit != r.commit
+            || g.original_line != r.original_line
+        {
+            bail!(
+                "blame -L mismatch at line {}: git={:?} lib={:?}",
+                g.final_line,
+                g,
+                r
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Blame porcelain line attribution must match system git.
 pub fn verify_blame_porcelain(git: &Path, bench_exe: &Path, repo: &Path, path: &str) -> Result<()> {
     let git_out = git_output(git, repo, &["blame", "--porcelain", "HEAD", "--", path])?;
