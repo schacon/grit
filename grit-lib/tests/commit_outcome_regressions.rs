@@ -141,6 +141,69 @@ fn allow_empty_still_stages_dirty_tracked_files() {
 }
 
 #[test]
+fn commit_worktree_allow_empty_stages_dirty_tracked() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "Test"]);
+
+    fs::write(root.join("a.txt"), "base\n").expect("write");
+    git(root, &["add", "a.txt"]);
+    git(root, &["commit", "-qm", "base"]);
+
+    fs::write(root.join("a.txt"), "dirty\n").expect("edit");
+
+    let repo = open_repo(root);
+    let mut req = commit_worktree_req("marker");
+    req.allow_empty = true;
+    let outcome =
+        commit_worktree(&repo, &req, &mut NullProgress).expect("commit_worktree allow-empty");
+    assert_eq!(
+        outcome.changes, 1,
+        "dirty tracked file must be staged and committed"
+    );
+
+    let porcelain = git(root, &["status", "--porcelain"]);
+    assert!(
+        porcelain.trim().is_empty(),
+        "working tree should be clean, got:\n{porcelain}"
+    );
+}
+
+#[test]
+fn commit_worktree_allow_empty_stages_new_untracked() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main", "."]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "Test"]);
+
+    fs::write(root.join("tracked.txt"), "t\n").expect("write");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "base"]);
+    fs::write(root.join("fresh.txt"), "new\n").expect("untracked");
+
+    let repo = open_repo(root);
+    let mut req = commit_worktree_req("with-untracked");
+    req.allow_empty = true;
+    let outcome =
+        commit_worktree(&repo, &req, &mut NullProgress).expect("commit_worktree allow-empty");
+    assert_eq!(outcome.changes, 1, "untracked file must be staged");
+
+    let porcelain = git(root, &["status", "--porcelain"]);
+    assert!(
+        porcelain.trim().is_empty(),
+        "working tree should be clean, got:\n{porcelain}"
+    );
+    assert_eq!(
+        git(root, &["show", "HEAD:fresh.txt"]).trim(),
+        "new",
+        "committed tree must include the new file"
+    );
+}
+
+#[test]
 fn stage_for_commit_stages_untracked_below_auto_cache_threshold() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

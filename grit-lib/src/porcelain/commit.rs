@@ -110,22 +110,6 @@ pub fn commit_worktree(
     progress: &mut dyn ProgressSink,
 ) -> Result<CommitOutcome> {
     let mut index = repo.load_index()?;
-    if req.allow_empty && req.assume_worktree_synced && req.skip_pre_commit_tree_match {
-        if let HeadState::Branch {
-            oid: Some(parent_oid),
-            ..
-        } = resolve_head(repo.git_dir())?
-        {
-            let parent_tree = commit_tree_oid(repo, &parent_oid)?;
-            if index.cache_tree_root == Some(parent_tree)
-                && cache_tree_extension_valid(index.cache_tree.as_ref())
-            {
-                let mut req = req.clone();
-                req.staged_change_count = Some(0);
-                return create_commit_with_index(repo, &mut index, &req, progress);
-            }
-        }
-    }
     let staged = crate::porcelain::add::stage_for_commit_on_index(repo, &mut index, progress)?;
     if index.has_unmerged_entries() {
         return Err(Error::IndexUnmerged);
