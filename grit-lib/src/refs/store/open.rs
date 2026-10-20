@@ -66,16 +66,17 @@ mod tests {
         let git_dir = tmp.path().join(".git");
         fs::create_dir_all(&git_dir).expect("git dir");
         let config = git_dir.join("config");
-        fs::write(&config, "[core]\n\trepositoryformatversion = 0\n").expect("config v0");
+        const FILES_CONFIG: &str =
+            "[core]\n\trepositoryformatversion = 0\n; pad-for-same-length-test.........\n";
+        const REFTABLE_CONFIG: &str =
+            "[core]\n\trepositoryformatversion = 1\n[extensions]\n\trefStorage = reftable\n";
+        assert_eq!(FILES_CONFIG.len(), REFTABLE_CONFIG.len());
+        fs::write(&config, FILES_CONFIG).expect("config v0");
         let before = open_ref_store(&git_dir).expect("open files");
         assert_eq!(before.format(), RefStorageFormat::Files);
 
         let t0 = FileTime::from_last_modification_time(&fs::metadata(&config).expect("stat"));
-        fs::write(
-            &config,
-            "[core]\n\trepositoryformatversion = 1\n[extensions]\n\trefStorage = reftable\n",
-        )
-        .expect("rewrite reftable");
+        fs::write(&config, REFTABLE_CONFIG).expect("rewrite reftable");
         filetime::set_file_mtime(&config, t0).expect("restore mtime");
 
         assert_eq!(

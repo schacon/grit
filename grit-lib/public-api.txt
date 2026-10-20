@@ -11991,6 +11991,7 @@ pub fn grit_lib::refs::read_log_refs_config(&std::path::Path) -> grit_lib::refs:
 pub fn grit_lib::refs::read_raw_ref(&std::path::Path, &str) -> grit_lib::error::Result<grit_lib::refs::RawRefLookup>
 pub fn grit_lib::refs::read_ref_file(&std::path::Path) -> grit_lib::error::Result<grit_lib::refs::Ref>
 pub fn grit_lib::refs::read_symbolic_ref(&std::path::Path, &str) -> grit_lib::error::Result<core::option::Option<alloc::string::String>>
+pub fn grit_lib::refs::read_symbolic_ref_for_repository(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<core::option::Option<alloc::string::String>>
 pub fn grit_lib::refs::ref_matches_glob(&str, &str) -> bool
 pub fn grit_lib::refs::ref_update_flags(&str) -> grit_lib::refs::store::RefUpdateFlags
 pub fn grit_lib::refs::reflog_file_path(&std::path::Path, &str) -> std::path::PathBuf
@@ -16122,6 +16123,7 @@ pub fn grit_lib::state::read_orig_head(&std::path::Path) -> grit_lib::error::Res
 pub fn grit_lib::state::read_revert_head(&std::path::Path) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
 pub fn grit_lib::state::repo_state(&std::path::Path, bool) -> grit_lib::error::Result<grit_lib::state::RepoState>
 pub fn grit_lib::state::resolve_head(&std::path::Path) -> grit_lib::error::Result<grit_lib::state::HeadState>
+pub fn grit_lib::state::resolve_head_for_repository(&grit_lib::repo::Repository) -> grit_lib::error::Result<grit_lib::state::HeadState>
 pub fn grit_lib::state::split_commit_in_progress(&std::path::Path, &grit_lib::state::HeadState) -> bool
 pub fn grit_lib::state::upstream_tracking(&std::path::Path, &str) -> grit_lib::error::Result<core::option::Option<(usize, usize)>>
 pub fn grit_lib::state::wt_status_get_state(&std::path::Path, &grit_lib::state::HeadState, bool) -> grit_lib::error::Result<grit_lib::state::WtStatusState>
