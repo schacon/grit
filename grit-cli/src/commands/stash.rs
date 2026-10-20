@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::commands::diff::{self, DiffOutcome};
 use crate::commands::show::{self, DiffStat};
 use crate::context;
+use crate::diff_render;
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
@@ -119,7 +120,7 @@ impl HumanRender for StashShowOutcome {
             let color = std::io::stdout().is_terminal()
                 && grit_lib::porcelain::terminal::ansi_supported()
                 && std::env::var_os("NO_COLOR").is_none();
-            show::render_stat(w, stat, color, None)?;
+            diff_render::render_stat_with_leading_blank(w, stat, color, None)?;
         }
         Ok(())
     }

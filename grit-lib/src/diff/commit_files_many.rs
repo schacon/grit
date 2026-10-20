@@ -6,7 +6,7 @@ use crate::config::ConfigSet;
 use crate::error::Result;
 use crate::objects::{parse_commit, ObjectId};
 use crate::odb::Odb;
-use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ThreadPolicy};
+use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ParallelOptions, ThreadPolicy};
 
 use super::core::diff_trees_with_renames_and_policy;
 use super::detail::{DiffDetail, DiffTotals};
@@ -101,6 +101,30 @@ fn totals_for_detail(files: &[super::detail::FileDiff], detail: DiffDetail) -> O
             deletions: 0,
         }),
     }
+}
+
+/// Parallel options for diffing many commits in one batch.
+///
+/// Honors [`ThreadPolicy::threads_override`] `Some(1)` (serial). When the caller did not
+/// cap threads, uses auto worker count so multi-commit batches can run in parallel like
+/// Git's `log -p`. Per-commit work still uses the caller's original policy.
+fn commit_files_many_parallel_options(
+    thread_policy: &ThreadPolicy,
+    config: &ConfigSet,
+) -> ParallelOptions {
+    let batch_policy = if thread_policy.threads_override == Some(1) {
+        *thread_policy
+    } else {
+        ThreadPolicy {
+            threads_override: thread_policy.threads_override.or(Some(0)),
+            min_items_override: thread_policy.min_items_override,
+            min_total_bytes_override: thread_policy.min_total_bytes_override,
+        }
+    };
+    let mut par_opts = batch_policy.resolve(ParallelOp::DiffContent, config);
+    par_opts.min_items = par_opts.min_items.min(2);
+    par_opts.min_total_bytes = None;
+    par_opts
 }
 
 fn diff_one_commit(
@@ -215,7 +239,7 @@ impl Diff<'_> {
         pathspecs: &[String],
         opts: CommitFilesManyOptions,
         config: &ConfigSet,
-        _thread_policy: &ThreadPolicy,
+        thread_policy: &ThreadPolicy,
     ) -> Result<Vec<CommitFilesResult>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
@@ -248,29 +272,14 @@ impl Diff<'_> {
             });
         }
 
-        let batch_policy = ThreadPolicy::with_threads_override(Some(0))
-            .min_items_override(Some(1))
-            .min_total_bytes_override(Some(0));
-        let content_policy = batch_policy;
-
         odb.with_pack_read_context(|| {
-            let par_opts = batch_policy.resolve(ParallelOp::DiffContent, config);
-            let use_parallel = work_items.len() >= 2;
-            if use_parallel {
-                try_par_map(&work_items, par_opts, 0, |work| {
-                    diff_one_commit(self, work, pathspecs, &opts, config, &content_policy)
-                })
-                .map_err(|err| match err {
-                    ParallelHashError::Task(e) => e,
-                })
-            } else {
-                work_items
-                    .iter()
-                    .map(|work| {
-                        diff_one_commit(self, work, pathspecs, &opts, config, &content_policy)
-                    })
-                    .collect()
-            }
+            let par_opts = commit_files_many_parallel_options(thread_policy, config);
+            try_par_map(&work_items, par_opts, 0, |work| {
+                diff_one_commit(self, work, pathspecs, &opts, config, thread_policy)
+            })
+            .map_err(|err| match err {
+                ParallelHashError::Task(e) => e,
+            })
         })
     }
 }
