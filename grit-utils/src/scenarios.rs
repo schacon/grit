@@ -77,6 +77,7 @@ pub enum PrepareKind {
     StashReset,
     MaintenanceReset,
     DiffDirtyReset,
+    DiffSyntheticReset,
     WorktreeStatusClean,
     WorktreeStatusDirty,
     WorktreeAdd,
@@ -140,6 +141,7 @@ fn prepare_command(cfg: &RunConfig, git: &Path, kind: PrepareKind, repo: &Path) 
         PrepareKind::StashReset => "prepare-stash",
         PrepareKind::MaintenanceReset => "prepare-maintenance",
         PrepareKind::DiffDirtyReset => "prepare-diff-dirty",
+        PrepareKind::DiffSyntheticReset => "prepare-diff-synthetic",
         PrepareKind::WorktreeStatusClean => "prepare-worktree-status-clean",
         PrepareKind::WorktreeStatusDirty => "prepare-worktree-status-dirty",
         PrepareKind::WorktreeAdd => "prepare-worktree-add",
@@ -680,6 +682,9 @@ pub fn run_dense_leaf_worktree_suite(
     Ok(build_report(git, grit, timestamp, scenarios))
 }
 
+/// Number of tracked `.txt` files modified for the synthetic `diff-{size}` dashboard scenario.
+pub const SYNTHETIC_DIFF_MODIFIED: usize = 48;
+
 /// Worktree diff with ~48 modified files (`git diff` vs `grit diff`).
 pub fn run_diff_suite(
     hyperfine: &Path,
@@ -689,11 +694,11 @@ pub fn run_diff_suite(
     sizes: &[usize],
     timestamp: time::OffsetDateTime,
 ) -> Result<BenchReport> {
-    const MODIFIED: usize = 48;
+    let modified = SYNTHETIC_DIFF_MODIFIED;
     let mut scenarios = Vec::new();
     for &size in sizes {
         let repo = create_repo(git, size)?;
-        modify_files_for_diff(&repo, MODIFIED)?;
+        modify_files_for_diff(&repo, modified)?;
         scenarios.push(run_scenario(
             hyperfine,
             git,
@@ -704,12 +709,12 @@ pub fn run_diff_suite(
                 group: "diff".into(),
                 fixture: format!("synthetic-{size}"),
                 description: format!(
-                    "worktree diff with {MODIFIED} modified tracked files (git diff, grit diff)"
+                    "worktree diff with {modified} modified tracked files (git diff, grit diff)"
                 ),
                 grit_argv: vec!["diff".into()],
                 git_argv: vec!["diff".into()],
                 driver: Driver::Cli,
-                prepare_kind: None,
+                prepare_kind: Some(PrepareKind::DiffSyntheticReset),
                 grit_via_shell: false,
                 git_via_shell: false,
             },
@@ -1163,6 +1168,15 @@ pub fn run_prepare_stash(git: &Path) -> Result<()> {
 
 pub fn run_prepare_diff_dirty(git: &Path) -> Result<()> {
     crate::fixture::prepare_diff_dirty_iteration(&bench_work_dir(), git)
+}
+
+/// Hyperfine prepare hook for [`run_diff_suite`] (restores the synthetic diff fixture).
+pub fn run_prepare_diff_synthetic(git: &Path) -> Result<()> {
+    crate::fixture::prepare_synthetic_diff_iteration(
+        &bench_work_dir(),
+        git,
+        SYNTHETIC_DIFF_MODIFIED,
+    )
 }
 
 pub fn run_prepare_switch(git: &Path) -> Result<()> {
