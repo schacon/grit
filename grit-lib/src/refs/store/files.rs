@@ -636,6 +636,89 @@ impl FilesRefStore {
         Ok(())
     }
 
+    /// Lock every ref `update` writes (and `update.name` when its expectation must be
+    /// verified), recheck the expectation against disk under those locks, then write the refs.
+    ///
+    /// Holding the write targets' locks across the recheck matters for symbolic refs too: an
+    /// update to `HEAD` that dereferences to `refs/heads/main` must exclude writers of `main`,
+    /// not only of `HEAD`. Each successful write consumes its lock; anything left is released.
+    #[allow(clippy::too_many_arguments)]
+    fn persist_update_locked(
+        &self,
+        update: &RefUpdate,
+        batch_extras: &BTreeSet<String>,
+        before: &RefBatchState,
+        running: &RefBatchState,
+        next: &RefBatchState,
+        packed_lock_held: bool,
+        persisted_refs: &mut HashSet<String>,
+        writes_ref: bool,
+    ) -> Result<()> {
+        let mut targets: Vec<String> = running
+            .refs
+            .keys()
+            .chain(next.refs.keys())
+            .filter(|name| *name != &update.name && running.refs.get(*name) != next.refs.get(*name))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for target in symref_deref_delete_changed_targets(running, next, update) {
+            if !persisted_refs.contains(&target) && !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        if writes_ref {
+            targets.push(update.name.clone());
+        }
+
+        let mut held: BTreeMap<String, PathBuf> = BTreeMap::new();
+        let release = |held: &BTreeMap<String, PathBuf>| {
+            for lock in held.values() {
+                let _ = fs::remove_file(lock);
+            }
+        };
+        let verify_name = (!matches!(update.expected, Expected::Any)).then_some(&update.name);
+        for name in targets.iter().chain(verify_name) {
+            if held.contains_key(name) {
+                continue;
+            }
+            let (_, _, lock_path) = self.ref_lock_paths(name);
+            let acquired = match lock_path.parent() {
+                Some(parent) => fs::create_dir_all(parent).map_err(Error::Io),
+                None => Ok(()),
+            }
+            .and_then(|()| self.acquire_ref_lock(&lock_path, name).map_err(Error::from));
+            if let Err(err) = acquired {
+                release(&held);
+                return Err(err);
+            }
+            held.insert(name.clone(), lock_path);
+        }
+
+        if let Err(err) = self.recheck_update_at_commit(update, batch_extras, before, running) {
+            release(&held);
+            return Err(err.into());
+        }
+        #[cfg(test)]
+        tests::run_after_recheck_hook();
+
+        for name in &targets {
+            let Some(lock_path) = held.remove(name) else {
+                continue;
+            };
+            if let Err(err) = self.persist_one_ref_change(name, next, &lock_path, packed_lock_held)
+            {
+                let _ = fs::remove_file(&lock_path);
+                release(&held);
+                return Err(err);
+            }
+            persisted_refs.insert(name.clone());
+        }
+        release(&held);
+        Ok(())
+    }
+
     fn persist_state_diff(
         &self,
         before: &RefBatchState,
@@ -668,47 +751,6 @@ impl FilesRefStore {
             let mut next = running.clone();
             apply_update(&mut next, update).map_err(Error::from)?;
 
-            self.recheck_update_at_commit(update, &batch_extras, before, &running)
-                .map_err(Error::from)?;
-
-            let mut changed: BTreeSet<String> = BTreeSet::new();
-            for name in running.refs.keys().chain(next.refs.keys()) {
-                if running.refs.get(name) != next.refs.get(name) {
-                    changed.insert(name.clone());
-                }
-            }
-
-            for side_name in changed
-                .iter()
-                .filter(|name| *name != &update.name)
-                .cloned()
-                .collect::<Vec<_>>()
-            {
-                self.persist_one_ref_name(
-                    &side_name,
-                    &next,
-                    packed_lock_held,
-                    &mut persisted_refs,
-                )?;
-            }
-
-            for target in symref_deref_delete_changed_targets(&running, &next, update) {
-                if persisted_refs.contains(&target) {
-                    continue;
-                }
-                let (_, _, lock_path) = self.ref_lock_paths(&target);
-                if let Some(parent) = lock_path.parent() {
-                    fs::create_dir_all(parent).map_err(Error::Io)?;
-                }
-                self.acquire_ref_lock(&lock_path, &target)
-                    .map_err(Error::from)?;
-                let write_result =
-                    self.persist_one_ref_change(&target, &next, &lock_path, packed_lock_held);
-                let _ = fs::remove_file(&lock_path);
-                write_result?;
-                persisted_refs.insert(target);
-            }
-
             let name = &update.name;
             let b = running.refs.get(name);
             let a = next.refs.get(name);
@@ -718,20 +760,18 @@ impl FilesRefStore {
                 && !self
                     .loose_ref_file_exists(name)
                     .map_err(|e| RefStoreError::Corrupt(e.to_string()))?;
+            let writes_ref = b != a || materialize_loose;
 
-            let (_, _, lock_path) = self.ref_lock_paths(name);
-            if b != a || materialize_loose {
-                if let Some(parent) = lock_path.parent() {
-                    fs::create_dir_all(parent).map_err(Error::Io)?;
-                }
-                self.acquire_ref_lock(&lock_path, name)
-                    .map_err(Error::from)?;
-                let write_result =
-                    self.persist_one_ref_change(name, &next, &lock_path, packed_lock_held);
-                let _ = fs::remove_file(&lock_path);
-                write_result?;
-                persisted_refs.insert(name.clone());
-            }
+            self.persist_update_locked(
+                update,
+                &batch_extras,
+                before,
+                &running,
+                &next,
+                packed_lock_held,
+                &mut persisted_refs,
+                writes_ref,
+            )?;
 
             running = next;
             crate::refs::test_ref_store_batch_pause_after_ref_write(idx, &self.common_dir);
@@ -1226,4 +1266,171 @@ fn collect_reflog_ref_names(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::refs::store::RefUpdateFlags;
+
+    // hygiene: test-only commit interleaving hook
+    thread_local! {
+        static AFTER_RECHECK: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    /// Runs (once) the hook installed by [`after_next_recheck`] on this thread.
+    pub(super) fn run_after_recheck_hook() {
+        if let Some(hook) = AFTER_RECHECK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+    }
+
+    /// Run `hook` inside the next commit on this thread, right after an update passed its
+    /// on-disk compare-and-swap recheck and before the ref is written.
+    fn after_next_recheck(hook: impl FnOnce() + 'static) {
+        AFTER_RECHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    fn oid(byte: u8) -> ObjectId {
+        let mut bytes = [0u8; 20];
+        bytes[19] = byte;
+        ObjectId::from_bytes(&bytes).expect("oid")
+    }
+
+    fn store(git_dir: &Path) -> FilesRefStore {
+        FilesRefStore::open(FilesRefStoreConfig {
+            git_dir: git_dir.to_path_buf(),
+            common_dir: git_dir.to_path_buf(),
+            namespace_prefix: None,
+            log_refs: LogRefsConfig::None,
+        })
+    }
+
+    fn set(
+        store: &FilesRefStore,
+        name: &str,
+        value: ObjectId,
+        expected: Expected,
+    ) -> StoreResult<()> {
+        let txn = RefTransaction::new().update(RefUpdate {
+            name: name.to_owned(),
+            new_value: Some(RawRef::Direct(value)),
+            expected,
+            reflog: None,
+            flags: RefUpdateFlags::default(),
+        })?;
+        store.prepare(txn)?.commit()
+    }
+
+    fn git_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("refs/heads")).expect("refs");
+        fs::write(dir.path().join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+        dir
+    }
+
+    /// Two writers that both expect `expected` must not both succeed: the one that commits
+    /// first holds the ref lock from its recheck to its write.
+    fn assert_racing_writer_is_locked_out(expected: Expected, seed: Option<ObjectId>) {
+        let dir = git_dir();
+        let name = "refs/notes/commits";
+        let writer = store(dir.path());
+        if let Some(seed) = seed {
+            set(&writer, name, seed, Expected::Missing).expect("seed");
+        }
+
+        let other = store(dir.path());
+        let racing_expected = expected.clone();
+        let racer = std::rc::Rc::new(RefCell::new(None));
+        let racer_slot = racer.clone();
+        after_next_recheck(move || {
+            *racer_slot.borrow_mut() = Some(set(&other, name, oid(2), racing_expected));
+        });
+        set(&writer, name, oid(3), expected).expect("first committer wins");
+
+        let racer = racer.borrow_mut().take().expect("hook ran");
+        assert!(
+            matches!(racer, Err(RefStoreError::LockHeld { .. })),
+            "racing writer must not commit while the ref is locked: {racer:?}"
+        );
+        assert_eq!(
+            writer.read_raw(name).expect("read"),
+            Some(RawRef::Direct(oid(3)))
+        );
+        assert!(
+            !dir.path().join("refs/notes/commits.lock").exists(),
+            "the lock is released after the write"
+        );
+    }
+
+    #[test]
+    fn expected_oid_update_holds_the_lock_through_the_write() {
+        assert_racing_writer_is_locked_out(Expected::Oid(oid(1)), Some(oid(1)));
+    }
+
+    #[test]
+    fn expected_missing_create_holds_the_lock_through_the_write() {
+        assert_racing_writer_is_locked_out(Expected::Missing, None);
+    }
+
+    #[test]
+    fn symbolic_update_holds_the_dereferenced_target_lock_through_the_write() {
+        let dir = git_dir();
+        let writer = store(dir.path());
+        set(&writer, "refs/heads/main", oid(1), Expected::Missing).expect("seed main");
+
+        let other = store(dir.path());
+        let racer = std::rc::Rc::new(RefCell::new(None));
+        let racer_slot = racer.clone();
+        after_next_recheck(move || {
+            *racer_slot.borrow_mut() = Some(set(
+                &other,
+                "refs/heads/main",
+                oid(2),
+                Expected::Oid(oid(1)),
+            ));
+        });
+        set(&writer, "HEAD", oid(3), Expected::Oid(oid(1))).expect("update through HEAD");
+
+        let racer = racer.borrow_mut().take().expect("hook ran");
+        assert!(
+            matches!(racer, Err(RefStoreError::LockHeld { .. })),
+            "a direct writer of the HEAD target must be locked out: {racer:?}"
+        );
+        assert_eq!(
+            writer.read_raw("refs/heads/main").expect("read"),
+            Some(RawRef::Direct(oid(3)))
+        );
+        assert_eq!(
+            writer.read_raw("HEAD").expect("read"),
+            Some(RawRef::Symbolic("refs/heads/main".to_owned()))
+        );
+        for lock in ["HEAD.lock", "refs/heads/main.lock"] {
+            assert!(!dir.path().join(lock).exists(), "{lock} released");
+        }
+    }
+
+    #[test]
+    fn failed_recheck_releases_the_lock() {
+        let dir = git_dir();
+        let name = "refs/heads/main";
+        let writer = store(dir.path());
+        set(&writer, name, oid(1), Expected::Missing).expect("create");
+        let other = store(dir.path());
+        set(&other, name, oid(2), Expected::Oid(oid(1))).expect("other moves it");
+
+        let err = set(&writer, name, oid(3), Expected::Oid(oid(1))).expect_err("stale");
+        assert!(
+            matches!(err, RefStoreError::ExpectedMismatch { .. }),
+            "{err:?}"
+        );
+        assert!(!dir.path().join("refs/heads/main.lock").exists());
+        set(&writer, name, oid(3), Expected::Oid(oid(2))).expect("retry against current value");
+        assert_eq!(
+            writer.read_raw(name).expect("read"),
+            Some(RawRef::Direct(oid(3)))
+        );
+    }
 }
