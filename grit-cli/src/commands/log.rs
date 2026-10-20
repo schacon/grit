@@ -514,12 +514,21 @@ fn build_commit_outcome(
     let now = context::wall_clock_now(env).unix_timestamp();
     let json_output = output_mode == OutputMode::Json;
     let need_refs = display.decorate || json_output;
+<<<<<<< New base: log display: address review regressions (decorate, config I/O, group-by perf, do
     let head_branch = if display.oneline || display.decorate {
         resolve_current_branch(repo)?
     } else {
         None
     };
     let detail = format.detail_for_log();
+||||||| Common ancestor
+=======
+    let head_branch = if display.decorate {
+        resolve_current_branch(repo)?
+    } else {
+        None
+    };
+>>>>>>> Current commit: log: defer HEAD resolve for plain log; UTF-8-safe group-by; refresh log schema
 
     let (commit_json_rows, commit_rows) = if need_refs {
         let loader = CommitJsonLoader::new(repo)?;
