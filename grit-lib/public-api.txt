@@ -7365,19 +7365,19 @@ pub grit_lib::objects::pack::PackIndex::is_cruft: bool
 pub grit_lib::objects::pack::PackIndex::is_promisor: bool
 pub grit_lib::objects::pack::PackIndex::pack_path: std::path::PathBuf
 impl grit_lib::objects::pack::PackIndex
-pub fn grit_lib::objects::pack::PackIndex::contains(&self, &grit_lib::objects::ObjectId) -> bool
+pub fn grit_lib::objects::pack::PackIndex::contains(&self, &grit_lib::objects::ObjectId) -> core::result::Result<bool, grit_lib::prelude::Error>
 pub fn grit_lib::objects::pack::PackIndex::crc32_at(&self, usize) -> core::option::Option<u32>
-pub fn grit_lib::objects::pack::PackIndex::crc32_for_pack_offset(&self, u64) -> core::option::Option<u32>
-pub fn grit_lib::objects::pack::PackIndex::find_offset(&self, &grit_lib::objects::ObjectId) -> core::option::Option<u64>
-pub fn grit_lib::objects::pack::PackIndex::find_offset_monotonic(&self, &grit_lib::objects::ObjectId, &mut usize) -> core::option::Option<u64>
+pub fn grit_lib::objects::pack::PackIndex::crc32_for_pack_offset(&self, u64) -> core::result::Result<core::option::Option<u32>, grit_lib::prelude::Error>
+pub fn grit_lib::objects::pack::PackIndex::find_offset(&self, &grit_lib::objects::ObjectId) -> core::result::Result<core::option::Option<u64>, grit_lib::prelude::Error>
+pub fn grit_lib::objects::pack::PackIndex::find_offset_monotonic(&self, &grit_lib::objects::ObjectId, &mut usize) -> core::result::Result<core::option::Option<u64>, grit_lib::prelude::Error>
 pub fn grit_lib::objects::pack::PackIndex::find_position(&self, &grit_lib::objects::ObjectId) -> core::option::Option<usize>
-pub fn grit_lib::objects::pack::PackIndex::find_position_by_offset_sorted(&self, u64) -> core::option::Option<usize>
+pub fn grit_lib::objects::pack::PackIndex::find_position_by_offset_sorted(&self, u64) -> core::result::Result<core::option::Option<usize>, grit_lib::prelude::Error>
 pub fn grit_lib::objects::pack::PackIndex::hash_bytes(&self) -> usize
 pub fn grit_lib::objects::pack::PackIndex::is_empty(&self) -> bool
 pub fn grit_lib::objects::pack::PackIndex::iter(&self) -> grit_lib::pack_index::PackIndexIter<'_>
 pub fn grit_lib::objects::pack::PackIndex::len(&self) -> usize
-pub fn grit_lib::objects::pack::PackIndex::next_pack_offset_after(&self, u64, u64) -> u64
-pub fn grit_lib::objects::pack::PackIndex::offset_at(&self, usize) -> u64
+pub fn grit_lib::objects::pack::PackIndex::next_pack_offset_after(&self, u64, u64) -> core::result::Result<u64, grit_lib::prelude::Error>
+pub fn grit_lib::objects::pack::PackIndex::offset_at(&self, usize) -> core::result::Result<u64, grit_lib::prelude::Error>
 pub fn grit_lib::objects::pack::PackIndex::oid_at(&self, usize) -> &[u8]
 impl core::clone::Clone for grit_lib::objects::pack::PackIndex
 pub fn grit_lib::objects::pack::PackIndex::clone(&self) -> Self

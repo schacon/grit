@@ -104,8 +104,8 @@ fn v2_idx_matches_git_show_index() {
     for (hex, off, crc) in git_rows {
         let oid = ObjectId::from_hex(&hex).expect("oid");
         let pos = idx.find_position(&oid).expect("oid in idx");
-        assert_eq!(idx.find_offset(&oid), Some(off));
-        assert_eq!(idx.offset_at(pos), off);
+        assert_eq!(idx.find_offset(&oid).expect("lookup"), Some(off));
+        assert_eq!(idx.offset_at(pos).expect("off"), off);
         assert_eq!(idx.oid_at(pos), oid.as_bytes());
         assert_eq!(idx.crc32_at(pos), crc);
     }
@@ -133,8 +133,8 @@ fn v1_idx_matches_git_show_index() {
     for (hex, off, _crc) in git_rows {
         let oid = ObjectId::from_hex(&hex).expect("oid");
         let pos = idx.find_position(&oid).expect("oid in idx");
-        assert_eq!(idx.find_offset(&oid), Some(off));
-        assert_eq!(idx.offset_at(pos), off);
+        assert_eq!(idx.find_offset(&oid).expect("lookup"), Some(off));
+        assert_eq!(idx.offset_at(pos).expect("off"), off);
         assert_eq!(idx.crc32_at(pos), None);
     }
 }

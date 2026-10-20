@@ -5,9 +5,11 @@
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::error::Error;
 use grit_lib::maintenance::{repack_all, RepackOptions};
+use grit_lib::objects::odb::Odb;
 use grit_lib::objects::pack::{
-    clear_pack_cache, parse_pack_index_bytes, read_pack_index, read_pack_index_no_verify,
-    test_pack_cache_guard, verify_pack_and_collect,
+    clear_pack_cache, parse_pack_index_bytes, read_object_from_pack, read_pack_index,
+    read_pack_index_cached, read_pack_index_no_verify, test_pack_cache_guard,
+    verify_pack_and_collect, write_v2_pack_index_with_trailer,
 };
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
@@ -61,7 +63,7 @@ fn git_written_v1_and_v2_mmap_match_parsed_offsets() {
         assert_eq!(mapped.len(), from_bytes.len());
         for (i, entry) in mapped.iter().enumerate() {
             assert_eq!(entry.oid(), from_bytes.oid_at(i));
-            assert_eq!(entry.offset(), from_bytes.offset_at(i));
+            assert_eq!(entry.offset().expect("off"), from_bytes.offset_at(i).expect("off"));
             assert_eq!(entry.crc32(), from_bytes.crc32_at(i));
         }
     }
@@ -86,7 +88,69 @@ fn git_large_offset_table_opens_via_mmap() {
     let idx_path = out.idx_path.expect("idx");
     let mapped = read_pack_index_no_verify(&idx_path).expect("mmap");
     let oid = ObjectId::from_bytes(mapped.oid_at(0)).expect("oid");
-    assert!(mapped.find_offset(&oid).is_some());
+    assert!(mapped.find_offset(&oid).expect("lookup").is_some());
+}
+
+#[test]
+fn lazy_v2_out_of_range_large_offset_slot_returns_corruption_not_panic() {
+    let oid = ObjectId::from_bytes(&[0x01; 20]).expect("oid");
+    let mut body = Vec::new();
+    body.extend_from_slice(b"\xfftOc");
+    body.extend_from_slice(&2u32.to_be_bytes());
+    let fanout = grit_lib::objects::pack::compute_fanout_from_oid_slices(&[oid.as_bytes()]);
+    for f in fanout {
+        body.extend_from_slice(&f.to_be_bytes());
+    }
+    body.extend_from_slice(oid.as_bytes());
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(&0xffff_ffffu32.to_be_bytes());
+    body.extend_from_slice(&[0u8; 20]);
+    body.extend_from_slice(&[0u8; 20]);
+    let idx = parse_pack_index_bytes(Path::new("bad-large-slot.idx"), body, false).expect("lazy");
+    let err = idx.find_offset(&oid).expect_err("corrupt slot");
+    assert!(matches!(err, Error::CorruptObject(_)));
+}
+
+#[test]
+fn lazy_v2_inconsistent_large_offset_slot_returns_corruption() {
+    let oid = ObjectId::from_bytes(&[0x01; 20]).expect("oid");
+    let mut body = Vec::new();
+    body.extend_from_slice(b"\xfftOc");
+    body.extend_from_slice(&2u32.to_be_bytes());
+    let fanout = grit_lib::objects::pack::compute_fanout_from_oid_slices(&[oid.as_bytes()]);
+    for f in fanout {
+        body.extend_from_slice(&f.to_be_bytes());
+    }
+    body.extend_from_slice(oid.as_bytes());
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(&0x8000_0001u32.to_be_bytes());
+    body.extend_from_slice(&1000u64.to_be_bytes());
+    body.extend_from_slice(&[0u8; 20]);
+    body.extend_from_slice(&[0u8; 20]);
+    let idx = parse_pack_index_bytes(Path::new("bad-assign.idx"), body, false).expect("lazy");
+    let err = idx.find_offset(&oid).expect_err("inconsistent slot");
+    assert!(matches!(err, Error::CorruptObject(_)));
+}
+
+#[test]
+fn corrupt_large_offset_read_object_from_pack_propagates_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let idx_path = tmp.path().join("c.idx");
+    let pack_path = tmp.path().join("c.pack");
+    std::fs::write(&pack_path, b"PACK\x00\x00\x00\x02\x00\x00\x00\x00").expect("pack");
+    let oid = ObjectId::from_bytes(&[0x01; 20]).expect("oid");
+    write_v2_pack_index_with_trailer(&idx_path, &[(oid, 0x8000_0000u64, 0)], &[0u8; 20], 20, None)
+        .expect("write");
+    let mut raw = std::fs::read(&idx_path).expect("read");
+    let hb = 20;
+    let off32 = 8 + 256 * 4 + hb + 4;
+    raw[off32..off32 + 4].copy_from_slice(&0xffff_ffffu32.to_be_bytes());
+    std::fs::write(&idx_path, &raw).expect("write corrupt");
+    let idx = read_pack_index_no_verify(&idx_path).expect("open");
+    let mut idx = idx;
+    idx.pack_path = pack_path;
+    let err = read_object_from_pack(&idx, &oid).expect_err("typed corruption");
+    assert!(matches!(err, Error::CorruptObject(_)));
 }
 
 #[test]
@@ -159,7 +223,10 @@ fn repack_with_cached_mmap_index_succeeds() {
     );
     clear_pack_cache();
     let idx_path = out.idx_path.expect("idx");
-    let _cached = read_pack_index_no_verify(&idx_path).expect("prime cache");
+    let odb = Odb::new(repo.path());
+    odb.with_pack_read_context(|| {
+        read_pack_index_cached(&idx_path).expect("prime pack_cache index");
+    });
     let grit_repo = Repository::open(&repo.path().join(".git"), &RepositoryOptions::default())
         .expect("open repo");
     repack_all(&grit_repo, &RepackOptions::default()).expect("repack");
