@@ -14195,6 +14195,87 @@ pub fn grit_lib::revwalk::commit_graph::load_commit_graph_commit_info(&grit_lib:
 pub fn grit_lib::revwalk::commit_graph::parse_graph_file(&std::path::Path) -> core::option::Option<grit_lib::revwalk::commit_graph::ParsedGraphDump>
 pub fn grit_lib::revwalk::commit_graph::remove_commit_graph_chain_dir(&std::path::Path) -> bool
 pub type grit_lib::revwalk::commit_graph::BloomWalkStatsHandle = alloc::rcs::arc::Arc<std::sync::poison::mutex::Mutex<grit_lib::revwalk::commit_graph::BloomWalkStats>>
+pub mod grit_lib::revwalk::filter
+pub enum grit_lib::revwalk::filter::CommitFilterError
+pub grit_lib::revwalk::filter::CommitFilterError::InvalidPattern
+pub grit_lib::revwalk::filter::CommitFilterError::InvalidPattern::detail: alloc::string::String
+pub grit_lib::revwalk::filter::CommitFilterError::InvalidPattern::pattern: alloc::string::String
+impl core::error::Error for grit_lib::revwalk::filter::CommitFilterError
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilterError
+pub fn grit_lib::revwalk::filter::CommitFilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::revwalk::filter::CommitFilterError
+pub fn grit_lib::revwalk::filter::CommitFilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilterError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilterError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilterError
+pub struct grit_lib::revwalk::filter::CommitFilter
+impl grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::builder() -> grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilter::is_active(&self) -> bool
+pub fn grit_lib::revwalk::filter::CommitFilter::matches(&self, &grit_lib::repo::Repository, grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
+impl core::clone::Clone for grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilter
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilter
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilter
+pub struct grit_lib::revwalk::filter::CommitFilterBuilder
+impl grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::all_match(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::author(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::build(self) -> core::result::Result<grit_lib::revwalk::filter::CommitFilter, grit_lib::revwalk::filter::CommitFilterError>
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::committer(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::fixed_strings(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::grep(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::ignore_case(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::invert_grep(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::mailmap(self, grit_lib::config::mailmap::MailmapTable) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::new() -> Self
+impl core::clone::Clone for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::clone(&self) -> Self
+impl core::default::Default for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilterBuilder
+pub struct grit_lib::revwalk::filter::Pattern(_)
+impl grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::as_str(&self) -> &str
+pub fn grit_lib::revwalk::filter::Pattern::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::filter::Pattern
+impl core::cmp::PartialEq for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::eq(&self, &Self) -> bool
+impl core::convert::From<&str> for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::from(alloc::string::String) -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::filter::Pattern
+impl core::marker::Freeze for grit_lib::revwalk::filter::Pattern
+impl core::marker::Send for grit_lib::revwalk::filter::Pattern
+impl core::marker::Sync for grit_lib::revwalk::filter::Pattern
+impl core::marker::Unpin for grit_lib::revwalk::filter::Pattern
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::Pattern
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::Pattern
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::Pattern
 pub mod grit_lib::revwalk::handle
 pub struct grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> grit_lib::revwalk::handle::RevWalk<'repo>
@@ -14977,19 +15058,16 @@ pub fn grit_lib::revwalk::object_inspect::tree_entry_cat_file_type(&grit_lib::re
 pub fn grit_lib::revwalk::object_inspect::tree_entry_mode_cat_file_p(u32) -> alloc::string::String
 pub mod grit_lib::revwalk::queries
 pub struct grit_lib::revwalk::queries::RevWalkListOptions
+pub grit_lib::revwalk::queries::RevWalkListOptions::commit_filter: core::option::Option<alloc::rcs::arc::Arc<grit_lib::revwalk::filter::CommitFilter>>
 pub grit_lib::revwalk::queries::RevWalkListOptions::first_parent: bool
 pub grit_lib::revwalk::queries::RevWalkListOptions::limit: core::option::Option<usize>
 pub grit_lib::revwalk::queries::RevWalkListOptions::paths: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::revwalk::queries::RevWalkListOptions
-impl core::cmp::PartialEq for grit_lib::revwalk::queries::RevWalkListOptions
-pub fn grit_lib::revwalk::queries::RevWalkListOptions::eq(&self, &Self) -> bool
 impl core::default::Default for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::default() -> Self
 impl core::fmt::Debug for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Freeze for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Send for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Sync for grit_lib::revwalk::queries::RevWalkListOptions
@@ -15197,6 +15275,7 @@ pub grit_lib::revwalk::rev_list::RevListOptions::bloom_stats: core::option::Opti
 pub grit_lib::revwalk::rev_list::RevListOptions::boundary: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::cherry_mark: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::cherry_pick: bool
+pub grit_lib::revwalk::rev_list::RevListOptions::commit_filter: core::option::Option<alloc::rcs::arc::Arc<grit_lib::revwalk::filter::CommitFilter>>
 pub grit_lib::revwalk::rev_list::RevListOptions::commit_graph_changed_paths_version: i32
 pub grit_lib::revwalk::rev_list::RevListOptions::commit_graph_read_changed_paths: bool
 pub grit_lib::revwalk::rev_list::RevListOptions::count: bool
@@ -15544,6 +15623,86 @@ impl core::marker::Unpin for grit_lib::revwalk::rev_parse_error::AmbiguousObject
 impl core::marker::UnsafeUnpin for grit_lib::revwalk::rev_parse_error::AmbiguousObjectHint
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::rev_parse_error::AmbiguousObjectHint
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::rev_parse_error::AmbiguousObjectHint
+pub enum grit_lib::revwalk::CommitFilterError
+pub grit_lib::revwalk::CommitFilterError::InvalidPattern
+pub grit_lib::revwalk::CommitFilterError::InvalidPattern::detail: alloc::string::String
+pub grit_lib::revwalk::CommitFilterError::InvalidPattern::pattern: alloc::string::String
+impl core::error::Error for grit_lib::revwalk::filter::CommitFilterError
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilterError
+pub fn grit_lib::revwalk::filter::CommitFilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::revwalk::filter::CommitFilterError
+pub fn grit_lib::revwalk::filter::CommitFilterError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilterError
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilterError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilterError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilterError
+pub struct grit_lib::revwalk::CommitFilter
+impl grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::builder() -> grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilter::is_active(&self) -> bool
+pub fn grit_lib::revwalk::filter::CommitFilter::matches(&self, &grit_lib::repo::Repository, grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
+impl core::clone::Clone for grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilter
+pub fn grit_lib::revwalk::filter::CommitFilter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilter
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilter
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilter
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilter
+pub struct grit_lib::revwalk::CommitFilterBuilder
+impl grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::all_match(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::author(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::build(self) -> core::result::Result<grit_lib::revwalk::filter::CommitFilter, grit_lib::revwalk::filter::CommitFilterError>
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::committer(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::fixed_strings(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::grep(self, impl core::convert::Into<grit_lib::revwalk::filter::Pattern>) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::ignore_case(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::invert_grep(self, bool) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::mailmap(self, grit_lib::config::mailmap::MailmapTable) -> Self
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::new() -> Self
+impl core::clone::Clone for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::clone(&self) -> Self
+impl core::default::Default for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::default() -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::CommitFilterBuilder
+pub fn grit_lib::revwalk::filter::CommitFilterBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Send for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Sync for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::Unpin for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::CommitFilterBuilder
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::CommitFilterBuilder
+pub struct grit_lib::revwalk::Pattern(_)
+impl grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::as_str(&self) -> &str
+pub fn grit_lib::revwalk::filter::Pattern::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::revwalk::filter::Pattern
+impl core::cmp::PartialEq for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::eq(&self, &Self) -> bool
+impl core::convert::From<&str> for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::from(alloc::string::String) -> Self
+impl core::fmt::Debug for grit_lib::revwalk::filter::Pattern
+pub fn grit_lib::revwalk::filter::Pattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::revwalk::filter::Pattern
+impl core::marker::Freeze for grit_lib::revwalk::filter::Pattern
+impl core::marker::Send for grit_lib::revwalk::filter::Pattern
+impl core::marker::Sync for grit_lib::revwalk::filter::Pattern
+impl core::marker::Unpin for grit_lib::revwalk::filter::Pattern
+impl core::marker::UnsafeUnpin for grit_lib::revwalk::filter::Pattern
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::filter::Pattern
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::filter::Pattern
 pub struct grit_lib::revwalk::RevWalk<'repo>
 impl<'repo> grit_lib::revwalk::handle::RevWalk<'repo>
 pub fn grit_lib::revwalk::handle::RevWalk<'repo>::commits(&self, &[&str], &grit_lib::revwalk::queries::RevWalkListOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>
@@ -15570,19 +15729,16 @@ impl<'repo> core::marker::UnsafeUnpin for grit_lib::revwalk::handle::RevWalk<'re
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::revwalk::handle::RevWalk<'repo>
 pub struct grit_lib::revwalk::RevWalkListOptions
+pub grit_lib::revwalk::RevWalkListOptions::commit_filter: core::option::Option<alloc::rcs::arc::Arc<grit_lib::revwalk::filter::CommitFilter>>
 pub grit_lib::revwalk::RevWalkListOptions::first_parent: bool
 pub grit_lib::revwalk::RevWalkListOptions::limit: core::option::Option<usize>
 pub grit_lib::revwalk::RevWalkListOptions::paths: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::clone(&self) -> Self
-impl core::cmp::Eq for grit_lib::revwalk::queries::RevWalkListOptions
-impl core::cmp::PartialEq for grit_lib::revwalk::queries::RevWalkListOptions
-pub fn grit_lib::revwalk::queries::RevWalkListOptions::eq(&self, &Self) -> bool
 impl core::default::Default for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::default() -> Self
 impl core::fmt::Debug for grit_lib::revwalk::queries::RevWalkListOptions
 pub fn grit_lib::revwalk::queries::RevWalkListOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Freeze for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Send for grit_lib::revwalk::queries::RevWalkListOptions
 impl core::marker::Sync for grit_lib::revwalk::queries::RevWalkListOptions
