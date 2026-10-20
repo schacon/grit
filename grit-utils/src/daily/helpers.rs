@@ -660,7 +660,9 @@ pub fn prepare_worktree_rm_dir(_: &super::plan::DailyHeadlineContext) -> super::
     super::plan::DailyPrepare::Hook(PrepareKind::WorktreeRmDir)
 }
 
-pub fn prepare_worktree_mv_file(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+pub fn prepare_worktree_mv_file(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
     super::plan::DailyPrepare::Hook(PrepareKind::WorktreeMvFile)
 }
 
