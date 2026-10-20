@@ -2155,6 +2155,38 @@ mod tests {
     }
 
     #[test]
+    fn reachable_walk_since_cutoff_terminates_without_pending() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_test_bare(&dir)?;
+        let c1 = write_commit(&repo.odb(), &[], "one", 100, 100)?;
+        let c2 = write_commit(&repo.odb(), &[c1], "two", 200, 200)?;
+        let c3 = write_commit(&repo.odb(), &[c2], "three", 300, 300)?;
+        let tip = write_commit(&repo.odb(), &[c3], "tip", 400, 400)?;
+
+        let cutoffs = ReachableWalkCommitterCutoffs {
+            since: Some(250),
+            until: None,
+        };
+        let mut state = ReachableWalkState::new(&repo, &[tip], &[])?;
+        let page1 = state.emit_until(&repo, Some(1), cutoffs)?;
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0], tip);
+        assert!(state.has_pending());
+
+        let page2 = state.emit_until(&repo, Some(10), cutoffs)?;
+        assert_eq!(page2, vec![c3]);
+        assert!(
+            !state.has_pending(),
+            "walk must finish once every reachable commit is older than --since"
+        );
+
+        let all = state.emit_until(&repo, None, cutoffs)?;
+        assert!(all.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
     fn commits_reachable_errors_on_missing_parent_without_shallow() -> Result<()> {
         let dir = tempdir().map_err(Error::Io)?;
         let repo = open_test_bare(&dir)?;

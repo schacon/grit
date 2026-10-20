@@ -224,49 +224,43 @@ impl RevSelectArgs {
         }
     }
 
-    fn build_commit_filter(
-        &self,
-        repo: &Repository,
-    ) -> std::result::Result<Option<Arc<CommitFilter>>, CommitFilterError> {
-        if !self.has_commit_filter_flags() {
-            return Ok(None);
+    /// Flags and revision tokens to echo in `grit log` continuation hints (excludes paging and walk-mode flags).
+    pub fn log_continuation_args(&self) -> String {
+        let mut parts = Vec::new();
+        parts.extend(self.revs.iter().cloned());
+        if self.all {
+            parts.push("--all".to_owned());
         }
-        let mut builder = CommitFilterBuilder::new()
-            .ignore_case(self.regexp_ignore_case)
-            .all_match(self.all_match)
-            .invert_grep(self.invert_grep)
-            .fixed_strings(self.fixed_strings);
-        for pat in &self.author {
-            builder = builder.author(pat.as_str());
+        if let Some(glob) = &self.branches {
+            push_flag_with_optional_value(&mut parts, "--branches", glob);
         }
-        for pat in &self.committer {
-            builder = builder.committer(pat.as_str());
+        if let Some(glob) = &self.tags {
+            push_flag_with_optional_value(&mut parts, "--tags", glob);
         }
-        for pat in &self.grep {
-            builder = builder.grep(pat.as_str());
+        if let Some(glob) = &self.remotes {
+            push_flag_with_optional_value(&mut parts, "--remotes", glob);
         }
-        if log_mailmap_enabled(repo, self.no_mailmap) {
-            if let Ok(table) = load_mailmap_table(repo) {
-                if !table.is_empty() {
-                    builder = builder.mailmap(table);
-                }
+        if let Some(s) = &self.since {
+            parts.push(format!("--since={s}"));
+        } else if let Some(s) = &self.after {
+            parts.push(format!("--after={s}"));
+        }
+        if let Some(s) = &self.until {
+            parts.push(format!("--until={s}"));
+        } else if let Some(s) = &self.before {
+            if !s.starts_with(CURSOR_PREFIX) {
+                parts.push(format!("--before={s}"));
             }
         }
-        builder.build().map(|f| Some(Arc::new(f)))
+        parts.join(" ")
     }
 }
 
-/// Whether author/committer mailmap applies for log-style commands (`log.mailmap`, `--no-mailmap`).
-pub(crate) fn log_mailmap_enabled(repo: &Repository, no_mailmap: bool) -> bool {
-    if no_mailmap {
-        return false;
-    }
-    let Ok(config) = repo.config() else {
-        return true;
-    };
-    match config.get("log.mailmap") {
-        None => true,
-        Some(v) => parse_bool(&v).unwrap_or(true),
+fn push_flag_with_optional_value(parts: &mut Vec<String>, flag: &str, glob: &str) {
+    if glob.is_empty() {
+        parts.push(flag.to_owned());
+    } else {
+        parts.push(format!("{flag}={glob}"));
     }
 }
 

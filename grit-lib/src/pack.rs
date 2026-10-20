@@ -152,8 +152,6 @@ pub(crate) mod pack_cache {
         static THREAD_WARM_STORE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         static PACK_MONOTONIC_CURSOR: std::cell::RefCell<Option<(PathBuf, usize)>> =
             const { std::cell::RefCell::new(None) };
-        static SINGLE_PACK_READER: std::cell::RefCell<Option<(PathBuf, super::SingleLocalPackReader)>> =
-            const { std::cell::RefCell::new(None) };
     }
 
     fn store_thread_local_key(store: &crate::pack_store::PackStore) -> usize {
@@ -172,7 +170,6 @@ pub(crate) mod pack_cache {
         THREAD_WARM_STORE.set(0);
         super::clear_pack_read_info_cache();
         PACK_MONOTONIC_CURSOR.with(|cell| *cell.borrow_mut() = None);
-        SINGLE_PACK_READER.with(|cell| *cell.borrow_mut() = None);
     }
 
     pub(crate) fn try_read_object_via_single_pack_reader(
@@ -182,23 +179,14 @@ pub(crate) mod pack_cache {
         if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
             return Ok(None);
         }
-        SINGLE_PACK_READER.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.as_ref().is_none_or(|(dir, _)| dir != objects_dir) {
-                *slot = super::SingleLocalPackReader::open_allow_loose(objects_dir)
-                    .ok()
-                    .flatten()
-                    .map(|reader| (objects_dir.to_path_buf(), reader));
-            }
-            let Some((_, reader)) = slot.as_mut() else {
-                return Ok(None);
-            };
-            match reader.read_object(oid) {
-                Ok(obj) => Ok(Some(obj)),
-                Err(Error::ObjectNotFound(_)) => Ok(None),
-                Err(err) => Err(err),
-            }
-        })
+        let Some(mut reader) = super::SingleLocalPackReader::open_allow_loose(objects_dir)? else {
+            return Ok(None);
+        };
+        match reader.read_object(oid) {
+            Ok(obj) => Ok(Some(obj)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.

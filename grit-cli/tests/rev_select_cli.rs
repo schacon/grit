@@ -197,7 +197,7 @@ fn log_cursor_pages_through_range() -> TestResult {
     let page1 = grit_json(&dir, &["log", "base..HEAD"]);
     assert_eq!(page1["commits"].as_array().expect("commits").len(), 10);
     let cursor = page1["next"].as_str().expect("next cursor for range walk");
-    let page2 = grit_json(&dir, &["log", &format!("--cursor={cursor}")]);
+    let page2 = grit_json(&dir, &["log", "base..HEAD", &format!("--cursor={cursor}")]);
     assert!(page2["next"].is_null());
     let paged: Vec<String> = page1["commits"]
         .as_array()
@@ -309,6 +309,80 @@ fn revs_n_zero_left_right_json_shape() -> TestResult {
     assert!(v["count"].is_null());
     assert_eq!(v["left_right"]["left"], 0);
     assert_eq!(v["left_right"]["right"], 0);
+    Ok(())
+}
+
+#[test]
+fn log_cursor_rejects_mismatched_revision_selection() -> TestResult {
+    let dir = std::env::temp_dir().join(format!(
+        "grit-rev-select-cursor-mismatch-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 12);
+    let page1 = grit_json(&dir, &["log"]);
+    let cursor = page1["next"].as_str().expect("next").to_owned();
+    let out = grit_run(&dir, &["log", "HEAD~3", &format!("--cursor={cursor}")]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cursor was created for a different revision selection"),
+        "stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn log_cursor_rejects_incompatible_flags() -> TestResult {
+    let dir = std::env::temp_dir().join(format!(
+        "grit-rev-select-cursor-flags-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 12);
+    let page1 = grit_json(&dir, &["log"]);
+    let cursor = page1["next"].as_str().expect("next").to_owned();
+    for extra in [
+        "--reverse",
+        "--first-parent",
+        "--merges",
+        "--no-merges",
+        "--skip=1",
+    ] {
+        let out = grit_run(&dir, &["log", &format!("--cursor={cursor}"), extra]);
+        assert!(!out.status.success(), "expected failure with {extra}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("cannot combine `--cursor`"),
+            "stderr for {extra}: {stderr}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn log_cursor_continuation_includes_revision_args() -> TestResult {
+    let dir = std::env::temp_dir().join(format!(
+        "grit-rev-select-cursor-hint-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    seed_linear_repo(&dir, 3);
+    assert!(grit_run(&dir, &["branch", "base"]).status.success());
+    for i in 0..12 {
+        fs::write(dir.join("f.txt"), format!("main{i}\n")).expect("write");
+        assert!(grit_run(&dir, &["add", "f.txt"]).status.success());
+        assert!(grit_run(&dir, &["commit", &format!("m{i}")])
+            .status
+            .success());
+    }
+    let out = grit_run(&dir, &["log", "base..HEAD"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("→ more: grit log base..HEAD --cursor="),
+        "stdout: {stdout}"
+    );
     Ok(())
 }
 
