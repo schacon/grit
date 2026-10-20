@@ -188,11 +188,12 @@ pub fn write_patch_structured<W: Write>(
     Ok(())
 }
 
-fn structured_line_text(line: &StructuredLine) -> String {
-    line.segments
-        .iter()
-        .map(|s| s.text.as_str())
-        .collect::<String>()
+fn write_structured_line<W: Write>(out: &mut W, prefix: char, line: &StructuredLine) -> Result<()> {
+    write!(out, "{prefix}")?;
+    for segment in &line.segments {
+        write!(out, "{}", segment.text)?;
+    }
+    Ok(())
 }
 
 fn format_git_diff_hunk_side(start_1based: usize, line_count: usize) -> String {
@@ -237,12 +238,13 @@ fn write_structured_unified_body<W: Write>(
                 StructuredLineKind::Add => '+',
                 StructuredLineKind::Del => '-',
             };
-            let text = structured_line_text(line);
             if line.no_newline_at_eof {
-                writeln!(out, "{prefix}{text}")?;
+                write_structured_line(out, prefix, line)?;
+                writeln!(out)?;
                 writeln!(out, "\\ No newline at end of file")?;
             } else {
-                writeln!(out, "{prefix}{text}")?;
+                write_structured_line(out, prefix, line)?;
+                writeln!(out)?;
             }
         }
     }

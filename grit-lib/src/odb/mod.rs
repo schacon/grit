@@ -2051,8 +2051,16 @@ fn append_lookup_prefix_layer(
     out: &mut Vec<ObjectId>,
     seen: &mut HashSet<ObjectId>,
 ) -> Result<()> {
+    if limit != 0 && out.len() >= limit {
+        return Ok(());
+    }
+    let sub_limit = if limit == 0 {
+        0
+    } else {
+        limit.saturating_sub(out.len())
+    };
     let mut scratch = Vec::new();
-    store.lookup_prefix(prefix, 0, &mut scratch)?;
+    store.lookup_prefix(prefix, sub_limit, &mut scratch)?;
     for oid in scratch {
         if seen.insert(oid) {
             out.push(oid);

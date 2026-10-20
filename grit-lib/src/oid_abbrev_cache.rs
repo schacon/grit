@@ -1,16 +1,16 @@
 //! Per-batch memoization for collision-aware object-id abbreviation (`core.abbrev`).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use crate::commit_pretty::abbrev_hex;
 use crate::config::ConfigSet;
 use crate::error::Result;
-use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::ObjectId;
-use crate::parallel::{try_par_map_with_local, ParallelHashError, ParallelOp, ThreadPolicy};
+use crate::parallel::ThreadPolicy;
 use crate::repo::Repository;
-use crate::rev_parse::abbreviate_object_id_with_prefix_cache;
+use crate::rev_parse::{
+    abbreviate_object_id_with_prefix_cache, abbreviate_object_id_with_prefix_cache_assume_exists,
+};
 
 /// Memoized unique abbreviations using [`Repository::odb`] prefix lookup (pack/MIDX/loose).
 #[derive(Default, Clone)]
@@ -39,13 +39,13 @@ impl OidAbbrevCache {
         Ok(abbrev)
     }
 
-    /// Precompute index-line abbreviations with full-ODB disambiguation (parallel).
+    /// Precompute index-line abbreviations with full-ODB disambiguation.
     pub(crate) fn warm_for_patch_batch<I>(
         &mut self,
         repo: &Repository,
         oids: I,
-        thread_policy: &ThreadPolicy,
-        config: &ConfigSet,
+        _thread_policy: &ThreadPolicy,
+        _config: &ConfigSet,
     ) -> Result<()>
     where
         I: IntoIterator<Item = ObjectId>,
@@ -62,25 +62,16 @@ impl OidAbbrevCache {
         if unique.is_empty() {
             return Ok(());
         }
-        let list: Vec<ObjectId> = unique.into_iter().collect();
-        let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
-        par_opts.min_items = 0;
-        par_opts.min_total_bytes = None;
-        let store = repo.odb().pack_store_for(repo.odb().objects_dir());
-        let rows = match try_par_map_with_local(
-            &list,
-            par_opts,
-            0,
-            || PackReadContextGuard::install(Arc::clone(&store)),
-            |_ctx, oid| {
-                abbreviate_object_id_with_prefix_cache(repo, *oid, min_len, &mut HashMap::new())
-                    .map(|abbrev| (*oid, abbrev))
-            },
-        ) {
-            Ok(rows) => rows,
-            Err(ParallelHashError::Task(err)) => return Err(err),
-        };
-        for (oid, abbrev) in rows {
+        let mut list: Vec<ObjectId> = unique.into_iter().collect();
+        list.sort_by_key(ObjectId::to_hex);
+        let mut prefix_ambiguous: HashMap<String, bool> = HashMap::new();
+        for oid in list {
+            let abbrev = abbreviate_object_id_with_prefix_cache_assume_exists(
+                repo,
+                oid,
+                min_len,
+                &mut prefix_ambiguous,
+            )?;
             self.memo.insert(oid, abbrev);
         }
         Ok(())

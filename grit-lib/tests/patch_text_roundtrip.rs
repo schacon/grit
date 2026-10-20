@@ -7,8 +7,8 @@ use grit_lib::apply::{materialize_binary_patch_forward, parse_patch};
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::merge_diff::read_blob_at_path;
 use grit_lib::diff::{
-    diff_commits_with_renames_and_policy, tree_diff_structured_parallel, write_patch,
-    write_patch_structured, DiffOptions, PatchTextOptions,
+    diff_commits_with_renames_and_policy, tree_diff_structured_parallel, write_patch_structured,
+    DiffOptions, PatchTextOptions,
 };
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
