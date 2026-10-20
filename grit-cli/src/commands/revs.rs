@@ -27,6 +27,22 @@ impl From<LeftRightCounts> for RevsLeftRightCount {
     }
 }
 
+/// Left/right counts for a symmetric range (`--left-right --count`).
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+pub struct RevsLeftRightCount {
+    pub left: usize,
+    pub right: usize,
+}
+
+impl From<LeftRightCounts> for RevsLeftRightCount {
+    fn from(c: LeftRightCounts) -> Self {
+        Self {
+            left: c.left,
+            right: c.right,
+        }
+    }
+}
+
 /// Result of `grit revs`.
 #[derive(Serialize, JsonSchema)]
 pub struct RevsOutcome {
