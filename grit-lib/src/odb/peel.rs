@@ -4,16 +4,12 @@
 //! negotiation, bundles, commit-graph tips, `packed-refs` peel lines) shares these two
 //! [`Odb`] methods instead of its own tag loop.
 
+use std::collections::HashSet;
+
 use crate::error::{Error, Result};
 use crate::objects::{tag_object_line_oid, ObjectId, ObjectKind};
 
 use super::Odb;
-
-/// Longest chain of annotated tags [`Odb::peel_tags`] follows before reporting corruption.
-///
-/// Object ids make real cycles impossible, but a pluggable store can still serve a chain that
-/// never ends; real repositories rarely nest tags more than a couple of levels.
-const MAX_TAG_CHAIN: usize = 64;
 
 impl Odb {
     /// Follow annotated tags starting at `oid` until reaching an object that is not a tag.
@@ -34,24 +30,28 @@ impl Odb {
     /// # Errors
     ///
     /// - [`Error::ObjectNotFound`] when `oid` or any object the chain names is missing.
-    /// - [`Error::CorruptObject`] when a tag has no valid `object` header, or the chain is
-    ///   longer than 64 tags.
+    /// - [`Error::CorruptObject`] when a tag has no valid `object` header, or the chain names
+    ///   a tag it already passed through. Chains of any length are followed; content-addressed
+    ///   ids make a cycle impossible in a real repository, but a pluggable store can serve one.
     /// - Any other error [`Self::read`] / [`Self::read_info`] reports for the objects read.
     pub fn peel_tags(&self, oid: ObjectId) -> Result<(ObjectId, ObjectKind)> {
         let mut current = oid;
-        for _ in 0..=MAX_TAG_CHAIN {
+        let mut visited: Option<HashSet<ObjectId>> = None;
+        loop {
             let kind = self.read_info(&current)?.kind;
             if kind != ObjectKind::Tag {
                 return Ok((current, kind));
+            }
+            if !visited.get_or_insert_with(HashSet::new).insert(current) {
+                return Err(Error::CorruptObject(format!(
+                    "tag chain from {oid} loops back to {current}"
+                )));
             }
             let tag = self.read(&current)?;
             current = tag_object_line_oid(&tag.data).ok_or_else(|| {
                 Error::CorruptObject(format!("tag {current} has no valid object header"))
             })?;
         }
-        Err(Error::CorruptObject(format!(
-            "tag chain from {oid} is longer than {MAX_TAG_CHAIN} tags"
-        )))
     }
 
     /// Peel `oid` through annotated tags to a commit.
@@ -79,6 +79,9 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
+    use crate::objects::HashAlgo;
+    use crate::odb::{MemoryStore, OdbBuilder};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn tag(odb: &Odb, target: ObjectId, kind: &str, name: &str) -> ObjectId {
@@ -163,19 +166,31 @@ mod tests {
     }
 
     #[test]
-    fn chain_at_the_limit_peels_and_one_more_is_corrupt() {
+    fn long_chains_peel_without_a_depth_limit() {
         let dir = TempDir::new().unwrap();
         let odb = Odb::new(dir.path());
         let c = commit(&odb);
         let mut tip = tag(&odb, c, "commit", "t0");
-        for i in 1..MAX_TAG_CHAIN {
+        for i in 1..200 {
             tip = tag(&odb, tip, "tag", &format!("t{i}"));
         }
         assert_eq!(odb.peel_to_commit(tip).unwrap(), Some(c));
-        let too_deep = tag(&odb, tip, "tag", "over");
-        assert!(matches!(
-            odb.peel_tags(too_deep),
-            Err(Error::CorruptObject(_))
-        ));
+    }
+
+    #[test]
+    fn a_store_serving_a_tag_cycle_is_corrupt() {
+        let store = Arc::new(MemoryStore::new(HashAlgo::Sha1));
+        let a = ObjectId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let b = ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        for (from, to) in [(a, b), (b, a)] {
+            let body = format!("object {to}\ntype tag\ntag cycle\n\n");
+            store.insert_object(from, ObjectKind::Tag, Arc::from(body.into_bytes()));
+        }
+        let dir = TempDir::new().unwrap();
+        let odb = OdbBuilder::files(dir.path())
+            .primary(store)
+            .alternates(false)
+            .build();
+        assert!(matches!(odb.peel_tags(a), Err(Error::CorruptObject(_))));
     }
 }

@@ -106,3 +106,51 @@ fn peel_reports_missing_tag_target() {
         Err(grit_lib::error::Error::ObjectNotFound(_))
     ));
 }
+
+#[test]
+fn peel_follows_tag_chains_deeper_than_64_like_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["commit", "-q", "--allow-empty", "-m", "seed"]);
+    git(
+        root,
+        &[
+            "-c",
+            "advice.nestedTag=false",
+            "tag",
+            "-a",
+            "t0",
+            "-m",
+            "t0",
+        ],
+    );
+    for i in 1..=80 {
+        let (name, prev) = (format!("t{i}"), format!("t{}", i - 1));
+        git(
+            root,
+            &[
+                "-c",
+                "advice.nestedTag=false",
+                "tag",
+                "-a",
+                &name,
+                &prev,
+                "-m",
+                &name,
+            ],
+        );
+    }
+    git(root, &["fsck", "--strict"]);
+    let tip = oid(root, "refs/tags/t80");
+    let head = oid(root, "HEAD");
+    assert_eq!(oid(root, "refs/tags/t80^{}"), head);
+
+    let repo =
+        Repository::discover(Some(root), &RepositoryOptions::empty()).expect("discover repo");
+    assert_eq!(
+        repo.odb().peel_tags(tip).expect("peel"),
+        (head, ObjectKind::Commit)
+    );
+    assert_eq!(repo.odb().peel_to_commit(tip).expect("peel"), Some(head));
+}
