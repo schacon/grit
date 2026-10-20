@@ -419,7 +419,6 @@ pub fn ahead_behind_of_target_commits(
             std::slice::from_ref(&head),
             &[target],
             ReachableWalkLimit::CountAllRetainNewest(retain_newest_ahead),
-            ReachableWalkCommitterCutoffs::default(),
         )?
     };
 
@@ -431,7 +430,6 @@ pub fn ahead_behind_of_target_commits(
             std::slice::from_ref(&target),
             &[head],
             ReachableWalkLimit::CountAllRetainNewest(0),
-            ReachableWalkCommitterCutoffs::default(),
         )?
         .0
     };
@@ -691,7 +689,6 @@ impl ReachableWalkState {
                         .iter()
                         .all(|pending| pending.time < cutoffs.since.unwrap_or(i64::MIN));
                 if stop {
-                    self.heap.clear();
                     return Ok(None);
                 }
                 continue;
@@ -739,6 +736,22 @@ impl ReachableWalkState {
 /// With [`ReachableWalkLimit::CountAllRetainNewest`], `emitted_count` is the full
 /// ahead count while `collected_oids` holds at most the requested number of newest tips.
 pub fn walk_commits_reachable_excluding_ancestors_of(
+    repo: &Repository,
+    tips: &[ObjectId],
+    hide: &[ObjectId],
+    limit: ReachableWalkLimit,
+) -> Result<(usize, Vec<ObjectId>)> {
+    walk_commits_reachable_excluding_ancestors_of_cutoffs(
+        repo,
+        tips,
+        hide,
+        limit,
+        ReachableWalkCommitterCutoffs::default(),
+    )
+}
+
+/// Like [`walk_commits_reachable_excluding_ancestors_of`] with committer-date cutoffs on bounded walks.
+pub fn walk_commits_reachable_excluding_ancestors_of_cutoffs(
     repo: &Repository,
     tips: &[ObjectId],
     hide: &[ObjectId],
@@ -810,7 +823,6 @@ pub fn ahead_of_target_commits(
         std::slice::from_ref(&head),
         &[target],
         ReachableWalkLimit::CountAllRetainNewest(retain_newest),
-        ReachableWalkCommitterCutoffs::default(),
     )
 }
 
@@ -827,38 +839,6 @@ pub struct ReachableCountFilter {
     pub since: Option<i64>,
     /// Exclude commits with committer date strictly after this Unix timestamp.
     pub until: Option<i64>,
-}
-
-fn try_count_diff_via_stored_commit_bitmaps(
-    repo: &Repository,
-    tip: ObjectId,
-    hide: ObjectId,
-) -> Result<Option<usize>> {
-    let Some(index) = repo
-        .odb()
-        .with_pack_read_context(|| BitmapIndex::open(repo))
-        .map_err(|e| Error::CorruptObject(format!("pack bitmap: {e}")))?
-    else {
-        return Ok(None);
-    };
-    let Some(tip_bm) = index.commit_bitmap(&tip) else {
-        return Ok(None);
-    };
-    let Some(hide_bm) = index.commit_bitmap(&hide) else {
-        return Ok(None);
-    };
-    let mut reachable = Bitmap::new();
-    tip_bm.or_into(&mut reachable);
-    let mut hidden = Bitmap::new();
-    hide_bm.or_into(&mut hidden);
-    reachable.and_not_assign(&hidden);
-    let mut commit_type = Bitmap::new();
-    index
-        .type_bitmap(ObjectKind::Commit)
-        .expand_into_bitmap(&mut commit_type)
-        .map_err(|e| Error::CorruptObject(format!("pack bitmap: {e}")))?;
-    commit_type.and_assign(&reachable);
-    Ok(Some(commit_type.count_ones()))
 }
 
 /// Count commits reachable from `tips` that are not ancestors of any `hide` tip.
@@ -882,12 +862,10 @@ pub fn count_commits_reachable_excluding_ancestors_of(
     let mut cache = CommitGraphCache::new(repo);
 
     if tips.len() == 1 && hide.len() == 1 {
-        let tip = tips[0];
-        let hide_tip = hide[0];
-        if tip != hide_tip
-            && try_direct_first_parent_chain_merge_base(&mut cache, tip, hide_tip)?.is_some()
+        if let Some(n) =
+            try_count_on_first_parent_chain_excluding_hide(&mut cache, tips[0], hide[0], filter)?
         {
-            return Ok(0);
+            return Ok(n);
         }
     }
 
@@ -905,27 +883,6 @@ pub fn count_commits_reachable_excluding_ancestors_of(
             ) {
                 return Ok(n);
             }
-        }
-    }
-
-    if tips.len() == 1
-        && hide.len() == 1
-        && filter.min_parents.is_none()
-        && filter.max_parents.is_none()
-        && filter.since.is_none()
-        && filter.until.is_none()
-        && !filter.first_parent_only
-    {
-        if let Some(n) = try_count_diff_via_stored_commit_bitmaps(repo, tips[0], hide[0])? {
-            return Ok(n);
-        }
-    }
-
-    if tips.len() == 1 && hide.len() == 1 {
-        if let Some(n) =
-            try_count_on_first_parent_chain_excluding_hide(&mut cache, tips[0], hide[0], filter)?
-        {
-            return Ok(n);
         }
     }
 
@@ -960,43 +917,6 @@ pub fn count_commits_reachable_excluding_ancestors_of(
         }
     }
     Ok(count)
-}
-
-/// Like [`first_parent_commits_with_cutoffs`] but only when every visited commit has at most
-/// one parent (linear history). Returns `None` when a merge is encountered so callers can
-/// fall back to a full-graph bounded walk.
-pub fn try_linear_chain_commits_with_cutoffs(
-    repo: &Repository,
-    tip: ObjectId,
-    limit: usize,
-    cutoffs: ReachableWalkCommitterCutoffs,
-) -> Result<Option<Vec<ObjectId>>> {
-    let mut cache = CommitGraphCache::new(repo);
-    let mut out = Vec::with_capacity(limit.min(64));
-    let mut stack = vec![tip];
-    while let Some(cur) = stack.pop() {
-        if out.len() >= limit {
-            break;
-        }
-        let parents = cache.parents_of(cur)?;
-        if parents.len() > 1 {
-            return Ok(None);
-        }
-        let time = cache.commit_time(cur)?;
-        let below_since = cutoffs.since.is_some_and(|since| time < since);
-        let above_until = cutoffs.until.is_some_and(|until| time > until);
-        if !below_since && !above_until {
-            out.push(cur);
-        }
-        if below_since {
-            stack.extend(parents);
-            continue;
-        }
-        if let Some(&parent) = parents.first() {
-            stack.push(parent);
-        }
-    }
-    Ok(Some(out))
 }
 
 /// Newest-first commits on the first-parent chain from `tip`, applying committer-date
@@ -1106,6 +1026,22 @@ fn commit_is_excluded_from_count(
 
 /// `commits_reachable_excluding_ancestors_of` function.
 pub fn commits_reachable_excluding_ancestors_of(
+    repo: &Repository,
+    tips: &[ObjectId],
+    hide: &[ObjectId],
+    limit: Option<usize>,
+) -> Result<Vec<ObjectId>> {
+    commits_reachable_excluding_ancestors_of_cutoffs(
+        repo,
+        tips,
+        hide,
+        limit,
+        ReachableWalkCommitterCutoffs::default(),
+    )
+}
+
+/// Like [`commits_reachable_excluding_ancestors_of`] with committer-date cutoffs on bounded walks.
+pub fn commits_reachable_excluding_ancestors_of_cutoffs(
     repo: &Repository,
     tips: &[ObjectId],
     hide: &[ObjectId],
@@ -2064,30 +2000,17 @@ mod tests {
         let c2 = write_commit_same_time(&repo.odb(), &[c1], "two", 200)?;
         let c3 = write_commit_same_time(&repo.odb(), &[c2], "three", 300)?;
 
-        let all =
-            commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], None, Default::default())?;
+        let all = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], None)?;
         assert_eq!(all, vec![c3, c2, c1]);
 
-        let limited = commits_reachable_excluding_ancestors_of(
-            &repo,
-            &[c3],
-            &[],
-            Some(2),
-            Default::default(),
-        )?;
+        let limited = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], Some(2))?;
         assert_eq!(limited, vec![c3, c2]);
 
         let (total, retained) = ahead_of_target_commits(&repo, c3, c1, 1)?;
         assert_eq!(total, 2);
         assert_eq!(retained, vec![c3]);
 
-        let ahead = commits_reachable_excluding_ancestors_of(
-            &repo,
-            &[c3],
-            &[c1],
-            None,
-            Default::default(),
-        )?;
+        let ahead = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[c1], None)?;
         assert_eq!(ahead, vec![c3, c2]);
 
         Ok(())
@@ -2104,8 +2027,7 @@ mod tests {
 
         fs::write(repo.git_dir().join("shallow"), format!("{tip}\n")).map_err(Error::Io)?;
 
-        let out =
-            commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None, Default::default())?;
+        let out = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None)?;
         assert_eq!(out, vec![tip]);
 
         Ok(())
@@ -2152,9 +2074,7 @@ mod tests {
             .expect("oid");
         let tip = write_commit_same_time(&repo.odb(), &[missing], "tip", 100)?;
 
-        let err =
-            commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None, Default::default())
-                .unwrap_err();
+        let err = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None).unwrap_err();
         assert!(matches!(err, Error::ObjectNotFound(_)));
 
         Ok(())

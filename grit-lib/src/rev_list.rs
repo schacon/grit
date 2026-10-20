@@ -6169,18 +6169,7 @@ fn try_bounded_limit_list(
         && options.ordering == OrderingMode::Default
         && (options.since_cutoff.is_some() || options.until_cutoff.is_some())
     {
-        match crate::merge_base::try_linear_chain_commits_with_cutoffs(
-            repo, include[0], need, cutoffs,
-        )? {
-            Some(list) => list,
-            None => commits_reachable_excluding_ancestors_of_cutoffs(
-                repo,
-                include,
-                exclude,
-                Some(need),
-                cutoffs,
-            )?,
-        }
+        crate::merge_base::first_parent_commits_with_cutoffs(repo, include[0], need, cutoffs)?
     } else {
         commits_reachable_excluding_ancestors_of_cutoffs(
             repo,

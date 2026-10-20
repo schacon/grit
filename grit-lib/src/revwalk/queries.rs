@@ -1,6 +1,5 @@
 //! Typed revision-range parsing and high-level rev-walk queries on [`super::RevWalk`].
 use crate::error::{Error, Result};
-use crate::git_date::parse::{parse_date_basic_at, DateParseError};
 use crate::merge_base::{
     count_commits_reachable_excluding_ancestors_of, is_ancestor as merge_base_is_ancestor,
     merge_bases_first_vs_rest, ReachableCountFilter,
@@ -396,9 +395,6 @@ impl<'repo> RevWalk<'repo> {
         }
 
         let mut opts = rev_list_options_from_walk(repo, options, &parsed, all_refs, true)?;
-        // `--count` must not apply `-n`/`--max-count` per side; Git counts the full
-        // left and right sets even when a list limit is also set.
-        opts.max_count = None;
         opts.left_right = true;
         let left_count = {
             let mut left_opts = opts.clone();
