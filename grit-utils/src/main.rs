@@ -249,6 +249,14 @@ enum Cmd {
         #[arg(long)]
         cwd: PathBuf,
     },
+    /// Internal: measure peak RSS for one direct argv command (fresh process)
+    #[command(hide = true)]
+    MeasureDirectRun {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        argv: Vec<String>,
+    },
     /// Real-repo campaign scorecard (git.git, chromium-class synthetic, optional linux)
     Campaign {
         /// Tiny fixtures and fewer scenarios (for CI and integration tests).
@@ -963,6 +971,9 @@ fn main() -> Result<()> {
         Cmd::RunLimited { cwd } => {
             return grit_utils::resource::run_limited_cli(cwd);
         }
+        Cmd::MeasureDirectRun { cwd, argv } => {
+            return grit_utils::daily::runner::run_measure_direct_cli(cwd, argv);
+        }
         Cmd::Daily {
             command: DailyCmd::Validate { report },
         } => {
@@ -1621,6 +1632,7 @@ fn main() -> Result<()> {
         Cmd::Compare { .. }
         | Cmd::Daily { .. }
         | Cmd::MeasureRss { .. }
+        | Cmd::MeasureDirectRun { .. }
         | Cmd::RunLimited { .. }
         | Cmd::Drive { .. }
         | Cmd::PrepareAdd { .. }

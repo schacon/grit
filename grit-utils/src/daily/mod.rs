@@ -1,6 +1,7 @@
-//! Daily performance census report schema and scenario registry.
+//! Daily performance census report schema, scenario registry, and direct-spawn runner.
 
 pub mod registry;
+pub mod runner;
 pub mod schema;
 pub mod validate;
 
