@@ -68,6 +68,13 @@ pub struct DailyHeadlineContext {
     pub tag_bench_name: Option<String>,
     /// Network transport state (bare remote, URL, HTTP servers).
     pub remote: Option<DailyRemoteState>,
+    /// Smoke mode (smaller fixtures, single timed sample).
+    pub smoke: bool,
+    /// Path for log/blame/restore matrix rows.
+    pub matrix_path: Option<String>,
+    pub merge_base_a: Option<String>,
+    pub merge_base_b: Option<String>,
+    pub shortlog_git_range: Option<String>,
 }
 
 impl DailyHeadlineContext {
@@ -90,6 +97,11 @@ impl DailyHeadlineContext {
             branch_bench_name: None,
             tag_bench_name: None,
             remote: None,
+            smoke,
+            matrix_path: None,
+            merge_base_a: None,
+            merge_base_b: None,
+            shortlog_git_range: None,
         }
     }
 }
