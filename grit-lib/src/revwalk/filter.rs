@@ -24,6 +24,7 @@
 //! # }
 //! ```
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use regex::bytes::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
@@ -127,15 +128,15 @@ impl CommitFilter {
         let headers = scan_commit_headers(raw);
 
         if let Some(set) = &inner.author {
-            let ident = mapped_ident_bytes(headers.author, inner.mailmap.as_ref());
-            if !set.is_match(ident.as_bytes()) {
+            let ident = ident_for_pattern_match(headers.author, inner.mailmap.as_ref());
+            if !set.is_match(ident.as_ref()) {
                 return false;
             }
         }
 
         if let Some(set) = &inner.committer {
-            let ident = mapped_ident_bytes(headers.committer, inner.mailmap.as_ref());
-            if !set.is_match(ident.as_bytes()) {
+            let ident = ident_for_pattern_match(headers.committer, inner.mailmap.as_ref());
+            if !set.is_match(ident.as_ref()) {
                 return false;
             }
         }
@@ -263,8 +264,8 @@ impl CommitFilterBuilder {
 }
 
 struct CommitHeaderFields<'a> {
-    author: Option<&'a str>,
-    committer: Option<&'a str>,
+    author: Option<&'a [u8]>,
+    committer: Option<&'a [u8]>,
 }
 
 fn commit_message_body(raw: &[u8]) -> &[u8] {
@@ -283,10 +284,10 @@ fn scan_commit_headers(raw: &[u8]) -> CommitHeaderFields<'_> {
             if line_start == i {
                 break;
             }
-            let line = std::str::from_utf8(&raw[line_start..i]).unwrap_or("");
-            if let Some(rest) = line.strip_prefix("author ") {
+            let line = &raw[line_start..i];
+            if let Some(rest) = line.strip_prefix(b"author ") {
                 author = Some(rest);
-            } else if let Some(rest) = line.strip_prefix("committer ") {
+            } else if let Some(rest) = line.strip_prefix(b"committer ") {
                 committer = Some(rest);
             }
             line_start = i + 1;
@@ -295,29 +296,45 @@ fn scan_commit_headers(raw: &[u8]) -> CommitHeaderFields<'_> {
     CommitHeaderFields { author, committer }
 }
 
-fn ident_without_timestamp(ident: &str) -> &str {
-    let Some(gt) = ident.rfind('>') else {
-        return ident.trim_end();
-    };
-    ident[..=gt].trim_end()
+fn trim_end_ascii_ws(ident: &[u8]) -> &[u8] {
+    let end = ident
+        .iter()
+        .rposition(|&b| b != b' ' && b != b'\t')
+        .map_or(0, |i| i + 1);
+    &ident[..end]
 }
 
-fn mapped_ident_bytes(ident: Option<&str>, mailmap: Option<&MailmapTable>) -> String {
+fn ident_without_timestamp_bytes(ident: &[u8]) -> &[u8] {
+    let Some(gt) = ident.iter().rposition(|&b| b == b'>') else {
+        return trim_end_ascii_ws(ident);
+    };
+    trim_end_ascii_ws(&ident[..=gt])
+}
+
+/// Identity bytes matched against `--author` / `--committer` (timestamp stripped).
+fn ident_for_pattern_match<'a>(
+    ident: Option<&'a [u8]>,
+    mailmap: Option<&MailmapTable>,
+) -> Cow<'a, [u8]> {
     let Some(ident) = ident else {
-        return String::new();
+        return Cow::Borrowed(b"");
     };
-    let bare = ident_without_timestamp(ident);
+    let bare = ident_without_timestamp_bytes(ident);
     let Some(table) = mailmap else {
-        return bare.to_owned();
+        return Cow::Borrowed(bare);
     };
-    let (name, email) = parse_contact(bare);
+    // Mailmap rules are text; non-UTF-8 idents keep raw bytes (same as matching without mailmap).
+    let Ok(bare_str) = std::str::from_utf8(bare) else {
+        return Cow::Borrowed(bare);
+    };
+    let (name, email) = parse_contact(bare_str);
     let (name, email) = map_contact_table(name.as_deref(), email.as_deref(), table);
     if email.is_empty() {
-        name
+        Cow::Owned(name.into_bytes())
     } else if name.is_empty() {
-        format!("<{email}>")
+        Cow::Owned(format!("<{email}>").into_bytes())
     } else {
-        format!("{name} <{email}>")
+        Cow::Owned(format!("{name} <{email}>").into_bytes())
     }
 }
 
@@ -552,6 +569,16 @@ mod tests {
         assert!(filter.matches_bytes(hit));
         let miss = b"tree t\nauthor A <a> 1 +0000\ncommitter A <a> 1 +0000\n\naaaab\n";
         assert!(!filter.matches_bytes(miss));
+    }
+
+    #[test]
+    fn non_utf8_author_name_matches_email_pattern() {
+        let filter = CommitFilterBuilder::new()
+            .author("alice@example.com")
+            .build()
+            .unwrap();
+        let commit = b"tree abc\nauthor \xFFAlice <alice@example.com> 1 +0000\ncommitter C <c@x.com> 1 +0000\n\nm\n";
+        assert!(filter.matches_bytes(commit));
     }
 
     #[test]

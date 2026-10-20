@@ -1209,7 +1209,7 @@ pub fn rev_list(
         });
     }
     if let Some(filter) = options.commit_filter.as_ref().filter(|f| f.is_active()) {
-        included.retain(|oid| filter.matches(repo, *oid).unwrap_or(false));
+        retain_commits_matching_filter(repo, &mut included, filter)?;
     }
 
     if options.maximal_only {
@@ -5055,6 +5055,23 @@ fn dense_path_limited_count_only_compatible(options: &RevListOptions) -> bool {
         && !options.wants_parent_rewrite()
 }
 
+fn retain_commits_matching_filter(
+    repo: &Repository,
+    included: &mut HashSet<ObjectId>,
+    filter: &CommitFilter,
+) -> Result<()> {
+    let mut remove = Vec::new();
+    for &oid in included.iter() {
+        if !filter.matches(repo, oid)? {
+            remove.push(oid);
+        }
+    }
+    for oid in remove {
+        included.remove(&oid);
+    }
+    Ok(())
+}
+
 fn dense_path_limited_count_from_included(
     repo: &Repository,
     graph: &mut CommitGraph<'_>,
@@ -5062,7 +5079,7 @@ fn dense_path_limited_count_from_included(
     options: &RevListOptions,
 ) -> Result<usize> {
     if let Some(filter) = options.commit_filter.as_ref().filter(|f| f.is_active()) {
-        included.retain(|oid| filter.matches(repo, *oid).unwrap_or(false));
+        retain_commits_matching_filter(repo, included, filter)?;
     }
     if options.until_cutoff.is_some() || options.since_cutoff.is_some() {
         let until = options.until_cutoff;
@@ -6175,6 +6192,7 @@ fn can_use_bounded_path_limit_list(options: &RevListOptions) -> bool {
         && !options.count
         && can_use_bounded_limit_list(&RevListOptions {
             paths: Vec::new(),
+            commit_filter: None,
             ..options.clone()
         })
 }

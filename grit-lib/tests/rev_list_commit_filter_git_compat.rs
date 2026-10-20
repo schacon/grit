@@ -236,6 +236,51 @@ fn assert_rev_list_filter_matches_git(worktree: &Path, repo: &Repository, args: 
     }
 }
 
+fn commit_with_raw_author_bytes(worktree: &Path, author_value: &[u8], message: &str) -> ObjectId {
+    let tree = git(worktree, &["mktree"]).trim().to_string();
+    let mut body = Vec::new();
+    body.extend_from_slice(b"tree ");
+    body.extend_from_slice(tree.as_bytes());
+    body.push(b'\n');
+    body.extend_from_slice(b"author ");
+    body.extend_from_slice(author_value);
+    body.extend_from_slice(b" 1 +0000\ncommitter C <c@x.com> 1 +0000\n\n");
+    body.extend_from_slice(message.as_bytes());
+    body.push(b'\n');
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
+        .current_dir(worktree)
+        .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("hash-object spawn");
+    {
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin.write_all(&body).expect("write commit");
+    }
+    let out = child.wait_with_output().expect("hash-object");
+    assert!(
+        out.status.success(),
+        "hash-object: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let commit = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    git(worktree, &["update-ref", "refs/heads/main", &commit]);
+    commit.parse().expect("oid")
+}
+
+#[test]
+fn non_utf8_author_matches_git() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    commit_with_raw_author_bytes(wt, b"\xFFAlice <alice@example.com>", "binary author name");
+    let repo = open_grit_repo(wt);
+    assert_rev_list_filter_matches_git(wt, &repo, &["--author=alice@example.com", "main"]);
+}
+
 #[test]
 fn author_matches_git() {
     let hist = HistoryRepo::init();
