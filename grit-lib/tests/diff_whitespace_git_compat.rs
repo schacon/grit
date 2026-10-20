@@ -2,7 +2,7 @@
 
 mod support;
 
-use grit_lib::diff::{line_diff_unified_hunk_body, DiffOptions, WhitespaceMode};
+use grit_lib::diff::{line_diff_unified_hunk_body, DiffAlgorithm, DiffOptions, WhitespaceMode};
 use support::{
     git_diff_no_index_patch, patch_hunk_body, LineDiffAlgo, WhitespaceMode as HarnessWs,
 };
@@ -19,12 +19,33 @@ fn git_hunks(old: &str, new: &str, ws: HarnessWs) -> String {
 }
 
 fn grit_hunks(old: &str, new: &str, ws: WhitespaceMode) -> String {
-    let opts = DiffOptions::default().with_whitespace(ws);
+    grit_hunks_with_algo(old, new, ws, DiffAlgorithm::Myers)
+}
+
+fn grit_hunks_with_algo(
+    old: &str,
+    new: &str,
+    ws: WhitespaceMode,
+    algorithm: DiffAlgorithm,
+) -> String {
+    let mut opts = DiffOptions::default().with_whitespace(ws);
+    opts.algorithm = algorithm;
     let body = line_diff_unified_hunk_body(old, new, &opts);
     if body.is_empty() {
         return String::new();
     }
     patch_hunk_body(&format!("placeholder\n{body}"))
+}
+
+fn git_hunks_with_algo(old: &str, new: &str, ws: HarnessWs, algo: LineDiffAlgo) -> String {
+    patch_hunk_body(&git_diff_no_index_patch(
+        old.as_bytes(),
+        new.as_bytes(),
+        "f",
+        algo,
+        ws,
+        &[],
+    ))
 }
 
 #[test]
@@ -34,6 +55,17 @@ fn ignore_all_space_matches_git() {
     assert_eq!(
         grit_hunks(old, new, WhitespaceMode::ignore_all_space()),
         git_hunks(old, new, HarnessWs::IgnoreAllSpace)
+    );
+}
+
+#[test]
+fn ignore_all_space_histogram_matches_git_oracle() {
+    let old = "hello world\n";
+    let new = "helloworld\n";
+    let ws = WhitespaceMode::ignore_all_space();
+    assert_eq!(
+        grit_hunks_with_algo(old, new, ws, DiffAlgorithm::Histogram),
+        git_hunks_with_algo(old, new, HarnessWs::IgnoreAllSpace, LineDiffAlgo::Histogram)
     );
 }
 
@@ -90,24 +122,22 @@ fn ignore_all_space_nbsp_still_differs_like_git() {
 
 #[test]
 fn ignore_blank_lines_respects_myers_not_histogram() {
-    let old = (0..5).map(|i| format!("{}\n", char::from(b'A' + i))).collect::<String>();
-    let new = (0..5).map(|i| format!("{}\n", char::from(b'A' + i))).collect::<String>();
-    let mut opts = DiffOptions::default().with_whitespace(WhitespaceMode::ignore_blank_lines());
-    opts.algorithm = grit_lib::diff::DiffAlgorithm::Myers;
-    let body = line_diff_unified_hunk_body(&old, &new, &opts);
-    assert!(body.is_empty(), "identical non-blank lines should produce no hunks");
-    let git_patch = git_diff_no_index_patch(
-        old.as_bytes(),
-        new.as_bytes(),
-        "f",
-        LineDiffAlgo::Myers,
+    let old = "A\nB\n\nC\nD\nE\nA\nB\nC\nD\nE\n";
+    let new = "A\nB\nC\nD\nE\n\nA\nB\nC\nD\nE\n";
+    let ws = WhitespaceMode::ignore_blank_lines();
+    let grit_myers = grit_hunks_with_algo(old, new, ws, DiffAlgorithm::Myers);
+    let git_myers = git_hunks_with_algo(old, new, HarnessWs::IgnoreBlankLines, LineDiffAlgo::Myers);
+    let git_histogram = git_hunks_with_algo(
+        old,
+        new,
         HarnessWs::IgnoreBlankLines,
-        &[],
+        LineDiffAlgo::Histogram,
     );
-    assert!(
-        patch_hunk_body(&git_patch).is_empty(),
-        "git also shows no hunks for identical content with --ignore-blank-lines"
+    assert_ne!(
+        git_myers, git_histogram,
+        "fixture must distinguish git myers from git histogram with --ignore-blank-lines"
     );
+    assert_eq!(grit_myers, git_myers, "myers under --ignore-blank-lines");
 }
 
 #[test]
@@ -122,6 +152,7 @@ fn ignore_all_space_eof_newline_matches_git() {
     );
 }
 
+#[test]
 #[test]
 fn whitespace_modes_with_crlf_match_git() {
     let old = "line one\r\nline two\r\n";
