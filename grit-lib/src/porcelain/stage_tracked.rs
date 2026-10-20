@@ -32,6 +32,9 @@ use crate::worktree_scan::{
     WorktreeBlobScanOptions,
 };
 
+/// Above this index size, defer parallel blob restage and multi-thread stat preload to cap RSS.
+const PARALLEL_DEFERRED_RESTAGE_MAX_ENTRIES: usize = 80_000;
+
 /// Summary of paths updated while staging tracked modifications/deletions.
 ///
 /// Paths are stored as raw index bytes (may be non-UTF-8 on Unix).
@@ -177,7 +180,10 @@ pub(crate) fn stage_tracked_modifications_in_index_with_rules(
 ) -> Result<StageTrackedSummary> {
     let entry_count_at_start = index.entries.len();
     let bulk_untr_defer = entry_count_at_start >= thresholds.large_index_restage;
-    let parallel_restage = entry_count_at_start >= thresholds.parallel_tracked_restage;
+    // Parallel deferred restage holds every changed path plus batch read inputs at peak; stay
+    // serial on campaign-scale indexes so bulk add stays under the factory RSS ceiling.
+    let parallel_restage = entry_count_at_start >= thresholds.parallel_tracked_restage
+        && entry_count_at_start < PARALLEL_DEFERRED_RESTAGE_MAX_ENTRIES;
     if bulk_untr_defer {
         index.defer_untracked_cache_invalidation = true;
     }
@@ -332,9 +338,10 @@ fn stage_tracked_modifications_in_index_body(
         .unwrap_or(true);
     let blob_count = blob_dirs.len();
     let thread_policy = repo.thread_policy();
-    let blob_scan_opts = WorktreeBlobScanOptions {
-        preload_index,
-        stat_parallel_threads: Some(stat_scan_thread_count(
+    let stat_threads = if index.entries.len() >= PARALLEL_DEFERRED_RESTAGE_MAX_ENTRIES {
+        1
+    } else {
+        stat_scan_thread_count(
             &thread_policy,
             rules_config.as_ref(),
             WorktreeBlobScanOptions {
@@ -342,7 +349,11 @@ fn stage_tracked_modifications_in_index_body(
                 stat_parallel_threads: None,
             },
             blob_count,
-        )),
+        )
+    };
+    let blob_scan_opts = WorktreeBlobScanOptions {
+        preload_index,
+        stat_parallel_threads: Some(stat_threads),
     };
     let parallelism = thread_policy
         .resolve(
@@ -352,15 +363,6 @@ fn stage_tracked_modifications_in_index_body(
         .parallelism();
     let mut deferred_restage: Vec<DeferredRestageJob> = Vec::new();
     let mut pending_removals: Vec<Vec<u8>> = Vec::new();
-    let paths_by_entry_index: Vec<String> = index
-        .entries
-        .iter()
-        .map(|e| {
-            std::str::from_utf8(&e.path)
-                .map(str::to_owned)
-                .unwrap_or_default()
-        })
-        .collect();
     let stage_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
@@ -444,7 +446,6 @@ fn stage_tracked_modifications_in_index_body(
     if !deferred_restage.is_empty() {
         let restage_ctx = DeferredRestageContext {
             work_tree,
-            paths_by_entry_index: &paths_by_entry_index,
             precompose_unicode,
             ignorecase,
         };
@@ -593,14 +594,13 @@ fn stage_tracked_path_individual(
     Ok(())
 }
 
-/// Deferred blob restage: index slot from the pre-scan path table (stable across removals).
+/// Deferred blob restage: path captured at defer time (stable if later index rows shift).
 struct DeferredRestageJob {
-    entry_index: u32,
+    raw_path: Vec<u8>,
 }
 
 struct DeferredRestageContext<'a> {
     work_tree: &'a Path,
-    paths_by_entry_index: &'a [String],
     precompose_unicode: bool,
     ignorecase: bool,
 }
@@ -666,9 +666,9 @@ fn refresh_present_tracked_path(
     let oid = match std::str::from_utf8(raw_path) {
         Ok(rel_path) => {
             if let Some(deferred) = defer_restage {
+                let _ = entry_index;
                 deferred.push(DeferredRestageJob {
-                    entry_index: u32::try_from(entry_index)
-                        .map_err(|_| Error::Message("index entry index exceeds u32::MAX".into()))?,
+                    raw_path: raw_path.to_vec(),
                 });
                 return Ok(false);
             }
@@ -720,39 +720,37 @@ fn restage_deferred_jobs(
 ) -> Result<Vec<Vec<u8>>> {
     let DeferredRestageContext {
         work_tree,
-        paths_by_entry_index,
         precompose_unicode,
         ignorecase,
     } = ctx;
-    let mut batch_inputs: Vec<WorktreeBlobReadInput> = Vec::with_capacity(jobs.len());
-    let mut batch_entry_indices: Vec<u32> = Vec::with_capacity(jobs.len());
+    let mut batch_inputs = Vec::with_capacity(jobs.len());
     for job in jobs {
-        let entry_index = job.entry_index as usize;
-        let Some(rel_path) = paths_by_entry_index.get(entry_index) else {
-            continue;
-        };
-        if rel_path.is_empty() {
-            continue;
-        }
-        let raw_path = rel_path.as_bytes();
-        let Some(idx_e) = index.get(raw_path, 0) else {
+        let raw_path = job.raw_path.as_slice();
+        let rel_path = std::str::from_utf8(raw_path)
+            .map_err(|_| Error::Message("deferred restage requires utf-8 index paths".into()))?;
+        let Some(idx_e) = index.get(raw_path, 0).cloned() else {
             continue;
         };
         let abs_path =
             abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
-        batch_entry_indices.push(job.entry_index);
+        let file_attrs = rules.file_attrs(rel_path, false);
+        let index_entry =
+            if crate::crlf::clean_uses_autocrlf_index_guard(&file_attrs, rules.conversion()) {
+                Some(idx_e)
+            } else {
+                None
+            };
         batch_inputs.push(WorktreeBlobReadInput {
             abs: abs_path,
-            index_relpath: rel_path.clone(),
-            index_entry: Some(idx_e.clone()),
-            file_attrs: rules.file_attrs(rel_path, false),
+            index_relpath: rel_path.to_owned(),
+            index_entry,
+            file_attrs,
             cached_meta: None,
         });
     }
-    if batch_inputs.is_empty() {
-        return Ok(Vec::new());
+    if !batch_inputs.is_empty() {
+        repo.odb().ensure_all_loose_prefix_dirs()?;
     }
-    repo.odb().ensure_all_loose_prefix_dirs()?;
     let prepared = prepare_and_store_worktree_blobs_parallel(
         repo.odb(),
         &batch_inputs,
@@ -764,27 +762,24 @@ fn restage_deferred_jobs(
 
     let mut replacements = Vec::new();
     let mut modified = Vec::new();
-    for ((&entry_index, input), prep) in batch_entry_indices
-        .iter()
-        .zip(batch_inputs.iter())
-        .zip(prepared.iter())
-    {
-        let entry_index = entry_index as usize;
-        let Some(rel_path) = paths_by_entry_index.get(entry_index) else {
-            continue;
-        };
-        let raw_path = rel_path.as_bytes();
+    for (job, prep) in jobs.iter().zip(prepared.iter()) {
+        let raw_path = job.raw_path.as_slice();
         let Some(idx_e) = index.get(raw_path, 0) else {
             continue;
         };
-        debug_assert_eq!(input.index_relpath.as_str(), prep.index_relpath.as_str());
+        debug_assert_eq!(
+            std::str::from_utf8(raw_path).ok(),
+            Some(prep.index_relpath.as_str())
+        );
         let idx_mode = idx_e.mode;
         let idx_oid = idx_e.oid;
         let mode_for_index = if trust_filemode { prep.mode } else { idx_mode };
         if prep.oid == idx_oid && (mode_for_index == idx_mode || !trust_filemode) {
             continue;
         }
-        let entry = entry_from_stat(&input.abs, raw_path, prep.oid, mode_for_index)?;
+        let abs_path =
+            abs_path_for_stage_tracked(work_tree, raw_path, precompose_unicode, ignorecase);
+        let entry = entry_from_stat(&abs_path, raw_path, prep.oid, mode_for_index)?;
         modified.push(raw_path.to_vec());
         replacements.push(entry);
     }

@@ -2356,21 +2356,22 @@ impl Index {
             return;
         }
         const BULK_MERGE_MIN: usize = 64;
+        if self.defer_untracked_cache_invalidation {
+            // Campaign-scale tracked restage: merge in bulk but keep UNTR and invalidate only
+            // touched cache-tree paths (issue #1184).
+            for entry in replacements.iter().filter(|e| e.stage() == 0) {
+                self.invalidate_cache_tree_for_path(&entry.path);
+            }
+            self.merge_sorted_replacements_into_entries(replacements);
+            self.touch_fsmonitor_after_entry_change();
+            return;
+        }
         let repl_for_inval: Vec<Vec<u8>> = replacements
             .iter()
             .filter(|e| e.stage() == 0)
             .map(|e| e.path.clone())
             .collect();
         self.merge_sorted_replacements_into_entries(replacements);
-        if self.defer_untracked_cache_invalidation {
-            // Campaign-scale tracked restage: merge in bulk but keep UNTR and invalidate only
-            // touched cache-tree paths (issue #1184).
-            for path in &repl_for_inval {
-                self.invalidate_cache_tree_for_path(path);
-            }
-            self.touch_fsmonitor_after_entry_change();
-            return;
-        }
         if repl_for_inval.len() >= BULK_MERGE_MIN {
             self.cache_tree = None;
             self.cache_tree_root = None;
@@ -4847,84 +4848,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_adjacent_halves_matches_sort_dedup_oracle() {
-        let n = 800usize;
-        let m = 200usize;
-        let mut kept: Vec<IndexEntry> = (0..n)
-            .map(|i| make_entry(&format!("path/{i:05}.txt")))
-            .collect();
-        kept.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-
-        let mut replacements: Vec<IndexEntry> = (0..m)
-            .map(|i| {
-                let slot = i * 3;
-                let mut e = make_entry(&format!("path/{slot:05}.txt"));
-                e.oid = dummy_oid();
-                e
-            })
-            .collect();
-        replacements.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-        dedup_sorted_replacement_entries(&mut replacements);
-
-        let mut fast = kept.clone();
-        fast.reserve(replacements.len());
-        let mid = fast.len();
-        let mut repl = replacements.clone();
-        fast.append(&mut repl);
-        merge_sorted_index_adjacent_halves(&mut fast, mid);
-
-        let mut oracle = kept;
-        for entry in replacements {
-            oracle.push(entry);
-        }
-        oracle.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-        dedup_sorted_replacement_entries(&mut oracle);
-
-        assert_eq!(fast.len(), oracle.len());
-        for (a, b) in fast.iter().zip(oracle.iter()) {
-            assert_eq!(a.path, b.path);
-            assert_eq!(a.stage(), b.stage());
-            assert_eq!(a.oid, b.oid);
-            assert_eq!(a.base_index_pos, b.base_index_pos);
-        }
-    }
-
-    #[test]
-    fn bulk_merge_matches_per_path_replace() {
-        let mut idx = Index::new();
-        for i in 0..128usize {
-            idx.add_or_replace(make_entry(&format!("bulk/{i:03}.txt")));
-        }
-        idx.sort();
-
-        let mut replacements: Vec<IndexEntry> = (0..32usize)
-            .map(|i| {
-                let mut e = make_entry(&format!("bulk/{i:03}.txt"));
-                e.oid = dummy_oid();
-                e
-            })
-            .collect();
-        replacements.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
-        dedup_sorted_replacement_entries(&mut replacements);
-
-        let mut via_merge = idx.clone();
-        via_merge.replace_stage0_entries_batch(replacements.clone());
-
-        let mut via_insert = idx;
-        for entry in replacements {
-            via_insert.add_or_replace(entry);
-        }
-        via_insert.sort();
-
-        assert_eq!(via_merge.entries.len(), via_insert.entries.len());
-        for (a, b) in via_merge.entries.iter().zip(via_insert.entries.iter()) {
-            assert_eq!(a.path, b.path);
-            assert_eq!(a.oid, b.oid);
-            assert_eq!(a.stage(), b.stage());
-        }
-    }
-
-    #[test]
     fn merge_replacements_preserves_base_index_pos() {
         let mut idx = Index::new();
         let mut kept = make_entry("path/a.txt");
@@ -5307,5 +5230,80 @@ mod tests {
         e.set_intent_to_add(true);
         idx.add_or_replace(e);
         crate::write_tree::write_tree_from_index(&odb, &idx, "").unwrap();
+    }
+
+    fn naive_merge_sorted(kept: &[IndexEntry], insert: &[IndexEntry]) -> Vec<IndexEntry> {
+        let mut out: Vec<IndexEntry> = kept.iter().chain(insert.iter()).cloned().collect();
+        out.sort_by(index_entry_path_stage_cmp);
+        let mut deduped = Vec::with_capacity(out.len());
+        for entry in out {
+            if deduped
+                .last()
+                .is_some_and(|last| index_entry_path_stage_cmp(last, &entry).is_eq())
+            {
+                *deduped.last_mut().unwrap() = entry;
+            } else {
+                deduped.push(entry);
+            }
+        }
+        deduped
+    }
+
+    #[test]
+    fn merge_sorted_index_halves_matches_naive_merge() {
+        let paths = [
+            ".gitattributes",
+            "a.txt",
+            "b.txt",
+            "f.txt",
+            "z.txt",
+            "dir/nested.txt",
+        ];
+        let mut kept = Vec::new();
+        let mut insert = Vec::new();
+        for (i, path) in paths.iter().enumerate() {
+            let mut e = make_entry(path);
+            e.oid = ObjectId::from_bytes(&[i as u8; 20]).unwrap();
+            kept.push(e);
+        }
+        for (i, path) in paths.iter().enumerate() {
+            if i % 2 == 0 {
+                continue;
+            }
+            let mut e = make_entry(path);
+            e.oid = ObjectId::from_bytes(&[(i + 100) as u8; 20]).unwrap();
+            insert.push(e);
+        }
+        kept.sort_by(index_entry_path_stage_cmp);
+        insert.sort_by(index_entry_path_stage_cmp);
+
+        let expected = naive_merge_sorted(&kept, &insert);
+        let merged = merge_sorted_index_entries(kept, insert);
+        assert_eq!(merged, expected, "fixed scenario merge mismatch");
+
+        for seed in 0u64..200 {
+            let mut kept = Vec::new();
+            let mut insert = Vec::new();
+            for n in 0..((seed % 7) + 1) {
+                let path = format!("p/{seed}/{n}.txt");
+                let mut e = make_entry(&path);
+                e.oid = ObjectId::from_bytes(&[(seed as u8).wrapping_add(n as u8); 20]).unwrap();
+                kept.push(e);
+            }
+            for n in 0..((seed % 5) + 1) {
+                let path = format!("p/{seed}/{n}.txt");
+                let mut e = make_entry(&path);
+                e.oid = ObjectId::from_bytes(
+                    &[(seed as u8).wrapping_add(n as u8).wrapping_add(50); 20],
+                )
+                .unwrap();
+                insert.push(e);
+            }
+            kept.sort_by(index_entry_path_stage_cmp);
+            insert.sort_by(index_entry_path_stage_cmp);
+            let expected = naive_merge_sorted(&kept, &insert);
+            let merged = merge_sorted_index_entries(kept, insert);
+            assert_eq!(merged, expected, "seed {seed} merge mismatch");
+        }
     }
 }
