@@ -28,7 +28,8 @@ use crate::worktree_batch::{prepare_and_store_worktree_blobs_parallel, WorktreeB
 use crate::worktree_rules::WorktreeRules;
 use crate::worktree_scan::{
     collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
-    visit_blob_lookup_batches, BlobDiskLookup, BlobDiskStat, WorktreeBlobScanOptions,
+    visit_blob_lookup_batches, BlobDiskLookup, BlobDiskStat, BlobScanSparseMode,
+    WorktreeBlobScanOptions,
 };
 
 /// Summary of paths updated while staging tracked modifications/deletions.
@@ -369,6 +370,10 @@ fn stage_tracked_modifications_in_index_body(
                     );
                     path_has_symlink_parent_cached(work_tree, &abs, &mut symlink_parent_cache)
                 }
+        },
+        BlobScanSparseMode::StageTracked {
+            index_mtime,
+            trust_filemode,
         },
     )?;
     visit_blob_lookup_batches(stage_batches, |entry_index, lookup| {

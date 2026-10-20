@@ -293,7 +293,7 @@ fn worktree_clean_for_switch_paths(
     use crate::worktree_scan::{
         collect_blob_lookup_batches, for_each_blob_by_directory,
         group_blob_entries_by_dir_for_paths, visit_blob_lookup_batches, BlobDiskLookup,
-        WorktreeBlobScanOptions,
+        BlobScanSparseMode, WorktreeBlobScanOptions,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -420,6 +420,7 @@ fn worktree_clean_for_switch_paths(
             dir_abs,
             file_abs,
             |_| false,
+            BlobScanSparseMode::WorktreeGuard { stat_policy },
         )?;
         visit_blob_lookup_batches(guard_batches, |entry_index, lookup| {
             if !matches.load(Ordering::Relaxed) {

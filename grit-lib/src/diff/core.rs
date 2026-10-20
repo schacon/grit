@@ -3845,9 +3845,9 @@ fn diff_index_to_worktree_inner(
     }
 
     use crate::worktree_scan::{
-        collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
-        visit_blob_lookup_batches, BlobDiskLookup, WorktreeBlobScanOptions,
-        PARALLEL_STAT_MIN_ENTRIES,
+        blob_lookup_batch_entry_indices, collect_blob_lookup_batches, group_blob_entries_by_dir,
+        stat_scan_thread_count, visit_blob_lookup_batches, BlobDiskLookup, BlobScanSparseMode,
+        WorktreeBlobScanOptions, PARALLEL_STAT_MIN_ENTRIES,
     };
     let preload_index = config
         .get_bool("core.preloadIndex")
@@ -3889,6 +3889,19 @@ fn diff_index_to_worktree_inner(
     // Parallel preload must lstat ancestor directories without following symlinks. When a
     // tracked directory is replaced by a symlink, indexed paths under it are deletions even if
     // the link target still holds a file at the same relative path with an unchanged stat.
+    let sparse = if parallel_blob_work {
+        BlobScanSparseMode::StatusDiff {
+            stat_policy,
+            index_mtime,
+            trust_filemode,
+            for_status: options.for_status,
+            refresh_index_stat_in_pass,
+            parallel_blob_work,
+            honor_fsmonitor_stat_skip: use_fsmonitor_stat_skip,
+        }
+    } else {
+        BlobScanSparseMode::Dense
+    };
     let blob_stat_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
@@ -3901,7 +3914,9 @@ fn diff_index_to_worktree_inner(
         |rel_path| {
             dir_symlinks.has_symlink_in_path(work_tree, rel_path, precompose_unicode, ignorecase)
         },
+        sparse,
     )?;
+    let retained_indices = blob_lookup_batch_entry_indices(&blob_stat_batches);
     visit_blob_lookup_batches(blob_stat_batches, |entry_index, lookup| {
         let path_owned = std::str::from_utf8(&index.entries[entry_index].path)
             .unwrap_or("")
@@ -4072,6 +4087,24 @@ fn diff_index_to_worktree_inner(
         }
         Ok(())
     })?;
+    if parallel_blob_work
+        && refresh_index_stat_in_pass
+        && options.for_status
+        && index_stat_cache_trustworthy(index_mtime)
+    {
+        for &entry_index in &blob_dirs.indices {
+            if retained_indices.contains(&entry_index) {
+                continue;
+            }
+            let ie = &index.entries[entry_index];
+            if !index_entry_needs_worktree_diff_pass1(ie) {
+                continue;
+            }
+            if !entry_is_racy_with_policy(ie, index_mtime, stat_policy) {
+                stat_refresh_verified[entry_index] = true;
+            }
+        }
+    }
     if parallel_blob_work && !staging_hash_jobs.is_empty() {
         parallel_process_blob_worktree_jobs(
             odb,
@@ -4752,7 +4785,7 @@ pub fn refresh_index_stat_content_verified_with_rules(
     use crate::crlf;
     use crate::worktree_scan::{
         collect_blob_lookup_batches, group_blob_entries_by_dir, visit_blob_lookup_batches,
-        BlobDiskLookup, WorktreeBlobScanOptions,
+        BlobDiskLookup, BlobScanSparseMode, WorktreeBlobScanOptions,
     };
 
     let index_mtime = index_mtime_for_diff(index, index_mtime);
@@ -4842,6 +4875,10 @@ pub fn refresh_index_stat_content_verified_with_rules(
         file_abs,
         |rel_path| {
             dir_symlinks.has_symlink_in_path(work_tree, rel_path, precompose_unicode, ignorecase)
+        },
+        BlobScanSparseMode::StatRefresh {
+            stat_policy,
+            index_mtime,
         },
     )?;
     visit_blob_lookup_batches(refresh_batches, |entry_index, lookup| {
