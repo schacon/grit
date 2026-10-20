@@ -215,7 +215,7 @@ fn assert_t5303_chain_metadata(fx: &T5303Pack) {
         if oid == fx.blob1 {
             continue;
         }
-        let off = entry.offset();
+        let off = entry.offset().expect("index offset");
         let dep = read_packed_delta_dependency(&pack_bytes, off, 20)
             .expect("dep parse")
             .expect("delta");
