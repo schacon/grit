@@ -23,6 +23,7 @@ use crate::error::{Error, MidxError, Result};
 use crate::objects::{HashAlgo, ObjectId, ObjectInfo};
 use crate::pack::{read_pack_index_no_verify, PackIndex};
 use crate::pack_bitmap::{MidxBitmapWriter, PackBitmapWriteOptions};
+use crate::pack_map::PackData;
 use crate::pack_rev::append_hashfile_checksum;
 use crate::repo::Repository;
 
@@ -306,7 +307,7 @@ fn open_midx_layer_bytes(path: &Path) -> Result<Arc<PackData>> {
 // built once (no stat/read/parse on lookup hits). In-process writers call [`evict_pack_dir`].
 pub(crate) mod midx_cache {
     use super::{
-        midx_chain_layer_paths_newest_first, midx_load_for_read,
+        midx_chain_layer_paths_newest_first, midx_load_for_read, open_midx_layer_bytes,
         repo_midx_hash_version_for_objects_dir, MidxLoadResult, MidxReadView,
         MIDX_LARGE_OFFSET_NEEDED,
     };
@@ -328,8 +329,8 @@ pub(crate) mod midx_cache {
         oidl_off: usize,
         num_objects: usize,
         hash_len: usize,
-        /// Per sorted OID position: `(pack_id, in-pack offset)` decoded at prepare time.
-        pack_offsets: Vec<(u32, u64)>,
+        ooff_off: usize,
+        loff: Option<(usize, usize)>,
         pack_dir: PathBuf,
         pack_names: Vec<String>,
         pack_indexes: Vec<Arc<OnceLock<Option<Arc<PackIndex>>>>>,
@@ -357,20 +358,13 @@ pub(crate) mod midx_cache {
             for (i, slot) in fanout.iter_mut().enumerate() {
                 *slot = read_be_u32(data, view.oidf_off + i * 4).unwrap_or(0);
             }
-            let mut pack_offsets = Vec::with_capacity(view.num_objects);
-            for i in 0..view.num_objects {
-                let ob = view.ooff_off + i * 8;
-                let pack_id = read_be_u32(data, ob).unwrap_or(0);
-                let raw_off = read_be_u32(data, ob + 4).unwrap_or(0);
-                let offset = decode_midx_object_offset(data, raw_off, view.loff).unwrap_or(0);
-                pack_offsets.push((pack_id, offset));
-            }
             Self {
                 fanout,
                 oidl_off: view.oidl_off,
+                ooff_off: view.ooff_off,
+                loff: view.loff,
                 num_objects: view.num_objects,
                 hash_len,
-                pack_offsets,
                 pack_dir: pack_dir.to_path_buf(),
                 pack_names: view.pack_names.clone(),
                 pack_indexes: view
@@ -496,7 +490,11 @@ pub(crate) mod midx_cache {
         #[inline(always)]
         pub fn lookup_pack_and_offset(&self, oid: &ObjectId) -> Option<(u32, u64)> {
             let pos = self.find_position(oid)?;
-            Some(self.pack_offsets[pos])
+            let ob = self.ooff_off + pos * 8;
+            let data = self.bytes.as_ref();
+            let pack_id = read_be_u32(data, ob).ok()?;
+            let raw_off = read_be_u32(data, ob + 4).ok()?;
+            decode_midx_object_offset(data, raw_off, self.loff).map(|offset| (pack_id, offset))
         }
 
         #[inline]
@@ -524,14 +522,14 @@ pub(crate) mod midx_cache {
                 h[19] = i as u8;
                 bytes.extend_from_slice(&h);
             }
-            let pack_offsets: Vec<(u32, u64)> = (0..n).map(|i| (0, i as u64)).collect();
             Self {
                 bytes: PackData::from_owned(bytes),
                 fanout,
                 oidl_off: 0,
+                ooff_off: 0,
+                loff: None,
                 num_objects: n,
                 hash_len,
-                pack_offsets,
                 pack_dir: PathBuf::from("/nonexistent"),
                 pack_names: vec!["test-pack.idx".into()],
                 pack_indexes: vec![Arc::new(OnceLock::new())],
@@ -885,7 +883,7 @@ pub(crate) mod midx_cache {
         let mut layers = Vec::with_capacity(path_count);
         let mut pack_names_by_layer = Vec::with_capacity(path_count);
         for path in paths {
-            let bytes = match PackData::open_with_min_len(&path, MIDX_MIN_FILE_LEN) {
+            let bytes = match open_midx_layer_bytes(&path) {
                 Ok(b) => b,
                 Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
                     if require_every_layer {
@@ -1893,10 +1891,12 @@ pub fn verify_midx(objects_dir: &Path) -> std::result::Result<(), Vec<String>> {
         Some(p) => p,
         None => return Ok(()),
     };
-    let data = match fs::read(&path) {
-        Ok(d) => d,
+    let data = match open_midx_layer_bytes(&path) {
+        Ok(bytes) => bytes,
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Ok(()),
     };
+    let data = data.as_ref();
 
     let mut fatal: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -1928,7 +1928,7 @@ pub fn verify_midx(objects_dir: &Path) -> std::result::Result<(), Vec<String>> {
     let num_packs = u32::from_be_bytes([data[8], data[9], data[10], data[11]]) as usize;
 
     // --- table of contents ---
-    let chunks = match parse_midx_toc(&data, hash_len, &mut errors) {
+    let chunks = match parse_midx_toc(data, hash_len, &mut errors) {
         Ok(c) => c,
         Err(fatal) => {
             if !errors.is_empty() {
@@ -2029,7 +2029,7 @@ pub fn verify_midx(objects_dir: &Path) -> std::result::Result<(), Vec<String>> {
     }
 
     // --- checksum ---
-    if !midx_checksum_is_valid(&data) {
+    if !midx_checksum_is_valid(data) {
         errors.push("incorrect checksum".to_owned());
     }
 
@@ -2715,6 +2715,9 @@ fn midx_load_for_read(
     diagnostics: &dyn DiagnosticSink,
 ) -> Result<MidxLoadResult> {
     if data.len() < MIDX_HEADER_SIZE + 20 {
+        diagnostics.warn(Warning::MidxChunkTableError {
+            detail: "multi-pack-index file is too small".to_owned(),
+        });
         return Ok(MidxLoadResult::Skip);
     }
     let sig = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
@@ -2736,10 +2739,6 @@ fn midx_load_for_read(
             expected: expected_hash_version,
         }
         .into());
-    }
-    if !midx_checksum_is_valid(data) {
-        diagnostics.warn(Warning::MidxChecksumMismatch);
-        return Ok(MidxLoadResult::Skip);
     }
     let hash_len = if hash_version == 2 { 32usize } else { 20usize };
     let num_packs = u32::from_be_bytes([data[8], data[9], data[10], data[11]]) as usize;
@@ -2774,19 +2773,6 @@ fn midx_load_for_read(
         let b = oidf_off + i * 4;
         u32::from_be_bytes([data[b], data[b + 1], data[b + 2], data[b + 3]])
     };
-    for i in 0..255 {
-        let f1 = fanout(i);
-        let f2 = fanout(i + 1);
-        if f1 > f2 {
-            return Err(MidxError::OidFanoutOutOfOrder {
-                index: i,
-                first: f1,
-                second: f2,
-                next: i + 1,
-            }
-            .into());
-        }
-    }
     let num_objects = fanout(255) as usize;
 
     let Some((oidl_off, oidl_len)) = toc_chunk_range(&chunks, data.len(), MIDX_CHUNKID_OIDLOOKUP)
@@ -2826,18 +2812,13 @@ fn midx_load_for_read(
             Ok(s) => s.to_string(),
             Err(_) => return Err(MidxError::PackNameChunkTooShort.into()),
         };
-        if version == MIDX_VERSION_V1
-            && !pack_names.is_empty()
-            && name.as_str() <= pack_names.last().map(|s| s.as_str()).unwrap_or("")
-        {
-            return Err(MidxError::PackNamesOutOfOrder {
-                previous: pack_names.last().cloned().unwrap_or_default(),
-                name,
-            }
-            .into());
-        }
         pack_names.push(name);
         start += rel + 1;
+    }
+
+    if !midx_checksum_is_valid(data) {
+        diagnostics.warn(Warning::MidxChecksumMismatch);
+        return Ok(MidxLoadResult::Skip);
     }
 
     Ok(MidxLoadResult::Ok(MidxReadView {
@@ -3904,19 +3885,16 @@ mod tests {
         super::midx_cache::evict_pack_dir(&pack_dir);
         clear_pack_cache();
 
-        let sink = CollectingDiagnostics::with_dedupe(true);
-        let via_midx = try_read_object_via_midx_with_diagnostics(&objects, &oid, &sink)
-            .expect("checksum mismatch must not abort reads");
+        let errs = super::verify_midx(&objects).expect_err("verify catches bad checksum");
+        assert!(
+            errs.iter().any(|e| e.contains("incorrect checksum")),
+            "expected verify checksum error, got {errs:?}"
+        );
+        let via_midx =
+            try_read_object_via_midx(&objects, &oid).expect("checksum mismatch must not fatal");
         assert!(
             via_midx.is_none(),
-            "corrupt MIDX must be skipped for direct midx lookup"
-        );
-        assert!(
-            sink.warnings()
-                .iter()
-                .any(|w| matches!(w, Warning::MidxChecksumMismatch)),
-            "expected checksum mismatch warning, got {:?}",
-            sink.warnings()
+            "invalid MIDX checksum must be skipped for direct lookup"
         );
 
         let git_dir = tmp.path().join(".git");
@@ -3924,6 +3902,51 @@ mod tests {
         let grit_obj = odb.read(&oid).expect("pack fallback read");
         let via_pack = read_object_from_packs(&objects, &oid).expect("pack read");
         assert_eq!(via_pack.data, grit_obj.data);
+    }
+
+    #[test]
+    fn midx_shorter_than_min_len_skips_without_fatal_error() {
+        let Some((tmp, oid)) = midx_fixture(true) else {
+            eprintln!("SKIP: git unavailable for MIDX fixture");
+            return;
+        };
+        let objects = tmp.path().join(".git/objects");
+        let pack_dir = objects.join("pack");
+        let midx_path = pack_dir.join("multi-pack-index");
+        let mut bytes = fs::read(&midx_path).expect("read");
+        bytes.truncate(super::MIDX_HEADER_SIZE + 10);
+        fs::write(&midx_path, &bytes).expect("truncate");
+        super::midx_cache::evict_pack_dir(&pack_dir);
+        clear_pack_cache();
+        assert!(
+            try_read_object_via_midx(&objects, &oid)
+                .expect("read")
+                .is_none(),
+            "truncated MIDX must be skipped for direct lookup"
+        );
+        read_object_from_packs(&objects, &oid).expect("pack fallback still works");
+    }
+
+    #[test]
+    fn large_git_midx_layer_uses_mapped_backing() {
+        let Some((tmp, _oid)) = midx_fixture(false) else {
+            eprintln!("SKIP: git unavailable for MIDX fixture");
+            return;
+        };
+        for i in 0..120 {
+            std::fs::write(tmp.path().join(format!("bulk{i}.txt")), format!("{i}\n")).unwrap();
+            git(tmp.path(), &["add", &format!("bulk{i}.txt")]);
+            git(tmp.path(), &["commit", "-q", "-m", &format!("bulk{i}")]);
+        }
+        git(tmp.path(), &["repack", "-adf"]);
+        git(tmp.path(), &["multi-pack-index", "write"]);
+        let midx_path = tmp.path().join(".git/objects/pack/multi-pack-index");
+        let len = std::fs::metadata(&midx_path).expect("meta").len();
+        assert!(len > 8192, "midx size {len}");
+        let storage =
+            crate::pack_map::PackData::open_with_min_len(&midx_path, super::MIDX_MIN_FILE_LEN)
+                .expect("open");
+        assert!(storage.is_mapped_backing());
     }
 
     #[test]
