@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::registry::ScenarioSpec;
+use super::remote_state::DailyRemoteState;
 use super::runner::BenchArgv;
 use crate::scenarios::PrepareKind;
 
@@ -14,6 +15,8 @@ pub enum DailyPrepare {
     Hook(PrepareKind),
     /// Run a shell prepare snippet (after optional hook prepare is not composed; use one variant).
     Shell(BenchArgv),
+    /// Reset via `grit-bench prepare-network-*` using `GRIT_BENCH_DAILY_NETWORK_BARE`.
+    Network(&'static str),
 }
 
 /// One daily scenario row the runner can execute (or mark pending).
@@ -63,6 +66,8 @@ pub struct DailyHeadlineContext {
     pub branch_bench_name: Option<String>,
     /// Tag name targeted by create benchmarks on many-refs fixtures.
     pub tag_bench_name: Option<String>,
+    /// Network transport state (bare remote, URL, HTTP servers).
+    pub remote: Option<DailyRemoteState>,
 }
 
 impl DailyHeadlineContext {
@@ -84,6 +89,7 @@ impl DailyHeadlineContext {
             linked_worktree: None,
             branch_bench_name: None,
             tag_bench_name: None,
+            remote: None,
         }
     }
 }

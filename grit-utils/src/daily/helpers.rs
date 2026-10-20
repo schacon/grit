@@ -678,6 +678,18 @@ pub fn prepare_worktree_init_empty(
     super::plan::DailyPrepare::Hook(PrepareKind::WorktreeInitEmpty)
 }
 
+pub fn matrix_spec(id: &str) -> &'static super::registry::ScenarioSpec {
+    super::registry::REMOTE_MATRIX_SCENARIOS
+        .iter()
+        .find(|s| s.id == id)
+        .or_else(|| {
+            super::registry::HEADLINE_SCENARIOS
+                .iter()
+                .find(|s| s.id == id)
+        })
+        .unwrap_or_else(|| panic!("unknown matrix id {id}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
