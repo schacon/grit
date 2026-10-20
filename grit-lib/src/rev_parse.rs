@@ -1845,6 +1845,7 @@ pub(crate) fn abbreviate_object_id_with_prefix_cache(
 }
 
 /// Like [`abbreviate_object_id_with_prefix_cache`], optionally skipping an ODB existence probe.
+#[allow(dead_code)]
 pub(crate) fn abbreviate_object_id_with_prefix_cache_assume_exists(
     repo: &Repository,
     oid: ObjectId,

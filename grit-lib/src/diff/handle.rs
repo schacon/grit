@@ -1,6 +1,7 @@
 //! Repository-scoped tree and index diffs via [`Diff`].
 use crate::diff::targets::{
-    collect_files_for_target, collect_tree_structured_for_target, file_diffs_from_entries,
+    collect_diff_entries_for_patch_target, collect_files_for_target,
+    collect_tree_structured_for_target, file_diffs_from_entries,
 };
 use crate::diff::TreeDiffStructured;
 use crate::diff::{diff_index_to_tree, diff_index_to_worktree, diff_trees, DiffEntry, DiffOptions};
@@ -128,5 +129,19 @@ impl<'repo> Diff<'repo> {
         opts: &DiffOptions,
     ) -> Result<Vec<TreeDiffStructured>> {
         collect_tree_structured_for_target(self.repo, target, pathspecs, *opts)
+    }
+
+    /// Tree diff entries for commit-range [`write_patch`] (skips structured line diffs).
+    ///
+    /// # Errors
+    ///
+    /// Propagates diff failures; returns an error for worktree/index patch targets.
+    pub fn patch_entries(
+        &self,
+        target: &DiffTarget,
+        pathspecs: &[String],
+        opts: &DiffOptions,
+    ) -> Result<Vec<DiffEntry>> {
+        collect_diff_entries_for_patch_target(self.repo, target, pathspecs, *opts)
     }
 }

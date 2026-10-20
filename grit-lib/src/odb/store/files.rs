@@ -481,20 +481,46 @@ fn merge_prefix_matches(
     if limit != 0 && out.len() >= limit {
         return Ok(());
     }
-    let sub_limit = if limit == 0 {
-        0
-    } else {
-        limit.saturating_sub(out.len())
-    };
-    let mut scratch = Vec::new();
-    store.lookup_prefix(prefix, sub_limit, &mut scratch)?;
-    for oid in scratch {
-        if seen.insert(oid) {
-            out.push(oid);
-            if limit != 0 && out.len() >= limit {
-                return Ok(());
+    if limit == 0 {
+        let mut scratch = Vec::new();
+        store.lookup_prefix(prefix, 0, &mut scratch)?;
+        for oid in scratch {
+            if seen.insert(oid) {
+                out.push(oid);
             }
         }
+        return Ok(());
     }
-    Ok(())
+
+    let goal = limit;
+    let mut fetch = goal.saturating_sub(out.len());
+    loop {
+        let mut scratch = Vec::new();
+        store.lookup_prefix(prefix, fetch, &mut scratch)?;
+        let scratch_len = scratch.len();
+        let before = out.len();
+        for oid in scratch {
+            if seen.insert(oid) {
+                out.push(oid);
+                if out.len() >= goal {
+                    return Ok(());
+                }
+            }
+        }
+        if out.len() >= goal {
+            return Ok(());
+        }
+        if scratch_len < fetch {
+            return Ok(());
+        }
+        let need = goal.saturating_sub(out.len());
+        if need == 0 {
+            return Ok(());
+        }
+        fetch = if before == out.len() {
+            fetch.saturating_add(need)
+        } else {
+            scratch_len.saturating_add(need)
+        };
+    }
 }

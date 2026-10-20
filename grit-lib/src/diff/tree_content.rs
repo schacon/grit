@@ -74,6 +74,9 @@ pub fn tree_diff_contents_parallel(
     Ok(rows)
 }
 
+/// Below this count, structured diffs run serially to avoid thread-pool overhead on small patches.
+const TREE_DIFF_STRUCTURED_SERIAL_MAX: usize = 16;
+
 /// Load sides and compute structured line diffs for each entry in parallel.
 ///
 /// # Errors
@@ -90,6 +93,14 @@ pub fn tree_diff_structured_parallel(
         return Ok(Vec::new());
     }
     let diff_options = diff_options.cap_word_level_inline_for_changed_files(entries.len());
+    if entries.len() <= TREE_DIFF_STRUCTURED_SERIAL_MAX {
+        let store = odb.pack_store_for(odb.objects_dir());
+        let _guard = PackReadContextGuard::install(Arc::clone(&store));
+        return entries
+            .iter()
+            .map(|entry| tree_diff_structured_one(odb, entry, diff_options))
+            .collect();
+    }
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
     par_opts.min_total_bytes = None;
@@ -99,56 +110,62 @@ pub fn tree_diff_structured_parallel(
         par_opts,
         0,
         || PackReadContextGuard::install(Arc::clone(&store)),
-        |_ctx, entry| {
-            if !entry.old_oid.is_zero()
-                && entry.old_oid == entry.new_oid
-                && entry.old_mode == entry.new_mode
-            {
-                return Ok(TreeDiffStructured {
-                    entry: entry.clone(),
-                    structured: StructuredFileDiff {
-                        old_mode: mode_display(&entry.old_mode),
-                        new_mode: mode_display(&entry.new_mode),
-                        old_encoding_lossy: false,
-                        new_encoding_lossy: false,
-                        hunks: Vec::new(),
-                    },
-                    binary: false,
-                    patch_bytes: None,
-                });
-            }
-            let (old_bytes, old_bin) = load_old_side(odb, entry)?;
-            let (new_bytes, new_bin) = load_new_side(odb, entry)?;
-            let binary = old_bin || new_bin;
-            let structured = if binary {
-                StructuredFileDiff {
-                    old_mode: mode_display(&entry.old_mode),
-                    new_mode: mode_display(&entry.new_mode),
-                    old_encoding_lossy: old_bytes.encoding_lossy,
-                    new_encoding_lossy: new_bytes.encoding_lossy,
-                    hunks: Vec::new(),
-                }
-            } else {
-                structured_file_diff(
-                    &entry.old_mode,
-                    &entry.new_mode,
-                    &old_bytes,
-                    &new_bytes,
-                    diff_options,
-                )
-            };
-            Ok(TreeDiffStructured {
-                entry: entry.clone(),
-                structured,
-                binary,
-                patch_bytes: None,
-            })
-        },
+        |_ctx, entry| tree_diff_structured_one(odb, entry, diff_options),
     );
     match rows {
         Ok(rows) => Ok(rows),
         Err(ParallelHashError::Task(err)) => Err(err),
     }
+}
+
+fn tree_diff_structured_one(
+    odb: &Odb,
+    entry: &DiffEntry,
+    diff_options: DiffOptions,
+) -> Result<TreeDiffStructured> {
+    if !entry.old_oid.is_zero()
+        && entry.old_oid == entry.new_oid
+        && entry.old_mode == entry.new_mode
+    {
+        return Ok(TreeDiffStructured {
+            entry: entry.clone(),
+            structured: StructuredFileDiff {
+                old_mode: mode_display(&entry.old_mode),
+                new_mode: mode_display(&entry.new_mode),
+                old_encoding_lossy: false,
+                new_encoding_lossy: false,
+                hunks: Vec::new(),
+            },
+            binary: false,
+            patch_bytes: None,
+        });
+    }
+    let (old_bytes, old_bin) = load_old_side(odb, entry)?;
+    let (new_bytes, new_bin) = load_new_side(odb, entry)?;
+    let binary = old_bin || new_bin;
+    let structured = if binary {
+        StructuredFileDiff {
+            old_mode: mode_display(&entry.old_mode),
+            new_mode: mode_display(&entry.new_mode),
+            old_encoding_lossy: old_bytes.encoding_lossy,
+            new_encoding_lossy: new_bytes.encoding_lossy,
+            hunks: Vec::new(),
+        }
+    } else {
+        structured_file_diff(
+            &entry.old_mode,
+            &entry.new_mode,
+            &old_bytes,
+            &new_bytes,
+            diff_options,
+        )
+    };
+    Ok(TreeDiffStructured {
+        entry: entry.clone(),
+        structured,
+        binary,
+        patch_bytes: None,
+    })
 }
 
 fn mode_display(mode: &str) -> Option<String> {

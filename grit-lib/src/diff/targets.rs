@@ -1012,15 +1012,14 @@ fn entries_to_file_changes(
         .collect()
 }
 
-fn tree_commit_changes(
+fn tree_commit_diff_entries(
     repo: &Repository,
     base: &ObjectId,
     tip: &ObjectId,
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
-    diff_options: DiffOptions,
     rename_threshold: u32,
-) -> Result<Vec<TreeDiffStructured>> {
+) -> Result<Vec<DiffEntry>> {
     let mut entries = diff_commits_with_renames_and_policy(
         repo.odb(),
         base,
@@ -1030,17 +1029,30 @@ fn tree_commit_changes(
         thread_policy,
     )?;
     sort_entries(&mut entries);
-    tree_diff_structured_parallel(repo.odb(), entries, config, thread_policy, diff_options)
+    Ok(entries)
 }
 
-fn commit_changes(
+fn tree_commit_changes(
     repo: &Repository,
-    oid: &ObjectId,
+    base: &ObjectId,
+    tip: &ObjectId,
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
     diff_options: DiffOptions,
     rename_threshold: u32,
 ) -> Result<Vec<TreeDiffStructured>> {
+    let entries =
+        tree_commit_diff_entries(repo, base, tip, config, thread_policy, rename_threshold)?;
+    tree_diff_structured_parallel(repo.odb(), entries, config, thread_policy, diff_options)
+}
+
+fn commit_diff_entries(
+    repo: &Repository,
+    oid: &ObjectId,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+    rename_threshold: u32,
+) -> Result<Vec<DiffEntry>> {
     let commit = read_commit(repo, oid)?;
     let new_tree = commit.tree;
     let old_tree = match commit.parents.first() {
@@ -1058,7 +1070,71 @@ fn commit_changes(
         thread_policy,
     )?;
     sort_entries(&mut entries);
+    Ok(entries)
+}
+
+fn commit_changes(
+    repo: &Repository,
+    oid: &ObjectId,
+    config: &ConfigSet,
+    thread_policy: &ThreadPolicy,
+    diff_options: DiffOptions,
+    rename_threshold: u32,
+) -> Result<Vec<TreeDiffStructured>> {
+    let entries = commit_diff_entries(repo, oid, config, thread_policy, rename_threshold)?;
     tree_diff_structured_parallel(repo.odb(), entries, config, thread_policy, diff_options)
+}
+
+/// Tree diff entries for ODB-backed patch-text (`write_patch`), without structured line diffs.
+pub(crate) fn collect_diff_entries_for_patch_target(
+    repo: &Repository,
+    target: &DiffTarget,
+    pathspecs: &[String],
+    opts: DiffOptions,
+) -> Result<Vec<DiffEntry>> {
+    let config = repo.config()?;
+    let thread_policy = repo.thread_policy();
+    let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
+
+    let mut entries = match target {
+        DiffTarget::Commit(oid) => {
+            commit_diff_entries(repo, oid, &config, &thread_policy, rename_threshold)?
+        }
+        DiffTarget::Trees { old, new } => {
+            if let Some(base) = old {
+                tree_commit_diff_entries(
+                    repo,
+                    base,
+                    new,
+                    &config,
+                    &thread_policy,
+                    rename_threshold,
+                )?
+            } else {
+                commit_diff_entries(repo, new, &config, &thread_policy, rename_threshold)?
+            }
+        }
+        DiffTarget::WorktreeVsHead
+        | DiffTarget::WorktreeVsTree(_)
+        | DiffTarget::IndexVsHead
+        | DiffTarget::WorktreeVsIndex => {
+            return Err(Error::Message(
+                "worktree patch targets require structured diff rows".into(),
+            ));
+        }
+    };
+    if !pathspecs.is_empty() {
+        entries.retain(|e| {
+            let path = e
+                .new_path
+                .as_deref()
+                .or(e.old_path.as_deref())
+                .unwrap_or("");
+            let old_path = e.old_path.as_deref();
+            file_change_matches_pathspecs(repo, path, old_path, pathspecs)
+        });
+    }
+    Ok(entries)
 }
 
 fn resolve_diff_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {

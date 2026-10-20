@@ -1,13 +1,15 @@
 //! Prefix lookup must see collisions across pack and loose layers (Git disambiguate parity).
 
 use grit_lib::object_inspect::abbreviate_for_display;
+use grit_lib::objects::odb::BULK_NEW_LOOSE_WRITE;
 use grit_lib::objects::{HashAlgo, ObjectKind};
 use grit_lib::repo::Repository;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-fn git(dir: &std::path::Path, args: &[&str]) -> String {
+fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -24,29 +26,16 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-fn git_write_blob(dir: &std::path::Path, data: &[u8]) {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("git")
-        .current_dir(dir)
-        .args(["hash-object", "-w", "--stdin"])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("git hash-object");
-    child
-        .stdin
-        .take()
-        .expect("stdin")
-        .write_all(data)
-        .expect("write stdin");
-    let out = child.wait_with_output().expect("wait");
+fn loose_object_path(objects: &Path, oid: &grit_lib::objects::ObjectId) -> std::path::PathBuf {
+    let hex = oid.to_hex();
+    objects.join(&hex[..2]).join(&hex[2..])
+}
+
+fn assert_loose_object_exists(objects: &Path, oid: &grit_lib::objects::ObjectId) {
     assert!(
-        out.status.success(),
-        "git hash-object: {}",
-        String::from_utf8_lossy(&out.stderr)
+        loose_object_path(objects, oid).is_file(),
+        "expected loose object for {}",
+        oid.to_hex()
     );
 }
 
@@ -88,27 +77,33 @@ fn lookup_prefix_finds_loose_collision_when_pack_object_is_also_loose() {
     git(dir, &["commit", "-qm", "packed"]);
     git(dir, &["repack", "-a", "-d"]);
 
+    let git_dir = dir.join(".git");
+    let objects = git_dir.join("objects");
+    assert!(
+        !loose_object_path(&objects, &packed_oid).is_file(),
+        "packed blob should not be loose before materialization"
+    );
+
     let repo = Repository::open(
-        dir.join(".git").as_path(),
+        git_dir.as_path(),
         &grit_lib::config::environment::RepositoryOptions::empty().with_work_tree(dir),
     )
     .expect("open grit");
 
-    // Same OID in pack and loose (overlap), plus a second loose OID sharing the 7-hex prefix.
-    git_write_blob(dir, &packed_data);
-    git_write_blob(dir, &collision_data);
     assert_eq!(
         repo.odb()
-            .write(ObjectKind::Blob, &packed_data)
-            .expect("grit write packed"),
+            .write_with_options(ObjectKind::Blob, &packed_data, BULK_NEW_LOOSE_WRITE)
+            .expect("materialize packed blob loose"),
         packed_oid
     );
     assert_eq!(
         repo.odb()
-            .write(ObjectKind::Blob, &collision_data)
-            .expect("grit write collision"),
+            .write_with_options(ObjectKind::Blob, &collision_data, BULK_NEW_LOOSE_WRITE)
+            .expect("write collision loose"),
         collision_oid
     );
+    assert_loose_object_exists(&objects, &packed_oid);
+    assert_loose_object_exists(&objects, &collision_oid);
 
     let prefix = &packed_oid.to_hex()[..7];
     let mut grit_matches = Vec::new();
@@ -151,4 +146,7 @@ fn lookup_prefix_finds_loose_collision_when_pack_object_is_also_loose() {
         .lookup_prefix(prefix, 2, &mut limited)
         .expect("limited lookup");
     assert_eq!(limited.len(), 2, "limit=2 must return both colliding oids");
+    let limited_hex: HashSet<_> = limited.iter().map(|o| o.to_hex()).collect();
+    assert!(limited_hex.contains(&packed_oid.to_hex()));
+    assert!(limited_hex.contains(&collision_oid.to_hex()));
 }

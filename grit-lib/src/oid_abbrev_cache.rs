@@ -8,15 +8,24 @@ use crate::error::Result;
 use crate::objects::ObjectId;
 use crate::parallel::ThreadPolicy;
 use crate::repo::Repository;
-use crate::rev_parse::{
-    abbreviate_object_id_with_prefix_cache, abbreviate_object_id_with_prefix_cache_assume_exists,
-};
+use crate::rev_parse::{abbreviate_object_id_with_prefix_cache, prefix_is_ambiguous_in_odb};
 
 /// Memoized unique abbreviations using [`Repository::odb`] prefix lookup (pack/MIDX/loose).
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct OidAbbrevCache {
     min_len: usize,
     memo: HashMap<ObjectId, String>,
+    prefix_ambiguous: HashMap<String, bool>,
+}
+
+impl Default for OidAbbrevCache {
+    fn default() -> Self {
+        Self {
+            min_len: 7,
+            memo: HashMap::new(),
+            prefix_ambiguous: HashMap::new(),
+        }
+    }
 }
 
 impl OidAbbrevCache {
@@ -25,6 +34,7 @@ impl OidAbbrevCache {
         Self {
             min_len: min_len.clamp(4, 40),
             memo: HashMap::new(),
+            prefix_ambiguous: HashMap::new(),
         }
     }
 
@@ -33,13 +43,17 @@ impl OidAbbrevCache {
         if let Some(hit) = self.memo.get(oid) {
             return Ok(hit.clone());
         }
-        let abbrev =
-            abbreviate_object_id_with_prefix_cache(repo, *oid, self.min_len, &mut HashMap::new())?;
+        let abbrev = abbreviate_object_id_with_prefix_cache(
+            repo,
+            *oid,
+            self.min_len,
+            &mut self.prefix_ambiguous,
+        )?;
         self.memo.insert(*oid, abbrev.clone());
         Ok(abbrev)
     }
 
-    /// Precompute index-line abbreviations with full-ODB disambiguation.
+    /// Precompute index-line abbreviations with batch-local and ODB disambiguation.
     pub(crate) fn warm_for_patch_batch<I>(
         &mut self,
         repo: &Repository,
@@ -64,15 +78,56 @@ impl OidAbbrevCache {
         }
         let mut list: Vec<ObjectId> = unique.into_iter().collect();
         list.sort_by_key(ObjectId::to_hex);
-        let mut prefix_ambiguous: HashMap<String, bool> = HashMap::new();
-        for oid in list {
-            let abbrev = abbreviate_object_id_with_prefix_cache_assume_exists(
-                repo,
-                oid,
-                min_len,
-                &mut prefix_ambiguous,
-            )?;
-            self.memo.insert(oid, abbrev);
+        if list.len() <= 4 {
+            for oid in list {
+                let abbrev = abbreviate_object_id_with_prefix_cache(
+                    repo,
+                    oid,
+                    min_len,
+                    &mut self.prefix_ambiguous,
+                )?;
+                self.memo.insert(oid, abbrev);
+            }
+            return Ok(());
+        }
+        let hexes: Vec<String> = list.iter().map(ObjectId::to_hex).collect();
+        let mut lens = vec![min_len; list.len()];
+
+        loop {
+            let mut by_prefix: HashMap<String, Vec<usize>> = HashMap::new();
+            for (i, hex) in hexes.iter().enumerate() {
+                let end = lens[i].min(hex.len());
+                by_prefix.entry(hex[..end].to_owned()).or_default().push(i);
+            }
+            let mut bumped = false;
+            for indices in by_prefix.values() {
+                if indices.len() <= 1 {
+                    continue;
+                }
+                bumped = true;
+                for &i in indices {
+                    if lens[i] < 40 {
+                        lens[i] += 1;
+                    }
+                }
+            }
+            if !bumped {
+                break;
+            }
+        }
+
+        for (i, oid) in list.iter().enumerate() {
+            let hex = &hexes[i];
+            let mut len = lens[i].min(hex.len());
+            while len <= hex.len() {
+                let prefix = &hex[..len];
+                if !prefix_is_ambiguous_in_odb(repo, prefix, &mut self.prefix_ambiguous)? {
+                    break;
+                }
+                len += 1;
+            }
+            len = len.min(hex.len());
+            self.memo.insert(*oid, hex[..len].to_owned());
         }
         Ok(())
     }

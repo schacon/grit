@@ -293,8 +293,12 @@ fn attach_path_display(repo: &grit_lib::repo::Repository, mut outcome: DiffOutco
 
 /// Write `git apply`-compatible patch text to stdout (`--patch-text`).
 pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
+    if opts.no_index {
+        anyhow::bail!("--patch-text cannot be used with --no-index");
+    }
     let repo = context::discover()?;
     let config = repo.config().context("could not load config")?;
+    let prefix = pathspec_prefix_for_repo(&repo)?;
     let DiffRunOptions {
         no_index: _,
         staged,
@@ -304,11 +308,38 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
         paths,
         format: _,
         word_level_inline: _,
-        exit_code: _,
-        quiet: _,
+        exit_code,
+        quiet,
         patch_text: _,
     } = opts;
     let (commits, path_args) = disambiguate_diff_revision_and_paths(&repo, commits, paths);
+    let mut diff_options = DiffOptions::from_config(config.as_ref());
+    diff_options.context_lines = CONTEXT_LINES;
+    diff_options.word_level_inline = false;
+    let args = resolve_diff_arguments(
+        &repo,
+        prefix.as_deref(),
+        staged,
+        unstaged,
+        against.as_deref(),
+        &commits,
+        &path_args,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if quiet {
+        let changed = repo
+            .diff()
+            .has_changes(&args.target, &args.pathspecs, diff_options)
+            .context("could not check for diff changes")?;
+        if exit_code {
+            std::process::exit(exit_code(&DiffOutcome {
+                changed,
+                files: Vec::new(),
+                path_display: None,
+            }));
+        }
+        return Ok(());
+    }
     let run_opts = DiffRunOptions {
         no_index: false,
         staged,
@@ -322,9 +353,6 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
         quiet: false,
         patch_text: true,
     };
-    let mut diff_options = DiffOptions::from_config(config.as_ref());
-    diff_options.context_lines = CONTEXT_LINES;
-    diff_options.word_level_inline = false;
     let patch_opts = PatchTextOptions::from_repo(&repo, diff_options)?;
     let mut buf = Vec::new();
     let needs_worktree_bytes =
@@ -344,9 +372,14 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
         write_patch(&repo, &entries, &patch_opts, &mut buf)
             .context("could not write patch text")?;
     }
-    std::io::stdout()
-        .write_all(&buf)
-        .context("could not write patch text to stdout")?;
+    if !buf.is_empty() {
+        std::io::stdout()
+            .write_all(&buf)
+            .context("could not write patch text to stdout")?;
+    }
+    if exit_code {
+        std::process::exit(if buf.is_empty() { 0 } else { 1 });
+    }
     Ok(())
 }
 
