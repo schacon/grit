@@ -419,6 +419,7 @@ pub fn ahead_behind_of_target_commits(
             std::slice::from_ref(&head),
             &[target],
             ReachableWalkLimit::CountAllRetainNewest(retain_newest_ahead),
+            ReachableWalkCommitterCutoffs::default(),
         )?
     };
 
@@ -430,6 +431,7 @@ pub fn ahead_behind_of_target_commits(
             std::slice::from_ref(&target),
             &[head],
             ReachableWalkLimit::CountAllRetainNewest(0),
+            ReachableWalkCommitterCutoffs::default(),
         )?
         .0
     };
@@ -741,6 +743,7 @@ pub fn walk_commits_reachable_excluding_ancestors_of(
     tips: &[ObjectId],
     hide: &[ObjectId],
     limit: ReachableWalkLimit,
+    cutoffs: ReachableWalkCommitterCutoffs,
 ) -> Result<(usize, Vec<ObjectId>)> {
     walk_commits_reachable_excluding_ancestors_of_cutoffs(
         repo,
@@ -807,6 +810,7 @@ pub fn ahead_of_target_commits(
         std::slice::from_ref(&head),
         &[target],
         ReachableWalkLimit::CountAllRetainNewest(retain_newest),
+        ReachableWalkCommitterCutoffs::default(),
     )
 }
 
@@ -1106,6 +1110,7 @@ pub fn commits_reachable_excluding_ancestors_of(
     tips: &[ObjectId],
     hide: &[ObjectId],
     limit: Option<usize>,
+    cutoffs: ReachableWalkCommitterCutoffs,
 ) -> Result<Vec<ObjectId>> {
     commits_reachable_excluding_ancestors_of_cutoffs(
         repo,
@@ -2059,17 +2064,30 @@ mod tests {
         let c2 = write_commit_same_time(&repo.odb(), &[c1], "two", 200)?;
         let c3 = write_commit_same_time(&repo.odb(), &[c2], "three", 300)?;
 
-        let all = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], None)?;
+        let all =
+            commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], None, Default::default())?;
         assert_eq!(all, vec![c3, c2, c1]);
 
-        let limited = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[], Some(2))?;
+        let limited = commits_reachable_excluding_ancestors_of(
+            &repo,
+            &[c3],
+            &[],
+            Some(2),
+            Default::default(),
+        )?;
         assert_eq!(limited, vec![c3, c2]);
 
         let (total, retained) = ahead_of_target_commits(&repo, c3, c1, 1)?;
         assert_eq!(total, 2);
         assert_eq!(retained, vec![c3]);
 
-        let ahead = commits_reachable_excluding_ancestors_of(&repo, &[c3], &[c1], None)?;
+        let ahead = commits_reachable_excluding_ancestors_of(
+            &repo,
+            &[c3],
+            &[c1],
+            None,
+            Default::default(),
+        )?;
         assert_eq!(ahead, vec![c3, c2]);
 
         Ok(())
@@ -2086,7 +2104,8 @@ mod tests {
 
         fs::write(repo.git_dir().join("shallow"), format!("{tip}\n")).map_err(Error::Io)?;
 
-        let out = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None)?;
+        let out =
+            commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None, Default::default())?;
         assert_eq!(out, vec![tip]);
 
         Ok(())
@@ -2133,7 +2152,9 @@ mod tests {
             .expect("oid");
         let tip = write_commit_same_time(&repo.odb(), &[missing], "tip", 100)?;
 
-        let err = commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None).unwrap_err();
+        let err =
+            commits_reachable_excluding_ancestors_of(&repo, &[tip], &[], None, Default::default())
+                .unwrap_err();
         assert!(matches!(err, Error::ObjectNotFound(_)));
 
         Ok(())

@@ -73,6 +73,7 @@ pub fn run_revwalk_suite(
     };
     let bare = ensure_fixture(git, profile, NetworkFixtureKind::DeepHistory)?;
     let worktree = clone_deep_worktree(git, &bare)?;
+    let bench_exe = std::env::current_exe().context("grit-bench exe")?;
     let mut scenarios = Vec::new();
     // Committer timestamps are `1 + commit_index` (see `write_deep_history_fast_import`).
     // Use a cutoff that leaves ~20 commits at the tip so `-n 20` matches grit's Unix `--since`.

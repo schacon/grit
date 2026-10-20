@@ -114,7 +114,6 @@ pub fn run(rev: RevSelectArgs, count: bool, left_right: bool) -> Result<RevsOutc
     }
     let walk = repo.rev_walk();
     let token_refs = rev.rev_tokens(&[]);
-
     if count {
         if rev.max_count == Some(0) {
             return Ok(RevsOutcome {
