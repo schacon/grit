@@ -12,6 +12,8 @@ mod context;
 mod dates;
 mod diagnostics;
 mod diff_args;
+mod diff_format;
+mod diff_render;
 mod json_error;
 mod json_filter;
 #[cfg(test)]
@@ -512,9 +514,6 @@ enum Command {
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
     Diff {
-        /// Compare two filesystem paths outside any repository (Git `--no-index`).
-        #[arg(long = "no-index")]
-        no_index: bool,
         /// Staged changes only (index vs HEAD).
         #[arg(short = 'S', long = "staged", visible_aliases = ["cached"])]
         staged: bool,
@@ -530,17 +529,14 @@ enum Command {
         /// Print nothing; implies `--exit-code`.
         #[arg(long = "quiet")]
         quiet: bool,
-        /// Emit a unified patch for `git apply` (not compatible with `--json`).
-        #[arg(long = "patch-text")]
-        patch_text: bool,
         /// One commit (that commit's patch), two commits (tree diff), or a range `A..B` / `A...B`.
         #[arg(value_name = "COMMIT")]
         commits: Vec<String>,
-        /// With `--no-index`, exactly two paths. Otherwise limit the diff (after `--`, like `grit log`).
+        /// Limit the diff to these paths (after `--`, like `grit log`).
         #[arg(value_name = "PATH", last = true)]
         paths: Vec<String>,
         #[command(flatten)]
-        format: diff_args::DiffFormatArgs,
+        format: diff_format::DiffFormatArgs,
     },
     /// Show information about a commit, tag, or branch (defaults to HEAD).
     Show {
@@ -1152,23 +1148,17 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             ctx,
         ),
         Command::Diff {
-            no_index,
             staged,
             unstaged,
             against,
             exit_code,
             quiet,
-            patch_text,
             commits,
             paths,
             format,
         } => {
-            if patch_text && matches!(opts.mode, crate::output::OutputMode::Json) {
-                anyhow::bail!("--patch-text cannot be used with --json");
-            }
-            let exit_code = exit_code || quiet || no_index;
-            let run_opts = commands::diff::DiffRunOptions {
-                no_index,
+            let wants_exit_code = exit_code || quiet;
+            match commands::diff::run(commands::diff::DiffRunOptions {
                 staged,
                 unstaged,
                 against,
@@ -1177,27 +1167,21 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 format,
                 word_level_inline: matches!(opts.mode, crate::output::OutputMode::Human)
                     && commands::diff::diff_word_level_inline_for_output(),
-                exit_code,
+                exit_code: wants_exit_code,
                 quiet,
-                patch_text,
-            };
-            if patch_text {
-                commands::diff::run_patch_text(run_opts)?;
-                return Ok(());
-            }
-            match commands::diff::run(run_opts) {
+            }) {
                 Ok(outcome) => {
                     if !quiet {
                         emit(&outcome, opts, ctx)?;
                     }
-                    if exit_code {
+                    if wants_exit_code {
                         std::process::exit(commands::diff::exit_code(&outcome));
                     }
                     Ok(())
                 }
                 Err(err) => {
                     output::emit_error(&err, opts);
-                    std::process::exit(if exit_code {
+                    std::process::exit(if wants_exit_code {
                         commands::diff::DIFF_ERROR_EXIT
                     } else {
                         1

@@ -133,7 +133,7 @@ pub(crate) fn diffstat(diff: &DiffOutcome) -> DiffStat {
     for file in &diff.files {
         let mut ins = 0;
         let mut del = 0;
-        for hunk in &file.hunks {
+        for hunk in file.hunks.as_deref().into_iter().flatten() {
             for line in &hunk.lines {
                 match line.kind {
                     LineKind::Add => ins += 1,

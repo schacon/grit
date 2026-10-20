@@ -32,18 +32,11 @@ The target branch is the first that exists of: the `target.branch` config value,
 | Task | Command |
 | --- | --- |
 | Uncommitted changes as a diff | `grit diff` |
-| Patch text for `git apply` | `grit diff --patch-text` |
-| Is the tree clean? (exit code only) | `grit diff --quiet` — **0** clean, **1** changed |
-| Diff ignoring whitespace (reformatted code) | `grit diff -w` |
-| Diff with no context lines (scripting) | `grit diff -U0` |
-| Patch for `git apply` | `grit diff --patch-text [<commit> [<commit>]]` |
+| Changed paths only | `grit diff --name-only` |
+| Per-file line counts | `grit diff --stat` or `grit diff --numstat` |
 | The change one commit made | `grit diff <commit>` |
 | A commit's message and file summary | `grit show [<commit-or-branch-or-tag>]` |
-| Recent history, ten at a time | `grit log`, then `grit log --cursor <next>` using the `next` value |
-| Compact one-line history | `grit log --oneline` (add `--decorate` for branch/tag labels) |
-| Author commit counts on a range | `grit log --group-by author` (`--count` for totals only; like `git shortlog -sne`) |
-| Filter history by author or message | `grit log --author=<pat>`, `grit log --grep=<pat> -i`, same flags on `grit revs` |
-| List or count commits on ranges | `grit revs <range>…`, `grit revs --count`, `grit revs --count --left-right A...B` |
+| Recent history, ten at a time | `grit log`, then `grit log --before <next>` using the `next` value |
 | Commits on this branch not on the target | `grit shortlog` |
 
 Revisions can be full or short ids, branch or tag names, or expressions like `HEAD~2`.
@@ -69,7 +62,7 @@ $ grit commit -m "Explain what changed and why"
 | Delete a merged branch | `grit branch -d <name>` |
 | Delete regardless | `grit branch -D <name>` |
 
-`grit switch`, `grit merge`, and `grit pull` allow local edits on paths the destination does not change (same scoped rule as Git). `grit pick` and `grit revert` still require a clean worktree. All of these refuse rather than overwrite an untracked file.
+`grit switch`, `grit merge`, `grit pick`, `grit revert` and `grit pull` refuse to run with uncommitted changes. Commit first. They also refuse rather than overwrite an untracked file.
 
 ## Combining work
 

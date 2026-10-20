@@ -52,6 +52,7 @@ pub struct DiffFormatArgs {
 
 impl DiffFormatArgs {
     /// Apply CLI overrides onto repository-configured [`DiffOptions`].
+    #[allow(dead_code)]
     pub fn to_options(&self, base: DiffOptions) -> Result<DiffOptions> {
         let mut options = match self.unified {
             Some(n) => base.with_context_lines(n),
