@@ -128,6 +128,112 @@
       ],
       "type": "object"
     },
+    "DiffTotalsJson": {
+      "description": "Aggregate line counts for `--stat` / `--numstat` JSON.",
+      "properties": {
+        "deletions": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "files_changed": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "insertions": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deletions",
+        "files_changed",
+        "insertions"
+      ],
+      "type": "object"
+    },
+    "FileDiff": {
+      "description": "One changed file.",
+      "properties": {
+        "binary": {
+          "type": "boolean"
+        },
+        "hunks": {
+          "description": "Patch hunks; omitted in JSON unless the output format is a full patch.",
+          "items": {
+            "$ref": "#/definitions/Hunk"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "new_encoding_lossy": {
+          "description": "True when new side bytes were decoded with lossy UTF-8.",
+          "type": "boolean"
+        },
+        "new_mode": {
+          "description": "New git mode (octal), when present on this side.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "old_encoding_lossy": {
+          "description": "True when old side bytes were decoded with lossy UTF-8.",
+          "type": "boolean"
+        },
+        "old_mode": {
+          "description": "Old git mode (octal), when present on this side.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "old_path": {
+          "description": "Pre-rename path, when different from `path`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Display path (the new path, or the old path for a deletion).",
+          "type": "string"
+        },
+        "similarity": {
+          "description": "Rename/copy similarity (0–100).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stat": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LineStatJson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Line counts when `--stat` / `--numstat` / `--shortstat` is active."
+        },
+        "status": {
+          "$ref": "#/definitions/ChangeStatus"
+        }
+      },
+      "required": [
+        "binary",
+        "path",
+        "status"
+      ],
+      "type": "object"
+    },
     "FileStat": {
       "properties": {
         "binary": {
@@ -241,10 +347,20 @@
               "type": "null"
             }
           ],
-          "description": "The files the commit changed, only with `--stat`."
+          "description": "The files the commit changed, only with `--stat` (same shape as [`grit show`](../show/))."
         },
         "subject": {
           "type": "string"
+        },
+        "totals": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DiffTotalsJson"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -276,6 +392,21 @@
         "date",
         "email",
         "name"
+      ],
+      "type": "object"
+    },
+    "Segment": {
+      "description": "A run of text within a line, flagged if it's part of the word-level change.",
+      "properties": {
+        "emphasis": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
       ],
       "type": "object"
     }

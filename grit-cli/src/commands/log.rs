@@ -4,6 +4,7 @@
 //! there's more, prints the command to fetch the next page.
 
 use anyhow::{bail, Context, Result};
+use grit_lib::diff::{CommitFilesManyOptions, DiffOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::group_by::{
     group_commits_by_author, mailmap_for_grouping, GroupByAuthorOptions,
@@ -15,10 +16,14 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
 
-use crate::commands::diff::diff_of_commit;
+use crate::commands::diff::{
+    cli_outcome_from_lib, render_log_commit_diff, resolve_commit_diff_pathspecs, DiffOutcome,
+    DiffTotalsJson, FileDiff,
+};
 use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
 use crate::context::{self, CommitSummary};
+use crate::diff_format::DiffFormatArgs;
 use crate::log_display::{
     decorate_commit_row, render_author_groups_human, render_author_groups_markdown,
     render_oneline_line,
@@ -75,6 +80,12 @@ pub struct LogOutcome {
     #[serde(skip)]
     #[schemars(skip)]
     continuation_args: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    format: DiffFormatArgs,
+    #[serde(skip)]
+    #[schemars(skip)]
+    commit_diffs: Vec<Option<DiffOutcome>>,
 }
 
 fn format_log_cursor_command(rev_args: Option<&str>, cursor: &str) -> String {
@@ -115,9 +126,9 @@ impl HumanRender for LogOutcome {
                 outln!(w, "{line}");
             }
         } else {
-            for (row, commit) in ui::commit_rows(&self.commit_rows, now)
+            for (row, (commit, diff)) in ui::commit_rows(&self.commit_rows, now)
                 .iter()
-                .zip(&self.commits)
+                .zip(self.commits.iter().zip(&self.commit_diffs))
             {
                 let row = if self.display.decorate {
                     decorate_commit_row(row, &commit.commit.refs, head_branch)
@@ -125,8 +136,12 @@ impl HumanRender for LogOutcome {
                     row.clone()
                 };
                 outln!(w, "{row}");
-                if let Some(stat) = &commit.stat {
+                if let Some(outcome) = diff {
+                    render_log_commit_diff(w, outcome)?;
+                } else if let Some(stat) = &commit.stat {
                     render_stat(w, stat, color, None)?;
+                }
+                if diff.is_some() || commit.stat.is_some() {
                     outln!(w);
                 }
             }
@@ -148,7 +163,12 @@ impl HumanRender for LogOutcome {
 pub struct LogCommit {
     #[serde(flatten)]
     pub commit: CommitJson,
-    /// The files the commit changed, only with `--stat`.
+    /// Per-file diff detail when `-p`, `--stat`, `--name-only`, or `--name-status` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<FileDiff>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totals: Option<DiffTotalsJson>,
+    /// The files the commit changed, only with `--stat` (same shape as [`grit show`](../show/)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stat: Option<DiffStat>,
 }
@@ -188,6 +208,19 @@ impl MarkdownRender for LogOutcome {
         } else {
             markdown::print_commit_list(w, &self.commit_rows, ctx)?;
         }
+        if self.format.any_format_flag() {
+            for (row, diff) in self.commit_rows.iter().zip(&self.commit_diffs) {
+                if let Some(outcome) = diff {
+                    if outcome.files.is_empty() {
+                        continue;
+                    }
+                    outln!(w);
+                    let oid = row.oid.to_hex();
+                    outln!(w, "### `{oid}`");
+                    outcome.render_markdown(w, ctx)?;
+                }
+            }
+        }
         if let Some(next) = &self.next {
             outln!(w);
             let cmd = format_log_cursor_command(self.continuation_args.as_deref(), next);
@@ -200,13 +233,13 @@ impl MarkdownRender for LogOutcome {
 pub fn run(
     rev: RevSelectArgs,
     cursor: Option<String>,
-    stat: bool,
+    format: DiffFormatArgs,
     display: LogDisplayOptions,
     output_mode: OutputMode,
 ) -> Result<LogOutcome> {
     if display.group_by.is_some() {
-        if stat {
-            bail!("`grit log` cannot combine `--stat` with `--group-by`");
+        if format.any_format_flag() {
+            bail!("`grit log` cannot combine diff format flags with `--group-by`");
         }
         if display.oneline {
             bail!("`grit log` cannot combine `--oneline` with `--group-by`");
@@ -268,7 +301,8 @@ pub fn run(
         return build_commit_outcome(
             &repo,
             &page.commits,
-            stat,
+            format,
+            &rev.paths,
             next,
             truncated,
             display,
@@ -329,7 +363,8 @@ pub fn run(
         return build_commit_outcome(
             &repo,
             &oids,
-            stat,
+            format,
+            &rev.paths,
             None,
             truncated,
             display,
@@ -349,7 +384,8 @@ pub fn run(
     build_commit_outcome(
         &repo,
         &page.commits,
-        stat,
+        format,
+        &rev.paths,
         next,
         truncated,
         display,
@@ -383,6 +419,8 @@ fn empty_outcome(display: LogDisplayOptions) -> Result<LogOutcome> {
         head_branch: None,
         oneline_lines: Vec::new(),
         continuation_args: None,
+        format: DiffFormatArgs::default(),
+        commit_diffs: Vec::new(),
     })
 }
 
@@ -449,6 +487,8 @@ fn build_author_group_outcome_from_groups(
         head_branch: None,
         oneline_lines: Vec::new(),
         continuation_args: None,
+        format: DiffFormatArgs::default(),
+        commit_diffs: Vec::new(),
     })
 }
 
@@ -456,7 +496,8 @@ fn build_author_group_outcome_from_groups(
 fn build_commit_outcome(
     repo: &grit_lib::repo::Repository,
     oids: &[ObjectId],
-    stat: bool,
+    format: DiffFormatArgs,
+    path_args: &[String],
     next: Option<String>,
     truncated: bool,
     display: LogDisplayOptions,
@@ -472,6 +513,7 @@ fn build_commit_outcome(
     } else {
         None
     };
+    let detail = format.detail_for_log();
 
     let (commit_json_rows, commit_rows) = if need_refs {
         let loader = CommitJsonLoader::new(repo)?;
@@ -485,20 +527,61 @@ fn build_commit_outcome(
         (json_rows, summaries)
     };
 
-    let commits = commit_json_rows
-        .into_iter()
-        .zip(oids.iter())
-        .map(|(commit, oid)| {
-            Ok(LogCommit {
+    let config = repo.config().context("could not load config")?;
+    let thread_policy = repo.thread_policy();
+    let pathspecs = if path_args.is_empty() {
+        Vec::new()
+    } else {
+        resolve_commit_diff_pathspecs(repo, path_args)?
+    };
+
+    let many_results = if let Some(detail) = detail {
+        let mut diff_options = DiffOptions::from_config(config.as_ref());
+        format.apply_context(&mut diff_options);
+        diff_options.word_level_inline = false;
+        let opts = CommitFilesManyOptions {
+            diff_options,
+            detail,
+            skip_merge_patches: true,
+        };
+        Some((
+            detail,
+            repo.diff()
+                .commit_files_many(oids, &pathspecs, opts, config.as_ref(), &thread_policy)
+                .context("could not diff commits")?,
+        ))
+    } else {
+        None
+    };
+
+    let mut commits = Vec::with_capacity(oids.len());
+    let mut commit_diffs = Vec::with_capacity(oids.len());
+    for (i, commit) in commit_json_rows.into_iter().enumerate() {
+        if let Some((detail, ref results)) = many_results {
+            let outcome =
+                cli_outcome_from_lib(repo, results[i].output.clone(), detail, format)?;
+            let stat = if format.stat {
+                Some(diffstat(&outcome))
+            } else {
+                None
+            };
+            commits.push(LogCommit {
                 commit,
-                stat: if stat {
-                    Some(diffstat(&diff_of_commit(repo, oid)?))
-                } else {
-                    None
-                },
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+                files: Some(outcome.files.clone()),
+                totals: outcome.totals,
+                stat,
+            });
+            commit_diffs.push(Some(outcome));
+        } else {
+            commits.push(LogCommit {
+                commit,
+                files: None,
+                totals: None,
+                stat: None,
+            });
+            commit_diffs.push(None);
+        }
+    }
 
     let head_branch_ref = head_branch.as_deref();
     let oneline_lines = if display.oneline {
@@ -521,5 +604,7 @@ fn build_commit_outcome(
         head_branch,
         oneline_lines,
         continuation_args,
+        format,
+        commit_diffs,
     })
 }

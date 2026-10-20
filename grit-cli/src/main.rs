@@ -445,9 +445,8 @@ enum Command {
         /// Continue a paged walk using the opaque `next` token from a previous page.
         #[arg(long = "cursor", value_name = "TOKEN")]
         cursor: Option<String>,
-        /// Show which files each commit changed, with insertion and deletion counts.
-        #[arg(long)]
-        stat: bool,
+        #[command(flatten)]
+        format: diff_format::DiffFormatArgs,
         /// One line per commit: short oid and subject (refs when `--decorate`).
         #[arg(long)]
         oneline: bool,
@@ -1076,7 +1075,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
         Command::Log {
             rev,
             cursor,
-            stat,
+            format,
             oneline,
             decorate,
             group_by,
@@ -1094,7 +1093,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 group_count_only: count,
             };
             emit(
-                &commands::log::run(rev, cursor, stat, display, opts.mode)?,
+                &commands::log::run(rev, cursor, format, display, opts.mode)?,
                 opts,
                 ctx,
             )
