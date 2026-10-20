@@ -74,11 +74,23 @@ fn diff_rename_algorithm_filter_flags() {
     assert!(paths.contains(&"b.txt".to_string()));
     assert!(paths.contains(&"a.txt".to_string()));
 
+    let (code, _, stderr) = grit(root, &["diff", "-M30", "HEAD~1", "HEAD", "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+
     let (code, _, stderr) = grit(
         root,
         &["diff", "--find-renames=30", "HEAD~1", "HEAD", "--json"],
     );
     assert_eq!(code, 0, "stderr={stderr}");
+
+    let (code, _, stderr) = grit(
+        root,
+        &["diff", "--find-renames", "HEAD~1", "HEAD", "--json"],
+    );
+    assert_eq!(
+        code, 0,
+        "bare --find-renames must not consume HEAD~1 as threshold: {stderr}"
+    );
 
     let (code, _, stderr) = grit(
         root,

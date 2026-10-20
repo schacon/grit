@@ -109,9 +109,6 @@ mod tests {
             normalize_find_renames_argv(["diff", "-M30", "HEAD~1"]),
             ["diff", "-M=30", "HEAD~1"]
         );
-        assert_eq!(
-            normalize_find_renames_argv(["-M100%"]),
-            ["-M=100%"]
-        );
+        assert_eq!(normalize_find_renames_argv(["-M100%"]), ["-M=100%"]);
     }
 }

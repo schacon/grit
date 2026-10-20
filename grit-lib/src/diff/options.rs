@@ -57,8 +57,8 @@ impl DiffAlgorithm {
     }
 }
 
-/// u32 rename APIs: thresholds `0`–`100` run detection at that Git `-M` percent; values above
-/// [`RENAME_DETECTION_DISABLED`] skip detection (legacy postprocess and `--no-renames` plumbing).
+/// u32 rename APIs: thresholds `0`–`100` run detection at that Git `-M` percent;
+/// [`RENAME_DETECTION_DISABLED`] (101) and above skip detection (legacy postprocess and `--no-renames` plumbing).
 pub const RENAME_DETECTION_DISABLED: u32 = 101;
 
 /// Rename detection policy for tree diffs.
