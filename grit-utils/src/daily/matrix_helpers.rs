@@ -660,6 +660,33 @@ pub fn verify_git_fsck(ctx: &DailyHeadlineContext) -> Result<()> {
     Ok(())
 }
 
+/// On-disk path for the canonical commit-graph file (`.git/objects/info/commit-graph`).
+#[must_use]
+pub fn commit_graph_path(repo: &Path) -> PathBuf {
+    repo.join(".git/objects/info/commit-graph")
+}
+
+/// Whether a non-empty commit-graph file exists (omission-sensitive preflight check).
+#[must_use]
+pub fn commit_graph_present(repo: &Path) -> bool {
+    std::fs::metadata(commit_graph_path(repo)).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+}
+
+/// Validate the commit-graph chain with system `git commit-graph verify`.
+pub fn verify_git_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
+    let mut cmd = Command::new(&ctx.git);
+    cmd.args(["commit-graph", "verify"]).current_dir(&ctx.repo);
+    git_env(&mut cmd);
+    let out = cmd.output().context("git commit-graph verify")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git commit-graph verify failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(())
+}
+
 /// Run one grit subcommand in the scenario repo (for preflight correctness checks).
 pub fn run_grit_in_repo(ctx: &DailyHeadlineContext, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new(&ctx.grit);
@@ -691,7 +718,14 @@ pub fn correctness_grit_repack_full(ctx: &DailyHeadlineContext) -> Result<()> {
 
 /// Preflight `grit gc commit-graph` output before timing `repack/commit-graph@git-git`.
 pub fn correctness_grit_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
-    preflight_grit_gc_then_fsck(ctx, &["gc", "commit-graph"])
+    run_prepare_daily_reset(&ctx.git)?;
+    run_grit_in_repo(ctx, &["gc", "commit-graph"])?;
+    anyhow::ensure!(
+        commit_graph_present(&ctx.repo),
+        "grit gc commit-graph did not write objects/info/commit-graph"
+    );
+    verify_git_commit_graph(ctx)?;
+    verify_git_fsck(ctx)
 }
 
 /// Count loose object files under `.git/objects` (excluding `pack/` and `info/`).
