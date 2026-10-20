@@ -295,7 +295,28 @@ pub(crate) fn file_diffs_from_entries(
     Ok(structured
         .into_iter()
         .map(file_diff_from_tree_structured)
+        .filter(|f| include_file_in_diff(f, opts))
         .collect())
+}
+
+fn include_file_in_diff(file: &FileDiff, opts: DiffOptions) -> bool {
+    if !opts.whitespace.is_active() || file.binary {
+        return true;
+    }
+    if matches!(
+        file.status,
+        DiffStatus::Renamed
+            | DiffStatus::Added
+            | DiffStatus::Deleted
+            | DiffStatus::Copied
+            | DiffStatus::TypeChanged
+    ) {
+        return true;
+    }
+    if file.old_mode != file.new_mode {
+        return true;
+    }
+    !file.hunks.is_empty()
 }
 
 pub(crate) fn collect_files_for_target(
@@ -343,7 +364,7 @@ pub(crate) fn collect_files_for_target(
         }
         DiffTarget::Commit(oid) => {
             let items = commit_changes(repo, oid, &config, &thread_policy, opts, rename_threshold)?;
-            filter_and_map_tree_structured(items, repo, pathspecs)
+            filter_and_map_tree_structured(items, repo, pathspecs, opts)
         }
         DiffTarget::Trees { old, new } => {
             let items = if let Some(base) = old {
@@ -359,7 +380,7 @@ pub(crate) fn collect_files_for_target(
             } else {
                 commit_changes(repo, new, &config, &thread_policy, opts, rename_threshold)?
             };
-            filter_and_map_tree_structured(items, repo, pathspecs)
+            filter_and_map_tree_structured(items, repo, pathspecs, opts)
         }
     };
     Ok(files)
@@ -369,10 +390,12 @@ fn filter_and_map_tree_structured(
     items: Vec<TreeDiffStructured>,
     repo: &Repository,
     pathspecs: &[String],
+    opts: DiffOptions,
 ) -> Vec<FileDiff> {
     filter_tree_diff(items, repo, pathspecs)
         .into_iter()
         .map(file_diff_from_tree_structured)
+        .filter(|f| include_file_in_diff(f, opts))
         .collect()
 }
 
@@ -433,7 +456,10 @@ fn file_diffs_from_worktree_changes(
     let est_bytes = changes.len().saturating_mul(8192);
     Ok(par_map(&changes, par_opts, est_bytes, |fc| {
         build_file_diff(fc, opts)
-    }))
+    })
+    .into_iter()
+    .filter(|f| include_file_in_diff(f, opts))
+    .collect())
 }
 
 fn build_file_diff(fc: &FileChange, diff_options: DiffOptions) -> FileDiff {
@@ -1042,6 +1068,92 @@ fn bytes_for_diff(data: &[u8]) -> (SideBytes, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn include_file_omits_whitespace_only_modified() {
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            new_oid: ObjectId::from_hex("0000000000000000000000000000000000000002").unwrap(),
+            binary: false,
+            content_changed: true,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(!include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_omits_ws_only_even_when_content_changed_false() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: oid,
+            new_oid: oid,
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(!include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_keeps_mode_only_under_whitespace() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100755".into()),
+            old_oid: oid,
+            new_oid: oid,
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_keeps_whitespace_only_rename() {
+        let file = FileDiff {
+            path: "new.txt".into(),
+            old_path: Some("old.txt".into()),
+            status: DiffStatus::Renamed,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            new_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(include_file_in_diff(&file, opts));
+    }
 
     #[test]
     fn resolve_errors_staged_and_unstaged() {

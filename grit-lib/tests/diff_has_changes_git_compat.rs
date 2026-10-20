@@ -223,7 +223,7 @@ fn has_changes_matches_git_exit_code_whitespace_only_unstaged_with_ignore_all_sp
     let repo = open_repo(root);
     let git_code = git_diff_exit(root, &["diff", "-w", "--exit-code"]);
     let mut opts = DiffOptions::default();
-    opts.ignore_all_space = true;
+    opts.whitespace.ignore_all_space = true;
     let grit_changed = repo
         .diff()
         .has_changes(&DiffTarget::WorktreeVsIndex, &[], opts)
@@ -246,7 +246,7 @@ fn has_changes_matches_git_exit_code_whitespace_only_with_ignore_all_space() {
     let repo = open_repo(root);
     let git_code = git_diff_exit(root, &["diff", "--cached", "-w", "--exit-code"]);
     let mut opts = DiffOptions::default();
-    opts.ignore_all_space = true;
+    opts.whitespace.ignore_all_space = true;
     let grit_changed = repo
         .diff()
         .has_changes(&DiffTarget::IndexVsHead, &[], opts)
