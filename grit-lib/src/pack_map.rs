@@ -34,7 +34,7 @@ enum Storage {
     Owned(Vec<u8>),
 }
 
-/// Immutable bytes of a `.pack` or MIDX file.
+/// Immutable bytes of a `.pack`, pack index, commit-graph, or MIDX file.
 ///
 /// # Safety (memory-mapped storage)
 ///
@@ -133,6 +133,12 @@ impl PackData {
         Arc::new(Self {
             storage: Storage::Owned(data),
         })
+    }
+
+    /// True when backing storage is a memory map (not an owned buffer).
+    #[cfg(test)]
+    pub(crate) fn is_mapped_backing(&self) -> bool {
+        matches!(self.storage, Storage::Mapped(_))
     }
 
     /// Fingerprint of the bytes currently held in memory.
