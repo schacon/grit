@@ -77,6 +77,9 @@ fn diff_rename_algorithm_filter_flags() {
     let (code, _, stderr) = grit(root, &["diff", "-M30", "HEAD~1", "HEAD", "--json"]);
     assert_eq!(code, 0, "stderr={stderr}");
 
+    let (code, _, stderr) = grit(root, &["--json", "diff", "-M30", "HEAD~1", "HEAD"]);
+    assert_eq!(code, 0, "global --json before diff: {stderr}");
+
     let (code, _, stderr) = grit(
         root,
         &["diff", "--find-renames=30", "HEAD~1", "HEAD", "--json"],
@@ -122,4 +125,30 @@ fn diff_rename_algorithm_filter_flags() {
 
     let (code, _, stderr) = grit(root, &["diff", "-M", "HEAD~1", "HEAD", "--json"]);
     assert_eq!(code, 0, "-M must not treat HEAD~1 as threshold: {stderr}");
+}
+
+#[test]
+fn diff_dash_m_pathspec_after_double_dash_is_not_rewrite() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["config", "user.email", "t@example.com"]);
+    git(root, &["config", "user.name", "T"]);
+    std::fs::write(root.join("-M30"), "hello\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "base"]);
+    std::fs::write(root.join("-M30"), "hello world\n").unwrap();
+    git(root, &["add", "--", "-M30"]);
+    git(root, &["commit", "-qm", "change"]);
+
+    let (code, stdout, stderr) = grit(root, &["diff", "HEAD~1", "HEAD", "--json", "--", "-M30"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let paths: Vec<_> = json["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(paths, vec!["-M30".to_string()]);
 }

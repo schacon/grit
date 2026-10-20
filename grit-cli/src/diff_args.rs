@@ -89,29 +89,78 @@ impl DiffFormatArgs {
     }
 }
 
-/// Rewrite argv tokens so Git-style attached `-M` thresholds parse under clap (`-M30`, `-M100%`).
+/// Rewrite Git-style attached `-M` thresholds so clap can parse them (`-M30` → `-M=30`).
+///
+/// Only applies to the `diff` subcommand, after global flags and before `--`.
 #[must_use]
-pub fn normalize_find_renames_argv<I, S>(args: I) -> Vec<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let mut out = Vec::new();
-    for arg in args {
-        let s = arg.as_ref();
-        if let Some(rest) = s.strip_prefix("-M") {
-            if rest.is_empty() {
-                out.push("-M".to_owned());
-            } else if rest.starts_with('=') {
-                out.push(s.to_owned());
-            } else {
-                out.push(format!("-M={rest}"));
-            }
-        } else {
-            out.push(s.to_owned());
+pub fn normalize_diff_argv(mut args: Vec<String>) -> Vec<String> {
+    let Some(diff_idx) = locate_diff_subcommand(&args) else {
+        return args;
+    };
+    let mut end = args.len();
+    for (i, arg) in args.iter().enumerate().skip(diff_idx + 1) {
+        if arg == "--" {
+            end = i;
+            break;
         }
     }
-    out
+    for arg in args.iter_mut().take(end).skip(diff_idx + 1) {
+        if let Some(replacement) = rewrite_attached_find_renames(arg) {
+            *arg = replacement;
+        }
+    }
+    args
+}
+
+fn locate_diff_subcommand(args: &[String]) -> Option<usize> {
+    let mut i = 1;
+    while i < args.len() {
+        let token = args[i].as_str();
+        if is_leading_global_flag(token) {
+            i = skip_global_flag(args, i);
+            continue;
+        }
+        if token == "diff" {
+            return Some(i);
+        }
+        return None;
+    }
+    None
+}
+
+fn is_leading_global_flag(token: &str) -> bool {
+    matches!(
+        token,
+        "--json"
+            | "--markdown"
+            | "--filter"
+            | "--threads"
+            | "-v"
+            | "-V"
+            | "--version"
+            | "-h"
+            | "--help"
+    ) || token.starts_with("--filter=")
+        || token.starts_with("--threads=")
+}
+
+fn skip_global_flag(args: &[String], i: usize) -> usize {
+    let token = args[i].as_str();
+    if (token == "--filter" || token == "--threads") && i + 1 < args.len() {
+        return i + 2;
+    }
+    i + 1
+}
+
+fn rewrite_attached_find_renames(token: &str) -> Option<String> {
+    if token == "-M" || token.starts_with("-M=") || token.starts_with("--find-renames") {
+        return None;
+    }
+    let rest = token.strip_prefix("-M")?;
+    if rest.is_empty() || rest.starts_with('=') {
+        return None;
+    }
+    Some(format!("-M={rest}"))
 }
 
 #[cfg(test)]
@@ -119,11 +168,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_attached_m_threshold() {
-        assert_eq!(
-            normalize_find_renames_argv(["diff", "-M30", "HEAD~1"]),
-            ["diff", "-M=30", "HEAD~1"]
-        );
-        assert_eq!(normalize_find_renames_argv(["-M100%"]), ["-M=100%"]);
+    fn normalize_attached_m_threshold_after_diff() {
+        let args = vec![
+            "grit".into(),
+            "diff".into(),
+            "-M30".into(),
+            "HEAD~1".into(),
+            "HEAD".into(),
+        ];
+        let out = normalize_diff_argv(args);
+        assert_eq!(out[2], "-M=30");
+        let pct = normalize_diff_argv(vec![
+            "grit".into(),
+            "diff".into(),
+            "-M100%".into(),
+            "HEAD".into(),
+        ]);
+        assert_eq!(pct[2], "-M=100%");
+    }
+
+    #[test]
+    fn normalize_attached_m_with_global_json_before_diff() {
+        let args = vec![
+            "grit".into(),
+            "--json".into(),
+            "diff".into(),
+            "-M30".into(),
+            "HEAD~1".into(),
+            "HEAD".into(),
+        ];
+        let out = normalize_diff_argv(args);
+        assert_eq!(out[3], "-M=30");
+    }
+
+    #[test]
+    fn normalize_skips_pathspecs_after_double_dash() {
+        let args = vec![
+            "grit".into(),
+            "diff".into(),
+            "HEAD~1".into(),
+            "HEAD".into(),
+            "--".into(),
+            "-M30".into(),
+        ];
+        let out = normalize_diff_argv(args);
+        assert_eq!(out.last().map(String::as_str), Some("-M30"));
+    }
+
+    #[test]
+    fn normalize_global_filter_with_value_before_diff() {
+        let args = vec![
+            "grit".into(),
+            "--filter".into(),
+            ".files".into(),
+            "diff".into(),
+            "-M5".into(),
+            "HEAD".into(),
+        ];
+        let out = normalize_diff_argv(args);
+        assert_eq!(out[4], "-M=5");
+    }
+
+    #[test]
+    fn normalize_global_threads_with_value_before_diff() {
+        let args = vec![
+            "grit".into(),
+            "--threads".into(),
+            "4".into(),
+            "diff".into(),
+            "-M5".into(),
+            "HEAD".into(),
+        ];
+        let out = normalize_diff_argv(args);
+        assert_eq!(out[4], "-M=5");
     }
 }
