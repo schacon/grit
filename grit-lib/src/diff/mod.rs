@@ -15,6 +15,7 @@
 mod core;
 mod filter;
 pub mod handle;
+mod has_changes;
 mod options;
 mod patch_log;
 mod targets;
@@ -24,6 +25,9 @@ mod unified_emit;
 pub use core::*;
 pub use filter::{DiffFilter, InvalidDiffFilter};
 pub use handle::Diff;
+pub use has_changes::{
+    text_sides_differ, HAS_CHANGES_CALL_COUNT, WORKTREE_HAS_CHANGES_ENTRIES_SCANNED,
+};
 pub use options::{
     renames_from_config, DiffAlgorithm, DiffOptions, RenameDetection, UnknownDiffAlgorithm,
     RENAME_DETECTION_DISABLED, WORD_LEVEL_INLINE_MAX_CHANGED_FILES,

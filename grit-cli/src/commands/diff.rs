@@ -49,6 +49,8 @@ const FG_ON_DIFF: &str = "38;5;231";
 /// Result of `grit diff`.
 #[derive(Serialize, JsonSchema)]
 pub struct DiffOutcome {
+    /// Whether any selected change exists (matches `grit diff --quiet` / `--exit-code`).
+    pub changed: bool,
     pub files: Vec<FileDiff>,
     #[serde(skip)]
     #[schemars(skip)]
@@ -218,6 +220,24 @@ pub struct DiffRunOptions {
     pub format: DiffFormatArgs,
     /// Intra-line word highlights in structured hunks (human TTY output only).
     pub word_level_inline: bool,
+    /// Exit with status 1 when there are changes (Git `--exit-code`). Consumed in `main`, not in [`run`].
+    #[allow(dead_code)]
+    pub exit_code: bool,
+    /// Print nothing; implies [`Self::exit_code`].
+    pub quiet: bool,
+}
+
+/// Exit status when `grit diff` fails while `--exit-code` or `--quiet` is set.
+pub const DIFF_ERROR_EXIT: i32 = 2;
+
+/// Process exit code for `--exit-code` / `--quiet`: 0 when clean, 1 when changed.
+#[must_use]
+pub fn exit_code(outcome: &DiffOutcome) -> i32 {
+    if outcome.changed {
+        1
+    } else {
+        0
+    }
 }
 
 /// Whether human diff output should compute word-level inline emphasis.
@@ -259,14 +279,30 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
         &opts.paths,
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if opts.quiet {
+        let changed = repo
+            .diff()
+            .has_changes(&args.target, &args.pathspecs, diff_options)
+            .context("could not check for diff changes")?;
+        return Ok(attach_path_display(
+            &repo,
+            DiffOutcome {
+                changed,
+                files: Vec::new(),
+                path_display: None,
+            },
+        ));
+    }
     let files = repo
         .diff()
         .files(&args.target, &args.pathspecs, &diff_options)
         .context("could not build diff")?;
+    let files: Vec<FileDiff> = files.into_iter().map(FileDiff::from).collect();
     Ok(attach_path_display(
         &repo,
         DiffOutcome {
-            files: files.into_iter().map(FileDiff::from).collect(),
+            changed: !files.is_empty(),
+            files,
             path_display: None,
         },
     ))
@@ -281,10 +317,12 @@ pub fn diff_of_commit(repo: &grit_lib::repo::Repository, oid: &ObjectId) -> Resu
         .diff()
         .files(&DiffTarget::Commit(*oid), &[], &diff_options)
         .context("could not build diff")?;
+    let files: Vec<FileDiff> = files.into_iter().map(FileDiff::from).collect();
     Ok(attach_path_display(
         repo,
         DiffOutcome {
-            files: files.into_iter().map(FileDiff::from).collect(),
+            changed: !files.is_empty(),
+            files,
             path_display: None,
         },
     ))
@@ -302,10 +340,12 @@ pub fn outcome_from_tree_entries(
         .diff()
         .files_from_entries(entries, &diff_options)
         .context("could not build diff")?;
+    let files: Vec<FileDiff> = files.into_iter().map(FileDiff::from).collect();
     Ok(attach_path_display(
         repo,
         DiffOutcome {
-            files: files.into_iter().map(FileDiff::from).collect(),
+            changed: !files.is_empty(),
+            files,
             path_display: None,
         },
     ))
@@ -577,4 +617,71 @@ fn expand_tabs(s: &str, start_col: usize) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod run_has_changes_tests {
+    use super::*;
+    use grit_lib::config::environment::RepositoryOptions;
+    use grit_lib::diff::{DiffTarget, HAS_CHANGES_CALL_COUNT};
+    use grit_lib::repo::Repository;
+    use grit_test_support::git;
+    use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn init_repo(root: &std::path::Path) -> Repository {
+        git(root, &["init", "-q", "-b", "main", "."]);
+        git(root, &["config", "user.email", "t@example.com"]);
+        git(root, &["config", "user.name", "Test"]);
+        std::fs::write(root.join("a.txt"), "v\n").expect("write");
+        git(root, &["add", "a.txt"]);
+        git(root, &["commit", "-qm", "init"]);
+        Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .expect("open")
+    }
+
+    #[test]
+    fn non_quiet_run_does_not_invoke_has_changes() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repo(root);
+        std::fs::write(root.join("a.txt"), "dirty\n").expect("write");
+        HAS_CHANGES_CALL_COUNT.store(0, Ordering::SeqCst);
+        let config = repo.config().expect("config");
+        let mut diff_options = DiffOptions::from_config(config.as_ref());
+        let files = repo
+            .diff()
+            .files(&DiffTarget::WorktreeVsHead, &[], &diff_options)
+            .expect("files");
+        let _ = DiffOutcome {
+            changed: !files.is_empty(),
+            files: files.into_iter().map(FileDiff::from).collect(),
+            path_display: None,
+        };
+        assert_eq!(HAS_CHANGES_CALL_COUNT.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn quiet_path_invokes_has_changes_once() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let repo = init_repo(root);
+        std::fs::write(root.join("a.txt"), "dirty\n").expect("write");
+        HAS_CHANGES_CALL_COUNT.store(0, Ordering::SeqCst);
+        let config = repo.config().expect("config");
+        let diff_options = DiffOptions::from_config(config.as_ref());
+        let changed = repo
+            .diff()
+            .has_changes(&DiffTarget::WorktreeVsHead, &[], diff_options)
+            .expect("has_changes");
+        assert!(changed);
+        assert_eq!(HAS_CHANGES_CALL_COUNT.load(Ordering::SeqCst), 1);
+    }
 }
