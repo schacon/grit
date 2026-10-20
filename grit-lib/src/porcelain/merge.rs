@@ -51,7 +51,9 @@ use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::index_from_tree::{
     index_from_tree_with_worktree_stats, refresh_stage0_index_stats_from_worktree,
 };
-use crate::porcelain::worktree_guard::{ensure_worktree_clean_for_merge, prepare_tree_checkout};
+use crate::porcelain::worktree_guard::{
+    ensure_worktree_clean_for_merge, prepare_tree_checkout, prepare_tree_checkout_with_changes,
+};
 use crate::refs;
 use crate::repo::Repository;
 use crate::state::{clear_merge_state, read_merge_heads, read_orig_head};

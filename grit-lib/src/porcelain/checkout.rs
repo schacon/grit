@@ -894,6 +894,7 @@ fn remove_wholesale_directories_on_disk(
     Ok(wholesale_dirs_removed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn checkout_commit_index_update(
     repo: &Repository,
     index_mut: &mut Index,
@@ -902,7 +903,11 @@ fn checkout_commit_index_update(
     new_entries: Vec<IndexEntry>,
     bulk_index_rewrite: bool,
     checkout_result_tree: Option<crate::objects::ObjectId>,
+    skip_index_updates: bool,
 ) -> Result<()> {
+    if skip_index_updates {
+        return Ok(());
+    }
     let change_count = paths_to_remove.len() + new_entries.len();
     let pre_mtime_max = crate::index::stage0_mtime_max(&index_mut.entries);
     let new_mtime_max = crate::index::stage0_mtime_max(&new_entries);

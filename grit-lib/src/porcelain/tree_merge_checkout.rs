@@ -66,6 +66,8 @@ pub(crate) fn apply_clean_tree_merge_to_worktree(
         &mut snapshot.index,
         CheckoutApplyOptions {
             parallel_prepare_blobs: true,
+            checkout_result_tree: Some(merged.result_tree),
+            skip_index_updates: true,
             ..CheckoutApplyOptions::default()
         },
         None,
