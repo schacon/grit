@@ -40,15 +40,6 @@ fn tree_changes_for_clean_merge_with_snapshot(
     }
 }
 
-/// How [`apply_clean_tree_merge_to_worktree`] updates the index during checkout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CleanTreeMergeCheckoutMode {
-    /// Worktree-only checkout; sparse merge index apply is the only index mutation (pick/revert).
-    WorktreeOnly,
-    /// In-memory index checkout with a single deferred disk write (three-way merge).
-    DeferredIndexWrite,
-}
-
 /// Checkout and index update for a clean merge result (no conflict markers).
 ///
 /// Assumes the worktree is clean and untracked guards pass.
@@ -60,7 +51,6 @@ pub(crate) fn apply_clean_tree_merge_to_worktree(
     repo: &Repository,
     from_tree: &ObjectId,
     merged: &TreeMergeOutput,
-    mode: CleanTreeMergeCheckoutMode,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree()
@@ -72,24 +62,14 @@ pub(crate) fn apply_clean_tree_merge_to_worktree(
         collect_untracked_for_tree_changes(repo, &mut snapshot.index, work_tree, &tree_changes)?;
     ensure_no_untracked_overwrite(&untracked, &tree_changes)?;
 
-    let checkout_apply = match mode {
-        CleanTreeMergeCheckoutMode::WorktreeOnly => CheckoutApplyOptions {
-            parallel_prepare_blobs: true,
-            skip_index_updates: true,
-            ..CheckoutApplyOptions::default()
-        },
-        CleanTreeMergeCheckoutMode::DeferredIndexWrite => CheckoutApplyOptions {
-            parallel_prepare_blobs: true,
-            checkout_result_tree: Some(merged.result_tree),
-            defer_index_disk_write: true,
-            ..CheckoutApplyOptions::default()
-        },
-    };
     checkout_tree_changes_with_index_opts(
         repo,
         &tree_changes,
         &mut snapshot.index,
-        checkout_apply,
+        CheckoutApplyOptions {
+            parallel_prepare_blobs: true,
+            ..CheckoutApplyOptions::default()
+        },
         None,
     )?;
     apply_tree_merge_output_to_worktree_index(repo, &mut snapshot.index, merged)?;

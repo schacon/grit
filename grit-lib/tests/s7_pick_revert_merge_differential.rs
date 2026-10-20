@@ -67,6 +67,22 @@ fn index_stage0_fingerprint(wt: &std::path::Path) -> Vec<String> {
     git_index_stage0_fingerprint(wt)
 }
 
+/// Stage-0 index rows and git's cached/staged diff vs HEAD (matches post-pick/revert/merge expectations).
+fn assert_git_index_matches_head_and_clean(wt: &std::path::Path) {
+    assert!(
+        git(wt, &["diff-index", "--cached", "HEAD"])
+            .trim()
+            .is_empty(),
+        "expected no staged diff vs HEAD: {}",
+        git(wt, &["diff-index", "--cached", "HEAD"])
+    );
+    assert!(
+        git(wt, &["status", "--porcelain"]).trim().is_empty(),
+        "expected clean porcelain status: {}",
+        git(wt, &["status", "--porcelain"])
+    );
+}
+
 fn worktree_fingerprint(wt: &std::path::Path) -> Vec<u8> {
     let mut out = Vec::new();
     fn walk(dir: &std::path::Path, prefix: &str, out: &mut Vec<u8>) {
@@ -141,6 +157,7 @@ fn s7_differential_pick_matches_git() {
         index_stage0_fingerprint(grit_dir.path()),
         git_index_stage0_fingerprint(git_dir.path())
     );
+    assert_git_index_matches_head_and_clean(grit_dir.path());
 }
 
 #[test]
@@ -180,6 +197,7 @@ fn s7_differential_revert_matches_git() {
         index_stage0_fingerprint(grit_dir.path()),
         git_index_stage0_fingerprint(git_dir.path())
     );
+    assert_git_index_matches_head_and_clean(grit_dir.path());
 }
 
 #[test]
@@ -222,6 +240,7 @@ fn s7_differential_merge_matches_git() {
         index_stage0_fingerprint(grit_dir.path()),
         git_index_stage0_fingerprint(git_dir.path())
     );
+    assert_git_index_matches_head_and_clean(grit_dir.path());
 }
 
 #[test]

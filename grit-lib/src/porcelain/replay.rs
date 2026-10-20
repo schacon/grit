@@ -18,9 +18,7 @@ use crate::objects::{parse_commit, CommitData, ObjectId, ObjectKind};
 use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::revert::merge_commit_message_for_revert;
-use crate::porcelain::tree_merge_checkout::{
-    apply_clean_tree_merge_to_worktree, CleanTreeMergeCheckoutMode,
-};
+use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
 use crate::porcelain::worktree_guard::ensure_worktree_clean_for_pick;
 use crate::refs::{
     resolve_ref, should_autocreate_reflog_with_config, update_branch_for_commit_with_config,
@@ -188,12 +186,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
         let current = resolve_ref(repo.git_dir(), &refname).ok();
         crate::refs::verify_branch_commit_cas(Some(head_oid), current, &refname)?;
 
-        apply_clean_tree_merge_to_worktree(
-            repo,
-            &head_tree,
-            &merged,
-            CleanTreeMergeCheckoutMode::WorktreeOnly,
-        )?;
+        apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged)?;
 
         if let Err(err) =
             update_branch_for_commit_with_config(repo.git_dir(), &ref_update, config.as_ref())
@@ -212,12 +205,7 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
             BranchCommitRefLock::acquire(repo.git_dir(), &refname, Some(head_oid))?;
         branch_ref_lock.write_reflogs(repo.git_dir(), &ref_update, &head_oid, config.as_ref())?;
 
-        apply_clean_tree_merge_to_worktree(
-            repo,
-            &head_tree,
-            &merged,
-            CleanTreeMergeCheckoutMode::WorktreeOnly,
-        )?;
+        apply_clean_tree_merge_to_worktree(repo, &head_tree, &merged)?;
 
         if let Err(err) = branch_ref_lock.finish_ref_commit(repo.git_dir(), &ref_update) {
             undo_prepared_branch_commit_reflogs(repo.git_dir(), &refname, config.as_ref());

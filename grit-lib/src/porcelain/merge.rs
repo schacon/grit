@@ -50,12 +50,8 @@ use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::index_from_tree::{
     index_from_tree_with_worktree_stats, refresh_stage0_index_stats_from_worktree,
 };
-use crate::porcelain::tree_merge_checkout::{
-    apply_clean_tree_merge_to_worktree, CleanTreeMergeCheckoutMode,
-};
-use crate::porcelain::worktree_guard::{
-    ensure_worktree_clean_for_merge, prepare_tree_checkout, prepare_tree_checkout_with_changes,
-};
+use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
+use crate::porcelain::worktree_guard::{ensure_worktree_clean_for_merge, prepare_tree_checkout};
 use crate::refs;
 use crate::repo::Repository;
 use crate::state::{clear_merge_state, read_merge_heads, read_orig_head};
@@ -293,8 +289,7 @@ pub fn integrate_branch(
     let other_tree = commit_tree(repo, &other_oid)?;
 
     if is_ancestor(repo, into_oid, other_oid)? {
-        let ff_changes = diff_trees(repo.odb(), Some(&into_tree), Some(&other_tree), "")?;
-        prepare_tree_checkout_with_changes(repo, &ff_changes)?;
+        prepare_tree_checkout(repo, Some(&into_tree), &other_tree)?;
         checkout_between_trees(repo, Some(&into_tree), &other_tree)?;
         move_branch(
             repo,
@@ -356,12 +351,7 @@ pub fn integrate_branch(
         "GIT_COMMITTER_DATE",
     )?;
 
-    apply_clean_tree_merge_to_worktree(
-        repo,
-        &into_tree,
-        &merged,
-        CleanTreeMergeCheckoutMode::DeferredIndexWrite,
-    )?;
+    apply_clean_tree_merge_to_worktree(repo, &into_tree, &merged)?;
 
     let commit = CommitData {
         tree: merged.result_tree,

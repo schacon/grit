@@ -781,7 +781,6 @@ fn checkout_prepared_tree_transition(
             wholesale_safety_precomputed: prepared.wholesale_safety_precomputed,
             skip_bulk_checkout_fast_path: false,
             checkout_result_tree: Some(prepared.target_tree),
-            skip_index_updates: false,
             defer_index_disk_write: false,
         },
         attribute_changes,
