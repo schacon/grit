@@ -5,6 +5,10 @@ summary: Tree-to-tree and index-to-worktree diffs, blob patches, and the DiffEnt
 
 Diffing in grit-lib centers on the [`diff`](rustdoc:grit_lib::diff) domain module (tree/content diff, merge helpers, patch-ids). Prefer `Repository::diff` (`Diff`) for tree, index, and worktree comparisons on one open handle. Results are `DiffEntry` rows with a `DiffStatus` letter (`M`, `A`, `D`, …), paths, modes, and object ids — the same shape [`grit diff`](../../diff/) and `porcelain::status` use before formatting output. See [API layout](../api-layout/) for the flat-path map.
 
+## Selecting what to diff
+
+Porcelain and the CLI resolve user arguments into a [`DiffTarget`](rustdoc:grit_lib::diff::DiffTarget) with [`resolve_diff_arguments`](rustdoc:grit_lib::diff::resolve_diff_arguments): uncommitted changes (`WorktreeVsHead`), `--staged` (`IndexVsHead`), `--unstaged` (`WorktreeVsIndex`), `--against <ref>` (`WorktreeVsTree`), a single commit (`Commit`), or a commit range (`Trees`). Call [`Diff::files`](rustdoc:grit_lib::diff::Diff::files) with normalized pathspecs and [`DiffOptions`](rustdoc:grit_lib::diff::DiffOptions) to obtain [`FileDiff`](rustdoc:grit_lib::diff::FileDiff) rows (structured hunks plus paths, modes, and OIDs).
+
 ## Tree-to-tree
 
 `diff_trees` compares two tree objects recursively and returns changed paths. Pass `None` for either side to diff against an empty tree. `diff_trees_show_tree_entries` can emit tree objects themselves (Git’s `diff-tree -t` behavior).

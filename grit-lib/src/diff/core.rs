@@ -6267,10 +6267,11 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
     for path in &all_paths {
         if index_entries
             .get(path.as_bytes())
-            .is_some_and(|ie| ie.skip_worktree())
+            .is_some_and(|ie| ie.skip_worktree() || ie.assume_unchanged())
         {
             // Sparse checkout: `git diff <rev>` does not report tree↔worktree drift for
             // skip-worktree paths (they are outside the sparse cone). Matches t7012 stash flow.
+            // Assume-unchanged (`CE_VALID`) paths are likewise omitted (Git `diff-lib.c`).
             continue;
         }
 
