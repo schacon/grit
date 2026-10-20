@@ -308,7 +308,7 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
         paths,
         format: _,
         word_level_inline: _,
-        exit_code,
+        exit_code: wants_exit_code,
         quiet,
         patch_text: _,
     } = opts;
@@ -331,7 +331,7 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
             .diff()
             .has_changes(&args.target, &args.pathspecs, diff_options)
             .context("could not check for diff changes")?;
-        if exit_code {
+        if wants_exit_code {
             std::process::exit(exit_code(&DiffOutcome {
                 changed,
                 files: Vec::new(),
@@ -377,7 +377,7 @@ pub fn run_patch_text(opts: DiffRunOptions) -> Result<()> {
             .write_all(&buf)
             .context("could not write patch text to stdout")?;
     }
-    if exit_code {
+    if wants_exit_code {
         std::process::exit(if buf.is_empty() { 0 } else { 1 });
     }
     Ok(())
