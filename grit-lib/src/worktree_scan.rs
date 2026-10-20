@@ -957,7 +957,7 @@ pub(crate) fn collect_blob_lookup_batches(
             index,
             plan,
             threads,
-            &symlink_missing,
+            symlink_missing,
             Arc::clone(&dir_abs_arc),
             Arc::clone(&file_abs_arc),
             sparse,
@@ -966,7 +966,7 @@ pub(crate) fn collect_blob_lookup_batches(
         let (batch, scanned) = collect_blob_lookups_serial(
             index,
             plan,
-            &symlink_missing,
+            symlink_missing,
             dir_abs_arc.as_ref(),
             file_abs_arc.as_ref(),
             sparse,
