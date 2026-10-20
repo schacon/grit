@@ -939,6 +939,12 @@ pub struct CommitGraphChain {
     layers: Vec<CommitGraphLayer>,
 }
 
+/// Test-only constructor (tip-first layer order).
+#[doc(hidden)]
+pub fn commit_graph_chain_from_layers_for_test(layers: Vec<CommitGraphLayer>) -> CommitGraphChain {
+    CommitGraphChain { layers }
+}
+
 impl CommitGraphChain {
     /// Bloom settings from the newest layer, if that layer carries Bloom data.
     #[must_use]
