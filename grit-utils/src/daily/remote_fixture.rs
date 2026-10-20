@@ -203,16 +203,6 @@ fn configure_client_remote(git: &Path, client: &Path, remote: &DailyRemoteState)
     configure_remote(git, client, &remote.remote_url, &remote.meta.default_branch)
 }
 
-fn ctx_with_remote(
-    repo: PathBuf,
-    setup: &DailySetup<'_>,
-    remote: DailyRemoteState,
-) -> DailyHeadlineContext {
-    let mut ctx = DailyHeadlineContext::new(repo, setup.git, setup.grit, setup.smoke);
-    ctx.remote = Some(remote);
-    ctx
-}
-
 pub fn setup_git_git_file_remote(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
     with_remote_scratch("git-git", |scratch| {
         let bare = scratch.join("remote.git");
@@ -561,9 +551,9 @@ pub fn verify_push_incremental_http(ctx: &DailyHeadlineContext, cwd: &Path) -> R
             "http push after grit: served remote {http_tip_after_grit} != client {client_tip_grit}"
         );
     }
-    if client_tip_git != client_tip_grit {
+    if http_tip_after_git != http_tip_after_grit {
         bail!(
-            "http push parity: git client tip {client_tip_git} != grit client tip {client_tip_grit}"
+            "http push parity: git remote tip {http_tip_after_git} != grit remote tip {http_tip_after_grit}"
         );
     }
     Ok(())

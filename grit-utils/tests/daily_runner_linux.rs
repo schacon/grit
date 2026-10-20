@@ -176,3 +176,29 @@ fn timeout_reports_typed_failure() {
         .expect("direct timeout");
     assert_eq!(out.status.code(), Some(EXIT_TIMEOUT));
 }
+
+#[test]
+fn ab_bench_fails_when_timed_command_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ok = BenchArgv::new("/bin/true", Vec::<String>::new());
+    let fail = BenchArgv::new("/bin/false", Vec::<String>::new());
+    let policy = RunPolicy {
+        warmups_per_tool: 0,
+        min_runs_per_tool: 1,
+        max_runs_per_tool: 1,
+        min_total_timed_duration: Duration::from_millis(0),
+        scenario_time_budget: Duration::from_secs(30),
+    };
+    let err = run_ab_bench(&AbBenchRequest {
+        cwd: dir.path(),
+        git: &ok,
+        grit: &fail,
+        prepare: None,
+        policy: &policy,
+        limits: &RunLimits::default(),
+        measure_helper: Path::new(bench_exe()),
+        correctness: None,
+    })
+    .expect_err("failed grit timed run must fail the scenario");
+    assert!(err.to_string().contains("grit timed run"), "{err}");
+}

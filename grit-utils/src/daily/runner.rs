@@ -257,6 +257,9 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
         next_git = !next_git;
     }
 
+    ensure_timed_series_success("git", &git_samples)?;
+    ensure_timed_series_success("grit", &grit_samples)?;
+
     Ok(AbBenchOutcome {
         git: ToolSeries {
             stats: timing_stats_from_samples(&git_samples),
@@ -267,6 +270,19 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
             samples: grit_samples,
         },
     })
+}
+
+fn ensure_timed_series_success(tool: &str, samples: &[TimedRunSample]) -> Result<()> {
+    for (index, sample) in samples.iter().enumerate() {
+        if sample_succeeded(sample) {
+            continue;
+        }
+        anyhow::bail!("{tool} timed run {index} failed: {:?}", sample.termination);
+    }
+    if samples.is_empty() {
+        anyhow::bail!("{tool} produced no timed samples");
+    }
+    Ok(())
 }
 
 pub(crate) fn run_prepare(cwd: &Path, prepare: Option<&BenchArgv>) -> Result<()> {
