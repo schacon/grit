@@ -537,9 +537,7 @@ pub fn verify_push_incremental_http(ctx: &DailyHeadlineContext, cwd: &Path) -> R
     )?;
     let http_tip_after_git = ref_oid(&ctx.git, &http_bare, &branch_ref)?;
     if http_tip_after_git != client_tip_git {
-        bail!(
-            "http push after git: served remote {http_tip_after_git} != client {client_tip_git}"
-        );
+        bail!("http push after git: served remote {http_tip_after_git} != client {client_tip_git}");
     }
 
     prepare_network_push(&ctx.git, &remote.bare)?;
@@ -620,10 +618,7 @@ pub fn clone_bench_script(tool: &Path, url: &str, dest: &Path) -> String {
     let tool_q = shell_quote(&tool.to_string_lossy());
     let url_q = shell_quote(url);
     let dest_q = shell_quote(&dest.to_string_lossy());
-    let dest_name = dest
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("clone");
+    let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("clone");
     format!("rm -rf {dest_q} && {tool_q} clone -q {url_q} {dest_name}")
 }
 
@@ -650,9 +645,6 @@ pub fn clone_bench_script_grit(tool: &Path, url: &str, dest: &Path) -> String {
     let tool_q = shell_quote(&tool.to_string_lossy());
     let url_q = shell_quote(url);
     let dest_q = shell_quote(&dest.to_string_lossy());
-    let dest_name = dest
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("clone");
+    let dest_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("clone");
     format!("rm -rf {dest_q} && {tool_q} clone {url_q} {dest_name}")
 }
