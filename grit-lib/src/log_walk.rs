@@ -1,7 +1,7 @@
 //! Resumable HEAD log walks for bounded `grit log` paging.
 //!
 //! [`LogWalkCursor`] encodes the heap and visited sets of the date-order reachable walk
-//! so `--before` continues the same traversal instead of restarting from a single commit.
+//! so `--cursor` continues the same traversal instead of restarting from a single commit.
 
 use std::io::{Cursor, Read, Write};
 
@@ -126,7 +126,7 @@ impl LogWalkCursor {
         Ok(LogWalkPage { commits, next })
     }
 
-    /// Encode this cursor for `--before` (URL-safe, opaque to callers).
+    /// Encode this cursor for `--cursor` (URL-safe, opaque to callers).
     ///
     /// # Errors
     ///
@@ -137,7 +137,7 @@ impl LogWalkCursor {
         Ok(format!("{CURSOR_PREFIX}{}", base64_encode(&buf)))
     }
 
-    /// Decode a `--before` cursor produced by [`Self::encode`].
+    /// Decode a `--cursor` token produced by [`Self::encode`].
     ///
     /// # Errors
     ///
@@ -513,6 +513,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn since_cutoff_does_not_emit_stale_continuation_cursor() -> Result<()> {
+        let dir = tempdir().map_err(Error::Io)?;
+        let repo = open_repo(&dir)?;
+        let c1 = write_commit(&repo.odb(), &[], "c1", 100)?;
+        let c2 = write_commit(&repo.odb(), &[c1], "c2", 200)?;
+        let c3 = write_commit(&repo.odb(), &[c2], "c3", 300)?;
+        let tip = write_commit(&repo.odb(), &[c3], "tip", 400)?;
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &tip)?;
+        crate::refs::write_symbolic_ref(repo.git_dir(), "HEAD", "refs/heads/main")?;
+
+        let query = LogWalkQuery {
+            tips: vec![tip],
+            hide: Vec::new(),
+            cutoffs: ReachableWalkCommitterCutoffs {
+                since: Some(250),
+                until: None,
+            },
+        };
+        let page = LogWalkCursor::step(&repo, &query, None, 10)?;
+        assert_eq!(page.commits, vec![tip, c3]);
+        assert!(
+            page.next.is_none(),
+            "since cutoff must not leave a continuation cursor with pruned heap state"
+        );
+        Ok(())
     }
 
     #[test]

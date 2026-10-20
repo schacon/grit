@@ -377,6 +377,9 @@ impl<'repo> RevWalk<'repo> {
         }
 
         let mut opts = rev_list_options_from_walk(repo, options, &parsed, all_refs, true)?;
+        // `--count` must not apply `-n`/`--max-count` per side; Git counts the full
+        // left and right sets even when a list limit is also set.
+        opts.max_count = None;
         opts.left_right = true;
         let left_count = {
             let mut left_opts = opts.clone();

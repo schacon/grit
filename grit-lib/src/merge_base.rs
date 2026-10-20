@@ -689,6 +689,7 @@ impl ReachableWalkState {
                         .iter()
                         .all(|pending| pending.time < cutoffs.since.unwrap_or(i64::MIN));
                 if stop {
+                    self.heap.clear();
                     return Ok(None);
                 }
                 continue;
@@ -1740,13 +1741,26 @@ impl<'r> CommitGraphCache<'r> {
         })?;
         self.ensure_single_pack_reader();
         let linkage = if let Some(reader) = self.single_pack.as_mut() {
-            let object = reader.read_object(&commit_oid)?;
-            if object.kind != ObjectKind::Commit {
-                return Err(Error::CorruptObject(format!(
-                    "object {commit_oid} is not a commit"
-                )));
+            match reader.read_object(&commit_oid) {
+                Ok(object) => {
+                    if object.kind != ObjectKind::Commit {
+                        return Err(Error::CorruptObject(format!(
+                            "object {commit_oid} is not a commit"
+                        )));
+                    }
+                    crate::objects::parse_commit_linkage(&object.data)?
+                }
+                Err(Error::ObjectNotFound(_)) => {
+                    let object = self.repo.odb().read(&commit_oid)?;
+                    if object.kind != ObjectKind::Commit {
+                        return Err(Error::CorruptObject(format!(
+                            "object {commit_oid} is not a commit"
+                        )));
+                    }
+                    crate::objects::parse_commit_linkage(&object.data)?
+                }
+                Err(e) => return Err(e),
             }
-            crate::objects::parse_commit_linkage(&object.data)?
         } else {
             let object = self.repo.odb().read(&commit_oid)?;
             if object.kind != ObjectKind::Commit {
@@ -1913,6 +1927,15 @@ mod tests {
         let mut old = tip;
         for _ in 0..1500 {
             old = first_parent_oid(&mut CommitGraphCache::new(&repo), old)?;
+        }
+        {
+            let mut link = repo
+                .caches()
+                .commit_linkage()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            link.parents.clear();
+            link.times.clear();
         }
         reset_intersect_walk_steps();
         reset_commit_parent_lookups();
