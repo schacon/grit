@@ -1304,7 +1304,7 @@ pub fn ensure_worktree_clean_for_pick(repo: &Repository) -> Result<()> {
 /// # Errors
 ///
 /// Returns [`Error::Message`] when changes are present, matching `grit revert` wording.
-pub fn ensure_worktree_clean_for_revert(repo: &Repository) -> Result<()> {
+pub(crate) fn ensure_worktree_clean_for_revert(repo: &Repository) -> Result<()> {
     ensure_worktree_clean_with_message(
         repo,
         "you have uncommitted changes — commit them before reverting",

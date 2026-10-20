@@ -19,7 +19,7 @@ use crate::porcelain::checkout::checkout_between_trees;
 use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::revert::merge_commit_message_for_revert;
 use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
-use crate::porcelain::worktree_guard::ensure_worktree_clean_for_pick;
+use crate::porcelain::worktree_guard::{ensure_worktree_clean_for_pick, ensure_worktree_clean_for_revert};
 use crate::refs::{
     resolve_ref, should_autocreate_reflog_with_config, update_branch_for_commit_with_config,
     BranchCommitRefLock, BranchCommitRefUpdate,
@@ -84,8 +84,6 @@ pub enum ReplayOutcome {
 /// - [`Error::ReplaySourceAtHead`] when picking a commit that is already `HEAD`.
 /// - I/O, ODB, merge, checkout, or ref update failures.
 pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOutcome> {
-    ensure_worktree_clean_for_pick(repo)?;
-
     let (refname, head_oid) = match resolve_head(repo.git_dir())? {
         HeadState::Branch {
             refname,
@@ -112,6 +110,11 @@ pub fn replay_commit(repo: &Repository, req: &ReplayRequest) -> Result<ReplayOut
     let head_tree = commit_tree(repo, &head_oid)?;
     let (base_tree, ours_tree, theirs_tree) =
         merge_trees_for_direction(repo, req.direction, &source, head_tree)?;
+
+    match req.direction {
+        ReplayDirection::Pick => ensure_worktree_clean_for_pick(repo)?,
+        ReplayDirection::Revert => ensure_worktree_clean_for_revert(repo)?,
+    };
 
     if req.direction == ReplayDirection::Pick && base_tree == source.tree {
         return Ok(ReplayOutcome::Empty);

@@ -905,6 +905,15 @@ pub fn refresh_tree_merge_index_stat_cache(
         if entry.mode != MODE_REGULAR && entry.mode != crate::index::MODE_EXECUTABLE {
             continue;
         }
+        if let Some(existing) = index.get(&entry.path, 0) {
+            if existing.oid == entry.oid
+                && existing.mode == entry.mode
+                && existing.size > 0
+                && (existing.mtime_sec > 0 || existing.ctime_sec > 0)
+            {
+                continue;
+            }
+        }
         let abs = worktree_path_from_index_rel(work_tree, &entry.path);
         if !abs.is_file() {
             continue;

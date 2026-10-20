@@ -54,6 +54,19 @@ fn head_tree_hex(wt: &std::path::Path) -> String {
     git(wt, &["rev-parse", "HEAD^{tree}"]).trim().to_owned()
 }
 
+fn git_index_stage0_fingerprint(wt: &std::path::Path) -> Vec<String> {
+    git(wt, &["ls-files", "-s"])
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn index_stage0_fingerprint(wt: &std::path::Path) -> Vec<String> {
+    git_index_stage0_fingerprint(wt)
+}
+
 fn worktree_fingerprint(wt: &std::path::Path) -> Vec<u8> {
     let mut out = Vec::new();
     fn walk(dir: &std::path::Path, prefix: &str, out: &mut Vec<u8>) {
@@ -124,6 +137,10 @@ fn s7_differential_pick_matches_git() {
         worktree_fingerprint(grit_dir.path()),
         worktree_fingerprint(git_dir.path())
     );
+    assert_eq!(
+        index_stage0_fingerprint(grit_dir.path()),
+        git_index_stage0_fingerprint(git_dir.path())
+    );
 }
 
 #[test]
@@ -158,6 +175,10 @@ fn s7_differential_revert_matches_git() {
     assert_eq!(
         fs::read_to_string(grit_dir.path().join("a.txt")).expect("grit a"),
         fs::read_to_string(git_dir.path().join("a.txt")).expect("git a"),
+    );
+    assert_eq!(
+        index_stage0_fingerprint(grit_dir.path()),
+        git_index_stage0_fingerprint(git_dir.path())
     );
 }
 
@@ -196,6 +217,10 @@ fn s7_differential_merge_matches_git() {
     assert_eq!(
         worktree_fingerprint(grit_dir.path()),
         worktree_fingerprint(git_dir.path())
+    );
+    assert_eq!(
+        index_stage0_fingerprint(grit_dir.path()),
+        git_index_stage0_fingerprint(git_dir.path())
     );
 }
 
