@@ -309,7 +309,7 @@ pub(crate) mod midx_cache {
     use super::{
         midx_chain_layer_paths_newest_first, midx_load_for_read, open_midx_layer_bytes,
         repo_midx_hash_version_for_objects_dir, MidxLoadResult, MidxReadView,
-        MIDX_LARGE_OFFSET_NEEDED,
+        MIDX_LARGE_OFFSET_NEEDED, MIDX_MIN_FILE_LEN,
     };
     use crate::diagnostics::{DiagnosticSink, Warning};
     use crate::error::{Error, Result};
@@ -317,6 +317,7 @@ pub(crate) mod midx_cache {
     use crate::pack::{read_object_at, read_pack_index_cached, PackIndex};
     use crate::pack_map::PackData;
     use std::collections::HashMap;
+    use std::fs;
     use std::ops::ControlFlow;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -883,6 +884,22 @@ pub(crate) mod midx_cache {
         let mut layers = Vec::with_capacity(path_count);
         let mut pack_names_by_layer = Vec::with_capacity(path_count);
         for path in paths {
+            let file_len = match fs::metadata(&path) {
+                Ok(meta) => meta.len(),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    if require_every_layer {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                Err(err) => return Err(Error::Io(err)),
+            };
+            if file_len < MIDX_MIN_FILE_LEN {
+                if require_every_layer {
+                    return Ok(None);
+                }
+                continue;
+            }
             let bytes = match open_midx_layer_bytes(&path) {
                 Ok(b) => b,
                 Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -3867,6 +3884,27 @@ mod tests {
             .expect("lookup")
             .expect("listed");
         assert_eq!(off, 0x8000_0010);
+    }
+
+    #[test]
+    fn tiny_midx_stub_skipped_without_aborting_reads() {
+        let Some((tmp, oid)) = midx_fixture(true) else {
+            eprintln!("SKIP: git unavailable for MIDX fixture");
+            return;
+        };
+        let objects = tmp.path().join(".git/objects");
+        let pack_dir = objects.join("pack");
+        std::fs::write(pack_dir.join("multi-pack-index"), [0u8; 8]).expect("tiny stub midx");
+        super::midx_cache::evict_pack_dir(&pack_dir);
+        clear_pack_cache();
+
+        assert!(super::prepared_midx_chain(&objects)
+            .expect("tiny MIDX must not fail chain build")
+            .is_none());
+        assert!(try_read_object_via_midx(&objects, &oid)
+            .expect("tiny MIDX must not fail lookup")
+            .is_none());
+        read_object_from_packs(&objects, &oid).expect("pack fallback still works");
     }
 
     #[test]
