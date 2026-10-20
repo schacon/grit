@@ -93,7 +93,7 @@ pub const WORD_LEVEL_INLINE_MAX_CHANGED_FILES: usize = 64;
 
 /// Line-diff options shared by structured output, log patches, and benchmarks.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct DiffOptions {
     /// Unchanged context lines around each change (Git `-U`, default 3).
     pub context_lines: usize,
@@ -109,8 +109,9 @@ pub struct DiffOptions {
     pub filter: Option<DiffFilter>,
     /// When false, skip intra-line word emphasis (line-level hunks only).
     pub word_level_inline: bool,
-    /// `-w`, `-b`, `--ignore-space-at-eol`, and `--ignore-blank-lines`.
-    pub whitespace: WhitespaceMode,
+    /// When set, incremented on each blob ODB read during tree content loading (tests only).
+    #[doc(hidden)]
+    pub blob_read_counter: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Default for DiffOptions {
@@ -123,8 +124,19 @@ impl Default for DiffOptions {
             renames: RenameDetection::default(),
             filter: None,
             word_level_inline: true,
-            whitespace: WhitespaceMode::default(),
+            blob_read_counter: None,
         }
+    }
+}
+
+impl PartialEq for DiffOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.context_lines == other.context_lines
+            && self.inter_hunk_context == other.inter_hunk_context
+            && self.algorithm == other.algorithm
+            && self.indent_heuristic == other.indent_heuristic
+            && self.renames == other.renames
+            && self.word_level_inline == other.word_level_inline
     }
 }
 
@@ -346,7 +358,8 @@ mod tests {
             ..DiffOptions::default()
         };
         assert!(
-            on.cap_word_level_inline_for_changed_files(WORD_LEVEL_INLINE_MAX_CHANGED_FILES)
+            on.clone()
+                .cap_word_level_inline_for_changed_files(WORD_LEVEL_INLINE_MAX_CHANGED_FILES)
                 .word_level_inline
         );
         assert!(

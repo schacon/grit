@@ -8,12 +8,19 @@ use crate::objects::ObjectId;
 use crate::odb::Odb;
 use crate::parallel::{try_par_map_with_local, ParallelHashError};
 use crate::parallel::{ParallelOp, ThreadPolicy};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use super::detail::{line_change_counts, LineStat};
 use super::structured::{structured_file_diff, SideBytes, StructuredFileDiff};
 use super::DiffEntry;
 use super::DiffOptions;
+
+fn note_blob_read(counter: Option<&AtomicUsize>) {
+    if let Some(c) = counter {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// Tree diff entry with structured line hunks ready for CLI rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +70,8 @@ pub fn tree_diff_contents_parallel(
     let est_bytes = entries.len().saturating_mul(8192);
     let rows = parallel_map_indices(odb, entries.len(), par_opts, est_bytes, |i| {
         let entry = &entries[i];
-        let (old_bytes, old_bin) = load_old_side(odb, entry)?;
-        let (new_bytes, new_bin) = load_new_side(odb, entry)?;
+        let (old_bytes, old_bin) = load_old_side(odb, entry, None)?;
+        let (new_bytes, new_bin) = load_new_side(odb, entry, None)?;
         Ok::<TreeDiffContent, Error>(TreeDiffContent {
             entry: entry.clone(),
             old_bytes,
@@ -93,18 +100,21 @@ pub fn tree_diff_stat_parallel(
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
     par_opts.min_total_bytes = None;
+    let line_diff_opts = diff_options;
+    let blob_counter = line_diff_opts.blob_read_counter.clone();
     let store = odb.pack_store_for(odb.objects_dir());
     let rows = try_par_map_with_local(
         &entries,
         par_opts,
         0,
         || PackReadContextGuard::install(Arc::clone(&store)),
-        |_ctx, entry| {
+        move |_ctx, entry| {
+            let blob_reads = blob_counter.as_deref();
             if !entry.old_oid.is_zero()
                 && entry.old_oid == entry.new_oid
                 && entry.old_mode == entry.new_mode
             {
-                let (_, old_bin) = load_old_side(odb, entry)?;
+                let (_, old_bin) = load_old_side(odb, entry, blob_reads)?;
                 let binary = old_bin;
                 return Ok((
                     entry.clone(),
@@ -116,8 +126,8 @@ pub fn tree_diff_stat_parallel(
                     },
                 ));
             }
-            let (old_bytes, old_bin) = load_old_side(odb, entry)?;
-            let (new_bytes, new_bin) = load_new_side(odb, entry)?;
+            let (old_bytes, old_bin) = load_old_side(odb, entry, blob_reads)?;
+            let (new_bytes, new_bin) = load_new_side(odb, entry, blob_reads)?;
             let binary = old_bin || new_bin;
             let stat = if binary {
                 None
@@ -125,7 +135,7 @@ pub fn tree_diff_stat_parallel(
                 Some(line_change_counts(
                     &old_bytes.text(),
                     &new_bytes.text(),
-                    &diff_options,
+                    &line_diff_opts,
                 ))
             };
             Ok((entry.clone(), binary, stat))
@@ -156,13 +166,16 @@ pub fn tree_diff_structured_parallel(
     let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
     par_opts.min_items = 0;
     par_opts.min_total_bytes = None;
+    let line_diff_opts = diff_options;
+    let blob_counter = line_diff_opts.blob_read_counter.clone();
     let store = odb.pack_store_for(odb.objects_dir());
     let rows = try_par_map_with_local(
         &entries,
         par_opts,
         0,
         || PackReadContextGuard::install(Arc::clone(&store)),
-        |_ctx, entry| {
+        move |_ctx, entry| {
+            let blob_reads = blob_counter.as_deref();
             if !entry.old_oid.is_zero()
                 && entry.old_oid == entry.new_oid
                 && entry.old_mode == entry.new_mode
@@ -181,8 +194,8 @@ pub fn tree_diff_structured_parallel(
                     patch_bytes: None,
                 });
             }
-            let (old_bytes, old_bin) = load_old_side(odb, entry)?;
-            let (new_bytes, new_bin) = load_new_side(odb, entry)?;
+            let (old_bytes, old_bin) = load_old_side(odb, entry, blob_reads)?;
+            let (new_bytes, new_bin) = load_new_side(odb, entry, blob_reads)?;
             let binary = old_bin || new_bin;
             let structured = if binary {
                 StructuredFileDiff {
@@ -198,7 +211,7 @@ pub fn tree_diff_structured_parallel(
                     &entry.new_mode,
                     &old_bytes,
                     &new_bytes,
-                    diff_options,
+                    line_diff_opts.clone(),
                 )
             };
             Ok(TreeDiffStructured {
@@ -223,7 +236,11 @@ fn mode_display(mode: &str) -> Option<String> {
     }
 }
 
-fn load_old_side(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
+fn load_old_side(
+    odb: &Odb,
+    e: &DiffEntry,
+    blob_reads: Option<&AtomicUsize>,
+) -> Result<(SideBytes, bool)> {
     if e.old_mode == "160000" {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.old_oid).into_bytes()),
@@ -233,10 +250,14 @@ fn load_old_side(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
     if e.old_mode == "000000" {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
-    blob_bytes(odb, &e.old_oid)
+    blob_bytes(odb, &e.old_oid, blob_reads)
 }
 
-fn load_new_side(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
+fn load_new_side(
+    odb: &Odb,
+    e: &DiffEntry,
+    blob_reads: Option<&AtomicUsize>,
+) -> Result<(SideBytes, bool)> {
     if e.new_mode == "160000" {
         return Ok((
             SideBytes::from_bytes(gitlink_line(&e.new_oid).into_bytes()),
@@ -246,7 +267,7 @@ fn load_new_side(odb: &Odb, e: &DiffEntry) -> Result<(SideBytes, bool)> {
     if e.new_mode == "000000" {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
-    blob_bytes(odb, &e.new_oid)
+    blob_bytes(odb, &e.new_oid, blob_reads)
 }
 
 fn gitlink_line(oid: &ObjectId) -> String {
@@ -256,12 +277,15 @@ fn gitlink_line(oid: &ObjectId) -> String {
     format!("Subproject commit {}\n", oid.to_hex())
 }
 
-fn blob_bytes(odb: &Odb, oid: &ObjectId) -> Result<(SideBytes, bool)> {
+fn blob_bytes(
+    odb: &Odb,
+    oid: &ObjectId,
+    blob_reads: Option<&AtomicUsize>,
+) -> Result<(SideBytes, bool)> {
     if *oid == ObjectId::zero() {
         return Ok((SideBytes::from_bytes(Vec::new()), false));
     }
-    #[cfg(test)]
-    odb.hot_path_metrics().record_blob_content_read();
+    note_blob_read(blob_reads);
     let data = odb.read(oid)?.data;
     Ok(bytes_for_diff(&data))
 }

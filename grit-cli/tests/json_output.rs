@@ -1621,6 +1621,10 @@ fn diff_worktree_rename_with_small_unstaged_edit() -> TestResult {
     assert_eq!(files[0]["status"], "renamed");
     assert_eq!(files[0]["path"], "b.txt");
     assert_eq!(files[0]["old_path"], "a.txt");
+    assert!(
+        files[0]["similarity"].as_u64().is_some_and(|s| s > 0),
+        "rename similarity missing in JSON: {v}"
+    );
     Ok(())
 }
 

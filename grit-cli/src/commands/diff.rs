@@ -423,6 +423,23 @@ fn default_worktree_diff_entries(
     worktree_against_tree_entries(repo, base_tree.as_ref())
 }
 
+fn worktree_scope_outcome(
+    changes: Vec<FileChange>,
+    detail: DiffDetail,
+    config: &grit_lib::config::ConfigSet,
+    thread_policy: &grit_lib::parallel::ThreadPolicy,
+    diff_options: DiffOptions,
+    format: DiffFormatArgs,
+) -> Result<DiffOutcome> {
+    Ok(match detail {
+        DiffDetail::Stat => outcome_stat_from_changes(changes, diff_options, format),
+        DiffDetail::NameOnly | DiffDetail::NameStatus => outcome_from_change_names(changes, format),
+        DiffDetail::Patch | _ => {
+            outcome_from_changes(changes, config, thread_policy, diff_options, format)
+        }
+    })
+}
+
 fn outcome_from_change_names(changes: Vec<FileChange>, format: DiffFormatArgs) -> DiffOutcome {
     let files = changes
         .into_iter()
@@ -630,26 +647,15 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--staged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(staged_entries(&repo)?, &repo, &pathspecs);
-        let outcome = match detail {
-            DiffDetail::Patch => outcome_from_changes(
-                file_changes_from_entries(&repo, entries, None)?,
-                &config,
-                &thread_policy,
-                diff_options,
-                format,
-            ),
-            DiffDetail::Stat | DiffDetail::NameOnly | DiffDetail::NameStatus => {
-                outcome_from_entries(&repo, entries, detail, diff_options, format)?
-            }
-            _ => outcome_from_changes(
-                file_changes_from_entries(&repo, entries, None)?,
-                &config,
-                &thread_policy,
-                diff_options,
-                format,
-            ),
-        };
+        let changes = filter_file_changes(staged_changes(&repo)?, &repo, &pathspecs);
+        let outcome = worktree_scope_outcome(
+            changes,
+            detail,
+            &config,
+            &thread_policy,
+            diff_options,
+            format,
+        )?;
         return Ok(finish_outcome(&repo, format, outcome));
     }
     if opts.unstaged {
@@ -657,37 +663,15 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             anyhow::bail!("--unstaged cannot be combined with revision arguments or --against");
         }
         let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
-        let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
-        let outcome = match detail {
-            DiffDetail::Patch => with_worktree_diff_side(&repo, |side| {
-                Ok(outcome_from_changes(
-                    file_changes_from_entries(&repo, entries, Some(side))?,
-                    &config,
-                    &thread_policy,
-                    diff_options,
-                    format,
-                ))
-            })?,
-            DiffDetail::Stat => with_worktree_diff_side(&repo, |side| {
-                Ok(outcome_stat_from_changes(
-                    file_changes_from_entries(&repo, entries, Some(side))?,
-                    diff_options,
-                    format,
-                ))
-            })?,
-            DiffDetail::NameOnly | DiffDetail::NameStatus => {
-                outcome_from_entries(&repo, entries, detail, diff_options, format)?
-            }
-            _ => with_worktree_diff_side(&repo, |side| {
-                Ok(outcome_from_changes(
-                    file_changes_from_entries(&repo, entries, Some(side))?,
-                    &config,
-                    &thread_policy,
-                    diff_options,
-                    format,
-                ))
-            })?,
-        };
+        let changes = filter_file_changes(unstaged_changes(&repo)?, &repo, &pathspecs);
+        let outcome = worktree_scope_outcome(
+            changes,
+            detail,
+            &config,
+            &thread_policy,
+            diff_options,
+            format,
+        )?;
         return Ok(finish_outcome(&repo, format, outcome));
     }
     if commits.len() > 2 {
@@ -700,30 +684,15 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
         0 => {
             let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
             let against_ref = opts.against.as_deref();
-            let outcome = match detail {
-                DiffDetail::NameOnly | DiffDetail::NameStatus | DiffDetail::Stat => {
-                    let entries = filter_diff_entries(
-                        default_worktree_diff_entries(&repo, against_ref)?,
-                        &repo,
-                        &pathspecs,
-                    );
-                    outcome_from_entries(&repo, entries, detail, diff_options, format)?
-                }
-                DiffDetail::Patch => outcome_from_changes(
-                    filtered_worktree_file_changes(&repo, against_ref, &pathspecs)?,
-                    &config,
-                    &thread_policy,
-                    diff_options,
-                    format,
-                ),
-                _ => outcome_from_changes(
-                    filtered_worktree_file_changes(&repo, against_ref, &pathspecs)?,
-                    &config,
-                    &thread_policy,
-                    diff_options,
-                    format,
-                ),
-            };
+            let changes = filtered_worktree_file_changes(&repo, against_ref, &pathspecs)?;
+            let outcome = worktree_scope_outcome(
+                changes,
+                detail,
+                &config,
+                &thread_policy,
+                diff_options,
+                format,
+            )?;
             return Ok(finish_outcome(&repo, format, outcome));
         }
         1 => {
@@ -753,7 +722,7 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
                     tree_diff_outcome(&repo, entries, detail, diff_options, format)?,
                 ));
             } else if path_args.is_empty() {
-                single_argument_path_unstaged_diff(&repo, spec)?
+                single_argument_path_worktree_diff(&repo, spec)?
             } else {
                 resolve_diff_commit(&repo, spec)?;
                 unreachable!("resolve_diff_commit errors above");
@@ -800,16 +769,14 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     };
     let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
     let filtered = filter_file_changes(changes, &repo, &pathspecs);
-    let outcome = match detail {
-        DiffDetail::Patch => {
-            outcome_from_changes(filtered, &config, &thread_policy, diff_options, format)
-        }
-        DiffDetail::Stat => outcome_stat_from_changes(filtered, diff_options, format),
-        DiffDetail::NameOnly | DiffDetail::NameStatus => {
-            outcome_from_change_names(filtered, format)
-        }
-        _ => outcome_from_changes(filtered, &config, &thread_policy, diff_options, format),
-    };
+    let outcome = worktree_scope_outcome(
+        filtered,
+        detail,
+        &config,
+        &thread_policy,
+        diff_options,
+        format,
+    )?;
     Ok(finish_outcome(&repo, format, outcome))
 }
 
@@ -950,7 +917,7 @@ fn outcome_from_changes(
     let est_bytes = changes.len().saturating_mul(8192);
     use grit_lib::parallel::par_map;
     let files = par_map(&changes, par_opts, est_bytes, |fc| {
-        build_file_diff(fc, diff_options)
+        build_file_diff(fc, diff_options.clone())
     });
     DiffOutcome {
         changed: false,
@@ -1159,8 +1126,8 @@ fn filter_file_changes(
         .collect()
 }
 
-/// Unstaged diff for one pathspec argument when revision parsing failed (`git diff <path>`).
-fn single_argument_path_unstaged_diff(
+/// Worktree diff for one pathspec when revision parsing failed (`git diff <path>`).
+fn single_argument_path_worktree_diff(
     repo: &grit_lib::repo::Repository,
     pathspec: &str,
 ) -> Result<Vec<FileChange>> {
@@ -1177,12 +1144,7 @@ fn single_argument_path_unstaged_diff(
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     ensure_pathspec_matches_known_in_repository(repo, pathspec, &resolved)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let specs = vec![resolved];
-    let all = unstaged_changes(repo)?;
-    Ok(all
-        .into_iter()
-        .filter(|c| repo.paths_match_pathspecs(&c.path, &specs))
-        .collect())
+    filtered_worktree_file_changes(repo, None, std::slice::from_ref(&resolved))
 }
 
 /// Unstaged diff entries: index vs working tree (no blob loading).

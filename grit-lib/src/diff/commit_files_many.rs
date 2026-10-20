@@ -167,7 +167,7 @@ fn diff_one_commit(
         odb,
         entries,
         opts.detail,
-        opts.diff_options,
+        opts.diff_options.clone(),
         config,
         thread_policy,
     )?;
@@ -364,7 +364,7 @@ mod tests {
             repo.odb(),
             entries,
             opts.detail,
-            opts.diff_options,
+            opts.diff_options.clone(),
             &config,
             &policy,
         )?;

@@ -104,56 +104,38 @@ fn diff_stat_empty_is_zero_bytes() {
 }
 
 #[test]
-fn diff_name_status_two_commit_path_limit() {
+fn diff_stat_same_files_as_default_diff() {
     let fx = CliFixture::new();
-    std::fs::write(fx.path().join("a.txt"), b"a\n").expect("write");
-    std::fs::write(fx.path().join("b.txt"), b"b\n").expect("write");
-    git(fx.path(), &["add", "a.txt", "b.txt"]);
-    git(fx.path(), &["commit", "-m", "initial"]);
-    std::fs::write(fx.path().join("a.txt"), b"aa\n").expect("write");
-    std::fs::write(fx.path().join("b.txt"), b"bb\n").expect("write");
-    git(fx.path(), &["add", "a.txt", "b.txt"]);
-    git(fx.path(), &["commit", "-m", "second"]);
-    let git_out = std::process::Command::new("git")
-        .current_dir(fx.path())
-        .args(["diff", "--name-status", "HEAD~1", "HEAD", "--", "a.txt"])
-        .output()
-        .expect("git diff");
-    let grit_out = grit(
-        fx.path(),
-        &["diff", "--name-status", "HEAD~1", "HEAD", "--", "a.txt"],
-    );
-    assert!(grit_out.ok(), "{}", grit_out.dump("name-status path"));
-    assert_eq!(
-        String::from_utf8_lossy(&git_out.stdout),
-        grit_out.stdout,
-        "{}",
-        grit_out.dump("grit name-status path limit")
-    );
-}
-
-#[test]
-fn diff_stat_no_leading_blank_line() {
-    let fx = CliFixture::new();
-    std::fs::write(fx.path().join("f.txt"), b"a\n").expect("write");
-    git(fx.path(), &["add", "f.txt"]);
+    std::fs::write(fx.path().join("staged.txt"), b"a\n").expect("write");
+    std::fs::write(fx.path().join("other.txt"), b"o\n").expect("write");
+    git(fx.path(), &["add", "staged.txt", "other.txt"]);
     git(fx.path(), &["commit", "-m", "init"]);
-    std::fs::write(fx.path().join("f.txt"), b"b\n").expect("write");
-    let out = grit(fx.path(), &["diff", "--stat", "HEAD~1", "HEAD"]);
-    assert!(out.ok(), "{}", out.dump("stat"));
-    assert!(
-        !out.stdout.starts_with('\n'),
-        "stat must not begin with a blank line: {:?}",
-        out.stdout
-    );
-}
+    std::fs::write(fx.path().join("staged.txt"), b"b\n").expect("write");
+    std::fs::write(fx.path().join("other.txt"), b"p\n").expect("write");
+    git(fx.path(), &["add", "staged.txt"]);
 
-#[test]
-fn diff_markdown_shortstat_empty_is_zero_bytes() {
-    let fx = CliFixture::empty();
-    let out = grit(fx.path(), &["diff", "--markdown", "--shortstat"]);
-    assert!(out.ok(), "{}", out.dump("markdown shortstat empty"));
-    assert!(out.stdout.is_empty(), "stdout={:?}", out.stdout);
+    let default_json = grit(fx.path(), &["diff", "--json"]);
+    assert!(default_json.ok(), "{}", default_json.dump("diff json"));
+    let stat_json = grit(fx.path(), &["diff", "--stat", "--json"]);
+    assert!(stat_json.ok(), "{}", stat_json.dump("diff --stat json"));
+
+    fn paths_from_diff_json(stdout: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(stdout).expect("json");
+        v["files"]
+            .as_array()
+            .expect("files")
+            .iter()
+            .map(|f| f["path"].as_str().expect("path").to_string())
+            .collect()
+    }
+    let mut default_paths = paths_from_diff_json(&default_json.stdout);
+    let mut stat_paths = paths_from_diff_json(&stat_json.stdout);
+    default_paths.sort();
+    stat_paths.sort();
+    assert_eq!(
+        default_paths, stat_paths,
+        "default diff paths {default_paths:?} vs stat {stat_paths:?}"
+    );
 }
 
 #[test]

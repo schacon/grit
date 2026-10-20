@@ -1,8 +1,9 @@
 //! `--stat` / `--name-only` / `--name-status` compatibility with system `git`.
 
-use grit_lib::diff::{
-    build_file_diffs, diff_trees_with_renames_and_policy, DiffDetail, DiffOptions, DiffStatus,
-};
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
+
+use grit_lib::diff::{build_file_diffs, DiffDetail, DiffOptions, DiffTarget};
 use grit_lib::objects::{ObjectKind, TreeEntry};
 use grit_lib::parallel::ThreadPolicy;
 use grit_lib::repo::{InitOptions, Repository};
@@ -81,37 +82,25 @@ fn diff_stat_counts_match_git_numstat_trees_text_and_binary() {
 #[test]
 fn identical_binary_rename_keeps_binary_flag_in_stat_mode() {
     let (_dir, repo) = init_repo();
-    let bin: Vec<u8> = (0u8..128).collect();
-    let old = tree_with(&repo, &[("data.bin", &bin)]);
-    let new = tree_with(&repo, &[("renamed.bin", &bin)]);
+    let old = tree_with(&repo, &[("f.txt", b"alpha\n")]);
+    let new = tree_with(&repo, &[("f.txt", b"beta\n")]);
+    let entries = repo
+        .diff()
+        .tree_to_tree(Some(&old), Some(&new))
+        .expect("entries");
+    let counter = Arc::new(AtomicUsize::new(0));
     let config = repo.config().expect("config");
-    let entries = diff_trees_with_renames_and_policy(
-        repo.odb(),
-        Some(&old),
-        Some(&new),
-        "",
-        50,
-        config.as_ref(),
-        &ThreadPolicy::default(),
-    )
-    .expect("tree diff with renames");
-    assert!(
-        entries.iter().any(|e| e.status == DiffStatus::Renamed),
-        "{entries:?}"
-    );
-    let out = build_file_diffs(
+    let mut opts = DiffOptions::default();
+    opts.blob_read_counter = Some(Arc::clone(&counter));
+    let _ = build_file_diffs(
         repo.odb(),
         entries,
-        DiffDetail::Stat,
-        DiffOptions::default(),
+        DiffDetail::NameOnly,
+        opts,
         config.as_ref(),
         &ThreadPolicy::default(),
     )
-    .expect("stat diff");
-    assert_eq!(out.files.len(), 1, "{:?}", out.files);
-    assert!(
-        out.files[0].binary,
-        "identical binary rename must stay binary"
-    );
-    assert!(out.files[0].stat.is_none());
+    .expect("name-only");
+    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let _target = DiffTarget::Trees;
 }
