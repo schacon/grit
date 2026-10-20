@@ -1,15 +1,19 @@
 //! Per-batch memoization for collision-aware object-id abbreviation (`core.abbrev`).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::commit_pretty::abbrev_hex;
+use crate::config::ConfigSet;
 use crate::error::Result;
+use crate::objects::pack_store::PackReadContextGuard;
 use crate::objects::ObjectId;
+use crate::parallel::{try_par_map_with_local, ParallelHashError, ParallelOp, ThreadPolicy};
 use crate::repo::Repository;
-use crate::rev_parse::abbreviate_object_id;
+use crate::rev_parse::abbreviate_object_id_with_prefix_cache;
 
 /// Memoized unique abbreviations using [`Repository::odb`] prefix lookup (pack/MIDX/loose).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct OidAbbrevCache {
     min_len: usize,
     memo: HashMap<ObjectId, String>,
@@ -29,46 +33,55 @@ impl OidAbbrevCache {
         if let Some(hit) = self.memo.get(oid) {
             return Ok(hit.clone());
         }
-        let abbrev = abbreviate_object_id(repo, *oid, self.min_len)?;
+        let abbrev =
+            abbreviate_object_id_with_prefix_cache(repo, *oid, self.min_len, &mut HashMap::new())?;
         self.memo.insert(*oid, abbrev.clone());
         Ok(abbrev)
     }
 
-    /// Precompute index-line abbreviations for OIDs appearing together in one patch.
-    ///
-    /// Extends prefixes only until unique within `oids` (matches `git diff` output for typical
-    /// trees; falls back to [`abbreviate_object_id`] when a zero OID is present).
-    pub(crate) fn warm_for_patch_batch<I>(&mut self, _repo: &Repository, oids: I) -> Result<()>
+    /// Precompute index-line abbreviations with full-ODB disambiguation (parallel).
+    pub(crate) fn warm_for_patch_batch<I>(
+        &mut self,
+        repo: &Repository,
+        oids: I,
+        thread_policy: &ThreadPolicy,
+        config: &ConfigSet,
+    ) -> Result<()>
     where
         I: IntoIterator<Item = ObjectId>,
     {
         let min_len = self.min_len;
-        let unique: HashSet<ObjectId> = oids.into_iter().collect();
+        let mut unique: HashSet<ObjectId> = HashSet::new();
+        for oid in oids {
+            if oid.is_zero() {
+                self.memo.insert(oid, abbrev_hex(&oid, min_len));
+            } else {
+                unique.insert(oid);
+            }
+        }
         if unique.is_empty() {
             return Ok(());
         }
-        let hex_by_oid: HashMap<ObjectId, String> =
-            unique.iter().map(|oid| (*oid, oid.to_hex())).collect();
-        for oid in unique.iter().copied() {
-            if oid.is_zero() {
-                self.memo.insert(oid, abbrev_hex(&oid, min_len));
-                continue;
-            }
-            let Some(hex) = hex_by_oid.get(&oid) else {
-                continue;
-            };
-            let mut chosen = hex[..min_len.min(hex.len())].to_string();
-            for len in min_len..=40 {
-                let prefix = &hex[..len.min(hex.len())];
-                let collision = unique.iter().any(|other| {
-                    *other != oid && hex_by_oid.get(other).is_some_and(|h| h.starts_with(prefix))
-                });
-                if !collision {
-                    chosen = prefix.to_string();
-                    break;
-                }
-            }
-            self.memo.insert(oid, chosen);
+        let list: Vec<ObjectId> = unique.into_iter().collect();
+        let mut par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
+        par_opts.min_items = 0;
+        par_opts.min_total_bytes = None;
+        let store = repo.odb().pack_store_for(repo.odb().objects_dir());
+        let rows = match try_par_map_with_local(
+            &list,
+            par_opts,
+            0,
+            || PackReadContextGuard::install(Arc::clone(&store)),
+            |_ctx, oid| {
+                abbreviate_object_id_with_prefix_cache(repo, *oid, min_len, &mut HashMap::new())
+                    .map(|abbrev| (*oid, abbrev))
+            },
+        ) {
+            Ok(rows) => rows,
+            Err(ParallelHashError::Task(err)) => return Err(err),
+        };
+        for (oid, abbrev) in rows {
+            self.memo.insert(oid, abbrev);
         }
         Ok(())
     }
@@ -103,6 +116,25 @@ mod tests {
             }
         }
         panic!("failed to find two blobs sharing a 7-hex prefix");
+    }
+
+    #[test]
+    fn warm_for_patch_batch_disambiguates_against_full_odb() -> Result<()> {
+        let dir = TempDir::new().expect("tempdir");
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let (referenced, dangling, data_ref, data_dang) = two_blobs_sharing_seven_hex_prefix();
+        assert_eq!(referenced.to_hex()[..7], dangling.to_hex()[..7]);
+        repo.odb().write(ObjectKind::Blob, &data_ref)?;
+        repo.odb().write(ObjectKind::Blob, &data_dang)?;
+        let config = repo.config()?.clone();
+        let thread_policy = repo.thread_policy();
+        let mut cache = OidAbbrevCache::new(7);
+        cache.warm_for_patch_batch(&repo, [referenced, dangling], &thread_policy, &config)?;
+        let ab = cache.abbrev(&repo, &referenced)?;
+        let bb = cache.abbrev(&repo, &dangling)?;
+        assert_ne!(ab, bb);
+        assert!(ab.len() > 7 || bb.len() > 7);
+        Ok(())
     }
 
     #[test]

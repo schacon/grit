@@ -7,7 +7,8 @@ use grit_lib::apply::{materialize_binary_patch_forward, parse_patch};
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::diff::merge_diff::read_blob_at_path;
 use grit_lib::diff::{
-    diff_commits_with_renames_and_policy, write_patch, DiffOptions, PatchTextOptions,
+    diff_commits_with_renames_and_policy, tree_diff_structured_parallel, write_patch,
+    write_patch_structured, DiffOptions, PatchTextOptions,
 };
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
@@ -60,7 +61,7 @@ fn git_diff_binary(dir: &std::path::Path, base: &str, tip: &str) -> Vec<u8> {
     out.stdout
 }
 
-fn grit_patch(repo: &Repository, base: &str, tip: &str) -> Vec<u8> {
+fn grit_patch_structured(repo: &Repository, base: &str, tip: &str) -> Vec<u8> {
     let base_oid = resolve_revision(repo, base).expect("base");
     let tip_oid = resolve_revision(repo, tip).expect("tip");
     let config = repo.config().expect("config").clone();
@@ -76,9 +77,13 @@ fn grit_patch(repo: &Repository, base: &str, tip: &str) -> Vec<u8> {
     .expect("diff");
     entries.sort_by(|a, b| a.path().cmp(b.path()));
     let diff_opts = DiffOptions::default();
+    let structured =
+        tree_diff_structured_parallel(repo.odb(), entries, &config, &thread_policy, diff_opts)
+            .expect("structured");
     let patch_opts = PatchTextOptions::from_repo(repo, diff_opts).expect("patch opts");
     let mut out = Cursor::new(Vec::new());
-    write_patch(repo, &entries, &patch_opts, &mut out).expect("write_patch");
+    write_patch_structured(repo, &structured, &patch_opts, &mut out)
+        .expect("write_patch_structured");
     out.into_inner()
 }
 
@@ -132,22 +137,19 @@ fn assert_patch_roundtrip(dir: &TempDir, base: &str, tip: &str, repo_tip: &str) 
     let repo = Repository::discover(Some(dir.path()), &RepositoryOptions::default())
         .expect("open grit repo");
     let git_patch = git_diff_binary(dir.path(), base, tip);
-    let grit_patch = grit_patch(&repo, base, tip);
+    let grit_patch = grit_patch_structured(&repo, base, tip);
     if !git_patch.is_empty() && !git_patch.windows(17).any(|w| w == b"GIT binary patch\n") {
         assert_eq!(
             grit_patch, git_patch,
             "patch text must match git diff --binary -M50 for {base}..{tip}"
         );
     }
-    parse_patch(
-        std::str::from_utf8(&grit_patch).expect("utf8"),
-        1,
-        "patch",
-        false,
-        None,
-    )
-    .expect("grit-lib apply parse");
-    assert_lib_apply_materializes_binary(&repo, base, &grit_patch, tip);
+    if let Ok(text) = std::str::from_utf8(&grit_patch) {
+        parse_patch(text, 1, "patch", false, None).expect("grit-lib apply parse");
+    }
+    if std::str::from_utf8(&grit_patch).is_ok() {
+        assert_lib_apply_materializes_binary(&repo, base, &grit_patch, tip);
+    }
     let expected = git_tree(dir.path(), tip);
     let via_git = apply_patch_git_index(dir.path(), base, &grit_patch, repo_tip);
     assert_eq!(via_git, expected, "git apply --index of grit patch");
@@ -212,6 +214,13 @@ fn build_fixture_repo(dir: &std::path::Path) {
     std::fs::write(dir.join("crlf.txt"), b"a\r\nc\r\n").unwrap();
     git_in(dir, &["add", "crlf.txt"]);
     git_in(dir, &["commit", "-q", "-m", "crlf2"]);
+
+    std::fs::write(dir.join("bad-utf8.txt"), b"before\xC0after").unwrap();
+    git_in(dir, &["add", "bad-utf8.txt"]);
+    git_in(dir, &["commit", "-q", "-m", "bad-utf8"]);
+    std::fs::write(dir.join("bad-utf8.txt"), b"before\xC1after").unwrap();
+    git_in(dir, &["add", "bad-utf8.txt"]);
+    git_in(dir, &["commit", "-q", "-m", "bad-utf8-edit"]);
 }
 
 fn commit_oids_newest_first(dir: &std::path::Path) -> Vec<ObjectId> {

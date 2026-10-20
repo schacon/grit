@@ -1831,24 +1831,47 @@ fn apply_nav_step(
 /// Returns [`Error::ObjectNotFound`] when the target OID does not exist in the
 /// object database.
 pub fn abbreviate_object_id(repo: &Repository, oid: ObjectId, min_len: usize) -> Result<String> {
+    abbreviate_object_id_with_prefix_cache(repo, oid, min_len, &mut HashMap::new())
+}
+
+/// Like [`abbreviate_object_id`] with memoized full-ODB prefix ambiguity checks.
+pub(crate) fn abbreviate_object_id_with_prefix_cache(
+    repo: &Repository,
+    oid: ObjectId,
+    min_len: usize,
+    prefix_ambiguous: &mut HashMap<String, bool>,
+) -> Result<String> {
     let min_len = min_len.clamp(4, 40);
     let target = oid.to_hex();
 
-    // If object doesn't exist, just return the minimum abbreviation
     if !repo.odb().exists(&oid) {
         return Ok(target[..min_len].to_owned());
     }
 
     for len in min_len..=40 {
         let prefix = &target[..len];
-        let mut matches = Vec::new();
-        repo.odb().lookup_prefix(prefix, 0, &mut matches)?;
-        if matches.len() <= 1 {
-            return Ok(prefix.to_owned());
+        if prefix_is_ambiguous_in_odb(repo, prefix, prefix_ambiguous)? {
+            continue;
         }
+        return Ok(prefix.to_owned());
     }
 
     Ok(target)
+}
+
+pub(crate) fn prefix_is_ambiguous_in_odb(
+    repo: &Repository,
+    prefix: &str,
+    cache: &mut HashMap<String, bool>,
+) -> Result<bool> {
+    if let Some(hit) = cache.get(prefix) {
+        return Ok(*hit);
+    }
+    let mut matches = Vec::new();
+    repo.odb().lookup_prefix(prefix, 2, &mut matches)?;
+    let amb = matches.len() > 1;
+    cache.insert(prefix.to_owned(), amb);
+    Ok(amb)
 }
 
 /// Render `path` relative to `cwd` with `/` separators.

@@ -129,6 +129,7 @@ pub fn grit_lib::apply::materialize_binary_patch_reverse(&grit_lib::apply::Binar
 pub fn grit_lib::apply::materialize_binary_patch_section(&grit_lib::apply::BinaryPatchSection, core::option::Option<&[u8]>) -> grit_lib::error::Result<alloc::vec::Vec<u8>>
 pub fn grit_lib::apply::parse_patch(&str, usize, &str, bool, core::option::Option<&str>) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::apply::FilePatch>>
 pub fn grit_lib::apply::write_git_binary_patch(&[u8], &[u8], &str, &str) -> grit_lib::error::Result<alloc::string::String>
+pub fn grit_lib::apply::write_git_binary_patch_sections<W: core::io::write::Write>(&mut W, &[u8], &[u8]) -> grit_lib::error::Result<()>
 pub mod grit_lib::bench_fixture
 pub mod grit_lib::bench_fixture::daily_special
 pub enum grit_lib::bench_fixture::daily_special::DailySpecialShape
@@ -3048,6 +3049,7 @@ pub const grit_lib::diff::ws::WS_SPACE_BEFORE_TAB: u32
 pub const grit_lib::diff::ws::WS_TAB_IN_INDENT: u32
 pub const grit_lib::diff::ws::WS_TAB_WIDTH_MASK: u32
 pub const grit_lib::diff::ws::WS_TRAILING_SPACE: u32
+pub fn grit_lib::diff::ws::is_space_git(u8) -> bool
 pub fn grit_lib::diff::ws::parse_whitespace_rule(&str) -> core::result::Result<u32, grit_lib::diff::ws::WhitespaceRuleError>
 pub fn grit_lib::diff::ws::whitespace_error_string(u32) -> alloc::string::String
 pub fn grit_lib::diff::ws::ws_blank_line(&str) -> bool
@@ -3394,14 +3396,10 @@ impl !core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffIndexToWorktr
 pub grit_lib::diff::DiffOptions::algorithm: grit_lib::diff::DiffAlgorithm
 pub grit_lib::diff::DiffOptions::context_lines: usize
 pub grit_lib::diff::DiffOptions::filter: core::option::Option<grit_lib::diff::DiffFilter>
-pub grit_lib::diff::DiffOptions::ignore_all_space: bool
-pub grit_lib::diff::DiffOptions::ignore_blank_lines: bool
-pub grit_lib::diff::DiffOptions::ignore_cr_at_eol: bool
-pub grit_lib::diff::DiffOptions::ignore_space_at_eol: bool
-pub grit_lib::diff::DiffOptions::ignore_space_change: bool
 pub grit_lib::diff::DiffOptions::indent_heuristic: bool
 pub grit_lib::diff::DiffOptions::inter_hunk_context: usize
 pub grit_lib::diff::DiffOptions::renames: grit_lib::diff::RenameDetection
+pub grit_lib::diff::DiffOptions::whitespace: grit_lib::diff::WhitespaceMode
 pub grit_lib::diff::DiffOptions::word_level_inline: bool
 impl grit_lib::diff::DiffOptions
 pub fn grit_lib::diff::DiffOptions::cap_word_level_inline_for_changed_files(self, usize) -> Self
@@ -3415,6 +3413,7 @@ pub fn grit_lib::diff::DiffOptions::with_filter(self, core::option::Option<grit_
 pub fn grit_lib::diff::DiffOptions::with_indent_heuristic(self, bool) -> Self
 pub fn grit_lib::diff::DiffOptions::with_inter_hunk_context(self, usize) -> Self
 pub fn grit_lib::diff::DiffOptions::with_renames(self, grit_lib::diff::RenameDetection) -> Self
+pub fn grit_lib::diff::DiffOptions::with_whitespace(self, grit_lib::diff::WhitespaceMode) -> Self
 pub fn grit_lib::diff::DiffOptions::with_word_level_inline(self, bool) -> Self
 impl core::clone::Clone for grit_lib::diff::DiffOptions
 pub fn grit_lib::diff::DiffOptions::clone(&self) -> Self
@@ -3507,6 +3506,7 @@ impl core::clone::Clone for grit_lib::diff::LogPatchOptions
 pub fn grit_lib::diff::LogPatchOptions::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::diff::LogPatchOptions
 pub fn grit_lib::diff::LogPatchOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::diff::LogPatchOptions
 impl core::marker::Freeze for grit_lib::diff::LogPatchOptions
 impl core::marker::Send for grit_lib::diff::LogPatchOptions
 impl core::marker::Sync for grit_lib::diff::LogPatchOptions
@@ -3514,6 +3514,37 @@ impl core::marker::Unpin for grit_lib::diff::LogPatchOptions
 impl core::marker::UnsafeUnpin for grit_lib::diff::LogPatchOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::LogPatchOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::LogPatchOptions
+pub struct grit_lib::diff::PatchResolvedSide
+pub grit_lib::diff::PatchResolvedSide::entry: grit_lib::diff::DiffEntry
+pub grit_lib::diff::PatchResolvedSide::new_bytes: alloc::vec::Vec<u8>
+pub grit_lib::diff::PatchResolvedSide::old_bytes: alloc::vec::Vec<u8>
+impl core::clone::Clone for grit_lib::diff::PatchResolvedSide
+pub fn grit_lib::diff::PatchResolvedSide::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::diff::PatchResolvedSide
+pub fn grit_lib::diff::PatchResolvedSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::diff::PatchResolvedSide
+impl core::marker::Send for grit_lib::diff::PatchResolvedSide
+impl core::marker::Sync for grit_lib::diff::PatchResolvedSide
+impl core::marker::Unpin for grit_lib::diff::PatchResolvedSide
+impl core::marker::UnsafeUnpin for grit_lib::diff::PatchResolvedSide
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::PatchResolvedSide
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::PatchResolvedSide
+pub struct grit_lib::diff::PatchTextOptions
+pub grit_lib::diff::PatchTextOptions::abbrev_len: usize
+pub grit_lib::diff::PatchTextOptions::diff: grit_lib::diff::DiffOptions
+impl grit_lib::diff::PatchTextOptions
+pub fn grit_lib::diff::PatchTextOptions::from_repo(&grit_lib::repo::Repository, grit_lib::diff::DiffOptions) -> grit_lib::error::Result<Self>
+impl core::clone::Clone for grit_lib::diff::PatchTextOptions
+pub fn grit_lib::diff::PatchTextOptions::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::diff::PatchTextOptions
+pub fn grit_lib::diff::PatchTextOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::diff::PatchTextOptions
+impl core::marker::Send for grit_lib::diff::PatchTextOptions
+impl core::marker::Sync for grit_lib::diff::PatchTextOptions
+impl core::marker::Unpin for grit_lib::diff::PatchTextOptions
+impl core::marker::UnsafeUnpin for grit_lib::diff::PatchTextOptions
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::PatchTextOptions
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::PatchTextOptions
 pub struct grit_lib::diff::SubmodulePorcelainFlags
 pub grit_lib::diff::SubmodulePorcelainFlags::modified: bool
 pub grit_lib::diff::SubmodulePorcelainFlags::new_commits: bool
@@ -3594,6 +3625,36 @@ impl core::marker::Unpin for grit_lib::diff::UnknownDiffAlgorithm
 impl core::marker::UnsafeUnpin for grit_lib::diff::UnknownDiffAlgorithm
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::UnknownDiffAlgorithm
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::UnknownDiffAlgorithm
+#[non_exhaustive] pub struct grit_lib::diff::WhitespaceMode
+pub grit_lib::diff::WhitespaceMode::ignore_all_space: bool
+pub grit_lib::diff::WhitespaceMode::ignore_blank_lines: bool
+pub grit_lib::diff::WhitespaceMode::ignore_space_at_eol: bool
+pub grit_lib::diff::WhitespaceMode::ignore_space_change: bool
+impl grit_lib::diff::WhitespaceMode
+pub fn grit_lib::diff::WhitespaceMode::ignore_all_space() -> Self
+pub fn grit_lib::diff::WhitespaceMode::ignore_blank_lines() -> Self
+pub fn grit_lib::diff::WhitespaceMode::ignore_space_change() -> Self
+pub fn grit_lib::diff::WhitespaceMode::is_active(self) -> bool
+pub fn grit_lib::diff::WhitespaceMode::normalize_line_for_compare<'a>(&self, &'a str) -> alloc::borrow::Cow<'a, str>
+pub fn grit_lib::diff::WhitespaceMode::normalizes_line_compare(self) -> bool
+impl core::clone::Clone for grit_lib::diff::WhitespaceMode
+pub fn grit_lib::diff::WhitespaceMode::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::WhitespaceMode
+impl core::cmp::PartialEq for grit_lib::diff::WhitespaceMode
+pub fn grit_lib::diff::WhitespaceMode::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::diff::WhitespaceMode
+pub fn grit_lib::diff::WhitespaceMode::default() -> Self
+impl core::fmt::Debug for grit_lib::diff::WhitespaceMode
+pub fn grit_lib::diff::WhitespaceMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::diff::WhitespaceMode
+impl core::marker::StructuralPartialEq for grit_lib::diff::WhitespaceMode
+impl core::marker::Freeze for grit_lib::diff::WhitespaceMode
+impl core::marker::Send for grit_lib::diff::WhitespaceMode
+impl core::marker::Sync for grit_lib::diff::WhitespaceMode
+impl core::marker::Unpin for grit_lib::diff::WhitespaceMode
+impl core::marker::UnsafeUnpin for grit_lib::diff::WhitespaceMode
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::WhitespaceMode
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::WhitespaceMode
 pub struct grit_lib::diff::WorktreeAddRefreshParams<'a>
 pub grit_lib::diff::WorktreeAddRefreshParams::abs_path: &'a std::path::Path
 pub grit_lib::diff::WorktreeAddRefreshParams::conv: &'a grit_lib::worktree::crlf::ConversionConfig
@@ -3670,6 +3731,7 @@ pub fn grit_lib::diff::hash_worktree_file(&grit_lib::objects::odb::Odb, &std::pa
 pub fn grit_lib::diff::head_path_states(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>) -> grit_lib::error::Result<alloc::collections::btree::map::BTreeMap<alloc::string::String, (u32, grit_lib::objects::ObjectId)>>
 pub fn grit_lib::diff::indent_heuristic_from_config(&grit_lib::config::ConfigSet) -> bool
 pub fn grit_lib::diff::index_mtime_for_diff(&grit_lib::index::Index, core::option::Option<(u32, u32)>) -> core::option::Option<(u32, u32)>
+pub fn grit_lib::diff::line_diff_unified_hunk_body(&str, &str, &grit_lib::diff::DiffOptions) -> alloc::string::String
 pub fn grit_lib::diff::map_new_to_old_lines_compacted(&str, &str, similar::types::Algorithm, bool, usize) -> alloc::vec::Vec<core::option::Option<usize>>
 pub fn grit_lib::diff::materialize_worktree_blob(&grit_lib::objects::odb::Odb, &std::path::Path, &std::fs::Metadata, &grit_lib::worktree::crlf::ConversionConfig, &grit_lib::worktree::crlf::FileAttrs, &str, core::option::Option<&grit_lib::index::IndexEntry>, core::option::Option<&grit_lib::filter_process::FilterProcessState>) -> grit_lib::error::Result<grit_lib::objects::ObjectId>
 pub fn grit_lib::diff::mode_from_metadata(&std::fs::Metadata) -> u32
@@ -3721,23 +3783,8 @@ pub fn grit_lib::diff::write_commit_header_and_message<W: core::io::write::Write
 pub fn grit_lib::diff::write_commit_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &grit_lib::objects::ObjectId, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_commits_log_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &mut W, &[grit_lib::objects::ObjectId], &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_diff_entry_log_patch<W: core::io::write::Write>(&mut W, &grit_lib::repo::Repository, &grit_lib::objects::odb::Odb, &grit_lib::diff::DiffEntry, &grit_lib::diff::LogPatchOptions) -> grit_lib::error::Result<()>
-pub struct grit_lib::diff::PatchTextOptions
-pub grit_lib::diff::PatchTextOptions::abbrev_len: usize
-pub grit_lib::diff::PatchTextOptions::diff: grit_lib::diff::DiffOptions
-impl grit_lib::diff::PatchTextOptions
-pub fn grit_lib::diff::PatchTextOptions::from_repo(&grit_lib::repo::Repository, grit_lib::diff::DiffOptions) -> grit_lib::error::Result<Self>
-impl core::clone::Clone for grit_lib::diff::PatchTextOptions
-pub fn grit_lib::diff::PatchTextOptions::clone(&self) -> Self
-impl core::fmt::Debug for grit_lib::diff::PatchTextOptions
-pub fn grit_lib::diff::PatchTextOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for grit_lib::diff::PatchTextOptions
-impl core::marker::Send for grit_lib::diff::PatchTextOptions
-impl core::marker::Sync for grit_lib::diff::PatchTextOptions
-impl core::marker::Unpin for grit_lib::diff::PatchTextOptions
-impl core::marker::UnsafeUnpin for grit_lib::diff::PatchTextOptions
-impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::PatchTextOptions
-impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::PatchTextOptions
 pub fn grit_lib::diff::write_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::DiffEntry], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_patch_resolved<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::PatchResolvedSide], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_patch_structured<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::TreeDiffStructured], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_unified_diff_with_prefix_and_funcname_and_algorithm<W: core::io::write::Write>(&mut W, &str, &str, &str, &str, usize, usize, &str, &str, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, similar::types::Algorithm, bool, bool, bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::zero_oid() -> grit_lib::objects::ObjectId

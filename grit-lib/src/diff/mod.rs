@@ -48,8 +48,8 @@ pub fn line_diff_unified_hunk_body(
 }
 pub use patch_log::{
     write_commit_header_and_message, write_commit_log_patch, write_commits_log_patch,
-    write_diff_entry_log_patch, write_patch, write_patch_structured, LogPatchCommitHeader,
-    LogPatchOptions, PatchTextOptions,
+    write_diff_entry_log_patch, write_patch, write_patch_resolved, write_patch_structured,
+    LogPatchCommitHeader, LogPatchOptions, PatchResolvedSide, PatchTextOptions,
 };
 pub use targets::{
     resolve_diff_arguments, DiffArguments, DiffTarget, FileDiff, ResolveDiffArgumentsError,
