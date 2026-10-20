@@ -21,13 +21,14 @@ use crate::output::{outln, ChangeStatus, HumanRender, MarkdownRender, RenderCont
 use crate::ui::{self, PathDisplayOptions};
 use anyhow::{Context, Result};
 use grit_lib::diff::structured::{format_hunk_range, StructuredHunk, StructuredLineKind};
-use grit_lib::diff::{resolve_diff_arguments, DiffEntry, DiffOptions, DiffTarget};
+use grit_lib::diff::{diff_paths, resolve_diff_arguments, DiffEntry, DiffOptions, DiffTarget};
 use grit_lib::objects::ObjectId;
 use grit_lib::worktree::pathspec::pathdiff;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::IsTerminal;
 use std::io::Write;
+use std::path::Path;
 
 /// Tab stop width used when expanding tabs for display.
 const TAB_WIDTH: usize = 8;
@@ -210,6 +211,7 @@ pub struct Segment {
 
 /// Inputs for `grit diff` (flags and revision arguments).
 pub struct DiffRunOptions {
+    pub no_index: bool,
     pub staged: bool,
     pub unstaged: bool,
     pub against: Option<String>,
@@ -262,6 +264,9 @@ fn pathspec_prefix_for_repo(repo: &grit_lib::repo::Repository) -> Result<Option<
 }
 
 pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
+    if opts.no_index {
+        return run_no_index(&opts);
+    }
     let repo = context::discover()?;
     let config = repo.config().context("could not load config")?;
     let prefix = pathspec_prefix_for_repo(&repo)?;
@@ -306,6 +311,30 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             path_display: None,
         },
     ))
+}
+
+fn run_no_index(opts: &DiffRunOptions) -> Result<DiffOutcome> {
+    if opts.staged || opts.unstaged || opts.against.is_some() {
+        anyhow::bail!("--no-index cannot be combined with repository diff modes");
+    }
+    let mut specs = opts.paths.clone();
+    if specs.len() < 2 {
+        specs.extend(opts.commits.clone());
+    }
+    if specs.len() != 2 {
+        anyhow::bail!("--no-index requires exactly two paths");
+    }
+    let left = Path::new(&specs[0]);
+    let right = Path::new(&specs[1]);
+    let mut diff_options = opts.format.to_options(DiffOptions::default())?;
+    diff_options.word_level_inline = opts.word_level_inline;
+    let files = diff_paths(left, right, &diff_options).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let files: Vec<FileDiff> = files.into_iter().map(FileDiff::from).collect();
+    Ok(DiffOutcome {
+        changed: !files.is_empty(),
+        files,
+        path_display: None,
+    })
 }
 
 /// The diff a single commit introduced, as a [`DiffOutcome`]. Reused by `grit show`.

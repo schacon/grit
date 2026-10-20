@@ -16,6 +16,7 @@ mod core;
 mod filter;
 pub mod handle;
 mod has_changes;
+mod no_index;
 mod options;
 mod patch_log;
 mod targets;
@@ -29,6 +30,7 @@ pub use handle::Diff;
 pub use has_changes::{
     text_sides_differ, HAS_CHANGES_CALL_COUNT, WORKTREE_HAS_CHANGES_ENTRIES_SCANNED,
 };
+pub use no_index::{diff_paths, NoIndexError};
 pub use options::{
     renames_from_config, DiffAlgorithm, DiffOptions, RenameDetection, UnknownDiffAlgorithm,
     RENAME_DETECTION_DISABLED, WORD_LEVEL_INLINE_MAX_CHANGED_FILES,

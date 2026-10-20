@@ -493,6 +493,9 @@ enum Command {
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
     Diff {
+        /// Compare two filesystem paths outside any repository (Git `--no-index`).
+        #[arg(long = "no-index")]
+        no_index: bool,
         /// Staged changes only (index vs HEAD).
         #[arg(short = 'S', long = "staged", visible_aliases = ["cached"])]
         staged: bool,
@@ -511,7 +514,7 @@ enum Command {
         /// One commit (that commit's patch), two commits (tree diff), or a range `A..B` / `A...B`.
         #[arg(value_name = "COMMIT")]
         commits: Vec<String>,
-        /// Limit the diff to these paths (after `--`, like `grit log`).
+        /// With `--no-index`, exactly two paths. Otherwise limit the diff (after `--`, like `grit log`).
         #[arg(value_name = "PATH", last = true)]
         paths: Vec<String>,
         #[command(flatten)]
@@ -1100,6 +1103,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             ctx,
         ),
         Command::Diff {
+            no_index,
             staged,
             unstaged,
             against,
@@ -1109,8 +1113,9 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             paths,
             format,
         } => {
-            let exit_code = exit_code || quiet;
+            let exit_code = exit_code || quiet || no_index;
             match commands::diff::run(commands::diff::DiffRunOptions {
+                no_index,
                 staged,
                 unstaged,
                 against,

@@ -3175,6 +3175,29 @@ impl core::marker::Unpin for grit_lib::diff::LogPatchCommitHeader
 impl core::marker::UnsafeUnpin for grit_lib::diff::LogPatchCommitHeader
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::LogPatchCommitHeader
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::LogPatchCommitHeader
+#[non_exhaustive] pub enum grit_lib::diff::NoIndexError
+pub grit_lib::diff::NoIndexError::PathNotAccessible
+pub grit_lib::diff::NoIndexError::PathNotAccessible::path: alloc::string::String
+impl core::clone::Clone for grit_lib::diff::NoIndexError
+pub fn grit_lib::diff::NoIndexError::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::diff::NoIndexError
+impl core::cmp::PartialEq for grit_lib::diff::NoIndexError
+pub fn grit_lib::diff::NoIndexError::eq(&self, &Self) -> bool
+impl core::convert::From<grit_lib::diff::NoIndexError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::diff::NoIndexError) -> Self
+impl core::error::Error for grit_lib::diff::NoIndexError
+impl core::fmt::Debug for grit_lib::diff::NoIndexError
+pub fn grit_lib::diff::NoIndexError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::diff::NoIndexError
+pub fn grit_lib::diff::NoIndexError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::diff::NoIndexError
+impl core::marker::Freeze for grit_lib::diff::NoIndexError
+impl core::marker::Send for grit_lib::diff::NoIndexError
+impl core::marker::Sync for grit_lib::diff::NoIndexError
+impl core::marker::Unpin for grit_lib::diff::NoIndexError
+impl core::marker::UnsafeUnpin for grit_lib::diff::NoIndexError
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::NoIndexError
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::NoIndexError
 #[non_exhaustive] pub enum grit_lib::diff::RenameDetection
 pub grit_lib::diff::RenameDetection::Off
 pub grit_lib::diff::RenameDetection::Similarity(u8)
@@ -3621,6 +3644,7 @@ pub fn grit_lib::diff::diff_index_to_worktree(&grit_lib::objects::odb::Odb, &mut
 pub fn grit_lib::diff::diff_index_to_worktree_for_staging(&grit_lib::objects::odb::Odb, &std::path::Path, &mut grit_lib::index::Index, &std::path::Path, grit_lib::diff::DiffIndexToWorktreeOptions) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::diff::DiffEntry>, bool, alloc::collections::btree::map::BTreeMap<alloc::string::String, grit_lib::index::IndexStatFields>)>
 pub fn grit_lib::diff::diff_index_to_worktree_with_options(&grit_lib::objects::odb::Odb, &mut grit_lib::index::Index, &std::path::Path, grit_lib::diff::DiffIndexToWorktreeOptions) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::diff::DiffEntry>, bool)>
 pub fn grit_lib::diff::diff_index_to_worktree_with_renames(&grit_lib::repo::Repository, &mut grit_lib::index::Index, &std::path::Path, grit_lib::diff::DiffIndexToWorktreeOptions, u32) -> grit_lib::error::Result<(alloc::vec::Vec<grit_lib::diff::DiffEntry>, bool)>
+pub fn grit_lib::diff::diff_paths(&std::path::Path, &std::path::Path, &grit_lib::diff::DiffOptions) -> core::result::Result<alloc::vec::Vec<grit_lib::diff::FileDiff>, grit_lib::diff::NoIndexError>
 pub fn grit_lib::diff::diff_slice_ops_compacted(&[&str], &[&str], similar::types::Algorithm, bool) -> alloc::vec::Vec<similar::types::DiffOp>
 pub fn grit_lib::diff::diff_tree_path_change_count(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, core::option::Option<&grit_lib::objects::ObjectId>, &str) -> grit_lib::error::Result<usize>
 pub fn grit_lib::diff::diff_tree_to_worktree(&grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::objects::ObjectId>, &std::path::Path, &grit_lib::index::Index) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::DiffEntry>>
@@ -3943,6 +3967,8 @@ impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
 impl core::convert::From<grit_lib::command_runner::hooks::HookError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::command_runner::hooks::HookError) -> Self
+impl core::convert::From<grit_lib::diff::NoIndexError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::diff::NoIndexError) -> Self
 impl core::convert::From<grit_lib::error::ApplyError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::error::ApplyError) -> Self
 impl core::convert::From<grit_lib::error::ConfigError> for grit_lib::error::Error
@@ -9993,6 +10019,8 @@ impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
 impl core::convert::From<grit_lib::command_runner::hooks::HookError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::command_runner::hooks::HookError) -> Self
+impl core::convert::From<grit_lib::diff::NoIndexError> for grit_lib::error::Error
+pub fn grit_lib::error::Error::from(grit_lib::diff::NoIndexError) -> Self
 impl core::convert::From<grit_lib::error::ApplyError> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(grit_lib::error::ApplyError) -> Self
 impl core::convert::From<grit_lib::error::ConfigError> for grit_lib::error::Error
