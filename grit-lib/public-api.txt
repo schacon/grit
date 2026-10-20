@@ -3589,6 +3589,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::TreeDiffContent
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::TreeDiffContent
 pub struct grit_lib::diff::TreeDiffStructured
 pub grit_lib::diff::TreeDiffStructured::binary: bool
+pub grit_lib::diff::TreeDiffStructured::patch_bytes: core::option::Option<(grit_lib::diff::structured::SideBytes, grit_lib::diff::structured::SideBytes)>
 pub grit_lib::diff::TreeDiffStructured::entry: grit_lib::diff::DiffEntry
 pub grit_lib::diff::TreeDiffStructured::structured: grit_lib::diff::structured::StructuredFileDiff
 impl core::clone::Clone for grit_lib::diff::TreeDiffStructured

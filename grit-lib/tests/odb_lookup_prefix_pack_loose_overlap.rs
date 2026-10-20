@@ -50,8 +50,14 @@ fn git_write_blob(dir: &std::path::Path, data: &[u8]) {
     );
 }
 
-fn two_blobs_sharing_seven_hex_prefix() -> (grit_lib::objects::ObjectId, grit_lib::objects::ObjectId, Vec<u8>, Vec<u8>) {
-    let mut first_by_prefix: HashMap<String, (grit_lib::objects::ObjectId, Vec<u8>)> = HashMap::new();
+fn two_blobs_sharing_seven_hex_prefix() -> (
+    grit_lib::objects::ObjectId,
+    grit_lib::objects::ObjectId,
+    Vec<u8>,
+    Vec<u8>,
+) {
+    let mut first_by_prefix: HashMap<String, (grit_lib::objects::ObjectId, Vec<u8>)> =
+        HashMap::new();
     for n in 0_u64..2_000_000 {
         let data = n.to_string().into_bytes();
         let oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, &data);
@@ -70,7 +76,8 @@ fn two_blobs_sharing_seven_hex_prefix() -> (grit_lib::objects::ObjectId, grit_li
 
 #[test]
 fn lookup_prefix_finds_loose_collision_when_pack_object_is_also_loose() {
-    let (packed_oid, collision_oid, packed_data, collision_data) = two_blobs_sharing_seven_hex_prefix();
+    let (packed_oid, collision_oid, packed_data, collision_data) =
+        two_blobs_sharing_seven_hex_prefix();
     assert_eq!(packed_oid.to_hex()[..7], collision_oid.to_hex()[..7]);
 
     let root = TempDir::new().expect("tempdir");
@@ -91,7 +98,9 @@ fn lookup_prefix_finds_loose_collision_when_pack_object_is_also_loose() {
     git_write_blob(dir, &packed_data);
     git_write_blob(dir, &collision_data);
     assert_eq!(
-        repo.odb().write(ObjectKind::Blob, &packed_data).expect("grit write packed"),
+        repo.odb()
+            .write(ObjectKind::Blob, &packed_data)
+            .expect("grit write packed"),
         packed_oid
     );
     assert_eq!(
@@ -129,14 +138,7 @@ fn lookup_prefix_finds_loose_collision_when_pack_object_is_also_loose() {
     assert_eq!(grit_hex, git_matches, "prefix `{prefix}` disambiguate set");
 
     let grit_abbrev = abbreviate_for_display(&repo, packed_oid, true).expect("abbrev");
-    let git_abbrev = git(
-        dir,
-        &[
-            "rev-parse",
-            "--short=7",
-            &packed_oid.to_hex(),
-        ],
-    );
+    let git_abbrev = git(dir, &["rev-parse", "--short=7", &packed_oid.to_hex()]);
     assert_eq!(
         grit_abbrev, git_abbrev,
         "abbrev must extend past ambiguous 7-hex prefix"
