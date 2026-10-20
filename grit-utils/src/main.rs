@@ -249,6 +249,14 @@ enum Cmd {
         #[arg(long)]
         cwd: PathBuf,
     },
+    /// Internal: measure peak RSS for one direct argv command (fresh process)
+    #[command(hide = true)]
+    MeasureDirectRun {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        argv: Vec<String>,
+    },
     /// Real-repo campaign scorecard (git.git, chromium-class synthetic, optional linux)
     Campaign {
         /// Tiny fixtures and fewer scenarios (for CI and integration tests).
@@ -308,6 +316,12 @@ enum Cmd {
         candidate: PathBuf,
         #[arg(long, default_value = "0.10")]
         tolerance: f64,
+    },
+    /// Daily performance census (schema validation; full matrix in later steps)
+    #[command(hide = true)]
+    Daily {
+        #[command(subcommand)]
+        command: DailyCmd,
     },
     /// Prepare and list cached benchmark fixtures (git.git + synthetic tiers)
     Fixtures {
@@ -442,6 +456,11 @@ enum Cmd {
         git: PathBuf,
     },
     #[command(hide = true)]
+    PrepareDiffSynthetic {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
     PrepareWorktreeStatusClean {
         #[arg(long)]
         git: PathBuf,
@@ -526,6 +545,15 @@ impl From<SynthTierArg> for SynthTier {
             SynthTierArg::L => SynthTier::L,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum DailyCmd {
+    /// Parse a report and verify schema tag, ids, and peak RSS fields
+    Validate {
+        /// Daily census JSON report path
+        report: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -691,6 +719,18 @@ enum LibOpCmd {
     RevListCountHead {
         repo: PathBuf,
     },
+    RevListCountAuthorHead {
+        repo: PathBuf,
+        #[arg(long, default_value = ".")]
+        author: String,
+    },
+    RevListAuthorNHead {
+        repo: PathBuf,
+        #[arg(long, default_value = ".")]
+        author: String,
+        #[arg(long, default_value = "50")]
+        max_count: usize,
+    },
     BlamePorcelain {
         repo: PathBuf,
         path: String,
@@ -831,6 +871,18 @@ fn run_lib_op(workload: &LibOpCmd) -> Result<()> {
             let repo = open_repo(repo)?;
             odb_driver::rev_list_count_head(&repo)?;
         }
+        LibOpCmd::RevListCountAuthorHead { repo, author } => {
+            let repo = open_repo(repo)?;
+            odb_driver::rev_list_count_author_head(&repo, author)?;
+        }
+        LibOpCmd::RevListAuthorNHead {
+            repo,
+            author,
+            max_count,
+        } => {
+            let repo = open_repo(repo)?;
+            odb_driver::rev_list_author_n_head(&repo, author, *max_count)?;
+        }
         LibOpCmd::BlamePorcelain { repo, path } => {
             let repo = open_repo(repo)?;
             odb_driver::blame_porcelain(&repo, path)?;
@@ -923,6 +975,16 @@ fn main() -> Result<()> {
         }
         Cmd::RunLimited { cwd } => {
             return grit_utils::resource::run_limited_cli(cwd);
+        }
+        Cmd::MeasureDirectRun { cwd, argv } => {
+            return grit_utils::daily::runner::run_measure_direct_cli(cwd, argv);
+        }
+        Cmd::Daily {
+            command: DailyCmd::Validate { report },
+        } => {
+            grit_utils::validate_daily_report(report)?;
+            eprintln!("daily report valid: {}", report.display());
+            return Ok(());
         }
         Cmd::Drive { workload } => {
             return run_drive(workload);
@@ -1100,6 +1162,10 @@ fn main() -> Result<()> {
         Cmd::PrepareDiffDirty { git } => {
             let git = resolve_binary("git", Some(git))?;
             return grit_utils::scenarios::run_prepare_diff_dirty(&git);
+        }
+        Cmd::PrepareDiffSynthetic { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return grit_utils::scenarios::run_prepare_diff_synthetic(&git);
         }
         Cmd::PrepareWorktreeStatusClean { git } => {
             let git = resolve_binary("git", Some(git))?;
@@ -1573,7 +1639,9 @@ fn main() -> Result<()> {
             status
         }
         Cmd::Compare { .. }
+        | Cmd::Daily { .. }
         | Cmd::MeasureRss { .. }
+        | Cmd::MeasureDirectRun { .. }
         | Cmd::RunLimited { .. }
         | Cmd::Drive { .. }
         | Cmd::PrepareAdd { .. }
@@ -1598,6 +1666,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
         | Cmd::PrepareDiffDirty { .. }
+        | Cmd::PrepareDiffSynthetic { .. }
         | Cmd::PrepareWorktreeStatusClean { .. }
         | Cmd::PrepareWorktreeStatusDirty { .. }
         | Cmd::PrepareCampaignStatusDirty { .. }

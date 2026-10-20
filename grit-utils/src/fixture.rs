@@ -120,6 +120,15 @@ pub fn modify_files_for_diff(dir: &Path, count: usize) -> Result<()> {
     Ok(())
 }
 
+/// Reset the worktree to `HEAD` and apply exactly `count` unstaged `.txt` modifications.
+///
+/// Used as a hyperfine `--prepare` hook so `git diff` and `grit diff` each run against the
+/// same dirty fixture regardless of what the previous timed command did.
+pub fn prepare_synthetic_diff_iteration(dir: &Path, git: &Path, count: usize) -> Result<()> {
+    run_git(git, dir, &["reset", "--hard", "HEAD"])?;
+    modify_files_for_diff(dir, count)
+}
+
 /// Dirty the worktree (~10% modified, ~5% untracked).
 pub fn dirty_repo(dir: &Path, count: usize) -> Result<()> {
     let modify_count = count / 10;
@@ -585,6 +594,28 @@ mod tests {
 
     fn which_git() -> PathBuf {
         crate::binary::resolve_binary("git", None).expect("git")
+    }
+
+    #[test]
+    fn prepare_synthetic_diff_iteration_restores_name_count() {
+        let git = which_git();
+        remove_dir_robust(&scratch_dir());
+        let repo = create_repo(&git, 500).expect("create repo");
+        modify_files_for_diff(&repo, 48).expect("seed diff");
+        prepare_synthetic_diff_iteration(&repo, &git, 48).expect("prepare");
+        let out = Command::new(&git)
+            .args(["diff", "--name-only"])
+            .current_dir(&repo)
+            .output()
+            .expect("git diff --name-only");
+        assert!(out.status.success());
+        let names = std::str::from_utf8(&out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .count();
+        assert_eq!(names, 48);
+        remove_dir_robust(&scratch_dir());
     }
 
     #[test]
