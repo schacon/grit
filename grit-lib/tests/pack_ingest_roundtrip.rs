@@ -1252,7 +1252,7 @@ fn pack_rev_fsck_messages_cover_header_and_body_errors() {
         .iter()
         .any(|m| m.contains("invalid checksum")));
 
-    let _ = build_pack_rev_bytes(&index);
+    let _ = build_pack_rev_bytes(&index).expect("rev bytes");
     let _ = build_pack_rev_bytes_from_index_order_offsets(
         &index
             .iter()
