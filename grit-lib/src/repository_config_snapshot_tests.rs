@@ -557,6 +557,41 @@ printf '%s\n' '	hookKey = from-hook' >> "$cfg"
     }
 
     #[test]
+    fn repository_open_succeeds_when_git_config_count_exceeds_fingerprint_limit() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = init_repo(root);
+        let git_dir = repo.git_dir().to_path_buf();
+
+        let mut env = crate::environment::Environment::empty();
+        env.cwd = root.to_path_buf();
+        env.git_config_count = Some("257".into());
+        for i in 0..257 {
+            env.git_config_pairs
+                .push((format!("section{i}.key"), format!("v{i}")));
+        }
+        assert!(env.config_fingerprint().is_none());
+
+        let opened = Repository::open(
+            &git_dir,
+            &RepositoryOptions::with_environment(env).with_work_tree(root.to_path_buf()),
+        )
+        .expect("open with many GIT_CONFIG pairs");
+        assert!(
+            opened
+                .config()
+                .expect("config session")
+                .get("user.name")
+                .is_some()
+                || opened
+                    .config()
+                    .expect("config")
+                    .get("core.repositoryformatversion")
+                    .is_some()
+        );
+    }
+
+    #[test]
     fn includeif_onbranch_load_with_reftable_probe_does_not_deadlock() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("real");

@@ -26,7 +26,7 @@
 //! # }
 //! ```
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -617,6 +617,7 @@ impl Repository {
     }
 
     fn refresh_config_session(&self) -> Result<()> {
+        self.caches.clear_session_config();
         self.caches.clear_local_config_derived();
         let opts = self.config_load_options(true);
         let env = self.environment.as_ref();
@@ -624,10 +625,14 @@ impl Repository {
             .caches
             .load_config_with_options(env, Some(&self.git_dir), &opts)?;
         let key = ConfigCacheKey::new(Some(&self.git_dir), &opts);
-        let (env_fingerprint, base_stamps, extra_stamps) = self
-            .caches
-            .config_entry_stamps(&key)
-            .ok_or_else(|| Error::Message("config cache entry missing after load".to_owned()))?;
+        let (env_fingerprint, base_stamps, extra_stamps) =
+            self.caches.config_entry_stamps(&key).unwrap_or_else(|| {
+                (
+                    env.config_fingerprint().unwrap_or_default(),
+                    config_file_stamps(env, Some(&self.git_dir), &opts),
+                    Vec::new(),
+                )
+            });
         let cached_settings =
             Self::repo_cached_settings_from_config(cfg.as_ref(), self.environment.as_ref());
         let replace_lookup_inactive = self.replace_lookup_inactive(cfg.as_ref());
@@ -2417,7 +2422,7 @@ pub fn common_git_dir_for_config(git_dir: &Path) -> PathBuf {
 /// True when `extensions.worktreeConfig` is enabled in the common `config`.
 pub fn worktree_config_enabled(common_dir: &Path) -> bool {
     let path = common_dir.join("config");
-    let Ok(content) = crate::repo_caches::process_cached_local_config(&path) else {
+    let Ok(content) = crate::repo_caches::read_local_config_file(&path) else {
         return false;
     };
     worktree_config_enabled_for_text(Some(content.as_str()))
@@ -2536,7 +2541,7 @@ pub fn init_worktree_config(git_dir: &Path) -> Result<()> {
 /// `discover_git_directory_reason` / t1309.
 pub fn early_config_ignore_repo_reason(common_dir: &Path) -> Option<String> {
     let path = common_dir.join("config");
-    let content = crate::repo_caches::process_cached_local_config(&path).ok()?;
+    let content = crate::repo_caches::read_local_config_file(&path).ok()?;
     early_config_ignore_repo_reason_for_text(Some(content.as_str()))
 }
 
@@ -2708,7 +2713,7 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
     let Some(config_path) = repository_config_path(git_dir) else {
         return Ok(());
     };
-    let content = crate::repo_caches::process_cached_local_config(&config_path)?;
+    let content = crate::repo_caches::read_local_config_file(&config_path)?;
     let parsed = parse_repository_format(&content, &config_path)?;
     validate_repository_format_parsed(&parsed)
 }
@@ -2730,16 +2735,6 @@ pub(crate) struct RepositoryFormat {
 /// # Errors
 ///
 /// Returns [`Error::Io`] or [`Error::Config`] when config cannot be read or parsed.
-// hygiene: process-wide repository format parse cache keyed by git dir
-static PROCESS_REPOSITORY_FORMAT: Mutex<Option<HashMap<PathBuf, RepositoryFormat>>> =
-    Mutex::new(None);
-
-pub(crate) fn clear_process_repository_format_cache() {
-    if let Ok(mut guard) = PROCESS_REPOSITORY_FORMAT.lock() {
-        *guard = None;
-    }
-}
-
 pub(crate) fn read_repository_format_from_git_dir(git_dir: &Path) -> Result<RepositoryFormat> {
     let Some(config_path) = repository_config_path(git_dir) else {
         return Ok(RepositoryFormat {
@@ -2748,20 +2743,7 @@ pub(crate) fn read_repository_format_from_git_dir(git_dir: &Path) -> Result<Repo
             ref_storage: None,
         });
     };
-    let key = config_path
-        .canonicalize()
-        .unwrap_or_else(|_| config_path.clone());
-    if let Ok(mut guard) = PROCESS_REPOSITORY_FORMAT.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
-        if let Some(parsed) = map.get(&key) {
-            return Ok(parsed.clone());
-        }
-        let content = crate::repo_caches::process_cached_local_config(&config_path)?;
-        let parsed = parse_repository_format(&content, &config_path)?;
-        map.insert(key, parsed.clone());
-        return Ok(parsed);
-    }
-    let content = crate::repo_caches::process_cached_local_config(&config_path)?;
+    let content = crate::repo_caches::read_local_config_file(&config_path)?;
     parse_repository_format(&content, &config_path)
 }
 

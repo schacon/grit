@@ -279,6 +279,7 @@ fn resolve_upstream_full_ref_name(repo: &Repository, base: &str, is_push: bool) 
     }
     let (branch_key, display_branch) = resolve_upstream_branch_context(repo, base)?;
     let config_path = repo.common_git_dir().join("config");
+    let _ = repo.config()?;
     let config_content = repo.caches().local_config_text(&config_path)?;
     let Some((remote, merge)) = parse_branch_tracking(&config_content, &branch_key) else {
         return Err(RevParseError::NoUpstream {
@@ -312,6 +313,7 @@ fn resolve_upstream_full_ref_name(repo: &Repository, base: &str, is_push: bool) 
 /// `push` refspecs (exact `refs/heads/<branch>:refs/heads/<dest>` mappings).
 pub fn resolve_push_full_ref_for_branch(repo: &Repository, branch_short: &str) -> Result<String> {
     let config_path = repo.common_git_dir().join("config");
+    let _ = repo.config()?;
     let config_content = repo.caches().local_config_text(&config_path)?;
 
     let upstream_tracking =

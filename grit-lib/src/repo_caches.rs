@@ -8,44 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-type LocalConfigFileStamp = (std::time::SystemTime, u64);
-type ProcessLocalConfigCache = HashMap<PathBuf, (Option<LocalConfigFileStamp>, String)>;
-// hygiene: process-wide local config body cache keyed by path (cleared on repository config invalidation)
-static PROCESS_LOCAL_CONFIG: Mutex<Option<ProcessLocalConfigCache>> = Mutex::new(None);
-
-/// Process-wide cache for repository-local `config` bodies (used when no [`RepoCaches`] handle exists).
-/// Drop process-wide local-config and dependent caches (called on repository config invalidation).
-pub(crate) fn clear_process_config_caches() {
-    if let Ok(mut guard) = PROCESS_LOCAL_CONFIG.lock() {
-        *guard = None;
-    }
-    crate::repo::clear_process_repository_format_cache();
-    crate::refs::store::clear_process_ref_store_cache();
-}
-
-fn evict_process_local_config_for_path(path: &Path) {
-    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if let Ok(mut guard) = PROCESS_LOCAL_CONFIG.lock() {
-        if let Some(map) = guard.as_mut() {
-            map.remove(&key);
-        }
-    }
-}
-
-pub(crate) fn process_cached_local_config(path: &Path) -> Result<String> {
-    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let stamp = crate::config::stamp_for_path(path);
-    if let Ok(mut guard) = PROCESS_LOCAL_CONFIG.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
-        if let Some((cached_stamp, text)) = map.get(&key) {
-            if cached_stamp == &stamp {
-                return Ok(text.clone());
-            }
-        }
-        let text = std::fs::read_to_string(path).map_err(Error::Io)?;
-        map.insert(key, (stamp, text.clone()));
-        return Ok(text);
-    }
+/// Read repository-local `config` from disk (no caching; standalone [`ConfigSet::load`] paths use this).
+pub(crate) fn read_local_config_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path).map_err(Error::Io)
 }
 
@@ -238,6 +202,11 @@ impl RepoCaches {
         }
         let opts = &effective;
         let key = ConfigCacheKey::new(git_dir, opts);
+        if let Ok(guard) = self.session_config.lock() {
+            if let Some((_, cfg)) = guard.as_ref() {
+                return Ok(Arc::clone(cfg));
+            }
+        }
         let Some(env_fp) = env.config_fingerprint() else {
             #[cfg(test)]
             crate::config::cascade_load_counters::record_uncached();
@@ -293,7 +262,13 @@ impl RepoCaches {
         }
         self.clear_session_config();
         self.clear_local_config_derived();
-        clear_process_config_caches();
+        if let Ok(mut guard) = self.ref_stores.lock() {
+            guard.clear();
+        }
+        if let Ok(mut guard) = self.ref_storage_format.lock() {
+            guard.clear();
+        }
+        crate::refs::store::clear_ref_store_stamp_cache();
     }
 
     /// Repository-local `config` body (linked worktree common dir when needed), read at most once per handle until invalidation.
@@ -303,7 +278,7 @@ impl RepoCaches {
                 return Ok(text.clone());
             }
         }
-        let text = process_cached_local_config(config_path)?;
+        let text = read_local_config_file(config_path)?;
         if let Ok(mut guard) = self.local_config_text.lock() {
             *guard = Some(text.clone());
         }
@@ -377,7 +352,6 @@ impl RepoCaches {
                     .any(|(p, _)| p == path)
             });
         }
-        evict_process_local_config_for_path(path);
         if let Ok(mut slot) = self.local_config_text.lock() {
             *slot = None;
         }

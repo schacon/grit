@@ -105,3 +105,36 @@ impl RefStorageFormat {
 pub fn detect_format(git_dir: &Path) -> Result<RefStorageFormat> {
     RefStorageFormat::detect(git_dir)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn detect_reflects_rewritten_ref_storage_without_repository() {
+        let tmp = TempDir::new().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("git dir");
+        fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n",
+        )
+        .expect("config");
+        assert_eq!(
+            RefStorageFormat::detect(&git_dir).expect("detect"),
+            RefStorageFormat::Files
+        );
+
+        fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryformatversion = 1\n[extensions]\n\trefStorage = reftable\n",
+        )
+        .expect("rewrite");
+        assert_eq!(
+            RefStorageFormat::detect(&git_dir).expect("detect again"),
+            RefStorageFormat::Reftable
+        );
+    }
+}

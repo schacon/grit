@@ -2383,11 +2383,15 @@ impl ConfigSet {
         if let Some(gd) = git_dir {
             let common_dir = crate::repo::common_git_dir_for_config(gd);
             let local_path = common_dir.join("config");
-            let local_text = opts
-                .repo_caches
-                .as_ref()
-                .and_then(|c| c.local_config_text(&local_path).ok())
-                .or_else(|| crate::repo_caches::process_cached_local_config(&local_path).ok());
+            let local_text = if local_path.is_file() {
+                Some(if let Some(c) = opts.repo_caches.as_ref() {
+                    c.local_config_text(&local_path)?
+                } else {
+                    crate::repo_caches::read_local_config_file(&local_path)?
+                })
+            } else {
+                None
+            };
             if let Some(msg) =
                 crate::repo::early_config_ignore_repo_reason_for_text(local_text.as_deref())
             {

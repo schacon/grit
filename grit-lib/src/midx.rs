@@ -1035,7 +1035,7 @@ fn sniff_objectformat_hash_version(config_path: &Path) -> u8 {
 
 /// Uncached `[extensions] objectformat` scan of one config file.
 fn sniff_objectformat_hash_version_uncached(config_path: &Path) -> u8 {
-    let Ok(text) = crate::repo_caches::process_cached_local_config(config_path) else {
+    let Ok(text) = crate::repo_caches::read_local_config_file(config_path) else {
         return HASH_VERSION_SHA1;
     };
     // Minimal scan for `[extensions]` ... `objectformat = sha256`. Section and key

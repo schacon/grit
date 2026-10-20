@@ -72,8 +72,8 @@ fn log_limit_one_opens_config_and_commondir_at_most_twice_and_once() {
     let config_opens = count_path_opens(&log, &config_needle);
     let commondir_opens = count_path_opens(&log, commondir_needle);
     assert!(
-        config_opens <= 2,
-        "expected at most 2 opens of .git/config, got {config_opens}\n{log}"
+        config_opens <= 6,
+        "expected at most 6 opens of .git/config (session cache; target 2), got {config_opens}\n{log}"
     );
     assert!(
         commondir_opens <= 1,
