@@ -666,7 +666,6 @@ fn refresh_present_tracked_path(
     let oid = match std::str::from_utf8(raw_path) {
         Ok(rel_path) => {
             if let Some(deferred) = defer_restage {
-                let meta = fs::symlink_metadata(abs_path).map_err(Error::Io)?;
                 deferred.push(DeferredRestageJob {
                     entry_index: u32::try_from(entry_index)
                         .map_err(|_| Error::Message("index entry index exceeds u32::MAX".into()))?,
