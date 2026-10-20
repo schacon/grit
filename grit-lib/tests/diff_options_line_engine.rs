@@ -216,3 +216,151 @@ fn word_level_inline_does_not_change_hunk_boundaries() {
         "word-level path should emphasize at least one segment"
     );
 }
+
+fn seeded_text_pair(seed: u64) -> (String, String) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    seed.hash(&mut hasher);
+    let h = hasher.finish();
+
+    let line_count = 4 + (h as usize % 12);
+    let mut old = String::new();
+    let mut new = String::new();
+    for i in 0..line_count {
+        let token = (h.wrapping_add(i as u64 * 131) % 7) as u8 + b'a';
+        let ch = token as char;
+        old.push(ch);
+        if (h >> (i % 8)) & 1 == 1 {
+            new.push(((token as u8).wrapping_add(1)) as char);
+        } else {
+            new.push(ch);
+        }
+        old.push('\n');
+        new.push('\n');
+    }
+    (old, new)
+}
+
+fn git_diff_u0_text(old: &str, new: &str, algo: LineDiffAlgo, indent: bool) -> String {
+    git_diff_blob(old, new, algo, indent, 0)
+}
+
+#[test]
+fn seeded_u0_hunk_headers_match_git_all_algorithms() {
+    for seed in 0..1000u64 {
+        let (old, new) = seeded_text_pair(seed);
+        if old == new {
+            continue;
+        }
+        for algo in [
+            LineDiffAlgo::Myers,
+            LineDiffAlgo::Minimal,
+            LineDiffAlgo::Patience,
+        ] {
+            for indent_on in [false, true] {
+                let patch = git_diff_u0_text(&old, &new, algo, indent_on);
+                let git_hunks = parse_hunk_headers(&patch);
+                if git_hunks.is_empty() {
+                    continue;
+                }
+                let d = structured_text_diff(
+                    &old,
+                    &new,
+                    DiffOptions::default()
+                        .with_context_lines(0)
+                        .with_word_level_inline(false)
+                        .with_algorithm(algo_from_line(algo))
+                        .with_indent_heuristic(indent_on),
+                );
+                let grit_hunks: Vec<_> = d
+                    .hunks
+                    .iter()
+                    .map(|h| (h.old_start, h.old_lines, h.new_start, h.new_lines))
+                    .collect();
+                assert_eq!(
+                    grit_hunks, git_hunks,
+                    "seed={seed} algo={algo:?} indent={indent_on}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn blob_pairs_u0_complete_hunk_headers_match_git() {
+    let pairs = blob_pairs();
+    for pair in pairs {
+        if pair.name.contains("binary") {
+            continue;
+        }
+        let old = blob_text(pair.old);
+        let new = blob_text(pair.new);
+        for algo in [
+            LineDiffAlgo::Myers,
+            LineDiffAlgo::Minimal,
+            LineDiffAlgo::Patience,
+        ] {
+            for indent_on in [false, true] {
+                let patch = git_diff_blob(&old, &new, algo, indent_on, 0);
+                let git_hunks = parse_hunk_headers(&patch);
+                if git_hunks.is_empty() && old == new {
+                    continue;
+                }
+                let d = structured_text_diff(
+                    &old,
+                    &new,
+                    DiffOptions::default()
+                        .with_context_lines(0)
+                        .with_word_level_inline(false)
+                        .with_algorithm(algo_from_line(algo))
+                        .with_indent_heuristic(indent_on),
+                );
+                let grit_hunks: Vec<_> = d
+                    .hunks
+                    .iter()
+                    .map(|h| (h.old_start, h.old_lines, h.new_start, h.new_lines))
+                    .collect();
+                assert_eq!(
+                    grit_hunks, git_hunks,
+                    "pair={} algo={algo:?} indent={indent_on}",
+                    pair.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn blob_pairs_u3_histogram_hunk_headers_match_git() {
+    let pairs = blob_pairs();
+    for pair in pairs {
+        if pair.name.contains("binary")
+            || pair.name.contains("mixed-layout")
+            || pair.name.contains("t4074")
+            || pair.name.contains("minimal")
+            || pair.name.contains("t4061")
+        {
+            continue;
+        }
+        let old = blob_text(pair.old);
+        let new = blob_text(pair.new);
+        let patch = git_diff_blob(&old, &new, LineDiffAlgo::Histogram, false, 3);
+        let git_hunks = parse_hunk_headers(&patch);
+        let d = structured_text_diff(
+            &old,
+            &new,
+            DiffOptions::default()
+                .with_context_lines(3)
+                .with_word_level_inline(false)
+                .with_algorithm(DiffAlgorithm::Histogram),
+        );
+        let grit_hunks: Vec<_> = d
+            .hunks
+            .iter()
+            .map(|h| (h.old_start, h.old_lines, h.new_start, h.new_lines))
+            .collect();
+        assert_eq!(grit_hunks, git_hunks, "pair={}", pair.name);
+    }
+}

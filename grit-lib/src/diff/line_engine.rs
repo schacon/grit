@@ -12,18 +12,20 @@ pub(crate) fn line_hunks(
     old_content: &str,
     new_content: &str,
     options: &DiffOptions,
+    enclosing_function_context: bool,
 ) -> Vec<StructuredHunk> {
     if old_content == new_content {
         return Vec::new();
     }
     let body = unified_hunk_body_for_diff_options(old_content, new_content, options);
-    structured_hunks_from_unified_body(&body, old_content, new_content)
+    structured_hunks_from_unified_body(&body, old_content, new_content, enclosing_function_context)
 }
 
 fn structured_hunks_from_unified_body(
     body: &str,
     old_content: &str,
     new_content: &str,
+    enclosing_function_context: bool,
 ) -> Vec<StructuredHunk> {
     if body.is_empty() {
         return Vec::new();
@@ -32,6 +34,7 @@ fn structured_hunks_from_unified_body(
     let after_ends_nl = new_content.ends_with('\n');
     let before_count = line_count(old_content);
     let after_count = line_count(new_content);
+    let old_line_bodies = super::old_line_bodies_for_context(old_content);
 
     imara_unified_hunk_slices(body)
         .into_iter()
@@ -111,12 +114,26 @@ fn structured_hunks_from_unified_body(
                 });
             }
 
+            let context = if enclosing_function_context {
+                structured_lines
+                    .iter()
+                    .filter(|l| l.kind == StructuredLineKind::Del)
+                    .filter_map(|l| l.old)
+                    .min()
+                    .or_else(|| structured_lines.iter().filter_map(|l| l.old).min())
+                    .and_then(|old_line_no| {
+                        super::enclosing_function_context(&old_line_bodies, old_line_no)
+                    })
+            } else {
+                None
+            };
+
             Some(StructuredHunk {
                 old_start,
                 new_start,
                 old_lines,
                 new_lines,
-                context: None,
+                context,
                 lines: structured_lines,
             })
         })

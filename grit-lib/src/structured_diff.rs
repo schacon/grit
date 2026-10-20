@@ -162,7 +162,8 @@ pub fn structured_text_diff(
     new_text: &str,
     options: DiffOptions,
 ) -> StructuredTextDiff {
-    let mut hunks = line_engine::line_hunks(old_text, new_text, &options);
+    let mut hunks =
+        line_engine::line_hunks(old_text, new_text, &options, options.word_level_inline);
     if options.word_level_inline {
         apply_word_level_inline(&mut hunks, old_text, new_text);
     }
@@ -345,6 +346,32 @@ fn lines_with_trailing_newline(text: &str) -> (Vec<&str>, bool) {
 
 fn strip_diff_newline_only(s: &str) -> &str {
     s.strip_suffix('\n').unwrap_or(s)
+}
+
+/// Old-side line bodies for structured hunk metadata (CRLF-safe split).
+pub(crate) fn old_line_bodies_for_context(text: &str) -> Vec<String> {
+    TextLines::from_text(text).lines
+}
+
+/// Nearest enclosing definition line above a 1-based old hunk start (Git `-W` style).
+pub(crate) fn enclosing_function_context(
+    lines: &[String],
+    old_start_1based: usize,
+) -> Option<String> {
+    if old_start_1based == 0 {
+        return None;
+    }
+    function_context(lines, old_start_1based.saturating_sub(1))
+}
+
+fn function_context(lines: &[String], start_0based: usize) -> Option<String> {
+    lines[..start_0based.min(lines.len())]
+        .iter()
+        .rev()
+        .find_map(|line| {
+            let first = line.chars().next()?;
+            (first.is_alphabetic() || first == '_').then(|| line.trim_end().to_owned())
+        })
 }
 
 fn reconcile_segments_with_line(segments: &mut Vec<StructuredSegment>, full_line: &str) {
@@ -565,6 +592,15 @@ mod tests {
             (g_os, g_ol, g_ns, g_nl)
         );
         assert_eq!((h.new_start, h.new_lines), (1, 0));
+    }
+
+    #[test]
+    fn structured_hunk_retains_enclosing_function_context() {
+        let old = "fn foo() {\n  let x = 1;\n}\n";
+        let new = "fn foo() {\n  let x = 2;\n}\n";
+        let d = structured_text_diff(old, new, DiffOptions::default());
+        let h = &d.hunks[0];
+        assert_eq!(h.context.as_deref(), Some("fn foo() {"));
     }
 
     #[test]
