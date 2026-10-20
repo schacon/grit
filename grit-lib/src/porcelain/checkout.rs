@@ -467,6 +467,31 @@ pub(crate) struct CheckoutApplyOptions {
     pub skip_bulk_checkout_fast_path: bool,
     /// When set, the index should match this tree after checkout (updates cache-tree root).
     pub checkout_result_tree: Option<crate::objects::ObjectId>,
+    /// Update the work tree only; leave the in-memory index unchanged (caller updates index).
+    pub skip_index_updates: bool,
+}
+
+fn maybe_checkout_commit_index_update(
+    repo: &Repository,
+    index_mut: &mut Index,
+    wholesale_dirs_removed: &BTreeSet<String>,
+    paths_to_remove: &[Vec<u8>],
+    new_entries: Vec<IndexEntry>,
+    bulk_index_rewrite: bool,
+    apply: &CheckoutApplyOptions,
+) -> Result<()> {
+    if apply.skip_index_updates {
+        return Ok(());
+    }
+    checkout_commit_index_update(
+        repo,
+        index_mut,
+        wholesale_dirs_removed,
+        paths_to_remove,
+        new_entries,
+        bulk_index_rewrite,
+        apply.checkout_result_tree,
+    )
 }
 
 /// Like [`checkout_tree_changes`], but updates `index` in place instead of loading from disk.
@@ -1079,14 +1104,14 @@ fn checkout_bulk_added_tree_changes(
             config,
         )?;
     }
-    checkout_commit_index_update(
+    maybe_checkout_commit_index_update(
         repo,
         index_mut,
         &apply.preverified_wholesale_dirs,
         &[],
         new_entries,
         true,
-        apply.checkout_result_tree,
+        &apply,
     )?;
     progress.finish();
     Ok(())
@@ -1269,14 +1294,14 @@ fn checkout_bulk_mod_delete_tree_changes(
         progress,
     )?;
 
-    checkout_commit_index_update(
+    maybe_checkout_commit_index_update(
         repo,
         index_mut,
         wholesale_index_prefixes,
         &paths_to_remove,
         new_entries,
         true,
-        apply.checkout_result_tree,
+        &apply,
     )?;
     progress.finish();
     Ok(())
@@ -1292,7 +1317,7 @@ fn checkout_bulk_deleted_tree_changes(
     wholesale_dirs_removed: &BTreeSet<String>,
     deleted_abs_paths: &mut Vec<PathBuf>,
     progress: &mut dyn ProgressSink,
-    checkout_result_tree: Option<crate::objects::ObjectId>,
+    apply: &CheckoutApplyOptions,
 ) -> Result<()> {
     let mut parallel_deleted_paths: HashSet<String> = HashSet::new();
     let mut per_file_deletes: Vec<String> = Vec::new();
@@ -1355,14 +1380,14 @@ fn checkout_bulk_deleted_tree_changes(
         progress.inc(1);
     }
     remove_empty_parent_dirs_batch(work_tree, deleted_abs_paths);
-    checkout_commit_index_update(
+    maybe_checkout_commit_index_update(
         repo,
         index_mut,
         wholesale_index_prefixes,
         &paths_to_remove,
         Vec::new(),
         true,
-        checkout_result_tree,
+        apply,
     )?;
     progress.finish();
     Ok(())
@@ -1517,7 +1542,7 @@ fn checkout_tree_changes_with_progress(
                 &wholesale_dirs_removed,
                 &mut deleted_abs_paths,
                 progress,
-                apply.checkout_result_tree,
+                &apply,
             );
         }
     }
@@ -1828,14 +1853,14 @@ fn checkout_tree_changes_with_progress(
     remove_empty_parent_dirs_batch(work_tree, &deleted_abs_paths);
     drop(rules);
     let bulk_index_rewrite = changes.len() >= 64;
-    checkout_commit_index_update(
+    maybe_checkout_commit_index_update(
         repo,
         index_mut,
         &wholesale_dirs_removed,
         &paths_to_remove,
         new_entries,
         bulk_index_rewrite,
-        apply.checkout_result_tree,
+        &apply,
     )?;
     progress.finish();
     Ok(())
@@ -3261,6 +3286,7 @@ mod tests {
                 wholesale_safety_precomputed: true,
                 skip_bulk_checkout_fast_path: false,
                 checkout_result_tree: None,
+                skip_index_updates: false,
             },
             None,
         )
@@ -3340,6 +3366,7 @@ mod tests {
                 wholesale_safety_precomputed: true,
                 skip_bulk_checkout_fast_path: false,
                 checkout_result_tree: None,
+                skip_index_updates: false,
             },
             None,
         )
