@@ -297,8 +297,8 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
             pending: false,
             setup: setup_git_git,
             prepare: DailyPrepare::None,
-            build_git: |c| cat_head_tree_bench(c).1,
-            build_grit: |c| cat_head_tree_bench(c).0,
+            build_git: |c| cat_blob_bench(c).1,
+            build_grit: |c| cat_blob_bench(c).0,
         },
         DailyHeadlinePlan {
             spec: scenario_spec("reflog/list@synth-10k"),

@@ -24,10 +24,6 @@ use crate::worktree_fixture::{
     shell_mv_file, shell_redirect_devnull, shell_restore_modified_set, shell_rm_dir_git,
     shell_rm_dir_grit,
 };
-use crate::worktree_fixture::{
-    record_matrix_path_targets, shell_mv_file, shell_restore_modified_set, shell_rm_dir_git,
-    shell_rm_dir_grit,
-};
 
 /// Shortlog/compare target for git-git matrix rows (tag present on pinned git.git).
 pub const GIT_GIT_SHORTLOG_TARGET: &str = "v2.46.0";

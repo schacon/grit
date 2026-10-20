@@ -457,4 +457,3 @@ pub const MATRIX_SCENARIOS: &[ScenarioSpec] = &[
         description: "List remotes vs git remote",
     },
 ];
-|||||||
