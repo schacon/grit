@@ -190,19 +190,8 @@ fn fill_sparse_maps_walk(
         let b_sub = b_te.filter(|e| e.mode == MODE_DIR).map(|e| e.oid);
         let o_sub = o_te.filter(|e| e.mode == MODE_DIR).map(|e| e.oid);
         let t_sub = t_te.filter(|e| e.mode == MODE_DIR).map(|e| e.oid);
-        let descend = subtree_touched(&fp, touched);
-        if !descend {
+        if !subtree_touched(&fp, touched) {
             continue;
-        }
-
-        if o_sub.is_some() && subtree_touched(&fp, touched) {
-            cache.note_dir_with_descendant(MergeTreeSide::Ours, &fp);
-        }
-        if t_sub.is_some() && subtree_touched(&fp, touched) {
-            cache.note_dir_with_descendant(MergeTreeSide::Theirs, &fp);
-        }
-        if b_sub.is_some() && subtree_touched(&fp, touched) {
-            cache.note_dir_with_descendant(MergeTreeSide::Base, &fp);
         }
 
         fill_sparse_maps_walk(

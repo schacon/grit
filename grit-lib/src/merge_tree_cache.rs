@@ -49,10 +49,6 @@ impl MergeTreeCache {
         }
     }
 
-    pub(crate) fn note_dir_with_descendant(&mut self, side: MergeTreeSide, dir_path: &[u8]) {
-        self.dir_with_descendant[side as usize].insert(dir_path.to_vec());
-    }
-
     pub(crate) fn dir_has_descendant(&self, side: MergeTreeSide, prefix: &[u8]) -> bool {
         let set = &self.dir_with_descendant[side as usize];
         if set.contains(prefix) {

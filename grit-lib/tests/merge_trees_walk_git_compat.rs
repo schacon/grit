@@ -4,13 +4,73 @@ mod support;
 
 use std::fs;
 
-use grit_lib::objects::ObjectId;
+use grit_lib::index::MODE_REGULAR;
+use grit_lib::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
 
 use support::git as hist_git;
 use support::{
-    assert_merge_commits_match_git, commit_file, open_grit_repo, skip_merge_tree_git,
-    CommitMergeLabels, HistoryRepo,
+    assert_merge_commits_match_git, commit_file, empty_tree, git_commit_tree, open_grit_repo,
+    skip_merge_tree_git, CommitMergeLabels, HistoryRepo,
 };
+
+const MODE_DIR: u32 = 0o040000;
+
+#[test]
+fn empty_subtree_dir_entry_matches_git_merge_tree() {
+    if !skip_merge_tree_git() {
+        return;
+    }
+    let history = init_repo();
+    let grit = open_grit_repo(history.worktree());
+    let odb = grit.odb();
+    let base_tree = empty_tree(&grit);
+    let blob = odb
+        .write(ObjectKind::Blob, b"file at dir path\n")
+        .expect("blob");
+    let ours_tree = odb
+        .write(
+            ObjectKind::Tree,
+            &serialize_tree(&[TreeEntry {
+                mode: MODE_REGULAR,
+                name: b"dir".to_vec(),
+                oid: blob,
+            }]),
+        )
+        .expect("ours tree");
+    let theirs_tree = odb
+        .write(
+            ObjectKind::Tree,
+            &serialize_tree(&[TreeEntry {
+                mode: MODE_DIR,
+                name: b"dir".to_vec(),
+                oid: base_tree,
+            }]),
+        )
+        .expect("theirs tree");
+    let base_commit = git_commit_tree(history.worktree(), &base_tree, &[], "empty base");
+    let ours_commit = git_commit_tree(
+        history.worktree(),
+        &ours_tree,
+        &[base_commit],
+        "ours blob dir",
+    );
+    let theirs_commit = git_commit_tree(
+        history.worktree(),
+        &theirs_tree,
+        &[base_commit],
+        "theirs empty dir",
+    );
+    let labels = CommitMergeLabels::from_commits(&ours_commit, &theirs_commit);
+    assert_merge_commits_match_git(
+        &history,
+        &grit,
+        &base_commit,
+        &ours_commit,
+        &theirs_commit,
+        labels.presentation(),
+        "ours file dir vs theirs empty tree at dir",
+    );
+}
 
 const CASE_COUNT: u32 = 220;
 
