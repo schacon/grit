@@ -37,32 +37,15 @@ fn parse_range(s: &str) -> (usize, usize) {
 fn git_diff_blob(old: &str, new: &str, algo: LineDiffAlgo, indent: bool, context: usize) -> String {
     use std::process::Command;
     let tmp = tempfile::tempdir().expect("tempdir");
-    let path = tmp.path().join("f.txt");
-    std::fs::write(&path, old).expect("write old");
-    Command::new("git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(tmp.path())
-        .status()
-        .expect("git init");
-    for (k, v) in [("user.email", "t@e.com"), ("user.name", "T")] {
-        Command::new("git")
-            .args(["config", k, v])
-            .current_dir(tmp.path())
-            .status()
-            .unwrap();
-    }
-    Command::new("git")
-        .args(["add", "f.txt"])
-        .current_dir(tmp.path())
-        .status()
-        .unwrap();
-    Command::new("git")
-        .args(["commit", "-qm", "init"])
-        .current_dir(tmp.path())
-        .status()
-        .unwrap();
-    std::fs::write(&path, new).expect("write new");
-    let mut args = vec!["diff".to_owned(), format!("-U{context}")];
+    let old_path = tmp.path().join("old.txt");
+    let new_path = tmp.path().join("new.txt");
+    std::fs::write(&old_path, old).expect("write old");
+    std::fs::write(&new_path, new).expect("write new");
+    let mut args = vec![
+        "diff".to_owned(),
+        "--no-index".to_owned(),
+        format!("-U{context}"),
+    ];
     match algo {
         LineDiffAlgo::Myers => {}
         LineDiffAlgo::Histogram => args.push("--histogram".to_owned()),
@@ -74,12 +57,12 @@ fn git_diff_blob(old: &str, new: &str, algo: LineDiffAlgo, indent: bool, context
     } else {
         args.push("--no-indent-heuristic".to_owned());
     }
-    args.push("f.txt".to_owned());
+    args.push(old_path.display().to_string());
+    args.push(new_path.display().to_string());
     let out = Command::new("git")
         .args(&args)
-        .current_dir(tmp.path())
         .output()
-        .expect("git diff");
+        .expect("git diff --no-index");
     String::from_utf8(out.stdout).expect("utf8")
 }
 
@@ -120,6 +103,34 @@ fn assert_all_hunks_match_git(
         grit_hunks, git_hunks,
         "algo={algo:?} indent={indent_on} context={context}"
     );
+}
+
+#[test]
+fn mixed_layout_u0_histogram_hunk_headers_match_git() {
+    let pairs = blob_pairs();
+    let pair = pairs
+        .iter()
+        .find(|p| p.name == "t4033/t4050-mixed-layout")
+        .expect("mixed-layout fixture");
+    let old = blob_text(pair.old);
+    let new = blob_text(pair.new);
+    for indent_on in [false, true] {
+        assert_all_hunks_match_git(old, new, LineDiffAlgo::Histogram, indent_on, 0);
+    }
+}
+
+#[test]
+fn t4071_minimal_u0_hunk_headers_match_git() {
+    let pairs = blob_pairs();
+    let pair = pairs
+        .iter()
+        .find(|p| p.name == "t4071-minimal")
+        .expect("t4071-minimal fixture");
+    let old = blob_text(pair.old);
+    let new = blob_text(pair.new);
+    for indent_on in [false, true] {
+        assert_all_hunks_match_git(old, new, LineDiffAlgo::Minimal, indent_on, 0);
+    }
 }
 
 #[test]
@@ -245,6 +256,13 @@ fn seeded_text_pair(seed: u64) -> (String, String) {
 
 fn git_diff_u0_text(old: &str, new: &str, algo: LineDiffAlgo, indent: bool) -> String {
     git_diff_blob(old, new, algo, indent, 0)
+}
+
+#[test]
+fn seeded_u0_histogram_seed_11_matches_git() {
+    let (old, new) = seeded_text_pair(11);
+    assert_all_hunks_match_git(&old, &new, LineDiffAlgo::Histogram, false, 0);
+    assert_all_hunks_match_git(&old, &new, LineDiffAlgo::Histogram, true, 0);
 }
 
 #[test]

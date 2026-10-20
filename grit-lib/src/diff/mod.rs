@@ -14,6 +14,7 @@
 //! ```
 mod core;
 mod filter;
+mod git_histogram;
 pub mod handle;
 mod has_changes;
 mod no_index;

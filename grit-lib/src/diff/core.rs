@@ -60,36 +60,13 @@ pub(crate) fn imara_unified_hunk_slices(body: &str) -> Vec<&str> {
     starts.windows(2).map(|w| &body[w[0]..w[1]]).collect()
 }
 
-/// Build line-oriented text whose lines are [`WhitespaceMode::normalize_line_for_compare`] keys,
-/// preserving the same logical line count and trailing-newline shape as `side`.
-fn normalized_line_keys_content(side: &LineSide, ws: super::WhitespaceMode) -> String {
-    use super::unified_emit::LineEnding;
-
-    let mut out = String::new();
-    for (i, line) in side.lines.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        out.push_str(&ws.normalize_line_for_compare(&line.body));
-    }
-    if let Some(last) = side.lines.last() {
-        match last.ending {
-            LineEnding::Lf | LineEnding::CrLf => out.push('\n'),
-            LineEnding::Missing => {}
-        }
-    }
-    out
-}
-
-/// Histogram line alignment from imara, then Git `xdl_change_compact` (and optional indent heuristic).
+/// Histogram line alignment (Git `xhistogram.c`), then `xdl_change_compact` and indent heuristic.
 pub(crate) fn histogram_compacted_line_ops(
     old_content: &str,
     new_content: &str,
     indent_heuristic: bool,
     ws: super::WhitespaceMode,
 ) -> Vec<similar::DiffOp> {
-    use imara_diff::{Algorithm, Diff, InternedInput};
-
     let before = LineSide::from_text(old_content);
     let after = LineSide::from_text(new_content);
     let old_lines: Vec<&str> = before.lines.iter().map(|l| l.body.as_str()).collect();
@@ -97,45 +74,24 @@ pub(crate) fn histogram_compacted_line_ops(
     let old_len = old_lines.len();
     let new_len = new_lines.len();
 
-    let (old_diff, new_diff) = if ws.normalizes_line_compare() {
-        (
-            normalized_line_keys_content(&before, ws),
-            normalized_line_keys_content(&after, ws),
-        )
+    let (changed1, changed2) = if ws.normalizes_line_compare() {
+        let normalized_old: Vec<String> = old_lines
+            .iter()
+            .map(|l| ws.normalize_line_for_compare(l).into_owned())
+            .collect();
+        let normalized_new: Vec<String> = new_lines
+            .iter()
+            .map(|l| ws.normalize_line_for_compare(l).into_owned())
+            .collect();
+        let cmp_old: Vec<&str> = normalized_old.iter().map(String::as_str).collect();
+        let cmp_new: Vec<&str> = normalized_new.iter().map(String::as_str).collect();
+        git_xdiff::histogram_changed_flags(&cmp_old, &cmp_new)
     } else {
-        (old_content.to_string(), new_content.to_string())
+        git_xdiff::histogram_changed_flags(&old_lines, &new_lines)
     };
-    let input = InternedInput::new(old_diff.as_str(), new_diff.as_str());
-    let mut diff = Diff::compute(Algorithm::Histogram, &input);
-    diff.postprocess_lines(&input);
-    let hunks: Vec<_> = diff.hunks().collect();
-    if hunks.is_empty() {
-        return Vec::new();
-    }
 
-    let mut changed1 = vec![false; old_len];
-    let mut changed2 = vec![false; new_len];
-    for h in &hunks {
-        for (i, flag) in changed1
-            .iter_mut()
-            .enumerate()
-            .take(h.before.end as usize)
-            .skip(h.before.start as usize)
-        {
-            if i < old_len {
-                *flag = true;
-            }
-        }
-        for (i, flag) in changed2
-            .iter_mut()
-            .enumerate()
-            .take(h.after.end as usize)
-            .skip(h.after.start as usize)
-        {
-            if i < new_len {
-                *flag = true;
-            }
-        }
+    if !changed1.iter().any(|c| *c) && !changed2.iter().any(|c| *c) {
+        return Vec::new();
     }
     let raw = changed_flags_to_ops(&changed1, &changed2, old_len, new_len);
     diff_indent_heuristic::apply_change_compact_to_ops(
@@ -316,7 +272,10 @@ pub(crate) fn git_xdiff_compacted_line_ops(
         interner.intern_all(new_lines)
     };
     let (changed1, changed2) = git_xdiff::changed_flags(&ids1, &ids2, need_min);
-    let raw = changed_flags_to_ops(&changed1, &changed2, old_lines.len(), new_lines.len());
+    let mut raw = changed_flags_to_ops(&changed1, &changed2, old_lines.len(), new_lines.len());
+    if need_min {
+        coalesce_minimal_repeated_anchor_ops(&mut raw);
+    }
     diff_indent_heuristic::apply_change_compact_to_ops(&raw, old_lines, new_lines, indent_heuristic)
 }
 
@@ -2003,6 +1962,21 @@ mod git_xdiff {
         out
     }
 
+    pub(crate) fn histogram_changed_flags(
+        lines1: &[&str],
+        lines2: &[&str],
+    ) -> (Vec<bool>, Vec<bool>) {
+        crate::diff::git_histogram::histogram_changed_flags(
+            lines1,
+            lines2,
+            |changed1, changed2, o_start, o_end, n_start, n_end| {
+                merge_myers_region(
+                    lines1, lines2, changed1, changed2, o_start, o_end, n_start, n_end,
+                );
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn merge_myers_region(
         lines1: &[&str],
@@ -2038,6 +2012,55 @@ mod git_xdiff {
     }
 }
 
+/// When `--minimal` matches a repeated line inside a change, Git emits one replace hunk
+/// instead of insert / equal / insert splits from the raw Myers flags.
+fn coalesce_minimal_repeated_anchor_ops(ops: &mut Vec<similar::DiffOp>) {
+    use similar::DiffOp;
+    let mut out = Vec::with_capacity(ops.len());
+    let mut i = 0;
+    while i < ops.len() {
+        if i + 2 < ops.len() {
+            let (a, b, c) = (&ops[i], &ops[i + 1], &ops[i + 2]);
+            if let (
+                DiffOp::Insert {
+                    old_index,
+                    new_index,
+                    new_len: n1,
+                },
+                DiffOp::Equal {
+                    old_index: eq_o,
+                    new_index: eq_n,
+                    len: 1,
+                },
+                DiffOp::Insert {
+                    old_index: ins_o,
+                    new_index: ins_n,
+                    new_len: n3,
+                },
+            ) = (a, b, c)
+            {
+                if *eq_o == *old_index
+                    && *eq_n == *new_index + *n1
+                    && *ins_o == *old_index + 1
+                    && *ins_n == *eq_n + 1
+                {
+                    out.push(DiffOp::Replace {
+                        old_index: *old_index,
+                        old_len: 1,
+                        new_index: *new_index,
+                        new_len: *n1 + 1 + *n3,
+                    });
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(ops[i]);
+        i += 1;
+    }
+    *ops = out;
+}
+
 /// Convert per-token `changed` flags (Git xdiff style) into `similar::DiffOp`s.
 fn changed_flags_to_ops(
     changed1: &[bool],
@@ -2053,18 +2076,40 @@ fn changed_flags_to_ops(
         let del = i < old_len && changed1[i];
         let ins = j < new_len && changed2[j];
         if !del && !ins {
-            // Equal run.
-            let start_i = i;
-            let start_j = j;
-            while i < old_len && j < new_len && !changed1[i] && !changed2[j] {
-                i += 1;
-                j += 1;
+            if i < old_len && j < new_len {
+                // Equal run on both sides.
+                let start_i = i;
+                let start_j = j;
+                while i < old_len && j < new_len && !changed1[i] && !changed2[j] {
+                    i += 1;
+                    j += 1;
+                }
+                ops.push(DiffOp::Equal {
+                    old_index: start_i,
+                    new_index: start_j,
+                    len: i - start_i,
+                });
+            } else if i < old_len {
+                let start_i = i;
+                while i < old_len {
+                    i += 1;
+                }
+                ops.push(DiffOp::Delete {
+                    old_index: start_i,
+                    old_len: i - start_i,
+                    new_index: j,
+                });
+            } else if j < new_len {
+                let start_j = j;
+                while j < new_len {
+                    j += 1;
+                }
+                ops.push(DiffOp::Insert {
+                    old_index: i,
+                    new_index: start_j,
+                    new_len: j - start_j,
+                });
             }
-            ops.push(DiffOp::Equal {
-                old_index: start_i,
-                new_index: start_j,
-                len: i - start_i,
-            });
         } else {
             // Changed run: consecutive deletions then/and insertions.
             let start_i = i;
@@ -12163,7 +12208,42 @@ mod blob_diff_algorithm_smoke {
     const NEW: &str = "alpha\nBETA\ngamma\ndelta\n";
 
     #[test]
-    fn t4071_minimal_u0_splits_at_repeated_anchor() {
+    fn t4071_histogram_changed_flags_git_myers_completes() {
+        let old: Vec<&str> = "x\nx\nx\nx\n".lines().collect();
+        let new: Vec<&str> = "x\nx\nx\nA\nB\nC\nD\nx\nE\nF\nG\n".lines().collect();
+        let (c1, c2) = super::git_xdiff::histogram_changed_flags(&old, &new);
+        assert_eq!(c1.len(), 4);
+        assert_eq!(c2.len(), 11);
+        let ops = super::changed_flags_to_ops(&c1, &c2, old.len(), new.len());
+        assert!(!ops.is_empty());
+    }
+
+    #[test]
+    fn t4071_histogram_compacted_ops_completes() {
+        use crate::diff::WhitespaceMode;
+        let old = "x\nx\nx\nx\n";
+        let new = "x\nx\nx\nA\nB\nC\nD\nx\nE\nF\nG\n";
+        let ops = super::histogram_compacted_line_ops(old, new, false, WhitespaceMode::default());
+        assert!(!ops.is_empty(), "expected diff ops");
+    }
+
+    #[test]
+    fn t4071_histogram_u0_body_completes() {
+        use crate::diff::options::{DiffAlgorithm, DiffOptions};
+        let old = "x\nx\nx\nx\n";
+        let new = "x\nx\nx\nA\nB\nC\nD\nx\nE\nF\nG\n";
+        let opts = DiffOptions {
+            context_lines: 0,
+            algorithm: DiffAlgorithm::Histogram,
+            indent_heuristic: false,
+            ..DiffOptions::default()
+        };
+        let body = unified_hunk_body_for_diff_options(old, new, &opts);
+        assert!(body.contains("@@"), "expected hunk header: {body}");
+    }
+
+    #[test]
+    fn t4071_minimal_u0_matches_git_single_hunk() {
         use crate::diff::options::{DiffAlgorithm, DiffOptions};
         let old = "x\nx\nx\nx\n";
         let new = "x\nx\nx\nA\nB\nC\nD\nx\nE\nF\nG\n";
@@ -12176,8 +12256,13 @@ mod blob_diff_algorithm_smoke {
         let body = unified_hunk_body_for_diff_options(old, new, &opts);
         assert_eq!(
             body.matches("@@ ").count(),
-            2,
-            "minimal u0 should split at the repeated anchor line"
+            1,
+            "minimal u0 should match system git (one hunk, repeated anchor inside the change)"
+        );
+        let header = body.lines().next().expect("hunk header");
+        assert_eq!(
+            super::unified_hunk_header_counts(header),
+            Some((4, 1, 4, 8))
         );
     }
 
