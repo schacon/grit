@@ -18,7 +18,10 @@ pub mod queries;
 
 pub use filter::{CommitFilter, CommitFilterBuilder, CommitFilterError, Pattern};
 pub use handle::RevWalk;
-pub use queries::{parse_rev_walk_tokens, RevWalkListOptions, RevWalkParsedSpecs};
+pub use queries::{
+    parse_rev_walk_tokens, LeftRightCounts, MergeFilter, RefSelection, RevWalkListOptions,
+    RevWalkParsedSpecs,
+};
 
 pub mod rev_list {
     //! rev_list API (re-exported at this path).
