@@ -24,6 +24,8 @@ pub struct TreeDiffStructured {
     pub structured: StructuredFileDiff,
     /// `true` when either side looks like a binary blob (NUL in the first 8 KiB).
     pub binary: bool,
+    /// Worktree/index side bytes when content is not materialized in the ODB.
+    pub patch_bytes: Option<(SideBytes, SideBytes)>,
 }
 
 /// One tree diff entry with both sides loaded for line-level diffing.
@@ -176,6 +178,7 @@ pub fn tree_diff_structured_parallel(
                         hunks: Vec::new(),
                     },
                     binary: old_bin,
+                    patch_bytes: None,
                 });
             }
             let (old_bytes, old_bin) = load_old_side(odb, entry)?;
@@ -202,6 +205,7 @@ pub fn tree_diff_structured_parallel(
                 entry: entry.clone(),
                 structured,
                 binary,
+                patch_bytes: None,
             })
         },
     );

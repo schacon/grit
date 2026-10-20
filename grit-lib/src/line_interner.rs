@@ -45,6 +45,7 @@ impl LineInterner {
     }
 
     /// Intern normalized keys for diff comparison while preserving display via original line slices.
+    #[allow(dead_code)]
     pub fn intern_all_normalized<'a>(
         &mut self,
         lines: &[&'a str],

@@ -1,9 +1,15 @@
 //! Repository-scoped tree and index diffs via [`Diff`].
 use crate::config::ConfigSet;
+use crate::diff::targets::{
+    collect_diff_entries_for_patch_target, collect_files_for_target,
+    collect_tree_structured_for_target, file_diffs_from_entries,
+};
+use crate::diff::TreeDiffStructured;
 use crate::diff::{
     build_file_diffs, diff_index_to_tree, diff_index_to_worktree, diff_trees, DiffDetail,
     DiffEntry, DiffFilesOutput, DiffOptions,
 };
+use crate::diff::{DiffTarget, FileDiff};
 use crate::error::Result;
 use crate::index::Index;
 use crate::objects::ObjectId;
@@ -89,12 +95,26 @@ impl<'repo> Diff<'repo> {
         )
     }
 
-    /// Build per-file diff output for tree or index diff entries.
+    /// Structured per-file diffs for `target`, honoring `pathspecs` and line-diff `opts`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates index, ODB, and worktree diff failures.
+    pub fn files(
+        &self,
+        target: &DiffTarget,
+        pathspecs: &[String],
+        opts: &DiffOptions,
+    ) -> Result<Vec<FileDiff>> {
+        collect_files_for_target(self.repo, target, pathspecs, *opts)
+    }
+
+    /// Build per-file diff output for tree or index diff entries (stat, name-only, patch).
     ///
     /// # Errors
     ///
     /// Propagates object database and diff errors from [`build_file_diffs`].
-    pub fn files(
+    pub fn files_with_detail(
         &self,
         entries: Vec<DiffEntry>,
         detail: DiffDetail,
@@ -110,5 +130,46 @@ impl<'repo> Diff<'repo> {
             config,
             thread_policy,
         )
+    }
+
+    /// Build [`FileDiff`] rows from an existing tree diff entry list (e.g. stash W vs index).
+    ///
+    /// # Errors
+    ///
+    /// Propagates object read and structured diff errors.
+    pub fn files_from_entries(
+        &self,
+        entries: Vec<DiffEntry>,
+        opts: &DiffOptions,
+    ) -> Result<Vec<FileDiff>> {
+        file_diffs_from_entries(self.repo, entries, *opts)
+    }
+
+    /// Structured diff rows for [`write_patch_structured`] (patch-text output).
+    ///
+    /// # Errors
+    ///
+    /// Propagates index, ODB, and worktree diff failures.
+    pub fn tree_structured(
+        &self,
+        target: &DiffTarget,
+        pathspecs: &[String],
+        opts: &DiffOptions,
+    ) -> Result<Vec<TreeDiffStructured>> {
+        collect_tree_structured_for_target(self.repo, target, pathspecs, *opts)
+    }
+
+    /// Tree diff entries for commit-range [`write_patch`] (skips structured line diffs).
+    ///
+    /// # Errors
+    ///
+    /// Propagates diff failures; returns an error for worktree/index patch targets.
+    pub fn patch_entries(
+        &self,
+        target: &DiffTarget,
+        pathspecs: &[String],
+        opts: &DiffOptions,
+    ) -> Result<Vec<DiffEntry>> {
+        collect_diff_entries_for_patch_target(self.repo, target, pathspecs, *opts)
     }
 }

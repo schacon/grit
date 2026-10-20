@@ -225,6 +225,10 @@ pub struct Odb {
     extra_read_sources: Vec<Arc<dyn ObjectStore>>,
     /// When false, alternate object directories are not consulted ([`OdbBuilder::alternates`]).
     alternates_enabled: bool,
+    /// Avoid re-reading the same loose object repeatedly during one repository session.
+    session_loose_reads: Arc<std::sync::Mutex<std::collections::HashMap<ObjectId, Object>>>,
+    /// Parsed tree entries reused for the lifetime of this [`Odb`] handle (Git object cache).
+    session_tree_entries: Arc<Mutex<HashMap<ObjectId, Arc<Vec<crate::objects::TreeEntry>>>>>,
 }
 
 const _: () = {
@@ -313,6 +317,8 @@ impl Odb {
             custom_primary: None,
             extra_read_sources: Vec::new(),
             alternates_enabled: true,
+            session_loose_reads: Arc::new(Mutex::new(HashMap::new())),
+            session_tree_entries: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             exists_probe: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
@@ -362,11 +368,59 @@ impl Odb {
             custom_primary: None,
             extra_read_sources: Vec::new(),
             alternates_enabled: true,
+            session_loose_reads: Arc::new(Mutex::new(HashMap::new())),
+            session_tree_entries: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             exists_probe: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             hot_path_test_metrics: crate::hot_path_test_metrics::HotPathTestMetrics::new(),
         }
+    }
+
+    /// Parsed tree entries for `oid`, cached on this [`Odb`] handle.
+    pub(crate) fn cached_tree_entries(
+        &self,
+        oid: &ObjectId,
+    ) -> Result<Arc<Vec<crate::objects::TreeEntry>>> {
+        if let Ok(guard) = self.session_tree_entries.lock() {
+            if let Some(entries) = guard.get(oid) {
+                return Ok(Arc::clone(entries));
+            }
+        }
+        let obj = self.read(oid)?;
+        if obj.kind != ObjectKind::Tree {
+            return Err(Error::CorruptObject(format!(
+                "expected tree, got {}",
+                obj.kind.as_str()
+            )));
+        }
+        let parsed = crate::objects::parse_tree(&obj.data)?;
+        let arc = Arc::new(parsed);
+        if let Ok(mut guard) = self.session_tree_entries.lock() {
+            if guard.len() > 4096 {
+                guard.clear();
+            }
+            guard.insert(*oid, Arc::clone(&arc));
+        }
+        Ok(arc)
+    }
+
+    fn session_cached_loose_read(&self, oid: &ObjectId) -> Option<Object> {
+        self.session_loose_reads.lock().ok()?.get(oid).cloned()
+    }
+
+    fn remember_session_loose_read(&self, oid: &ObjectId, obj: &Object) {
+        if let Ok(mut guard) = self.session_loose_reads.lock() {
+            if guard.len() > 256 {
+                guard.clear();
+            }
+            guard.insert(*oid, obj.clone());
+        }
+    }
+
+    fn finish_session_loose_read(&self, oid: &ObjectId, obj: Object) -> Result<Object> {
+        self.remember_session_loose_read(oid, &obj);
+        Ok(obj)
     }
 
     /// Hot-path regression counters (crate-internal tests only).
@@ -1417,6 +1471,10 @@ impl Odb {
             });
         }
 
+        if let Some(obj) = self.session_cached_loose_read(oid) {
+            return Ok(obj);
+        }
+
         if let Some(obj) = self.overlay_read(oid) {
             return Ok(obj);
         }
@@ -1440,7 +1498,7 @@ impl Odb {
         } else {
             self.with_pack_store_for(&self.objects_dir, read_primary)
         } {
-            Ok(Some(obj)) => return Ok(obj),
+            Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj),
             Ok(None) => {}
             Err(err)
                 if files_primary
@@ -1453,12 +1511,12 @@ impl Odb {
         }
 
         if let Some(obj) = self.try_read_extra_sources(oid)? {
-            return Ok(obj);
+            return self.finish_session_loose_read(oid, obj);
         }
 
         if self.alternates_enabled {
             match self.sources()?.read(oid) {
-                Ok(Some(obj)) => return Ok(obj),
+                Ok(Some(obj)) => return self.finish_session_loose_read(oid, obj),
                 Ok(None) => {}
                 Err(err) => return Err(err),
             }
@@ -2051,16 +2109,8 @@ fn append_lookup_prefix_layer(
     out: &mut Vec<ObjectId>,
     seen: &mut HashSet<ObjectId>,
 ) -> Result<()> {
-    if limit != 0 && out.len() >= limit {
-        return Ok(());
-    }
-    let sub_limit = if limit == 0 {
-        0
-    } else {
-        limit.saturating_sub(out.len())
-    };
     let mut scratch = Vec::new();
-    store.lookup_prefix(prefix, sub_limit, &mut scratch)?;
+    store.lookup_prefix(prefix, 0, &mut scratch)?;
     for oid in scratch {
         if seen.insert(oid) {
             out.push(oid);
