@@ -1233,7 +1233,7 @@ pub fn chain_shell_public(program: &Path, invocations: &[Vec<String>]) -> String
     chain_shell(program, invocations)
 }
 
-fn chain_shell(program: &Path, invocations: &[Vec<String>]) -> String {
+pub(crate) fn chain_shell(program: &Path, invocations: &[Vec<String>]) -> String {
     invocations
         .iter()
         .map(|args| shell_command(program, args))
@@ -1255,7 +1255,11 @@ fn sh_script(script: String) -> Vec<String> {
     vec!["-c".into(), script]
 }
 
-fn switch_argv(grit: &Path, git: &Path, meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
+pub(crate) fn switch_argv(
+    grit: &Path,
+    git: &Path,
+    meta: &HotPathMeta,
+) -> (Vec<String>, Vec<String>) {
     let grit_cmd = chain_shell(
         grit,
         &[
@@ -1273,7 +1277,7 @@ fn switch_argv(grit: &Path, git: &Path, meta: &HotPathMeta) -> (Vec<String>, Vec
     (sh_script(grit_cmd), sh_script(git_cmd))
 }
 
-fn pick_argv(meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
+pub(crate) fn pick_argv(meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
     (
         vec!["pick".into(), meta.pick_commit.clone()],
         vec![
@@ -1295,7 +1299,7 @@ fn revert_argv(meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
     )
 }
 
-fn merge_argv(meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
+pub(crate) fn merge_argv(meta: &HotPathMeta) -> (Vec<String>, Vec<String>) {
     (
         vec!["merge".into(), meta.topic_branch.clone()],
         vec![
