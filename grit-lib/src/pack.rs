@@ -172,11 +172,7 @@ pub(crate) mod pack_cache {
         THREAD_WARM_STORE.set(0);
         super::clear_pack_read_info_cache();
         PACK_MONOTONIC_CURSOR.with(|cell| *cell.borrow_mut() = None);
-        SINGLE_PACK_READER.with(|cell| {
-            if let Ok(mut slot) = cell.try_borrow_mut() {
-                *slot = None;
-            }
-        });
+        SINGLE_PACK_READER.with(|cell| *cell.borrow_mut() = None);
     }
 
     pub(crate) fn try_read_object_via_single_pack_reader(
@@ -186,36 +182,23 @@ pub(crate) mod pack_cache {
         if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
             return Ok(None);
         }
-        let objects_dir = objects_dir.to_path_buf();
         SINGLE_PACK_READER.with(|cell| {
             let mut slot = cell.borrow_mut();
-            if slot.as_ref().is_none_or(|(dir, _)| dir != &objects_dir) {
-                *slot = super::SingleLocalPackReader::open_allow_loose(&objects_dir)
+            if slot.as_ref().is_none_or(|(dir, _)| dir != objects_dir) {
+                *slot = super::SingleLocalPackReader::open_allow_loose(objects_dir)
                     .ok()
                     .flatten()
-                    .map(|reader| (objects_dir.clone(), reader));
+                    .map(|reader| (objects_dir.to_path_buf(), reader));
             }
-        });
-
-        let taken = SINGLE_PACK_READER.with(|cell| cell.borrow_mut().take());
-        let Some((dir, mut reader)) = taken else {
-            return Ok(None);
-        };
-
-        let result = match reader.read_object(oid) {
-            Ok(obj) => Ok(Some(obj)),
-            Err(Error::ObjectNotFound(_)) => Ok(None),
-            Err(err) => Err(err),
-        };
-
-        SINGLE_PACK_READER.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.is_none() {
-                *slot = Some((dir, reader));
+            let Some((_, reader)) = slot.as_mut() else {
+                return Ok(None);
+            };
+            match reader.read_object(oid) {
+                Ok(obj) => Ok(Some(obj)),
+                Err(Error::ObjectNotFound(_)) => Ok(None),
+                Err(err) => Err(err),
             }
-        });
-
-        result
+        })
     }
 
     /// Drop thread-local pack caches after invalidation on this or another thread.
@@ -364,7 +347,7 @@ pub(crate) mod pack_cache {
         objects_dir: &Path,
         idx: &PackIndex,
         oid: &crate::objects::ObjectId,
-    ) -> Result<Option<u64>> {
+    ) -> Option<u64> {
         if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
             return idx.find_offset(oid);
         }
@@ -395,7 +378,7 @@ pub(crate) mod pack_cache {
         let Some(idx) = idx else {
             return Ok(None);
         };
-        let Some(offset) = find_offset_in_pack_read_context(objects_dir, &idx, oid)? else {
+        let Some(offset) = find_offset_in_pack_read_context(objects_dir, &idx, oid) else {
             return Ok(None);
         };
         match super::read_object_from_pack_at_offset(&idx, offset) {
@@ -3789,7 +3772,7 @@ pub(crate) fn try_read_object_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = pack_cache::find_offset_in_pack_read_context(objects_dir, idx, oid)?
+        let Some(offset) = pack_cache::find_offset_in_pack_read_context(objects_dir, idx, oid)
         else {
             continue;
         };
