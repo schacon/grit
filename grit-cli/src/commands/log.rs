@@ -214,58 +214,31 @@ pub fn run(
         );
     }
     let continuation = cursor.or(deprecated_cursor);
-    if display.group_by.is_some() && continuation.is_some() {
-        bail!("`grit log` cannot combine `--cursor` with `--group-by`");
-    }
     if let Some(token) = continuation.as_deref() {
         if !rev.paths.is_empty() {
             bail!(
                 "`grit log` cannot combine `--cursor` with path filters; drop the cursor or the paths"
             );
         }
-        if rev.has_explicit_log_selection(deprecated_warning) {
-            bail!(
-                "`grit log` cannot combine `--cursor` with revision, date, or ref selection; \
-                 continue with `--cursor` alone or start a new walk"
-            );
-        }
-        if rev.reverse
-            || rev.first_parent
-            || rev.merges
-            || rev.no_merges
-            || rev.skip > 0
-            || rev.has_commit_filter_flags()
-        {
+        if rev.reverse || rev.first_parent || rev.merges || rev.no_merges || rev.skip > 0 {
             bail!(
                 "`grit log` cannot combine `--cursor` with `--reverse`, `--first-parent`, \
-                 `--merges`, `--no-merges`, `--skip`, or commit filters (`--author`, `--grep`, …)"
+                 `--merges`, `--no-merges`, or `--skip`"
             );
         }
         let resume = LogWalkCursor::decode(token).context("invalid log continuation cursor")?;
         let page_size = rev.max_count.unwrap_or(PAGE);
-        let query = resume.resume_query();
-        let page = LogWalkCursor::step(&repo, query, Some(&resume), page_size)
+        let page = LogWalkCursor::step(&repo, resume.query(), Some(&resume), page_size)
             .context("could not list commits")?;
-        let truncated = page.next.is_some();
         let next = page.next.map(|c| c.encode()).transpose()?;
-        return build_commit_outcome(
-            &repo,
-            &page.commits,
-            stat,
-            next,
-            truncated,
-            display,
-            output_mode,
-        );
+        return build_outcome(&repo, &page.commits, stat, next);
     }
 
     let token_refs = rev.rev_tokens(&["HEAD"]);
     let page_size = rev.max_count.unwrap_or(PAGE);
 
-    let use_rev_walk = display.group_by.is_some()
-        || !rev.paths.is_empty()
+    let use_rev_walk = !rev.paths.is_empty()
         || rev.max_count.is_some()
-        || opts.commit_filter.as_ref().is_some_and(|f| f.is_active())
         || LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?.is_none();
 
     if use_rev_walk {
@@ -316,7 +289,6 @@ pub fn run(
 
     let page =
         LogWalkCursor::step(&repo, &query, None, page_size).context("could not list commits")?;
-    let truncated = page.next.is_some();
     let next = page.next.map(|c| c.encode()).transpose()?;
     build_commit_outcome(
         &repo,

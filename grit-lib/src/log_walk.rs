@@ -79,9 +79,9 @@ pub struct LogWalkPage {
 }
 
 impl LogWalkCursor {
-    /// Revision selection encoded when this cursor was issued.
+    /// Revision tips, exclusions, and date cutoffs bound to this continuation token.
     #[must_use]
-    pub fn resume_query(&self) -> &LogWalkQuery {
+    pub fn query(&self) -> &LogWalkQuery {
         &self.query
     }
 
