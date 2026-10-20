@@ -2291,8 +2291,6 @@ mod status_op_tests {
 
     #[test]
     fn warm_status_after_git_status_reuses_untr_without_rescanning() {
-        use std::process::Command;
-
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         grit_test_support::git(root, &["init", "-q", "-b", "main", "."]);
@@ -2324,11 +2322,7 @@ mod status_op_tests {
         status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
         status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
 
-        let root_s = root.to_str().expect("utf-8");
-        Command::new("git")
-            .args(["-C", root_s, "status"])
-            .output()
-            .expect("git status");
+        grit_test_support::git(root, &["status"]);
 
         untracked_walk_probe::reset();
         let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
