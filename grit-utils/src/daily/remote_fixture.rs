@@ -23,6 +23,16 @@ use crate::network_suite::{
 use crate::network_verify::{verify_client_fetch_tip, verify_clone_against_bare};
 use crate::shell::shell_quote;
 
+fn ctx_with_remote(
+    repo: PathBuf,
+    setup: &DailySetup<'_>,
+    remote: DailyRemoteState,
+) -> DailyHeadlineContext {
+    let mut ctx = DailyHeadlineContext::new(repo, setup.git, setup.grit, setup.smoke);
+    ctx.remote = Some(remote);
+    ctx
+}
+
 fn with_remote_scratch<T, F>(label: &str, f: F) -> Result<T>
 where
     F: FnOnce(&Path) -> Result<T>,
