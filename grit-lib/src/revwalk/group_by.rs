@@ -8,7 +8,7 @@ use crate::commit_encoding;
 use crate::error::Result;
 use crate::mailmap::{load_mailmap_table, MailmapTable};
 use crate::objects::ObjectId;
-use crate::pack::SingleLocalPackReader;
+use crate::pack::{SingleLocalPackReader, COMMIT_HEADER_READ_PREFIX};
 use crate::repo::Repository;
 use crate::revwalk::queries::rev_list_commits_for_author_group;
 use crate::revwalk::RevWalkListOptions;
@@ -172,7 +172,7 @@ fn count_authors_from_commit_oids(
     let objects_dir = repo.git_dir().join("objects");
     let mut counter = AuthorCounter::new();
     let used_single_pack = repo.odb().with_pack_read_context(|| {
-        count_authors_single_pack_sorted(&objects_dir, oids, mailmap, &mut counter)
+        count_authors_single_pack(&objects_dir, oids, mailmap, &mut counter)
     })?;
     if used_single_pack {
         return Ok(counter.into_sorted_groups());
@@ -185,7 +185,7 @@ fn count_authors_from_commit_oids(
     Ok(counter.into_sorted_groups())
 }
 
-fn count_authors_single_pack_sorted(
+fn count_authors_single_pack(
     objects_dir: &Path,
     oids: &[ObjectId],
     mailmap: Option<&MailmapTable>,
@@ -194,16 +194,15 @@ fn count_authors_single_pack_sorted(
     let Some(mut reader) = SingleLocalPackReader::open_allow_loose(objects_dir)? else {
         return Ok(false);
     };
-    let mut keyed = Vec::with_capacity(oids.len());
     for oid in oids {
-        let Some(offset) = reader.pack_offset(oid)? else {
-            return Ok(false);
-        };
-        keyed.push((offset, *oid));
-    }
-    keyed.sort_by_key(|(offset, _)| *offset);
-    for (_, oid) in keyed {
-        let obj = reader.read_object(&oid)?;
+        if let Some(prefix) =
+            reader.try_read_commit_header_prefix(oid, COMMIT_HEADER_READ_PREFIX)?
+        {
+            if accumulate_author_count(&prefix, mailmap, counter).is_ok() {
+                continue;
+            }
+        }
+        let obj = reader.read_object(oid)?;
         accumulate_author_count(&obj.data, mailmap, counter)?;
     }
     Ok(true)

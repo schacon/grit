@@ -74,7 +74,10 @@ fn log_group_by_respects_log_mailmap_false() {
     let fixture = CliFixture::empty();
     let root = fixture.path();
     fixture.run_ok(&["config", "log.mailmap", "false"]);
-    fixture.write_repo_file(".mailmap", "Mapped <mapped@example.com> <raw@example.com>\n");
+    fixture.write_repo_file(
+        ".mailmap",
+        "Mapped <mapped@example.com> <raw@example.com>\n",
+    );
     support::git_commit_as(root, "Raw", "raw@example.com", "one");
     let out = fixture
         .run_ok(&["log", "--group-by", "author", "--count"])
@@ -87,6 +90,31 @@ fn log_group_by_respects_log_mailmap_false() {
         !out.contains("mapped@example.com"),
         "mailmap must not apply when log.mailmap=false: {out}"
     );
+}
+
+#[test]
+fn log_group_by_author_count_respects_max_count() {
+    let fixture = CliFixture::empty();
+    let root = fixture.path();
+    support::git_commit_as(root, "Alice", "alice@example.com", "first");
+    support::git_commit_as(root, "Bob", "bob@example.com", "second");
+    support::git_commit_as(root, "Carol", "carol@example.com", "third");
+    let raw = fixture
+        .run_ok(&[
+            "--json",
+            "log",
+            "--group-by",
+            "author",
+            "--count",
+            "-n",
+            "1",
+        ])
+        .stdout;
+    let out: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    let groups = out["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1, "expected one author group for -n 1: {out}");
+    assert_eq!(groups[0]["name"], "Carol");
+    assert_eq!(out["truncated"], true);
 }
 
 #[test]
