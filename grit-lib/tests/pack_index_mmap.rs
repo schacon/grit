@@ -63,7 +63,10 @@ fn git_written_v1_and_v2_mmap_match_parsed_offsets() {
         assert_eq!(mapped.len(), from_bytes.len());
         for (i, entry) in mapped.iter().enumerate() {
             assert_eq!(entry.oid(), from_bytes.oid_at(i));
-            assert_eq!(entry.offset().expect("off"), from_bytes.offset_at(i).expect("off"));
+            assert_eq!(
+                entry.offset().expect("off"),
+                from_bytes.offset_at(i).expect("off")
+            );
             assert_eq!(entry.crc32(), from_bytes.crc32_at(i));
         }
     }

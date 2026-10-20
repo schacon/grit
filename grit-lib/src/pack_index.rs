@@ -297,11 +297,7 @@ impl PackIndex {
     ///
     /// Updates `cursor` to the matching row on success. When the probe regresses (out-of-order
     /// input), falls back to fanout + binary search and resets `cursor`.
-    pub fn find_offset_monotonic(
-        &self,
-        oid: &ObjectId,
-        cursor: &mut usize,
-    ) -> Result<Option<u64>> {
+    pub fn find_offset_monotonic(&self, oid: &ObjectId, cursor: &mut usize) -> Result<Option<u64>> {
         const FORWARD_SCAN_MAX: usize = 128;
         let needle = oid.as_bytes();
         if needle.len() != self.layout.hash_bytes {

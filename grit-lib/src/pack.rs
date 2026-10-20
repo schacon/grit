@@ -3270,8 +3270,7 @@ pub fn read_object_from_pack_bytes(
     oid: &[u8],
 ) -> Result<Object> {
     validate_pack_index_object_count(pack_bytes, idx)?;
-    let id = ObjectId::from_bytes(oid)
-        .map_err(|_| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
+    let id = ObjectId::from_bytes(oid).map_err(|_| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
     let entry_offset = idx
         .find_offset(&id)?
         .ok_or_else(|| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
@@ -5710,7 +5709,10 @@ mod cached_lookup_tests {
         let v1 = convert_pack_idx_to_v1(&objects);
         assert!(pack_index_is_v1(&v1));
         let idx = read_pack_index_cached(&v1).expect("parse v1 idx");
-        let off = idx.find_offset(&tree).expect("fanout lookup in v1 idx").expect("off");
+        let off = idx
+            .find_offset(&tree)
+            .expect("fanout lookup in v1 idx")
+            .expect("off");
         assert!(off > 0);
         let obj = read_object_from_pack(&idx, &tree).expect("read via v1 index");
         assert_eq!(obj.kind, ObjectKind::Tree);
@@ -6055,7 +6057,9 @@ mod cached_lookup_tests {
         let pack_bytes = std::fs::read(&idx.pack_path).expect("pack");
         let off = idx.find_offset(&tree).expect("tree in pack").expect("off");
         let start = off as usize;
-        let end = super::pack_entry_raw_end(&idx, &pack_bytes, off).expect("entry end").expect("end");
+        let end = super::pack_entry_raw_end(&idx, &pack_bytes, off)
+            .expect("entry end")
+            .expect("end");
         let expected = &pack_bytes[start..end];
         let slice = packed_full_object_slice(&objects, &tree)
             .expect("lookup")
@@ -6097,13 +6101,9 @@ mod cached_lookup_tests {
             .expect("tree offset")
             .expect("off");
         let start = off as usize;
-        let end = super::pack_entry_raw_end(
-            &primary_idx,
-            &fs::read(&primary_pack).unwrap(),
-            off,
-        )
-        .expect("entry end")
-        .expect("end");
+        let end = super::pack_entry_raw_end(&primary_idx, &fs::read(&primary_pack).unwrap(), off)
+            .expect("entry end")
+            .expect("end");
         let flip = start + (end - start) / 2;
         let mut corrupt = fs::read(&redundant_pack).expect("read redundant");
         corrupt[flip] ^= 0x01;

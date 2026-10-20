@@ -577,10 +577,7 @@ fn grit_idx_rev_bytes(
     }
     let idx_bytes = std::fs::read(&idx_path).expect("read idx");
     let index = read_pack_index(&idx_path).expect("parse idx");
-    let offsets: Vec<u64> = index
-        .iter()
-        .map(|e| e.offset().expect("offset"))
-        .collect();
+    let offsets: Vec<u64> = index.iter().map(|e| e.offset().expect("offset")).collect();
     let rev_bytes = build_pack_rev_bytes_from_index_order_offsets_and_checksum(&offsets, trailer);
     (idx_bytes, rev_bytes)
 }

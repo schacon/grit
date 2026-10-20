@@ -567,8 +567,9 @@ fn write_ref_delta_from_ofs(
     let base_oid = match dep {
         PackedDeltaDependency::RefBase { base_oid } => base_oid,
         PackedDeltaDependency::OfsBase { base_offset } => {
-            let row = find_position_by_pack_offset(&pack.idx, base_offset)?
-                .ok_or_else(|| Error::CorruptObject("ofs delta base missing from index".to_owned()))?;
+            let row = find_position_by_pack_offset(&pack.idx, base_offset)?.ok_or_else(|| {
+                Error::CorruptObject("ofs delta base missing from index".to_owned())
+            })?;
             ObjectId::from_bytes(pack.idx.oid_at(row))?
         }
     };

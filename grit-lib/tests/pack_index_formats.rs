@@ -139,7 +139,8 @@ fn oracle_index_and_reads(repo: &RepoFixture, idx_path: &Path, idx: &PackIndex, 
         assert_eq!(idx.crc32_at(pos), *crc);
         assert_eq!(idx.crc32_for_pack_offset(*off).expect("crc lookup"), *crc);
         assert_eq!(
-            idx.find_position_by_offset_sorted(*off).expect("off lookup"),
+            idx.find_position_by_offset_sorted(*off)
+                .expect("off lookup"),
             Some(pos),
             "offset lookup for {hex}"
         );

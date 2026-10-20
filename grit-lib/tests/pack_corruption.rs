@@ -489,10 +489,7 @@ fn t5303_redundant_pack_recovers_when_primary_corrupt() {
 
         let idx =
             grit_lib::objects::pack::read_pack_index(&primary.with_extension("idx")).expect("idx");
-        let off2 = idx
-            .find_offset(&fx.blob2)
-            .expect("lookup")
-            .expect("off2");
+        let off2 = idx.find_offset(&fx.blob2).expect("lookup").expect("off2");
         flip_byte_at(&primary, off2).expect("break primary delta");
         clear_pack_cache();
 
