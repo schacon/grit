@@ -131,24 +131,47 @@ pub fn needs_more_timed_runs(
     if grit_runs < min_runs && grit_runs < policy.max_runs_per_tool {
         return true;
     }
+    if git_runs != grit_runs {
+        if git_runs < grit_runs && git_runs < policy.max_runs_per_tool {
+            return true;
+        }
+        if grit_runs < git_runs && grit_runs < policy.max_runs_per_tool {
+            return true;
+        }
+    }
     if total_timed_ms < min_total_ms {
         return git_runs < policy.max_runs_per_tool || grit_runs < policy.max_runs_per_tool;
     }
     false
 }
 
-/// Build [`TimingStats`] from individual timed samples (peak RSS is max over runs).
+fn sample_succeeded(sample: &TimedRunSample) -> bool {
+    sample.termination == TerminationKind::Success
+}
+
+/// Build [`TimingStats`] from successful timed samples only (peak RSS is max over all runs).
 #[must_use]
 pub fn timing_stats_from_samples(samples: &[TimedRunSample]) -> TimingStats {
-    let mut runs_ms: Vec<f64> = samples.iter().map(|s| s.wall_ms).collect();
-    runs_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = runs_ms.len();
+    let runs_ms: Vec<f64> = samples
+        .iter()
+        .filter(|s| sample_succeeded(s))
+        .map(|s| s.wall_ms)
+        .collect();
+    let mut sorted_ms = runs_ms.clone();
+    sorted_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = sorted_ms.len();
     let mean_ms = if n == 0 {
         0.0
     } else {
         runs_ms.iter().sum::<f64>() / n as f64
     };
-    let median_ms = if n == 0 { 0.0 } else { runs_ms[n / 2] };
+    let median_ms = if n == 0 {
+        0.0
+    } else if n % 2 == 1 {
+        sorted_ms[n / 2]
+    } else {
+        (sorted_ms[n / 2 - 1] + sorted_ms[n / 2]) / 2.0
+    };
     let variance = if n <= 1 {
         0.0
     } else {
@@ -162,8 +185,8 @@ pub fn timing_stats_from_samples(samples: &[TimedRunSample]) -> TimingStats {
             / ((n - 1) as f64)
     };
     let stddev_ms = variance.sqrt();
-    let min_ms = runs_ms.first().copied().unwrap_or(0.0);
-    let max_ms = runs_ms.last().copied().unwrap_or(0.0);
+    let min_ms = sorted_ms.first().copied().unwrap_or(0.0);
+    let max_ms = sorted_ms.last().copied().unwrap_or(0.0);
     let peak_rss_bytes = samples.iter().map(|s| s.peak_rss_bytes).max();
     TimingStats {
         mean_ms,
@@ -218,12 +241,16 @@ pub fn run_ab_bench(request: &AbBenchRequest<'_>) -> Result<AbBenchOutcome> {
         run_prepare(cwd, *prepare)?;
         if next_git {
             let sample = run_timed_via_helper(cwd, git, limits, measure_helper)?;
-            total_timed_ms += sample.wall_ms;
+            if sample_succeeded(&sample) {
+                total_timed_ms += sample.wall_ms;
+            }
             git_samples.push(sample);
             git_count += 1;
         } else {
             let sample = run_timed_via_helper(cwd, grit, limits, measure_helper)?;
-            total_timed_ms += sample.wall_ms;
+            if sample_succeeded(&sample) {
+                total_timed_ms += sample.wall_ms;
+            }
             grit_samples.push(sample);
             grit_count += 1;
         }
@@ -379,6 +406,74 @@ fn measure_limits_from_env() -> Result<RunLimits> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timing_stats_median_averages_even_count() {
+        let samples = vec![
+            TimedRunSample {
+                wall_ms: 10.0,
+                peak_rss_bytes: 0,
+                termination: TerminationKind::Success,
+            },
+            TimedRunSample {
+                wall_ms: 20.0,
+                peak_rss_bytes: 0,
+                termination: TerminationKind::Success,
+            },
+        ];
+        let stats = timing_stats_from_samples(&samples);
+        assert!((stats.median_ms - 15.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn timing_stats_excludes_failed_runs() {
+        let samples = vec![
+            TimedRunSample {
+                wall_ms: 10.0,
+                peak_rss_bytes: 100,
+                termination: TerminationKind::Success,
+            },
+            TimedRunSample {
+                wall_ms: 60_000.0,
+                peak_rss_bytes: 0,
+                termination: TerminationKind::Timeout,
+            },
+            TimedRunSample {
+                wall_ms: 20.0,
+                peak_rss_bytes: 100,
+                termination: TerminationKind::Success,
+            },
+        ];
+        let stats = timing_stats_from_samples(&samples);
+        assert_eq!(stats.runs_ms, vec![10.0, 20.0]);
+        assert!((stats.median_ms - 15.0).abs() < f64::EPSILON);
+        assert!((stats.mean_ms - 15.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn needs_more_balances_unequal_counts_after_min_runs() {
+        let policy = RunPolicy {
+            min_runs_per_tool: 2,
+            max_runs_per_tool: 10,
+            min_total_timed_duration: Duration::from_millis(100),
+            scenario_time_budget: Duration::from_secs(60),
+            ..Default::default()
+        };
+        assert!(needs_more_timed_runs(
+            &policy,
+            3,
+            2,
+            500.0,
+            Duration::from_millis(1)
+        ));
+        assert!(!needs_more_timed_runs(
+            &policy,
+            3,
+            3,
+            500.0,
+            Duration::from_millis(1)
+        ));
+    }
 
     #[test]
     fn timing_stats_median_mean_stddev() {
