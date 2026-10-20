@@ -33,6 +33,7 @@ pub const LINKED_WT_DIR: &str = "daily-linked-wt";
 pub const CONFIG_BENCH_KEY: &str = "daily.bench.key";
 pub const CONFIG_BENCH_VALUE: &str = "daily-bench-value";
 pub const NOTES_BENCH_MSG: &str = "daily bench note";
+pub const PACK_REFS_BENCH_TAG: &str = "daily-bench-pack-tag";
 
 fn default_linked_worktree_path(ctx: &DailyHeadlineContext) -> PathBuf {
     ctx.linked_worktree
@@ -158,7 +159,7 @@ pub fn setup_synth10k_gc(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext>
     run_git(
         setup.git,
         &ctx.repo,
-        &["tag", "-f", "daily-bench-pack-tag", "HEAD"],
+        &["tag", "-f", PACK_REFS_BENCH_TAG, "HEAD"],
     )?;
     Ok(ctx)
 }
@@ -317,7 +318,9 @@ pub fn run_prepare_daily_reset(git: &Path) -> Result<()> {
 pub fn run_prepare_daily_gc_seed(git: &Path) -> Result<()> {
     let repo = crate::worktree_fixture::active_worktree_repo();
     reset_worktree_clean(git, &repo)?;
-    seed_loose_objects(git, &repo)
+    seed_loose_objects(git, &repo)?;
+    run_git(git, &repo, &["tag", "-f", PACK_REFS_BENCH_TAG, "HEAD"])?;
+    Ok(())
 }
 
 pub fn switch_100k_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
@@ -535,9 +538,11 @@ fn write_ignore_paths(repo: &Path, count: usize) -> Result<()> {
 }
 
 pub fn hooks_list_bench(ctx: &DailyHeadlineContext) -> (BenchArgv, BenchArgv) {
+    let hooks_path = shell_command(&ctx.git, &["rev-parse", "--git-path", "hooks"]);
     let git_ls = format!(
-        "cd {} && ls $(git rev-parse --git-path hooks) >/dev/null 2>&1",
-        shell_quote_path(&ctx.repo)
+        "set -eu\ncd {} && hooks_dir=$({hooks_path}) && ls \"$hooks_dir\"/ >/dev/null 2>&1",
+        shell_quote_path(&ctx.repo),
+        hooks_path = hooks_path
     );
     (sh_devnull(&ctx.grit, &["hooks"]), sh_script(git_ls))
 }
@@ -653,6 +658,65 @@ pub fn verify_git_fsck(ctx: &DailyHeadlineContext) -> Result<()> {
         anyhow::bail!("git fsck failed: {}", String::from_utf8_lossy(&out.stderr));
     }
     Ok(())
+}
+
+/// Run one grit subcommand in the scenario repo (for preflight correctness checks).
+pub fn run_grit_in_repo(ctx: &DailyHeadlineContext, args: &[&str]) -> Result<()> {
+    let mut cmd = Command::new(&ctx.grit);
+    cmd.args(args).current_dir(&ctx.repo);
+    let out = cmd
+        .output()
+        .with_context(|| format!("grit {}", args.join(" ")))?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "grit {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(())
+}
+
+/// Reset fixture state, run grit maintenance, then validate output with system git fsck.
+pub fn preflight_grit_gc_then_fsck(ctx: &DailyHeadlineContext, grit_args: &[&str]) -> Result<()> {
+    run_prepare_daily_reset(&ctx.git)?;
+    run_grit_in_repo(ctx, grit_args)?;
+    verify_git_fsck(ctx)
+}
+
+/// Preflight `grit gc repack` output before timing `repack/full@git-git`.
+pub fn correctness_grit_repack_full(ctx: &DailyHeadlineContext) -> Result<()> {
+    preflight_grit_gc_then_fsck(ctx, &["gc", "repack"])
+}
+
+/// Preflight `grit gc commit-graph` output before timing `repack/commit-graph@git-git`.
+pub fn correctness_grit_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
+    preflight_grit_gc_then_fsck(ctx, &["gc", "commit-graph"])
+}
+
+/// Count loose object files under `.git/objects` (excluding `pack/` and `info/`).
+pub fn count_loose_objects(repo: &Path) -> Result<usize> {
+    use std::fs;
+    let objects = repo.join(".git/objects");
+    let mut count = 0usize;
+    for entry in fs::read_dir(&objects).context("read objects dir")? {
+        let entry = entry.context("objects entry")?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "pack" || name == "info" {
+            continue;
+        }
+        if name.len() != 2 {
+            continue;
+        }
+        for leaf in fs::read_dir(entry.path()).context("read shard dir")? {
+            let leaf = leaf.context("shard entry")?;
+            if leaf.file_type().is_ok_and(|t| t.is_file()) {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }
 
 pub fn setup_ignore_check(setup: &DailySetup<'_>) -> Result<DailyHeadlineContext> {
@@ -788,18 +852,28 @@ pub fn prepare_daily_reset(ctx: &DailyHeadlineContext) -> DailyPrepare {
 
 pub fn prepare_stash_list(ctx: &DailyHeadlineContext) -> DailyPrepare {
     let reset = prepare_daily_reset_script(&ctx.git);
-    let push = shell_command(&ctx.git, &["stash", "push", "-m", "daily-bench-stash"]);
-    let repo = crate::worktree_fixture::active_worktree_repo();
+    let push = shell_command(
+        &ctx.git,
+        &["stash", "push", "-u", "-m", "daily-bench-stash"],
+    );
+    let repo_q = shell_quote_path(&ctx.repo);
     let script = format!(
-        "{reset}\ncd {repo} && echo daily-bench >> daily-stash-touch.txt && {push}",
-        repo = shell_quote_path(&repo),
+        "set -eu\n{reset}\ncd {repo_q} && echo daily-bench >> daily-stash-touch.txt && {push}",
         push = push
     );
     DailyPrepare::Shell(BenchArgv::new("/bin/sh", ["-c", script.as_str()]))
 }
 
-pub fn correctness_repack(ctx: &DailyHeadlineContext) -> Result<()> {
-    verify_git_fsck(ctx)
+pub fn prepare_stash_list_seed(ctx: &DailyHeadlineContext) -> Result<()> {
+    run_prepare_daily_reset(&ctx.git)?;
+    let touch = ctx.repo.join("daily-stash-touch.txt");
+    std::fs::write(&touch, "daily-bench\n").context("stash list seed touch file")?;
+    run_git(
+        &ctx.git,
+        &ctx.repo,
+        &["stash", "push", "-u", "-m", "daily-bench-stash"],
+    )?;
+    Ok(())
 }
 
 pub fn correctness_bundle_create(ctx: &DailyHeadlineContext) -> Result<()> {

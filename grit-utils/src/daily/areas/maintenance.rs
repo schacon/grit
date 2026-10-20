@@ -2,9 +2,9 @@
 
 use super::super::helpers::headline_spec;
 use super::super::matrix_helpers::{
-    correctness_repack, fsck_full_bench, gc_default_bench, prepare_daily_reset, prepare_gc_seed,
-    repack_commit_graph_bench, repack_full_bench, setup_big_blobs, setup_git_git,
-    setup_git_git_repack_smoke, setup_synth10k_gc,
+    correctness_grit_commit_graph, correctness_grit_repack_full, fsck_full_bench, gc_default_bench,
+    prepare_daily_reset, prepare_gc_seed, repack_commit_graph_bench, repack_full_bench,
+    setup_big_blobs, setup_git_git, setup_git_git_repack_smoke, setup_synth10k_gc,
 };
 use super::super::plan::DailyHeadlinePlan;
 
@@ -26,7 +26,7 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
             prepare: prepare_daily_reset,
             build_git: |c| repack_full_bench(c).1,
             build_grit: |c| repack_full_bench(c).0,
-            correctness: Some(correctness_repack),
+            correctness: Some(correctness_grit_repack_full),
         },
         DailyHeadlinePlan {
             spec: headline_spec("fsck/full@git-git"),
@@ -53,7 +53,7 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
             prepare: prepare_daily_reset,
             build_git: |c| repack_commit_graph_bench(c).1,
             build_grit: |c| repack_commit_graph_bench(c).0,
-            correctness: Some(correctness_repack),
+            correctness: Some(correctness_grit_commit_graph),
         },
     ]
 }
