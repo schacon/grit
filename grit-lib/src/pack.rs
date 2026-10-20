@@ -3594,6 +3594,15 @@ impl SingleLocalPackReader {
         }
         read_object_from_pack_at_offset(&self.idx, offset)
     }
+
+    /// Pack file offset for `oid` in this reader's index, if present.
+    ///
+    /// # Errors
+    ///
+    /// Propagates pack index lookup errors.
+    pub fn pack_offset(&self, oid: &ObjectId) -> Result<Option<u64>> {
+        self.idx.find_offset(oid)
+    }
 }
 fn pack_indexes_for_lookup(
     objects_dir: &Path,

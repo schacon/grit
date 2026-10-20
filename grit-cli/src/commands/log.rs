@@ -6,7 +6,8 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::group_by::{
-    group_commits_by_author, mailmap_for_grouping, GroupByAuthorOptions,
+    group_commits_by_author, group_commits_by_author_from_rev, mailmap_for_grouping,
+    GroupByAuthorOptions,
 };
 use grit_lib::revwalk::log_walk::{LogWalkCursor, LogWalkQuery};
 use grit_lib::state::{resolve_head, HeadState};
@@ -271,17 +272,35 @@ pub fn run(
         if rev.max_count == Some(0) {
             return empty_outcome(display);
         }
-        let walk = repo.rev_walk();
         let mut fetch_opts = opts.clone();
         fetch_opts.limit = fetch_limit_plus_one(rev.max_count);
-        let oids = walk
+        if display.group_by == Some(LogGroupBy::Author) {
+            let use_mailmap = rev_select::log_mailmap_enabled(&repo, rev.no_mailmap);
+            let mailmap = mailmap_for_grouping(&repo, use_mailmap)?;
+            if display.group_count_only {
+                let grouped = group_commits_by_author_from_rev(
+                    &repo,
+                    &token_refs,
+                    &fetch_opts,
+                    mailmap.as_ref(),
+                    GroupByAuthorOptions { count_only: true },
+                )
+                .context("could not list commits")?;
+                let truncated = rev.max_count.is_some();
+                return build_author_group_outcome_from_groups(&repo, grouped, truncated, display);
+            }
+            let oids = repo
+                .rev_walk()
+                .commits(&token_refs, &fetch_opts)
+                .context("could not list commits")?;
+            let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
+            return build_author_group_outcome(&repo, &oids, truncated, display, use_mailmap);
+        }
+        let oids = repo
+            .rev_walk()
             .commits(&token_refs, &fetch_opts)
             .context("could not list commits")?;
         let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
-        if display.group_by == Some(LogGroupBy::Author) {
-            let use_mailmap = rev_select::log_mailmap_enabled(&repo, rev.no_mailmap);
-            return build_author_group_outcome(&repo, &oids, truncated, display, use_mailmap);
-        }
         return build_commit_outcome(&repo, &oids, stat, None, truncated, display, output_mode);
     }
 
@@ -346,14 +365,31 @@ fn build_author_group_outcome(
             count_only: display.group_count_only,
         },
     )?;
-    let now = context::wall_clock_now(repo.environment()).unix_timestamp();
-    let loader = CommitJsonLoader::new(repo)?;
+    build_author_group_outcome_from_groups(repo, grouped, truncated, display)
+}
+
+fn build_author_group_outcome_from_groups(
+    repo: &grit_lib::repo::Repository,
+    grouped: Vec<grit_lib::revwalk::AuthorGroup>,
+    truncated: bool,
+    display: LogDisplayOptions,
+) -> Result<LogOutcome> {
     let include_commits = !display.group_count_only;
+    let loader = if include_commits {
+        Some(CommitJsonLoader::new(repo)?)
+    } else {
+        None
+    };
+    let now = if include_commits {
+        Some(context::wall_clock_now(repo.environment()).unix_timestamp())
+    } else {
+        None
+    };
     let mut json_groups = Vec::with_capacity(grouped.len());
     let mut author_group_rows = Vec::with_capacity(grouped.len());
     for g in &grouped {
         author_group_rows.push((g.count, g.name.clone(), g.email.clone()));
-        let commits = if include_commits {
+        let commits = if let (Some(loader), Some(now)) = (loader.as_ref(), now) {
             Some(loader.load(repo, &g.commits, now)?)
         } else {
             None
