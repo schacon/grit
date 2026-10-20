@@ -1,8 +1,7 @@
 //! Open the correct [`super::RefStore`] backend for a git directory.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::environment::Environment;
 use crate::error::Result;
@@ -11,23 +10,6 @@ use crate::ref_storage::RefStorageFormat as OnDiskFormat;
 use super::routing::resolve_common_dir;
 use super::{FilesRefStore, FilesRefStoreConfig, RefStore, ReftableRefStore};
 use crate::refs::LogRefsConfig;
-
-type ConfigStamp = Option<(std::time::SystemTime, u64)>;
-type RefStoreCache = HashMap<PathBuf, (ConfigStamp, Arc<dyn RefStore>)>;
-// hygiene: stamp-validated ref store cache for callers without a Repository handle
-static REF_STORE_BY_CONFIG_STAMP: Mutex<Option<RefStoreCache>> = Mutex::new(None);
-
-/// Drop stamp-validated ref store entries (called when repository config is invalidated).
-pub(crate) fn clear_ref_store_stamp_cache() {
-    if let Ok(mut guard) = REF_STORE_BY_CONFIG_STAMP.lock() {
-        *guard = None;
-    }
-}
-
-fn local_config_stamp(git_dir: &Path) -> ConfigStamp {
-    crate::repo::repository_config_path_for_caches(git_dir)
-        .and_then(|p| crate::config::stamp_for_path(&p))
-}
 
 /// Select and open the ref store for `git_dir` (detects backend via [`OnDiskFormat::detect`]).
 ///
@@ -38,21 +20,6 @@ fn local_config_stamp(git_dir: &Path) -> ConfigStamp {
 ///
 /// Propagates format detection and backend open failures.
 pub fn open_ref_store(git_dir: &Path) -> Result<Arc<dyn RefStore>> {
-    let key = git_dir
-        .canonicalize()
-        .unwrap_or_else(|_| git_dir.to_path_buf());
-    let stamp = local_config_stamp(git_dir);
-    if let Ok(mut guard) = REF_STORE_BY_CONFIG_STAMP.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
-        if let Some((cached_stamp, store)) = map.get(&key) {
-            if cached_stamp == &stamp {
-                return Ok(Arc::clone(store));
-            }
-        }
-        let store = open_ref_store_uncached(git_dir, &Environment::empty(), None)?;
-        map.insert(key, (stamp, Arc::clone(&store)));
-        return Ok(store);
-    }
     open_ref_store_uncached(git_dir, &Environment::empty(), None)
 }
 
@@ -83,4 +50,43 @@ pub(crate) fn open_ref_store_uncached(
         OnDiskFormat::Reftable => Arc::new(ReftableRefStore::open(git_dir.to_path_buf())?),
     };
     Ok(store)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::refs::store::{RefStorageFormat, RefStore};
+    use filetime::FileTime;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn open_ref_store_rereads_when_config_content_changes_under_same_stamp() {
+        let tmp = TempDir::new().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("git dir");
+        let config = git_dir.join("config");
+        fs::write(&config, "[core]\n\trepositoryformatversion = 0\n").expect("config v0");
+        let before = open_ref_store(&git_dir).expect("open files");
+        assert_eq!(before.format(), RefStorageFormat::Files);
+
+        let t0 = FileTime::from_last_modification_time(&fs::metadata(&config).expect("stat"));
+        fs::write(
+            &config,
+            "[core]\n\trepositoryformatversion = 1\n[extensions]\n\trefStorage = reftable\n",
+        )
+        .expect("rewrite reftable");
+        filetime::set_file_mtime(&config, t0).expect("restore mtime");
+
+        assert_eq!(
+            OnDiskFormat::detect(&git_dir).expect("detect"),
+            OnDiskFormat::Reftable
+        );
+        let after = open_ref_store(&git_dir).expect("open after rewrite");
+        assert_eq!(
+            after.format(),
+            RefStorageFormat::Reftable,
+            "must not reuse files store when config content changed under restored mtime"
+        );
+    }
 }

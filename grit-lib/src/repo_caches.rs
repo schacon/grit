@@ -268,7 +268,6 @@ impl RepoCaches {
         if let Ok(mut guard) = self.ref_storage_format.lock() {
             guard.clear();
         }
-        crate::refs::store::clear_ref_store_stamp_cache();
     }
 
     /// Repository-local `config` body (linked worktree common dir when needed), read at most once per handle until invalidation.
