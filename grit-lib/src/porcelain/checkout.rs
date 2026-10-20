@@ -2836,6 +2836,7 @@ mod tests {
         assert!(bulk_mod_delete_checkout_eligible(&changes, &rules));
     }
 
+    #[test]
     fn wholesale_deleted_directories_detects_full_top_level_dir() {
         let tmp = TempDir::new().expect("tempdir");
         let repo = init_repository(
