@@ -456,6 +456,11 @@ enum Cmd {
         git: PathBuf,
     },
     #[command(hide = true)]
+    PrepareDiffSynthetic {
+        #[arg(long)]
+        git: PathBuf,
+    },
+    #[command(hide = true)]
     PrepareWorktreeStatusClean {
         #[arg(long)]
         git: PathBuf,
@@ -1158,6 +1163,10 @@ fn main() -> Result<()> {
             let git = resolve_binary("git", Some(git))?;
             return grit_utils::scenarios::run_prepare_diff_dirty(&git);
         }
+        Cmd::PrepareDiffSynthetic { git } => {
+            let git = resolve_binary("git", Some(git))?;
+            return grit_utils::scenarios::run_prepare_diff_synthetic(&git);
+        }
         Cmd::PrepareWorktreeStatusClean { git } => {
             let git = resolve_binary("git", Some(git))?;
             return prepare_worktree_status_clean(&git);
@@ -1657,6 +1666,7 @@ fn main() -> Result<()> {
         | Cmd::PrepareRestore
         | Cmd::PrepareStash { .. }
         | Cmd::PrepareDiffDirty { .. }
+        | Cmd::PrepareDiffSynthetic { .. }
         | Cmd::PrepareWorktreeStatusClean { .. }
         | Cmd::PrepareWorktreeStatusDirty { .. }
         | Cmd::PrepareCampaignStatusDirty { .. }
