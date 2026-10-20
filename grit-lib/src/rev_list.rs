@@ -6937,7 +6937,6 @@ fn peel_ref_oids_to_unique_commits(repo: &Repository, raw: Vec<ObjectId>) -> Res
             _ => {}
         }
     }
-    out.sort();
     Ok(out)
 }
 
