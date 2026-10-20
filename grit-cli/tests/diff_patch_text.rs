@@ -73,7 +73,10 @@ fn diff_patch_text_unstaged_git_apply_check() {
         "expected full patch body, got:\n{patch_text}"
     );
 
-    git_in(dir.path(), &["restore", "--source=HEAD", "--worktree", "file.txt"]);
+    git_in(
+        dir.path(),
+        &["restore", "--source=HEAD", "--worktree", "file.txt"],
+    );
 
     let check = Command::new("git")
         .current_dir(dir.path())
@@ -126,7 +129,16 @@ fn diff_patch_text_staged_git_apply_check() {
         "expected full patch body, got:\n{patch_text}"
     );
 
-    git_in(dir.path(), &["restore", "--source=HEAD", "--staged", "--worktree", "file.txt"]);
+    git_in(
+        dir.path(),
+        &[
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "file.txt",
+        ],
+    );
 
     let check = Command::new("git")
         .current_dir(dir.path())
