@@ -50,7 +50,9 @@ use crate::porcelain::commit::write_commit_object;
 use crate::porcelain::index_from_tree::{
     index_from_tree_with_worktree_stats, refresh_stage0_index_stats_from_worktree,
 };
-use crate::porcelain::tree_merge_checkout::apply_clean_tree_merge_to_worktree;
+use crate::porcelain::tree_merge_checkout::{
+    apply_clean_tree_merge_to_worktree, CleanTreeMergeCheckoutMode,
+};
 use crate::porcelain::worktree_guard::{
     ensure_worktree_clean_for_merge, prepare_tree_checkout, prepare_tree_checkout_with_changes,
 };
@@ -354,7 +356,12 @@ pub fn integrate_branch(
         "GIT_COMMITTER_DATE",
     )?;
 
-    apply_clean_tree_merge_to_worktree(repo, &into_tree, &merged)?;
+    apply_clean_tree_merge_to_worktree(
+        repo,
+        &into_tree,
+        &merged,
+        CleanTreeMergeCheckoutMode::DeferredIndexWrite,
+    )?;
 
     let commit = CommitData {
         tree: merged.result_tree,
