@@ -2288,4 +2288,55 @@ mod status_op_tests {
              (read {entries_read} directory entries)"
         );
     }
+
+    #[test]
+    fn warm_status_after_git_status_reuses_untr_without_rescanning() {
+        use std::process::Command;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        grit_test_support::git(root, &["init", "-q", "-b", "main", "."]);
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        const FILE_COUNT: usize = 4500;
+        for i in 0..FILE_COUNT {
+            let depth = 3 + (i % 5);
+            let mut rel = String::new();
+            for d in 0..depth {
+                rel.push_str(&format!("/d{}", (i + d) % 7));
+            }
+            rel.push_str(&format!("/f{i}.txt"));
+            rel.remove(0);
+            let abs = root.join(&rel);
+            if let Some(parent) = abs.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&abs, format!("body {i}\n")).unwrap();
+        }
+        grit_test_support::git(root, &["add", "-A"]);
+        grit_test_support::git(root, &["commit", "-qm", "seed"]);
+
+        let repo = Repository::open(
+            &root.join(".git"),
+            &RepositoryOptions::empty().with_work_tree(root),
+        )
+        .unwrap();
+        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+
+        let root_s = root.to_str().expect("utf-8");
+        Command::new("git")
+            .args(["-C", root_s, "status"])
+            .output()
+            .expect("git status");
+
+        untracked_walk_probe::reset();
+        let _ = status(&repo, &StatusOptions::default(), &mut NullProgress).unwrap();
+        let entries_read = untracked_walk_probe::count();
+        assert!(
+            entries_read <= 32,
+            "after system git status, grit must reuse UNTR without a full rescan \
+             (read {entries_read} directory entries)"
+        );
+    }
 }

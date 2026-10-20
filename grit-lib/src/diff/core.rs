@@ -3882,13 +3882,10 @@ fn diff_index_to_worktree_inner(
         && (materialize_dirty_blobs || options.for_status);
     let mut staging_hash_jobs: Vec<StagingHashJob> = Vec::new();
     let mut stat_refresh_verified = vec![false; index.entries.len()];
-    let scan_symlink_ancestors = config
-        .get_bool("core.symlinks")
-        .and_then(|r| r.ok())
-        .unwrap_or(true);
     // Parallel preload must lstat ancestor directories without following symlinks. When a
     // tracked directory is replaced by a symlink, indexed paths under it are deletions even if
     // the link target still holds a file at the same relative path with an unchanged stat.
+    // This is independent of `core.symlinks` (checkout support); detection must stay enabled.
     let sparse = if parallel_blob_work {
         BlobScanSparseMode::StatusDiff {
             stat_policy,
@@ -3908,7 +3905,8 @@ fn diff_index_to_worktree_inner(
         blob_scan,
         &thread_policy,
         &config,
-        scan_symlink_ancestors,
+        true,
+        None,
         dir_abs,
         file_abs,
         |rel_path| {
@@ -4218,6 +4216,33 @@ pub fn index_mtime_for_diff(index: &Index, explicit: Option<(u32, u32)>) -> Opti
 }
 
 impl SymlinkDirCache {
+    /// Returns `true` when `prefix` itself is a symlink (and records the result).
+    fn probe_prefix(
+        &mut self,
+        work_tree: &Path,
+        prefix: &str,
+        precompose_unicode: bool,
+        ignorecase: bool,
+    ) -> bool {
+        if self.symlink.contains(prefix) {
+            return true;
+        }
+        if self.plain.contains(prefix) {
+            return false;
+        }
+        let abs = index_entry_worktree_abs(work_tree, prefix, precompose_unicode, ignorecase);
+        let is_symlink = match fs::symlink_metadata(&abs) {
+            Ok(meta) => meta.file_type().is_symlink(),
+            _ => false,
+        };
+        if is_symlink {
+            self.symlink.insert(prefix.to_owned());
+        } else {
+            self.plain.insert(prefix.to_owned());
+        }
+        is_symlink
+    }
+
     /// Whether any parent component of `rel_path` is a symlink.
     pub(crate) fn has_symlink_in_path(
         &mut self,
@@ -4240,15 +4265,8 @@ impl SymlinkDirCache {
             if self.plain.contains(&prefix) {
                 continue;
             }
-            let abs = index_entry_worktree_abs(work_tree, &prefix, precompose_unicode, ignorecase);
-            match fs::symlink_metadata(&abs) {
-                Ok(meta) if meta.file_type().is_symlink() => {
-                    self.symlink.insert(prefix.clone());
-                    return true;
-                }
-                _ => {
-                    self.plain.insert(prefix.clone());
-                }
+            if self.probe_prefix(work_tree, &prefix, precompose_unicode, ignorecase) {
+                return true;
             }
         }
         false
@@ -4860,17 +4878,15 @@ pub fn refresh_index_stat_content_verified_with_rules(
     let mut changed = false;
     let filter_fp = rules_lock.as_ref().map(|r| r.filter_process());
     let thread_policy = crate::parallel::ThreadPolicy::default();
-    let scan_symlink_ancestors = config
-        .get_bool("core.symlinks")
-        .and_then(|r| r.ok())
-        .unwrap_or(true);
+    // Symlink ancestor detection must run even when core.symlinks is false.
     let refresh_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
         blob_scan,
         &thread_policy,
         &config,
-        scan_symlink_ancestors,
+        true,
+        None,
         dir_abs,
         file_abs,
         |rel_path| {

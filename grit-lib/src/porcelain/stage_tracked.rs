@@ -359,6 +359,7 @@ fn stage_tracked_modifications_in_index_body(
         &thread_policy,
         &rules_config,
         true,
+        None,
         dir_abs,
         file_abs,
         |rel_path| {

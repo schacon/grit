@@ -24,7 +24,10 @@ use std::sync::Arc;
 /// Deep trees often have one tracked file per leaf directory; one `read_dir` plus
 /// `DirEntry::metadata` per parent beats a full-path `symlink_metadata` per indexed file on
 /// large trees (issue #1231), including NTFS and deep Unix worktrees.
+#[cfg(windows)]
 const READ_DIR_AMORTIZE_MIN: usize = 1;
+#[cfg(not(windows))]
+const READ_DIR_AMORTIZE_MIN: usize = 2;
 
 /// Test hook: incremented once per worktree metadata syscall used by directory scans.
 static WORKTREE_METADATA_PROBE: AtomicUsize = AtomicUsize::new(0);
@@ -653,6 +656,19 @@ where
     }
 
     let abs_dir = dir_abs(dir);
+    #[cfg(windows)]
+    if blobs.len() == 1 {
+        let blob = &blobs[0];
+        if has_symlink_ancestor(&blob.rel_path) {
+            visit(blob.entry_index, &blob.rel_path, BlobDiskLookup::Missing)?;
+            return Ok(());
+        }
+        let target = file_abs(&blob.rel_path);
+        let lookup = lookup_lone_blob_in_directory(&abs_dir, &blob.file_name, &target);
+        visit(blob.entry_index, &blob.rel_path, lookup)?;
+        return Ok(());
+    }
+
     let (dir_readable, on_disk) = read_directory_map(&abs_dir)?;
     for &entry_index in entry_indices {
         let rel_path = entry_rel_path(index, entry_index)?;
@@ -718,6 +734,49 @@ where
         }
     }
     Ok(())
+}
+
+/// One indexed file under `abs_dir`: a single `read_dir` without building a map (Windows leaf dirs).
+#[cfg(windows)]
+fn lookup_lone_blob_in_directory(
+    abs_dir: &Path,
+    index_file_name: &str,
+    target_abs: &Path,
+) -> BlobDiskLookup {
+    if probe_counts(abs_dir) {
+        WORKTREE_READ_DIR_PROBE.fetch_add(1, Ordering::Relaxed);
+    }
+    let rd = match fs::read_dir(abs_dir) {
+        Ok(rd) => rd,
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::PermissionDenied
+                || e.raw_os_error() == Some(20) =>
+        {
+            return BlobDiskLookup::Missing;
+        }
+        Err(e) => return BlobDiskLookup::Io(e),
+    };
+    for item in rd {
+        let Ok(entry) = item else { continue };
+        let name = entry.file_name();
+        if name == ".git" {
+            continue;
+        }
+        if name == index_file_name || dir_entry_name_matches(index_file_name, &entry) {
+            return match dir_entry_metadata(&entry) {
+                Ok(m) => BlobDiskLookup::Present(m),
+                Err(e) => BlobDiskLookup::Io(e),
+            };
+        }
+    }
+    match symlink_metadata_path(target_abs) {
+        Ok(meta) => BlobDiskLookup::Present(meta),
+        Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
+            BlobDiskLookup::Missing
+        }
+        Err(e) => BlobDiskLookup::Io(e),
+    }
 }
 
 fn preload_blob_lookups_parallel(
@@ -869,15 +928,21 @@ pub(crate) fn collect_blob_lookup_batches(
     thread_policy: &crate::parallel::ThreadPolicy,
     config: &crate::config::ConfigSet,
     scan_symlink_ancestors: bool,
+    precomputed_symlink_missing: Option<&HashSet<String>>,
     dir_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     file_abs: impl Fn(&str) -> PathBuf + Send + Sync + 'static,
     mut has_symlink_ancestor: impl FnMut(&str) -> bool,
     sparse: BlobScanSparseMode,
 ) -> Result<Vec<Vec<(usize, BlobDiskLookup)>>> {
-    let symlink_missing = if scan_symlink_ancestors {
-        build_symlink_missing(index, plan, &mut has_symlink_ancestor)
+    let symlink_missing_storage;
+    let symlink_missing: &HashSet<String> = if let Some(precomputed) = precomputed_symlink_missing {
+        precomputed
+    } else if scan_symlink_ancestors {
+        symlink_missing_storage = build_symlink_missing(index, plan, &mut has_symlink_ancestor);
+        &symlink_missing_storage
     } else {
-        HashSet::new()
+        symlink_missing_storage = HashSet::new();
+        &symlink_missing_storage
     };
 
     let blob_count = plan.len();
@@ -951,6 +1016,7 @@ where
         thread_policy,
         config,
         scan_symlink_ancestors,
+        None,
         dir_abs,
         file_abs,
         has_symlink_ancestor,
@@ -1173,16 +1239,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(seen, CHAINS);
-        assert!(
-            worktree_read_dir_probe_count() >= CHAINS,
-            "deep leaf dirs should read_dir each parent (got {} read_dirs)",
-            worktree_read_dir_probe_count()
-        );
-        assert!(
-            worktree_metadata_probe_count() <= CHAINS + 5,
-            "read_dir scan should stat via DirEntry metadata, got {}",
-            worktree_metadata_probe_count()
-        );
+        #[cfg(windows)]
+        {
+            assert!(
+                worktree_read_dir_probe_count() >= CHAINS,
+                "Windows deep leaf dirs should read_dir each parent (got {} read_dirs)",
+                worktree_read_dir_probe_count()
+            );
+            assert!(
+                worktree_metadata_probe_count() <= CHAINS + 5,
+                "read_dir scan should stat via DirEntry metadata, got {}",
+                worktree_metadata_probe_count()
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                worktree_read_dir_probe_count(),
+                0,
+                "Unix single-file leaf dirs should use direct stat, not read_dir"
+            );
+            assert!(
+                worktree_metadata_probe_count() <= CHAINS + 5,
+                "direct stat scan budget exceeded: {}",
+                worktree_metadata_probe_count()
+            );
+        }
     }
 
     #[test]
@@ -1228,6 +1310,7 @@ mod tests {
             &policy,
             &config,
             false,
+            None,
             dir_abs,
             file_abs,
             |_| false,
@@ -1295,6 +1378,7 @@ mod tests {
             &policy,
             &config,
             false,
+            None,
             dir_abs,
             file_abs,
             |_| false,
