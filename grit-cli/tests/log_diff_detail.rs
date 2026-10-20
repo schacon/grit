@@ -13,6 +13,68 @@ fn commit_all(dir: &std::path::Path, msg: &str) {
 }
 
 #[test]
+fn log_detail_modes_include_totals_in_json() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), b"a\n").expect("write");
+    commit_all(dir.path(), "one");
+    std::fs::write(dir.path().join("a.txt"), b"a\nb\n").expect("write");
+    commit_all(dir.path(), "two");
+
+    for (flag, expect_ins) in [
+        (&["-p"][..], true),
+        (&["--name-only"][..], false),
+        (&["--name-status"][..], false),
+        (&["--stat"][..], true),
+    ] {
+        let mut args = vec!["log", "--json", "--limit", "1"];
+        args.extend_from_slice(flag);
+        let out = grit(dir.path(), &args);
+        assert!(out.ok(), "{}: {}", flag.join(" "), out.dump("log json"));
+        let json: Value = serde_json::from_str(out.stdout.trim()).expect("json");
+        let entry = &json["commits"][0];
+        assert!(entry.get("files").is_some(), "{flag:?} missing files");
+        let totals = entry
+            .get("totals")
+            .expect("totals")
+            .as_object()
+            .expect("totals object");
+        assert!(totals.contains_key("files_changed"));
+        if expect_ins {
+            assert!(totals.contains_key("insertions"));
+            assert!(totals.contains_key("deletions"));
+        }
+    }
+}
+
+#[test]
+fn log_deleted_path_history_matches_git() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("deleted.txt"), b"x\n").expect("write");
+    commit_all(dir.path(), "add");
+    std::fs::remove_file(dir.path().join("deleted.txt")).expect("remove");
+    commit_all(dir.path(), "remove");
+
+    let git_out = std::process::Command::new("git")
+        .current_dir(dir.path())
+        .args(["log", "--oneline", "--", "deleted.txt"])
+        .output()
+        .expect("git log");
+    assert!(git_out.status.success());
+    let git_stdout = String::from_utf8_lossy(&git_out.stdout);
+    let git_lines: Vec<_> = git_stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(git_lines.len(), 2);
+
+    let out = grit(dir.path(), &["log", "--", "deleted.txt"]);
+    assert!(out.ok(), "{}", out.dump("log deleted path"));
+    assert_eq!(out.stdout.lines().filter(|l| !l.is_empty()).count(), 2);
+
+    let patch = grit(dir.path(), &["log", "-p", "--", "deleted.txt"]);
+    assert!(patch.ok(), "{}", patch.dump("log -p deleted"));
+}
+
+#[test]
 fn log_patch_files_equal_diff_per_commit() {
     let dir = tempfile::tempdir().expect("tempdir");
     init_repo(dir.path());

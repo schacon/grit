@@ -16,9 +16,10 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    apply_rename_detection_to_diff_entries, build_file_diffs, diff_index_to_tree_with_renames,
-    diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy, line_change_counts,
-    read_submodule_head_oid, read_worktree_side_bytes_for_diff,
+    apply_rename_detection_to_diff_entries, build_file_diffs, diff_commits_with_renames_and_policy,
+    diff_index_to_tree, diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
+    diff_trees_with_renames_and_policy, line_change_counts, read_submodule_head_oid,
+    read_worktree_side_bytes_for_diff,
     structured::{
         format_hunk_range, structured_file_diff, SideBytes, StructuredFileDiff, StructuredLineKind,
     },
@@ -338,13 +339,8 @@ fn finish_outcome(
     mut outcome: DiffOutcome,
 ) -> DiffOutcome {
     outcome.changed = !outcome.files.is_empty();
-    if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
-        let stat = diffstat_from_files(&outcome.files);
-        outcome.totals = Some(DiffTotalsJson {
-            files_changed: stat.files_changed,
-            insertions: stat.insertions,
-            deletions: stat.deletions,
-        });
+    if outcome.totals.is_none() && format.any_format_flag() {
+        outcome.totals = Some(totals_json_for_detail(&outcome.files, format.detail()));
     }
     if matches!(
         format.detail(),
@@ -354,6 +350,32 @@ fn finish_outcome(
         return outcome;
     }
     attach_path_display(repo, format, outcome)
+}
+
+fn totals_json_for_detail(files: &[FileDiff], detail: DiffDetail) -> DiffTotalsJson {
+    match detail {
+        DiffDetail::Stat | DiffDetail::Patch => {
+            let stat = diffstat_from_files(files);
+            DiffTotalsJson {
+                files_changed: stat.files_changed,
+                insertions: stat.insertions,
+                deletions: stat.deletions,
+            }
+        }
+        DiffDetail::NameOnly | DiffDetail::NameStatus => DiffTotalsJson {
+            files_changed: files.len(),
+            insertions: 0,
+            deletions: 0,
+        },
+        _ => {
+            let stat = diffstat_from_files(files);
+            DiffTotalsJson {
+                files_changed: stat.files_changed,
+                insertions: stat.insertions,
+                deletions: stat.deletions,
+            }
+        }
+    }
 }
 
 fn format_is_byte_list_or_stat(format: DiffFormatArgs) -> bool {
@@ -380,6 +402,25 @@ fn filtered_worktree_file_changes(
         worktree_changes(repo)?
     };
     Ok(filter_file_changes(raw, repo, pathspecs))
+}
+
+fn default_worktree_diff_entries(
+    repo: &grit_lib::repo::Repository,
+    against: Option<&str>,
+) -> Result<Vec<DiffEntry>> {
+    let base_tree = if let Some(spec) = against {
+        Some(context::commit_tree(
+            repo,
+            &resolve_diff_commit(repo, spec)?,
+        )?)
+    } else {
+        let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
+        match head.oid() {
+            Some(oid) => Some(context::commit_tree(repo, oid)?),
+            None => None,
+        }
+    };
+    worktree_against_tree_entries(repo, base_tree.as_ref())
 }
 
 fn outcome_from_change_names(changes: Vec<FileChange>, format: DiffFormatArgs) -> DiffOutcome {
@@ -660,18 +701,14 @@ pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
             let pathspecs = resolve_worktree_diff_pathspecs(&repo, &path_args)?;
             let against_ref = opts.against.as_deref();
             let outcome = match detail {
-                DiffDetail::NameOnly | DiffDetail::NameStatus => {
-                    let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
+                DiffDetail::NameOnly | DiffDetail::NameStatus | DiffDetail::Stat => {
+                    let entries = filter_diff_entries(
+                        default_worktree_diff_entries(&repo, against_ref)?,
+                        &repo,
+                        &pathspecs,
+                    );
                     outcome_from_entries(&repo, entries, detail, diff_options, format)?
                 }
-                DiffDetail::Stat => with_worktree_diff_side(&repo, |side| {
-                    let entries = filter_diff_entries(unstaged_entries(&repo)?, &repo, &pathspecs);
-                    Ok(outcome_stat_from_changes(
-                        file_changes_from_entries(&repo, entries, Some(side))?,
-                        diff_options,
-                        format,
-                    ))
-                })?,
                 DiffDetail::Patch => outcome_from_changes(
                     filtered_worktree_file_changes(&repo, against_ref, &pathspecs)?,
                     &config,
@@ -1504,11 +1541,22 @@ fn worktree_against_tree_entries(
         .context("could not load the index")?;
     let config = repo.config().context("could not load config")?;
 
-    let index_backed = base_tree
+    let cache_matches_base = base_tree
         .zip(index.cache_tree_root.as_ref())
         .map(|(left, right)| left == right)
         .unwrap_or(base_tree.is_none() && index.cache_tree_root.is_none())
-        && grit_lib::index::write_tree::cache_tree_extension_valid(index.cache_tree.as_ref());
+        && grit_lib::index::write_tree::cache_tree_fully_valid(
+            repo.odb(),
+            index.cache_tree.as_ref(),
+        );
+    let has_staged = {
+        let index = repo
+            .index_handle()
+            .load()
+            .context("could not load the index")?;
+        !diff_index_to_tree(repo.odb(), &index, base_tree, false)?.is_empty()
+    };
+    let index_backed = cache_matches_base && !has_staged;
     let diff_index_mtime = grit_lib::diff::index_mtime_for_diff(&index, None);
     let rules_arc = std::sync::Arc::new(std::sync::Mutex::new(
         WorktreeRules::from_repository(repo, &index).context("could not load worktree rules")?,
@@ -1824,7 +1872,7 @@ fn build_file_diff(fc: &FileChange, diff_options: DiffOptions) -> FileDiff {
         new_encoding_lossy: structured.new_encoding_lossy,
         binary: fc.binary,
         content_changed: fc.content_changed,
-        similarity: None,
+        similarity: fc.similarity,
         stat: None,
         hunks: Some(hunks),
     }

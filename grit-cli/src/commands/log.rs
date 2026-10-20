@@ -4,7 +4,7 @@
 //! there's more, prints the command to fetch the next page.
 
 use anyhow::{bail, Context, Result};
-use grit_lib::diff::{CommitFilesManyOptions, DiffOptions};
+use grit_lib::diff::{CommitFilesManyInput, CommitFilesManyOptions, DiffOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::group_by::{
     group_commits_by_author, mailmap_for_grouping, GroupByAuthorOptions,
@@ -22,7 +22,7 @@ use crate::commands::diff::{
 };
 use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
-use crate::context::{self, CommitSummary};
+use crate::context::{self, subject_line, CommitSummary};
 use crate::diff_format::DiffFormatArgs;
 use crate::log_display::{
     decorate_commit_row, render_author_groups_human, render_author_groups_markdown,
@@ -519,7 +519,20 @@ fn build_commit_outcome(
         let loader = CommitJsonLoader::new(repo)?;
         loader.load_with_summaries(repo, oids, now)?
     } else {
-        let summaries = CommitJsonLoader::load_summaries_only(repo, oids)?;
+        let summaries = oids
+            .iter()
+            .map(|oid| {
+                let commit = context::read_commit(repo, oid)?;
+                let (author, timestamp) = context::author_and_time(&commit.author);
+                Ok(CommitSummary {
+                    oid: *oid,
+                    subject: subject_line(&commit.message),
+                    author,
+                    author_ident: commit.author.clone(),
+                    timestamp,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let json_rows = summaries
             .iter()
             .map(|s| CommitJson::from_summary(s, now))
@@ -535,6 +548,18 @@ fn build_commit_outcome(
         resolve_commit_diff_pathspecs(repo, path_args)?
     };
 
+    let mut commit_inputs = Vec::with_capacity(oids.len());
+    if detail.is_some() {
+        for oid in oids {
+            let commit = context::read_commit(repo, oid)?;
+            commit_inputs.push(CommitFilesManyInput {
+                oid: *oid,
+                parents: commit.parents.clone(),
+                tree: commit.tree,
+            });
+        }
+    }
+
     let many_results = if let Some(detail) = detail {
         let mut diff_options = DiffOptions::from_config(config.as_ref());
         format.apply_context(&mut diff_options);
@@ -547,7 +572,13 @@ fn build_commit_outcome(
         Some((
             detail,
             repo.diff()
-                .commit_files_many(oids, &pathspecs, opts, config.as_ref(), &thread_policy)
+                .commit_files_many_work(
+                    &commit_inputs,
+                    &pathspecs,
+                    opts,
+                    config.as_ref(),
+                    &thread_policy,
+                )
                 .context("could not diff commits")?,
         ))
     } else {

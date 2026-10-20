@@ -29,7 +29,7 @@ mod tree_content;
 mod unified_emit;
 mod whitespace_mode;
 
-pub use commit_files_many::{CommitFilesManyOptions, CommitFilesResult};
+pub use commit_files_many::{CommitFilesManyInput, CommitFilesManyOptions, CommitFilesResult};
 pub use core::*;
 pub use detail::FileDiff as ListedFileDiff;
 pub use detail::{line_change_counts, DiffDetail, DiffTotals, LineStat};

@@ -6255,7 +6255,7 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
     if worktree_rules.is_none() {
         if let Some(tree_oid) = tree_oid {
             if index.cache_tree_root.as_ref() == Some(tree_oid)
-                && crate::write_tree::cache_tree_extension_valid(index.cache_tree.as_ref())
+                && crate::write_tree::cache_tree_fully_valid(odb, index.cache_tree.as_ref())
             {
                 let mut idx = index.clone();
                 let options = DiffIndexToWorktreeOptions {
@@ -6612,14 +6612,15 @@ pub fn diff_tree_to_worktree_with_git_dir_and_rules(
             (None, Some(ref meta)) => {
                 // In index but not in tree, and exists in worktree
                 let file_attrs = file_attrs_for(path);
-                let wt_oid = hash_worktree_file(
+                let idx_ent = index_entries.get(path.as_bytes()).copied();
+                let wt_oid = materialize_worktree_blob(
                     odb,
                     &file_path,
                     meta,
                     &conv,
                     &file_attrs,
                     path,
-                    index_entries.get(path.as_bytes()).copied(),
+                    idx_ent,
                     filter_fp,
                 )?;
                 let wt_mode = mode_from_metadata(meta);
@@ -6906,20 +6907,7 @@ pub fn detect_renames_with_policy(
             .collect();
         let added_sizes: Vec<Option<usize>> = remaining_added
             .iter()
-            .map(|&ai| {
-                let add = &added[ai];
-                if !add.new_oid.is_zero() {
-                    blob_payload_size(odb, &add.new_oid).or_else(|| {
-                        work_root.and_then(|_| {
-                            read_added_entry_bytes(odb, add, work_root).map(|data| data.len())
-                        })
-                    })
-                } else if work_root.is_some() {
-                    read_added_entry_bytes(odb, add, work_root).map(|data| data.len())
-                } else {
-                    None
-                }
-            })
+            .map(|&ai| added_entry_payload_size(odb, &added[ai], work_root))
             .collect();
 
         let mut load_deleted = vec![false; remaining_deleted.len()];
@@ -7882,6 +7870,16 @@ fn blob_payload_size(odb: &Odb, oid: &ObjectId) -> Option<usize> {
         return None;
     }
     odb.read_info(oid).ok().map(|info| info.size as usize)
+}
+
+/// Payload size for an added diff side (ODB blob or worktree bytes when not stored yet).
+fn added_entry_payload_size(odb: &Odb, add: &DiffEntry, work_root: Option<&Path>) -> Option<usize> {
+    if !add.new_oid.is_zero() {
+        if let Some(size) = blob_payload_size(odb, &add.new_oid) {
+            return Some(size);
+        }
+    }
+    read_added_entry_bytes(odb, add, work_root).map(|data| data.len())
 }
 
 /// Git `diffcore-delta` size gate: skip pairs that cannot reach `minimum_score`.

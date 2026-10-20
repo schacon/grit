@@ -73,7 +73,7 @@ pub enum RenameDetection {
 
 impl Default for RenameDetection {
     fn default() -> Self {
-        Self::Similarity(50)
+        Self::Similarity(40)
     }
 }
 
@@ -326,7 +326,7 @@ mod tests {
         let cfg2 = config_from("[diff]\n\trenames = copies\n");
         assert_eq!(
             DiffOptions::from_config(&cfg2).renames,
-            RenameDetection::Similarity(50)
+            RenameDetection::default()
         );
 
         for off in ["no", "0", "off", "OFF"] {

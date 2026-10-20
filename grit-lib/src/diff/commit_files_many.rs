@@ -9,7 +9,7 @@ use crate::odb::Odb;
 use crate::parallel::{try_par_map, ParallelHashError, ParallelOp, ThreadPolicy};
 
 use super::core::diff_trees_with_renames_and_policy;
-use super::detail::DiffDetail;
+use super::detail::{DiffDetail, DiffTotals};
 use super::files::{build_file_diffs, DiffFilesOutput};
 use super::options::DiffOptions;
 use super::Diff;
@@ -92,6 +92,17 @@ fn parent_tree_for_commit(
     Ok(parse_commit(&raw.data)?.tree)
 }
 
+fn totals_for_detail(files: &[super::detail::FileDiff], detail: DiffDetail) -> Option<DiffTotals> {
+    match detail {
+        DiffDetail::Stat | DiffDetail::Patch => Some(DiffTotals::from_files(files)),
+        DiffDetail::NameOnly | DiffDetail::NameStatus => Some(DiffTotals {
+            files_changed: files.len(),
+            insertions: 0,
+            deletions: 0,
+        }),
+    }
+}
+
 fn diff_one_commit(
     diff: &Diff,
     work: &CommitWork,
@@ -104,7 +115,11 @@ fn diff_one_commit(
         return Ok(CommitFilesResult {
             output: DiffFilesOutput {
                 files: Vec::new(),
-                totals: None,
+                totals: Some(DiffTotals {
+                    files_changed: 0,
+                    insertions: 0,
+                    deletions: 0,
+                }),
             },
             parent_count: work.parent_count,
         });
@@ -124,7 +139,7 @@ fn diff_one_commit(
         entries.sort_by(|a, b| a.path().cmp(b.path()));
     }
     entries = filter_entries(diff.repository(), entries, pathspecs);
-    let output = build_file_diffs(
+    let mut output = build_file_diffs(
         odb,
         entries,
         opts.detail,
@@ -132,17 +147,34 @@ fn diff_one_commit(
         config,
         thread_policy,
     )?;
+    if output.totals.is_none() {
+        output.totals = totals_for_detail(&output.files, opts.detail);
+    }
     Ok(CommitFilesResult {
         output,
         parent_count: work.parent_count,
     })
 }
 
+/// One commit's identity for [`Diff::commit_files_many_work`], avoiding a second ODB read.
+#[derive(Debug, Clone)]
+pub struct CommitFilesManyInput {
+    /// Commit object id (order matches the log walk).
+    pub oid: ObjectId,
+    /// First-parent chain and other parents from the commit object.
+    pub parents: Vec<ObjectId>,
+    /// Tree object id for this commit.
+    pub tree: ObjectId,
+}
+
 impl Diff<'_> {
     /// Build per-commit file diffs for a slice of commit oids, preserving input order.
     ///
     /// Parent trees are resolved once and reused across consecutive commits (same as
-    /// [`super::write_commits_log_patch`]). Work runs in parallel when [`ThreadPolicy`] allows.
+    /// [`super::write_commits_log_patch`]). When `oids` are newest-first and history is
+    /// linear, each commit's first parent is the next oid and its tree is reused without
+    /// an extra read. Work runs in parallel when [`ThreadPolicy`] allows and the batch is
+    /// large enough to amortize pool startup.
     ///
     /// # Errors
     ///
@@ -158,37 +190,87 @@ impl Diff<'_> {
         if oids.is_empty() {
             return Ok(Vec::new());
         }
-        let repo = self.repository();
-        let odb = repo.odb();
-        let mut trees_by_commit: HashMap<ObjectId, ObjectId> = HashMap::with_capacity(oids.len());
-        let mut parsed: Vec<(ObjectId, Vec<ObjectId>, ObjectId)> = Vec::with_capacity(oids.len());
+        let odb = self.repository().odb();
+        let mut inputs = Vec::with_capacity(oids.len());
         for oid in oids {
             let raw = odb.read(oid)?;
             let commit = parse_commit(&raw.data)?;
-            trees_by_commit.insert(*oid, commit.tree);
-            parsed.push((*oid, commit.parents.clone(), commit.tree));
+            inputs.push(CommitFilesManyInput {
+                oid: *oid,
+                parents: commit.parents.clone(),
+                tree: commit.tree,
+            });
+        }
+        self.commit_files_many_work(&inputs, pathspecs, opts, config, thread_policy)
+    }
+
+    /// Like [`Self::commit_files_many`] when commit trees and parents are already loaded.
+    ///
+    /// # Errors
+    ///
+    /// Propagates object read, tree diff, and parallel pool errors.
+    pub fn commit_files_many_work(
+        &self,
+        inputs: &[CommitFilesManyInput],
+        pathspecs: &[String],
+        opts: CommitFilesManyOptions,
+        config: &ConfigSet,
+        _thread_policy: &ThreadPolicy,
+    ) -> Result<Vec<CommitFilesResult>> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let repo = self.repository();
+        let odb = repo.odb();
+        let mut trees_by_commit: HashMap<ObjectId, ObjectId> = HashMap::with_capacity(inputs.len());
+        for input in inputs {
+            trees_by_commit.insert(input.oid, input.tree);
         }
 
-        let mut work_items: Vec<CommitWork> = Vec::with_capacity(oids.len());
-        for (_oid, parents, tree) in parsed {
-            let parent_count = parents.len();
-            let parent_tree = match parents.first() {
-                None => None,
-                Some(parent) => Some(parent_tree_for_commit(odb, parent, &trees_by_commit)?),
+        let mut work_items: Vec<CommitWork> = Vec::with_capacity(inputs.len());
+        for (i, input) in inputs.iter().enumerate() {
+            let parent_count = input.parents.len();
+            let parent_tree = if parent_count == 0 {
+                None
+            } else if i + 1 < inputs.len() && input.parents[0] == inputs[i + 1].oid {
+                Some(inputs[i + 1].tree)
+            } else {
+                Some(parent_tree_for_commit(
+                    odb,
+                    &input.parents[0],
+                    &trees_by_commit,
+                )?)
             };
             work_items.push(CommitWork {
-                tree,
+                tree: input.tree,
                 parent_tree,
                 parent_count,
             });
         }
 
-        let par_opts = thread_policy.resolve(ParallelOp::DiffContent, config);
-        try_par_map(&work_items, par_opts, 0, |work| {
-            diff_one_commit(self, work, pathspecs, &opts, config, thread_policy)
-        })
-        .map_err(|err| match err {
-            ParallelHashError::Task(e) => e,
+        let batch_policy = ThreadPolicy::with_threads_override(Some(0))
+            .min_items_override(Some(1))
+            .min_total_bytes_override(Some(0));
+        let content_policy = batch_policy;
+
+        odb.with_pack_read_context(|| {
+            let par_opts = batch_policy.resolve(ParallelOp::DiffContent, config);
+            let use_parallel = work_items.len() >= 2;
+            if use_parallel {
+                try_par_map(&work_items, par_opts, 0, |work| {
+                    diff_one_commit(self, work, pathspecs, &opts, config, &content_policy)
+                })
+                .map_err(|err| match err {
+                    ParallelHashError::Task(e) => e,
+                })
+            } else {
+                work_items
+                    .iter()
+                    .map(|work| {
+                        diff_one_commit(self, work, pathspecs, &opts, config, &content_policy)
+                    })
+                    .collect()
+            }
         })
     }
 }
@@ -280,13 +362,22 @@ mod tests {
         assert_eq!(many[0].output.files, single.files);
 
         let policy_serial = ThreadPolicy::with_threads_override(Some(1));
+        let policy_par = ThreadPolicy::with_threads_override(Some(4))
+            .min_items_override(Some(1))
+            .min_total_bytes_override(Some(0));
+        let tree3 = tree_with(&repo, &[("f.txt", b"c\n")]);
+        let mid = write_commit(&repo, tree3, vec![child], "mid");
+        let tree4 = tree_with(&repo, &[("f.txt", b"d\n")]);
+        let tip = write_commit(&repo, tree4, vec![mid], "tip");
+        let batch = [tip, mid, child];
         let many_par =
             repo.diff()
-                .commit_files_many(&[child], &[], opts.clone(), &config, &policy)?;
+                .commit_files_many(&batch, &[], opts.clone(), &config, &policy_par)?;
         let many_serial =
             repo.diff()
-                .commit_files_many(&[child], &[], opts, &config, &policy_serial)?;
-        assert_eq!(many_par[0].output, many_serial[0].output);
+                .commit_files_many(&batch, &[], opts, &config, &policy_serial)?;
+        assert_eq!(many_par.len(), 3);
+        assert_eq!(many_par, many_serial);
         Ok(())
     }
 }

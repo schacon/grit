@@ -3374,6 +3374,18 @@ impl core::marker::Unpin for grit_lib::diff::DiffEntry
 impl core::marker::UnsafeUnpin for grit_lib::diff::DiffEntry
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::diff::DiffEntry
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffEntry
+pub struct grit_lib::diff::CommitFilesManyOptions
+pub grit_lib::diff::CommitFilesManyOptions::detail: grit_lib::diff::DiffDetail
+pub grit_lib::diff::CommitFilesManyOptions::diff_options: grit_lib::diff::DiffOptions
+pub grit_lib::diff::CommitFilesManyOptions::skip_merge_patches: bool
+pub struct grit_lib::diff::CommitFilesManyInput
+pub grit_lib::diff::CommitFilesManyInput::oid: grit_lib::objects::ObjectId
+pub grit_lib::diff::CommitFilesManyInput::parents: alloc::vec::Vec<grit_lib::objects::ObjectId>
+pub grit_lib::diff::CommitFilesManyInput::tree: grit_lib::objects::ObjectId
+pub fn grit_lib::diff::handle::Diff<'repo>::commit_files_many_work(&self, &[grit_lib::diff::CommitFilesManyInput], &[alloc::string::String], grit_lib::diff::CommitFilesManyOptions, &grit_lib::config::ConfigSet, &grit_lib::parallel::ThreadPolicy) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::diff::CommitFilesResult>>
+pub struct grit_lib::diff::CommitFilesResult
+pub grit_lib::diff::CommitFilesResult::output: grit_lib::diff::DiffFilesOutput
+pub grit_lib::diff::CommitFilesResult::parent_count: usize
 pub struct grit_lib::diff::DiffFilesOutput
 pub grit_lib::diff::DiffFilesOutput::files: alloc::vec::Vec<grit_lib::diff::ListedFileDiff>
 pub grit_lib::diff::DiffFilesOutput::totals: core::option::Option<grit_lib::diff::DiffTotals>

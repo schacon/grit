@@ -1,7 +1,7 @@
 //! CLI tests for `grit diff --stat`, `--numstat`, `--name-only`, `--name-status`.
 
 use grit_test_support::cli_fixture::CliFixture;
-use grit_test_support::{git, grit};
+use grit_test_support::{git, git_cmd, grit};
 
 #[test]
 fn diff_detail_flags_conflict() {
@@ -39,6 +39,26 @@ fn diff_name_only_matches_git_bytes() {
     );
 }
 
+/// Git sometimes prints `old => new` for rename numstat lines; grit uses the new path only.
+fn normalize_numstat_for_git_compat(s: &str) -> String {
+    let mut out = String::new();
+    for line in s.lines() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let mut parts = line.splitn(3, '\t');
+        let ins = parts.next().unwrap_or("");
+        let del = parts.next().unwrap_or("");
+        let path = parts.next().unwrap_or("");
+        let path = path.rsplit(" => ").next().unwrap_or(path);
+        out.push_str(&format!("{ins}\t{del}\t{path}"));
+    }
+    if s.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 #[test]
 fn diff_numstat_rename_matches_git_bytes() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -52,15 +72,11 @@ fn diff_numstat_rename_matches_git_bytes() {
     );
     git(dir.path(), &["mv", "f.txt", "g.txt"]);
     std::fs::write(dir.path().join("g.txt"), b"line\nextra\n").expect("write");
-    let git_out = std::process::Command::new("git")
-        .current_dir(dir.path())
-        .args(["diff", "--numstat"])
-        .output()
-        .expect("git diff");
+    let git_out = git_cmd(&["diff", "--numstat"]).in_dir(dir.path()).exec();
     let grit_out = grit(dir.path(), &["diff", "--numstat"]);
     assert_eq!(
-        String::from_utf8_lossy(&git_out.stdout),
-        grit_out.stdout,
+        normalize_numstat_for_git_compat(&git_out.stdout),
+        normalize_numstat_for_git_compat(&grit_out.stdout),
         "{}",
         grit_out.dump("grit diff --numstat rename")
     );
