@@ -572,6 +572,7 @@ impl BlobLookupCollectSink<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_blob_lookups_in_directory(
     index: &Index,
     dir: &str,
