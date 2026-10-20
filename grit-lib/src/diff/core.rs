@@ -2172,7 +2172,8 @@ pub fn diff_tree_path_change_count(
 
 /// Diff two trees and pair deleted/added paths as renames when content is similar enough.
 ///
-/// `rename_threshold` is Git's `-M` percentage (default 50). Use `100` to skip rename detection.
+/// `rename_threshold` is Git's `-M` percentage (`0`–`100`, inclusive). Use
+/// [`RENAME_DETECTION_DISABLED`](crate::diff::RENAME_DETECTION_DISABLED) to skip rename detection.
 ///
 /// # Errors
 ///
@@ -2212,7 +2213,7 @@ pub fn diff_trees_with_renames_and_policy(
     thread_policy: &ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
     let mut entries = diff_trees(odb, old_tree_oid, new_tree_oid, prefix)?;
-    if rename_threshold < 100 {
+    if rename_threshold <= 100 {
         entries =
             detect_renames_with_policy(odb, None, entries, rename_threshold, config, thread_policy);
     }
@@ -2248,7 +2249,8 @@ pub fn diff_commits(odb: &Odb, base: &ObjectId, tip: &ObjectId) -> Result<Vec<Di
 
 /// Diff the trees at two commits and pair deleted/added paths as renames when similar enough.
 ///
-/// `rename_threshold` is Git's `-M` percentage (default 50). Use `100` to skip rename detection.
+/// `rename_threshold` is Git's `-M` percentage (`0`–`100`, inclusive). Use
+/// [`RENAME_DETECTION_DISABLED`](crate::diff::RENAME_DETECTION_DISABLED) to skip rename detection.
 ///
 /// # Errors
 ///
@@ -2788,8 +2790,8 @@ pub fn diff_index_to_tree(
 
 /// Diff the index against a tree and pair deleted/added paths as renames when similar enough.
 ///
-/// `rename_threshold` is Git's `-M` percentage (50 is the usual default); pass `100` to skip
-/// rename detection.
+/// `rename_threshold` is Git's `-M` percentage (`0`–`100`). Pass
+/// [`RENAME_DETECTION_DISABLED`](crate::diff::RENAME_DETECTION_DISABLED) to skip rename detection.
 ///
 /// # Errors
 ///
@@ -2817,7 +2819,7 @@ pub fn diff_index_to_tree_with_renames(
 /// Apply Git `-M` rename detection to a flat diff (index↔tree, tree↔tree, or index↔worktree).
 ///
 /// Pass `work_root` when added sides may be read from the working tree (index↔worktree diffs).
-/// Use `rename_threshold` `100` to leave entries unchanged.
+/// Use a threshold above `100` (typically [`RENAME_DETECTION_DISABLED`](crate::diff::RENAME_DETECTION_DISABLED)) to leave entries unchanged.
 ///
 /// # Errors
 ///
@@ -2830,7 +2832,7 @@ pub fn apply_rename_detection_to_diff_entries(
     config: &ConfigSet,
     thread_policy: &ThreadPolicy,
 ) -> Result<Vec<DiffEntry>> {
-    if entries.is_empty() || rename_threshold >= 100 {
+    if entries.is_empty() || rename_threshold > 100 {
         return Ok(entries);
     }
     if work_root.is_some() {
@@ -3018,7 +3020,7 @@ pub fn diff_index_to_worktree_with_renames(
     let (mut entries, changed) =
         diff_index_to_worktree_with_options(odb, index, work_tree, options)?;
     let mut synthetic_new_paths = HashSet::new();
-    if rename_threshold < 100 {
+    if rename_threshold <= 100 {
         if let Some(rules_arc) = rules_for_append {
             let rules = rules_arc
                 .lock()
@@ -7181,7 +7183,7 @@ pub struct DiffPostprocessOptions {
     /// When set, `--break-rewrites` threshold on Git's internal 0–[`GIT_DIFF_MAX_SCORE`] scale
     /// (`None` = off).
     pub break_score: Option<u64>,
-    /// `-M` similarity threshold (0–100); `100` disables rename detection.
+    /// `-M` similarity threshold (`0`–`100`); values above `100` disable rename detection.
     pub rename_threshold: u32,
     /// `-C` copy threshold (0–100); `None` skips copy detection.
     pub copy_threshold: Option<u32>,
@@ -7196,7 +7198,7 @@ impl Default for DiffPostprocessOptions {
     fn default() -> Self {
         Self {
             break_score: None,
-            rename_threshold: 100,
+            rename_threshold: crate::diff::RENAME_DETECTION_DISABLED,
             copy_threshold: None,
             find_copies_harder: false,
             materialize_break_worktree_new_oid: false,
@@ -7417,7 +7419,7 @@ pub fn postprocess_diff_entries(
 ) -> Result<Vec<DiffEntry>> {
     let mut entries = entries;
     if let Some(break_score) = opts.break_score {
-        let rename_or_copy = opts.rename_threshold < 100 || opts.copy_threshold.is_some();
+        let rename_or_copy = opts.rename_threshold <= 100 || opts.copy_threshold.is_some();
         entries = if rename_or_copy {
             split_broken_modifications(odb, work_root, entries, break_score, worktree, config)?
         } else {
@@ -7453,7 +7455,7 @@ pub fn postprocess_diff_entries(
             config,
             thread_policy,
         ))
-    } else if opts.rename_threshold < 100 {
+    } else if opts.rename_threshold <= 100 {
         Ok(detect_renames_with_policy(
             odb,
             work_root,

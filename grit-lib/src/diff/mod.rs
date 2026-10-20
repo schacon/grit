@@ -26,7 +26,7 @@ pub use filter::{DiffFilter, InvalidDiffFilter};
 pub use handle::Diff;
 pub use options::{
     renames_from_config, DiffAlgorithm, DiffOptions, RenameDetection, UnknownDiffAlgorithm,
-    WORD_LEVEL_INLINE_MAX_CHANGED_FILES,
+    RENAME_DETECTION_DISABLED, WORD_LEVEL_INLINE_MAX_CHANGED_FILES,
 };
 pub use patch_log::{
     write_commit_header_and_message, write_commit_log_patch, write_commits_log_patch,

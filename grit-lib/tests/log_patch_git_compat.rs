@@ -244,7 +244,7 @@ fn log_patch_git_git_diff_tree_no_renames_matches_git() {
         .expect("head oid");
     let config = ConfigSet::new();
     let opts = DiffPostprocessOptions {
-        rename_threshold: 100,
+        rename_threshold: grit_lib::diff::RENAME_DETECTION_DISABLED,
         ..Default::default()
     };
     let git_raw = git_raw_lines(

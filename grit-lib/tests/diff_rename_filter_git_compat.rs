@@ -105,9 +105,14 @@ fn no_renames_reports_add_and_delete() {
     let (dr, parent, commit) = t4001_rename_repo();
     let wt = &dr.worktree;
     let git_lines = git_name_status(wt, &["--no-renames", &parent.to_hex(), &commit.to_hex()]);
-    let grit_entries =
-        diff_trees_with_renames(dr.repo.odb(), Some(&parent), Some(&commit), "", 100)
-            .expect("diff");
+    let grit_entries = diff_trees_with_renames(
+        dr.repo.odb(),
+        Some(&parent),
+        Some(&commit),
+        "",
+        grit_lib::diff::RENAME_DETECTION_DISABLED,
+    )
+    .expect("diff");
     let grit_lines = grit_name_status(&grit_entries);
     assert_eq!(git_lines, grit_lines);
     assert!(
@@ -190,5 +195,41 @@ fn algorithm_flag_overrides_config() {
     assert_eq!(opts.algorithm, DiffAlgorithm::Histogram);
 
     let opts_off = opts.with_renames(RenameDetection::Off);
-    assert_eq!(opts_off.rename_threshold_percent(), 100);
+    assert_eq!(opts_off.rename_similarity_threshold(), None);
+    assert_eq!(
+        opts_off.rename_threshold_u32(),
+        grit_lib::diff::RENAME_DETECTION_DISABLED
+    );
+}
+
+#[test]
+fn exact_rename_matches_git_m100_percent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wt = dir.path();
+    git_quiet(wt, &["init", "-q", "-b", "main"]);
+    std::fs::write(wt.join("old.txt"), "same content\n").unwrap();
+    git_quiet(wt, &["add", "old.txt"]);
+    git_quiet(wt, &["commit", "-qm", "base"]);
+    let parent = rev_parse_tree(wt, "HEAD^{tree}");
+    git_quiet(wt, &["mv", "old.txt", "new.txt"]);
+    git_quiet(wt, &["commit", "-qm", "rename"]);
+    let commit = rev_parse_tree(wt, "HEAD^{tree}");
+
+    let git_lines = git_name_status(wt, &["-M100%", &parent.to_hex(), &commit.to_hex()]);
+    assert!(
+        git_lines
+            .iter()
+            .any(|l| l.starts_with("R100\told.txt\tnew.txt")),
+        "git: {git_lines:?}"
+    );
+
+    let repo = grit_lib::repo::Repository::discover(
+        Some(wt),
+        &grit_lib::config::environment::RepositoryOptions::empty(),
+    )
+    .expect("open");
+    let grit_entries =
+        diff_trees_with_renames(repo.odb(), Some(&parent), Some(&commit), "", 100).expect("diff");
+    let grit_lines = grit_name_status(&grit_entries);
+    assert_eq!(git_lines, grit_lines);
 }

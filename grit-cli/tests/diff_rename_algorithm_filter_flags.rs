@@ -74,7 +74,10 @@ fn diff_rename_algorithm_filter_flags() {
     assert!(paths.contains(&"b.txt".to_string()));
     assert!(paths.contains(&"a.txt".to_string()));
 
-    let (code, _, stderr) = grit(root, &["diff", "-M30", "HEAD~1", "HEAD", "--json"]);
+    let (code, _, stderr) = grit(
+        root,
+        &["diff", "--find-renames=30", "HEAD~1", "HEAD", "--json"],
+    );
     assert_eq!(code, 0, "stderr={stderr}");
 
     let (code, _, stderr) = grit(
@@ -86,4 +89,25 @@ fn diff_rename_algorithm_filter_flags() {
     let (code, _, stderr) = grit(root, &["diff", "--diff-filter=Z", "HEAD~1", "HEAD"]);
     assert_ne!(code, 0, "invalid filter should fail");
     assert!(stderr.contains("unknown") || stderr.contains("filter"));
+
+    std::fs::write(root.join("exact.txt"), "same\n").unwrap();
+    git(root, &["add", "exact.txt"]);
+    git(root, &["commit", "-qm", "exact"]);
+    git(root, &["mv", "exact.txt", "moved.txt"]);
+    git(root, &["commit", "-qm", "mv"]);
+    let (code, stdout, stderr) = grit(
+        root,
+        &["diff", "--find-renames=100%", "HEAD~1", "HEAD", "--json"],
+    );
+    assert_eq!(code, 0, "stderr={stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(json["files"].as_array().map(|a| a.len()), Some(1));
+    assert_eq!(
+        json["files"][0]["status"].as_str(),
+        Some("renamed"),
+        "stdout={stdout}"
+    );
+
+    let (code, _, stderr) = grit(root, &["diff", "-M", "HEAD~1", "HEAD", "--json"]);
+    assert_eq!(code, 0, "-M must not treat HEAD~1 as threshold: {stderr}");
 }

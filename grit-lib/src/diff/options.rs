@@ -57,6 +57,10 @@ impl DiffAlgorithm {
     }
 }
 
+/// u32 rename APIs: thresholds `0`–`100` run detection at that Git `-M` percent; values above
+/// [`RENAME_DETECTION_DISABLED`] skip detection (legacy postprocess and `--no-renames` plumbing).
+pub const RENAME_DETECTION_DISABLED: u32 = 101;
+
 /// Rename detection policy for tree diffs.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,13 +168,20 @@ impl DiffOptions {
         self
     }
 
-    /// Git `-M` threshold in percent, or `100` when rename detection is off.
+    /// Similarity percent for rename detection, or `None` when [`RenameDetection::Off`].
     #[must_use]
-    pub fn rename_threshold_percent(self) -> u32 {
+    pub fn rename_similarity_threshold(self) -> Option<u32> {
         match self.renames {
-            RenameDetection::Off => 100,
-            RenameDetection::Similarity(p) => u32::from(p),
+            RenameDetection::Off => None,
+            RenameDetection::Similarity(p) => Some(u32::from(p)),
         }
+    }
+
+    /// u32 threshold for [`super::apply_rename_detection_to_diff_entries`] and related APIs.
+    #[must_use]
+    pub fn rename_threshold_u32(self) -> u32 {
+        self.rename_similarity_threshold()
+            .unwrap_or(RENAME_DETECTION_DISABLED)
     }
 
     /// Builder-style update of word-level inline emphasis.
