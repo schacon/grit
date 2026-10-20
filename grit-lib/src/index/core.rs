@@ -4027,6 +4027,12 @@ pub struct IndexStatFields {
 }
 
 impl IndexStatFields {
+    /// Munged size field stored in the index (see [`munge_index_size`]).
+    #[must_use]
+    pub(crate) fn index_size(&self) -> u32 {
+        self.size
+    }
+
     /// Capture stat fields from filesystem metadata.
     #[must_use]
     pub fn from_metadata(meta: &fs::Metadata) -> Self {
@@ -4089,6 +4095,34 @@ impl IndexStatFields {
 impl From<&fs::Metadata> for IndexStatFields {
     fn from(meta: &fs::Metadata) -> Self {
         Self::from_metadata(meta)
+    }
+}
+
+impl IndexStatFields {
+    /// Whether cached stat fields match a stage-0 index row (Git `ie_match_stat`).
+    #[must_use]
+    pub(crate) fn matches_index_entry(&self, ie: &IndexEntry, policy: StatMatchPolicy) -> bool {
+        if self.size != ie.size {
+            return false;
+        }
+        if self.mtime_sec != ie.mtime_sec {
+            return false;
+        }
+        if policy.use_nanosec && policy.check_stat && self.mtime_nsec != ie.mtime_nsec {
+            return false;
+        }
+        if policy.trust_ctime && policy.check_stat {
+            if self.ctime_sec != ie.ctime_sec {
+                return false;
+            }
+            if policy.use_nanosec && self.ctime_nsec != ie.ctime_nsec {
+                return false;
+            }
+        }
+        if policy.check_stat && self.ino != ie.ino {
+            return false;
+        }
+        true
     }
 }
 

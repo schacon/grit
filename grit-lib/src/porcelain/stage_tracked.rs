@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::diff::{
     entry_is_racy, index_entry_worktree_abs, materialize_worktree_blob, mode_from_metadata,
-    read_submodule_head_oid, stat_matches, symlink_target_bytes, SymlinkDirCache,
+    read_submodule_head_oid, symlink_target_bytes, SymlinkDirCache,
 };
 use crate::error::{Error, Result};
 use crate::hash::Parallelism;
@@ -27,8 +27,8 @@ use crate::unicode_normalization::resolve_worktree_path_for_staging;
 use crate::worktree_batch::{prepare_and_store_worktree_blobs_parallel, WorktreeBlobReadInput};
 use crate::worktree_rules::WorktreeRules;
 use crate::worktree_scan::{
-    collect_blob_lookups_for_plan, group_blob_entries_by_dir, stat_scan_thread_count,
-    BlobDiskLookup, WorktreeBlobScanOptions,
+    collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
+    visit_blob_lookup_batches, BlobDiskLookup, BlobDiskStat, WorktreeBlobScanOptions,
 };
 
 /// Summary of paths updated while staging tracked modifications/deletions.
@@ -348,7 +348,8 @@ fn stage_tracked_modifications_in_index_body(
         )
         .parallelism();
     let mut deferred_restage: Vec<DeferredRestageJob> = Vec::new();
-    let stage_lookups = collect_blob_lookups_for_plan(
+    let mut pending_removals: Vec<Vec<u8>> = Vec::new();
+    let stage_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
         blob_scan_opts,
@@ -370,36 +371,34 @@ fn stage_tracked_modifications_in_index_body(
                 }
         },
     )?;
-    for (entry_index, lookup) in stage_lookups {
+    visit_blob_lookup_batches(stage_batches, |entry_index, lookup| {
         let rel_path = match std::str::from_utf8(&index.entries[entry_index].path) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(_) => return Ok(()),
         };
         let Some(idx_e) = index.get(rel_path.as_bytes(), 0).cloned() else {
-            continue;
+            return Ok(());
         };
         if idx_e.stage() != 0 {
-            continue;
+            return Ok(());
         }
         let raw_path = idx_e.path.clone();
         let abs_path = abs_path_for_stage_tracked(work_tree, &raw_path, precompose_unicode);
         match lookup {
             BlobDiskLookup::Missing => {
                 if idx_e.skip_worktree() {
-                    continue;
+                    return Ok(());
                 }
                 if rel_path_has_symlink_parent(work_tree, rel_path) {
-                    if index.remove(&raw_path) {
-                        summary.removed.push(raw_path);
-                    }
-                    continue;
+                    pending_removals.push(raw_path);
+                    return Ok(());
                 }
-                if symlink_metadata_for_staging(&abs_path)?.is_none() && index.remove(&raw_path) {
-                    summary.removed.push(raw_path);
+                if symlink_metadata_for_staging(&abs_path)?.is_none() {
+                    pending_removals.push(raw_path);
                 }
             }
             BlobDiskLookup::Io(e) => return Err(Error::Io(e)),
-            BlobDiskLookup::Present(meta) => {
+            BlobDiskLookup::Present(stat) => {
                 let ctx = PresentRefreshCtx {
                     repo,
                     index,
@@ -411,10 +410,16 @@ fn stage_tracked_modifications_in_index_body(
                     rules,
                 };
                 let defer = parallel_restage.then_some(&mut deferred_restage);
-                if refresh_present_tracked_path(ctx, &meta, defer)? {
+                if refresh_present_tracked_path(ctx, stat, defer)? {
                     summary.modified.push(raw_path);
                 }
             }
+        }
+        Ok(())
+    })?;
+    for raw_path in pending_removals {
+        if index.remove(&raw_path) {
+            summary.removed.push(raw_path);
         }
     }
 
@@ -547,7 +552,7 @@ fn stage_tracked_path_individual(
                 trust_filemode,
                 rules,
             };
-            if refresh_present_tracked_path(ctx, &meta, None)? {
+            if refresh_present_tracked_path(ctx, BlobDiskStat::from_metadata(&meta), None)? {
                 summary.modified.push(raw_path.to_vec());
             }
         }
@@ -570,7 +575,7 @@ struct DeferredRestageJob {
 
 fn refresh_present_tracked_path(
     ctx: PresentRefreshCtx<'_>,
-    meta: &fs::Metadata,
+    stat: BlobDiskStat,
     defer_restage: Option<&mut Vec<DeferredRestageJob>>,
 ) -> Result<bool> {
     let PresentRefreshCtx {
@@ -591,7 +596,7 @@ fn refresh_present_tracked_path(
         return refresh_gitlink(repo, index, raw_path, abs_path, idx_e);
     }
 
-    if meta.is_dir() && !meta.file_type().is_symlink() {
+    if stat.is_dir {
         if abs_path.join(".git").exists() {
             if let Some(oid) = read_submodule_head_oid(abs_path) {
                 if index
@@ -611,8 +616,10 @@ fn refresh_present_tracked_path(
         }
     }
 
-    let wt_mode = mode_from_metadata(meta);
-    let stat_same = stat_matches(idx_e, meta);
+    let wt_mode = stat.git_mode;
+    let stat_same = stat
+        .fields
+        .matches_index_entry(idx_e, crate::index::StatMatchPolicy::default());
     let racy = entry_is_racy(idx_e, index_mtime);
     if !idx_intent_to_add && idx_e.size != 0 && stat_same && !racy {
         if wt_mode == idx_mode || !trust_filemode {
@@ -626,20 +633,22 @@ fn refresh_present_tracked_path(
     let oid = match std::str::from_utf8(raw_path) {
         Ok(rel_path) => {
             if let Some(deferred) = defer_restage {
+                let meta = fs::symlink_metadata(abs_path).map_err(Error::Io)?;
                 deferred.push(DeferredRestageJob {
                     raw_path: raw_path.to_vec(),
                     abs_path: abs_path.to_path_buf(),
-                    meta: meta.clone(),
+                    meta,
                 });
                 return Ok(false);
             }
+            let meta = fs::symlink_metadata(abs_path).map_err(Error::Io)?;
             let file_attrs = rules.file_attrs(rel_path, false);
             let conv = rules.conversion();
             let filter_fp = Some(rules.filter_process());
             let staged_oid = materialize_worktree_blob(
                 repo.odb(),
                 abs_path,
-                meta,
+                &meta,
                 conv,
                 &file_attrs,
                 rel_path,
@@ -655,7 +664,8 @@ fn refresh_present_tracked_path(
             staged_oid
         }
         Err(_) => {
-            let oid = read_worktree_blob_oid_raw(repo, abs_path, meta)?;
+            let meta = fs::symlink_metadata(abs_path).map_err(Error::Io)?;
+            let oid = read_worktree_blob_oid_raw(repo, abs_path, &meta)?;
             if !idx_intent_to_add && idx_oid == oid && (wt_mode == idx_mode || !trust_filemode) {
                 return Ok(false);
             }

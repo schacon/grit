@@ -67,7 +67,11 @@ fn build_fixture(root: &std::path::Path) {
     grit_test_support::git(root, &["commit", "-qm", "base"]);
 }
 
-fn peak_rss_status(root: &std::path::Path, grit: &std::path::Path, grit_bench: &std::path::Path) -> u64 {
+fn peak_rss_status(
+    root: &std::path::Path,
+    grit: &std::path::Path,
+    grit_bench: &std::path::Path,
+) -> u64 {
     let cmd = format!("{} status", grit.display());
     let out = Command::new(grit_bench)
         .arg("measure-rss")

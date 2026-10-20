@@ -3269,6 +3269,34 @@ fn try_push_status_modified_on_size_mismatch(
     true
 }
 
+fn try_push_status_modified_on_size_mismatch_stat(
+    ie: &IndexEntry,
+    path_str_ref: &str,
+    stat: &crate::worktree_scan::BlobDiskStat,
+    for_status: bool,
+    result: &mut Vec<DiffEntry>,
+) -> bool {
+    if ie.stat_cache_unset() {
+        return false;
+    }
+    if !for_status || stat.worktree_size() == ie.size {
+        return false;
+    }
+    let worktree_mode = stat.git_mode;
+    let path_owned = path_str_ref.to_owned();
+    result.push(DiffEntry {
+        status: DiffStatus::Modified,
+        old_path: Some(path_owned.clone()),
+        new_path: Some(path_owned),
+        old_mode: format_mode(ie.mode),
+        new_mode: format_mode(worktree_mode),
+        old_oid: ie.oid,
+        new_oid: ie.oid,
+        score: None,
+    });
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_index_blob_worktree_diff(
     odb: &Odb,
@@ -3817,8 +3845,9 @@ fn diff_index_to_worktree_inner(
     }
 
     use crate::worktree_scan::{
-        collect_blob_lookups_for_plan, group_blob_entries_by_dir, stat_scan_thread_count,
-        BlobDiskLookup, WorktreeBlobScanOptions, PARALLEL_STAT_MIN_ENTRIES,
+        collect_blob_lookup_batches, group_blob_entries_by_dir, stat_scan_thread_count,
+        visit_blob_lookup_batches, BlobDiskLookup, WorktreeBlobScanOptions,
+        PARALLEL_STAT_MIN_ENTRIES,
     };
     let preload_index = config
         .get_bool("core.preloadIndex")
@@ -3860,7 +3889,7 @@ fn diff_index_to_worktree_inner(
     // Parallel preload must lstat ancestor directories without following symlinks. When a
     // tracked directory is replaced by a symlink, indexed paths under it are deletions even if
     // the link target still holds a file at the same relative path with an unchanged stat.
-    let blob_stat_lookups = collect_blob_lookups_for_plan(
+    let blob_stat_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
         blob_scan,
@@ -3870,16 +3899,10 @@ fn diff_index_to_worktree_inner(
         dir_abs,
         file_abs,
         |rel_path| {
-            scan_symlink_ancestors
-                && dir_symlinks.has_symlink_in_path(
-                    work_tree,
-                    rel_path,
-                    precompose_unicode,
-                    ignorecase,
-                )
+            dir_symlinks.has_symlink_in_path(work_tree, rel_path, precompose_unicode, ignorecase)
         },
     )?;
-    for (entry_index, lookup) in blob_stat_lookups {
+    visit_blob_lookup_batches(blob_stat_batches, |entry_index, lookup| {
         let path_owned = std::str::from_utf8(&index.entries[entry_index].path)
             .unwrap_or("")
             .to_owned();
@@ -3887,7 +3910,7 @@ fn diff_index_to_worktree_inner(
         if use_fsmonitor_stat_skip {
             let ie_skip = &index.entries[entry_index];
             if crate::fsmonitor::entry_skips_worktree_stat(ie_skip, index) {
-                continue;
+                return Ok(());
             }
         }
         match lookup {
@@ -3905,17 +3928,14 @@ fn diff_index_to_worktree_inner(
                 });
             }
             BlobDiskLookup::Io(e) => return Err(Error::Io(e)),
-            BlobDiskLookup::Present(meta) => {
+            BlobDiskLookup::Present(stat) => {
                 if materialize_dirty_blobs {
-                    staging_stat_cache.insert(
-                        path_str_ref.to_owned(),
-                        crate::index::IndexStatFields::from_metadata(&meta),
-                    );
+                    staging_stat_cache.insert(path_str_ref.to_owned(), stat.fields);
                 }
                 if refresh_index_stat_in_pass {
                     let ie_ref = &index.entries[entry_index];
-                    let stat_matches = stat_matches_with_policy(ie_ref, &meta, stat_policy);
-                    let worktree_size = u32::try_from(meta.len()).unwrap_or(u32::MAX);
+                    let stat_matches = stat_matches_blob_stat(ie_ref, &stat, stat_policy);
+                    let worktree_size = stat.worktree_size();
                     // When size changed, the status fast path skips content hashing for the
                     // unstaged diff; skip the refresh pass's duplicate read here too.
                     // Mtime-only bumps keep size and still refresh.
@@ -3938,6 +3958,7 @@ fn diff_index_to_worktree_inner(
                             ignorecase,
                         );
                         let ie = &mut index.entries[entry_index];
+                        let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
                         let refresh = refresh_index_blob_stat_from_metadata(
                             odb,
                             ie,
@@ -3957,9 +3978,9 @@ fn diff_index_to_worktree_inner(
                             stat_refresh_verified[entry_index] = true;
                         }
                         if index.fsmonitor_last_update.is_some()
-                            && stat_matches_with_policy(
+                            && stat_matches_blob_stat(
                                 &index.entries[entry_index],
-                                &meta,
+                                &stat,
                                 stat_policy,
                             )
                             && !refresh.index_changed
@@ -3970,8 +3991,8 @@ fn diff_index_to_worktree_inner(
                 }
                 let ie = &index.entries[entry_index];
                 if parallel_blob_work {
-                    let worktree_mode = mode_from_metadata(&meta);
-                    let stat_same = stat_matches_with_policy(ie, &meta, stat_policy);
+                    let worktree_mode = stat.git_mode;
+                    let stat_same = stat_matches_blob_stat(ie, &stat, stat_policy);
                     let racy = entry_is_racy_with_policy(ie, index_mtime, stat_policy);
                     if stat_same
                         && !racy
@@ -3983,7 +4004,7 @@ fn diff_index_to_worktree_inner(
                             trust_filemode,
                         )
                     {
-                        continue;
+                        return Ok(());
                     }
                     if trust_filemode && stat_same && worktree_mode != ie.mode {
                         let path_owned = path_str_ref.to_owned();
@@ -3997,10 +4018,10 @@ fn diff_index_to_worktree_inner(
                             new_oid: ie.oid,
                             score: None,
                         });
-                    } else if try_push_status_modified_on_size_mismatch(
+                    } else if try_push_status_modified_on_size_mismatch_stat(
                         ie,
                         path_str_ref,
-                        &meta,
+                        &stat,
                         options.for_status,
                         &mut result,
                     ) {
@@ -4029,6 +4050,7 @@ fn diff_index_to_worktree_inner(
                         precompose_unicode,
                         ignorecase,
                     );
+                    let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
                     push_index_blob_worktree_diff(
                         odb,
                         ie,
@@ -4048,7 +4070,8 @@ fn diff_index_to_worktree_inner(
                 }
             }
         }
-    }
+        Ok(())
+    })?;
     if parallel_blob_work && !staging_hash_jobs.is_empty() {
         parallel_process_blob_worktree_jobs(
             odb,
@@ -4602,6 +4625,15 @@ pub fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
     stat_matches_with_policy(ie, meta, crate::index::StatMatchPolicy::default())
 }
 
+/// Whether compact worktree stat from a directory scan matches the index row.
+pub(crate) fn stat_matches_blob_stat(
+    ie: &IndexEntry,
+    stat: &crate::worktree_scan::BlobDiskStat,
+    policy: crate::index::StatMatchPolicy,
+) -> bool {
+    stat.fields.matches_index_entry(ie, policy)
+}
+
 /// Like [`stat_matches`], honoring `core.trustctime`, `core.checkstat`, and `core.usenanosec`.
 #[must_use]
 pub fn stat_matches_with_policy(
@@ -4719,8 +4751,8 @@ pub fn refresh_index_stat_content_verified_with_rules(
     use crate::config::ConfigSet;
     use crate::crlf;
     use crate::worktree_scan::{
-        collect_blob_lookups_for_plan, group_blob_entries_by_dir, BlobDiskLookup,
-        WorktreeBlobScanOptions,
+        collect_blob_lookup_batches, group_blob_entries_by_dir, visit_blob_lookup_batches,
+        BlobDiskLookup, WorktreeBlobScanOptions,
     };
 
     let index_mtime = index_mtime_for_diff(index, index_mtime);
@@ -4799,7 +4831,7 @@ pub fn refresh_index_stat_content_verified_with_rules(
         .get_bool("core.symlinks")
         .and_then(|r| r.ok())
         .unwrap_or(true);
-    let refresh_lookups = collect_blob_lookups_for_plan(
+    let refresh_batches = collect_blob_lookup_batches(
         index,
         &blob_dirs,
         blob_scan,
@@ -4809,24 +4841,19 @@ pub fn refresh_index_stat_content_verified_with_rules(
         dir_abs,
         file_abs,
         |rel_path| {
-            scan_symlink_ancestors
-                && dir_symlinks.has_symlink_in_path(
-                    work_tree,
-                    rel_path,
-                    precompose_unicode,
-                    ignorecase,
-                )
+            dir_symlinks.has_symlink_in_path(work_tree, rel_path, precompose_unicode, ignorecase)
         },
     )?;
-    for (entry_index, lookup) in refresh_lookups {
-        let BlobDiskLookup::Present(meta) = lookup else {
-            continue;
+    visit_blob_lookup_batches(refresh_batches, |entry_index, lookup| {
+        let BlobDiskLookup::Present(_stat) = lookup else {
+            return Ok(());
         };
         let path_owned = std::str::from_utf8(&index.entries[entry_index].path)
             .unwrap_or("")
             .to_owned();
         let file_path =
             index_entry_worktree_abs(work_tree, &path_owned, precompose_unicode, ignorecase);
+        let meta = fs::symlink_metadata(&file_path).map_err(Error::Io)?;
         let ie = &mut index.entries[entry_index];
         if refresh_index_blob_stat_from_metadata(
             odb,
@@ -4844,7 +4871,8 @@ pub fn refresh_index_stat_content_verified_with_rules(
         {
             changed = true;
         }
-    }
+        Ok(())
+    })?;
     Ok(changed)
 }
 
