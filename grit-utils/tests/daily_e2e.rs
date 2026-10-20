@@ -60,7 +60,7 @@ fn run_daily_smoke(git: &Path, grit: &Path, output: &Path, extra: &[&str]) -> st
     cmd.output().expect("spawn grit-bench daily")
 }
 
-const LOCAL_HEADLINE_IDS: [&str; 13] = [
+const ALL_HEADLINE_IDS: [&str; 17] = [
     "status/clean@synth-10k",
     "status/dirty@synth-10k",
     "add/modified@synth-10k",
@@ -74,6 +74,10 @@ const LOCAL_HEADLINE_IDS: [&str; 13] = [
     "merge/clean@synth-10k",
     "pick/one@synth-10k",
     "stash/push-pop@synth-10k",
+    "fetch/incremental@git-git",
+    "pull/fast-forward@git-git",
+    "push/incremental@git-git",
+    "clone/local@synth-10k",
 ];
 
 #[test]
@@ -88,12 +92,13 @@ fn smoke_report_validates() {
         &[
             FixtureKind::Synth10kSmoke,
             FixtureKind::GitGitWt,
+            FixtureKind::GitGit,
             FixtureKind::ManyRefsSmoke,
         ],
     );
 
     let out_path = cache.path().join("daily-smoke.json");
-    let only = LOCAL_HEADLINE_IDS.join(",");
+    let only = ALL_HEADLINE_IDS.join(",");
     let out = run_daily_smoke(&git, &grit, &out_path, &["--only", &only]);
     assert!(
         out.status.success(),
@@ -102,8 +107,8 @@ fn smoke_report_validates() {
     );
 
     let report = grit_utils::validate_daily_report(&out_path).expect("validate smoke report");
-    assert_eq!(report.scenarios.len(), LOCAL_HEADLINE_IDS.len());
-    for id in LOCAL_HEADLINE_IDS {
+    assert_eq!(report.scenarios.len(), ALL_HEADLINE_IDS.len());
+    for id in ALL_HEADLINE_IDS {
         let row = report
             .scenarios
             .iter()
