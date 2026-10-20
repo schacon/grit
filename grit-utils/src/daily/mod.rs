@@ -2,6 +2,7 @@
 
 pub mod areas;
 pub mod helpers;
+pub mod matrix_helpers;
 pub mod matrix_registry;
 pub mod plan;
 pub mod registry;

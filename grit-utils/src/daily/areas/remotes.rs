@@ -1,7 +1,7 @@
 //! Remote headline scenarios (stubbed pending until step 6).
 
-use super::super::helpers::headline_spec;
-use super::super::plan::{DailyHeadlinePlan, DailyPrepare, DailySetup};
+use super::super::helpers::{headline_spec, prepare_none};
+use super::super::plan::{DailyHeadlinePlan, DailySetup};
 use super::super::runner::BenchArgv;
 
 fn pending_setup(
@@ -26,9 +26,10 @@ pub fn plans() -> Vec<DailyHeadlinePlan> {
         spec: headline_spec(id),
         pending: true,
         setup: pending_setup,
-        prepare: DailyPrepare::None,
+        prepare: prepare_none,
         build_git: pending_argv,
         build_grit: pending_argv,
+        correctness: None,
     })
     .collect()
 }

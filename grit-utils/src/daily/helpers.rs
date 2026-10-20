@@ -16,7 +16,7 @@ use crate::hot_path_fixture::{
     setup_pick_merge_fixture, setup_switch_fixture, touch_paths_for_size, HotPathRepoSpec,
 };
 use crate::real_repo_fixture::{git_env, run_git};
-use crate::scenarios::{merge_argv, pick_argv, switch_argv};
+use crate::scenarios::{merge_argv, pick_argv, switch_argv, PrepareKind};
 use crate::shell::shell_quote;
 use crate::worktree_fixture::{
     ensure_worktree_bench_repo, record_matrix_path_targets, set_worktree_bench_cwd,
@@ -73,7 +73,7 @@ pub fn pin_daily_scratch_root() {
     std::env::set_var("GRIT_BENCH_DAILY_ROOT", &root);
 }
 
-fn with_scratch<T, F>(label: &str, f: F) -> Result<T>
+pub(crate) fn with_scratch<T, F>(label: &str, f: F) -> Result<T>
 where
     F: FnOnce(&Path) -> Result<T>,
 {
@@ -571,6 +571,8 @@ pub fn prepare_bench_argv(
         PrepareKind::WorktreeCleanUntracked => "prepare-worktree-clean-untracked",
         PrepareKind::WorktreeInitEmpty => "prepare-worktree-init-empty",
         PrepareKind::RestoreReset => "prepare-restore",
+        PrepareKind::HistoryRewriteReset => "prepare-history-rewrite",
+        PrepareKind::RevertReset => "prepare-revert",
         _ => "prepare-worktree-status-clean",
     };
     BenchArgv::new(prepare_bin, [sub, "--git", &git.display().to_string()])
@@ -586,6 +588,94 @@ pub fn scenario_spec(id: &str) -> &'static ScenarioSpec {
 
 pub fn headline_spec(id: &str) -> &'static HeadlineScenario {
     scenario_spec(id)
+}
+
+pub fn prepare_none(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::None
+}
+
+pub fn prepare_switch_reset(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::SwitchReset)
+}
+
+pub fn prepare_pick_reset(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::PickReset)
+}
+
+pub fn prepare_merge_reset(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::MergeReset)
+}
+
+pub fn prepare_revert_reset(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::RevertReset)
+}
+
+pub fn prepare_stash_reset(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::StashReset)
+}
+
+pub fn prepare_history_rewrite_reset(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::HistoryRewriteReset)
+}
+
+pub fn prepare_worktree_status_clean(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeStatusClean)
+}
+
+pub fn prepare_worktree_status_dirty(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeStatusDirty)
+}
+
+pub fn prepare_worktree_add(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeAdd)
+}
+
+pub fn prepare_worktree_commit(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeCommit)
+}
+
+pub fn prepare_worktree_diff(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeDiff)
+}
+
+pub fn prepare_worktree_staged_diff(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeStagedDiff)
+}
+
+pub fn prepare_worktree_restore_paths(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeRestorePaths)
+}
+
+pub fn prepare_worktree_rm_dir(_: &super::plan::DailyHeadlineContext) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeRmDir)
+}
+
+pub fn prepare_worktree_mv_file(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeMvFile)
+}
+
+pub fn prepare_worktree_clean_untracked(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeCleanUntracked)
+}
+
+pub fn prepare_worktree_init_empty(
+    _: &super::plan::DailyHeadlineContext,
+) -> super::plan::DailyPrepare {
+    super::plan::DailyPrepare::Hook(PrepareKind::WorktreeInitEmpty)
 }
 
 #[cfg(test)]
