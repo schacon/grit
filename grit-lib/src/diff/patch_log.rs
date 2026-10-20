@@ -19,10 +19,7 @@ use crate::quote_path::format_diff_path_with_prefix;
 use crate::repo::Repository;
 use crate::userdiff::{matcher_for_path_parsed, FuncnameMatcher};
 
-use super::{
-    diff_trees, empty_blob_oid, write_unified_diff_with_prefix_and_funcname_and_algorithm,
-    zero_oid, DiffEntry, DiffStatus,
-};
+use super::{diff_trees, empty_blob_oid, zero_oid, DiffEntry, DiffStatus};
 
 /// How much commit metadata precedes each patch in [`write_commit_log_patch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -525,7 +522,6 @@ fn write_diff_entry_log_patch_with_tree<W: Write>(
         git_new.to_owned()
     };
     let d = &opts.diff;
-    let (algorithm, use_git_histogram) = d.legacy_unified_algorithm();
     let funcname_matcher = if let Some(tree) = new_tree {
         log_patch_funcname_matcher(repo, &config, tree, git_new)?
     } else {
@@ -534,42 +530,32 @@ fn write_diff_entry_log_patch_with_tree<W: Write>(
     let funcname_ref = funcname_matcher.as_ref();
     if byte_oriented {
         let mut patch_buf = Vec::new();
-        write_unified_diff_with_prefix_and_funcname_and_algorithm(
+        super::write_unified_diff_from_diff_options(
             &mut patch_buf,
             &old_text,
             &new_text,
             &old_path,
             &new_path,
-            d.context_lines,
-            d.inter_hunk_context,
             "a/",
             "b/",
             funcname_ref,
-            algorithm,
-            false,
-            use_git_histogram,
-            d.indent_heuristic,
+            d,
             QUOTE_FULLY,
         )?;
         let patch_str = std::str::from_utf8(&patch_buf)
             .map_err(|_| crate::error::Error::CorruptObject("patch re-encoding failed".into()))?;
         out.write_all(&crate::commit_encoding::encode_latin1_lossy(patch_str))?;
     } else {
-        write_unified_diff_with_prefix_and_funcname_and_algorithm(
+        super::write_unified_diff_from_diff_options(
             out,
             &old_text,
             &new_text,
             &old_path,
             &new_path,
-            d.context_lines,
-            d.inter_hunk_context,
             "a/",
             "b/",
             funcname_ref,
-            algorithm,
-            false,
-            use_git_histogram,
-            d.indent_heuristic,
+            d,
             QUOTE_FULLY,
         )?;
     }

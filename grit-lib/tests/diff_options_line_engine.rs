@@ -10,15 +10,20 @@ fn blob_text(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).expect("utf8 fixture")
 }
 
-fn parse_hunk_header(patch: &str) -> (usize, usize, usize, usize) {
-    let line = patch.lines().find(|l| l.starts_with("@@")).expect("hunk");
-    let rest = line.strip_prefix("@@ ").expect("prefix");
-    let (old_part, new_part) = rest.split_once(" +").expect("plus");
-    let old_part = old_part.strip_prefix('-').expect("minus");
-    let (os, ol) = parse_range(old_part.split(' ').next().expect("old"));
-    let new_part = new_part.split(" @@").next().expect("close");
-    let (ns, nl) = parse_range(new_part);
-    (os, ol, ns, nl)
+fn parse_hunk_headers(patch: &str) -> Vec<(usize, usize, usize, usize)> {
+    patch
+        .lines()
+        .filter(|l| l.starts_with("@@ "))
+        .map(|line| {
+            let rest = line.strip_prefix("@@ ").expect("prefix");
+            let (old_part, new_part) = rest.split_once(" +").expect("plus");
+            let old_part = old_part.strip_prefix('-').expect("minus");
+            let (os, ol) = parse_range(old_part.split(' ').next().expect("old"));
+            let new_part = new_part.split(" @@").next().expect("close");
+            let (ns, nl) = parse_range(new_part);
+            (os, ol, ns, nl)
+        })
+        .collect()
 }
 
 fn parse_range(s: &str) -> (usize, usize) {
@@ -29,7 +34,7 @@ fn parse_range(s: &str) -> (usize, usize) {
     }
 }
 
-fn git_diff_blob(old: &str, new: &str, algo: LineDiffAlgo, indent: bool) -> String {
+fn git_diff_blob(old: &str, new: &str, algo: LineDiffAlgo, indent: bool, context: usize) -> String {
     use std::process::Command;
     let tmp = tempfile::tempdir().expect("tempdir");
     let path = tmp.path().join("f.txt");
@@ -57,19 +62,19 @@ fn git_diff_blob(old: &str, new: &str, algo: LineDiffAlgo, indent: bool) -> Stri
         .status()
         .unwrap();
     std::fs::write(&path, new).expect("write new");
-    let mut args = vec!["diff", "-U3"];
+    let mut args = vec!["diff".to_owned(), format!("-U{context}")];
     match algo {
         LineDiffAlgo::Myers => {}
-        LineDiffAlgo::Histogram => args.push("--histogram"),
-        LineDiffAlgo::Patience => args.push("--patience"),
-        LineDiffAlgo::Minimal => args.push("--minimal"),
+        LineDiffAlgo::Histogram => args.push("--histogram".to_owned()),
+        LineDiffAlgo::Patience => args.push("--patience".to_owned()),
+        LineDiffAlgo::Minimal => args.push("--minimal".to_owned()),
     }
     if indent {
-        args.push("--indent-heuristic");
+        args.push("--indent-heuristic".to_owned());
     } else {
-        args.push("--no-indent-heuristic");
+        args.push("--no-indent-heuristic".to_owned());
     }
-    args.push("f.txt");
+    args.push("f.txt".to_owned());
     let out = Command::new("git")
         .args(&args)
         .current_dir(tmp.path())
@@ -87,24 +92,33 @@ fn algo_from_line(line: LineDiffAlgo) -> DiffAlgorithm {
     }
 }
 
-fn assert_first_hunk_matches_git(old: &str, new: &str, algo: LineDiffAlgo, indent_on: bool) {
-    let patch = git_diff_blob(old, new, algo, indent_on);
-    assert!(patch.contains("@@"), "expected git hunks");
-    let (g_os, g_ol, g_ns, g_nl) = parse_hunk_header(&patch);
+fn assert_all_hunks_match_git(
+    old: &str,
+    new: &str,
+    algo: LineDiffAlgo,
+    indent_on: bool,
+    context: usize,
+) {
+    let patch = git_diff_blob(old, new, algo, indent_on, context);
+    let git_hunks = parse_hunk_headers(&patch);
+    assert!(!git_hunks.is_empty(), "expected git hunks");
     let d = structured_text_diff(
         old,
         new,
         DiffOptions::default()
-            .with_context_lines(3)
+            .with_context_lines(context)
             .with_word_level_inline(false)
             .with_algorithm(algo_from_line(algo))
             .with_indent_heuristic(indent_on),
     );
-    let h = &d.hunks[0];
+    let grit_hunks: Vec<_> = d
+        .hunks
+        .iter()
+        .map(|h| (h.old_start, h.old_lines, h.new_start, h.new_lines))
+        .collect();
     assert_eq!(
-        (h.old_start, h.old_lines, h.new_start, h.new_lines),
-        (g_os, g_ol, g_ns, g_nl),
-        "algo={algo:?} indent={indent_on}"
+        grit_hunks, git_hunks,
+        "algo={algo:?} indent={indent_on} context={context}"
     );
 }
 
@@ -131,12 +145,46 @@ fn structured_hunks_match_git_for_each_algorithm() {
         LineDiffAlgo::Histogram,
     ] {
         for indent_on in [false, true] {
-            assert_first_hunk_matches_git(old_p, new_p, algo, indent_on);
+            assert_all_hunks_match_git(old_p, new_p, algo, indent_on, 3);
         }
     }
 
     for indent_on in [false, true] {
-        assert_first_hunk_matches_git(old_i, new_i, LineDiffAlgo::Myers, indent_on);
+        assert_all_hunks_match_git(old_i, new_i, LineDiffAlgo::Myers, indent_on, 3);
+    }
+
+    for pair in &pairs {
+        let old = blob_text(pair.old);
+        let new = blob_text(pair.new);
+        if old == new {
+            continue;
+        }
+        for algo in [
+            LineDiffAlgo::Myers,
+            LineDiffAlgo::Minimal,
+            LineDiffAlgo::Patience,
+            LineDiffAlgo::Histogram,
+        ] {
+            let patch = git_diff_blob(old, new, algo, true, 3);
+            if parse_hunk_headers(&patch).is_empty() {
+                continue;
+            }
+            assert_all_hunks_match_git(old, new, algo, true, 3);
+        }
+    }
+}
+
+#[test]
+fn zero_context_deletion_anchor_matches_git_review_case() {
+    let old = "  x\n  y\n\n}\n  x\nthree\na\nb\nc\nthree\n\n";
+    let new = "  x\n  y\n";
+    for algo in [
+        LineDiffAlgo::Myers,
+        LineDiffAlgo::Minimal,
+        LineDiffAlgo::Patience,
+        LineDiffAlgo::Histogram,
+    ] {
+        assert_all_hunks_match_git(old, new, algo, true, 0);
     }
 }
 

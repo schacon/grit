@@ -205,23 +205,24 @@ impl DiffOptions {
     ) -> bool {
         resolve_indent_heuristic(config, cli_indent_heuristic, cli_no_indent_heuristic)
     }
-
-    /// Pair passed to legacy unified-diff helpers (`similar` algorithm + histogram flag).
-    #[must_use]
-    pub fn legacy_unified_algorithm(self) -> (similar::Algorithm, bool) {
-        (
-            self.algorithm.similar_algorithm(),
-            self.algorithm.uses_git_histogram(),
-        )
-    }
 }
 
 /// `diff.renames`: `false` disables; `true` or copy modes use default similarity.
 #[must_use]
 pub fn renames_from_config(config: &ConfigSet) -> RenameDetection {
     match config.get("diff.renames") {
-        Some(v) if v.eq_ignore_ascii_case("false") => RenameDetection::Off,
-        Some(_) => RenameDetection::default(),
+        Some(v) => {
+            let v = v.trim();
+            if v.eq_ignore_ascii_case("false")
+                || v.eq_ignore_ascii_case("no")
+                || v.eq_ignore_ascii_case("off")
+                || v == "0"
+            {
+                RenameDetection::Off
+            } else {
+                RenameDetection::default()
+            }
+        }
         None => RenameDetection::default(),
     }
 }
@@ -279,6 +280,15 @@ mod tests {
             DiffOptions::from_config(&cfg2).renames,
             RenameDetection::Similarity(50)
         );
+
+        for off in ["no", "0", "off", "OFF"] {
+            let cfg = config_from(&format!("[diff]\n\trenames = {off}\n"));
+            assert_eq!(
+                DiffOptions::from_config(&cfg).renames,
+                RenameDetection::Off,
+                "renames={off}"
+            );
+        }
     }
 
     #[test]

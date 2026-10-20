@@ -133,7 +133,6 @@ impl TextLines {
             ends_with_newline: ends_nl,
         }
     }
-
 }
 
 /// Decode side bytes as UTF-8 when valid to avoid an extra allocation on the hot path.

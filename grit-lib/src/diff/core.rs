@@ -50,7 +50,7 @@ use super::unified_emit::{
 pub mod structured;
 
 /// Splits imara-diff unified body (concatenated hunks) into per-hunk slices for post-processing.
-fn imara_unified_hunk_slices(body: &str) -> Vec<&str> {
+pub(crate) fn imara_unified_hunk_slices(body: &str) -> Vec<&str> {
     let mut starts: Vec<usize> = Vec::new();
     if body.starts_with("@@") {
         starts.push(0);
@@ -361,6 +361,171 @@ fn myers_git_xdiff_unified_body_raw(
         },
         None,
     )
+}
+
+/// Unified hunk bodies (`@@` …) for [`DiffOptions`], shared by structured and log-patch output.
+pub(crate) fn unified_hunk_body_for_diff_options(
+    old_content: &str,
+    new_content: &str,
+    options: &crate::diff::options::DiffOptions,
+) -> String {
+    use crate::diff::options::DiffAlgorithm;
+    match options.algorithm {
+        DiffAlgorithm::Histogram => histogram_unified_body_raw(
+            old_content,
+            new_content,
+            options.context_lines,
+            options.inter_hunk_context,
+        ),
+        DiffAlgorithm::Myers => myers_git_xdiff_unified_body_raw(
+            old_content,
+            new_content,
+            options.context_lines,
+            options.inter_hunk_context,
+            options.indent_heuristic,
+        ),
+        DiffAlgorithm::Patience => similar_unified_hunk_body_raw(
+            old_content,
+            new_content,
+            options.context_lines,
+            options.inter_hunk_context,
+            options.indent_heuristic,
+            similar::Algorithm::Patience,
+        ),
+        DiffAlgorithm::Minimal => similar_unified_hunk_body_raw(
+            old_content,
+            new_content,
+            options.context_lines,
+            options.inter_hunk_context,
+            options.indent_heuristic,
+            similar::Algorithm::Lcs,
+        ),
+    }
+}
+
+fn similar_unified_hunk_body_raw(
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    indent_heuristic: bool,
+    algorithm: similar::Algorithm,
+) -> String {
+    use similar::{udiff::UnifiedDiffHunk, TextDiff};
+
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_lines(old_content, new_content);
+    let compacted_ops = diff_indent_heuristic::diff_lines_ops_compacted(
+        old_content,
+        new_content,
+        algorithm,
+        indent_heuristic,
+    );
+    let max_common_gap = context_lines
+        .saturating_mul(2)
+        .saturating_add(inter_hunk_context);
+    let op_groups = group_diff_ops_gap(compacted_ops, context_lines, max_common_gap);
+    let mut out = Vec::new();
+    let mut annot = UnifiedDiffNoNewlineAnnotator::new(old_content, new_content);
+    for ops in op_groups {
+        if ops.is_empty() {
+            continue;
+        }
+        let hunk = UnifiedDiffHunk::new(ops, &diff, true);
+        let hunk_str = format!("{hunk}");
+        let _ = annot.write_hunk(&mut out, &hunk_str);
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Parse `@@ -old +new @@` into 1-based starts and line counts (Git display form).
+pub(crate) fn unified_hunk_header_counts(
+    header_line: &str,
+) -> Option<(usize, usize, usize, usize)> {
+    let rest = header_line.strip_prefix("@@ ")?;
+    let (old_part, rest2) = rest.split_once(" +")?;
+    let old_tok = old_part.strip_prefix('-')?.split(' ').next()?;
+    let new_tok = rest2.split(" @@").next()?.split(' ').next()?;
+
+    fn parse_side(spec: &str) -> (usize, usize) {
+        if let Some((start, count)) = spec.split_once(',') {
+            (start.parse().unwrap_or(0), count.parse().unwrap_or(0))
+        } else {
+            (spec.parse().unwrap_or(0), 1)
+        }
+    }
+
+    let (os, ol) = parse_side(old_tok);
+    let (ns, nl) = parse_side(new_tok);
+    Some((os, ol, ns, nl))
+}
+
+/// Write `---` / `+++` and unified hunks using [`unified_hunk_body_for_diff_options`].
+pub(crate) fn write_unified_diff_from_diff_options<W: std::io::Write>(
+    out: &mut W,
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+    options: &crate::diff::options::DiffOptions,
+    quote_path_fully: bool,
+) -> Result<()> {
+    use crate::quote_path::format_diff_path_with_prefix;
+
+    if old_path == "/dev/null" {
+        out.write_all(b"--- /dev/null\n")?;
+    } else if src_prefix.is_empty() {
+        writeln!(out, "--- {old_path}")?;
+    } else {
+        out.write_all(b"--- ")?;
+        out.write_all(
+            format_diff_path_with_prefix(src_prefix, old_path, quote_path_fully).as_bytes(),
+        )?;
+        out.write_all(b"\n")?;
+    }
+    if new_path == "/dev/null" {
+        out.write_all(b"+++ /dev/null\n")?;
+    } else if dst_prefix.is_empty() {
+        writeln!(out, "+++ {new_path}")?;
+    } else {
+        out.write_all(b"+++ ")?;
+        out.write_all(
+            format_diff_path_with_prefix(dst_prefix, new_path, quote_path_fully).as_bytes(),
+        )?;
+        out.write_all(b"\n")?;
+    }
+
+    let body = unified_hunk_body_for_diff_options(old_content, new_content, options);
+    if body.is_empty() {
+        return Ok(());
+    }
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    for hunk_str in imara_unified_hunk_slices(&body) {
+        if hunk_str.is_empty() {
+            continue;
+        }
+        if let Some(first_newline) = hunk_str.find('\n') {
+            let header_line = &hunk_str[..first_newline];
+            let rest = &hunk_str[first_newline..];
+            if let Some(func_ctx) =
+                extract_function_context(header_line, &old_lines, funcname_matcher, Some(old_path))
+            {
+                out.write_all(header_line.as_bytes())?;
+                out.write_all(b" ")?;
+                out.write_all(func_ctx.as_bytes())?;
+                out.write_all(rest.as_bytes())?;
+            } else {
+                out.write_all(hunk_str.as_bytes())?;
+            }
+        } else {
+            out.write_all(hunk_str.as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 #[expect(clippy::too_many_arguments)]
