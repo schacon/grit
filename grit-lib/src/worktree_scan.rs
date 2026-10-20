@@ -560,7 +560,7 @@ pub(crate) fn for_each_blob_by_directory<F, H>(
     dir_abs: impl Fn(&str) -> PathBuf,
     file_abs: impl Fn(&str) -> PathBuf,
     mut has_symlink_ancestor: H,
-    mut visit: F,
+    visit: F,
 ) -> Result<()>
 where
     F: FnMut(usize, BlobDiskLookup) -> Result<()>,

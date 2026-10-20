@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::diff::{
-    entry_is_racy, index_entry_worktree_abs, materialize_worktree_blob, mode_from_metadata,
-    read_submodule_head_oid, symlink_target_bytes, SymlinkDirCache,
+    entry_is_racy, index_entry_worktree_abs, materialize_worktree_blob, read_submodule_head_oid,
+    symlink_target_bytes, SymlinkDirCache,
 };
 use crate::error::{Error, Result};
 use crate::hash::Parallelism;
@@ -909,7 +909,7 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
-    use crate::diff::{entry_is_racy, stat_matches};
+    use crate::diff::{entry_is_racy, mode_from_metadata, stat_matches};
     use crate::index::{
         entry_from_metadata, index_file_mtime, Index, MODE_EXECUTABLE, MODE_REGULAR,
     };
