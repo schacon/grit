@@ -19,39 +19,44 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::mem;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Resolve a pack index row position from a pack byte offset (`.rev` first, then sorted table).
-#[must_use]
-pub fn find_position_by_pack_offset(idx: &PackIndex, offset: u64) -> Option<usize> {
-    if let Some(pos) = find_position_by_pack_offset_rev(idx, offset) {
-        return Some(pos);
+pub fn find_position_by_pack_offset(idx: &PackIndex, offset: u64) -> Result<Option<usize>> {
+    if let Some(pos) = find_position_by_pack_offset_rev(idx, offset)? {
+        return Ok(Some(pos));
     }
     idx.find_position_by_offset_sorted(offset)
 }
 
-fn find_position_by_pack_offset_rev(idx: &PackIndex, offset: u64) -> Option<usize> {
+fn find_position_by_pack_offset_rev(idx: &PackIndex, offset: u64) -> Result<Option<usize>> {
     use crate::pack_rev::{rev_path_for_index, try_rev_positions_in_pack_order};
     use std::cmp::Ordering;
-    use std::fs;
     let rev_path = rev_path_for_index(&idx.idx_path);
-    let data = fs::read(rev_path).ok()?;
-    let positions = try_rev_positions_in_pack_order(&data, idx.len())?;
+    let data = PackData::open_with_min_len(&rev_path, 12).ok();
+    let Some(data) = data else {
+        return Ok(None);
+    };
+    let positions = try_rev_positions_in_pack_order(data.deref(), idx.len());
+    let Some(positions) = positions else {
+        return Ok(None);
+    };
     let mut lo = 0usize;
     let mut hi = positions.len();
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let idx_pos = positions[mid] as usize;
-        let off = idx.offset_at(idx_pos);
+        let off = idx.offset_at(idx_pos)?;
         match off.cmp(&offset) {
             Ordering::Less => lo = mid + 1,
             Ordering::Greater => hi = mid,
-            Ordering::Equal => return Some(idx_pos),
+            Ordering::Equal => return Ok(Some(idx_pos)),
         }
     }
-    None
+    Ok(None)
 }
 
 /// Basic information about local packs.
@@ -324,7 +329,7 @@ pub(crate) mod pack_cache {
         let Some(idx) = idx else {
             return Ok(None);
         };
-        let Some(offset) = idx.find_offset(oid) else {
+        let Some(offset) = idx.find_offset(oid)? else {
             return Ok(None);
         };
         match super::read_object_from_pack_at_offset(&idx, offset) {
@@ -349,7 +354,7 @@ pub(crate) mod pack_cache {
         let Some(idx) = idx else {
             return Ok(None);
         };
-        let Some(offset) = idx.find_offset(oid) else {
+        let Some(offset) = idx.find_offset(oid)? else {
             return Ok(None);
         };
         match super::read_object_info_from_pack_at_offset(&idx, offset) {
@@ -1736,8 +1741,7 @@ pub fn hash_object_bytes(kind: ObjectKind, data: &[u8], hash_bytes: usize) -> Re
 ///
 /// Returns [`Error::CorruptObject`] when format checks fail.
 pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
-    let bytes = fs::read(idx_path).map_err(Error::Io)?;
-    parse_pack_index_bytes(idx_path, bytes, true)
+    crate::pack_index::open_pack_index_file(idx_path, true)
 }
 
 /// Parse a pack index file without verifying the SHA-1 trailer checksum.
@@ -1746,8 +1750,7 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
 /// write path (`midx-write.c`/`packfile.c` `open_pack_index`), so a deliberately
 /// corrupted-but-structurally-valid idx (t5319 64-bit offset tests) still loads.
 pub fn read_pack_index_no_verify(idx_path: &Path) -> Result<PackIndex> {
-    let bytes = fs::read(idx_path).map_err(Error::Io)?;
-    parse_pack_index_bytes(idx_path, bytes, false)
+    crate::pack_index::open_pack_index_file(idx_path, false)
 }
 
 /// A pack object type as encoded in the packed stream header.
@@ -2003,7 +2006,7 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
         if computed.as_slice() != entry.oid() {
             return Err(Error::CorruptObject(format!(
                 "pack object hash mismatch at offset {} (index says {})",
-                entry.offset(),
+                entry.offset()?,
                 oid_bytes_to_hex(entry.oid())
             )));
         }
@@ -2076,7 +2079,7 @@ fn verify_pack_structure_and_records(
 
     let mut by_offset: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     for entry in idx.iter() {
-        by_offset.insert(entry.offset(), entry.oid().to_vec());
+        by_offset.insert(entry.offset()?, entry.oid().to_vec());
     }
     let offsets: Vec<u64> = by_offset.keys().copied().collect();
     if offsets.is_empty() {
@@ -2537,7 +2540,7 @@ fn find_other_pack_index(
         if idx.idx_path == current.idx_path {
             continue;
         }
-        if idx.contains(oid) {
+        if idx.contains(oid)? {
             return Ok(Some(Arc::clone(&idx)));
         }
     }
@@ -2552,7 +2555,7 @@ fn rescue_in_pack_base(
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
 ) -> Result<Option<(ObjectKind, Vec<u8>)>> {
-    let Some(pos) = find_position_by_pack_offset(idx, base_offset) else {
+    let Some(pos) = find_position_by_pack_offset(idx, base_offset)? else {
         return Ok(None);
     };
     let entry_oid = idx.oid_at(pos);
@@ -2572,7 +2575,7 @@ fn rescue_in_pack_base(
         }
     }
     if let Some(other_idx) = find_other_pack_index(dir, idx, &base_oid)? {
-        let Some(off) = other_idx.find_offset(&base_oid) else {
+        let Some(off) = other_idx.find_offset(&base_oid)? else {
             return Ok(None);
         };
         if let Ok((kind, data)) =
@@ -2782,7 +2785,7 @@ fn resolve_pack_object_at_body(
                 });
 
                 if let Ok(base_oid) = ObjectId::from_bytes(base_raw.as_slice()) {
-                    if let Some(base_offset) = idx_ref.find_offset(&base_oid) {
+                    if let Some(base_offset) = idx_ref.find_offset(&base_oid)? {
                         if let Some((base_kind, base_data)) =
                             pack_cache::get_delta_base(pack_id, base_offset)
                         {
@@ -2824,7 +2827,7 @@ fn resolve_pack_object_at_body(
                             }
                         }
                         if let Some(other_idx) = find_other_pack_index(dir, idx_ref, &base_oid)? {
-                            let Some(off) = other_idx.find_offset(&base_oid) else {
+                            let Some(off) = other_idx.find_offset(&base_oid)? else {
                                 return Err(Error::ObjectNotFound(base_oid.to_hex()));
                             };
                             cur_idx = PackIndexHandle::Shared(other_idx);
@@ -2924,7 +2927,7 @@ fn resolve_pack_object_info_at_body(
                 }
 
                 let base_oid = ObjectId::from_bytes(base_raw)?;
-                if let Some(base_offset) = idx_ref.find_offset(&base_oid) {
+                if let Some(base_offset) = idx_ref.find_offset(&base_oid)? {
                     cur_offset = base_offset;
                     continue;
                 }
@@ -2942,7 +2945,7 @@ fn resolve_pack_object_info_at_body(
                         });
                     }
                     if let Some(other_idx) = find_other_pack_index(dir, idx_ref, &base_oid)? {
-                        let Some(off) = other_idx.find_offset(&base_oid) else {
+                        let Some(off) = other_idx.find_offset(&base_oid)? else {
                             return Err(Error::ObjectNotFound(base_oid.to_hex()));
                         };
                         let base_info = resolve_pack_object_info_at(
@@ -3011,7 +3014,7 @@ pub fn read_object_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Object> 
 ///
 /// Same as [`read_object_from_pack`], except no hash verification is performed on the payload.
 pub fn read_object_info_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<ObjectInfo> {
-    let Some(offset) = idx.find_offset(oid) else {
+    let Some(offset) = idx.find_offset(oid)? else {
         return Err(Error::ObjectNotFound(oid.to_hex()));
     };
     read_object_info_from_pack_at_offset(idx, offset)
@@ -3209,7 +3212,7 @@ pub fn read_object_from_pack_at_offset(idx: &PackIndex, offset: u64) -> Result<O
 /// [`read_object_from_pack`] with an explicit starting delta-chain depth, used when the read
 /// itself resolves a delta base from another pack (the chain budget must carry across packs).
 fn read_object_from_pack_at_depth(idx: &PackIndex, oid: &ObjectId, depth: usize) -> Result<Object> {
-    let Some(offset) = idx.find_offset(oid) else {
+    let Some(offset) = idx.find_offset(oid)? else {
         return Err(Error::ObjectNotFound(oid.to_hex()));
     };
     read_object_at_depth(idx, offset, depth)
@@ -3267,9 +3270,9 @@ pub fn read_object_from_pack_bytes(
     oid: &[u8],
 ) -> Result<Object> {
     validate_pack_index_object_count(pack_bytes, idx)?;
-    let entry_offset = ObjectId::from_bytes(oid)
-        .ok()
-        .and_then(|id| idx.find_offset(&id))
+    let id = ObjectId::from_bytes(oid).map_err(|_| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
+    let entry_offset = idx
+        .find_offset(&id)?
         .ok_or_else(|| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
     let store = crate::pack_store::PackStore::legacy_for_pack_path(&idx.pack_path);
     crate::pack_store::PackStore::with_context(store, || {
@@ -3473,7 +3476,7 @@ impl SingleLocalPackReader {
                         );
                     }
                     let base_oid = ObjectId::from_bytes(base_raw)?;
-                    let Some(base_offset) = self.idx.find_offset(&base_oid) else {
+                    let Some(base_offset) = self.idx.find_offset(&base_oid)? else {
                         return Err(Error::ObjectNotFound(base_oid.to_hex()));
                     };
                     cur_offset = base_offset;
@@ -3488,7 +3491,7 @@ impl SingleLocalPackReader {
     ///
     /// Same as [`read_object_info_from_pack_at_offset`].
     pub fn read_info(&mut self, oid: &ObjectId) -> Result<ObjectInfo> {
-        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor) else {
+        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor)? else {
             return Err(Error::ObjectNotFound(oid.to_hex()));
         };
         if let Some(info) =
@@ -3506,7 +3509,7 @@ impl SingleLocalPackReader {
     ///
     /// Same as [`read_object_from_pack_at_offset`].
     pub fn read_object(&mut self, oid: &ObjectId) -> Result<Object> {
-        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor) else {
+        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor)? else {
             return Err(Error::ObjectNotFound(oid.to_hex()));
         };
         if let Some(obj) =
@@ -3614,7 +3617,7 @@ pub(crate) fn try_read_object_info_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = idx.find_offset(oid) else {
+        let Some(offset) = idx.find_offset(oid)? else {
             continue;
         };
         match read_object_info_from_pack_at_offset(idx, offset) {
@@ -3644,7 +3647,7 @@ pub(crate) fn try_read_object_from_packs_with_options(
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;
     for idx in &indexes {
-        let Some(offset) = idx.find_offset(oid) else {
+        let Some(offset) = idx.find_offset(oid)? else {
             continue;
         };
         match read_object_from_pack_at_offset(idx, offset) {
@@ -3689,7 +3692,7 @@ pub fn try_read_object_from_local_packs_cached(
 ) -> Result<Option<Object>> {
     let indexes = read_local_pack_indexes_cached(objects_dir)?;
     for idx in &indexes {
-        if idx.find_offset(oid).is_none() {
+        if idx.find_offset(oid)?.is_none() {
             continue;
         }
         match read_object_from_pack(idx, oid) {
@@ -3732,7 +3735,7 @@ fn parse_in_pack_delta_reuse_candidate(
         }
         PackedType::OfsDelta => {
             let base_off = parse_ofs_delta_base(pack_bytes, &mut p, entry_offset)?;
-            let Some(pos) = find_position_by_pack_offset(idx, base_off) else {
+            let Some(pos) = find_position_by_pack_offset(idx, base_off)? else {
                 return Ok(None);
             };
             let base_oid_bytes = idx.oid_at(pos);
@@ -3747,7 +3750,7 @@ fn parse_in_pack_delta_reuse_candidate(
         return Ok(None);
     }
     let zlib_start = p;
-    let Some(end_pos) = pack_entry_raw_end(idx, pack_bytes, entry_offset) else {
+    let Some(end_pos) = pack_entry_raw_end(idx, pack_bytes, entry_offset)? else {
         return Ok(None);
     };
     if zlib_start >= end_pos {
@@ -3788,7 +3791,7 @@ fn parse_in_pack_delta_reuse_zlib(
         }
         PackedType::OfsDelta => {
             let base_off = parse_ofs_delta_base(pack_bytes, &mut p, entry_offset)?;
-            let Some(pos) = find_position_by_pack_offset(idx, base_off) else {
+            let Some(pos) = find_position_by_pack_offset(idx, base_off)? else {
                 return Ok(None);
             };
             let base_oid_bytes = idx.oid_at(pos);
@@ -3803,14 +3806,14 @@ fn parse_in_pack_delta_reuse_zlib(
         return Ok(None);
     }
     let zlib_start = p;
-    let Some(end_pos) = pack_entry_raw_end(idx, pack_bytes, entry_offset) else {
+    let Some(end_pos) = pack_entry_raw_end(idx, pack_bytes, entry_offset)? else {
         return Ok(None);
     };
     if zlib_start >= end_pos {
         return Ok(None);
     }
     let entry_bytes = &pack_bytes[start..end_pos];
-    if let Some(crc) = idx.crc32_for_pack_offset(entry_offset) {
+    if let Some(crc) = idx.crc32_for_pack_offset(entry_offset)? {
         if crc32fast::hash(entry_bytes) != crc {
             return Ok(None);
         }
@@ -3908,7 +3911,7 @@ pub fn collect_packed_delta_reuse_for_send(
                 continue;
             }
             let Some((base, size, zlib_start, zlib_end)) =
-                parse_in_pack_delta_reuse_zlib(idx, pack_bytes, entry.offset(), in_pack)?
+                parse_in_pack_delta_reuse_zlib(idx, pack_bytes, entry.offset()?, in_pack)?
             else {
                 continue;
             };
@@ -3971,7 +3974,7 @@ pub fn packed_ref_delta_reuse_slice(
         if idx.hash_bytes() != 20 {
             continue;
         }
-        let Some(entry_offset) = idx.find_offset(oid) else {
+        let Some(entry_offset) = idx.find_offset(oid)? else {
             continue;
         };
         let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
@@ -4021,7 +4024,7 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
         if idx.hash_bytes() != 20 {
             continue;
         }
-        let Some(entry_offset) = idx.find_offset(oid) else {
+        let Some(entry_offset) = idx.find_offset(oid)? else {
             continue;
         };
         let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
@@ -4037,7 +4040,7 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
             }
             PackedType::OfsDelta => {
                 let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry_offset)?;
-                return Ok(find_position_by_pack_offset(idx, base_off)
+                return Ok(find_position_by_pack_offset(idx, base_off)?
                     .and_then(|pos| ObjectId::from_bytes(idx.oid_at(pos)).ok()));
             }
             _ => continue,
@@ -4053,14 +4056,18 @@ pub(crate) fn pack_entry_raw_end(
     idx: &PackIndex,
     pack_bytes: &[u8],
     entry_offset: u64,
-) -> Option<usize> {
+) -> Result<Option<usize>> {
     let hb = idx.hash_bytes();
-    let pack_end = pack_bytes.len().checked_sub(hb)?;
+    let Some(pack_end) = pack_bytes.len().checked_sub(hb) else {
+        return Ok(None);
+    };
     let start = entry_offset as usize;
     if start >= pack_end {
-        return None;
+        return Ok(None);
     }
-    Some(idx.next_pack_offset_after(entry_offset, pack_end as u64) as usize)
+    Ok(Some(
+        idx.next_pack_offset_after(entry_offset, pack_end as u64)? as usize,
+    ))
 }
 
 /// When `oid` is stored as a full (non-delta) object in a local pack, return its verbatim packed
@@ -4085,7 +4092,7 @@ pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Op
     let mut indexes = read_local_pack_indexes_cached(objects_dir)?;
     sort_pack_indexes_newest_first(&mut indexes);
     for idx in &indexes {
-        let Some(entry_offset) = idx.find_offset(oid) else {
+        let Some(entry_offset) = idx.find_offset(oid)? else {
             continue;
         };
         let pack_bytes = read_pack_bytes_cached(&idx.pack_path)?;
@@ -4098,7 +4105,7 @@ pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Op
             // The same OID may be a full object in another pack; keep scanning.
             continue;
         }
-        let Some(end) = pack_entry_raw_end(idx, &pack_bytes, entry_offset) else {
+        let Some(end) = pack_entry_raw_end(idx, &pack_bytes, entry_offset)? else {
             continue;
         };
         if end <= start {
@@ -4108,7 +4115,7 @@ pub fn packed_full_object_slice(objects_dir: &Path, oid: &ObjectId) -> Result<Op
         // Git `check_pack_crc`: verbatim reuse copies bytes unparsed, so guard with the pack
         // index's CRC32. A corrupt copy is skipped, letting a redundant pack or the normal
         // (validating) read path serve the object instead (t5303).
-        let recorded_crc = idx.crc32_for_pack_offset(entry_offset);
+        let recorded_crc = idx.crc32_for_pack_offset(entry_offset)?;
         match recorded_crc {
             Some(crc) if crc32fast::hash(slice) != crc => continue,
             // v1 indexes carry no CRC; verify by inflating and re-hashing the content.
@@ -5051,7 +5058,12 @@ mod tests {
         };
         let pack_path = idx.pack_path.clone();
         let pack_id = pack_cache::pack_id_for(&pack_path);
-        let mid_off = idx.iter().nth(4).map(|e| e.offset()).expect("mid hop");
+        let mid_off = idx
+            .iter()
+            .nth(4)
+            .map(|e| e.offset())
+            .expect("mid hop")
+            .expect("mid off");
         let _ = read_object_from_pack(&idx, &tip).expect("warm cache");
         assert!(
             pack_cache::test_delta_base_cached(&pack_path, pack_id, mid_off),
@@ -5167,7 +5179,7 @@ mod tests {
         let idx_a = install_synthetic_pack(&objects, "cycle-a", &pack_a, &[(oid_a, off_a)]);
         assert_eq!(idx_a.len(), 1);
         assert_eq!(idx_b.len(), 1);
-        assert!(idx_b.contains(&oid_b));
+        assert!(idx_b.contains(&oid_b).expect("contains"));
         let _ = idx_b;
 
         let err = read_object_from_pack(&idx_a, &oid_a).expect_err("cross-pack cycle");
@@ -5470,7 +5482,7 @@ mod tests {
         .expect("idx");
 
         let idx = read_pack_index(&idx_path).expect("parse idx");
-        assert_eq!(idx.offset_at(0), object_offset);
+        assert_eq!(idx.offset_at(0).expect("off"), object_offset);
         let got = read_object_from_pack(&idx, &oid).expect("read at large offset");
         assert_eq!(got.data, data);
     }
@@ -5620,7 +5632,7 @@ mod cached_lookup_tests {
             body.extend_from_slice(&slot.to_be_bytes());
         }
         for entry in parsed.iter() {
-            body.extend_from_slice(&(entry.offset() as u32).to_be_bytes());
+            body.extend_from_slice(&(entry.offset().expect("off") as u32).to_be_bytes());
             body.extend_from_slice(entry.oid());
         }
         body.extend_from_slice(HashAlgo::Sha1.digest(&body).as_bytes());
@@ -5667,10 +5679,10 @@ mod cached_lookup_tests {
         let oid_last = ObjectId::from_bytes(&last).unwrap();
         let oid_miss = ObjectId::from_bytes(&miss).unwrap();
 
-        assert_eq!(idx.find_offset(&oid_first), Some(12));
-        assert_eq!(idx.find_offset(&oid_mid), Some(24));
-        assert_eq!(idx.find_offset(&oid_last), Some(36));
-        assert_eq!(idx.find_offset(&oid_miss), None);
+        assert_eq!(idx.find_offset(&oid_first).expect("f"), Some(12));
+        assert_eq!(idx.find_offset(&oid_mid).expect("m"), Some(24));
+        assert_eq!(idx.find_offset(&oid_last).expect("l"), Some(36));
+        assert_eq!(idx.find_offset(&oid_miss).expect("miss"), None);
     }
 
     #[test]
@@ -5697,7 +5709,10 @@ mod cached_lookup_tests {
         let v1 = convert_pack_idx_to_v1(&objects);
         assert!(pack_index_is_v1(&v1));
         let idx = read_pack_index_cached(&v1).expect("parse v1 idx");
-        let off = idx.find_offset(&tree).expect("fanout lookup in v1 idx");
+        let off = idx
+            .find_offset(&tree)
+            .expect("fanout lookup in v1 idx")
+            .expect("off");
         assert!(off > 0);
         let obj = read_object_from_pack(&idx, &tree).expect("read via v1 index");
         assert_eq!(obj.kind, ObjectKind::Tree);
@@ -6021,9 +6036,11 @@ mod cached_lookup_tests {
         let pack_bytes = std::fs::read(&idx.pack_path).expect("read pack");
         for entry in idx.iter() {
             let crc = entry.crc32().expect("v2 idx entry crc");
-            let start = entry.offset() as usize;
-            let end =
-                super::pack_entry_raw_end(&idx, &pack_bytes, entry.offset()).expect("entry end");
+            let off = entry.offset().expect("entry off");
+            let start = off as usize;
+            let end = super::pack_entry_raw_end(&idx, &pack_bytes, off)
+                .expect("entry end")
+                .expect("end");
             assert_eq!(crc32fast::hash(&pack_bytes[start..end]), crc);
         }
         let _ = tree;
@@ -6038,9 +6055,11 @@ mod cached_lookup_tests {
         let objects = dir.path().join(".git").join("objects");
         let idx = read_pack_index(&v2_idx_path(&objects)).expect("idx");
         let pack_bytes = std::fs::read(&idx.pack_path).expect("pack");
-        let off = idx.find_offset(&tree).expect("tree in pack");
+        let off = idx.find_offset(&tree).expect("tree in pack").expect("off");
         let start = off as usize;
-        let end = super::pack_entry_raw_end(&idx, &pack_bytes, off).expect("entry end");
+        let end = super::pack_entry_raw_end(&idx, &pack_bytes, off)
+            .expect("entry end")
+            .expect("end");
         let expected = &pack_bytes[start..end];
         let slice = packed_full_object_slice(&objects, &tree)
             .expect("lookup")
@@ -6077,10 +6096,14 @@ mod cached_lookup_tests {
         touch_mtime(&redundant_idx, newer);
         clear_pack_cache();
 
-        let off = primary_idx.find_offset(&tree).expect("tree offset");
+        let off = primary_idx
+            .find_offset(&tree)
+            .expect("tree offset")
+            .expect("off");
         let start = off as usize;
         let end = super::pack_entry_raw_end(&primary_idx, &fs::read(&primary_pack).unwrap(), off)
-            .expect("entry end");
+            .expect("entry end")
+            .expect("end");
         let flip = start + (end - start) / 2;
         let mut corrupt = fs::read(&redundant_pack).expect("read redundant");
         corrupt[flip] ^= 0x01;
@@ -6090,7 +6113,8 @@ mod cached_lookup_tests {
         let recorded_crc = read_pack_index(&redundant_idx)
             .expect("redundant idx")
             .crc32_for_pack_offset(off)
-            .expect("crc");
+            .expect("crc")
+            .expect("crc value");
         let corrupt_slice = &corrupt[start..end];
         assert_ne!(
             crc32fast::hash(corrupt_slice),
