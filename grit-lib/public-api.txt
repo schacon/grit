@@ -6024,6 +6024,7 @@ pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_across(&std::
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_across_with_caches(&std::path::Path, &[std::path::PathBuf], core::option::Option<&grit_lib::repo::caches::RepoCaches>) -> core::result::Result<core::option::Option<Self>, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_with_caches(&std::path::Path, core::option::Option<&grit_lib::repo::caches::RepoCaches>) -> core::result::Result<core::option::Option<Self>, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::upgradable_filter_bytes(&self, &grit_lib::objects::ObjectId, &grit_lib::diff::bloom::BloomFilterSettings) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::verify_on_disk(&std::path::Path) -> core::result::Result<(), grit_lib::error::Error>
 impl core::clone::Clone for grit_lib::revwalk::commit_graph::CommitGraphChain
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::revwalk::commit_graph::CommitGraphChain
@@ -14514,6 +14515,7 @@ pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_across(&std::
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_across_with_caches(&std::path::Path, &[std::path::PathBuf], core::option::Option<&grit_lib::repo::caches::RepoCaches>) -> core::result::Result<core::option::Option<Self>, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::try_load_with_caches(&std::path::Path, core::option::Option<&grit_lib::repo::caches::RepoCaches>) -> core::result::Result<core::option::Option<Self>, grit_lib::error::Error>
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::upgradable_filter_bytes(&self, &grit_lib::objects::ObjectId, &grit_lib::diff::bloom::BloomFilterSettings) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::verify_on_disk(&std::path::Path) -> core::result::Result<(), grit_lib::error::Error>
 impl core::clone::Clone for grit_lib::revwalk::commit_graph::CommitGraphChain
 pub fn grit_lib::revwalk::commit_graph::CommitGraphChain::clone(&self) -> Self
 impl core::fmt::Debug for grit_lib::revwalk::commit_graph::CommitGraphChain
