@@ -2,6 +2,8 @@
 
 use std::borrow::Cow;
 
+use crate::ws::is_space_git;
+
 /// Whitespace handling for line diffs ([`super::DiffOptions::whitespace`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -66,12 +68,11 @@ impl WhitespaceMode {
             return Cow::Borrowed(line);
         }
         if self.ignore_all_space {
-            let stripped: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-            return Cow::Owned(stripped);
+            return Cow::Owned(strip_git_whitespace_bytes(line));
         }
         let mut work = line.to_string();
         if self.ignore_space_at_eol {
-            work = trim_trailing_whitespace_line(&work);
+            work = trim_trailing_git_whitespace(&work);
         }
         if self.ignore_space_change {
             work = normalize_ignore_space_change_line(&work);
@@ -80,19 +81,20 @@ impl WhitespaceMode {
     }
 }
 
-/// Normalise one line like Git's `-b` / `--ignore-space-change`.
+/// Normalise one line like Git's `-b` / `--ignore-space-change` (ASCII ws only).
 #[must_use]
 pub fn normalize_ignore_space_change_line(line: &str) -> String {
+    let bytes = line.as_bytes();
     let mut result = String::with_capacity(line.len());
     let mut in_space = false;
-    for c in line.chars() {
-        if c.is_whitespace() {
+    for &ch in bytes {
+        if is_space_git(ch) {
             if !in_space {
                 result.push(' ');
                 in_space = true;
             }
         } else {
-            result.push(c);
+            result.push(ch as char);
             in_space = false;
         }
     }
@@ -102,9 +104,23 @@ pub fn normalize_ignore_space_change_line(line: &str) -> String {
     result
 }
 
-fn trim_trailing_whitespace_line(line: &str) -> String {
-    line.trim_end_matches(|c: char| c.is_whitespace())
-        .to_string()
+/// Strip Git whitespace bytes for `-w` (NBSP and other non-Git space bytes are kept).
+#[must_use]
+pub fn strip_git_whitespace_bytes(line: &str) -> String {
+    let filtered: Vec<u8> = line.bytes().filter(|b| !is_space_git(*b)).collect();
+    String::from_utf8(filtered).unwrap_or_else(|_| line.to_string())
+}
+
+fn trim_trailing_git_whitespace(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && is_space_git(bytes[end - 1]) {
+        end -= 1;
+    }
+    if end == bytes.len() {
+        return line.to_string();
+    }
+    String::from_utf8(bytes[..end].to_vec()).unwrap_or_else(|_| line.to_string())
 }
 
 #[cfg(test)]
@@ -118,11 +134,22 @@ mod tests {
     }
 
     #[test]
-    fn ignore_all_space_strips_everything() {
-        let ws = WhitespaceMode {
-            ignore_all_space: true,
-            ..WhitespaceMode::default()
-        };
+    fn ignore_all_space_strips_git_whitespace_only() {
+        let ws = WhitespaceMode::ignore_all_space();
         assert_eq!(ws.normalize_line_for_compare("f o o").as_ref(), "foo");
+        let nbsp_line = "a\u{00a0}b";
+        assert_eq!(
+            ws.normalize_line_for_compare(nbsp_line).as_ref(),
+            nbsp_line,
+            "NBSP is not Git whitespace and must not be stripped by -w"
+        );
+    }
+
+    #[test]
+    fn nbsp_change_not_ignored_by_ignore_all_space_compare_key() {
+        let ws = WhitespaceMode::ignore_all_space();
+        let old_key = ws.normalize_line_for_compare("a\u{00a0}b");
+        let new_key = ws.normalize_line_for_compare("ab");
+        assert_ne!(old_key, new_key);
     }
 }

@@ -300,10 +300,23 @@ pub(crate) fn file_diffs_from_entries(
 }
 
 fn include_file_in_diff(file: &FileDiff, opts: DiffOptions) -> bool {
-    if opts.whitespace.is_active() && !file.binary && file.hunks.is_empty() {
-        return false;
+    if !opts.whitespace.is_active() || file.binary {
+        return true;
     }
-    true
+    if matches!(
+        file.status,
+        DiffStatus::Renamed
+            | DiffStatus::Added
+            | DiffStatus::Deleted
+            | DiffStatus::Copied
+            | DiffStatus::TypeChanged
+    ) {
+        return true;
+    }
+    if file.old_mode != file.new_mode {
+        return true;
+    }
+    !file.hunks.is_empty()
 }
 
 pub(crate) fn collect_files_for_target(
@@ -1055,6 +1068,92 @@ fn bytes_for_diff(data: &[u8]) -> (SideBytes, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn include_file_omits_whitespace_only_modified() {
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            new_oid: ObjectId::from_hex("0000000000000000000000000000000000000002").unwrap(),
+            binary: false,
+            content_changed: true,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(!include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_omits_ws_only_even_when_content_changed_false() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: oid,
+            new_oid: oid,
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(!include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_keeps_mode_only_under_whitespace() {
+        let oid = ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap();
+        let file = FileDiff {
+            path: "x.txt".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100755".into()),
+            old_oid: oid,
+            new_oid: oid,
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(include_file_in_diff(&file, opts));
+    }
+
+    #[test]
+    fn include_file_keeps_whitespace_only_rename() {
+        let file = FileDiff {
+            path: "new.txt".into(),
+            old_path: Some("old.txt".into()),
+            status: DiffStatus::Renamed,
+            old_mode: Some("100644".into()),
+            new_mode: Some("100644".into()),
+            old_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            new_oid: ObjectId::from_hex("0000000000000000000000000000000000000001").unwrap(),
+            binary: false,
+            content_changed: false,
+            old_encoding_lossy: false,
+            new_encoding_lossy: false,
+            hunks: Vec::new(),
+        };
+        let opts =
+            DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
+        assert!(include_file_in_diff(&file, opts));
+    }
 
     #[test]
     fn resolve_errors_staged_and_unstaged() {

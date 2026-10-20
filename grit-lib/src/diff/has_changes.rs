@@ -29,11 +29,7 @@ pub static WORKTREE_HAS_CHANGES_ENTRIES_SCANNED: AtomicUsize = AtomicUsize::new(
 pub static HAS_CHANGES_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn opts_need_content_compare(opts: &DiffOptions) -> bool {
-    opts.ignore_all_space
-        || opts.ignore_space_change
-        || opts.ignore_space_at_eol
-        || opts.ignore_cr_at_eol
-        || opts.ignore_blank_lines
+    opts.whitespace.is_active()
 }
 
 /// Returns whether `pathspecs` selects this diff entry (empty means all paths).
@@ -70,8 +66,9 @@ pub fn text_sides_differ(old: &str, new: &str, opts: &DiffOptions) -> bool {
     if old == new {
         return false;
     }
-    let (a, b) = preprocess_for_whitespace(old, new, opts);
-    if opts.ignore_blank_lines {
+    let ws = opts.whitespace;
+    let (a, b) = preprocess_for_whitespace(old, new, ws);
+    if ws.ignore_blank_lines {
         let a: Vec<_> = a.lines().filter(|l| !l.trim().is_empty()).collect();
         let b: Vec<_> = b.lines().filter(|l| !l.trim().is_empty()).collect();
         return a != b;
@@ -79,21 +76,22 @@ pub fn text_sides_differ(old: &str, new: &str, opts: &DiffOptions) -> bool {
     a != b
 }
 
-fn preprocess_for_whitespace(old: &str, new: &str, opts: &DiffOptions) -> (String, String) {
-    if opts.ignore_all_space {
+fn preprocess_for_whitespace(
+    old: &str,
+    new: &str,
+    ws: crate::diff::WhitespaceMode,
+) -> (String, String) {
+    if ws.ignore_all_space {
         return (strip_all_whitespace(old), strip_all_whitespace(new));
     }
-    if opts.ignore_space_change {
+    if ws.ignore_space_change {
         return (
             crate::diff::normalize_ignore_space_change(old),
             crate::diff::normalize_ignore_space_change(new),
         );
     }
-    if opts.ignore_space_at_eol {
+    if ws.ignore_space_at_eol {
         return (trim_trailing_ws_lines(old), trim_trailing_ws_lines(new));
-    }
-    if opts.ignore_cr_at_eol {
-        return (strip_cr_at_eol_lines(old), strip_cr_at_eol_lines(new));
     }
     (old.to_owned(), new.to_owned())
 }
@@ -112,13 +110,6 @@ fn strip_all_whitespace(s: &str) -> String {
 fn trim_trailing_ws_lines(s: &str) -> String {
     s.lines()
         .map(|line| line.trim_end_matches(|c: char| c.is_whitespace()))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn strip_cr_at_eol_lines(s: &str) -> String {
-    s.lines()
-        .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n")
 }

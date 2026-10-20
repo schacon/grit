@@ -383,7 +383,7 @@ where
         diff_ops_to_edit_spans(&ops)
     };
     if edits.is_empty() {
-        if old_content != new_content && !ws.is_active() {
+        if old_content != new_content && !ws.normalizes_line_compare() {
             edits = line_ending_only_edits(&before, &after);
         }
         if edits.is_empty() {
@@ -403,6 +403,74 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn git_patience_unified_body_raw_with_ignorable<F>(
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    indent_heuristic: bool,
+    ws: super::WhitespaceMode,
+    is_ignorable_change: Option<F>,
+) -> String
+where
+    F: Fn(&[&str], &[&str]) -> bool,
+{
+    let before = LineSide::from_text(old_content);
+    let after = LineSide::from_text(new_content);
+    if before.is_empty() && after.is_empty() {
+        return String::new();
+    }
+    let old_refs: Vec<&str> = before.lines.iter().map(|l| l.body.as_str()).collect();
+    let new_refs: Vec<&str> = after.lines.iter().map(|l| l.body.as_str()).collect();
+    let ops = if ws.normalizes_line_compare() {
+        git_xdiff_compacted_line_ops(&old_refs, &new_refs, indent_heuristic, false, ws)
+    } else {
+        let (changed1, changed2) = git_xdiff::patience_changed_flags(&old_refs, &new_refs);
+        let raw = changed_flags_to_ops(&changed1, &changed2, old_refs.len(), new_refs.len());
+        diff_indent_heuristic::apply_change_compact_to_ops(
+            &raw,
+            &old_refs,
+            &new_refs,
+            indent_heuristic,
+        )
+    };
+    let mut edits = if let Some(is_ignorable) = is_ignorable_change {
+        diff_ops_to_ignorable_edit_spans(&ops, &old_refs, &new_refs, is_ignorable)
+    } else {
+        diff_ops_to_edit_spans(&ops)
+    };
+    if edits.is_empty() {
+        if old_content != new_content && !ws.normalizes_line_compare() {
+            edits = line_ending_only_edits(&before, &after);
+        }
+        if edits.is_empty() {
+            return String::new();
+        }
+    }
+    emit_unified_body_from_edits(
+        &before,
+        &after,
+        &edits,
+        UnifiedEmitOptions {
+            context_lines,
+            inter_hunk_context,
+            function_context: false,
+        },
+        None,
+    )
+}
+
+fn blank_line_ignorable(
+    ws: super::WhitespaceMode,
+) -> impl Fn(&[&str], &[&str]) -> bool + Copy {
+    move |removed: &[&str], added: &[&str]| {
+        ws.ignore_blank_lines
+            && removed.iter().all(|l| crate::ws::ws_blank_line(l))
+            && added.iter().all(|l| crate::ws::ws_blank_line(l))
+    }
+}
+
 /// Unified hunk bodies (`@@` …) for [`DiffOptions`], shared by structured and log-patch output.
 pub(crate) fn unified_hunk_body_for_diff_options(
     old_content: &str,
@@ -410,39 +478,67 @@ pub(crate) fn unified_hunk_body_for_diff_options(
     options: &crate::diff::options::DiffOptions,
 ) -> String {
     use crate::diff::options::DiffAlgorithm;
-    use crate::ws::ws_blank_line;
 
     let ws = options.whitespace;
     if ws.is_active() {
-        let blank_only = |removed: &[&str], added: &[&str]| {
-            ws.ignore_blank_lines
-                && removed.iter().all(|l| ws_blank_line(l))
-                && added.iter().all(|l| ws_blank_line(l))
-        };
-        if ws.ignore_blank_lines && !ws.normalizes_line_compare() {
-            return histogram_unified_body_ignore_fc(
+        let blank_only = blank_line_ignorable(ws);
+        if ws.normalizes_line_compare() {
+            let need_min = matches!(options.algorithm, DiffAlgorithm::Minimal);
+            let ignorable = ws.ignore_blank_lines.then_some(blank_only);
+            return git_xdiff_unified_body_raw_with_ignorable(
                 old_content,
                 new_content,
                 options.context_lines,
                 options.inter_hunk_context,
-                false,
-                None,
                 options.indent_heuristic,
-                blank_only,
+                need_min,
+                ws,
+                ignorable,
             );
         }
-        let need_min = matches!(options.algorithm, DiffAlgorithm::Minimal);
-        let ignorable = ws.ignore_blank_lines.then_some(blank_only);
-        return git_xdiff_unified_body_raw_with_ignorable(
-            old_content,
-            new_content,
-            options.context_lines,
-            options.inter_hunk_context,
-            options.indent_heuristic,
-            need_min,
-            ws,
-            ignorable,
-        );
+        if ws.ignore_blank_lines {
+            return match options.algorithm {
+                DiffAlgorithm::Myers => git_xdiff_unified_body_raw_with_ignorable(
+                    old_content,
+                    new_content,
+                    options.context_lines,
+                    options.inter_hunk_context,
+                    options.indent_heuristic,
+                    false,
+                    ws,
+                    Some(blank_only),
+                ),
+                DiffAlgorithm::Minimal => git_xdiff_unified_body_raw_with_ignorable(
+                    old_content,
+                    new_content,
+                    options.context_lines,
+                    options.inter_hunk_context,
+                    options.indent_heuristic,
+                    true,
+                    ws,
+                    Some(blank_only),
+                ),
+                DiffAlgorithm::Patience => git_patience_unified_body_raw_with_ignorable(
+                    old_content,
+                    new_content,
+                    options.context_lines,
+                    options.inter_hunk_context,
+                    options.indent_heuristic,
+                    ws,
+                    Some(blank_only),
+                ),
+                DiffAlgorithm::Histogram => histogram_unified_body_ignore_fc(
+                    old_content,
+                    new_content,
+                    options.context_lines,
+                    options.inter_hunk_context,
+                    false,
+                    None,
+                    options.indent_heuristic,
+                    blank_only,
+                ),
+            };
+        }
     }
     match options.algorithm {
         DiffAlgorithm::Myers => git_xdiff_unified_body_raw(
