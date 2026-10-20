@@ -290,16 +290,17 @@ pub(crate) fn file_diffs_from_entries(
     sort_entries(&mut entries);
     let config = repo.config()?;
     let thread_policy = repo.thread_policy();
+    let filter_opts = opts.clone();
     let structured =
         tree_diff_structured_parallel(repo.odb(), entries, &config, &thread_policy, opts)?;
     Ok(structured
         .into_iter()
         .map(file_diff_from_tree_structured)
-        .filter(|f| include_file_in_diff(f, opts))
+        .filter(|f| include_file_in_diff(f, &filter_opts))
         .collect())
 }
 
-fn include_file_in_diff(file: &FileDiff, opts: DiffOptions) -> bool {
+fn include_file_in_diff(file: &FileDiff, opts: &DiffOptions) -> bool {
     if !opts.whitespace.is_active() || file.binary {
         return true;
     }
@@ -329,6 +330,7 @@ pub(crate) fn collect_tree_structured_for_target(
     let config = repo.config()?;
     let thread_policy = repo.thread_policy();
     let rename_threshold = opts.renames.threshold_percent().unwrap_or(101);
+    let filter_opts = opts.clone();
 
     let items = match target {
         DiffTarget::WorktreeVsHead => {
@@ -409,11 +411,11 @@ pub(crate) fn collect_tree_structured_for_target(
     };
     Ok(items
         .into_iter()
-        .filter(|t| include_tree_structured_in_diff(t, opts))
+        .filter(|t| include_tree_structured_in_diff(t, &filter_opts))
         .collect())
 }
 
-fn include_tree_structured_in_diff(item: &TreeDiffStructured, opts: DiffOptions) -> bool {
+fn include_tree_structured_in_diff(item: &TreeDiffStructured, opts: &DiffOptions) -> bool {
     if !opts.whitespace.is_active() || item.binary {
         return true;
     }
@@ -457,7 +459,7 @@ pub(crate) fn collect_files_for_target(
                 repo,
                 pathspecs,
             );
-            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts)?
+            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::WorktreeVsTree(tree) => {
             let changes = filter_file_changes(
@@ -465,20 +467,27 @@ pub(crate) fn collect_files_for_target(
                 repo,
                 pathspecs,
             );
-            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts)?
+            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::IndexVsHead => {
             let changes =
                 filter_file_changes(staged_changes(repo, rename_threshold)?, repo, pathspecs);
-            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts)?
+            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::WorktreeVsIndex => {
             let changes =
                 filter_file_changes(unstaged_changes(repo, rename_threshold)?, repo, pathspecs);
-            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts)?
+            file_diffs_from_worktree_changes(changes, &config, &thread_policy, opts.clone())?
         }
         DiffTarget::Commit(oid) => {
-            let items = commit_changes(repo, oid, &config, &thread_policy, opts, rename_threshold)?;
+            let items = commit_changes(
+                repo,
+                oid,
+                &config,
+                &thread_policy,
+                opts.clone(),
+                rename_threshold,
+            )?;
             filter_and_map_tree_structured(items, repo, pathspecs, opts)
         }
         DiffTarget::Trees { old, new } => {
@@ -489,11 +498,18 @@ pub(crate) fn collect_files_for_target(
                     new,
                     &config,
                     &thread_policy,
-                    opts,
+                    opts.clone(),
                     rename_threshold,
                 )?
             } else {
-                commit_changes(repo, new, &config, &thread_policy, opts, rename_threshold)?
+                commit_changes(
+                    repo,
+                    new,
+                    &config,
+                    &thread_policy,
+                    opts.clone(),
+                    rename_threshold,
+                )?
             };
             filter_and_map_tree_structured(items, repo, pathspecs, opts)
         }
@@ -510,7 +526,7 @@ fn filter_and_map_tree_structured(
     filter_tree_diff(items, repo, pathspecs)
         .into_iter()
         .map(file_diff_from_tree_structured)
-        .filter(|f| include_file_in_diff(f, opts))
+        .filter(|f| include_file_in_diff(f, &opts))
         .collect()
 }
 
@@ -572,10 +588,10 @@ fn tree_structured_from_worktree_changes(
     let est_bytes = changes.len().saturating_mul(8192);
     let hash_algo = repo.odb().hash_algo();
     Ok(par_map(&changes, par_opts, est_bytes, |fc| {
-        build_tree_structured(fc, hash_algo, opts)
+        build_tree_structured(fc, hash_algo, opts.clone())
     })
     .into_iter()
-    .filter(|t| include_tree_structured_in_diff(t, opts))
+    .filter(|t| include_tree_structured_in_diff(t, &opts))
     .collect())
 }
 
@@ -640,10 +656,10 @@ fn file_diffs_from_worktree_changes(
     par_opts.min_items = 0;
     let est_bytes = changes.len().saturating_mul(8192);
     Ok(par_map(&changes, par_opts, est_bytes, |fc| {
-        build_file_diff(fc, opts)
+        build_file_diff(fc, opts.clone())
     })
     .into_iter()
-    .filter(|f| include_file_in_diff(f, opts))
+    .filter(|f| include_file_in_diff(f, &opts))
     .collect())
 }
 
@@ -1348,7 +1364,7 @@ mod tests {
         };
         let opts =
             DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
-        assert!(!include_file_in_diff(&file, opts));
+        assert!(!include_file_in_diff(&file, &opts));
     }
 
     #[test]
@@ -1370,7 +1386,7 @@ mod tests {
         };
         let opts =
             DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
-        assert!(!include_file_in_diff(&file, opts));
+        assert!(!include_file_in_diff(&file, &opts));
     }
 
     #[test]
@@ -1392,7 +1408,7 @@ mod tests {
         };
         let opts =
             DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
-        assert!(include_file_in_diff(&file, opts));
+        assert!(include_file_in_diff(&file, &opts));
     }
 
     #[test]
@@ -1413,7 +1429,7 @@ mod tests {
         };
         let opts =
             DiffOptions::default().with_whitespace(crate::diff::WhitespaceMode::ignore_all_space());
-        assert!(include_file_in_diff(&file, opts));
+        assert!(include_file_in_diff(&file, &opts));
     }
 
     #[test]

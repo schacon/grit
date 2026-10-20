@@ -14,9 +14,8 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::commands::diff::{self, DiffOutcome};
-use crate::commands::show::{self, DiffStat};
 use crate::context;
-use crate::diff_render;
+use crate::diff_render::{self, DiffStat};
 use crate::markdown;
 use crate::output::{outln, HumanRender, MarkdownRender, RenderContext};
 
@@ -133,7 +132,7 @@ impl MarkdownRender for StashShowOutcome {
             return Ok(());
         }
         if let Some(stat) = &self.stat {
-            show::render_markdown_stat(w, stat, None)?;
+            diff_render::render_markdown_stat(w, stat, None)?;
         }
         Ok(())
     }
@@ -292,7 +291,7 @@ pub fn run_show(index: Option<String>, patch: bool) -> Result<StashShowOutcome> 
     }
     let entries = stash_diff(&repo, n).map_err(map_stash_error)?;
     let full = diff::outcome_from_tree_entries(&repo, entries)?;
-    let stat = show::diffstat(&full);
+    let stat = diff_render::diffstat_from_files(&full.files);
     Ok(StashShowOutcome {
         index: n,
         stat: Some(stat),

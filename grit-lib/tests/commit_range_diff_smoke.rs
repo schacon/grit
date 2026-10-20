@@ -57,7 +57,7 @@ fn commit_range_structured_diff_parallel_matches_serial() {
         entries.clone(),
         &config,
         &ThreadPolicy::with_threads_override(Some(1)),
-        opts,
+        opts.clone(),
     )
     .expect("serial");
     let parallel = tree_diff_structured_parallel(

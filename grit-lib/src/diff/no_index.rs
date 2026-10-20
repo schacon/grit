@@ -84,10 +84,12 @@ pub fn diff_paths(a: &Path, b: &Path, opts: &DiffOptions) -> Result<Vec<FileDiff
         entries
     };
 
-    let diff_options = opts.cap_word_level_inline_for_changed_files(entries.len());
+    let diff_options = opts
+        .clone()
+        .cap_word_level_inline_for_changed_files(entries.len());
     Ok(entries
         .into_iter()
-        .filter_map(|entry| file_diff_from_entry(&odb, &entry, diff_options))
+        .filter_map(|entry| file_diff_from_entry(&odb, &entry, diff_options.clone()))
         .collect())
 }
 

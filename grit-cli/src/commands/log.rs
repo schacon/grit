@@ -22,7 +22,7 @@ use crate::commands::diff::{
 };
 use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
-use crate::context::{self, subject_line, CommitSummary};
+use crate::context::{self, CommitSummary};
 use crate::diff_format::DiffFormatArgs;
 use crate::log_display::{
     decorate_commit_row, render_author_groups_human, render_author_groups_markdown,
@@ -519,20 +519,7 @@ fn build_commit_outcome(
         let loader = CommitJsonLoader::new(repo)?;
         loader.load_with_summaries(repo, oids, now)?
     } else {
-        let summaries = oids
-            .iter()
-            .map(|oid| {
-                let commit = context::read_commit(repo, oid)?;
-                let (author, timestamp) = context::author_and_time(&commit.author);
-                Ok(CommitSummary {
-                    oid: *oid,
-                    subject: subject_line(&commit.message),
-                    author,
-                    author_ident: commit.author.clone(),
-                    timestamp,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let summaries = CommitJsonLoader::load_summaries_only(repo, oids)?;
         let json_rows = summaries
             .iter()
             .map(|s| CommitJson::from_summary(s, now))
@@ -589,8 +576,7 @@ fn build_commit_outcome(
     let mut commit_diffs = Vec::with_capacity(oids.len());
     for (i, commit) in commit_json_rows.into_iter().enumerate() {
         if let Some((detail, ref results)) = many_results {
-            let outcome =
-                cli_outcome_from_lib(repo, results[i].output.clone(), detail, format)?;
+            let outcome = cli_outcome_from_lib(repo, results[i].output.clone(), detail, format)?;
             let stat = if format.stat {
                 Some(diffstat(&outcome))
             } else {

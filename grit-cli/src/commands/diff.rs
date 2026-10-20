@@ -16,8 +16,8 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    apply_rename_detection_to_diff_entries, build_file_diffs, diff_commits_with_renames_and_policy,
-    diff_index_to_tree, diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
+    apply_rename_detection_to_diff_entries, build_file_diffs, diff_index_to_tree,
+    diff_index_to_tree_with_renames, diff_index_to_worktree_with_renames,
     diff_trees_with_renames_and_policy, line_change_counts, read_submodule_head_oid,
     read_worktree_side_bytes_for_diff,
     structured::{
@@ -402,25 +402,6 @@ fn filtered_worktree_file_changes(
         worktree_changes(repo)?
     };
     Ok(filter_file_changes(raw, repo, pathspecs))
-}
-
-fn default_worktree_diff_entries(
-    repo: &grit_lib::repo::Repository,
-    against: Option<&str>,
-) -> Result<Vec<DiffEntry>> {
-    let base_tree = if let Some(spec) = against {
-        Some(context::commit_tree(
-            repo,
-            &resolve_diff_commit(repo, spec)?,
-        )?)
-    } else {
-        let head = resolve_head(repo.git_dir()).context("could not resolve HEAD")?;
-        match head.oid() {
-            Some(oid) => Some(context::commit_tree(repo, oid)?),
-            None => None,
-        }
-    };
-    worktree_against_tree_entries(repo, base_tree.as_ref())
 }
 
 fn worktree_scope_outcome(
@@ -1184,6 +1165,12 @@ fn unstaged_entries(repo: &grit_lib::repo::Repository) -> Result<Vec<DiffEntry>>
     .context("could not diff the index against the working tree")?;
     sort_entries(&mut entries);
     Ok(entries)
+}
+
+/// Staged changes: index vs HEAD tree.
+fn staged_changes(repo: &grit_lib::repo::Repository) -> Result<Vec<FileChange>> {
+    let entries = staged_entries(repo)?;
+    file_changes_from_entries(repo, entries, None)
 }
 
 /// Unstaged changes: worktree vs index (what changed on disk since `git add`).

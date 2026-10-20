@@ -107,6 +107,8 @@ pub struct DiffOptions {
     pub renames: RenameDetection,
     /// `--diff-filter` status selection (applied after rename detection).
     pub filter: Option<DiffFilter>,
+    /// Whitespace comparison rules for line diffs.
+    pub whitespace: WhitespaceMode,
     /// When false, skip intra-line word emphasis (line-level hunks only).
     pub word_level_inline: bool,
     /// When set, incremented on each blob ODB read during tree content loading (tests only).
@@ -123,6 +125,7 @@ impl Default for DiffOptions {
             indent_heuristic: true,
             renames: RenameDetection::default(),
             filter: None,
+            whitespace: WhitespaceMode::default(),
             word_level_inline: true,
             blob_read_counter: None,
         }
@@ -136,6 +139,8 @@ impl PartialEq for DiffOptions {
             && self.algorithm == other.algorithm
             && self.indent_heuristic == other.indent_heuristic
             && self.renames == other.renames
+            && self.filter == other.filter
+            && self.whitespace == other.whitespace
             && self.word_level_inline == other.word_level_inline
     }
 }

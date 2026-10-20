@@ -180,7 +180,7 @@ pub fn tree_diff_structured_parallel(
                 && entry.old_oid == entry.new_oid
                 && entry.old_mode == entry.new_mode
             {
-                let (old_bytes, old_bin) = load_old_side(odb, entry)?;
+                let (old_bytes, old_bin) = load_old_side(odb, entry, blob_reads)?;
                 return Ok(TreeDiffStructured {
                     entry: entry.clone(),
                     structured: StructuredFileDiff {

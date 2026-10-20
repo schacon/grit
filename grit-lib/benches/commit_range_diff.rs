@@ -92,7 +92,7 @@ fn bench_commit_range_structured(c: &mut Criterion) {
                         fx.entries.clone(),
                         &fx.config,
                         &policy,
-                        opts,
+                        opts.clone(),
                     )
                     .expect("structured diff"),
                 );

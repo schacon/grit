@@ -106,7 +106,7 @@ impl<'repo> Diff<'repo> {
         pathspecs: &[String],
         opts: &DiffOptions,
     ) -> Result<Vec<FileDiff>> {
-        collect_files_for_target(self.repo, target, pathspecs, *opts)
+        collect_files_for_target(self.repo, target, pathspecs, opts.clone())
     }
 
     /// Build per-file diff output for tree or index diff entries (stat, name-only, patch).
@@ -142,7 +142,7 @@ impl<'repo> Diff<'repo> {
         entries: Vec<DiffEntry>,
         opts: &DiffOptions,
     ) -> Result<Vec<FileDiff>> {
-        file_diffs_from_entries(self.repo, entries, *opts)
+        file_diffs_from_entries(self.repo, entries, opts.clone())
     }
 
     /// Structured diff rows for [`write_patch_structured`](super::write_patch_structured) (patch-text output).
@@ -156,7 +156,7 @@ impl<'repo> Diff<'repo> {
         pathspecs: &[String],
         opts: &DiffOptions,
     ) -> Result<Vec<TreeDiffStructured>> {
-        collect_tree_structured_for_target(self.repo, target, pathspecs, *opts)
+        collect_tree_structured_for_target(self.repo, target, pathspecs, opts.clone())
     }
 
     /// Tree diff entries for commit-range [`write_patch`](super::write_patch) (skips structured line diffs).
@@ -170,6 +170,6 @@ impl<'repo> Diff<'repo> {
         pathspecs: &[String],
         opts: &DiffOptions,
     ) -> Result<Vec<DiffEntry>> {
-        collect_diff_entries_for_patch_target(self.repo, target, pathspecs, *opts)
+        collect_diff_entries_for_patch_target(self.repo, target, pathspecs, opts.clone())
     }
 }

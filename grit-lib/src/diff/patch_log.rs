@@ -33,7 +33,7 @@ pub enum LogPatchCommitHeader {
 }
 
 /// Options for [`write_commit_log_patch`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LogPatchOptions {
     /// Unified diff hunk settings.
     pub diff: DiffOptions,
@@ -99,7 +99,7 @@ pub fn write_patch<W: Write>(
     let config = repo.config()?.clone();
     let thread_policy = repo.thread_policy();
     let log_opts = LogPatchOptions {
-        diff: opts.diff,
+        diff: opts.diff.clone(),
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
     };
@@ -164,7 +164,7 @@ pub fn write_patch_structured<W: Write>(
     let config = repo.config()?.clone();
     let thread_policy = repo.thread_policy();
     let log_opts = LogPatchOptions {
-        diff: opts.diff,
+        diff: opts.diff.clone(),
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
     };
@@ -399,7 +399,7 @@ fn effective_log_patch_options(
     opts: &LogPatchOptions,
 ) -> Result<LogPatchOptions> {
     let config = repo.config()?.clone();
-    let mut out = *opts;
+    let mut out = opts.clone();
     out.abbrev_len = resolve_core_abbrev_len(&config, repo.odb())?;
     Ok(out)
 }
@@ -989,7 +989,7 @@ pub fn write_patch_resolved<W: Write>(
     let config = repo.config()?.clone();
     let thread_policy = repo.thread_policy();
     let log_opts = LogPatchOptions {
-        diff: opts.diff,
+        diff: opts.diff.clone(),
         abbrev_len: opts.abbrev_len,
         commit_header: LogPatchCommitHeader::FormatPercentH,
     };

@@ -79,7 +79,7 @@ fn bench_diff_stat_vs_patch(c: &mut Criterion) {
                     fx.repo.odb(),
                     entries[..entry_count.min(entries.len())].to_vec(),
                     DiffDetail::Stat,
-                    opts,
+                    opts.clone(),
                     &config,
                     &policy,
                 )
@@ -94,7 +94,7 @@ fn bench_diff_stat_vs_patch(c: &mut Criterion) {
                     fx.repo.odb(),
                     entries[..entry_count.min(entries.len())].to_vec(),
                     DiffDetail::Patch,
-                    opts,
+                    opts.clone(),
                     &config,
                     &policy,
                 )

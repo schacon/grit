@@ -119,15 +119,6 @@ fn diff_stat_same_files_as_default_diff() {
     let stat_json = grit(fx.path(), &["diff", "--stat", "--json"]);
     assert!(stat_json.ok(), "{}", stat_json.dump("diff --stat json"));
 
-    fn paths_from_diff_json(stdout: &str) -> Vec<String> {
-        let v: serde_json::Value = serde_json::from_str(stdout).expect("json");
-        v["files"]
-            .as_array()
-            .expect("files")
-            .iter()
-            .map(|f| f["path"].as_str().expect("path").to_string())
-            .collect()
-    }
     let mut default_paths = paths_from_diff_json(&default_json.stdout);
     let mut stat_paths = paths_from_diff_json(&stat_json.stdout);
     default_paths.sort();
@@ -136,6 +127,71 @@ fn diff_stat_same_files_as_default_diff() {
         default_paths, stat_paths,
         "default diff paths {default_paths:?} vs stat {stat_paths:?}"
     );
+}
+
+fn paths_from_diff_json(stdout: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(stdout).expect("json");
+    v["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .map(|f| f["path"].as_str().expect("path").to_string())
+        .collect()
+}
+
+#[test]
+fn diff_staged_stat_same_files_as_staged_diff() {
+    let fx = CliFixture::new();
+    std::fs::write(fx.path().join("staged.txt"), b"a\n").expect("write");
+    std::fs::write(fx.path().join("unstaged.txt"), b"u\n").expect("write");
+    git(fx.path(), &["add", "."]);
+    git(fx.path(), &["commit", "-m", "init"]);
+    std::fs::write(fx.path().join("staged.txt"), b"b\n").expect("write");
+    std::fs::write(fx.path().join("unstaged.txt"), b"v\n").expect("write");
+    git(fx.path(), &["add", "staged.txt"]);
+
+    let staged_json = grit(fx.path(), &["diff", "--staged", "--json"]);
+    assert!(staged_json.ok(), "{}", staged_json.dump("staged diff"));
+    let stat_json = grit(fx.path(), &["diff", "--staged", "--stat", "--json"]);
+    assert!(stat_json.ok(), "{}", stat_json.dump("staged stat"));
+
+    let mut staged_paths = paths_from_diff_json(&staged_json.stdout);
+    let mut stat_paths = paths_from_diff_json(&stat_json.stdout);
+    staged_paths.sort();
+    stat_paths.sort();
+    assert_eq!(staged_paths, ["staged.txt"]);
+    assert_eq!(staged_paths, stat_paths);
+}
+
+#[test]
+fn diff_commit_stat_same_files_as_commit_diff() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let grit_init = grit(dir.path(), &["init"]);
+    assert!(grit_init.ok(), "{}", grit_init.dump("init"));
+    std::fs::write(dir.path().join("f.txt"), b"1\n").expect("write");
+    assert!(grit(dir.path(), &["add", "f.txt"]).ok(), "add");
+    assert!(
+        grit(dir.path(), &["commit", "-m", "one"]).ok(),
+        "commit one"
+    );
+    std::fs::write(dir.path().join("f.txt"), b"2\n").expect("write");
+    assert!(grit(dir.path(), &["add", "f.txt"]).ok(), "add");
+    assert!(
+        grit(dir.path(), &["commit", "-m", "two"]).ok(),
+        "commit two"
+    );
+
+    let patch_json = grit(dir.path(), &["diff", "HEAD~1", "--json"]);
+    assert!(patch_json.ok(), "{}", patch_json.dump("commit diff"));
+    let stat_json = grit(dir.path(), &["diff", "HEAD~1", "--stat", "--json"]);
+    assert!(stat_json.ok(), "{}", stat_json.dump("commit stat"));
+
+    let mut patch_paths = paths_from_diff_json(&patch_json.stdout);
+    let mut stat_paths = paths_from_diff_json(&stat_json.stdout);
+    patch_paths.sort();
+    stat_paths.sort();
+    assert_eq!(patch_paths, stat_paths);
+    assert_eq!(patch_paths, ["f.txt"]);
 }
 
 #[test]
