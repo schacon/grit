@@ -17,10 +17,13 @@
 //! # }
 //! ```
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use thiserror::Error;
 
@@ -33,6 +36,7 @@ use crate::objects::{
 use crate::pack::SingleLocalPackReader;
 use crate::parallel::{try_par_map_with_local, ParallelOp};
 use crate::repo::Repository;
+use crate::repo_caches::RepoCaches;
 use crate::rev_list::{all_ref_commit_tips_for_walk, walk_closure_ordered, CommitGraph};
 use crate::rev_parse_error::{AmbiguousChangeIdHint, RevParseError};
 
@@ -386,22 +390,41 @@ pub fn find_commits_by_change_id_prefix(
     })
 }
 
-fn stored_change_id_headers_likely(repo: &Repository, objects_dir: &Path) -> Result<bool> {
-    let cache = repo.caches().stored_change_id_header_likely();
-    if let Some(v) = *cache.lock().unwrap_or_else(|e| e.into_inner()) {
-        return Ok(v);
+/// Drop cached and persisted change-id header probe state after the ODB changes.
+pub(crate) fn invalidate_stored_change_id_header_probe(caches: &RepoCaches, objects_dir: &Path) {
+    if let Ok(mut guard) = caches.stored_change_id_header_likely().lock() {
+        *guard = None;
     }
-    let likely = probe_objects_for_change_id_headers(objects_dir)?;
-    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(likely);
+    let path = change_id_probe_marker_path(objects_dir);
+    let _ = fs::remove_file(path);
+}
+
+fn stored_change_id_headers_likely(repo: &Repository, objects_dir: &Path) -> Result<bool> {
+    let fingerprint = change_id_probe_odb_fingerprint(objects_dir)?;
+    let cache = repo.caches().stored_change_id_header_likely();
+    if let Some((cached_fp, likely)) = *cache.lock().unwrap_or_else(|e| e.into_inner()) {
+        if cached_fp == fingerprint {
+            return Ok(likely);
+        }
+    }
+    let likely = probe_objects_for_change_id_headers(objects_dir, fingerprint)?;
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((fingerprint, likely));
     Ok(likely)
 }
 
-fn probe_objects_for_change_id_headers(objects_dir: &Path) -> Result<bool> {
-    if let Some(likely) = read_change_id_probe_marker(objects_dir) {
-        return Ok(likely);
+fn probe_objects_for_change_id_headers(objects_dir: &Path, fingerprint: u64) -> Result<bool> {
+    match read_change_id_probe_marker(objects_dir) {
+        Some(ChangeIdProbeMarker::Present) => return Ok(true),
+        Some(ChangeIdProbeMarker::Absent(marker_fp)) if marker_fp == fingerprint => {
+            return Ok(false);
+        }
+        Some(ChangeIdProbeMarker::LegacyAbsent) => {
+            let _ = fs::remove_file(change_id_probe_marker_path(objects_dir));
+        }
+        Some(ChangeIdProbeMarker::Absent(_)) | None => {}
     }
     if objects_dir_has_loose_objects(objects_dir) {
-        write_change_id_probe_marker(objects_dir, true)?;
+        write_change_id_probe_marker(objects_dir, true, fingerprint)?;
         return Ok(true);
     }
     let pack_dir = objects_dir.join("pack");
@@ -414,37 +437,137 @@ fn probe_objects_for_change_id_headers(objects_dir: &Path) -> Result<bool> {
             }
             let data = fs::read(&path).map_err(Error::Io)?;
             if object_bytes_may_contain_change_id_header(&data) {
-                write_change_id_probe_marker(objects_dir, true)?;
+                write_change_id_probe_marker(objects_dir, true, fingerprint)?;
                 return Ok(true);
             }
         }
     }
-    write_change_id_probe_marker(objects_dir, false)?;
+    write_change_id_probe_marker(objects_dir, false, fingerprint)?;
     Ok(false)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeIdProbeMarker {
+    Present,
+    Absent(u64),
+    LegacyAbsent,
+}
+
+/// Cheap ODB layout stamp for validating persisted/in-memory negative probe caches.
+fn change_id_probe_odb_fingerprint(objects_dir: &Path) -> Result<u64> {
+    let mut hasher = DefaultHasher::new();
+    hash_loose_object_layout(objects_dir, &mut hasher)?;
+    let pack_dir = objects_dir.join("pack");
+    hash_path_metadata(&pack_dir, &mut hasher);
+    if pack_dir.is_dir() {
+        let mut pack_files = Vec::new();
+        for entry in fs::read_dir(&pack_dir).map_err(Error::Io)? {
+            let entry = entry.map_err(Error::Io)?;
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "pack") {
+                continue;
+            }
+            let meta = fs::metadata(&path).map_err(Error::Io)?;
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_owned();
+            pack_files.push((name, meta.len(), system_time_key(meta.modified().ok())));
+        }
+        pack_files.sort_unstable();
+        for file in pack_files {
+            file.hash(&mut hasher);
+        }
+    }
+    Ok(hasher.finish())
+}
+
+fn hash_loose_object_layout(objects_dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
+    let Ok(entries) = fs::read_dir(objects_dir) else {
+        return Ok(());
+    };
+    let mut loose = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.len() != 2 || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let Ok(hex_entries) = fs::read_dir(entry.path()) else {
+            continue;
+        };
+        for hex_entry in hex_entries.flatten() {
+            let path = hex_entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let meta = fs::metadata(&path).map_err(Error::Io)?;
+            let leaf = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_owned();
+            loose.push((
+                format!("{name}{leaf}"),
+                meta.len(),
+                system_time_key(meta.modified().ok()),
+            ));
+        }
+    }
+    loose.sort_unstable();
+    for item in loose {
+        item.hash(hasher);
+    }
+    Ok(())
+}
+
+fn hash_path_metadata(path: &Path, hasher: &mut DefaultHasher) {
+    if let Ok(meta) = fs::metadata(path) {
+        meta.len().hash(hasher);
+        system_time_key(meta.modified().ok()).hash(hasher);
+    }
+}
+
+fn system_time_key(time: Option<SystemTime>) -> (u64, u32) {
+    time.and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| (d.as_secs(), d.subsec_nanos()))
+        .unwrap_or((0, 0))
 }
 
 fn change_id_probe_marker_path(objects_dir: &Path) -> PathBuf {
     objects_dir.join("info").join(CHANGE_ID_PROBE_MARK)
 }
 
-fn read_change_id_probe_marker(objects_dir: &Path) -> Option<bool> {
+fn read_change_id_probe_marker(objects_dir: &Path) -> Option<ChangeIdProbeMarker> {
     let path = change_id_probe_marker_path(objects_dir);
     let data = fs::read(path).ok()?;
     if data.starts_with(PROBE_PRESENT) {
-        Some(true)
-    } else if data.starts_with(PROBE_ABSENT) {
-        Some(false)
-    } else {
-        None
+        return Some(ChangeIdProbeMarker::Present);
     }
+    if data.starts_with(b"absent ") {
+        let rest = data.strip_prefix(b"absent ")?;
+        let line = rest.split(|&b| b == b'\n').next()?;
+        let hex = std::str::from_utf8(line).ok()?.trim();
+        let fp = u64::from_str_radix(hex, 16).ok()?;
+        return Some(ChangeIdProbeMarker::Absent(fp));
+    }
+    if data.starts_with(PROBE_ABSENT) {
+        return Some(ChangeIdProbeMarker::LegacyAbsent);
+    }
+    None
 }
 
-fn write_change_id_probe_marker(objects_dir: &Path, present: bool) -> Result<()> {
+fn write_change_id_probe_marker(objects_dir: &Path, present: bool, fingerprint: u64) -> Result<()> {
     let path = change_id_probe_marker_path(objects_dir);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(Error::Io)?;
     }
-    let payload = if present { PROBE_PRESENT } else { PROBE_ABSENT };
+    let payload = if present {
+        PROBE_PRESENT.to_vec()
+    } else {
+        format!("absent {fingerprint:016x}\n").into_bytes()
+    };
     fs::write(path, payload).map_err(Error::Io)
 }
 

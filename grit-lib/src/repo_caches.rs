@@ -73,8 +73,8 @@ pub struct RepoCaches {
     commit_linkage: Mutex<CommitLinkageCache>,
     bitmap_index: BitmapIndexCache,
     diagnostics: Mutex<DiagnosticsHandle>,
-    /// Whether on-disk objects may contain `change-id` headers (`None` = not probed yet).
-    stored_change_id_header_likely: Mutex<Option<bool>>,
+    /// Cached change-id header probe `(odb fingerprint, result)` for this handle.
+    stored_change_id_header_likely: Mutex<Option<(u64, bool)>>,
 }
 
 impl std::fmt::Debug for RepoCaches {
@@ -120,7 +120,7 @@ impl RepoCaches {
         })
     }
 
-    pub(crate) fn stored_change_id_header_likely(&self) -> &Mutex<Option<bool>> {
+    pub(crate) fn stored_change_id_header_likely(&self) -> &Mutex<Option<(u64, bool)>> {
         &self.stored_change_id_header_likely
     }
 

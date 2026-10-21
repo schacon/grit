@@ -989,6 +989,19 @@ impl Odb {
                 PackStore::invalidate_legacy_for_objects_dir(store.objects_dir());
             }
         }
+        self.invalidate_change_id_header_probe();
+    }
+
+    fn invalidate_change_id_header_probe(&self) {
+        if let Some(caches) = self.shared_config_state.as_ref() {
+            crate::change_id::invalidate_stored_change_id_header_probe(caches, self.objects_dir());
+        }
+    }
+
+    fn note_commit_object_written(&self, kind: ObjectKind) {
+        if kind == ObjectKind::Commit {
+            self.invalidate_change_id_header_probe();
+        }
     }
 
     /// Materialize unreachable objects from packfiles superseded by a new repack pack.
@@ -1911,7 +1924,9 @@ impl Odb {
             if already_exists {
                 return Ok(oid);
             }
-            return WritableObjectStore::write(primary.as_ref(), kind, data, options);
+            let oid = WritableObjectStore::write(primary.as_ref(), kind, data, options)?;
+            self.note_commit_object_written(kind);
+            return Ok(oid);
         }
 
         let primary = self.primary()?;
@@ -1935,7 +1950,9 @@ impl Odb {
             return Ok(oid);
         }
 
-        WritableObjectStore::write(primary.as_ref(), kind, data, options)
+        let oid = WritableObjectStore::write(primary.as_ref(), kind, data, options)?;
+        self.note_commit_object_written(kind);
+        Ok(oid)
     }
 
     /// Write an object as a loose file in this object directory only.
@@ -1965,8 +1982,11 @@ impl Odb {
             return Ok(existing);
         }
 
-        self.local_loose()?
-            .write(kind, data, WriteOptions::default())
+        let oid = self
+            .local_loose()?
+            .write(kind, data, WriteOptions::default())?;
+        self.note_commit_object_written(kind);
+        Ok(oid)
     }
 
     /// Write a loose object file when it is missing, even if [`Self::exists`] is true because

@@ -79,7 +79,7 @@ impl DiffCompareArgs {
 
 /// Rewrite Git-style attached diff flags so clap can parse them (`-M30` → `-M=30`, `-U0` → `-U=0`).
 ///
-/// Applies to `diff`, `show`, and `log` after global flags and before `--`.
+/// Applies to porcelain commands that flatten [`DiffCompareArgs`] and `crate::diff_format::DiffFormatArgs` (`diff`, `show`, `log`), after global flags and before `--`.
 #[must_use]
 pub fn normalize_diff_argv(mut args: Vec<String>) -> Vec<String> {
     let Some(cmd_idx) = locate_porcelain_diff_command(&args) else {
