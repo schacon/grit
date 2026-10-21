@@ -145,7 +145,7 @@ impl<'repo> Diff<'repo> {
         file_diffs_from_entries(self.repo, entries, *opts)
     }
 
-    /// Structured diff rows for [`write_patch_structured`] (patch-text output).
+    /// Structured diff rows for [`write_patch_structured`](super::write_patch_structured) (patch-text output).
     ///
     /// # Errors
     ///
@@ -159,7 +159,7 @@ impl<'repo> Diff<'repo> {
         collect_tree_structured_for_target(self.repo, target, pathspecs, *opts)
     }
 
-    /// Tree diff entries for commit-range [`write_patch`] (skips structured line diffs).
+    /// Tree diff entries for commit-range [`write_patch`](super::write_patch) (skips structured line diffs).
     ///
     /// # Errors
     ///
