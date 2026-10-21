@@ -1593,6 +1593,59 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_tree_with_valid_prefix_does_not_enqueue_children() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        let missing_child = ObjectId::from_hex("abababababababababababababababababababab").unwrap();
+        let mut tree_bytes = Vec::new();
+        tree_bytes.extend_from_slice(b"100644 a\0");
+        tree_bytes.extend_from_slice(missing_child.as_bytes());
+        tree_bytes.extend_from_slice(b"\xffcorrupt suffix");
+        let tree_oid = repo
+            .odb()
+            .write(ObjectKind::Tree, &tree_bytes)
+            .expect("tree");
+        let commit_body = format!(
+            "tree {}\nauthor T <t@example.com> 1 +0000\ncommitter T <t@example.com> 1 +0000\n\n",
+            tree_oid.to_hex()
+        );
+        let commit_oid = repo
+            .odb()
+            .write(ObjectKind::Commit, commit_body.as_bytes())
+            .expect("commit");
+        crate::refs::write_ref(repo.git_dir(), "refs/heads/main", &commit_oid).expect("ref");
+
+        let report = fsck(
+            &repo,
+            &FsckOptions::full_repository(false),
+            &mut NullProgress,
+            &NeverCancel,
+        )
+        .expect("fsck");
+        assert!(
+            report.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    FsckIssue::BadObject { oid, error }
+                        if *oid == tree_oid && error.id == "corruptObject"
+                )
+            }),
+            "expected corrupt tree report: {:?}",
+            report.issues
+        );
+        assert!(
+            !report.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    FsckIssue::MissingObject { oid, .. } if *oid == missing_child
+                )
+            }),
+            "must not walk prefix entries before parse failure: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
     fn commit_tree_pointing_at_blob_is_broken_link() {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
