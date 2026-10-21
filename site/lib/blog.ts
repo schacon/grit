@@ -1,4 +1,7 @@
-/** Blog posts from `content/blog/*.md` (front matter: title, date, summary, author, slug). */
+/**
+ * Blog posts from `content/blog/*.md` (front matter: title, date, summary, author, slug, and
+ * optionally `script` / `style`: a post's own interactive figures, served from `site/public`).
+ */
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,6 +21,10 @@ export interface Post {
   published: string;
   body: string;
   source: string;
+  /** Public path of a script the post loads (it defines the custom elements its figures use). */
+  script?: string;
+  /** Public path of a stylesheet for those figures. */
+  style?: string;
 }
 
 let cached: Post[] | undefined;
@@ -43,6 +50,8 @@ export function loadPosts(): Post[] {
         published: meta.date,
         body,
         source,
+        script: meta.script,
+        style: meta.style,
       };
     });
   cached = posts.sort((a, b) => (a.published === b.published ? b.slug.localeCompare(a.slug) : b.published.localeCompare(a.published)));

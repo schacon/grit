@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import Script from "next/script";
 import { Footer, Rail, TopBar } from "@/components/Rail";
 import { BLOG_DESCRIPTION, displayDate, loadPosts, shortSha } from "@/lib/blog";
 import { initHighlighter } from "@/lib/highlight";
@@ -70,6 +71,8 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
           </div>
         </section>
       </main>
+      {post.style ? <link rel="stylesheet" href={post.style} precedence="default" /> : null}
+      {post.script ? <Script src={post.script} /> : null}
       <Footer>
         <a href="../">All posts</a>
         <a href="/">Home</a>
