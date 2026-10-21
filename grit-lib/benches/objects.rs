@@ -45,8 +45,7 @@ fn bench_object_id_hash(c: &mut Criterion) {
     ] {
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), &data, |b, input| {
-            b.iter(|| black_box(HashAlgo::Sha1.hash_object(kind, input)))
-                .expect("hash");
+            b.iter(|| black_box(HashAlgo::Sha1.hash_object(kind, input).expect("hash")));
         });
     }
     group.finish();
@@ -61,8 +60,7 @@ fn bench_hash_object(c: &mut Criterion) {
     ] {
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), &data, |b, input| {
-            b.iter(|| black_box(hash_object(HashAlgo::Sha1, kind, input)))
-                .expect("hash");
+            b.iter(|| black_box(hash_object(HashAlgo::Sha1, kind, input).expect("hash")));
         });
     }
     group.finish();
