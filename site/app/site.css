@@ -60,7 +60,7 @@
   .entry h2 a { text-decoration: none; }
   .entry p { max-width: 680px; margin: 14px 0 0; font-size: 18px; line-height: 1.55; color: var(--soft); text-wrap: pretty; }
 
-  .post-body { display: grid; grid-template-columns: minmax(0, 720px) minmax(0, 1fr); gap: 56px; padding: 48px 0 64px; }
+  .post-body { display: grid; grid-template-columns: minmax(0, 720px) minmax(220px, 1fr); gap: 56px; padding: 48px 0 64px; }
   .content { font-size: 19px; line-height: 1.65; color: var(--soft); }
   .content > :first-child { margin-top: 0; }
   .content h2 { margin: 2.2em 0 .5em; font-size: clamp(26px, 3vw, 34px); line-height: 1.1; letter-spacing: -.025em; color: var(--ink); }
@@ -86,7 +86,9 @@
   .toc li:has(> a[aria-current]) { box-shadow: inset 2px 0 var(--accent); margin-left: -1px; padding-left: 15px; }
   .toc a[aria-current] { color: var(--ink); }
   .toc-level-3 { padding-left: 28px; }
-  .clone { margin-top: 28px; padding: 12px 11px; border: 1px solid var(--line); border-radius: 10px; font: 11px/1.55 var(--mono); color: var(--soft); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+  /* Grow past the sidebar column into the page gutter (and beyond the 1200px container on wide
+     screens) rather than clipping the longest line; clip only at the viewport edge. */
+  .clone { width: max-content; min-width: 100%; max-width: calc(100% + clamp(20px, 4vw, 56px) + max(0px, (100vw - 1200px) / 2) - 24px); margin-top: 28px; padding: 12px 11px; border: 1px solid var(--line); border-radius: 10px; font: 11px/1.55 var(--mono); color: var(--soft); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
   .clone b { color: var(--ink); font-weight: 700; }
   .clone-cmd { color: var(--ink); }
   .clone-prompt { color: var(--accent); }
