@@ -96,7 +96,7 @@ pub struct DiffFormatArgs {
     /// Lines of context around each change (Git `-U`).
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified_context: Option<usize>,
-    /// Expand patch hunks to enclosing function boundaries (Git `-W`).
+    /// Expand hunks to enclosing function boundaries (Git `-W` / `--function-context`).
     #[arg(short = 'W', long = "function-context")]
     pub function_context: bool,
 }

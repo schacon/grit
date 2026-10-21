@@ -111,7 +111,7 @@ pub struct DiffOptions {
     pub whitespace: WhitespaceMode,
     /// When false, skip intra-line word emphasis (line-level hunks only).
     pub word_level_inline: bool,
-    /// Expand hunks to enclosing function boundaries (Git `-W`).
+    /// Expand hunks to enclosing function boundaries (`git diff -W`).
     pub function_context: bool,
     /// When set, incremented on each blob ODB read during tree content loading (tests only).
     #[doc(hidden)]
