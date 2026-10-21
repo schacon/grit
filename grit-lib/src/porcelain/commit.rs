@@ -989,6 +989,7 @@ fn create_commit_with_index(
         message.push('\n');
     }
 
+<<<<<<< New base: commit: message file, author override, and no-verify hooks
     let (mut author, mut author_raw) = if req.reset_author {
         (
             author_line_from_committer(
@@ -1004,6 +1005,15 @@ fn create_commit_with_index(
         (a, reuse_author_raw)
     } else if req.amend {
         (amend_author.unwrap_or_default(), amend_author_raw)
+||||||| Common ancestor
+    let (author, author_raw) = if let Some(a) = amend_author {
+        (a, amend_author_raw)
+=======
+    let (author, author_raw) = if req.amend && !req.author.is_empty() {
+        (req.author.clone(), Vec::new())
+    } else if let Some(a) = amend_author {
+        (a, amend_author_raw)
+>>>>>>> Current commit: Fix commit review blockers: message stripspace, post-commit, author parse, amend
     } else {
         (req.author.clone(), Vec::new())
     };
