@@ -1813,7 +1813,9 @@ impl core::marker::UnsafeUnpin for grit_lib::config::ident::ParsedSignatureTimes
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::config::ident::ParsedSignatureTimes
 pub fn grit_lib::config::ident::committer_timestamp_for_until_filter(&str) -> i64
+pub fn grit_lib::config::ident::committer_timestamp_for_until_filter_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering(&str) -> i64
+pub fn grit_lib::config::ident::committer_unix_seconds_for_ordering_bytes(&[u8]) -> i64
 pub fn grit_lib::config::ident::fsck_commit_idents(&[u8], grit_lib::objects::HashAlgo) -> core::result::Result<(), alloc::string::String>
 pub fn grit_lib::config::ident::parse_signature_tail(&str) -> core::option::Option<grit_lib::config::ident::SignatureTail>
 pub fn grit_lib::config::ident::parse_signature_times(&str) -> core::option::Option<grit_lib::config::ident::ParsedSignatureTimes>
@@ -9166,7 +9168,7 @@ pub fn grit_lib::objects::CommitRef<'a>::committer_raw(&self) -> &[u8]
 pub fn grit_lib::objects::CommitRef<'a>::committer_timestamp(&self) -> i64
 pub fn grit_lib::objects::CommitRef<'a>::committer_unix_seconds_for_ordering(&self) -> i64
 pub fn grit_lib::objects::CommitRef<'a>::encoding_raw(&self) -> core::option::Option<&[u8]>
-pub fn grit_lib::objects::CommitRef<'a>::extra_headers(&self) -> &[u8]
+pub fn grit_lib::objects::CommitRef<'a>::extra_headers(&self) -> alloc::borrow::Cow<'_, [u8]>
 pub fn grit_lib::objects::CommitRef<'a>::message(&self) -> alloc::borrow::Cow<'_, str>
 pub fn grit_lib::objects::CommitRef<'a>::message_bytes(&self) -> &[u8]
 pub fn grit_lib::objects::CommitRef<'a>::parents(&self) -> &[grit_lib::objects::ObjectId]

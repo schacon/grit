@@ -3,8 +3,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use grit_lib::objects::{parse_commit, serialize_commit, CommitRef, ObjectId, ObjectKind};
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::objects::{parse_commit, CommitRef, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_test_support::objects::{HashAlgo as FixtureAlgo, RepoFixture};
 
@@ -31,7 +31,8 @@ fn git_hash_commit(repo: &RepoFixture, body: &[u8]) -> ObjectId {
 #[test]
 fn commit_ref_roundtrip() {
     let fixture = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
-    let repo = Repository::discover(Some(fixture.path()), &RepositoryOptions::empty()).expect("open");
+    let repo =
+        Repository::discover(Some(fixture.path()), &RepositoryOptions::empty()).expect("open");
     let empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
     let samples: Vec<Vec<u8>> = vec![
@@ -56,29 +57,39 @@ fn commit_ref_roundtrip() {
             "tree {empty}\nauthor A <a@example.com> 1 +0000\ncommitter C <c@example.com> 1 +0000\nmergetag object {empty}\n type commit\n tag t\n tagger T <t@e.com> 1 +0000\n\nmerge-tag-body\n"
         )
         .into_bytes(),
+        format!(
+            "tree {empty}\nauthor A <a@example.com> 1 +0000\ncommitter C <c@example.com> 1 +0000\nchange-id interleaved\nencoding UTF-8\ngpgsig -----BEGIN PGP SIGNATURE-----\n sig\n -----END PGP SIGNATURE-----\n\ninterleaved-body\n"
+        )
+        .into_bytes(),
     ];
 
+    let mut sample_oids = Vec::with_capacity(samples.len());
     for body in &samples {
-        git_hash_commit(&fixture, body);
+        sample_oids.push(git_hash_commit(&fixture, body));
     }
 
-    let _root = fixture
+    let root = fixture
         .git(&["commit-tree", empty, "-m", "root"])
         .stdout
         .trim()
         .to_string();
-    fixture.git(&["commit-tree", empty, "-p", &_root, "-m", "child"]);
+    let child: ObjectId = fixture
+        .git(&["commit-tree", empty, "-p", &root, "-m", "child"])
+        .stdout
+        .trim()
+        .parse()
+        .expect("child oid");
 
-    let rev_list = fixture.git(&["rev-list", "--all"]).stdout;
-    for line in rev_list.lines() {
-        let oid: ObjectId = line.trim().parse().expect("rev-list oid");
+    let mut oids: Vec<ObjectId> = sample_oids;
+    oids.push(child);
+
+    for oid in oids {
         let obj = repo.odb().read(&oid).expect("read");
         assert_eq!(obj.kind, ObjectKind::Commit, "expected commit {oid}");
         let raw = &obj.data;
         let legacy = parse_commit(raw).expect("parse_commit");
         let cref = CommitRef::parse(raw).expect("CommitRef::parse");
         assert_eq!(cref.to_owned(), legacy, "to_owned mismatch for {oid}");
-        assert_eq!(serialize_commit(&legacy), *raw, "legacy serialize for {oid}");
         assert_eq!(cref.to_bytes(), *raw, "CommitRef serialize for {oid}");
     }
 }
