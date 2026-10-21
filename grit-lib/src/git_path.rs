@@ -895,12 +895,20 @@ pub(crate) fn pathspec_traverses_symlink_dir(
     {
         return false;
     }
+    let directory_pathspec = rel_path.ends_with('/');
     let components: Vec<&str> = rel_path.split('/').filter(|c| !c.is_empty()).collect();
-    if components.len() <= 1 {
+    if components.is_empty() {
         return false;
     }
+    let check_through = if directory_pathspec {
+        components.len()
+    } else if components.len() <= 1 {
+        return false;
+    } else {
+        components.len() - 1
+    };
     let mut prefix = String::new();
-    for component in &components[..components.len() - 1] {
+    for component in &components[..check_through] {
         if !prefix.is_empty() {
             prefix.push('/');
         }
@@ -950,6 +958,8 @@ mod git_path_component_tests {
         assert!(!pathspec_traverses_symlink_dir(
             root, "real/f", false, false
         ));
+        assert!(pathspec_traverses_symlink_dir(root, "dl/", false, false));
+        assert!(pathspec_traverses_symlink_dir(root, "dl/f/", false, false));
     }
 
     #[test]

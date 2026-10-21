@@ -1395,6 +1395,21 @@ mod tests {
             other => panic!("expected PathspecBeyondSymlink, got {other:?}"),
         }
 
+        let err = stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["dl/".to_owned()],
+                pathspec_sources: vec!["dl/".to_owned()],
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap_err();
+        match err {
+            Error::PathspecBeyondSymlink { spec } => assert_eq!(spec, "dl/"),
+            other => panic!("expected PathspecBeyondSymlink for dl/, got {other:?}"),
+        }
+
         let index = repo.load_index().unwrap();
         let entry = index.get(b"real/f", 0).expect("tracked file");
         assert_eq!(entry.size, 5, "modified file must stay unstaged");
