@@ -388,9 +388,6 @@ pub enum PathspecFromFileParseError {
     /// Quoted line decoded to invalid UTF-8.
     #[error("invalid UTF-8 in quoted pathspec")]
     InvalidUtf8InQuotedLine,
-    /// A NUL-mode record is not valid UTF-8.
-    #[error("invalid UTF-8 in NUL pathspec record")]
-    InvalidUtf8InNulRecord,
 }
 
 /// Failure while resolving argv and `--pathspec-from-file` pathspecs against a work tree.

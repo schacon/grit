@@ -344,10 +344,14 @@ impl From<&DiffStatus> for ChangeStatus {
 
 /// Serialize a [`DiffEntry`] as a [`ChangeJson`].
 pub fn change_json(entry: &DiffEntry) -> ChangeJson {
+    let old_path = match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => entry.old_path.clone(),
+        _ => None,
+    };
     ChangeJson {
         path: entry_path(entry).to_owned(),
         status: entry.status.into(),
-        old_path: entry.old_path.clone(),
+        old_path,
     }
 }
 

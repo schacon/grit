@@ -84,6 +84,88 @@ fn skip_global_flag(argv: &[String], i: usize) -> Option<usize> {
     }
 }
 
+#[cfg(test)]
+mod argv_tests {
+    use super::normalize_status_argv;
+
+    #[test]
+    fn normalize_skips_non_status_commands() {
+        let mut argv = vec![
+            "grit".into(),
+            "add".into(),
+            "-uno".into(),
+            "file.txt".into(),
+        ];
+        normalize_status_argv(&mut argv);
+        assert_eq!(argv[2], "-uno");
+    }
+
+    #[test]
+    fn normalize_expands_status_u_and_uno() {
+        let mut argv = vec![
+            "grit".into(),
+            "status".into(),
+            "-u".into(),
+            "keep.txt".into(),
+        ];
+        normalize_status_argv(&mut argv);
+        assert_eq!(argv[2], "--untracked=all");
+        assert_eq!(argv[3], "keep.txt");
+        let mut argv2 = vec!["grit".into(), "st".into(), "-uno".into()];
+        normalize_status_argv(&mut argv2);
+        assert_eq!(argv2[2], "--untracked=no");
+    }
+}
+
+fn is_grit_subcommand(name: &str) -> bool {
+    matches!(
+        name,
+        "init"
+            | "clone"
+            | "remote"
+            | "fetch"
+            | "pull"
+            | "push"
+            | "log"
+            | "show"
+            | "diff"
+            | "status"
+            | "st"
+            | "shortlog"
+            | "add"
+            | "rm"
+            | "mv"
+            | "clean"
+            | "restore"
+            | "reset"
+            | "commit"
+            | "branch"
+            | "tag"
+            | "switch"
+            | "merge"
+            | "pick"
+            | "revert"
+            | "history"
+            | "stash"
+            | "config"
+            | "fsck"
+            | "gc"
+            | "bundle"
+            | "notes"
+            | "cat"
+            | "rev-parse"
+            | "revs"
+            | "worktree"
+            | "auth"
+            | "skill"
+            | "completions"
+            | "manager"
+            | "upload-pack"
+            | "receive-pack"
+            | "help"
+    )
+}
+
 /// Which header line `grit status` shows (drives only the human rendering; the
 /// JSON fields below carry the same information in a flat, stable form).
 #[derive(Clone, Copy)]
