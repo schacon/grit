@@ -879,6 +879,7 @@ pub(crate) mod pack_cache {
                 return Ok(hit);
             }
         }
+        crate::trace::trace_span!("grit.pack.index.open");
         let parsed = Arc::new(read_pack_index_no_verify(idx_path)?);
         store.with_catalog(|g| {
             g.by_idx.insert(
