@@ -265,7 +265,7 @@ pub(crate) mod patch_ids;
 pub(crate) mod path_icase;
 pub(crate) mod path_population;
 pub mod path_validate;
-pub(crate) mod pathspec;
+pub mod pathspec;
 pub(crate) mod pkt_line;
 pub(crate) mod precompose_config;
 pub(crate) mod promisor;

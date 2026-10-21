@@ -53,6 +53,12 @@ When the current branch has a configured upstream (`branch.<name>.remote` and `b
 | ---- | ----------- |
 | `--untracked <MODE>` | How untracked paths are listed: `normal` (default) shows untracked files and collapses wholly untracked directories to a single directory entry; `all` lists every untracked file; `no` omits untracked paths. When the flag is omitted, `status.showUntrackedFiles` from config is used (Git-compatible; defaults to `normal`). |
 | `--no-ahead-behind` | Skip ahead/behind rev-list walks; JSON sets `ahead`, `behind`, and upstream counts to `null`. Also skipped when `status.aheadBehind=false` in config. |
+| `-u[<MODE>]` | Short form of `--untracked`: bare `-u` means `all`; `-uno`, `-unormal`, and `-uall` match Git. |
+| `PATH`… | Limit the report to paths matching these pathspecs (after `--`). Uses the same pathspec rules as [`grit add`](../add/). |
+| `--pathspec-from-file <FILE\|->` | Read pathspecs from a file (`-` for stdin), in addition to any `PATH` arguments. |
+| `--pathspec-file-nul` | `--pathspec-from-file` entries are NUL-separated (requires `--pathspec-from-file`). |
+
+Rename detection is on by default (Git’s `status.renames` / `diff.renames`; disable with `status.renames=false`). Human output shows renames as `old → new`; `--json` adds `old_path` on rename and copy entries.
 
 See also the [global options](../global-options/).
 
@@ -173,8 +179,8 @@ Pass `--json` for stable, scripting-friendly output:
 | `behind` | number or null | Commits on the target that the branch does not have; `null` when counts were skipped. |
 | `upstream` | object or null | When upstream tracking differs from `target`: `{ "ref", "ahead", "behind" }` (counts may be `null` when skipped). Always present; `null` when there is no separate upstream. |
 | `commits` | array | Newest of those commits, up to ten, each using the shared [`CommitJson`](../README.md#commit-json-object-commitjson) shape (including `change_id` and `change_id_stored`). |
-| `staged` | array | Staged changes with `path` and `status`. |
-| `unstaged` | array | Unstaged changes with `path` and `status`. |
+| `staged` | array | Staged changes with `path`, `status`, and optional `old_path` (renames/copies). |
+| `unstaged` | array | Unstaged changes with `path`, `status`, and optional `old_path` (renames/copies). |
 | `untracked` | array | Untracked paths (raw UTF-8; JSON escapes control characters). With default `--untracked normal`, wholly untracked directories appear once (often with a trailing `/`); with `--untracked all`, every file path is listed. |
 | `clean` | boolean | `true` when there is nothing to commit and nothing untracked. |
 | `merging` | boolean | **Deprecated.** Prefer `operation`. `true` when a merge is in progress (`MERGE_HEAD` exists). |
@@ -197,7 +203,8 @@ Example:
     { "oid": "9a1c2e0d4b6f8a1c3e5d7f9b0a2c4e6d8f0a1b3c", "subject": "Add a greeting test" }
   ],
   "staged": [
-    { "path": "notes.md", "status": "added" }
+    { "path": "notes.md", "status": "added" },
+    { "path": "renamed.txt", "status": "renamed", "old_path": "old.txt" }
   ],
   "unstaged": [
     { "path": "main.rs", "status": "modified" }

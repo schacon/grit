@@ -5,6 +5,13 @@
     "ChangeJson": {
       "description": "A single worktree/index change in JSON output.",
       "properties": {
+        "old_path": {
+          "description": "Previous path for renames and copies (`null` when not applicable).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "path": {
           "type": "string"
         },

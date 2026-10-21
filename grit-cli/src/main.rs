@@ -571,14 +571,8 @@ enum Command {
     /// Show what's changed and where you are (this is the default).
     #[command(alias = "st")]
     Status {
-        /// How untracked paths are listed: `normal` (default) collapses wholly
-        /// untracked directories; `all` lists every file; `no` omits untracked paths.
-        /// When omitted, uses `status.showUntrackedFiles` from config.
-        #[arg(long = "untracked", value_name = "MODE")]
-        untracked: Option<commands::status::UntrackedListing>,
-        /// Skip ahead/behind rev-list walks (also when `status.aheadBehind=false`).
-        #[arg(long = "no-ahead-behind")]
-        no_ahead_behind: bool,
+        #[command(flatten)]
+        status: commands::status::StatusCliArgs,
     },
     /// List the commits on this branch that aren't on the target branch yet.
     #[command(alias = "sl")]
@@ -952,7 +946,8 @@ struct ServeArgs {
 fn main() {
     stdio::configure();
     grit_trace::maybe_init_from_env();
-    let parse_argv = diff_args::normalize_diff_argv(std::env::args().collect());
+    let mut parse_argv = diff_args::normalize_diff_argv(std::env::args().collect());
+    commands::status::normalize_status_argv(&mut parse_argv);
     let cli = match Cli::try_parse_from(parse_argv) {
         Ok(cli) => cli,
         Err(err) if err.use_stderr() => {
@@ -1097,8 +1092,7 @@ fn reject_non_human_plumbing(cli: &Cli, opts: &OutputOptions) -> Result<()> {
 
 fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
     match cli.command.unwrap_or(Command::Status {
-        untracked: None,
-        no_ahead_behind: false,
+        status: commands::status::StatusCliArgs::default(),
     }) {
         Command::Init {
             path,
@@ -1278,14 +1272,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 ctx,
             )
         }
-        Command::Status {
-            untracked,
-            no_ahead_behind,
-        } => emit(
-            &commands::status::run(untracked, no_ahead_behind)?,
-            opts,
-            ctx,
-        ),
+        Command::Status { status } => emit(&commands::status::run(&status)?, opts, ctx),
         Command::Shortlog => emit(&commands::shortlog::run()?, opts, ctx),
         Command::Add {
             pathspecs,
