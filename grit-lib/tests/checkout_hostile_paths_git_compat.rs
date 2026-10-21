@@ -114,6 +114,10 @@ fn hostile_case_metas() -> &'static [HostileCaseMeta] {
             upstream_config: "",
         },
         HostileCaseMeta {
+            label: "ntfs backslash dotgit config",
+            upstream_config: "",
+        },
+        HostileCaseMeta {
             label: "symlink gitmodules",
             upstream_config: "",
         },
@@ -141,6 +145,7 @@ fn hostile_tree_body(
         "ntfs index allocation" => tree_entry("100644", b".git::$INDEX_ALLOCATION", blob_hex),
         "hfs dotgit" => tree_entry("100644", ".gI\u{200c}T".as_bytes(), blob_hex),
         "ntfs backslash" => tree_entry("100644", br"a\..\x", blob_hex),
+        "ntfs backslash dotgit config" => tree_entry("100644", b".git\\config", blob_hex),
         "symlink gitmodules" => tree_entry("120000", b".gitmodules", symlink_target_hex),
         other => panic!("unknown hostile case {other}"),
     }

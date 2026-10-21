@@ -422,15 +422,18 @@ fn ntfs_backslash_dotdot_tail(after: &str) -> bool {
 }
 
 fn scan_ntfs_backslash_dot_special(name: &str, mut pred: impl FnMut(&str) -> bool) -> bool {
-    let mut slash_rest = name;
-    while let Some(idx) = slash_rest.find('\\') {
-        let after = &slash_rest[idx + 1..];
-        if pred(after) {
+    if !name.contains('\\') {
+        return false;
+    }
+    let mut rest = name;
+    while let Some(idx) = rest.find('\\') {
+        let segment = &rest[..idx];
+        if !segment.is_empty() && pred(segment) {
             return true;
         }
-        slash_rest = after;
+        rest = &rest[idx + 1..];
     }
-    false
+    !rest.is_empty() && pred(rest)
 }
 
 fn has_dos_drive_prefix_bytes(name: &[u8]) -> bool {
@@ -525,6 +528,13 @@ mod tests {
             validate_component(b"foo\\.git", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsBackslash
         );
+        for name in [b".git\\config".as_slice(), b".git\\", b".GIT\\config"] {
+            assert_eq!(
+                validate_component(name, BLOB, FSCK, WT_KIND).unwrap_err(),
+                PathComponentError::NtfsBackslash,
+                "reject {name:?}"
+            );
+        }
         if cfg!(windows) {
             assert_eq!(
                 validate_component(br"a\..\x", BLOB, FSCK, FSCK_KIND).unwrap_err(),
