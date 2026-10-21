@@ -58,6 +58,7 @@ With `--graph`, human output draws a commit graph in the left margin (ASCII by d
 | `--remotes[=<glob>]` | Remote-tracking tips, optionally filtered by glob under `refs/remotes/`. |
 | `-p`, `--patch` | Unified patch under each commit (merge commits omit the patch). |
 | `--patch-text` | Accepted for CLI parity with [`grit diff`](diff.md); use `grit diff --patch-text` for git-apply output. |
+| `-W`, `--function-context` | Expand patch hunks to enclosing function boundaries (same as [`grit diff`](diff.md)). |
 | `--stat` | Per-file change bars and totals under each commit. |
 | `--numstat` | Tab-separated insertion/deletion/path lines per commit. |
 | `--shortstat` | One summary line per commit. |
