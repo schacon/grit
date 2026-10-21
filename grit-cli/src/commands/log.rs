@@ -17,10 +17,11 @@ use serde::Serialize;
 use std::io::Write;
 
 use crate::commands::diff::{
-    cli_outcome_from_lib, render_log_commit_diff, resolve_commit_diff_pathspecs, DiffOutcome,
-    DiffTotalsJson, FileDiff,
+    cli_outcome_from_lib, diff_of_commit, render_log_commit_diff,
+    resolve_commit_diff_pathspecs, DiffOutcome, DiffTotalsJson, FileDiff,
 };
-use crate::commands::show::{diffstat, render_stat, use_color, DiffStat};
+use crate::commands::show::{diffstat, DiffStat};
+use crate::diff_render::{render_stat, use_color};
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
 use crate::context::{self, CommitSummary};
 use crate::diff_format::DiffFormatArgs;
@@ -577,8 +578,8 @@ fn build_commit_outcome(
     for (i, commit) in commit_json_rows.into_iter().enumerate() {
         if let Some((detail, ref results)) = many_results {
             let outcome = cli_outcome_from_lib(repo, results[i].output.clone(), detail, format)?;
-            let stat = if format.stat {
-                Some(diffstat(&outcome))
+            let stat = if format.stat && commit_inputs[i].parents.len() < 2 {
+                Some(diffstat(&diff_of_commit(repo, &commit_inputs[i].oid)?))
             } else {
                 None
             };
