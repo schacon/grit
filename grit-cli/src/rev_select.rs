@@ -156,10 +156,19 @@ impl RevSelectArgs {
             || self.pickaxe_grep.is_some()
     }
 
-    /// True when the caller named revisions or ref sets on the command line (not the command default).
+    /// True when the caller supplied revision, date, or ref-set selectors (not command defaults).
+    ///
+    /// Log continuation with `--cursor` must not repeat these; the cursor encodes the query.
     #[must_use]
-    pub fn has_explicit_revision_selection(&self) -> bool {
+    pub fn has_log_walk_selectors(&self) -> bool {
         !self.revs.is_empty()
+            || self.since.is_some()
+            || self.after.is_some()
+            || self.until.is_some()
+            || self
+                .before
+                .as_ref()
+                .is_some_and(|b| !b.starts_with(CURSOR_PREFIX))
             || self.all
             || self.branches.is_some()
             || self.tags.is_some()
@@ -301,45 +310,6 @@ impl RevSelectArgs {
             }
         }
         builder.build().map(|f| Some(Arc::new(f)))
-    }
-
-    /// Flags and revision tokens to echo in `grit log` continuation hints (excludes paging and walk-mode flags).
-    pub fn log_continuation_args(&self) -> String {
-        let mut parts = Vec::new();
-        parts.extend(self.revs.iter().cloned());
-        if self.all {
-            parts.push("--all".to_owned());
-        }
-        if let Some(glob) = &self.branches {
-            push_flag_with_optional_value(&mut parts, "--branches", glob);
-        }
-        if let Some(glob) = &self.tags {
-            push_flag_with_optional_value(&mut parts, "--tags", glob);
-        }
-        if let Some(glob) = &self.remotes {
-            push_flag_with_optional_value(&mut parts, "--remotes", glob);
-        }
-        if let Some(s) = &self.since {
-            parts.push(format!("--since={s}"));
-        } else if let Some(s) = &self.after {
-            parts.push(format!("--after={s}"));
-        }
-        if let Some(s) = &self.until {
-            parts.push(format!("--until={s}"));
-        } else if let Some(s) = &self.before {
-            if !s.starts_with(CURSOR_PREFIX) {
-                parts.push(format!("--before={s}"));
-            }
-        }
-        parts.join(" ")
-    }
-}
-
-fn push_flag_with_optional_value(parts: &mut Vec<String>, flag: &str, glob: &str) {
-    if glob.is_empty() {
-        parts.push(flag.to_owned());
-    } else {
-        parts.push(format!("{flag}={glob}"));
     }
 }
 
