@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::diff::{
-    empty_blob_oid, is_unregistered_embedded_git_repo, materialize_worktree_blob,
-    mode_from_metadata, read_submodule_head_oid, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
+    is_unregistered_embedded_git_repo, materialize_worktree_blob, mode_from_metadata,
+    read_submodule_head_oid, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use crate::error::{Error, Result};
 use crate::git_path::pathspec_traverses_symlink_dir;
@@ -21,6 +21,7 @@ use crate::index::{
     entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_TREE,
 };
 use crate::objects::ObjectId;
+use crate::objects::ObjectKind;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
 use crate::path_validate::{EntryMode, PathValidationKind, ProtectOptions};
@@ -411,14 +412,7 @@ fn stage_inner_on_index(
 
     if opts.intent_to_add {
         let mut outcome = stage_intent_to_add_paths(
-            repo,
-            work_tree,
-            &untracked,
-            &unstaged,
-            &matches,
-            index,
-            &rules,
-            dry_run,
+            repo, work_tree, &untracked, &unstaged, &matches, index, &rules, dry_run,
         )?;
         if dry_run {
             sort_outcome_paths_lexicographic(&mut outcome);
@@ -1320,6 +1314,17 @@ fn walk_worktree_files_under(work_tree: &Path, rel_dir: &str, out: &mut Vec<Stri
     Ok(())
 }
 
+fn empty_blob_oid_for_repo(repo: &Repository, persist: bool) -> Result<crate::objects::ObjectId> {
+    let algo = repo.odb().hash_algo();
+    if persist {
+        repo.odb()
+            .write(ObjectKind::Blob, b"")
+            .map_err(|e| Error::Message(format!("could not store empty blob: {e}")))
+    } else {
+        Ok(algo.hash_object(ObjectKind::Blob, b""))
+    }
+}
+
 fn pathdiff_worktree(work_tree: &Path, abs: &Path) -> Result<String> {
     let rel = abs
         .strip_prefix(work_tree)
@@ -1359,12 +1364,7 @@ fn stage_intent_to_add_paths(
     }
 
     let mut outcome = StageOutcome::default();
-    let empty = empty_blob_oid();
-    if !dry_run {
-        repo.odb()
-            .write(crate::objects::ObjectKind::Blob, b"")
-            .map_err(|e| Error::Message(format!("could not store empty blob: {e}")))?;
-    }
+    let empty = empty_blob_oid_for_repo(repo, !dry_run)?;
     let precompose = rules
         .config()
         .get_bool("core.precomposeunicode")
@@ -2645,14 +2645,23 @@ mod tests {
         let index = repo.load_index().unwrap();
         let ie = index.get(b"f.txt", 0).expect("ita row");
         assert!(ie.intent_to_add());
-        assert_eq!(ie.oid, empty_blob_oid());
+        assert_eq!(
+            ie.oid,
+            repo.odb()
+                .hash_algo()
+                .hash_object(crate::objects::ObjectKind::Blob, b"")
+        );
 
         let fsck = Command::new("git")
             .args(["fsck", "--strict"])
             .current_dir(root)
             .output()
             .expect("git fsck");
-        assert!(fsck.status.success(), "{}", String::from_utf8_lossy(&fsck.stderr));
+        assert!(
+            fsck.status.success(),
+            "{}",
+            String::from_utf8_lossy(&fsck.stderr)
+        );
 
         let diff_stat = Command::new("git")
             .args(["diff", "--stat"])
@@ -2715,6 +2724,105 @@ mod tests {
             porcelain_ita_lines(&grit_porcelain.stdout),
             porcelain_ita_lines(&git_porcelain.stdout),
             "porcelain v2 for -N must match git"
+        );
+    }
+
+    #[test]
+    fn intent_to_add_sha256_round_trips_with_git() {
+        use std::process::Command;
+
+        let probe = TempDir::new().unwrap();
+        if !Command::new("git")
+            .args(["init", "--object-format=sha256", "--bare", "."])
+            .current_dir(probe.path())
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        grit_test_support::git(
+            root,
+            &[
+                "init",
+                "-q",
+                "--object-format=sha256",
+                "--initial-branch=main",
+                ".",
+            ],
+        );
+        grit_test_support::git(root, &["config", "user.email", "t@example.com"]);
+        grit_test_support::git(root, &["config", "user.name", "Test"]);
+        let repo = Repository::discover(Some(root), &RepositoryOptions::empty()).unwrap();
+        assert_eq!(repo.odb().hash_algo(), crate::objects::HashAlgo::Sha256);
+
+        fs::write(root.join("new.txt"), b"payload\n").unwrap();
+        stage(
+            &repo,
+            &StageOptions {
+                pathspecs: vec!["new.txt".to_owned()],
+                pathspec_sources: vec!["new.txt".to_owned()],
+                intent_to_add: true,
+                ..StageOptions::default()
+            },
+            &mut NullProgress,
+        )
+        .unwrap();
+
+        let index = repo.load_index().unwrap();
+        let ie = index.get(b"new.txt", 0).expect("ita row");
+        assert!(ie.intent_to_add());
+        let expected_empty = repo.odb().hash_algo().hash_object(ObjectKind::Blob, b"");
+        assert_eq!(ie.oid, expected_empty);
+
+        let fsck = Command::new("git")
+            .args(["fsck", "--strict"])
+            .current_dir(root)
+            .output()
+            .expect("git fsck");
+        assert!(
+            fsck.status.success(),
+            "sha256 ITA index must fsck: {}",
+            String::from_utf8_lossy(&fsck.stderr)
+        );
+
+        let grit_porcelain = Command::new("git")
+            .args(["status", "--porcelain=v2"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let root2 = tmp2.path();
+        grit_test_support::git(
+            root2,
+            &[
+                "init",
+                "-q",
+                "--object-format=sha256",
+                "--initial-branch=main",
+                ".",
+            ],
+        );
+        fs::write(root2.join("new.txt"), b"payload\n").unwrap();
+        grit_test_support::git(root2, &["add", "-N", "new.txt"]);
+        let git_porcelain = Command::new("git")
+            .args(["status", "--porcelain=v2"])
+            .current_dir(root2)
+            .output()
+            .unwrap();
+
+        fn porcelain_ita_line(out: &[u8]) -> Option<String> {
+            String::from_utf8_lossy(out)
+                .lines()
+                .find(|l| l.contains("new.txt"))
+                .map(str::to_owned)
+        }
+        assert_eq!(
+            porcelain_ita_line(&grit_porcelain.stdout),
+            porcelain_ita_line(&git_porcelain.stdout),
+            "sha256 porcelain v2 must match git add -N"
         );
     }
 }
