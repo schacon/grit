@@ -1023,6 +1023,20 @@ impl Index {
         Ok(idx)
     }
 
+    /// Like [`Self::load_expand_sparse`], but applies path protection from `config` when expanding sparse directories.
+    pub fn load_expand_sparse_with_config(
+        path: &Path,
+        odb: &Odb,
+        config: &ConfigSet,
+    ) -> Result<Self> {
+        Self::load_expand_sparse_optional_with_context(
+            path,
+            odb,
+            Some(config),
+            IndexParseContext::default(),
+        )
+    }
+
     /// Like [`Index::load_expand_sparse`], but treats a missing index or Git's
     /// `"file too short"` placeholder as an empty index.
     pub fn load_expand_sparse_optional(path: &Path, odb: &Odb) -> Result<Self> {
@@ -1113,6 +1127,7 @@ impl Index {
         patterns: &[String],
         cone_mode: bool,
         enable_sparse_index: bool,
+        protect: crate::path_validate::ProtectOptions,
     ) -> Result<()> {
         if !enable_sparse_index || !cone_mode {
             self.sparse_directories = false;
@@ -1147,6 +1162,7 @@ impl Index {
                 patterns,
                 cone_mode,
                 &self.entries,
+                protect,
             )?;
             if expected.is_empty() {
                 continue;
@@ -3006,8 +3022,7 @@ fn read_tree_into_overlay(
         if !prefix_under_or_equal(prefix, &path) {
             continue;
         }
-        let display_path = String::from_utf8_lossy(&path);
-        crate::path_population::validate_tree_walk_entry(&display_path, &name, mode, protect)?;
+        crate::path_population::validate_tree_walk_entry(rel_base, &name, mode, protect)?;
         if mode == MODE_TREE {
             read_tree_into_overlay(repo, &oid, prefix, &path, use_replace_path, protect, out)?;
             continue;
@@ -3373,17 +3388,11 @@ fn collect_sparse_aware_expected_blobs(
     patterns: &[String],
     cone_mode: bool,
     entries: &[IndexEntry],
+    protect: crate::path_validate::ProtectOptions,
 ) -> Result<Vec<IndexEntry>> {
     let mut out = Vec::new();
     walk_sparse_aware(
-        odb,
-        tree_oid,
-        prefix,
-        patterns,
-        cone_mode,
-        entries,
-        crate::path_validate::ProtectOptions::default(),
-        &mut out,
+        odb, tree_oid, prefix, patterns, cone_mode, entries, protect, &mut out,
     )?;
     Ok(out)
 }
@@ -3413,13 +3422,7 @@ fn walk_sparse_aware(
             p.extend_from_slice(&te.name);
             p
         };
-        let display_path = String::from_utf8_lossy(&path);
-        crate::path_population::validate_tree_walk_entry(
-            &display_path,
-            &te.name,
-            te.mode,
-            protect,
-        )?;
+        crate::path_population::validate_tree_walk_entry(&path, &te.name, te.mode, protect)?;
         if te.mode == MODE_TREE {
             let path_slash = {
                 let mut p = path.clone();
@@ -3489,13 +3492,7 @@ fn flatten_tree_blobs(
             p.extend_from_slice(&te.name);
             p
         };
-        let display_path = String::from_utf8_lossy(&path);
-        crate::path_population::validate_tree_walk_entry(
-            &display_path,
-            &te.name,
-            te.mode,
-            protect,
-        )?;
+        crate::path_population::validate_tree_walk_entry(prefix, &te.name, te.mode, protect)?;
         if te.mode == MODE_TREE {
             let sub = flatten_tree_blobs(odb, &te.oid, &path, protect)?;
             out.extend(sub);

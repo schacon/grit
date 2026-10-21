@@ -6,9 +6,10 @@
 //! `core.filesRefLockTimeout`, `core.packedRefsTimeout`, and `reftable.lockTimeout`.
 //!
 //! ```rust
+//! use grit_lib::config::ConfigSet;
 //! use grit_lib::lockfile::LockWait;
-//!
-//! assert_eq!(LockWait::Immediately, LockWait::Immediately);
+//! let wait = LockWait::files_ref_lock(Some(&ConfigSet::new()));
+//! assert!(matches!(wait, LockWait::Immediately | LockWait::Backoff { .. } | LockWait::Indefinitely));
 //! ```
 
 use std::fs::{self, File, OpenOptions};

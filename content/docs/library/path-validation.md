@@ -54,4 +54,4 @@ validate_component(
 ## Related
 
 - Tree object fsck uses the same rules via `grit-lib` maintenance APIs.
-- Step 2 of the path hardening plan will enforce these checks at index population and checkout.
+- Index population, checkout, restore, and `grit add` staging call these validators through `grit_lib::path_population` and `ProtectOptions::from_config`.

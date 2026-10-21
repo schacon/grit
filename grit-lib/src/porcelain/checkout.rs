@@ -101,8 +101,6 @@ pub fn checkout_between_trees_with_progress(
     to: &ObjectId,
     progress: &mut dyn ProgressSink,
 ) -> Result<()> {
-    // Reject hostile tree paths before touching the worktree (same rules as index population).
-    crate::porcelain::merge::tree_to_index_entries(repo, to, "")?;
     if from.is_none() {
         return checkout_populated_tree(repo, to, progress);
     }

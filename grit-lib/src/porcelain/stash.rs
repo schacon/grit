@@ -74,7 +74,7 @@ pub fn flatten_tree_full(
             format!("{prefix}/{entry_name}")
         };
         crate::path_population::validate_tree_walk_entry(
-            &full_path,
+            prefix.as_bytes(),
             &entry.name,
             entry.mode,
             protect,

@@ -5313,7 +5313,8 @@ pub fn grit_lib::index::Index::split_index_base_oid(&self) -> core::option::Opti
 pub fn grit_lib::index::Index::stage_file(&mut self, grit_lib::index::IndexEntry)
 pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
-pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::load_expand_sparse_with_config(&std::path::Path, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
 pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>
@@ -11908,7 +11909,8 @@ pub fn grit_lib::index::Index::split_index_base_oid(&self) -> core::option::Opti
 pub fn grit_lib::index::Index::stage_file(&mut self, grit_lib::index::IndexEntry)
 pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
-pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::load_expand_sparse_with_config(&std::path::Path, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
 pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>

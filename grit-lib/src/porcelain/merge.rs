@@ -102,7 +102,7 @@ fn tree_to_index_entries_with_protect(
         } else {
             format!("{prefix}/{name}")
         };
-        validate_tree_walk_entry(&path, &te.name, te.mode, protect)?;
+        validate_tree_walk_entry(prefix.as_bytes(), &te.name, te.mode, protect)?;
 
         if te.mode == 0o040000 {
             let sub = tree_to_index_entries_with_protect(repo, &te.oid, &path, protect)?;
