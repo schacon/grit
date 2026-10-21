@@ -464,7 +464,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use crate::porcelain::commit::{create_commit, CommitRequest};
+    use crate::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
     use crate::progress::NullProgress;
     use crate::repo::InitOptions;
 

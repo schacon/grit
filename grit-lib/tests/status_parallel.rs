@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
+use grit_lib::porcelain::commit::HookPolicy;
 use grit_lib::porcelain::status::{status, IgnoredMode, StatusModel, StatusOptions, UntrackedMode};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::{InitOptions, Repository};

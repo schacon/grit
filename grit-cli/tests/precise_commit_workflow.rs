@@ -6,7 +6,7 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
@@ -212,14 +212,69 @@ fn precise_commit_workflow_with_upstream_and_merge_conflict() -> TestResult {
     let add_preview = grit_json(&clone, &["add", "--dry-run", "-u", "--", "src"]);
     assert_eq!(add_preview["dry_run"], Value::Bool(true));
 
-    let preview = grit_json(&clone, &["commit", "--dry-run", "-m", "preview"]);
-    assert_eq!(preview["dry_run"], Value::Bool(true));
-    let files = preview["files"].as_array().expect("files");
-    assert!(files.iter().any(|f| f["path"] == "src/base.txt"));
+    let path_preview = grit_json(
+        &clone,
+        &["commit", "--dry-run", "-m", "preview", "--", "src/new.txt"],
+    );
+    assert_eq!(path_preview["dry_run"], Value::Bool(true));
+    assert_eq!(path_preview["scope"], "paths");
+    let preview_files = path_preview["files"].as_array().expect("preview files");
+    assert!(
+        preview_files.iter().any(|f| f["path"] == "src/new.txt"),
+        "path dry-run should list new file: {preview_files:?}"
+    );
 
-    let (code, _, stderr) = grit_run(&clone, &["add", "-u", "--", "src"]);
-    assert_eq!(code, 0, "add -u failed: {stderr}");
-    assert_git_clean_enough(&clone, "after add -u");
+    let (code, _, stderr) = grit_run(&clone, &["add", "-u", "--", "src/base.txt"]);
+    assert_eq!(code, 0, "add -u base failed: {stderr}");
+    assert_git_clean_enough(&clone, "after add -u base");
+
+    let real_new = grit_json(
+        &clone,
+        &["commit", "-m", "Add new under src", "--", "src/new.txt"],
+    );
+    assert_eq!(real_new["scope"], "paths");
+    assert_eq!(real_new["changes"], 1);
+    assert_git_clean_enough(&clone, "after path commit new");
+
+    fs::write(clone.join("src/to_drop.txt"), "drop me\n")?;
+    system_git_ok(&clone, &["add", "src/to_drop.txt"]);
+    system_git_ok(&clone, &["commit", "-qm", "track drop"]);
+    fs::remove_file(clone.join("src/to_drop.txt"))?;
+    let del_preview = grit_json(
+        &clone,
+        &[
+            "commit",
+            "--dry-run",
+            "-m",
+            "drop preview",
+            "--",
+            "src/to_drop.txt",
+        ],
+    );
+    assert_eq!(del_preview["files"].as_array().unwrap().len(), 1);
+    let del_real = grit_json(
+        &clone,
+        &["commit", "-m", "drop file", "--", "src/to_drop.txt"],
+    );
+    assert_eq!(del_real["changes"], 1);
+    assert_git_clean_enough(&clone, "after path commit delete");
+
+    fs::write(clone.join("src/base.txt"), "edited base again\n")?;
+    let (code, _, stderr) = grit_run(&clone, &["add", "-u", "--", "src/base.txt"]);
+    assert_eq!(code, 0, "re-stage base: {stderr}");
+    let chmod_preview = grit_json(
+        &clone,
+        &[
+            "commit",
+            "--dry-run",
+            "-m",
+            "mode preview",
+            "--",
+            "src/base.txt",
+        ],
+    );
+    assert_eq!(chmod_preview["files"].as_array().unwrap().len(), 1);
+
     let (code, stdout, stderr) = grit_commit_stdin(
         &clone,
         &["commit", "--staged", "-F", "-", "--json"],

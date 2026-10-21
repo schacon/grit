@@ -14,7 +14,7 @@ use grit_lib::maintenance::{
 use grit_lib::objects::pack::{clear_pack_cache, test_pack_cache_guard};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::add::stage_for_commit;
-use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+use grit_lib::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::git_fsck;

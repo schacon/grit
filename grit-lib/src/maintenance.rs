@@ -1498,7 +1498,7 @@ mod tests {
     use super::*;
     use crate::config::{ConfigFile, ConfigScope, ConfigSet};
     use crate::porcelain::add::stage_for_commit;
-    use crate::porcelain::commit::{create_commit, CommitRequest};
+    use crate::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
     use crate::progress::NullProgress;
     use crate::repo::InitOptions;
     use tempfile::TempDir;

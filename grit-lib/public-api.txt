@@ -10666,7 +10666,6 @@ pub grit_lib::porcelain::add::StageOptions::intent_to_add: bool
 pub grit_lib::porcelain::add::StageOptions::mode: grit_lib::porcelain::add::StageMode
 pub grit_lib::porcelain::add::StageOptions::pathspec_sources: alloc::vec::Vec<alloc::string::String>
 pub grit_lib::porcelain::add::StageOptions::pathspecs: alloc::vec::Vec<alloc::string::String>
-pub grit_lib::porcelain::add::StageOptions::dry_run: bool
 impl core::clone::Clone for grit_lib::porcelain::add::StageOptions
 pub fn grit_lib::porcelain::add::StageOptions::clone(&self) -> Self
 impl core::default::Default for grit_lib::porcelain::add::StageOptions

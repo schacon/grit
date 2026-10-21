@@ -5,7 +5,7 @@ use std::process::Command;
 
 use grit_lib::config::environment::RepositoryOptions;
 use grit_lib::porcelain::add::{stage, stage_for_commit, StageMode, StageOptions};
-use grit_lib::porcelain::commit::{commit_worktree, create_commit, CommitRequest};
+use grit_lib::porcelain::commit::{commit_worktree, create_commit, CommitRequest, HookPolicy};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;

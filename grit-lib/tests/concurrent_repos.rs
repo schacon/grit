@@ -21,7 +21,7 @@ use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::notes::{write_notes_commit, NotesTreeEntry};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::add::{stage, StageOptions};
-use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+use grit_lib::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
 use grit_lib::porcelain::status::{status, StatusOptions};
 use grit_lib::progress::NullProgress;
 use grit_lib::remote::transfer::{fetch_local, FetchOptions, TagMode};

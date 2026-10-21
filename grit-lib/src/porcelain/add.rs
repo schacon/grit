@@ -20,9 +20,9 @@ use crate::index::{
     entry_from_metadata, index_file_mtime, Index, IndexEntry, MODE_GITLINK, MODE_TREE,
 };
 use crate::objects::ObjectId;
-use crate::objects::ObjectKind;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
+use crate::path_validate::{validate_path, EntryMode, PathValidationKind, ProtectOptions};
 use crate::pathspec::{has_glob_chars, pathspec_is_exclude, sorted_paths_match_pathspec};
 use crate::porcelain::bulk_index::IndexStagingThresholds;
 use crate::porcelain::index_mode::{
@@ -197,7 +197,8 @@ pub(crate) fn stage_for_commit_on_index(
         dry_run,
         ..StageOptions::default()
     };
-    stage_inner_on_index(repo, &opts, progress, true, index, false)
+    // Tracked-scan staging writes blobs; use the diff-only path when previewing.
+    stage_inner_on_index(repo, &opts, progress, !dry_run, index, false)
 }
 
 /// Stage paths into a caller-owned index without writing it to disk.
@@ -422,6 +423,15 @@ fn stage_inner_on_index(
         validate_pathspecs(repo, index, work_tree, &unstaged, &untracked, opts, &rules)?;
     }
 
+    if opts.mode == StageMode::All {
+        validate_worktree_paths_for_staging(&rules, &untracked)?;
+        for entry in &unstaged {
+            if entry.status != DiffStatus::Deleted {
+                validate_worktree_paths_for_staging(&rules, &[entry.path().to_owned()])?;
+            }
+        }
+    }
+
     let matches =
         |path: &str| opts.pathspecs.is_empty() || repo.paths_match_pathspecs(path, &opts.pathspecs);
 
@@ -472,20 +482,15 @@ fn stage_inner_on_index(
                 continue;
             }
             if plan.remove {
-                if dry_run && write_index {
-                    if index.get(path.as_bytes(), 0).is_some() {
-                        outcome.removed.push(path);
-                    }
-                } else if index.remove(path.as_bytes()) {
+                if index.get(path.as_bytes(), 0).is_some() {
+                    index.remove(path.as_bytes());
                     outcome.removed.push(path);
                 }
                 continue;
             }
-            if dry_run && write_index {
-                outcome.modified.push(path);
-                continue;
+            if !dry_run {
+                icase_map.remove_alias_of(index, path.as_bytes());
             }
-            icase_map.remove_alias_of(index, path.as_bytes());
             apply_tracked_stage_plan(
                 repo,
                 work_tree,
@@ -989,17 +994,13 @@ fn stage_untracked_paths_parallel(
             deferred.push(prep.index_relpath);
             continue;
         }
-        if dry_run_list_only {
-            outcome.added.push(prep.index_relpath);
-            continue;
-        }
         icase_map.remove_alias_of(index, prep.index_relpath.as_bytes());
         let mode =
             mode_with_executable_hint(prep.mode, &prep.index_relpath, executable_hint, matches);
         let mut entry =
             entry_from_metadata(&prep.meta, prep.index_relpath.as_bytes(), prep.oid, mode);
         entry.mode = mode;
-        if !skip_per_path_cache_invalidate {
+        if !dry_run && !skip_per_path_cache_invalidate {
             index.invalidate_untracked_cache_for_path(&prep.index_relpath);
             index.invalidate_cache_tree_for_path(&entry.path);
         }
@@ -1007,15 +1008,15 @@ fn stage_untracked_paths_parallel(
         outcome.added.push(prep.index_relpath);
     }
     let staged_batch_count = batch_entries.len();
-    if !dry_run {
-        for entry in batch_entries {
+    for entry in batch_entries {
+        if !dry_run {
             if let Ok(rel) = std::str::from_utf8(&entry.path) {
                 mark_fsmonitor_staged(index, rel);
             }
-            index.add_or_replace(entry);
         }
+        index.add_or_replace(entry);
     }
-    if staged_batch_count > 0 && !dry_run_list_only && index.fsmonitor_last_update.is_some() {
+    if !dry_run && staged_batch_count > 0 && index.fsmonitor_last_update.is_some() {
         index.fsmonitor_validity_changed();
     }
 
@@ -1118,6 +1119,23 @@ fn stage_untracked_path(
     entry.mode = mode;
     index.stage_file(entry);
     mark_fsmonitor_staged(index, &index_relpath);
+    Ok(())
+}
+
+fn validate_worktree_paths_for_staging(rules: &WorktreeRules, paths: &[String]) -> Result<()> {
+    let protect = ProtectOptions::from_config(rules.config());
+    for path in paths {
+        if path.ends_with('/') {
+            continue;
+        }
+        validate_path(
+            path.as_bytes(),
+            EntryMode::new(0o100644),
+            protect,
+            PathValidationKind::Worktree,
+        )
+        .map_err(|reason| Error::invalid_path_component(path, reason))?;
+    }
     Ok(())
 }
 

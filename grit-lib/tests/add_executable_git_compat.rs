@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::porcelain::add::{stage, StageMode, StageOptions};
-use grit_lib::porcelain::commit::{create_commit, CommitRequest};
+use grit_lib::porcelain::commit::{create_commit, CommitRequest, HookPolicy};
 use grit_lib::porcelain::index_mode::StageExecutableHint;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
