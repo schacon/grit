@@ -20,11 +20,37 @@ use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::{git, git_hash_object_literally, HashAlgo};
 
 fn grit_bin() -> std::path::PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_grit")
+    if let Ok(p) = std::env::var("GRIT_BIN") {
+        let path = std::path::PathBuf::from(p);
+        if path.is_file() {
+            return path;
+        }
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().expect("workspace root");
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/grit")
-        })
+        .unwrap_or_else(|_| workspace.join("target"));
+    for subpath in ["debug/grit", "release/grit"] {
+        let candidate = target_dir.join(subpath);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_grit") {
+        let path = std::path::PathBuf::from(&p);
+        if path.is_absolute() && path.is_file() {
+            return path;
+        }
+        let from_workspace = workspace.join(&path);
+        if from_workspace.is_file() {
+            return from_workspace;
+        }
+    }
+    panic!(
+        "grit binary not found — run `cargo build -p grit-cli` or set GRIT_BIN (looked under {})",
+        target_dir.display()
+    );
 }
 
 fn tree_entry(mode: &str, name: &[u8], oid_hex: &str) -> Vec<u8> {
