@@ -60,29 +60,33 @@ mod tests {
     fn trace_spans_emitted() {
         let events: Arc<Mutex<Vec<SpanEnter>>> = Arc::new(Mutex::new(Vec::new()));
         let collector = SpanHierarchyCollector(Arc::clone(&events));
-        let _guard = tracing_subscriber::registry().with(collector).set_default();
+        let subscriber = tracing_subscriber::registry().with(collector);
 
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
-        let req = crate::porcelain::commit::CommitRequest {
-            message: "trace test".into(),
-            author: "T <t@example.com>".into(),
-            committer: "T <t@example.com>".into(),
-            allow_empty: true,
-            sign_override: None,
-            amend: false,
-            assume_worktree_synced: false,
-            skip_pre_commit_tree_match: false,
-            staged_change_count: None,
-        };
-        let _ = crate::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            let dir = tempfile::tempdir().unwrap();
+            let repo = Repository::init(dir.path(), &InitOptions::default()).unwrap();
+            let req = crate::porcelain::commit::CommitRequest {
+                message: "trace test".into(),
+                author: "T <t@example.com>".into(),
+                committer: "T <t@example.com>".into(),
+                allow_empty: true,
+                sign_override: None,
+                amend: false,
+                assume_worktree_synced: false,
+                skip_pre_commit_tree_match: false,
+                staged_change_count: None,
+            };
+            let _ =
+                crate::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).unwrap();
 
-        let opened = Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
-        let _ = status(&opened, &StatusOptions::default(), &mut NullProgress).unwrap();
-        let _ = opened
-            .rev_walk()
-            .walk("HEAD", &RevListOptions::default())
-            .unwrap();
+            let opened =
+                Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
+            let _ = status(&opened, &StatusOptions::default(), &mut NullProgress).unwrap();
+            let _ = opened
+                .rev_walk()
+                .walk("HEAD", &RevListOptions::default())
+                .unwrap();
+        });
 
         let seen = events.lock().unwrap();
         assert!(

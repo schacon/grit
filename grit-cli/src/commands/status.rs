@@ -10,7 +10,7 @@ use grit_lib::porcelain::status::{
 use grit_lib::progress::NullProgress;
 use grit_lib::refs::branch_tracking::{
     status_ahead_behind_enabled, BranchStanding, Standing, StandingHeader, StandingOptions,
-    TrackedComparison,
+    StatusHeader, TrackedComparison,
 };
 use grit_lib::state::{detect_in_progress, HeadState, InProgressOperation};
 use schemars::JsonSchema;
@@ -26,35 +26,6 @@ use crate::ui::{self, PathDisplayOptions};
 
 /// Maximum number of commits to list in the status shortlog before summarizing.
 const SHORTLOG_LIMIT: usize = 10;
-
-/// Which header line `grit status` shows (drives only the human rendering; the
-/// JSON fields below carry the same information in a flat, stable form).
-#[derive(Clone, Copy)]
-enum HeaderKind {
-    /// On a branch with a base: even with, ahead of, behind or diverged from it.
-    Compared(Standing),
-    /// Target resolves but ahead/behind counts were not computed.
-    ComparedNoCounts,
-    NoTarget,
-    Unborn,
-    Detached,
-    Invalid,
-    MergeInProgress,
-    OtherInProgress,
-}
-
-impl From<StandingHeader> for HeaderKind {
-    fn from(value: StandingHeader) -> Self {
-        match value {
-            StandingHeader::Unborn => Self::Unborn,
-            StandingHeader::Detached => Self::Detached,
-            StandingHeader::Invalid => Self::Invalid,
-            StandingHeader::NoTarget => Self::NoTarget,
-            StandingHeader::Compared(standing) => Self::Compared(standing),
-            StandingHeader::ComparedNoCounts => Self::ComparedNoCounts,
-        }
-    }
-}
 
 /// Result of `grit status`.
 #[derive(Serialize, JsonSchema)]
@@ -92,7 +63,7 @@ pub struct StatusOutcome {
     // Human-only state, not part of the JSON schema.
     #[serde(skip)]
     #[schemars(skip)]
-    header: HeaderKind,
+    header: StatusHeader,
     #[serde(skip)]
     #[schemars(skip)]
     commit_rows: Vec<CommitSummary>,
@@ -108,6 +79,9 @@ pub struct StatusOutcome {
     #[serde(skip)]
     #[schemars(skip)]
     show_counts: bool,
+    #[serde(skip)]
+    #[schemars(skip)]
+    standing: BranchStanding,
 }
 
 /// Upstream ahead/behind in `--json` / `--markdown` output.
@@ -142,17 +116,14 @@ impl MarkdownRender for StatusOutcome {
 impl StatusOutcome {
     /// Trunk or upstream ref name used in the status header line.
     fn header_comparison_name(&self) -> &str {
-        self.target
-            .as_deref()
-            .or_else(|| self.upstream.as_ref().map(|u| u.r#ref.as_str()))
-            .unwrap_or("")
+        StatusHeader::primary_comparison_name(&self.standing).unwrap_or("")
     }
 
     fn render_upstream_line_human(&self, w: &mut dyn Write) -> Result<()> {
         if !self.show_counts {
             return Ok(());
         }
-        let Some(up) = &self.upstream else {
+        let Some(up) = self.upstream.as_ref() else {
             return Ok(());
         };
         if self.target.is_none() {
@@ -194,16 +165,7 @@ impl StatusOutcome {
 
     /// Ref name for the `grit pull` hint (`pull` integrates the configured upstream).
     fn pull_update_ref(&self) -> Option<&str> {
-        if let Some(up) = &self.upstream {
-            if up.ahead == Some(0) && up.behind.is_some_and(|b| b > 0) {
-                return Some(up.r#ref.as_str());
-            }
-            return None;
-        }
-        if self.ahead == Some(0) && self.behind.is_some_and(|b| b > 0) {
-            return self.target.as_deref();
-        }
-        None
+        StatusHeader::pull_integration_ref(&self.standing)
     }
 
     fn render_header(&self, w: &mut dyn Write, ctx: &RenderContext) -> Result<()> {
@@ -211,7 +173,7 @@ impl StatusOutcome {
         let base = self.header_comparison_name();
         let now = ctx.now.unix_timestamp();
         match self.header {
-            HeaderKind::Compared(Standing::Ahead) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Ahead)) => {
                 outln!(
                     w,
                     "On {branch}  ·  {} ahead of {base}",
@@ -221,7 +183,7 @@ impl StatusOutcome {
                 outln!(w);
                 self.render_ahead_shortlog(w, now)?;
             }
-            HeaderKind::Compared(Standing::Behind) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Behind)) => {
                 outln!(
                     w,
                     "On {branch}  ·  {} behind {base}",
@@ -230,7 +192,7 @@ impl StatusOutcome {
                 self.render_upstream_line_human(w)?;
                 outln!(w);
             }
-            HeaderKind::Compared(Standing::Diverged) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Diverged)) => {
                 outln!(
                     w,
                     "On {branch}  ·  {} ahead, {} behind {base}",
@@ -241,42 +203,42 @@ impl StatusOutcome {
                 outln!(w);
                 self.render_ahead_shortlog(w, now)?;
             }
-            HeaderKind::Compared(Standing::Even) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Even)) => {
                 outln!(w, "On {branch}  ·  even with {base}");
                 self.render_upstream_line_human(w)?;
                 outln!(w);
             }
-            HeaderKind::ComparedNoCounts if base.is_empty() => {
+            StatusHeader::Branch(StandingHeader::ComparedNoCounts) if base.is_empty() => {
                 outln!(w, "On {branch}");
                 outln!(w);
             }
-            HeaderKind::ComparedNoCounts => {
+            StatusHeader::Branch(StandingHeader::ComparedNoCounts) => {
                 outln!(w, "On {branch}  ·  {base}");
                 self.render_upstream_line_human(w)?;
                 outln!(w);
             }
-            HeaderKind::NoTarget => {
+            StatusHeader::Branch(StandingHeader::NoTarget) => {
                 outln!(w, "On {branch}");
                 outln!(w);
             }
-            HeaderKind::Unborn => {
+            StatusHeader::Branch(StandingHeader::Unborn) => {
                 outln!(w, "On {branch} — no commits yet");
                 outln!(w);
             }
-            HeaderKind::Detached => {
+            StatusHeader::Branch(StandingHeader::Detached) => {
                 let short = self.head.as_deref().map(short_hex).unwrap_or_default();
                 outln!(w, "Detached at {short}");
                 outln!(w);
             }
-            HeaderKind::Invalid => {
+            StatusHeader::Branch(StandingHeader::Invalid) => {
                 outln!(w, "HEAD is in an unknown state");
                 outln!(w);
             }
-            HeaderKind::MergeInProgress => {
+            StatusHeader::MergeInProgress => {
                 outln!(w, "On {branch}  ·  merging — resolve conflicts");
                 outln!(w);
             }
-            HeaderKind::OtherInProgress => {
+            StatusHeader::OtherInProgress => {
                 outln!(w, "On {branch}  ·  operation in progress");
                 outln!(w);
             }
@@ -371,7 +333,7 @@ impl StatusOutcome {
         let branch = self.branch.as_deref().unwrap_or_default();
         let base = self.header_comparison_name();
         match self.header {
-            HeaderKind::Compared(Standing::Ahead) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Ahead)) => {
                 outln!(
                     w,
                     "On **`{branch}`** · **{}** ahead of `{base}`",
@@ -380,7 +342,7 @@ impl StatusOutcome {
                 self.render_upstream_line_markdown(w)?;
                 self.render_markdown_ahead_shortlog(w, ctx)?;
             }
-            HeaderKind::Compared(Standing::Behind) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Behind)) => {
                 outln!(
                     w,
                     "On **`{branch}`** · **{}** behind `{base}`",
@@ -389,7 +351,7 @@ impl StatusOutcome {
                 self.render_upstream_line_markdown(w)?;
                 outln!(w);
             }
-            HeaderKind::Compared(Standing::Diverged) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Diverged)) => {
                 outln!(
                     w,
                     "On **`{branch}`** · **{}** ahead, **{}** behind `{base}`",
@@ -399,42 +361,42 @@ impl StatusOutcome {
                 self.render_upstream_line_markdown(w)?;
                 self.render_markdown_ahead_shortlog(w, ctx)?;
             }
-            HeaderKind::Compared(Standing::Even) => {
+            StatusHeader::Branch(StandingHeader::Compared(Standing::Even)) => {
                 outln!(w, "On **`{branch}`** · even with `{base}`");
                 self.render_upstream_line_markdown(w)?;
                 outln!(w);
             }
-            HeaderKind::ComparedNoCounts if base.is_empty() => {
+            StatusHeader::Branch(StandingHeader::ComparedNoCounts) if base.is_empty() => {
                 outln!(w, "On **`{branch}`**");
                 outln!(w);
             }
-            HeaderKind::ComparedNoCounts => {
+            StatusHeader::Branch(StandingHeader::ComparedNoCounts) => {
                 outln!(w, "On **`{branch}`** · `{base}`");
                 self.render_upstream_line_markdown(w)?;
                 outln!(w);
             }
-            HeaderKind::NoTarget => {
+            StatusHeader::Branch(StandingHeader::NoTarget) => {
                 outln!(w, "On **`{branch}`**");
                 outln!(w);
             }
-            HeaderKind::Unborn => {
+            StatusHeader::Branch(StandingHeader::Unborn) => {
                 outln!(w, "On **`{branch}`** — no commits yet");
                 outln!(w);
             }
-            HeaderKind::Detached => {
+            StatusHeader::Branch(StandingHeader::Detached) => {
                 let short = self.head.as_deref().map(short_hex).unwrap_or_default();
                 outln!(w, "Detached at `{short}`");
                 outln!(w);
             }
-            HeaderKind::Invalid => {
+            StatusHeader::Branch(StandingHeader::Invalid) => {
                 outln!(w, "HEAD is in an unknown state");
                 outln!(w);
             }
-            HeaderKind::MergeInProgress => {
+            StatusHeader::MergeInProgress => {
                 outln!(w, "On **`{branch}`** · merging — resolve conflicts");
                 outln!(w);
             }
-            HeaderKind::OtherInProgress => {
+            StatusHeader::OtherInProgress => {
                 outln!(w, "On **`{branch}`** · operation in progress");
                 outln!(w);
             }
@@ -547,10 +509,7 @@ pub fn run(untracked: Option<UntrackedListing>, no_ahead_behind: bool) -> Result
         },
     )
     .context("could not resolve branch standing")?;
-    let header = match in_progress_header(merging, &operations) {
-        Some(kind @ (HeaderKind::MergeInProgress | HeaderKind::OtherInProgress)) => kind,
-        _ => standing.header.into(),
-    };
+    let header = StatusHeader::resolve(&standing, merging, &operations);
     let now = context::wall_clock_now(repo.environment()).unix_timestamp();
     let newest_ahead = standing
         .target
@@ -575,6 +534,7 @@ pub fn run(untracked: Option<UntrackedListing>, no_ahead_behind: bool) -> Result
 
     let path_display = PathDisplayOptions::from_repo(&repo).ok();
 
+    let standing_for_outcome = standing.clone();
     Ok(StatusOutcome {
         branch: standing.branch,
         detached: matches!(model.head, HeadState::Detached { .. }),
@@ -597,6 +557,7 @@ pub fn run(untracked: Option<UntrackedListing>, no_ahead_behind: bool) -> Result
         unstaged_entries: model.unstaged,
         path_display,
         show_counts,
+        standing: standing_for_outcome,
     })
 }
 
@@ -610,16 +571,6 @@ fn in_progress_label(op: InProgressOperation) -> String {
         InProgressOperation::Bisect => "bisect".to_owned(),
         InProgressOperation::Am => "am".to_owned(),
     }
-}
-
-fn in_progress_header(merging: bool, operations: &[InProgressOperation]) -> Option<HeaderKind> {
-    if merging || operations.contains(&InProgressOperation::Merge) {
-        return Some(HeaderKind::MergeInProgress);
-    }
-    if !operations.is_empty() {
-        return Some(HeaderKind::OtherInProgress);
-    }
-    None
 }
 
 fn tracked_to_upstream_json(tracked: &TrackedComparison) -> StatusUpstreamJson {

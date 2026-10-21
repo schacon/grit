@@ -310,6 +310,94 @@ fn status_markdown_includes_upstream_line() -> TestResult {
 }
 
 #[test]
+fn status_human_shows_upstream_counts_under_header_before_shortlog() -> TestResult {
+    let scratch = Scratch::new("upstream-order")?;
+    let clone = setup_topic_vs_main(&scratch);
+    let human = gs(&clone, &["status"]);
+    assert!(human.status.success());
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let up_pos = stdout.find("↑").expect("upstream counts line");
+    let shortlog_pos = stdout
+        .find("change ")
+        .or_else(|| stdout.find("commit "))
+        .unwrap_or(usize::MAX);
+    assert!(
+        up_pos < shortlog_pos,
+        "upstream line must precede ahead shortlog:\n{stdout}"
+    );
+    assert!(stdout.contains("origin/topic"));
+    Ok(())
+}
+
+#[test]
+fn status_pull_hint_prefers_upstream_over_target_when_both_exist() -> TestResult {
+    let scratch = Scratch::new("pull-upstream-pref")?;
+    let clone = setup_topic_vs_main(&scratch);
+    let upstream = scratch.child("w");
+    system_git_ok(&upstream, &["checkout", "-q", "topic"]);
+    write_file(&upstream.join("remote.txt"), "x\n");
+    system_git_ok(&upstream, &["add", "remote.txt"]);
+    system_git_ok(&upstream, &["commit", "-qm", "remote"]);
+    system_git_ok(&upstream, &["push", "-q", "origin", "HEAD:topic"]);
+    system_git_ok(&clone, &["fetch", "-q"]);
+
+    let human = gs(&clone, &["status"]);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains("grit pull to update from origin/topic"),
+        "pull hint must use upstream, not target main:\n{stdout}"
+    );
+    assert!(!stdout.contains("grit pull to update from main"));
+    Ok(())
+}
+
+#[test]
+fn status_markdown_upstream_line_without_target() -> TestResult {
+    let scratch = Scratch::new("md-up-only")?;
+    let remote = scratch.child("r.git");
+    let upstream = scratch.child("w");
+    let clone = scratch.child("c");
+    fs::create_dir_all(&upstream)?;
+    system_git_ok(
+        scratch.path(),
+        &["init", "-q", "--bare", &path_arg(&remote)],
+    );
+    system_git_ok(&upstream, &["clone", "-q", &path_arg(&remote), "."]);
+    system_git_ok(&upstream, &["config", "user.name", "T"]);
+    system_git_ok(&upstream, &["config", "user.email", "t@e.com"]);
+    write_file(&upstream.join("f"), "1\n");
+    system_git_ok(&upstream, &["add", "f"]);
+    system_git_ok(&upstream, &["commit", "-qm", "topic"]);
+    system_git_ok(&upstream, &["push", "-u", "origin", "HEAD:topic"]);
+    system_git_ok(
+        scratch.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "topic",
+            &path_arg(&remote),
+            &path_arg(&clone),
+        ],
+    );
+
+    let out = Command::new(GS)
+        .args(["--markdown", "status"])
+        .current_dir(&clone)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("spawn grit");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("origin/topic"),
+        "markdown should name upstream when no target:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_ahead_behind_config_false() -> TestResult {
     let scratch = Scratch::new("config")?;
     let clone = setup_topic_vs_main(&scratch);

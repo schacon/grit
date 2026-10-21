@@ -12477,6 +12477,31 @@ impl core::marker::Unpin for grit_lib::refs::branch_tracking::StandingHeader
 impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::StandingHeader
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::StandingHeader
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::StandingHeader
+pub enum grit_lib::refs::branch_tracking::StatusHeader
+pub grit_lib::refs::branch_tracking::StatusHeader::Branch(grit_lib::refs::branch_tracking::StandingHeader)
+pub grit_lib::refs::branch_tracking::StatusHeader::MergeInProgress
+pub grit_lib::refs::branch_tracking::StatusHeader::OtherInProgress
+impl grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::primary_comparison_name<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a str>
+pub fn grit_lib::refs::branch_tracking::StatusHeader::pull_integration_ref<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a str>
+pub fn grit_lib::refs::branch_tracking::StatusHeader::resolve(&grit_lib::refs::branch_tracking::BranchStanding, bool, &[grit_lib::state::InProgressOperation]) -> Self
+pub fn grit_lib::refs::branch_tracking::StatusHeader::upstream_line<'a>(&'a grit_lib::refs::branch_tracking::BranchStanding) -> core::option::Option<&'a grit_lib::refs::branch_tracking::TrackedComparison>
+impl core::clone::Clone for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::refs::branch_tracking::StatusHeader
+impl core::cmp::PartialEq for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::refs::branch_tracking::StatusHeader
+pub fn grit_lib::refs::branch_tracking::StatusHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::StructuralPartialEq for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Freeze for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Send for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Sync for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::Unpin for grit_lib::refs::branch_tracking::StatusHeader
+impl core::marker::UnsafeUnpin for grit_lib::refs::branch_tracking::StatusHeader
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::refs::branch_tracking::StatusHeader
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::refs::branch_tracking::StatusHeader
 pub struct grit_lib::refs::branch_tracking::BranchStanding
 pub grit_lib::refs::branch_tracking::BranchStanding::branch: core::option::Option<alloc::string::String>
 pub grit_lib::refs::branch_tracking::BranchStanding::header: grit_lib::refs::branch_tracking::StandingHeader

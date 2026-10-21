@@ -14,7 +14,7 @@ use crate::refs::store::{Expected, RawRef, RefUpdate, RefUpdateFlags};
 use crate::refspec::{parse_fetch_refspec, RefspecItem};
 use crate::repo::Repository;
 use crate::rev_parse::abbreviate_ref_name;
-use crate::state::HeadState;
+use crate::state::{HeadState, InProgressOperation};
 use crate::transfer::{match_positive, ref_excluded};
 
 /// The `remote.<name>.fetch` refspecs of one remote, split by polarity.
@@ -316,6 +316,69 @@ pub struct BranchStanding {
     pub upstream: Option<TrackedComparison>,
     /// Header classification for the primary comparison (target, else upstream).
     pub header: StandingHeader,
+}
+
+/// Status header after branch standing and in-progress operation overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusHeader {
+    /// Normal branch vs target/upstream summary.
+    Branch(StandingHeader),
+    /// A merge is in progress (`MERGE_HEAD` exists).
+    MergeInProgress,
+    /// Another in-progress operation (rebase, cherry-pick, …).
+    OtherInProgress,
+}
+
+impl StatusHeader {
+    /// Choose the header line, preferring merge/rebase overrides over branch standing.
+    #[must_use]
+    pub fn resolve(
+        standing: &BranchStanding,
+        merge_in_progress: bool,
+        operations: &[InProgressOperation],
+    ) -> Self {
+        if merge_in_progress || operations.contains(&InProgressOperation::Merge) {
+            return Self::MergeInProgress;
+        }
+        if !operations.is_empty() {
+            return Self::OtherInProgress;
+        }
+        Self::Branch(standing.header)
+    }
+
+    /// Short ref name for the primary header comparison (target, else upstream).
+    #[must_use]
+    pub fn primary_comparison_name<'a>(standing: &'a BranchStanding) -> Option<&'a str> {
+        standing
+            .target
+            .as_ref()
+            .map(|t| t.name.as_str())
+            .or_else(|| standing.upstream.as_ref().map(|u| u.name.as_str()))
+    }
+
+    /// Configured upstream comparison when it differs from target, or the sole comparison ref.
+    #[must_use]
+    pub fn upstream_line<'a>(standing: &'a BranchStanding) -> Option<&'a TrackedComparison> {
+        standing.upstream.as_ref()
+    }
+
+    /// Ref name for a `grit pull` hint: upstream when configured, otherwise target.
+    #[must_use]
+    pub fn pull_integration_ref<'a>(standing: &'a BranchStanding) -> Option<&'a str> {
+        if let Some(up) = &standing.upstream {
+            if up.ahead == Some(0) && up.behind.is_some_and(|b| b > 0) {
+                return Some(up.name.as_str());
+            }
+            return None;
+        }
+        standing.target.as_ref().and_then(|t| {
+            if t.ahead == Some(0) && t.behind.is_some_and(|b| b > 0) {
+                Some(t.name.as_str())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl BranchStanding {
