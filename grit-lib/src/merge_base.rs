@@ -1747,10 +1747,7 @@ impl<'r> CommitGraphCache<'r> {
                 )));
             }
             let linkage = CommitRef::parse(&object.data)?;
-            (
-                linkage.committer_timestamp(),
-                linkage.parents().to_vec(),
-            )
+            (linkage.committer_timestamp(), linkage.parents().to_vec())
         } else {
             let object = self.repo.odb().read(&commit_oid)?;
             if object.kind != ObjectKind::Commit {
@@ -1759,10 +1756,7 @@ impl<'r> CommitGraphCache<'r> {
                 )));
             }
             let linkage = CommitRef::parse(&object.data)?;
-            (
-                linkage.committer_timestamp(),
-                linkage.parents().to_vec(),
-            )
+            (linkage.committer_timestamp(), linkage.parents().to_vec())
         };
         let parents: Vec<ObjectId> = if self.shallow_boundaries.contains(&commit_oid) {
             Vec::new()

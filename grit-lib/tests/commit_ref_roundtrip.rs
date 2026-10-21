@@ -21,7 +21,11 @@ fn git_hash_commit(repo: &RepoFixture, body: &[u8]) -> ObjectId {
         .expect("hash-object");
     child.stdin.take().unwrap().write_all(body).expect("stdin");
     let out = child.wait_with_output().expect("wait");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse()

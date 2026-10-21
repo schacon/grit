@@ -312,9 +312,8 @@ fn parse_one_pass<'a>(data: &'a [u8]) -> Result<CommitRef<'a>> {
     let headers_block = &data[..headers_end];
     let author_bytes = author_raw
         .ok_or_else(|| Error::CorruptObject("commit missing author header".to_owned()))?;
-    let committer_bytes = committer_raw.ok_or_else(|| {
-        Error::CorruptObject("commit missing committer header".to_owned())
-    })?;
+    let committer_bytes = committer_raw
+        .ok_or_else(|| Error::CorruptObject("commit missing committer header".to_owned()))?;
 
     Ok(CommitRef {
         headers_block,
@@ -425,9 +424,9 @@ impl ExtraScan {
 }
 
 fn merge_identity_continuation(slot: &mut Option<Cow<'_, [u8]>>, rest: &[u8]) -> Result<()> {
-    let merged = slot.as_mut().ok_or_else(|| {
-        Error::CorruptObject("orphan header continuation".to_owned())
-    })?;
+    let merged = slot
+        .as_mut()
+        .ok_or_else(|| Error::CorruptObject("orphan header continuation".to_owned()))?;
     match merged {
         Cow::Borrowed(first) => {
             let mut buf = first.to_vec();
