@@ -38,6 +38,11 @@
   .install { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 36px; font-size: 15px; }
   .install code { font-family: var(--mono); border-radius: 10px; max-width: 100%; overflow-x: auto; white-space: nowrap; }
   .install .primary { background: var(--ink); color: var(--bg); padding: 16px 20px; }
+  .install .copy-command { display: inline-flex; align-items: center; gap: 14px; max-width: 100%; border-radius: 10px; padding-right: 12px; }
+  .install .copy-command code { min-width: 0; padding: 0; border-radius: 0; background: none; color: inherit; }
+  .copy-command button { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; opacity: .6; cursor: pointer; transition: opacity .15s, background-color .15s; }
+  .copy-command button:hover, .copy-command button:focus-visible { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); }
+  .copy-command button:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
   .install .secondary { padding: 14px 20px; border: 2px solid var(--ink); }
 
   .body { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 24px 56px; padding: 40px 0; }

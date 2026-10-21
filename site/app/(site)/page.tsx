@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CopyCommand } from "@/components/CopyCommand";
 import { Footer, Rail, TopBar } from "@/components/Rail";
 import { highlightHtml, initHighlighter } from "@/lib/highlight";
 
@@ -40,7 +41,7 @@ export default async function Home() {
               throughout.
             </p>
             <div className="install">
-              <code className="primary">$ curl -fsSL grit-scm.com/install | sh</code>
+              <CopyCommand className="primary" command="curl -fsSL grit-scm.com/install | sh" />
               <code className="secondary">cargo add grit-lib</code>
             </div>
           </div>
