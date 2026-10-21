@@ -5469,6 +5469,124 @@ pub fn grit_lib::index::index_file_mtime(&std::path::Path) -> core::option::Opti
 pub fn grit_lib::index::munge_index_size(u64) -> u32
 pub fn grit_lib::index::normalize_mode(u32) -> u32
 pub fn grit_lib::index::worktree_path_from_index_rel(&std::path::Path, &[u8]) -> std::path::PathBuf
+pub mod grit_lib::lockfile
+#[non_exhaustive] pub enum grit_lib::lockfile::LockError
+pub grit_lib::lockfile::LockError::Held
+pub grit_lib::lockfile::LockError::Held::path: std::path::PathBuf
+pub grit_lib::lockfile::LockError::Io
+pub grit_lib::lockfile::LockError::Io::path: std::path::PathBuf
+pub grit_lib::lockfile::LockError::Io::source: core::io::error::Error
+impl core::error::Error for grit_lib::lockfile::LockError
+pub fn grit_lib::lockfile::LockError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for grit_lib::lockfile::LockError
+pub fn grit_lib::lockfile::LockError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for grit_lib::lockfile::LockError
+pub fn grit_lib::lockfile::LockError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for grit_lib::lockfile::LockError
+impl core::marker::Send for grit_lib::lockfile::LockError
+impl core::marker::Sync for grit_lib::lockfile::LockError
+impl core::marker::Unpin for grit_lib::lockfile::LockError
+impl core::marker::UnsafeUnpin for grit_lib::lockfile::LockError
+impl !core::panic::unwind_safe::RefUnwindSafe for grit_lib::lockfile::LockError
+impl !core::panic::unwind_safe::UnwindSafe for grit_lib::lockfile::LockError
+pub enum grit_lib::lockfile::LockWait
+pub grit_lib::lockfile::LockWait::Backoff
+pub grit_lib::lockfile::LockWait::Backoff::budget: core::time::Duration
+pub grit_lib::lockfile::LockWait::Immediately
+pub grit_lib::lockfile::LockWait::Indefinitely
+impl grit_lib::lockfile::LockWait
+pub fn grit_lib::lockfile::LockWait::files_ref_lock(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
+pub fn grit_lib::lockfile::LockWait::files_ref_lock_for_git_dir(&std::path::Path) -> Self
+pub fn grit_lib::lockfile::LockWait::packed_refs(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
+pub fn grit_lib::lockfile::LockWait::packed_refs_for_git_dir(&std::path::Path) -> Self
+pub fn grit_lib::lockfile::LockWait::parse_files_ref_lock_timeout_ms(core::option::Option<&grit_lib::config::ConfigSet>) -> i64
+pub fn grit_lib::lockfile::LockWait::reftable_tables_list(core::option::Option<&grit_lib::config::ConfigSet>) -> Self
+impl core::clone::Clone for grit_lib::lockfile::LockWait
+pub fn grit_lib::lockfile::LockWait::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::lockfile::LockWait
+impl core::cmp::PartialEq for grit_lib::lockfile::LockWait
+pub fn grit_lib::lockfile::LockWait::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::lockfile::LockWait
+pub fn grit_lib::lockfile::LockWait::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::lockfile::LockWait
+impl core::marker::StructuralPartialEq for grit_lib::lockfile::LockWait
+impl core::marker::Freeze for grit_lib::lockfile::LockWait
+impl core::marker::Send for grit_lib::lockfile::LockWait
+impl core::marker::Sync for grit_lib::lockfile::LockWait
+impl core::marker::Unpin for grit_lib::lockfile::LockWait
+impl core::marker::UnsafeUnpin for grit_lib::lockfile::LockWait
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::lockfile::LockWait
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::lockfile::LockWait
+pub struct grit_lib::lockfile::LockFile
+impl grit_lib::lockfile::LockFile
+pub fn grit_lib::lockfile::LockFile::acquire(&std::path::Path, grit_lib::lockfile::LockWait) -> core::result::Result<Self, grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::acquire_with_clock(&std::path::Path, grit_lib::lockfile::LockWait, alloc::rcs::arc::Arc<dyn grit_lib::lockfile::LockClock>, alloc::rcs::arc::Arc<dyn grit_lib::lockfile::LockJitter>) -> core::result::Result<Self, grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::as_file(&self) -> core::result::Result<&std::fs::File, grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::as_file_mut(&mut self) -> core::result::Result<&mut std::fs::File, grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::commit(self) -> core::result::Result<(), grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::commit_to(self, &std::path::Path) -> core::result::Result<(), grit_lib::lockfile::LockError>
+pub fn grit_lib::lockfile::LockFile::detach(self)
+pub fn grit_lib::lockfile::LockFile::lock_path(&self) -> &std::path::Path
+pub fn grit_lib::lockfile::LockFile::rollback(self)
+pub fn grit_lib::lockfile::LockFile::with_commit_target(self, &std::path::Path) -> Self
+impl core::io::write::Write for grit_lib::lockfile::LockFile
+pub fn grit_lib::lockfile::LockFile::flush(&mut self) -> core::io::error::Result<()>
+pub fn grit_lib::lockfile::LockFile::write(&mut self, &[u8]) -> core::io::error::Result<usize>
+impl core::ops::drop::Drop for grit_lib::lockfile::LockFile
+pub fn grit_lib::lockfile::LockFile::drop(&mut self)
+impl core::marker::Freeze for grit_lib::lockfile::LockFile
+impl core::marker::Send for grit_lib::lockfile::LockFile
+impl core::marker::Sync for grit_lib::lockfile::LockFile
+impl core::marker::Unpin for grit_lib::lockfile::LockFile
+impl core::marker::UnsafeUnpin for grit_lib::lockfile::LockFile
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::lockfile::LockFile
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::lockfile::LockFile
+pub struct grit_lib::lockfile::SystemLockClock
+impl core::clone::Clone for grit_lib::lockfile::SystemLockClock
+pub fn grit_lib::lockfile::SystemLockClock::clone(&self) -> Self
+impl core::default::Default for grit_lib::lockfile::SystemLockClock
+pub fn grit_lib::lockfile::SystemLockClock::default() -> Self
+impl core::fmt::Debug for grit_lib::lockfile::SystemLockClock
+pub fn grit_lib::lockfile::SystemLockClock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::lockfile::SystemLockClock
+impl grit_lib::lockfile::LockClock for grit_lib::lockfile::SystemLockClock
+pub fn grit_lib::lockfile::SystemLockClock::now(&self) -> std::time::Instant
+pub fn grit_lib::lockfile::SystemLockClock::sleep(&self, core::time::Duration)
+impl core::marker::Freeze for grit_lib::lockfile::SystemLockClock
+impl core::marker::Send for grit_lib::lockfile::SystemLockClock
+impl core::marker::Sync for grit_lib::lockfile::SystemLockClock
+impl core::marker::Unpin for grit_lib::lockfile::SystemLockClock
+impl core::marker::UnsafeUnpin for grit_lib::lockfile::SystemLockClock
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::lockfile::SystemLockClock
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::lockfile::SystemLockClock
+pub struct grit_lib::lockfile::SystemLockJitter
+impl core::clone::Clone for grit_lib::lockfile::SystemLockJitter
+pub fn grit_lib::lockfile::SystemLockJitter::clone(&self) -> Self
+impl core::default::Default for grit_lib::lockfile::SystemLockJitter
+pub fn grit_lib::lockfile::SystemLockJitter::default() -> Self
+impl core::fmt::Debug for grit_lib::lockfile::SystemLockJitter
+pub fn grit_lib::lockfile::SystemLockJitter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for grit_lib::lockfile::SystemLockJitter
+impl grit_lib::lockfile::LockJitter for grit_lib::lockfile::SystemLockJitter
+pub fn grit_lib::lockfile::SystemLockJitter::fraction(&self, &std::path::Path, u32) -> f64
+impl core::marker::Freeze for grit_lib::lockfile::SystemLockJitter
+impl core::marker::Send for grit_lib::lockfile::SystemLockJitter
+impl core::marker::Sync for grit_lib::lockfile::SystemLockJitter
+impl core::marker::Unpin for grit_lib::lockfile::SystemLockJitter
+impl core::marker::UnsafeUnpin for grit_lib::lockfile::SystemLockJitter
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::lockfile::SystemLockJitter
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::lockfile::SystemLockJitter
+pub trait grit_lib::lockfile::LockClock: core::marker::Send + core::marker::Sync
+pub fn grit_lib::lockfile::LockClock::now(&self) -> std::time::Instant
+pub fn grit_lib::lockfile::LockClock::sleep(&self, core::time::Duration)
+impl grit_lib::lockfile::LockClock for grit_lib::lockfile::SystemLockClock
+pub fn grit_lib::lockfile::SystemLockClock::now(&self) -> std::time::Instant
+pub fn grit_lib::lockfile::SystemLockClock::sleep(&self, core::time::Duration)
+pub trait grit_lib::lockfile::LockJitter: core::marker::Send + core::marker::Sync
+pub fn grit_lib::lockfile::LockJitter::fraction(&self, &std::path::Path, u32) -> f64
+impl grit_lib::lockfile::LockJitter for grit_lib::lockfile::SystemLockJitter
+pub fn grit_lib::lockfile::SystemLockJitter::fraction(&self, &std::path::Path, u32) -> f64
+pub fn grit_lib::lockfile::lock_held_as_ref_present(grit_lib::lockfile::LockError) -> core::io::error::Error
 pub mod grit_lib::maintenance
 pub mod grit_lib::maintenance::fsck
 pub struct grit_lib::maintenance::fsck::FsckError
