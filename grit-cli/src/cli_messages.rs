@@ -2,6 +2,7 @@
 
 use anyhow::Error;
 use grit_lib::error::Error as LibError;
+use grit_lib::refs::store::RefStoreError;
 
 use crate::json_error::StructuredCliError;
 use crate::revision_errors::map_lib_revision_error;
@@ -36,12 +37,11 @@ fn map_lib_error(err: &LibError) -> String {
                 oid.to_hex()
             )
         }
-        LibError::InvalidRef(msg) if msg.starts_with("ref not found:") => {
-            let refname = msg.strip_prefix("ref not found: ").unwrap_or(msg.as_str());
-            if let Some(short) = refname.strip_prefix("refs/heads/") {
-                return format!("no branch named '{short}'");
+        LibError::RefStore(RefStoreError::NotFound { name }) => {
+            match name.strip_prefix("refs/heads/") {
+                Some(short) => format!("no branch named '{short}'"),
+                None => format!("ref not found: {name}"),
             }
-            format!("ref not found: {refname}")
         }
         other => other.git_stderr_message(),
     }
