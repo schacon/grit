@@ -1244,12 +1244,20 @@ impl Index {
             ParsedIndexExtensions,
         };
 
-        if data.len() < 12 {
-            return Err(Error::IndexError("file too short".to_owned()));
-        }
+        const INDEX_HEADER_LEN: usize = 12;
 
         let hash_len = hash_algo.len();
+        if data.len() < INDEX_HEADER_LEN + hash_len {
+            return Err(Error::IndexError(
+                "file too short for index header and checksum".to_owned(),
+            ));
+        }
         let (body, checksum) = data.split_at(data.len() - hash_len);
+        if body.len() < INDEX_HEADER_LEN {
+            return Err(Error::IndexError(
+                "file too short for index header and checksum".to_owned(),
+            ));
+        }
         if !checksum.iter().all(|&b| b == 0) {
             verify_trailer(hash_algo, data).map_err(|e| {
                 Error::IndexError(format!(
