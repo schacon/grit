@@ -58,6 +58,7 @@ icu_normalizer.workspace = true
 url.workspace = true
 filetime.workspace = true
 shell-words.workspace = true
+smallvec.workspace = true
 
 # Optional: the default `ureq`-backed HTTP client (feature `http-ureq`).
 ureq = { workspace = true, optional = true, default-features = false, features = ["gzip"] }
@@ -82,6 +83,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [[bench]]
 name = "objects"
+harness = false
+
+[[bench]]
+name = "commit_parse"
 harness = false
 
 [[bench]]

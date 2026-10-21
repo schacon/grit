@@ -910,6 +910,7 @@ dependencies = [
  "sha2",
  "shell-words",
  "similar 3.2.0",
+ "smallvec",
  "tempfile",
  "terminal_size",
  "thiserror",

@@ -171,6 +171,24 @@ pub fn committer_unix_seconds_for_ordering(ident: &str) -> i64 {
     }
 }
 
+/// Like [`committer_unix_seconds_for_ordering`] on raw identity bytes (ASCII commit headers).
+#[must_use]
+pub fn committer_unix_seconds_for_ordering_bytes(ident: &[u8]) -> i64 {
+    let Ok(ident) = std::str::from_utf8(ident) else {
+        return 0;
+    };
+    committer_unix_seconds_for_ordering(ident)
+}
+
+/// Like [`committer_timestamp_for_until_filter`] on raw identity bytes (ASCII commit headers).
+#[must_use]
+pub fn committer_timestamp_for_until_filter_bytes(ident: &[u8]) -> i64 {
+    let Ok(ident) = std::str::from_utf8(ident) else {
+        return 0;
+    };
+    committer_timestamp_for_until_filter(ident)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
