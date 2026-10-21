@@ -376,7 +376,12 @@ fn status_json_uses_upstream_after_switch_from_remote_tracking() -> TestResult {
     assert_eq!(v["branch"], "topic");
     assert_eq!(v["target"], "origin/main");
     assert_eq!(v["upstream"]["ref"], "origin/topic");
-    assert_eq!(v["ahead"], 0);
+    assert_eq!(v["upstream"]["ahead"], 0);
+    assert_eq!(v["upstream"]["behind"], 0);
+    assert!(
+        v["ahead"].as_u64().unwrap() >= 1,
+        "topic is ahead of origin/main: {v}"
+    );
     assert_eq!(v["behind"], 0);
     assert_eq!(v["clean"], Value::Bool(true));
 
@@ -2248,7 +2253,14 @@ fn schema_top_level_keys_are_stable() -> TestResult {
     let committed = gs_json(&seed, &["commit", "first"]);
     assert_eq!(
         keys(&committed),
-        ["amended", "branch", "changes", "oid", "subject"]
+        [
+            "amended",
+            "branch",
+            "change_id",
+            "changes",
+            "oid",
+            "subject"
+        ]
     );
 
     let status = gs_json(&seed, &["status"]);
@@ -2266,7 +2278,8 @@ fn schema_top_level_keys_are_stable() -> TestResult {
             "staged",
             "target",
             "unstaged",
-            "untracked"
+            "untracked",
+            "upstream"
         ]
     );
 

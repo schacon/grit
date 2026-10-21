@@ -281,6 +281,35 @@ fn status_pull_hint_follows_upstream_not_target() -> TestResult {
 }
 
 #[test]
+fn status_markdown_includes_upstream_line() -> TestResult {
+    let scratch = Scratch::new("md-upstream")?;
+    let clone = setup_topic_vs_main(&scratch);
+    let out = Command::new(GS)
+        .args(["--markdown", "status"])
+        .current_dir(&clone)
+        .env("GIT_CONFIG_GLOBAL", null_device())
+        .env("GIT_CONFIG_SYSTEM", null_device())
+        .output()
+        .expect("spawn grit");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("origin/topic"),
+        "markdown should name upstream ref:\n{stdout}"
+    );
+    let header_end = stdout
+        .find("Staged")
+        .or_else(|| stdout.find("Nothing to commit"))
+        .unwrap_or(stdout.len());
+    let header = &stdout[..header_end];
+    assert!(
+        header.contains('↑') && header.contains('↓'),
+        "upstream counts should appear in header before body:\n{header}"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_ahead_behind_config_false() -> TestResult {
     let scratch = Scratch::new("config")?;
     let clone = setup_topic_vs_main(&scratch);

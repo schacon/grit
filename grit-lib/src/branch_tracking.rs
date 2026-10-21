@@ -288,6 +288,23 @@ pub struct TrackedComparison {
     pub newest_ahead: Vec<ObjectId>,
 }
 
+/// How the status header summarizes branch vs target/upstream (before merge/rebase overrides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandingHeader {
+    /// On a branch that has no commits yet.
+    Unborn,
+    /// HEAD is detached.
+    Detached,
+    /// HEAD could not be resolved.
+    Invalid,
+    /// On a branch with no target or upstream to compare against.
+    NoTarget,
+    /// Symmetric ahead/behind counts vs the primary comparison ref.
+    Compared(Standing),
+    /// Primary comparison ref resolves but ahead/behind counts were skipped.
+    ComparedNoCounts,
+}
+
 /// Target and upstream standing for the current HEAD (status header / JSON).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchStanding {
@@ -297,6 +314,8 @@ pub struct BranchStanding {
     pub target: Option<TrackedComparison>,
     /// Configured upstream comparison, when it resolves and differs from [`Self::target`].
     pub upstream: Option<TrackedComparison>,
+    /// Header classification for the primary comparison (target, else upstream).
+    pub header: StandingHeader,
 }
 
 impl BranchStanding {
@@ -311,10 +330,27 @@ impl BranchStanding {
     /// Propagates configuration load errors and object read failures from the commit walk.
     pub fn compute(repo: &Repository, head: &HeadState, opts: StandingOptions) -> Result<Self> {
         match head {
-            HeadState::Invalid | HeadState::Detached { .. } => Ok(Self {
+            HeadState::Invalid => Ok(Self {
                 branch: None,
                 target: None,
                 upstream: None,
+                header: StandingHeader::Invalid,
+            }),
+            HeadState::Detached { .. } => Ok(Self {
+                branch: None,
+                target: None,
+                upstream: None,
+                header: StandingHeader::Detached,
+            }),
+            HeadState::Branch {
+                short_name,
+                oid: None,
+                ..
+            } => Ok(Self {
+                branch: Some(short_name.clone()),
+                target: None,
+                upstream: None,
+                header: StandingHeader::Unborn,
             }),
             HeadState::Branch {
                 short_name, oid, ..
@@ -322,24 +358,130 @@ impl BranchStanding {
                 let target_base = target_branch(repo)?;
                 let upstream_base = upstream_branch(repo, short_name);
                 let tip = *oid;
-                let target = target_base
-                    .map(|base| tracked_comparison(repo, tip, base, opts))
-                    .transpose()?;
-                let upstream = match upstream_base {
-                    Some(base) if target.as_ref().is_some_and(|t| t.full_ref == base.full_ref) => {
-                        None
-                    }
-                    Some(base) => Some(tracked_comparison(repo, tip, base, opts)?),
-                    None => None,
-                };
+                let (target, upstream) =
+                    comparisons_for_branch(repo, tip, target_base, upstream_base, opts)?;
+                let header = primary_standing_header(tip, target.as_ref(), upstream.as_ref(), opts);
                 Ok(Self {
                     branch: Some(short_name.clone()),
                     target,
                     upstream,
+                    header,
                 })
             }
         }
     }
+}
+
+fn primary_standing_header(
+    tip: Option<ObjectId>,
+    target: Option<&TrackedComparison>,
+    upstream: Option<&TrackedComparison>,
+    opts: StandingOptions,
+) -> StandingHeader {
+    let Some(tracked) = target.or(upstream) else {
+        return StandingHeader::NoTarget;
+    };
+    standing_header_for_tracked(tip, tracked, opts)
+}
+
+fn standing_header_for_tracked(
+    tip: Option<ObjectId>,
+    tracked: &TrackedComparison,
+    opts: StandingOptions,
+) -> StandingHeader {
+    if !opts.counts {
+        return if tip == Some(tracked.oid) {
+            StandingHeader::Compared(Standing::Even)
+        } else {
+            StandingHeader::ComparedNoCounts
+        };
+    }
+    StandingHeader::Compared(Standing::from_counts(
+        tracked.ahead.unwrap_or(0),
+        tracked.behind.unwrap_or(0),
+    ))
+}
+
+fn comparisons_for_branch(
+    repo: &Repository,
+    tip: Option<ObjectId>,
+    target_base: Option<ComparisonBase>,
+    upstream_base: Option<ComparisonBase>,
+    opts: StandingOptions,
+) -> Result<(Option<TrackedComparison>, Option<TrackedComparison>)> {
+    let Some(head_oid) = tip else {
+        let target = target_base
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        let upstream = upstream_base
+            .filter(|base| target.as_ref().is_none_or(|t| t.full_ref != base.full_ref))
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        return Ok((target, upstream));
+    };
+
+    let same_upstream_as_target = matches!(
+        (target_base.as_ref(), upstream_base.as_ref()),
+        (Some(t), Some(u)) if t.full_ref == u.full_ref
+    );
+
+    if same_upstream_as_target {
+        let target = target_base
+            .map(|base| tracked_comparison(repo, tip, base, opts))
+            .transpose()?;
+        return Ok((target, None));
+    }
+
+    if opts.counts {
+        if let (Some(t_base), Some(u_base)) = (&target_base, &upstream_base) {
+            let (target, upstream) = dual_tracked_comparisons(
+                repo,
+                head_oid,
+                t_base.clone(),
+                u_base.clone(),
+                opts.newest_ahead_limit,
+            )?;
+            return Ok((Some(target), Some(upstream)));
+        }
+    }
+
+    let target = target_base
+        .map(|base| tracked_comparison(repo, tip, base, opts))
+        .transpose()?;
+    let upstream = upstream_base
+        .filter(|base| target.as_ref().is_none_or(|t| t.full_ref != base.full_ref))
+        .map(|base| tracked_comparison(repo, tip, base, opts))
+        .transpose()?;
+    Ok((target, upstream))
+}
+
+fn dual_tracked_comparisons(
+    repo: &Repository,
+    head: ObjectId,
+    target_base: ComparisonBase,
+    upstream_base: ComparisonBase,
+    retain_newest_ahead: usize,
+) -> Result<(TrackedComparison, TrackedComparison)> {
+    let target_cmp = TipComparison::compute(repo, head, target_base.oid, retain_newest_ahead)?;
+    let upstream_cmp = TipComparison::compute(repo, head, upstream_base.oid, 0)?;
+    Ok((
+        TrackedComparison {
+            name: target_base.name,
+            full_ref: target_base.full_ref,
+            oid: target_base.oid,
+            ahead: Some(target_cmp.ahead),
+            behind: Some(target_cmp.behind),
+            newest_ahead: target_cmp.newest_ahead,
+        },
+        TrackedComparison {
+            name: upstream_base.name,
+            full_ref: upstream_base.full_ref,
+            oid: upstream_base.oid,
+            ahead: Some(upstream_cmp.ahead),
+            behind: Some(upstream_cmp.behind),
+            newest_ahead: Vec::new(),
+        },
+    ))
 }
 
 fn tracked_comparison(
