@@ -10,8 +10,8 @@ use std::collections::{BTreeSet, BinaryHeap, HashSet, VecDeque};
 use crate::error::{Error, Result};
 use crate::ewah_bitmap::Bitmap;
 use crate::objects::{
-    oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit, CommitRef, ObjectId,
-    ObjectKind, OidHashMap, OidHashSet,
+    oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit, CommitRef, ObjectId, ObjectKind,
+    OidHashMap, OidHashSet,
 };
 use crate::pack_bitmap::BitmapIndex;
 use crate::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};

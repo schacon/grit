@@ -8,8 +8,8 @@ use std::collections::{HashSet, VecDeque};
 use crate::error::Error;
 use crate::ewah_bitmap::Bitmap;
 use crate::objects::{
-    empty_oid_set, oid_hash_set, parse_commit, parse_tag, parse_tree, ObjectId,
-    ObjectKind, OidHashSet,
+    empty_oid_set, oid_hash_set, parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind,
+    OidHashSet,
 };
 use crate::pack::read_object_info_from_packs;
 use crate::pack_bitmap::{BitmapError, BitmapIndex};

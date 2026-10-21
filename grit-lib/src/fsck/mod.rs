@@ -38,8 +38,8 @@ use crate::gitmodules::{DotFsckIssue, DotFsckTracker};
 use crate::index::MODE_GITLINK;
 use crate::midx::verify_midx;
 use crate::objects::{
-    oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit, parse_tag,
-    parse_tree, HashAlgo, ObjectId, ObjectKind, OidHashMap, OidHashSet, TreeEntry,
+    oid_hash_map, oid_hash_set, oid_hash_set_from, parse_commit, parse_tag, parse_tree, HashAlgo,
+    ObjectId, ObjectKind, OidHashMap, OidHashSet, TreeEntry,
 };
 use crate::odb::Odb;
 use crate::pack::{prepare_pack_for_object_fsck, PackFsckTrailerIssue};

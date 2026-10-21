@@ -6,9 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::hash::{try_hash_object, Parallelism};
-use crate::objects::{
-    oid_hash_map, HashAlgo, ObjectId, ObjectKind, OidHashMap,
-};
+use crate::objects::{oid_hash_map, HashAlgo, ObjectId, ObjectKind, OidHashMap};
 use crate::odb::Odb;
 use crate::pack_zlib::{decompress_zlib_at_index, skip_zlib_at_with_scratch};
 use crate::parallel::run_ordered_pool;

@@ -3,9 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::error::Result;
-use crate::objects::{
-    oid_hash_set, parse_commit, ObjectId, ObjectKind,
-};
+use crate::objects::{oid_hash_set, parse_commit, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 

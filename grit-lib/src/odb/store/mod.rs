@@ -28,8 +28,7 @@ use std::path::Path;
 use crate::error::{Error, Result};
 use crate::hash;
 use crate::objects::{
-    oid_hash_map, HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind,
-    OidHashMap,
+    oid_hash_map, HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind, OidHashMap,
 };
 use crate::odb::WriteOptions;
 use crate::pack;

@@ -55,8 +55,8 @@ use crate::error::{Error, Result};
 use crate::hash;
 use crate::midx::validate_midx_referenced_packs_with_diagnostics;
 use crate::objects::{
-    oid_hash_map, oid_hash_set, HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind,
-    OidHashMap, OidHashSet,
+    oid_hash_map, oid_hash_set, HashAlgo, Object, ObjectId, ObjectInfo, ObjectKind, OidHashMap,
+    OidHashSet,
 };
 use crate::pack;
 use crate::pack_store::PackStore;
