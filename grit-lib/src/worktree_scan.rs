@@ -141,6 +141,46 @@ fn symlink_metadata_path(path: &Path) -> io::Result<fs::Metadata> {
     fs::symlink_metadata(path)
 }
 
+fn sparse_stat_policy(sparse: BlobScanSparseMode) -> crate::index::StatMatchPolicy {
+    match sparse {
+        BlobScanSparseMode::StatusDiff { stat_policy, .. }
+        | BlobScanSparseMode::WorktreeGuard { stat_policy }
+        | BlobScanSparseMode::StatRefresh { stat_policy, .. } => stat_policy,
+        _ => crate::index::StatMatchPolicy::default(),
+    }
+}
+
+/// When a directory scan stat disagrees with the index but path `symlink_metadata` agrees,
+/// prefer the path probe (Git `mingw_stat` / post-close semantics on Windows).
+#[cfg(windows)]
+fn align_lookup_stat_with_index_path_windows(
+    index: &Index,
+    entry_index: usize,
+    lookup: BlobDiskLookup,
+    target_abs: &Path,
+    stat_policy: crate::index::StatMatchPolicy,
+) -> BlobDiskLookup {
+    let BlobDiskLookup::Present(stat) = lookup else {
+        return lookup;
+    };
+    let ie = &index.entries[entry_index];
+    if crate::diff::stat_matches_blob_stat(ie, &stat, stat_policy) {
+        return BlobDiskLookup::Present(stat);
+    }
+    match symlink_metadata_path(target_abs) {
+        Ok(meta) => {
+            let path_stat = BlobDiskStat::from_metadata(&meta);
+            if crate::diff::stat_matches_blob_stat(ie, &path_stat, stat_policy) {
+                BlobDiskLookup::Present(path_stat)
+            } else {
+                BlobDiskLookup::Present(stat)
+            }
+        }
+        // `read_dir` already found the file; keep the scan stat when the path probe fails.
+        Err(_) => BlobDiskLookup::Present(stat),
+    }
+}
+
 use std::collections::BTreeSet;
 
 use crate::error::{Error, Result};
@@ -599,7 +639,23 @@ fn collect_blob_lookups_in_directory(
         dir_abs,
         file_abs,
         &mut |rel| symlink_missing.contains(rel),
-        &mut |entry_index, _path, lookup| sink.push(index, entry_index, lookup),
+        &mut |entry_index, rel_path, lookup| {
+            #[cfg(not(windows))]
+            let _ = rel_path;
+            #[cfg(windows)]
+            let lookup = {
+                let stat_policy = sparse_stat_policy(sparse);
+                let target = file_abs(rel_path);
+                align_lookup_stat_with_index_path_windows(
+                    index,
+                    entry_index,
+                    lookup,
+                    &target,
+                    stat_policy,
+                )
+            };
+            sink.push(index, entry_index, lookup)
+        },
     )?;
     Ok(())
 }
@@ -1550,5 +1606,36 @@ mod tests {
         assert_eq!(diffs.len(), 1);
         assert_eq!(diffs[0].status, DiffStatus::Deleted);
         assert_eq!(diffs[0].old_path.as_deref(), Some("dir/file.txt"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn align_lookup_keeps_dir_scan_stat_when_path_probe_fails() {
+        let tmp = TempDir::new().unwrap();
+        let wt = tmp.path();
+        fs::create_dir_all(wt.join(".git/objects")).unwrap();
+        let rel = "probe-fail.txt";
+        let oid = write_blob_file(wt, rel, b"payload\n");
+        let mut index = Index::new();
+        index
+            .add_or_replace(entry_from_stat(&wt.join(rel), rel.as_bytes(), oid, 0o100644).unwrap());
+        let dir_stat = BlobDiskStat::from_metadata(
+            &fs::symlink_metadata(wt.join(rel)).expect("worktree metadata"),
+        );
+        let policy = crate::index::StatMatchPolicy::default();
+        let lookup = align_lookup_stat_with_index_path_windows(
+            &index,
+            0,
+            BlobDiskLookup::Present(dir_stat),
+            Path::new("Z:\\no-such-path-for-align-probe\\missing.txt"),
+            policy,
+        );
+        assert!(
+            matches!(lookup, BlobDiskLookup::Present(s)),
+            "path probe failure must not discard a successful directory scan"
+        );
+        if let BlobDiskLookup::Present(s) = lookup {
+            assert_eq!(s.fields.index_size(), dir_stat.fields.index_size());
+        }
     }
 }
