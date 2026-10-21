@@ -122,13 +122,7 @@ impl HumanRender for StashShowOutcome {
             let color = std::io::stdout().is_terminal()
                 && grit_lib::porcelain::terminal::ansi_supported()
                 && std::env::var_os("NO_COLOR").is_none();
-<<<<<<< New base: fix: clone DiffOptions in tests/benches; scope tests for format flags
             diff_render::render_stat_with_leading_blank(w, stat, color, None)?;
-||||||| Common ancestor
-            show::render_stat(w, stat, color, None)?;
-=======
-            crate::diff_render::render_stat(w, stat, color, None)?;
->>>>>>> Current commit: fix: grit show rev:path, combined merge diffs, and log merge stat parity
         }
         Ok(())
     }
@@ -141,13 +135,7 @@ impl MarkdownRender for StashShowOutcome {
             return Ok(());
         }
         if let Some(stat) = &self.stat {
-<<<<<<< New base: fix: clone DiffOptions in tests/benches; scope tests for format flags
             diff_render::render_markdown_stat(w, stat, None)?;
-||||||| Common ancestor
-            show::render_markdown_stat(w, stat, None)?;
-=======
-            crate::diff_render::render_markdown_stat(w, stat, None)?;
->>>>>>> Current commit: fix: grit show rev:path, combined merge diffs, and log merge stat parity
         }
         Ok(())
     }
