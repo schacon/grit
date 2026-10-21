@@ -9931,6 +9931,29 @@ impl core::marker::Unpin for grit_lib::path_validate::EntryMode
 impl core::marker::UnsafeUnpin for grit_lib::path_validate::EntryMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::EntryMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::EntryMode
+pub enum grit_lib::path_validate::PathValidationKind
+pub grit_lib::path_validate::PathValidationKind::Fsck
+pub grit_lib::path_validate::PathValidationKind::Worktree
+impl core::clone::Clone for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::path_validate::PathValidationKind
+impl core::cmp::PartialEq for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::default() -> Self
+impl core::fmt::Debug for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::path_validate::PathValidationKind
+impl core::marker::StructuralPartialEq for grit_lib::path_validate::PathValidationKind
+impl core::marker::Freeze for grit_lib::path_validate::PathValidationKind
+impl core::marker::Send for grit_lib::path_validate::PathValidationKind
+impl core::marker::Sync for grit_lib::path_validate::PathValidationKind
+impl core::marker::Unpin for grit_lib::path_validate::PathValidationKind
+impl core::marker::UnsafeUnpin for grit_lib::path_validate::PathValidationKind
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::PathValidationKind
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::PathValidationKind
 pub struct grit_lib::path_validate::ProtectOptions
 pub grit_lib::path_validate::ProtectOptions::protect_hfs: bool
 pub grit_lib::path_validate::ProtectOptions::protect_ntfs: bool
@@ -9988,8 +10011,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::TreeEn
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::TreeEntryNameAudit
 pub fn grit_lib::path_validate::audit_tree_entry_name(&[u8], grit_lib::path_validate::ProtectOptions) -> grit_lib::path_validate::TreeEntryNameAudit
 pub fn grit_lib::path_validate::component_is_dotgit_alias(&[u8], grit_lib::path_validate::ProtectOptions) -> bool
-pub fn grit_lib::path_validate::validate_component(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
-pub fn grit_lib::path_validate::validate_path(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
+pub fn grit_lib::path_validate::validate_component(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
+pub fn grit_lib::path_validate::validate_path(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
 pub mod grit_lib::porcelain
 pub mod grit_lib::porcelain::add
 pub enum grit_lib::porcelain::add::StageMode

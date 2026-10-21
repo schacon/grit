@@ -2,14 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-use grit_lib::config::environment::{Environment, RepositoryOptions};
+use grit_lib::config::environment::Environment;
 use grit_lib::error::Error;
 use grit_lib::objects::parse_commit;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::checkout::checkout_between_trees;
+use grit_lib::porcelain::merge::tree_to_index_entries;
 use grit_lib::porcelain::reset::{reset_to_commit, ResetMode, ResetOptions};
 use grit_lib::porcelain::restore::{restore_paths, RestoreOptions, RestoreSource};
 use grit_lib::porcelain::switch::{resolve_switch_target, switch_repository, SwitchOptions};
@@ -18,7 +19,13 @@ use grit_lib::remote::fetch::NoProgress;
 use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::{git, git_hash_object_literally, HashAlgo};
 
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+fn grit_bin() -> std::path::PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_grit")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/grit")
+        })
+}
 
 fn tree_entry(mode: &str, name: &[u8], oid_hex: &str) -> Vec<u8> {
     let oid = hex::decode(oid_hex).expect("hex");
@@ -59,67 +66,96 @@ fn append_local_config(git_dir: &Path, section: &str) {
     fs::write(path, body).expect("write config");
 }
 
-struct HostileCase {
+struct HostileCaseMeta {
     label: &'static str,
-    tree_body: Vec<u8>,
+    upstream_config: &'static str,
 }
 
-fn build_hostile_cases(_repo: &Path) -> Vec<HostileCase> {
-    vec![
-        HostileCase {
+fn hostile_case_metas() -> &'static [HostileCaseMeta] {
+    &[
+        HostileCaseMeta {
             label: "dotdot directory",
-            tree_body: Vec::new(),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "dot",
-            tree_body: tree_entry("100644", b".", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "dotgit",
-            tree_body: tree_entry("100644", b".git", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "dotgit upper",
-            tree_body: tree_entry("100644", b".GIT", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "git tilde1",
-            tree_body: tree_entry("100644", b"git~1", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "ntfs trailing dot",
-            tree_body: tree_entry("100644", b".git.", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "ntfs trailing space",
-            tree_body: tree_entry("100644", b".git ", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "ntfs index allocation",
-            tree_body: tree_entry("100644", b".git::$INDEX_ALLOCATION", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "hfs dotgit",
-            tree_body: tree_entry("100644", ".gI\u{200c}T".as_bytes(), EMPTY_TREE),
+            upstream_config: "[core]\n\tprotectHFS = true\n",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "ntfs backslash",
-            tree_body: tree_entry("100644", br"a\..\x", EMPTY_TREE),
+            upstream_config: "",
         },
-        HostileCase {
+        HostileCaseMeta {
             label: "symlink gitmodules",
-            tree_body: tree_entry("120000", b".gitmodules", EMPTY_TREE),
+            upstream_config: "",
         },
     ]
 }
 
-fn init_bare_upstream(upstream: &Path, evil_tree: &str) -> (String, String, String) {
-    let safe_commit = commit_tree(upstream, EMPTY_TREE, None);
+fn hostile_tree_body(
+    label: &str,
+    upstream: &Path,
+    blob_hex: &str,
+    symlink_target_hex: &str,
+) -> Vec<u8> {
+    match label {
+        "dotdot directory" => {
+            let escaped_blob = write_blob(upstream, b"escaped");
+            let inner = write_tree(upstream, &tree_entry("100644", b"escaped", &escaped_blob));
+            tree_entry("40000", b"..", &inner)
+        }
+        "dot" => tree_entry("100644", b".", blob_hex),
+        "dotgit" => tree_entry("100644", b".git", blob_hex),
+        "dotgit upper" => tree_entry("100644", b".GIT", blob_hex),
+        "git tilde1" => tree_entry("100644", b"git~1", blob_hex),
+        "ntfs trailing dot" => tree_entry("100644", b".git.", blob_hex),
+        "ntfs trailing space" => tree_entry("100644", b".git ", blob_hex),
+        "ntfs index allocation" => tree_entry("100644", b".git::$INDEX_ALLOCATION", blob_hex),
+        "hfs dotgit" => tree_entry("100644", ".gI\u{200c}T".as_bytes(), blob_hex),
+        "ntfs backslash" => tree_entry("100644", br"a\..\x", blob_hex),
+        "symlink gitmodules" => tree_entry("120000", b".gitmodules", symlink_target_hex),
+        other => panic!("unknown hostile case {other}"),
+    }
+}
+
+fn init_bare_upstream(upstream: &Path, evil_tree: &str, extra_config: &str) -> (String, String) {
+    if !extra_config.is_empty() {
+        append_local_config(upstream, extra_config);
+    }
+    let safe_commit = commit_tree(upstream, &write_tree(upstream, b""), None);
     git(upstream, &["update-ref", "refs/heads/main", &safe_commit]);
     let evil_commit = commit_tree(upstream, evil_tree, None);
     git(upstream, &["update-ref", "refs/heads/evil", &evil_commit]);
     git(upstream, &["symbolic-ref", "HEAD", "refs/heads/main"]);
-    (safe_commit, evil_commit, evil_tree.to_string())
+    (safe_commit, evil_commit)
 }
 
 fn dir_bytes_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -153,12 +189,13 @@ fn assert_invalid_path_component(err: Error) {
     );
 }
 
-fn grit_clone_then_checkout_evil(
+fn grit_lib_clone_then_checkout_evil(
     upstream: &Path,
     dest: &Path,
     evil_tree: &str,
     case_label: &str,
-) -> (grit_lib::remote::clone::CloneOutcome, Error) {
+    local_config: &str,
+) -> Error {
     git(upstream, &["symbolic-ref", "HEAD", "refs/heads/evil"]);
     let opts = CloneOptions {
         url: upstream.to_string_lossy().into_owned(),
@@ -167,20 +204,42 @@ fn grit_clone_then_checkout_evil(
         ..CloneOptions::new(upstream.to_string_lossy(), dest.to_path_buf())
     };
     let outcome = clone_repo(opts, &mut NoProgress, None).expect("clone fetch");
+    if !local_config.is_empty() {
+        append_local_config(outcome.repo.git_dir(), local_config);
+        outcome.repo.reload_config().expect("reload config");
+    }
     let tree_oid: ObjectId = evil_tree.parse().expect("tree oid");
     let checkout_result = checkout_between_trees(&outcome.repo, None, &tree_oid);
     assert!(
         checkout_result.is_err(),
         "{case_label}: checkout should fail for hostile tree {evil_tree}: {checkout_result:?}"
     );
-    let err = checkout_result.unwrap_err();
-    (outcome, err)
+    checkout_result.unwrap_err()
+}
+
+fn grit_cli_clone_fails(upstream: &Path, dest: &Path) -> bool {
+    git(upstream, &["symbolic-ref", "HEAD", "refs/heads/evil"]);
+    let parent = dest.parent().unwrap_or(dest);
+    fs::create_dir_all(parent).ok();
+    if dest.exists() {
+        fs::remove_dir_all(dest).ok();
+    }
+    let name = dest.file_name().unwrap().to_str().unwrap();
+    let status = Command::new(grit_bin())
+        .current_dir(parent)
+        .args(["clone", upstream.to_str().unwrap(), name])
+        .status()
+        .expect("grit clone status");
+    !status.success()
 }
 
 fn git_clone_fails(upstream: &Path, dest: &Path) -> bool {
     git(upstream, &["symbolic-ref", "HEAD", "refs/heads/evil"]);
     let parent = dest.parent().unwrap_or(dest);
     fs::create_dir_all(parent).ok();
+    if dest.exists() {
+        fs::remove_dir_all(dest).ok();
+    }
     let name = dest.file_name().unwrap().to_str().unwrap();
     let status = Command::new("git")
         .current_dir(parent)
@@ -241,8 +300,7 @@ fn dotdot_tree_rejected_at_index_population() {
     )
     .expect("clone");
     let tree_oid: ObjectId = outer.parse().expect("tree");
-    let err = grit_lib::porcelain::merge::tree_to_index_entries(&outcome.repo, &tree_oid, "")
-        .expect_err("dotdot tree");
+    let err = tree_to_index_entries(&outcome.repo, &tree_oid, "").expect_err("dotdot tree");
     assert_invalid_path_component(err);
 }
 
@@ -250,10 +308,13 @@ fn dotdot_tree_rejected_at_index_population() {
 fn hostile_paths_rejected_on_clone_switch_reset_restore() {
     let parent = tempfile::tempdir().expect("parent");
     let upstream = parent.path().join("upstream.git");
+    fs::create_dir_all(upstream.parent().unwrap()).expect("parent dir");
 
-    for case in build_hostile_cases(Path::new("/")) {
+    for case in hostile_case_metas() {
+        if case.label == "ntfs backslash" && !cfg!(windows) {
+            continue;
+        }
         fs::remove_dir_all(&upstream).ok();
-        fs::create_dir_all(upstream.parent().unwrap()).expect("parent dir");
         git(
             upstream.parent().unwrap(),
             &[
@@ -262,65 +323,60 @@ fn hostile_paths_rejected_on_clone_switch_reset_restore() {
                 upstream.file_name().unwrap().to_str().unwrap(),
             ],
         );
-        let tree_body = match case.label {
-            "dotdot directory" => {
-                let escaped_blob = write_blob(&upstream, b"escaped");
-                let inner = write_tree(&upstream, &tree_entry("100644", b"escaped", &escaped_blob));
-                tree_entry("40000", b"..", &inner)
-            }
-            _ => case.tree_body,
-        };
+        let blob_hex = write_blob(&upstream, b"x");
+        let symlink_hex = write_blob(&upstream, b"target");
+        let tree_body = hostile_tree_body(case.label, &upstream, &blob_hex, &symlink_hex);
         let evil_tree = write_tree(&upstream, &tree_body);
-        if case.label == "hfs dotgit" {
-            let dest = parent.path().join("work");
-            if dest.exists() {
-                fs::remove_dir_all(&dest).ok();
-            }
-        }
-        let (_safe, evil_commit, _evil_tree_hex) = init_bare_upstream(&upstream, &evil_tree);
+        let (_safe, evil_commit) = init_bare_upstream(&upstream, &evil_tree, case.upstream_config);
         let evil_tree_oid: ObjectId = evil_tree.parse().expect("tree");
         let evil_commit_oid: ObjectId = evil_commit.parse().expect("commit");
 
-        let clone_dest = parent
-            .path()
-            .join(format!("clone-{}", case.label.replace(' ', "-")));
-        if case.label != "hfs dotgit" {
-            let (_clone_outcome, err) =
-                grit_clone_then_checkout_evil(&upstream, &clone_dest, &evil_tree, case.label);
-            assert_invalid_path_component(err);
-        }
+        let slug = case.label.replace(' ', "-");
+        let clone_dest = parent.path().join(format!("clone-{slug}"));
+        let err = grit_lib_clone_then_checkout_evil(
+            &upstream,
+            &clone_dest,
+            &evil_tree,
+            case.label,
+            case.upstream_config,
+        );
+        assert_invalid_path_component(err);
 
-        if case.label != "hfs dotgit" {
-            let git_dir = clone_dest.join(".git");
-            let snap_wt_after = dir_bytes_snapshot(&clone_dest);
-            assert!(
-                !parent.path().join("escaped").exists(),
-                "{}: file escaped outside clone parent",
-                case.label
-            );
-            assert!(
-                !snap_wt_after
-                    .keys()
-                    .any(|p| p.contains("escaped") || p.starts_with("..")),
-                "{}: hostile path materialized in work tree: {:?}",
-                case.label,
-                snap_wt_after.keys().collect::<Vec<_>>()
-            );
-        }
-
-        let git_dest = parent
-            .path()
-            .join(format!("git-{}", case.label.replace(' ', "-")));
+        let snap_wt_after = dir_bytes_snapshot(&clone_dest);
         assert!(
-            git_clone_fails(&upstream, &git_dest),
-            "{}: system git should refuse clone of evil default branch",
+            !parent.path().join("escaped").exists(),
+            "{}: file escaped outside clone parent",
             case.label
         );
+        assert!(
+            !snap_wt_after
+                .keys()
+                .any(|p| p.contains("escaped") || p.starts_with("..")),
+            "{}: hostile path materialized in work tree: {:?}",
+            case.label,
+            snap_wt_after.keys().collect::<Vec<_>>()
+        );
+
+        if case.label != "hfs dotgit" {
+            let git_dest = parent.path().join(format!("git-{slug}"));
+            assert!(
+                git_clone_fails(&upstream, &git_dest),
+                "{}: system git should refuse clone of evil default branch",
+                case.label
+            );
+
+            let grit_cli_dest = parent.path().join(format!("grit-cli-{slug}"));
+            assert!(
+                grit_cli_clone_fails(&upstream, &grit_cli_dest),
+                "{}: grit clone should refuse evil default branch",
+                case.label
+            );
+        }
 
         let repo = open_cloned_main(parent.path(), &upstream);
-        if case.label == "hfs dotgit" {
-            append_local_config(repo.git_dir(), "[core]\n\tprotectHFS = true\n");
-            repo.reload_config().expect("reload protectHFS");
+        if !case.upstream_config.is_empty() {
+            append_local_config(repo.git_dir(), case.upstream_config);
+            repo.reload_config().expect("reload config");
         }
         let wt_snap = dir_bytes_snapshot(repo.work_tree().expect("wt"));
         let git_snap = dir_bytes_snapshot(repo.git_dir());
@@ -369,7 +425,8 @@ fn git_tilde1_allowed_when_protect_ntfs_disabled() {
     git(dir.path(), &["config", "core.protectNTFS", "false"]);
     repo.reload_config().expect("reload config");
 
-    let tree_body = tree_entry("100644", b"git~1", EMPTY_TREE);
+    let blob = write_blob(repo.git_dir(), b"x");
+    let tree_body = tree_entry("100644", b"git~1", &blob);
     let tree = write_tree(repo.git_dir(), &tree_body);
     let tree_oid: ObjectId = tree.parse().expect("oid");
     checkout_between_trees(&repo, None, &tree_oid).expect("checkout git~1 with protectNTFS off");

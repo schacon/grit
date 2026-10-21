@@ -365,10 +365,11 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         outcome,
         index_dirty,
     } = ctx;
-    let mut dir_cache = LeadingDirCache::new();
+    let config = repo.config()?;
+    let protect = crate::path_validate::ProtectOptions::from_config(&config);
+    let mut dir_cache = LeadingDirCache::with_protect(protect);
 
     if !worktree_from_tree {
-        let config = repo.config()?;
         let attr_index = index_out.gitattributes_snapshot();
         let rules = WorktreeRules::from_parts(repo, &attr_index, Arc::clone(&config))?;
         let index_mtime = index_mtime_for_diff(index_out, None);

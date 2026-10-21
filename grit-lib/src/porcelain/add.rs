@@ -22,6 +22,7 @@ use crate::index::{
 use crate::objects::ObjectId;
 use crate::odb::BULK_NEW_LOOSE_WRITE;
 use crate::path_icase::{paths_equal, worktree_path_for_index_entry, Stage0IcasePathMap};
+use crate::path_validate::{EntryMode, PathValidationKind, ProtectOptions};
 use crate::pathspec::{has_glob_chars, pathspec_is_exclude, sorted_paths_match_pathspec};
 use crate::porcelain::bulk_index::IndexStagingThresholds;
 use crate::porcelain::index_mode::{
@@ -310,25 +311,6 @@ fn stage_inner_on_index(
     };
 
     if !opts.pathspecs.is_empty() {
-        let protect = crate::path_validate::ProtectOptions::from_config(&*repo.config()?);
-        for spec in &opts.pathspecs {
-            if pathspec_is_exclude(spec) {
-                continue;
-            }
-            if has_glob_chars(spec) || spec.ends_with('/') {
-                continue;
-            }
-            let rel = spec.trim_start_matches("./");
-            if rel.is_empty() || rel.ends_with('/') {
-                continue;
-            }
-            crate::path_validate::validate_path(
-                rel.as_bytes(),
-                crate::path_validate::EntryMode::new(0o100644),
-                protect,
-            )
-            .map_err(|reason| Error::invalid_path_component(rel, reason))?;
-        }
         validate_pathspecs(repo, index, work_tree, &unstaged, &untracked, opts, &rules)?;
     }
 
@@ -382,7 +364,7 @@ fn stage_inner_on_index(
 
     if ignorecase {
         outcome.modified +=
-            stage_ignorecase_spelling_updates(work_tree, &icase_map, &matches, index)?;
+            stage_ignorecase_spelling_updates(repo, work_tree, &icase_map, &matches, index)?;
     }
 
     if !untracked.is_empty() {
@@ -429,6 +411,19 @@ fn stage_inner_on_index(
 ///
 /// Index-vs-worktree diffs skip paths with no stage-0 entry, so modify/delete conflicts
 /// need an explicit pass when the user runs `grit add <path>`.
+fn validate_index_staging_path(repo: &Repository, path: &[u8], mode: u32) -> Result<()> {
+    let opts = ProtectOptions::from_config(&*repo.config()?);
+    crate::path_validate::validate_path(
+        path,
+        EntryMode::new(mode),
+        opts,
+        PathValidationKind::Worktree,
+    )
+    .map_err(|reason| {
+        Error::invalid_path_component(String::from_utf8_lossy(path).into_owned(), reason)
+    })
+}
+
 fn stage_unmerged_paths_matching_pathspecs(
     repo: &Repository,
     work_tree: &Path,
@@ -471,6 +466,7 @@ fn stage_unmerged_paths_matching_pathspecs(
         .map_err(|e| Error::Message(format!("could not store {rel}: {e}")))?;
         let mut entry = entry_from_metadata(&meta, raw_path, oid, mode);
         entry.mode = mode;
+        validate_index_staging_path(repo, raw_path, mode)?;
         index.stage_file(entry);
         mark_fsmonitor_staged(index, rel);
         updated += 1;
@@ -572,7 +568,7 @@ fn mode_from_diff_octal(mode: &str) -> Result<u32> {
 
 #[allow(clippy::too_many_arguments)]
 fn apply_tracked_stage_plan(
-    _repo: &Repository,
+    repo: &Repository,
     work_tree: &Path,
     rel_path: &str,
     plan: &TrackedStagePlan,
@@ -598,7 +594,7 @@ fn apply_tracked_stage_plan(
         } else {
             plan.oid
         };
-        return stage_gitlink_at(rel_path, &meta, oid, index);
+        return stage_gitlink_at(repo, rel_path, &meta, oid, index);
     }
 
     let oid = plan.oid;
@@ -615,6 +611,7 @@ fn apply_tracked_stage_plan(
         entry_from_metadata(&meta, rel_path.as_bytes(), oid, mode)
     };
     entry.mode = mode;
+    validate_index_staging_path(repo, rel_path.as_bytes(), mode)?;
     if has_unmerged {
         index.stage_file(entry);
     } else {
@@ -626,6 +623,7 @@ fn apply_tracked_stage_plan(
 
 /// Refresh index path spellings when the work tree uses a different ASCII case (ignorecase FS).
 fn stage_ignorecase_spelling_updates(
+    repo: &Repository,
     work_tree: &Path,
     icase_map: &Stage0IcasePathMap,
     matches: &impl Fn(&str) -> bool,
@@ -669,6 +667,7 @@ fn stage_ignorecase_spelling_updates(
         icase_map.remove_alias_of(index, actual_rel.as_bytes());
         let mut refreshed = entry;
         refreshed.path = actual_rel.as_bytes().to_vec();
+        validate_index_staging_path(repo, refreshed.path.as_slice(), refreshed.mode)?;
         index.stage_file(refreshed);
         mark_fsmonitor_staged(index, &actual_rel);
         updated += 1;
@@ -835,6 +834,7 @@ fn stage_untracked_paths_parallel(
     }
     let staged_batch_count = batch_entries.len();
     for entry in batch_entries {
+        validate_index_staging_path(repo, &entry.path, entry.mode)?;
         if let Ok(rel) = std::str::from_utf8(&entry.path) {
             mark_fsmonitor_staged(index, rel);
         }
@@ -892,7 +892,7 @@ fn stage_untracked_path(
                 "could not resolve submodule HEAD for '{index_relpath}'"
             ))
         })?;
-        return stage_gitlink_at(&index_relpath, &meta, head_oid, index);
+        return stage_gitlink_at(repo, &index_relpath, &meta, head_oid, index);
     }
 
     let file_attrs = rules.file_attrs(&index_relpath, false);
@@ -916,6 +916,7 @@ fn stage_untracked_path(
 
     let mut entry = entry_from_metadata(&meta, index_relpath.as_bytes(), oid, mode);
     entry.mode = mode;
+    validate_index_staging_path(repo, index_relpath.as_bytes(), mode)?;
     index.stage_file(entry);
     mark_fsmonitor_staged(index, &index_relpath);
     Ok(())
@@ -1064,11 +1065,13 @@ fn sorted_stageable_paths<'a>(
 }
 
 fn stage_gitlink_at(
+    repo: &Repository,
     rel_path: &str,
     meta: &fs::Metadata,
     head_oid: ObjectId,
     index: &mut Index,
 ) -> Result<()> {
+    validate_index_staging_path(repo, rel_path.as_bytes(), MODE_GITLINK)?;
     let mut entry = entry_from_metadata(meta, rel_path.as_bytes(), head_oid, MODE_GITLINK);
     entry.size = 0;
     index.stage_file(entry);

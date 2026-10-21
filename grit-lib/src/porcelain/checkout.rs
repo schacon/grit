@@ -106,9 +106,6 @@ pub fn checkout_between_trees_with_progress(
     if from.is_none() {
         return checkout_populated_tree(repo, to, progress);
     }
-    if let Some(from_oid) = from {
-        crate::porcelain::merge::tree_to_index_entries(repo, from_oid, "")?;
-    }
     checkout_between_trees_slow(repo, from, Some(to), progress)
 }
 
@@ -2043,19 +2040,11 @@ fn validate_diff_changes_for_worktree(
     protect: ProtectOptions,
 ) -> Result<()> {
     for change in changes {
-        let mode = if change.new_path.is_some() {
-            parse_git_mode(&change.new_mode)
-        } else {
-            parse_git_mode(&change.old_mode)
+        let Some(path) = &change.new_path else {
+            continue;
         };
-        if let Some(path) = &change.new_path {
-            validate_worktree_path(path.as_bytes(), mode, protect)?;
-        }
-        if change.status == DiffStatus::Deleted {
-            if let Some(path) = &change.old_path {
-                validate_worktree_path(path.as_bytes(), mode, protect)?;
-            }
-        }
+        let mode = parse_git_mode(&change.new_mode);
+        validate_worktree_path(path.as_bytes(), mode, protect)?;
     }
     Ok(())
 }

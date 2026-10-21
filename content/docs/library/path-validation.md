@@ -22,13 +22,27 @@ Object fsck always enables both flags via [`ProtectOptions::fsck`](https://docs.
 
 ## Validating components and paths
 
-[`validate_component`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_component.html) checks a single tree/index segment (no `/` inside). Pass the Git mode so symlink-only rules apply to `.gitmodules`, `.gitattributes`, `.gitignore`, and `.mailmap`:
+[`validate_component`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_component.html) checks a single tree/index segment (no `/` inside). Pass the Git mode and a [`PathValidationKind`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/enum.PathValidationKind.html). Worktree population and checkout use **`Worktree`** (Git `verify_path` on this platform: NTFS drive/backslash-dotdot syntax only on Windows; symlink names reject **`.gitmodules`** only). Object fsck uses **`Fsck`** (all four symlink dot-files):
 
 ```rust
-use grit_lib::path_validate::{validate_component, EntryMode, ProtectOptions};
+use grit_lib::path_validate::{validate_component, EntryMode, PathValidationKind, ProtectOptions};
 
 let opts = ProtectOptions::fsck();
-validate_component(b"src", EntryMode::new(0o100644), opts)?;
+validate_component(b"src", EntryMode::new(0o100644), opts, PathValidationKind::Worktree)?;
+```
+
+Fsck checks all symlink dot-files (`.gitmodules`, `.gitattributes`, `.gitignore`, `.mailmap`):
+
+```rust
+use grit_lib::path_validate::{validate_component, EntryMode, PathValidationKind, ProtectOptions};
+
+let opts = ProtectOptions::fsck();
+validate_component(
+    b".gitignore",
+    EntryMode::new(0o120000),
+    opts,
+    PathValidationKind::Fsck,
+)?;
 ```
 
 [`validate_path`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_path.html) splits on `/` and validates each segment. [`audit_tree_entry_name`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.audit_tree_entry_name.html) returns a bitmask-style summary for fsck-style reporting when several rules fire on one name.

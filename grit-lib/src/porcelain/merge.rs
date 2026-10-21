@@ -78,11 +78,20 @@ pub fn tree_to_index_entries(
     oid: &ObjectId,
     prefix: &str,
 ) -> Result<Vec<IndexEntry>> {
+    let protect = ProtectOptions::from_config(&*repo.config()?);
+    tree_to_index_entries_with_protect(repo, oid, prefix, protect)
+}
+
+fn tree_to_index_entries_with_protect(
+    repo: &Repository,
+    oid: &ObjectId,
+    prefix: &str,
+    protect: ProtectOptions,
+) -> Result<Vec<IndexEntry>> {
     let obj = repo.odb().read(oid)?;
     if obj.kind != ObjectKind::Tree {
         return Err(Error::Message(format!("expected tree, got {}", obj.kind)));
     }
-    let protect = ProtectOptions::from_config(&*repo.config()?);
     let entries = parse_tree(&obj.data)?;
     let mut result = Vec::new();
 
@@ -96,7 +105,7 @@ pub fn tree_to_index_entries(
         validate_tree_walk_entry(&path, &te.name, te.mode, protect)?;
 
         if te.mode == 0o040000 {
-            let sub = tree_to_index_entries(repo, &te.oid, &path)?;
+            let sub = tree_to_index_entries_with_protect(repo, &te.oid, &path, protect)?;
             result.extend(sub);
         } else {
             let path_bytes = path.into_bytes();
