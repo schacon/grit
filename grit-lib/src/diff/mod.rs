@@ -20,8 +20,8 @@ mod filter;
 #[allow(dead_code)]
 mod git_histogram;
 pub mod handle;
-mod merge_commit;
 mod has_changes;
+mod merge_commit;
 mod no_index;
 mod options;
 mod patch_log;
@@ -37,10 +37,10 @@ pub use detail::{line_change_counts, DiffDetail, DiffTotals, LineStat};
 pub use files::{build_file_diffs, name_status_line, DiffFilesOutput};
 pub use filter::{DiffFilter, InvalidDiffFilter};
 pub use handle::Diff;
-pub use merge_commit::{combined_structured_patch_body, commit_diff_files, DiffMerges};
 pub use has_changes::{
     text_sides_differ, HAS_CHANGES_CALL_COUNT, WORKTREE_HAS_CHANGES_ENTRIES_SCANNED,
 };
+pub use merge_commit::{combined_structured_patch_body, commit_diff_files, DiffMerges};
 pub use no_index::{diff_paths, NoIndexError};
 pub use options::{
     renames_from_config, DiffAlgorithm, DiffOptions, RenameDetection, UnknownDiffAlgorithm,

@@ -17,14 +17,14 @@ use serde::Serialize;
 use std::io::Write;
 
 use crate::commands::diff::{
-    cli_outcome_from_lib, diff_of_commit, render_log_commit_diff,
-    resolve_commit_diff_pathspecs, DiffOutcome, DiffTotalsJson, FileDiff,
+    cli_outcome_from_lib, diff_of_commit, render_log_commit_diff, resolve_commit_diff_pathspecs,
+    DiffOutcome, DiffTotalsJson, FileDiff,
 };
 use crate::commands::show::{diffstat, DiffStat};
-use crate::diff_render::{render_stat, use_color};
 use crate::commits_json::{fetch_limit_plus_one, truncate_oid_list, CommitJsonLoader};
 use crate::context::{self, CommitSummary};
 use crate::diff_format::DiffFormatArgs;
+use crate::diff_render::{render_stat, use_color};
 use crate::log_display::{
     decorate_commit_row, render_author_groups_human, render_author_groups_markdown,
     render_oneline_line,
