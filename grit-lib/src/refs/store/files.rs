@@ -1031,8 +1031,19 @@ impl RefStore for FilesRefStore {
     }
 
     fn delete_reflog(&self, name: &str) -> Result<()> {
-        let path = self.reflog_path(name);
-        let _ = fs::remove_file(path);
+        let route = self.route(name);
+        let logs_root = route.storage_dir.join("logs");
+        let path = logs_root.join(&route.storage_name);
+        let _ = fs::remove_file(&path);
+        // Empty parents left under `logs/` would block a later ref whose reflog needs that
+        // path as a file (deleting `a/b`, then creating `a`).
+        let mut parent = path.parent();
+        while let Some(dir) = parent.filter(|d| *d != logs_root && d.starts_with(&logs_root)) {
+            if fs::remove_dir(dir).is_err() {
+                break;
+            }
+            parent = dir.parent();
+        }
         Ok(())
     }
 
