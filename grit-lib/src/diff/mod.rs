@@ -25,6 +25,8 @@ mod merge_commit;
 mod no_index;
 mod options;
 mod patch_log;
+pub mod pickaxe;
+mod posix_ere;
 mod targets;
 mod tree_content;
 mod unified_emit;
@@ -62,6 +64,7 @@ pub use patch_log::{
     write_diff_entry_log_patch, write_patch, write_patch_resolved, write_patch_structured,
     LogPatchCommitHeader, LogPatchOptions, PatchResolvedSide, PatchTextOptions,
 };
+pub use pickaxe::{Pickaxe, PickaxeError, PickaxeKind};
 pub use targets::{
     resolve_diff_arguments, DiffArguments, DiffTarget, FileDiff, ResolveDiffArgumentsError,
 };

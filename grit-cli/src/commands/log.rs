@@ -324,6 +324,7 @@ pub fn run(
         || !rev.paths.is_empty()
         || rev.max_count.is_some()
         || opts.commit_filter.as_ref().is_some_and(|f| f.is_active())
+        || opts.pickaxe.is_some()
         || LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?.is_none();
 
     if use_rev_walk {

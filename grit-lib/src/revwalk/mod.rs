@@ -17,6 +17,7 @@ pub mod group_by;
 pub mod handle;
 pub mod queries;
 
+pub use crate::diff::{Pickaxe, PickaxeError, PickaxeKind};
 pub use filter::{CommitFilter, CommitFilterBuilder, CommitFilterError, Pattern};
 pub use group_by::{
     group_commits_by_author, group_commits_by_author_from_rev, mailmap_for_grouping, AuthorGroup,
