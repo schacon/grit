@@ -68,7 +68,7 @@ fn merge_fast_forward_preserves_dirty_unrelated_path() {
         integrate_branch(&repo, "refs/heads/main", main_oid, side_oid, "side").expect("merge");
     assert!(matches!(
         outcome,
-        IntegrateBranchOutcome::FastForward { oid } if oid == side_oid
+        IntegrateBranchOutcome::FastForward { oid, .. } if oid == side_oid
     ));
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("b.txt")).expect("read b after grit"),

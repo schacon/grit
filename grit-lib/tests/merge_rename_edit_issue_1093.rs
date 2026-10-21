@@ -108,7 +108,7 @@ fn integrate_branch_rename_on_theirs_edit_on_ours_clean_index() {
 
     let outcome =
         integrate_branch(&repo, "refs/heads/main", main_oid, ren_oid, "ren").expect("merge");
-    let IntegrateBranchOutcome::Merged { oid } = outcome else {
+    let IntegrateBranchOutcome::Merged { oid, .. } = outcome else {
         panic!("expected clean merge");
     };
 

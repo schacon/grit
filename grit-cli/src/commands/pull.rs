@@ -2,7 +2,9 @@
 //! current branch (fast-forward when possible, otherwise a merge).
 
 use anyhow::{bail, Context, Result};
+use grit_lib::change_id::{change_id, resolved_change_id, ChangeIdPolicy};
 use grit_lib::config::ConfigSet;
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::porcelain::worktree_guard::prepare_tree_checkout;
 use grit_lib::refs;
@@ -14,6 +16,17 @@ use crate::output::OutputMode;
 use crate::progress::TerminalProgress;
 use grit_lib::remote::transfer::{resolve_fetch_prune, FetchOptions, TagMode};
 use grit_lib::remote::{DefaultHttpClientFactory, Remote, DEFAULT_REMOTE};
+
+fn logical_change_id_json(repo: &grit_lib::repo::Repository, oid: ObjectId) -> Option<String> {
+    let obj = repo.odb().read(&oid).ok()?;
+    let data = parse_commit(&obj.data).ok()?;
+    let config = repo.config().ok()?;
+    if ChangeIdPolicy::from_config(config.as_ref()).enabled() {
+        Some(resolved_change_id(&oid, &data).id.as_str().to_owned())
+    } else {
+        change_id(&data).map(|id| id.as_str().to_owned())
+    }
+}
 
 pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
     let repo = context::discover()?;
@@ -91,6 +104,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
                 &short_name,
                 &format!("{remote}/{upstream_branch}"),
                 upstream_oid,
+                logical_change_id_json(&repo, upstream_oid),
             ))
         }
     }
