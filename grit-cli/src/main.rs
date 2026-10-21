@@ -532,10 +532,10 @@ enum Command {
         #[arg(long = "quiet")]
         quiet: bool,
         /// One commit (that commit's patch), two commits (tree diff), or a range `A..B` / `A...B`.
-        #[arg(value_name = "COMMIT")]
+        #[arg(value_name = "COMMIT", allow_hyphen_values = true)]
         commits: Vec<String>,
         /// Limit the diff to these paths (after `--`, like `grit log`).
-        #[arg(value_name = "PATH", last = true)]
+        #[arg(value_name = "PATH", last = true, allow_hyphen_values = true)]
         paths: Vec<String>,
         #[command(flatten)]
         format: diff_format::DiffFormatArgs,
@@ -1200,7 +1200,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 }
                 Err(err) => {
                     output::emit_error(&err, opts);
-                    std::process::exit(if wants_exit_code {
+                    std::process::exit(if no_index || wants_exit_code {
                         commands::diff::DIFF_ERROR_EXIT
                     } else {
                         1
