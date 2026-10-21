@@ -341,14 +341,24 @@ fn stage_inner_on_index(
             hash_blobs_without_write: opts.dry_run,
             ..DiffIndexToWorktreeOptions::default()
         };
-        let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
-            repo.odb(),
-            repo.git_dir(),
-            index,
-            work_tree,
-            diff_opts,
-        )?;
-        (unstaged, staging_stats)
+        if dry_run {
+            let (unstaged, _) = crate::diff::diff_index_to_worktree_with_options(
+                repo.odb(),
+                index,
+                work_tree,
+                diff_opts,
+            )?;
+            (unstaged, std::collections::BTreeMap::new())
+        } else {
+            let (unstaged, _, staging_stats) = crate::diff::diff_index_to_worktree_for_staging(
+                repo.odb(),
+                repo.git_dir(),
+                index,
+                work_tree,
+                diff_opts,
+            )?;
+            (unstaged, staging_stats)
+        }
     };
 
     let rules = lock_rules(&rules_arc)?;
