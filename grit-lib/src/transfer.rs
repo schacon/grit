@@ -1436,7 +1436,13 @@ pub fn fetch_local_with_progress(
             opts.dry_run,
         )?;
     }
-    finish_anonymous_url_fetch(local_git_dir, opts, default_branch.as_deref(), &remote_refs)?;
+    finish_anonymous_url_fetch(
+        local_git_dir,
+        opts,
+        default_branch.as_deref(),
+        &remote_refs,
+        &matched,
+    )?;
     let new_shallow = if opts.initial_remote_fetch {
         remote_shallow.iter().copied().collect()
     } else {
@@ -1973,6 +1979,7 @@ pub(crate) fn finish_anonymous_url_fetch(
     opts: &FetchOptions,
     default_branch: Option<&str>,
     remote_refs: &[(String, ObjectId)],
+    matched: &[MatchedRef],
 ) -> Result<()> {
     if opts.dry_run || opts.remote_name.is_some() {
         return Ok(());
@@ -1980,14 +1987,71 @@ pub(crate) fn finish_anonymous_url_fetch(
     let Some(source) = opts.fetch_source.as_deref() else {
         return Ok(());
     };
-    let Some(branch) = default_branch else {
+    let lines = fetch_head_lines_for_ad_hoc_fetch(
+        matched,
+        remote_refs,
+        &opts.refspecs,
+        default_branch,
+        source,
+    );
+    if lines.is_empty() {
         return Ok(());
-    };
-    let head_ref = format!("refs/heads/{branch}");
-    let Some((_, tip)) = remote_refs.iter().find(|(name, _)| name == &head_ref) else {
-        return Ok(());
-    };
-    crate::fetch_head::write_anonymous_fetch_head(git_dir, *tip, source)
+    }
+    crate::fetch_head::write_fetch_head(git_dir, &lines)
+}
+
+fn fetch_head_lines_for_ad_hoc_fetch(
+    matched: &[MatchedRef],
+    remote_refs: &[(String, ObjectId)],
+    refspecs: &[String],
+    default_branch: Option<&str>,
+    source: &str,
+) -> Vec<crate::fetch_head::FetchHeadLine> {
+    use crate::fetch_head::FetchHeadLine;
+    use crate::remote::Remote;
+
+    let anonymous_only = refspecs.len() == 1
+        && refspecs[0].trim_start_matches('+') == Remote::ANONYMOUS_FETCH_REFSPEC;
+
+    if anonymous_only {
+        if let Some(branch) = default_branch {
+            let head_ref = format!("refs/heads/{branch}");
+            if let Some(m) = matched
+                .iter()
+                .find(|m| m.remote_ref == head_ref && !m.is_tag)
+            {
+                return vec![FetchHeadLine {
+                    oid: m.oid,
+                    for_merge: true,
+                    description: source.to_owned(),
+                }];
+            }
+        }
+        if let Some((_, oid)) = remote_refs.iter().find(|(name, _)| name == "HEAD") {
+            return vec![FetchHeadLine {
+                oid: *oid,
+                for_merge: true,
+                description: source.to_owned(),
+            }];
+        }
+        return Vec::new();
+    }
+
+    matched
+        .iter()
+        .filter(|m| !m.is_tag && m.remote_ref.starts_with("refs/heads/"))
+        .map(|m| {
+            let short = m
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(m.remote_ref.as_str());
+            FetchHeadLine {
+                oid: m.oid,
+                for_merge: true,
+                description: format!("branch '{short}' of {source}"),
+            }
+        })
+        .collect()
 }
 
 /// Match a ref name against the positive refspecs, returning the destination

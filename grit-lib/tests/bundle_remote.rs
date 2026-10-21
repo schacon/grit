@@ -110,6 +110,79 @@ fn fetch_from_git_bundle_matches_git_fetch() {
 }
 
 #[test]
+fn literal_bundle_fetch_writes_fetch_head() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    init_with_commits(upstream.path(), &["bundle-tip"]);
+    let bundle_path = upstream.path().join("inc.bundle");
+    assert!(git_in(
+        upstream.path(),
+        &["bundle", "create", bundle_path.to_str().unwrap(), "HEAD",],
+    ));
+
+    let dest = tempfile::tempdir().expect("dest");
+    Repository::init(
+        dest.path(),
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
+    )
+    .expect("init");
+    git_configure_user(dest.path());
+    assert!(git_in(
+        dest.path(),
+        &["commit", "--allow-empty", "-qm", "seed"],
+    ));
+
+    let remote = Remote::from_url(bundle_path.to_str().unwrap()).expect("bundle url");
+    let repo = Repository::open(
+        &dest.path().join(".git"),
+        &RepositoryOptions::empty().with_work_tree(dest.path()),
+    )
+    .unwrap();
+    remote
+        .fetch(
+            &repo,
+            FetchOptions {
+                tags: TagMode::None,
+                ..Default::default()
+            },
+            &mut NoProgress,
+            None,
+        )
+        .expect("anonymous bundle fetch");
+
+    let grit_fetch_head = std::fs::read_to_string(dest.path().join(".git/FETCH_HEAD"))
+        .expect("grit FETCH_HEAD must exist");
+    let bundle_main =
+        grit_lib::refs::resolve_ref(upstream.path().join(".git").as_path(), "refs/heads/main")
+            .expect("upstream main");
+    let grit_oid = grit_fetch_head.split('\t').next().expect("oid").trim();
+    assert_eq!(grit_oid, bundle_main.to_hex());
+
+    let git_only = tempfile::tempdir().expect("git only");
+    Repository::init(
+        git_only.path(),
+        &InitOptions::new()
+            .with_initial_branch("main".to_owned())
+            .with_ref_storage(grit_lib::RefStorageFormat::Files),
+    )
+    .expect("init");
+    git_configure_user(git_only.path());
+    assert!(git_in(
+        git_only.path(),
+        &["commit", "--allow-empty", "-qm", "seed"],
+    ));
+    assert!(git_in(
+        git_only.path(),
+        &["fetch", bundle_path.to_str().unwrap()],
+    ));
+    let git_fetch_head =
+        std::fs::read_to_string(git_only.path().join(".git/FETCH_HEAD")).expect("git FETCH_HEAD");
+    let git_oid = git_fetch_head.split('\t').next().expect("git oid").trim();
+    assert_eq!(grit_oid, git_oid);
+}
+
+#[test]
 fn clone_from_bundle_matches_git_default_branch_when_head_not_first() {
     let upstream = tempfile::tempdir().expect("upstream");
     assert!(git_in(upstream.path(), &["init", "-q", "-b", "main", "."]));

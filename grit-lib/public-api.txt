@@ -12667,7 +12667,6 @@ pub fn grit_lib::remote::fetch::fetch_operation_identity(&grit_lib::config::envi
 pub fn grit_lib::remote::fetch::fetch_remote(&std::path::Path, &mut dyn grit_lib::remote::transport::Connection, &grit_lib::remote::transfer::FetchOptions, &mut dyn grit_lib::remote::fetch::Progress) -> grit_lib::error::Result<grit_lib::remote::transfer::FetchOutcome>
 pub mod grit_lib::remote::fetch_head
 pub fn grit_lib::remote::fetch_head::merge_object_ids_hex(&str) -> alloc::vec::Vec<alloc::string::String>
-pub fn grit_lib::remote::fetch_head::write_anonymous_fetch_head(&std::path::Path, grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<()>
 pub mod grit_lib::remote::fetch_negotiator
 pub struct grit_lib::remote::fetch_negotiator::SkippingNegotiator
 impl grit_lib::remote::fetch_negotiator::SkippingNegotiator

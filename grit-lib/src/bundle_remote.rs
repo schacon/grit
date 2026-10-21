@@ -154,12 +154,17 @@ pub fn fetch_from_bundle_with_progress(
     let default_branch =
         default_branch_from_bundle_head(&header.refs, init_default_branch.as_deref());
 
+    let mut opts = opts.clone();
+    if opts.remote_name.is_none() && opts.fetch_source.is_none() {
+        opts.fetch_source = Some(bundle_path.to_string_lossy().into_owned());
+    }
+
     complete_bundle_fetch(
         local_git_dir,
         repo.odb(),
         &remote_refs,
         default_branch,
-        opts,
+        &opts,
         &HashSet::new(),
         pack_oids,
         transfer,
@@ -374,6 +379,13 @@ fn complete_bundle_fetch(
         local_git_dir,
         opts,
         default_branch.as_deref(),
+    )?;
+    crate::transfer::finish_anonymous_url_fetch(
+        local_git_dir,
+        opts,
+        default_branch.as_deref(),
+        remote_refs,
+        &matched,
     )?;
     let new_shallow = if opts.initial_remote_fetch {
         remote_shallow.iter().copied().collect()

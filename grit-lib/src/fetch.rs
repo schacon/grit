@@ -1609,6 +1609,7 @@ pub fn fetch_remote(
         opts,
         default_branch.as_deref(),
         &remote_refs,
+        &matched,
     )?;
     Ok(FetchOutcome {
         updates,

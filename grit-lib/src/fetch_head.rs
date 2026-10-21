@@ -1,20 +1,39 @@
-//! Parsing [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion) lines.
+//! Parsing and writing [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion) lines.
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 use std::path::Path;
 
-/// Overwrite `.git/FETCH_HEAD` with a single for-merge line for an anonymous URL/path fetch.
-///
-/// Matches `git fetch <url>` when no remote-tracking refspec applies: one line
-/// `<oid>` + two tab characters + `<source>`.
+/// One line to append to or replace in `.git/FETCH_HEAD`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FetchHeadLine {
+    /// Object id at the tip of the fetched ref.
+    pub oid: ObjectId,
+    /// When false, the line is written with a `not-for-merge` marker.
+    pub for_merge: bool,
+    /// Text after the flag field (branch description or source path).
+    pub description: String,
+}
+
+/// Replace `.git/FETCH_HEAD` with `lines` (Git overwrites on a normal fetch).
 ///
 /// # Errors
 ///
 /// Returns [`Error::Io`] if the file cannot be written.
-pub fn write_anonymous_fetch_head(git_dir: &Path, tip: ObjectId, source: &str) -> Result<()> {
-    let line = format!("{}\t\t{source}\n", tip.to_hex());
-    std::fs::write(git_dir.join("FETCH_HEAD"), line).map_err(Error::Io)
+pub(crate) fn write_fetch_head(git_dir: &Path, lines: &[FetchHeadLine]) -> Result<()> {
+    let mut body = String::new();
+    for line in lines {
+        if line.for_merge {
+            body.push_str(&format!("{}\t\t{}\n", line.oid.to_hex(), line.description));
+        } else {
+            body.push_str(&format!(
+                "{}\tnot-for-merge\t{}\n",
+                line.oid.to_hex(),
+                line.description
+            ));
+        }
+    }
+    std::fs::write(git_dir.join("FETCH_HEAD"), body).map_err(Error::Io)
 }
 
 /// Collect 40-character hex object IDs from `FETCH_HEAD` content for lines that are **for merge**.
@@ -57,6 +76,25 @@ pub fn merge_object_ids_hex(input: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_fetch_head_for_merge_uses_double_tab() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        let oid = ObjectId::from_hex(&"a".repeat(40)).unwrap();
+        write_fetch_head(
+            &git_dir,
+            &[FetchHeadLine {
+                oid,
+                for_merge: true,
+                description: "../repo".to_owned(),
+            }],
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(git_dir.join("FETCH_HEAD")).unwrap();
+        assert_eq!(text, format!("{}\t\t../repo\n", oid.to_hex()));
+    }
 
     #[test]
     fn double_tab_for_merge_branch() {
