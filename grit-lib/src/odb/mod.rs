@@ -1913,18 +1913,12 @@ impl Odb {
     /// Hash raw content of a given kind using this repository's hash algorithm.
     ///
     /// This does **not** write anything to disk.
-    #[must_use]
-    pub fn hash(&self, kind: ObjectKind, data: &[u8]) -> ObjectId {
-        hash_object_data_with(self.hash_algo(), kind, data)
-    }
-
-    /// Like [`Self::hash`], but surfaces SHA-1 collision detection on ingestion.
     ///
     /// # Errors
     ///
     /// Returns [`Error::HashCollision`] when sha1dc detects a chosen-prefix collision.
-    pub fn try_hash(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
-        try_hash_object_data_with(self.hash_algo(), kind, data)
+    pub fn hash(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
+        hash_object_data_with(self.hash_algo(), kind, data)
     }
 
     /// Write an object to the loose store and return its [`ObjectId`].
@@ -2060,7 +2054,7 @@ impl Odb {
         data: &[u8],
         options: WriteOptions,
     ) -> Result<ObjectId> {
-        let oid = try_hash_object_data_with(self.hash_algo(), kind, data)?;
+        let oid = hash_object_data_with(self.hash_algo(), kind, data)?;
 
         if let Some(primary) = &self.custom_primary {
             let already_exists = if options.trust_new_loose {
@@ -2131,7 +2125,7 @@ impl Odb {
                 operation: "write_local",
             });
         }
-        let oid = try_hash_object_data_with(self.hash_algo(), kind, data)?;
+        let oid = hash_object_data_with(self.hash_algo(), kind, data)?;
 
         if let Some(existing) = self.try_freshen_existing_local(&oid) {
             return Ok(existing);
@@ -2156,7 +2150,7 @@ impl Odb {
                 operation: "write_loose_materialize",
             });
         }
-        let oid = try_hash_object_data_with(self.hash_algo(), kind, data)?;
+        let oid = hash_object_data_with(self.hash_algo(), kind, data)?;
         if let Ok(primary) = self.primary() {
             if let Ok(Some(existing)) = primary
                 .loose_store()
@@ -2181,7 +2175,7 @@ impl Odb {
     /// - [`Error::Io`] / [`Error::Zlib`] — storage errors.
     pub fn write_raw(&self, store_bytes: &[u8]) -> Result<ObjectId> {
         let obj = parse_object_bytes(store_bytes)?;
-        let oid = try_hash_object_data_with(self.hash_algo(), obj.kind, &obj.data)?;
+        let oid = hash_object_data_with(self.hash_algo(), obj.kind, &obj.data)?;
 
         if let Some(primary) = &self.custom_primary {
             if self.exists(&oid) {
@@ -2220,7 +2214,7 @@ impl Odb {
             });
         }
         let obj = parse_object_bytes(store_bytes)?;
-        let oid = try_hash_object_data_with(self.hash_algo(), obj.kind, &obj.data)?;
+        let oid = hash_object_data_with(self.hash_algo(), obj.kind, &obj.data)?;
         if let Some(existing) = self.try_freshen_existing_local(&oid) {
             return Ok(existing);
         }
@@ -2262,12 +2256,8 @@ impl Odb {
 
 /// Hash the canonical store bytes of an object (`"<kind> <len>\0<data>"`) with
 /// the given hash algorithm.
-fn hash_object_data_with(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> ObjectId {
+fn hash_object_data_with(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
     hash::hash_object(algo, kind, data)
-}
-
-fn try_hash_object_data_with(algo: HashAlgo, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
-    hash::try_hash_object(algo, kind, data)
 }
 
 /// Build canonical blob store bytes (`"blob <len>\\0<payload>"`).
@@ -2525,7 +2515,9 @@ mod tests {
     fn known_blob_hash() {
         // Verified: echo -n "hello" | git hash-object --stdin
         //        => b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0
-        let oid = HashAlgo::Sha1.hash_object(ObjectKind::Blob, b"hello");
+        let oid = HashAlgo::Sha1
+            .hash_object(ObjectKind::Blob, b"hello")
+            .expect("hash");
         assert_eq!(oid.to_hex(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
     }
 
@@ -2661,7 +2653,7 @@ mod tests {
         let objects2 = dir2.path().join("objects");
         let odb2 = Odb::new(&objects2);
         let store = super::blob_store_bytes(data);
-        let oid = hash::hash_object(odb2.hash_algo(), ObjectKind::Blob, data);
+        let oid = hash::hash_object(odb2.hash_algo(), ObjectKind::Blob, data).expect("hash");
         assert_eq!(oid, oid_normal);
         let zlib = odb2.zlib_compress_loose_store(&store).unwrap();
         let oid2 = odb2
@@ -3013,7 +3005,7 @@ mod tests {
         git_in(dir.path(), &["repack", "-ad"]);
         let objects = dir.path().join(".git").join("objects");
         let odb = Odb::new(&objects);
-        let oid = odb.hash(ObjectKind::Blob, payload);
+        let oid = odb.hash(ObjectKind::Blob, payload).expect("hash");
         assert!(odb.exists(&oid), "blob must live in pack after repack");
         let pack_dir = objects.join("pack");
         for entry in fs::read_dir(&pack_dir).unwrap().flatten() {
