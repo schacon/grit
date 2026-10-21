@@ -34,6 +34,35 @@ fn assert_hash_collision<T: std::fmt::Debug>(result: Result<T, Error>) {
     assert!(matches!(result, Err(Error::HashCollision { .. })));
 }
 
+fn shattered_blob_store_bytes(which: u8) -> Vec<u8> {
+    let payload = shattered_prefix(which);
+    let mut store = format!("blob {}\0", payload.len()).into_bytes();
+    store.extend_from_slice(&payload);
+    store
+}
+
+#[test]
+fn odb_write_raw_rejects_shattered_store_bytes() {
+    let repo = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
+    let odb = Odb::new(&repo.objects_dir());
+    let store = shattered_blob_store_bytes(1);
+    let err = odb
+        .write_raw(&store)
+        .expect_err("write_raw must reject collision");
+    assert!(matches!(err, Error::HashCollision { .. }));
+}
+
+#[test]
+fn odb_write_raw_local_rejects_shattered_store_bytes() {
+    let repo = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
+    let odb = Odb::new(&repo.objects_dir());
+    let store = shattered_blob_store_bytes(2);
+    let err = odb
+        .write_raw_local(&store)
+        .expect_err("write_raw_local must reject collision");
+    assert!(matches!(err, Error::HashCollision { .. }));
+}
+
 #[test]
 fn odb_write_rejects_shattered_blob() {
     let repo = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
@@ -119,8 +148,9 @@ fn parallel_hash_surfaces_collision() {
 }
 
 #[test]
-fn git_rejects_shattered_prefix_on_hash_object_write() {
+fn grit_stricter_than_git_on_shattered_prefix_blob() {
     let data = shattered_prefix(1);
+    assert_hash_collision(HashAlgo::Sha1.try_hash_object(ObjectKind::Blob, &data));
     let repo = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
     let mut child = Command::new("git")
         .current_dir(repo.path())
@@ -139,11 +169,9 @@ fn git_rejects_shattered_prefix_on_hash_object_write() {
         .write_all(&data)
         .expect("write");
     let out = child.wait_with_output().expect("wait");
-    if out.status.success() {
-        assert_hash_collision(HashAlgo::Sha1.try_hash_object(ObjectKind::Blob, &data));
-        return;
+    if !out.status.success() {
+        assert!(out.stdout.is_empty());
     }
-    assert!(out.stdout.is_empty());
 }
 
 #[test]
