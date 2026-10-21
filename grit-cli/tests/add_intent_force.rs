@@ -43,6 +43,29 @@ fn add_intent_to_add_json_lists_paths() {
 }
 
 #[test]
+fn add_intent_to_add_markdown_lists_paths() {
+    let grit = env!("CARGO_BIN_EXE_grit");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let null = null_config();
+    let root = dir.path();
+
+    assert!(run_grit(grit, root, &["init"], &null).status.success());
+    fs::write(root.join("n.txt"), b"new\n").expect("write");
+
+    let out = run_grit(grit, root, &["add", "-N", "n.txt", "--markdown"], &null);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        md.contains("n.txt"),
+        "markdown add output must list intent-to-add paths: {md}"
+    );
+}
+
+#[test]
 fn add_force_stages_ignored_file() {
     let grit = env!("CARGO_BIN_EXE_grit");
     let dir = tempfile::TempDir::new().expect("tempdir");

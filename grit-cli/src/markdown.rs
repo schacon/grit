@@ -893,11 +893,15 @@ pub fn print_add_outcome(w: &mut dyn Write, outcome: &AddOutcome) -> anyhow::Res
         .iter()
         .chain(&outcome.modified)
         .chain(&outcome.removed)
+        .chain(&outcome.intent_to_add)
         .take(10)
     {
         outln!(w, "  - `{path}`");
     }
-    let listed = outcome.added.len() + outcome.modified.len() + outcome.removed.len();
+    let listed = outcome.added.len()
+        + outcome.modified.len()
+        + outcome.removed.len()
+        + outcome.intent_to_add.len();
     if listed > 10 {
         outln!(w, "  - … and {} more", listed - 10);
     }
