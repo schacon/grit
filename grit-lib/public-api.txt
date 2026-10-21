@@ -4296,6 +4296,7 @@ pub fn grit_lib::diff::write_diff_entry_log_patch<W: core::io::write::Write>(&mu
 pub fn grit_lib::diff::write_patch<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::DiffEntry], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_patch_resolved<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::PatchResolvedSide], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::write_patch_structured<W: core::io::write::Write>(&grit_lib::repo::Repository, &[grit_lib::diff::TreeDiffStructured], &grit_lib::diff::PatchTextOptions, &mut W) -> grit_lib::error::Result<()>
+pub fn grit_lib::diff::write_paths_patch<W: core::io::write::Write>(&std::path::Path, &std::path::Path, &grit_lib::diff::DiffOptions, &mut W) -> core::result::Result<bool, grit_lib::diff::NoIndexError>
 pub fn grit_lib::diff::write_unified_diff_with_prefix_and_funcname_and_algorithm<W: core::io::write::Write>(&mut W, &str, &str, &str, &str, usize, usize, &str, &str, core::option::Option<&grit_lib::diff::userdiff::FuncnameMatcher>, similar::types::Algorithm, bool, bool, bool, bool) -> grit_lib::error::Result<()>
 pub fn grit_lib::diff::zero_oid() -> grit_lib::objects::ObjectId
 pub mod grit_lib::error
@@ -16222,10 +16223,10 @@ pub grit_lib::revwalk::history::HistoryError::RefApply
 pub grit_lib::revwalk::history::HistoryError::RefApply::message: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::RefCasMismatch
 pub grit_lib::revwalk::history::HistoryError::RefCasMismatch::name: alloc::string::String
-pub grit_lib::revwalk::history::HistoryError::Signing
-pub grit_lib::revwalk::history::HistoryError::Signing::message: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::RootCommit
 pub grit_lib::revwalk::history::HistoryError::RootCommit::commit: grit_lib::objects::ObjectId
+pub grit_lib::revwalk::history::HistoryError::Signing
+pub grit_lib::revwalk::history::HistoryError::Signing::message: alloc::string::String
 pub grit_lib::revwalk::history::HistoryError::SplitSelectsEverything
 pub grit_lib::revwalk::history::HistoryError::SplitSelectsNothing
 pub grit_lib::revwalk::history::HistoryError::SquashDiscardsMessage

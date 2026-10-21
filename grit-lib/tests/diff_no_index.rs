@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use grit_lib::diff::{
-    diff_paths, DiffOptions, DiffStatus, FileDiff, NoIndexError, RenameDetection,
+    diff_paths, write_paths_patch, DiffOptions, DiffStatus, FileDiff, NoIndexError, RenameDetection,
 };
 use tempfile::TempDir;
 
@@ -223,4 +223,32 @@ fn no_index_append_basename_trailing_slash() {
         grit_name_status(Path::new(&d_slash), &f),
         git_name_status(Path::new(&d_slash), &f)
     );
+}
+
+#[test]
+fn write_paths_patch_emits_unified_patch_for_differing_files() {
+    let dir = TempDir::new().expect("tempdir");
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, b"left\n").expect("write");
+    std::fs::write(&b, b"right\n").expect("write");
+
+    let mut patch = Vec::new();
+    let changed =
+        write_paths_patch(&a, &b, &DiffOptions::default(), &mut patch).expect("write_paths_patch");
+    assert!(changed);
+    let text = String::from_utf8(patch).expect("utf8 patch");
+    assert!(text.contains("@@"), "expected unified hunk header:\n{text}");
+    assert!(
+        text.contains("-left") && text.contains("+right"),
+        "expected line change in patch:\n{text}"
+    );
+
+    std::fs::write(&a, b"same\n").expect("write");
+    std::fs::write(&b, b"same\n").expect("write");
+    let mut empty = Vec::new();
+    let unchanged =
+        write_paths_patch(&a, &b, &DiffOptions::default(), &mut empty).expect("write_paths_patch");
+    assert!(!unchanged);
+    assert!(empty.is_empty());
 }
