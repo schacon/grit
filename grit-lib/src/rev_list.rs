@@ -12,7 +12,9 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::bitmap_walk::{bitmap_filter_supported, BitmapWalkError, PeeledTips};
+use crate::bitmap_walk::{
+    bitmap_filter_supported, BitmapWalkError, PeeledTips, ReachableSet,
+};
 use crate::commit_graph_file::{BloomPrecheck, BloomWalkStatsHandle, CommitGraphChain};
 use crate::config::ConfigSet;
 use crate::diff::zero_oid;
@@ -6071,6 +6073,169 @@ fn try_rev_list_accelerated(
             .then_some(non_commit_count),
         tip_annotated_tag_by_commit: HashMap::new(),
     }))
+}
+
+/// When bitmap acceleration applies, invoke `f` for each reachable commit without collecting oids.
+///
+/// Returns `Ok(true)` when `f` ran for every commit, `Ok(false)` when callers should fall back
+/// to a full [`rev_list`] walk.
+///
+/// # Errors
+///
+/// Propagates rev-parse, bitmap, and callback errors.
+pub(crate) fn try_for_each_bitmap_reachable_commit<F>(
+    repo: &Repository,
+    include: &[ObjectId],
+    exclude: &[ObjectId],
+    options: &RevListOptions,
+    mut f: F,
+) -> Result<bool>
+where
+    F: FnMut(ObjectId) -> Result<()>,
+{
+    if !rev_list_acceleration_compatible(options) {
+        return Ok(false);
+    }
+    if !wants_bitmap_rev_list(options) || !bitmap_filter_supported(options.filter.as_ref()) {
+        return Ok(false);
+    }
+
+    let index = match repo
+        .odb()
+        .with_pack_read_context(|| BitmapIndex::open(repo))
+    {
+        Ok(Some(index)) => index,
+        Ok(None) => return Ok(false),
+        Err(e) => return Err(Error::CorruptObject(format!("pack bitmap: {e}"))),
+    };
+    let (peeled_wants, filter_want_tips) = peeled_wants_from_rev_list_inputs(include, &[]);
+    let reachable = match index.reachability_with_peeled_wants(
+        repo,
+        peeled_wants,
+        exclude,
+        options.filter.as_ref(),
+        options.missing_action,
+        &filter_want_tips,
+    ) {
+        Ok(set) => set,
+        Err(BitmapWalkError::Unsupported(_)) => return Ok(false),
+        Err(BitmapWalkError::Bitmap(e)) => {
+            return Err(Error::CorruptObject(format!("pack bitmap: {e}")));
+        }
+        Err(BitmapWalkError::Repository(e)) => return Err(e),
+    };
+
+    let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
+    let excluded_object_ids = excluded_object_root_ids(
+        repo,
+        &[],
+        options.missing_action,
+        None,
+        skip_trees,
+        true,
+        false,
+    )?;
+
+    for oid in reachable.iter_by_kind(ObjectKind::Commit) {
+        if excluded_object_ids.contains(&oid) {
+            continue;
+        }
+        f(oid)?;
+    }
+    Ok(true)
+}
+
+/// Like [`try_for_each_bitmap_reachable_commit`] after resolving revision specs to commit tips.
+///
+/// # Errors
+///
+/// Propagates rev-parse and bitmap walk errors.
+pub(crate) fn try_for_each_bitmap_reachable_commit_from_specs<F>(
+    repo: &Repository,
+    positive_specs: &[String],
+    negative_specs: &[String],
+    options: &RevListOptions,
+    f: F,
+) -> Result<bool>
+where
+    F: FnMut(ObjectId) -> Result<()>,
+{
+    let mut include = resolve_specs_with_options(repo, positive_specs, options.ignore_missing)?;
+    let exclude = resolve_specs_with_options(repo, negative_specs, options.ignore_missing)?;
+    if options.all_refs {
+        include.extend(all_ref_tips(repo, &RefExclusions::default())?);
+    }
+    if include.is_empty() {
+        return Ok(true);
+    }
+    try_for_each_bitmap_reachable_commit(repo, &include, &exclude, options, f)
+}
+
+/// Pack-backed bitmap reachability for author-style counts (no object-root excludes).
+///
+/// Returns `Ok(None)` when callers should fall back to per-OID pack reads.
+pub(crate) fn try_bitmap_reachable_commit_set_for_specs(
+    repo: &Repository,
+    positive_specs: &[String],
+    negative_specs: &[String],
+    options: &RevListOptions,
+) -> Result<Option<(Arc<BitmapIndex>, ReachableSet)>> {
+    if !rev_list_acceleration_compatible(options) {
+        return Ok(None);
+    }
+    if !wants_bitmap_rev_list(options) || !bitmap_filter_supported(options.filter.as_ref()) {
+        return Ok(None);
+    }
+
+    let mut include = resolve_specs_with_options(repo, positive_specs, options.ignore_missing)?;
+    let exclude = resolve_specs_with_options(repo, negative_specs, options.ignore_missing)?;
+    if options.all_refs {
+        include.extend(all_ref_tips(repo, &RefExclusions::default())?);
+    }
+    if include.is_empty() {
+        return Ok(None);
+    }
+
+    let index = match BitmapIndex::open(repo) {
+        Ok(Some(index)) => index,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(Error::CorruptObject(format!("pack bitmap: {e}"))),
+    };
+    if index.backing_pack_index().is_none() {
+        return Ok(None);
+    }
+
+    let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
+    let excluded_object_ids = excluded_object_root_ids(
+        repo,
+        &[],
+        options.missing_action,
+        None,
+        skip_trees,
+        true,
+        false,
+    )?;
+    if !excluded_object_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let (peeled_wants, filter_want_tips) = peeled_wants_from_rev_list_inputs(&include, &[]);
+    let reachable = match index.reachability_with_peeled_wants(
+        repo,
+        peeled_wants,
+        &exclude,
+        options.filter.as_ref(),
+        options.missing_action,
+        &filter_want_tips,
+    ) {
+        Ok(set) => set,
+        Err(BitmapWalkError::Unsupported(_)) => return Ok(None),
+        Err(BitmapWalkError::Bitmap(e)) => {
+            return Err(Error::CorruptObject(format!("pack bitmap: {e}")));
+        }
+        Err(BitmapWalkError::Repository(e)) => return Err(e),
+    };
+    Ok(Some((index, reachable)))
 }
 
 /// When `--max-count` (plus `--skip`) is at least this large, prefer the commit-graph
