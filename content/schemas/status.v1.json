@@ -141,32 +141,12 @@
         "name"
       ],
       "type": "object"
-    }
-  },
-  "description": "Result of `grit status`.",
-  "properties": {
-    "ahead": {
-      "description": "Number of commits ahead of `target` (full count), or null when counts were skipped.",
-      "format": "uint",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
-      ]
     },
-    "behind": {
-      "description": "Number of commits on `target` not in the current branch (full count), or null when counts were skipped.",
-      "format": "uint",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
-      ]
-    },
-    "upstream": {
-      "description": "Upstream tracking comparison when it differs from `target`.",
+    "StatusUpstreamJson": {
+      "description": "Upstream ahead/behind in `--json` / `--markdown` output.",
       "properties": {
         "ahead": {
+          "description": "Commits on this branch not on the upstream, or `null` when counts were skipped.",
           "format": "uint",
           "minimum": 0.0,
           "type": [
@@ -175,6 +155,7 @@
           ]
         },
         "behind": {
+          "description": "Commits on the upstream not on this branch, or `null` when counts were skipped.",
           "format": "uint",
           "minimum": 0.0,
           "type": [
@@ -183,16 +164,33 @@
           ]
         },
         "ref": {
+          "description": "Short upstream ref name (`origin/topic`).",
           "type": "string"
         }
       },
       "required": [
-        "ahead",
-        "behind",
         "ref"
       ],
+      "type": "object"
+    }
+  },
+  "description": "Result of `grit status`.",
+  "properties": {
+    "ahead": {
+      "description": "Number of commits ahead of `target` (full count), or `null` when counts were skipped.",
+      "format": "uint",
+      "minimum": 0.0,
       "type": [
-        "object",
+        "integer",
+        "null"
+      ]
+    },
+    "behind": {
+      "description": "Number of commits on `target` not in the current branch (full count), or `null` when skipped.",
+      "format": "uint",
+      "minimum": 0.0,
+      "type": [
+        "integer",
         "null"
       ]
     },
@@ -265,11 +263,20 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "upstream": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/StatusUpstreamJson"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Upstream tracking comparison when it differs from `target`, or `null`."
     }
   },
   "required": [
-    "ahead",
-    "behind",
     "clean",
     "commits",
     "detached",

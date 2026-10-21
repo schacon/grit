@@ -178,6 +178,57 @@ fn status_no_ahead_behind_null_counts() -> TestResult {
 }
 
 #[test]
+fn status_upstream_without_target_branch() -> TestResult {
+    let scratch = Scratch::new("upstream-only")?;
+    let remote = scratch.child("r.git");
+    let upstream = scratch.child("w");
+    let clone = scratch.child("c");
+    fs::create_dir_all(&upstream)?;
+    system_git_ok(
+        scratch.path(),
+        &["init", "-q", "--bare", &path_arg(&remote)],
+    );
+    system_git_ok(&upstream, &["clone", "-q", &path_arg(&remote), "."]);
+    system_git_ok(&upstream, &["config", "user.name", "T"]);
+    system_git_ok(&upstream, &["config", "user.email", "t@e.com"]);
+    write_file(&upstream.join("f"), "1\n");
+    system_git_ok(&upstream, &["add", "f"]);
+    system_git_ok(&upstream, &["commit", "-qm", "topic"]);
+    system_git_ok(&upstream, &["push", "-u", "origin", "HEAD:topic"]);
+    system_git_ok(
+        scratch.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "topic",
+            &path_arg(&remote),
+            &path_arg(&clone),
+        ],
+    );
+
+    let v = gs_json(&clone, &["status"]);
+    assert_eq!(v["branch"], "topic");
+    assert!(v["target"].is_null());
+    assert_eq!(v["upstream"]["ref"], "origin/topic");
+    assert_eq!(v["upstream"]["ahead"], 0);
+    assert_eq!(v["upstream"]["behind"], 0);
+
+    let human = gs(&clone, &["status"]);
+    assert!(
+        human.status.success(),
+        "status failed: {}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains("even with origin/topic"),
+        "expected upstream in header:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_ahead_behind_config_false() -> TestResult {
     let scratch = Scratch::new("config")?;
     let clone = setup_topic_vs_main(&scratch);

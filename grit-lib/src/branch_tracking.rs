@@ -523,7 +523,10 @@ mod tests {
         commit(&origin, "a", "m1");
         git(&origin, &["checkout", "-qb", "topic"]);
         commit(&origin, "b", "topic");
-        git(tmp.path(), &["clone", "-q", "-b", "main", "origin", "clone"]);
+        git(
+            tmp.path(),
+            &["clone", "-q", "-b", "main", "origin", "clone"],
+        );
         let clone = tmp.path().join("clone");
         git(&clone, &["checkout", "-q", "topic"]);
         git(&clone, &["branch", "-q", "develop", "main"]);
