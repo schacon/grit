@@ -173,11 +173,14 @@ pub fn resolve_head_for_repository(repo: &crate::repo::Repository) -> Result<Hea
 }
 
 fn resolve_head_impl(git_dir: &Path, repo: Option<&crate::repo::Repository>) -> Result<HeadState> {
-    let resolve_named = |refname: &str| -> Result<crate::objects::ObjectId> {
+    let resolve_named = |refname: &str| -> Result<Option<crate::objects::ObjectId>> {
         if let Some(r) = repo {
-            r.resolve_ref_name(refname)
-        } else {
-            crate::refs::resolve_ref(git_dir, refname)
+            return r.references().resolve_if_exists(refname);
+        }
+        match crate::refs::resolve_ref(git_dir, refname) {
+            Ok(oid) => Ok(Some(oid)),
+            Err(Error::InvalidRef(msg)) if msg.starts_with("ref not found:") => Ok(None),
+            Err(e) => Err(e),
         }
     };
     let read_symbolic = |refname: &str| -> Result<Option<String>> {
@@ -210,7 +213,7 @@ fn resolve_head_impl(git_dir: &Path, repo: Option<&crate::repo::Repository>) -> 
         let refname = if refname == "refs/heads/.invalid" {
             if let Ok(Some(target)) = read_symbolic("HEAD") {
                 target
-            } else if let Ok(oid) = resolve_named("HEAD") {
+            } else if let Ok(Some(oid)) = resolve_named("HEAD") {
                 // Detached HEAD: Git keeps the `.invalid` stub on disk while the OID lives in reftable.
                 return Ok(HeadState::Detached { oid });
             } else {
@@ -234,16 +237,10 @@ fn resolve_head_impl(git_dir: &Path, repo: Option<&crate::repo::Repository>) -> 
         // Missing `refs/heads/*` => unborn branch (`None`). A symref to a non-branch
         // target that cannot be resolved (e.g. HEAD -> `.broken`) is invalid, matching
         // Git `refs_resolve_ref_unsafe` returning no target for `worktree list`.
-        let oid = match resolve_named(&refname) {
-            Ok(oid) => Some(oid),
-            Err(Error::InvalidRef(msg)) if msg.starts_with("ref not found:") => {
-                if refname.starts_with("refs/heads/") {
-                    None
-                } else {
-                    return Ok(HeadState::Invalid);
-                }
-            }
-            Err(e) => return Err(e),
+        let oid = match resolve_named(&refname)? {
+            Some(oid) => Some(oid),
+            None if refname.starts_with("refs/heads/") => None,
+            None => return Ok(HeadState::Invalid),
         };
 
         Ok(HeadState::Branch {
