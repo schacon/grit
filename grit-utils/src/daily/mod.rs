@@ -9,6 +9,7 @@ pub mod plan;
 pub mod registry;
 pub mod remote_fixture;
 pub mod remote_state;
+pub mod revision_selection_matrix_registry;
 pub mod run;
 pub mod runner;
 pub mod schema;
@@ -21,6 +22,7 @@ pub use matrix_registry::MATRIX_SCENARIOS;
 pub use registry::{
     Area, HeadlineScenario, RepoShape, ScenarioSpec, HEADLINE_SCENARIOS, REMOTE_MATRIX_SCENARIOS,
 };
+pub use revision_selection_matrix_registry::REVISION_SELECTION_MATRIX_SCENARIOS;
 pub use schema::{
     DailyBenchReport, DailyScenarioResult, DailyToolRun, DailyToolVersions, ScenarioId, SCHEMA_TAG,
 };

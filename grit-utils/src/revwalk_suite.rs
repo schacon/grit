@@ -8,6 +8,9 @@ use time::OffsetDateTime;
 
 use crate::bench_env::isolated_env_prefix;
 use crate::binary::{grit_source_commit, tool_version};
+use crate::daily::matrix_helpers::{
+    ensure_commit_graph_absent, verify_git_commit_graph_in_repo, write_git_commit_graph_reachable,
+};
 use crate::fixture::{remove_dir_robust, scratch_dir};
 use crate::hot_path_fixture::{setup_pick_merge_fixture, HotPathRepoSpec};
 use crate::machine::{collect_machine_info, format_timestamp};
@@ -36,8 +39,8 @@ fn odb_cfg_from_run(cfg: &RunConfig) -> OdbRunConfig {
     }
 }
 
-fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
-    let dest = scratch_dir().join("deep-history-worktree");
+fn clone_deep_worktree(git: &Path, bare: &Path, dest_name: &str) -> Result<PathBuf> {
+    let dest = scratch_dir().join(dest_name);
     remove_dir_robust(&dest);
     let mut cmd = Command::new(git);
     let bare_str = bare
@@ -72,8 +75,14 @@ pub fn run_revwalk_suite(
         NetworkProfile::Production
     };
     let bare = ensure_fixture(git, profile, NetworkFixtureKind::DeepHistory)?;
-    let worktree = clone_deep_worktree(git, &bare)?;
+    let worktree_no_graph = clone_deep_worktree(git, &bare, "deep-history-worktree-no-graph")?;
+    ensure_commit_graph_absent(&worktree_no_graph)?;
+    let worktree_commit_graph =
+        clone_deep_worktree(git, &bare, "deep-history-worktree-commit-graph")?;
+    write_git_commit_graph_reachable(git, &worktree_commit_graph)?;
+    verify_git_commit_graph_in_repo(git, &worktree_commit_graph)?;
     let bench_exe_path = std::env::current_exe().context("grit-bench exe")?;
+
     let mut scenarios = Vec::new();
     // Committer timestamps are `1 + commit_index` (see `write_deep_history_fast_import`).
     // Use a cutoff that leaves ~20 commits at the tip so `-n 20` matches grit's Unix `--since`.
@@ -83,101 +92,6 @@ pub fn run_revwalk_suite(
     const SINCE_GIT: &str = "--since=1970-01-01 13:53:00 +0000";
 
     let env_prefix = cfg.isolated_config.then(isolated_env_prefix);
-    for (id_suffix, prepare) in [
-        ("no-graph", None),
-        ("commit-graph", Some("commit-graph write")),
-    ] {
-        if let Some(prep) = prepare {
-            let mut cmd = Command::new(git);
-            cmd.args(["commit-graph", "write", "--reachable"])
-                .current_dir(&worktree);
-            git_env(&mut cmd);
-            let out = cmd.output().context("commit-graph write")?;
-            if !out.status.success() {
-                anyhow::bail!(
-                    "commit-graph write failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-            let _ = prep;
-        }
-        scenarios.push(run_odb_scenario(
-            hyperfine,
-            &bench_exe_path,
-            git,
-            &odb_cfg,
-            &Scenario {
-                id: format!("revs-count-author-{id_suffix}"),
-                group: "revs".into(),
-                fixture: bare.display().to_string(),
-                description: format!(
-                    "rev-list --count --author=. HEAD on deep-history ({id_suffix})"
-                ),
-                grit_argv: lib_op_argv("rev-list-count-author-head", &worktree, &[]),
-                git_argv: vec![
-                    "rev-list".into(),
-                    "--count".into(),
-                    "--author=.".into(),
-                    "HEAD".into(),
-                ],
-                driver: Driver::Lib,
-                prepare_kind: None,
-                grit_via_shell: false,
-                git_via_shell: false,
-            },
-            &worktree,
-        )?);
-        scenarios.push(run_odb_scenario(
-            hyperfine,
-            &bench_exe_path,
-            git,
-            &odb_cfg,
-            &Scenario {
-                id: format!("revs-author-n50-{id_suffix}"),
-                group: "revs".into(),
-                fixture: bare.display().to_string(),
-                description: format!(
-                    "rev-list -n 50 --author=. HEAD on deep-history ({id_suffix})"
-                ),
-                grit_argv: lib_op_argv(
-                    "rev-list-author-n-head",
-                    &worktree,
-                    &["--max-count".into(), "50".into()],
-                ),
-                git_argv: vec![
-                    "rev-list".into(),
-                    "-n".into(),
-                    "50".into(),
-                    "--author=.".into(),
-                    "HEAD".into(),
-                ],
-                driver: Driver::Lib,
-                prepare_kind: None,
-                grit_via_shell: false,
-                git_via_shell: false,
-            },
-            &worktree,
-        )?);
-        scenarios.push(run_scenario(
-            hyperfine,
-            git,
-            grit,
-            cfg,
-            &Scenario {
-                id: format!("revs-count-deep-{id_suffix}"),
-                group: "revs".into(),
-                fixture: bare.display().to_string(),
-                description: format!("revs --count HEAD on deep-history fixture ({id_suffix})"),
-                grit_argv: vec!["revs".into(), "--count".into(), "HEAD".into()],
-                git_argv: vec!["rev-list".into(), "--count".into(), "HEAD".into()],
-                driver: Driver::Cli,
-                prepare_kind: None,
-                grit_via_shell: false,
-                git_via_shell: false,
-            },
-            &worktree,
-        )?);
-    }
 
     scenarios.push(run_scenario(
         hyperfine,
@@ -192,7 +106,7 @@ pub fn run_revwalk_suite(
             grit_argv: vec![
                 "drive".into(),
                 "rev-walk-count-head-since".into(),
-                worktree.display().to_string(),
+                worktree_no_graph.display().to_string(),
                 SINCE_DEEP_HISTORY.to_string(),
             ],
             git_argv: vec![
@@ -208,7 +122,7 @@ pub fn run_revwalk_suite(
             grit_via_shell: false,
             git_via_shell: false,
         },
-        &worktree,
+        &worktree_no_graph,
     )?);
 
     let lr_range = if smoke {
@@ -229,7 +143,7 @@ pub fn run_revwalk_suite(
             grit_argv: vec![
                 "drive".into(),
                 "rev-walk-left-right-count".into(),
-                worktree.display().to_string(),
+                worktree_no_graph.display().to_string(),
                 lr_range.clone(),
             ],
             git_argv: vec![
@@ -243,8 +157,90 @@ pub fn run_revwalk_suite(
             grit_via_shell: false,
             git_via_shell: false,
         },
-        &worktree,
+        &worktree_no_graph,
     )?);
+
+    for (id_suffix, worktree) in [
+        ("no-graph", worktree_no_graph.as_path()),
+        ("commit-graph", worktree_commit_graph.as_path()),
+    ] {
+        scenarios.push(run_odb_scenario(
+            hyperfine,
+            &bench_exe_path,
+            git,
+            &odb_cfg,
+            &Scenario {
+                id: format!("revs-count-author-{id_suffix}"),
+                group: "revs".into(),
+                fixture: bare.display().to_string(),
+                description: format!(
+                    "rev-list --count --author=. HEAD on deep-history ({id_suffix})"
+                ),
+                grit_argv: lib_op_argv("rev-list-count-author-head", worktree, &[]),
+                git_argv: vec![
+                    "rev-list".into(),
+                    "--count".into(),
+                    "--author=.".into(),
+                    "HEAD".into(),
+                ],
+                driver: Driver::Lib,
+                prepare_kind: None,
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            worktree,
+        )?);
+        scenarios.push(run_odb_scenario(
+            hyperfine,
+            &bench_exe_path,
+            git,
+            &odb_cfg,
+            &Scenario {
+                id: format!("revs-author-n50-{id_suffix}"),
+                group: "revs".into(),
+                fixture: bare.display().to_string(),
+                description: format!(
+                    "rev-list -n 50 --author=. HEAD on deep-history ({id_suffix})"
+                ),
+                grit_argv: lib_op_argv(
+                    "rev-list-author-n-head",
+                    worktree,
+                    &["--max-count".into(), "50".into()],
+                ),
+                git_argv: vec![
+                    "rev-list".into(),
+                    "-n".into(),
+                    "50".into(),
+                    "--author=.".into(),
+                    "HEAD".into(),
+                ],
+                driver: Driver::Lib,
+                prepare_kind: None,
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            worktree,
+        )?);
+        scenarios.push(run_scenario(
+            hyperfine,
+            git,
+            grit,
+            cfg,
+            &Scenario {
+                id: format!("revs-count-deep-{id_suffix}"),
+                group: "revs".into(),
+                fixture: bare.display().to_string(),
+                description: format!("revs --count HEAD on deep-history fixture ({id_suffix})"),
+                grit_argv: vec!["revs".into(), "--count".into(), "HEAD".into()],
+                git_argv: vec!["rev-list".into(), "--count".into(), "HEAD".into()],
+                driver: Driver::Cli,
+                prepare_kind: None,
+                grit_via_shell: false,
+                git_via_shell: false,
+            },
+            worktree,
+        )?);
+    }
 
     let spec = HotPathRepoSpec::for_size(if smoke { 80 } else { 10_000 });
     let (pick_repo, meta) = setup_pick_merge_fixture(git, spec, 4)?;
