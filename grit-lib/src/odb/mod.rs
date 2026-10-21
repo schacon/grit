@@ -1591,10 +1591,7 @@ impl Odb {
         } else {
             self.with_pack_store_for(&self.objects_dir, read_primary)
         } {
-            Ok(Some(kind)) => {
-                self.remember_session_loose_read(oid, &Object::new(kind, buf.clone()));
-                return Ok(kind);
-            }
+            Ok(Some(kind)) => return Ok(kind),
             Ok(None) => {}
             Err(err)
                 if files_primary
@@ -1607,16 +1604,12 @@ impl Odb {
         }
 
         if let Some(kind) = self.try_read_into_extra_sources(oid, buf)? {
-            self.remember_session_loose_read(oid, &Object::new(kind, buf.clone()));
             return Ok(kind);
         }
 
         if self.alternates_enabled {
             match self.sources()?.read_into(oid, buf) {
-                Ok(Some(kind)) => {
-                    self.remember_session_loose_read(oid, &Object::new(kind, buf.clone()));
-                    return Ok(kind);
-                }
+                Ok(Some(kind)) => return Ok(kind),
                 Ok(None) => {}
                 Err(err) => return Err(err),
             }

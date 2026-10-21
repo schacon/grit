@@ -1246,14 +1246,15 @@ fn walk_tree_entries_from_data(
     tree_data: &[u8],
     oid_len: usize,
 ) {
-    for entry in TreeRefIter::with_oid_len(tree_data, oid_len) {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(err) => {
-                push_corrupt_parse(issues, config, strict, tree_oid, err);
-                break;
-            }
-        };
+    let entries = TreeRefIter::with_oid_len(tree_data, oid_len).collect::<Result<Vec<_>>>();
+    let entries = match entries {
+        Ok(entries) => entries,
+        Err(err) => {
+            push_corrupt_parse(issues, config, strict, tree_oid, err);
+            return;
+        }
+    };
+    for entry in entries {
         walk_one_tree_entry(
             odb,
             store_links,

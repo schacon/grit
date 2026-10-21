@@ -18,7 +18,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::mem;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -184,6 +183,24 @@ pub(crate) mod pack_cache {
         };
         match reader.read_object(oid) {
             Ok(obj) => Ok(Some(obj)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(crate) fn try_read_object_via_single_pack_reader_into(
+        objects_dir: &Path,
+        oid: &crate::objects::ObjectId,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<crate::objects::ObjectKind>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return Ok(None);
+        }
+        let Some(mut reader) = super::SingleLocalPackReader::open_allow_loose(objects_dir)? else {
+            return Ok(None);
+        };
+        match reader.read_object_into(oid, buf) {
+            Ok(kind) => Ok(Some(kind)),
             Err(Error::ObjectNotFound(_)) => Ok(None),
             Err(err) => Err(err),
         }
@@ -371,6 +388,32 @@ pub(crate) mod pack_cache {
         };
         match super::read_object_from_pack_at_offset(&idx, offset) {
             Ok(obj) => Ok(Some(obj)),
+            Err(Error::ObjectNotFound(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(crate) fn try_read_from_hinted_pack_into(
+        objects_dir: &Path,
+        oid: &crate::objects::ObjectId,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<crate::objects::ObjectKind>> {
+        if !crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
+            return Ok(None);
+        }
+        let idx = PACK_HIT_INDEX.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .and_then(|(dir, idx)| (dir == objects_dir).then(|| Arc::clone(idx)))
+        });
+        let Some(idx) = idx else {
+            return Ok(None);
+        };
+        let Some(offset) = find_offset_in_pack_read_context(objects_dir, &idx, oid)? else {
+            return Ok(None);
+        };
+        match super::read_object_at_depth_into(&idx, offset, 0, buf) {
+            Ok(kind) => Ok(Some(kind)),
             Err(Error::ObjectNotFound(_)) => Ok(None),
             Err(err) => Err(err),
         }
@@ -2477,66 +2520,14 @@ impl DeltaChainState {
     }
 }
 
-/// Apply `pending` deltas onto `base_data`, caching intermediates but not the final result object.
-fn apply_delta_chain_forward(
-    kind: ObjectKind,
-    base_data: &[u8],
-    whole_base: Option<(u32, u64)>,
-    pending: &[PendingDeltaFrame],
-    result_pack_id: u32,
-    result_offset: u64,
-) -> Result<Vec<u8>> {
-    if pending.is_empty() {
-        return Ok(base_data.to_vec());
-    }
-
-    let caching = pack_cache::delta_base_caching_enabled();
-    let mut cache_inserts: Vec<(u32, u64, Arc<[u8]>)> =
-        Vec::with_capacity(if caching { pending.len() + 1 } else { 0 });
-    if caching {
-        if let Some((pid, off)) = whole_base {
-            cache_inserts.push((pid, off, Arc::from(base_data)));
-        }
-    }
-
-    let mut owned = Vec::new();
-    let mut scratch = Vec::new();
-    if caching {
-        let mut rolling: Option<Arc<[u8]>> = None;
-        for frame in pending.iter().rev() {
-            let base: &[u8] = match &rolling {
-                Some(arc) => arc.as_ref(),
-                None => base_data,
-            };
-            apply_delta_into(&mut scratch, base, &frame.delta)?;
-            mem::swap(&mut owned, &mut scratch);
-            let arc: Arc<[u8]> = Arc::from(owned.into_boxed_slice());
-            if frame.pack_id != result_pack_id || frame.offset != result_offset {
-                cache_inserts.push((frame.pack_id, frame.offset, Arc::clone(&arc)));
-            }
-            rolling = Some(arc);
-            owned = Vec::new();
-        }
-        pack_cache::put_delta_bases(kind, &cache_inserts);
-        return Ok(match rolling {
-            Some(arc) => arc.to_vec(),
-            None => owned,
-        });
-    }
-
-    apply_delta_chain_forward_into(
-        &mut owned,
-        kind,
-        base_data,
-        whole_base,
-        pending,
-        result_pack_id,
-        result_offset,
-    )?;
-    Ok(owned)
+/// Copy `payload` into `out`, reusing `out`'s capacity when sufficient.
+fn copy_payload_preserve_capacity(out: &mut Vec<u8>, payload: &[u8]) {
+    out.clear();
+    out.extend_from_slice(payload);
 }
 
-/// Like [`apply_delta_chain_forward`], writing the final payload into `out`.
+/// Like [`apply_delta_chain_forward`], writing the final payload into `out` without replacing
+/// `out`'s allocation when the result fits in the existing capacity.
 fn apply_delta_chain_forward_into(
     out: &mut Vec<u8>,
     kind: ObjectKind,
@@ -2547,8 +2538,7 @@ fn apply_delta_chain_forward_into(
     result_offset: u64,
 ) -> Result<()> {
     if pending.is_empty() {
-        out.clear();
-        out.extend_from_slice(base_data);
+        copy_payload_preserve_capacity(out, base_data);
         return Ok(());
     }
 
@@ -2561,7 +2551,6 @@ fn apply_delta_chain_forward_into(
         }
     }
 
-    let mut owned = Vec::new();
     let mut scratch = Vec::new();
     if caching {
         let mut rolling: Option<Arc<[u8]>> = None;
@@ -2571,38 +2560,53 @@ fn apply_delta_chain_forward_into(
                 None => base_data,
             };
             apply_delta_into(&mut scratch, base, &frame.delta)?;
-            mem::swap(&mut owned, &mut scratch);
-            let arc: Arc<[u8]> = Arc::from(owned.into_boxed_slice());
+            let arc: Arc<[u8]> = Arc::from(scratch.into_boxed_slice());
+            scratch = Vec::new();
             if frame.pack_id != result_pack_id || frame.offset != result_offset {
                 cache_inserts.push((frame.pack_id, frame.offset, Arc::clone(&arc)));
             }
             rolling = Some(arc);
-            owned = Vec::new();
         }
         pack_cache::put_delta_bases(kind, &cache_inserts);
-        match rolling {
-            Some(arc) => {
-                out.clear();
-                out.extend_from_slice(arc.as_ref());
-            }
-            None => mem::swap(out, &mut owned),
+        if let Some(arc) = rolling {
+            copy_payload_preserve_capacity(out, arc.as_ref());
+        } else {
+            out.clear();
         }
         return Ok(());
     }
 
-    let mut use_initial_base = true;
-    for frame in pending.iter().rev() {
-        let base: &[u8] = if use_initial_base {
-            use_initial_base = false;
-            base_data
+    for (i, frame) in pending.iter().rev().enumerate() {
+        if i == 0 {
+            apply_delta_into(out, base_data, &frame.delta)?;
         } else {
-            owned.as_slice()
-        };
-        apply_delta_into(&mut scratch, base, &frame.delta)?;
-        mem::swap(&mut owned, &mut scratch);
+            apply_delta_into(&mut scratch, out.as_slice(), &frame.delta)?;
+            copy_payload_preserve_capacity(out, &scratch);
+            scratch.clear();
+        }
     }
-    mem::swap(out, &mut owned);
     Ok(())
+}
+
+fn finish_pack_read_with_pending(
+    out: &mut Vec<u8>,
+    kind: ObjectKind,
+    base: &[u8],
+    whole_base: Option<(u32, u64)>,
+    pending: &[PendingDeltaFrame],
+    result_pack_id: u32,
+    result_offset: u64,
+) -> Result<ObjectKind> {
+    apply_delta_chain_forward_into(
+        out,
+        kind,
+        base,
+        whole_base,
+        pending,
+        result_pack_id,
+        result_offset,
+    )?;
+    Ok(kind)
 }
 
 /// Starting index for a pack read: borrow the caller's [`PackIndex`], or hold a cached
@@ -2752,11 +2756,9 @@ fn resolve_pack_object_at_with_bytes_into(
             objects_dir,
             state,
             pack_bytes_override,
+            out,
         ) {
-            Ok((kind, data)) => {
-                *out = data;
-                return Ok(kind);
-            }
+            Ok(kind) => return Ok(kind),
             Err(e) if attempt == 0 && pack_bytes_parse_may_be_stale(&e) => {
                 if pack_cache::reload_pack_bytes_after_parse_failure(&pack_path)? {
                     state.visited.retain(|(id, _)| *id != start_pack_id);
@@ -2777,11 +2779,13 @@ fn resolve_pack_object_at_body(
     objects_dir: Option<&Path>,
     state: &mut DeltaChainState,
     pack_bytes_override: Option<&[u8]>,
-) -> Result<(ObjectKind, Vec<u8>)> {
+    out: &mut Vec<u8>,
+) -> Result<ObjectKind> {
     let result_offset = start_offset;
     let mut cur_offset = start_offset;
     let mut pending: Vec<PendingDeltaFrame> = Vec::with_capacity(64);
     let mut inflate = ZlibInflateScratch::default();
+    let mut whole_scratch = Vec::new();
 
     let mut cur_pack_path = cur_idx.get().pack_path.clone();
     let mut cur_pack_id = pack_cache::pack_id_for(&cur_pack_path);
@@ -2826,15 +2830,15 @@ fn resolve_pack_object_at_body(
                 if let Some((kind, data)) =
                     rescue_in_pack_base(idx_ref, cur_offset, objects_dir, state)?
                 {
-                    let result = apply_delta_chain_forward(
+                    return finish_pack_read_with_pending(
+                        out,
                         kind,
                         &data,
                         None,
                         &pending,
                         result_pack_id,
                         result_offset,
-                    )?;
-                    return Ok((kind, result));
+                    );
                 }
                 return Err(err);
             }
@@ -2842,38 +2846,60 @@ fn resolve_pack_object_at_body(
 
         match packed_type {
             PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
-                let data = match decompress_pack_data(bytes, &mut pos, size, &mut inflate) {
-                    Ok(d) => d,
-                    Err(err) => {
-                        if let Some((kind, rescued)) =
+                let kind = packed_type_to_kind(packed_type)?;
+                if pending.is_empty() {
+                    if let Err(err) =
+                        decompress_pack_data_into(bytes, &mut pos, size, &mut inflate, out)
+                    {
+                        if let Some((rescue_kind, rescued)) =
                             rescue_in_pack_base(idx_ref, cur_offset, objects_dir, state)?
                         {
-                            let result = apply_delta_chain_forward(
-                                kind,
+                            return finish_pack_read_with_pending(
+                                out,
+                                rescue_kind,
                                 &rescued,
                                 None,
                                 &pending,
                                 result_pack_id,
                                 result_offset,
-                            )?;
-                            return Ok((kind, result));
+                            );
                         }
                         return Err(err);
                     }
-                };
-                let kind = packed_type_to_kind(packed_type)?;
-                if pending.is_empty() {
-                    return Ok((kind, data));
+                    return Ok(kind);
                 }
-                let result = apply_delta_chain_forward(
+                whole_scratch.clear();
+                if let Err(err) = decompress_pack_data_into(
+                    bytes,
+                    &mut pos,
+                    size,
+                    &mut inflate,
+                    &mut whole_scratch,
+                ) {
+                    if let Some((rescue_kind, rescued)) =
+                        rescue_in_pack_base(idx_ref, cur_offset, objects_dir, state)?
+                    {
+                        return finish_pack_read_with_pending(
+                            out,
+                            rescue_kind,
+                            &rescued,
+                            None,
+                            &pending,
+                            result_pack_id,
+                            result_offset,
+                        );
+                    }
+                    return Err(err);
+                }
+                return finish_pack_read_with_pending(
+                    out,
                     kind,
-                    &data,
+                    &whole_scratch,
                     Some((pack_id, cur_offset)),
                     &pending,
                     result_pack_id,
                     result_offset,
-                )?;
-                return Ok((kind, result));
+                );
             }
             PackedType::OfsDelta => {
                 state.next_hop()?;
@@ -2887,15 +2913,15 @@ fn resolve_pack_object_at_body(
                 if let Some((base_kind, base_data)) =
                     pack_cache::get_delta_base(pack_id, base_offset)
                 {
-                    let result = apply_delta_chain_forward(
+                    return finish_pack_read_with_pending(
+                        out,
                         base_kind,
                         base_data.as_ref(),
                         None,
                         &pending,
                         result_pack_id,
                         result_offset,
-                    )?;
-                    return Ok((base_kind, result));
+                    );
                 }
                 cur_offset = base_offset;
             }
@@ -2921,15 +2947,15 @@ fn resolve_pack_object_at_body(
                         if let Some((base_kind, base_data)) =
                             pack_cache::get_delta_base(pack_id, base_offset)
                         {
-                            let result = apply_delta_chain_forward(
+                            return finish_pack_read_with_pending(
+                                out,
                                 base_kind,
                                 base_data.as_ref(),
                                 None,
                                 &pending,
                                 result_pack_id,
                                 result_offset,
-                            )?;
-                            return Ok((base_kind, result));
+                            );
                         }
                         cur_offset = base_offset;
                         continue;
@@ -2947,15 +2973,15 @@ fn resolve_pack_object_at_body(
                             if let Ok(obj) =
                                 crate::odb::Odb::read_loose_verify_oid(&loose, &base_oid)
                             {
-                                let result = apply_delta_chain_forward(
+                                return finish_pack_read_with_pending(
+                                    out,
                                     obj.kind,
                                     &obj.data,
                                     None,
                                     &pending,
                                     result_pack_id,
                                     result_offset,
-                                )?;
-                                return Ok((obj.kind, result));
+                                );
                             }
                         }
                         if let Some(other_idx) = find_other_pack_index(dir, idx_ref, &base_oid)? {
@@ -3927,6 +3953,19 @@ impl SingleLocalPackReader {
         read_object_from_pack_at_offset(&self.idx, offset)
     }
 
+    /// Like [`Self::read_object`], inflating into `out` and preserving its capacity when possible.
+    pub fn read_object_into(&mut self, oid: &ObjectId, out: &mut Vec<u8>) -> Result<ObjectKind> {
+        let Some(offset) = self.idx.find_offset_monotonic(oid, &mut self.cursor)? else {
+            return Err(Error::ObjectNotFound(oid.to_hex()));
+        };
+        if let Some(kind) =
+            read_whole_pack_entry_object_into(&self.idx, offset, self.pack_bytes.as_ref(), out)
+        {
+            return Ok(kind);
+        }
+        read_object_at_depth_into(&self.idx, offset, 0, out)
+    }
+
     /// Inflate the start of a whole (non-delta) commit object, if present in this pack.
     ///
     /// Returns `None` when the OID is missing, not a commit, or stored as a delta.
@@ -4140,15 +4179,13 @@ pub(crate) fn try_read_object_from_packs_with_options_into(
     if crate::pack_store::PackStore::read_context_matches_objects_dir(objects_dir) {
         pack_cache::sync_thread_local_with_store(&crate::pack_store::PackStore::active_for_reads());
     }
-    if let Some(obj) = pack_cache::try_read_object_via_single_pack_reader(objects_dir, oid)? {
-        buf.clear();
-        buf.extend_from_slice(&obj.data);
-        return Ok(obj.kind);
+    if let Some(kind) =
+        pack_cache::try_read_object_via_single_pack_reader_into(objects_dir, oid, buf)?
+    {
+        return Ok(kind);
     }
-    if let Some(obj) = pack_cache::try_read_from_hinted_pack(objects_dir, oid)? {
-        buf.clear();
-        buf.extend_from_slice(&obj.data);
-        return Ok(obj.kind);
+    if let Some(kind) = pack_cache::try_read_from_hinted_pack_into(objects_dir, oid, buf)? {
+        return Ok(kind);
     }
     let indexes = pack_indexes_for_lookup(objects_dir, opts)?;
     let mut last_err: Option<Error> = None;

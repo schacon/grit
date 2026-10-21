@@ -14,8 +14,6 @@ use flate2::read::ZlibDecoder;
 use grit_lib::objects::pack::{
     clear_pack_cache, read_object_from_pack, read_object_from_pack_into, read_pack_index,
 };
-use grit_lib::objects::ObjectKind;
-
 fn bench_idx_lookup(c: &mut Criterion) {
     let fx = ObjectBenchFixtures::global();
     let mut group = c.benchmark_group("odb_read/idx_lookup");
@@ -58,7 +56,7 @@ fn bench_packed_read(c: &mut Criterion) {
         });
     });
     group.bench_function("deep_delta_chain_read_into", |b| {
-        let mut buf = Vec::with_capacity(256 * 1024);
+        let mut buf = Vec::with_capacity(1024 * 1024);
         clear_pack_cache();
         b.iter(|| {
             clear_pack_cache();
