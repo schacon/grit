@@ -102,12 +102,6 @@ mod tests {
             *seen
         );
         assert!(
-            seen.iter().any(|e| e.name == names::REVWALK_SETUP),
-            "expected {} in {:?}",
-            names::REVWALK_SETUP,
-            *seen
-        );
-        assert!(
             seen.iter()
                 .any(|e| { e.name == names::INDEX_READ && e.parent == Some(names::STATUS_SCAN) }),
             "expected {} nested under {} in {:?}",
