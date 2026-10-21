@@ -42,6 +42,7 @@ smallvec = "1.15"
 toml = "0.8"
 filetime = "0.2"
 criterion = { version = "0.8.2", features = ["html_reports"] }
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher", "inline-more"] }
 nix = { version = "0.31", default-features = false, features = ["user", "feature"] }
 
 [workspace.lints.rust]

@@ -3,17 +3,21 @@
 //! Git object ids are already cryptographic digests; hashing them again with
 //! SipHash over the full 20–32 byte value is wasted work on hot paths. These
 //! types use only the first eight digest bytes for bucket selection, mixed with
-//! a per-hasher random odd multiplier so placement is not predictable to an
+//! a per-process random odd multiplier so placement is not predictable to an
 //! attacker who can choose object ids.
+//!
+//! Backing storage is [`hashbrown`] (same approach as `gix-hashtable`): it
+//! lowers insert and lookup overhead versus the standard library map for large
+//! OID-keyed tables while keeping the same semantics.
 //!
 //! [`ObjectId`] must be hashed with [`Hash::hash`] (which feeds the active digest
 //! bytes only) when used as a key in [`OidHashMap`] or [`OidHashSet`].
 
-use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
 use std::sync::OnceLock;
 
 use getrandom::getrandom;
+use hashbrown::{HashMap, HashSet};
 
 use super::ObjectId;
 
@@ -25,7 +29,7 @@ pub struct OidBuildHasher {
 
 impl Default for OidBuildHasher {
     fn default() -> Self {
-        Self::new()
+        shared_oid_build_hasher()
     }
 }
 
@@ -42,6 +46,7 @@ impl OidBuildHasher {
 impl BuildHasher for OidBuildHasher {
     type Hasher = OidHasher;
 
+    #[inline]
     fn build_hasher(&self) -> Self::Hasher {
         OidHasher {
             prefix: 0,
@@ -58,15 +63,16 @@ pub struct OidHasher {
 }
 
 impl Hasher for OidHasher {
+    #[inline(always)]
     fn finish(&self) -> u64 {
-        self.prefix.wrapping_mul(self.multiplier)
+        self.prefix ^ self.multiplier
     }
 
+    #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
-        let mut buf = [0u8; 8];
-        let n = bytes.len().min(8);
-        buf[..n].copy_from_slice(&bytes[..n]);
-        self.prefix = u64::from_ne_bytes(buf);
+        self.prefix = u64::from_ne_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
     }
 
     fn write_u8(&mut self, _i: u8) {
@@ -121,16 +127,35 @@ pub type OidHashMap<V> = HashMap<ObjectId, V, OidBuildHasher>;
 /// [`HashSet`] of [`ObjectId`] with [`OidBuildHasher`].
 pub type OidHashSet = HashSet<ObjectId, OidBuildHasher>;
 
+/// Shared [`OidBuildHasher`] for this process (one random odd multiplier).
+#[inline]
+fn shared_oid_build_hasher() -> OidBuildHasher {
+    static HASHER: OnceLock<OidBuildHasher> = OnceLock::new();
+    *HASHER.get_or_init(OidBuildHasher::new)
+}
+
 /// Empty [`OidHashMap`].
 #[inline]
 pub fn oid_hash_map<V>() -> OidHashMap<V> {
-    HashMap::with_hasher(OidBuildHasher::new())
+    HashMap::with_hasher(shared_oid_build_hasher())
+}
+
+/// Empty [`OidHashMap`] with room for at least `capacity` entries without rehashing.
+#[inline]
+pub fn oid_hash_map_with_capacity<V>(capacity: usize) -> OidHashMap<V> {
+    HashMap::with_capacity_and_hasher(capacity, shared_oid_build_hasher())
 }
 
 /// Empty [`OidHashSet`].
 #[inline]
 pub fn oid_hash_set() -> OidHashSet {
-    HashSet::with_hasher(OidBuildHasher::new())
+    HashSet::with_hasher(shared_oid_build_hasher())
+}
+
+/// Empty [`OidHashSet`] with room for at least `capacity` entries without rehashing.
+#[inline]
+pub fn oid_hash_set_with_capacity(capacity: usize) -> OidHashSet {
+    HashSet::with_capacity_and_hasher(capacity, shared_oid_build_hasher())
 }
 
 /// Shared empty OID set for borrow-only call sites (avoids per-call allocation).
@@ -142,21 +167,27 @@ pub fn empty_oid_set() -> &'static OidHashSet {
 
 /// Copy a standard OID set into an [`OidHashSet`].
 #[inline]
-pub fn oid_hash_set_from(set: &HashSet<ObjectId>) -> OidHashSet {
-    set.iter().copied().collect()
+pub fn oid_hash_set_from(set: &std::collections::HashSet<ObjectId>) -> OidHashSet {
+    let mut out = oid_hash_set_with_capacity(set.len());
+    out.extend(set.iter().copied());
+    out
 }
 
 /// Copy a standard OID map into an [`OidHashMap`].
 #[inline]
-pub fn oid_hash_map_from<V: Clone>(map: &HashMap<ObjectId, V>) -> OidHashMap<V> {
-    map.iter().map(|(k, v)| (*k, v.clone())).collect()
+pub fn oid_hash_map_from<V: Clone>(map: &std::collections::HashMap<ObjectId, V>) -> OidHashMap<V> {
+    let mut out = oid_hash_map_with_capacity(map.len());
+    for (k, v) in map {
+        out.insert(*k, v.clone());
+    }
+    out
 }
 
 /// Shared empty standard OID set for public API boundaries (avoids per-call allocation).
 #[must_use]
-pub fn empty_object_id_hash_set() -> &'static HashSet<ObjectId> {
-    static EMPTY: OnceLock<HashSet<ObjectId>> = OnceLock::new();
-    EMPTY.get_or_init(HashSet::new)
+pub fn empty_object_id_hash_set() -> &'static std::collections::HashSet<ObjectId> {
+    static EMPTY: OnceLock<std::collections::HashSet<ObjectId>> = OnceLock::new();
+    EMPTY.get_or_init(std::collections::HashSet::new)
 }
 
 /// Shared empty OID → bytes map for commit-graph filter tests and call sites.
