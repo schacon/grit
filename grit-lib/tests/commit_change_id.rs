@@ -277,10 +277,7 @@ fn testing_content_hash_is_deterministic() {
     git_fsck_strict(root);
     let cat = git_out(root, &["cat-file", "-p", "HEAD"]);
     let header = change_id_line(&cat).expect("change-id in cat-file");
-    assert_eq!(
-        header.strip_prefix("change-id ").unwrap(),
-        stored.as_str()
-    );
+    assert_eq!(header.strip_prefix("change-id ").unwrap(), stored.as_str());
 }
 
 #[test]
