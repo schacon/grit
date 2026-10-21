@@ -2470,7 +2470,6 @@ struct DeltaChainState {
     delta_decompress: Vec<u8>,
     chain_a: Vec<u8>,
     chain_b: Vec<u8>,
-    apply_scratch: Vec<u8>,
 }
 
 // hygiene: pack read delta-chain state (ROADMAP item 7 — per-thread pack cache)
@@ -2560,11 +2559,7 @@ fn apply_delta_chain_forward_into(
     if rev.is_empty() {
         apply_delta_into(out, base_data, &last.delta)?;
         if caching && (last.pack_id != result_pack_id || last.offset != result_offset) {
-            cache_inserts.push((
-                last.pack_id,
-                last.offset,
-                Arc::from(out.as_slice()),
-            ));
+            cache_inserts.push((last.pack_id, last.offset, Arc::from(out.as_slice())));
         }
         if caching {
             pack_cache::put_delta_bases(kind, &cache_inserts);
@@ -2572,37 +2567,26 @@ fn apply_delta_chain_forward_into(
         return Ok(());
     }
 
-    let first = rev
-        .first()
-        .copied()
-        .expect("rev non-empty when last was popped and len>1");
+    let Some(first) = rev.first().copied() else {
+        return Err(Error::CorruptObject(
+            "delta chain missing base-adjacent frame".to_owned(),
+        ));
+    };
     apply_delta_into(chain_a, base_data, &first.delta)?;
     if caching && (first.pack_id != result_pack_id || first.offset != result_offset) {
-        cache_inserts.push((
-            first.pack_id,
-            first.offset,
-            Arc::from(chain_a.as_slice()),
-        ));
+        cache_inserts.push((first.pack_id, first.offset, Arc::from(chain_a.as_slice())));
     }
     let mut src_is_a = true;
     for frame in rev.iter().skip(1) {
         if src_is_a {
             apply_delta_into(chain_b, chain_a.as_slice(), &frame.delta)?;
             if caching && (frame.pack_id != result_pack_id || frame.offset != result_offset) {
-                cache_inserts.push((
-                    frame.pack_id,
-                    frame.offset,
-                    Arc::from(chain_b.as_slice()),
-                ));
+                cache_inserts.push((frame.pack_id, frame.offset, Arc::from(chain_b.as_slice())));
             }
         } else {
             apply_delta_into(chain_a, chain_b.as_slice(), &frame.delta)?;
             if caching && (frame.pack_id != result_pack_id || frame.offset != result_offset) {
-                cache_inserts.push((
-                    frame.pack_id,
-                    frame.offset,
-                    Arc::from(chain_a.as_slice()),
-                ));
+                cache_inserts.push((frame.pack_id, frame.offset, Arc::from(chain_a.as_slice())));
             }
         }
         src_is_a = !src_is_a;
@@ -2614,11 +2598,7 @@ fn apply_delta_chain_forward_into(
     };
     apply_delta_into(out, penultimate_base, &last.delta)?;
     if caching && (last.pack_id != result_pack_id || last.offset != result_offset) {
-        cache_inserts.push((
-            last.pack_id,
-            last.offset,
-            Arc::from(out.as_slice()),
-        ));
+        cache_inserts.push((last.pack_id, last.offset, Arc::from(out.as_slice())));
     }
     if caching {
         pack_cache::put_delta_bases(kind, &cache_inserts);

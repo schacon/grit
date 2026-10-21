@@ -147,11 +147,7 @@ fn deepest_deltified_oid(objects: &Path) -> ObjectId {
     best.expect("delta oid").1
 }
 
-fn exercise_repeated_delta_reads(
-    objects: &Path,
-    delta_oid: &ObjectId,
-    interleave: &[ObjectId],
-) {
+fn exercise_repeated_delta_reads(objects: &Path, delta_oid: &ObjectId, interleave: &[ObjectId]) {
     let idx_path = fs::read_dir(objects.join("pack"))
         .expect("pack")
         .filter_map(|e| e.ok())
@@ -175,7 +171,8 @@ fn exercise_repeated_delta_reads(
             let mut scratch = Vec::new();
             let _ = odb.read_into(oid, &mut scratch).expect("interleave odb");
             if i == 0 {
-                let _ = read_object_from_pack_into(&idx, oid, &mut scratch).expect("interleave pack");
+                let _ =
+                    read_object_from_pack_into(&idx, oid, &mut scratch).expect("interleave pack");
             }
         }
         let kind = read_object_from_pack_into(&idx, delta_oid, &mut buf).expect("pack into");
@@ -227,7 +224,10 @@ fn odb_read_into_repeated_deep_delta_sha256() {
         return;
     }
     let dir = tempfile::TempDir::new().expect("tempdir");
-    git_in(dir.path(), &["init", "-q", "-b", "main", "--object-format=sha256"]);
+    git_in(
+        dir.path(),
+        &["init", "-q", "-b", "main", "--object-format=sha256"],
+    );
     git_in(dir.path(), &["config", "user.email", "t@example.com"]);
     let mut prev = String::new();
     for i in 0..64 {
@@ -253,7 +253,6 @@ fn odb_read_into_repeated_deep_delta_sha256() {
         .expect("for_each");
     exercise_repeated_delta_reads(&objects, &delta_oid, &all);
 }
-
 
 #[test]
 fn odb_read_into_matches_read_packed_delta_chain() {
