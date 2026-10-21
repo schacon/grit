@@ -149,14 +149,23 @@ fn fetch_once(
         .map_err(map_remote_fetch_error)
 }
 
-fn map_remote_fetch_error(err: RemoteError) -> anyhow::Error {
-    if matches!(
-        &err,
-        RemoteError::Library(grit_lib::error::Error::BundleMissingPrerequisites)
-    ) {
-        return anyhow::Error::new(crate::commands::bundle::MissingPrerequisites);
+/// Preserve typed [`grit_lib::error::Error::HashCollision`] for JSON output; other library
+/// errors keep the pre-mapper string form (no top-level [`grit_lib::error::Error`] downcast).
+pub(crate) fn map_remote_error(err: RemoteError) -> anyhow::Error {
+    match err {
+        RemoteError::Library(grit_lib::error::Error::BundleMissingPrerequisites) => {
+            anyhow::Error::new(crate::commands::bundle::MissingPrerequisites)
+        }
+        RemoteError::Library(grit_lib::error::Error::HashCollision { oid }) => {
+            crate::json_error::map_lib_error(grit_lib::error::Error::HashCollision { oid })
+        }
+        RemoteError::Library(lib) => anyhow::Error::msg(RemoteError::Library(lib).to_string()),
+        other => anyhow::Error::msg(other.to_string()),
     }
-    anyhow::Error::msg(err.to_string())
+}
+
+fn map_remote_fetch_error(err: RemoteError) -> anyhow::Error {
+    map_remote_error(err)
 }
 
 fn plural(n: usize) -> &'static str {
@@ -164,5 +173,39 @@ fn plural(n: usize) -> &'static str {
         ""
     } else {
         "s"
+    }
+}
+
+#[cfg(test)]
+mod map_remote_error_tests {
+    use grit_lib::error::Error as LibError;
+    use grit_lib::objects::ObjectId;
+    use grit_lib::remote::RemoteError;
+
+    use super::map_remote_error;
+    use crate::cli_messages::human_error_message;
+    use crate::json_error::structured_json_payload;
+
+    #[test]
+    fn library_object_not_found_keeps_remote_display() {
+        let err = map_remote_error(RemoteError::Library(LibError::ObjectNotFound(
+            "deadbeef".into(),
+        )));
+        assert!(err.downcast_ref::<LibError>().is_none());
+        assert_eq!(
+            human_error_message(&err),
+            "object not found: deadbeef",
+            "must not remap to revision-not-found wording"
+        );
+        assert!(structured_json_payload(&err).is_none());
+    }
+
+    #[test]
+    fn library_hash_collision_stays_typed_for_json() {
+        let oid = ObjectId::from_hex("f92d74e3874587aaf443d1db961d4e26dde13e9c").expect("oid");
+        let err = map_remote_error(RemoteError::Library(LibError::HashCollision { oid }));
+        let payload = structured_json_payload(&err).expect("structured payload");
+        assert_eq!(payload.kind, "hash_collision");
+        assert_eq!(payload.oid.as_deref(), Some(oid.to_hex().as_str()));
     }
 }

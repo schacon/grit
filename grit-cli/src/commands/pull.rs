@@ -10,6 +10,7 @@ use grit_lib::porcelain::worktree_guard::prepare_tree_checkout;
 use grit_lib::refs;
 use grit_lib::state::{resolve_head, HeadState};
 
+use crate::commands::fetch::map_remote_error;
 use crate::commands::merge::{self, MergeOutcome};
 use crate::context;
 use crate::output::OutputMode;
@@ -54,7 +55,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
     let factory = DefaultHttpClientFactory;
     let mut progress = TerminalProgress::new(mode);
     Remote::from_config(&config, &remote)
-        .map_err(|e| anyhow::Error::msg(e.to_string()))?
+        .map_err(map_remote_error)?
         .fetch(
             &repo,
             FetchOptions {
@@ -67,7 +68,7 @@ pub fn run(mode: OutputMode) -> Result<MergeOutcome> {
             &mut progress,
             Some(&factory),
         )
-        .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        .map_err(map_remote_error)?;
 
     // Which upstream tracking ref to integrate.
     let upstream_branch = config

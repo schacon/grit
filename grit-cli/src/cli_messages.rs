@@ -15,8 +15,11 @@ pub fn human_error_message(err: &Error) -> String {
         return map_lib_error(lib);
     }
     for cause in err.chain() {
-        if let Some(lib) = cause.downcast_ref::<LibError>() {
-            return map_lib_error(lib);
+        if let Some(structured) = cause.downcast_ref::<StructuredCliError>() {
+            return structured.human.clone();
+        }
+        if let Some(LibError::HashCollision { oid }) = cause.downcast_ref::<LibError>() {
+            return map_lib_error(&LibError::HashCollision { oid: *oid });
         }
     }
     format!("{err:#}")
@@ -27,6 +30,12 @@ fn map_lib_error(err: &LibError) -> String {
         return msg;
     }
     match err {
+        LibError::HashCollision { oid } => {
+            format!(
+                "refusing to store content that triggers an SHA-1 hash collision (digest {})",
+                oid.to_hex()
+            )
+        }
         LibError::InvalidRef(msg) if msg.starts_with("ref not found:") => {
             let refname = msg.strip_prefix("ref not found: ").unwrap_or(msg.as_str());
             if let Some(short) = refname.strip_prefix("refs/heads/") {
