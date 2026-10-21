@@ -286,16 +286,21 @@ pub fn run(
             );
         }
         let resume = LogWalkCursor::decode(token).context("invalid log continuation cursor")?;
-        let token_refs = rev.rev_tokens(&["HEAD"]);
-        let expected =
-            LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?.ok_or_else(|| {
-                anyhow::anyhow!("cursor was created for a different revision selection")
-            })?;
-        if resume.query() != &expected {
-            bail!("cursor was created for a different revision selection");
-        }
+        let query = if rev.has_explicit_revision_selection() {
+            let token_refs = rev.rev_tokens(&["HEAD"]);
+            let expected =
+                LogWalkQuery::from_rev_walk(&repo, &token_refs, &opts)?.ok_or_else(|| {
+                    anyhow::anyhow!("cursor was created for a different revision selection")
+                })?;
+            if resume.query() != &expected {
+                bail!("cursor was created for a different revision selection");
+            }
+            expected
+        } else {
+            resume.query().clone()
+        };
         let page_size = rev.max_count.unwrap_or(PAGE);
-        let page = LogWalkCursor::step(&repo, &expected, Some(&resume), page_size)
+        let page = LogWalkCursor::step(&repo, &query, Some(&resume), page_size)
             .context("could not list commits")?;
         let truncated = page.next.is_some();
         let next = page.next.map(|c| c.encode()).transpose()?;

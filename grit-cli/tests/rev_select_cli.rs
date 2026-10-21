@@ -211,9 +211,9 @@ fn log_cursor_pages_through_range() -> TestResult {
 }
 
 #[test]
-fn log_cursor_rejects_revision_selection() -> TestResult {
+fn log_cursor_continues_range_with_cursor_only() -> TestResult {
     let dir = std::env::temp_dir().join(format!(
-        "grit-rev-select-cursor-reject-{}",
+        "grit-rev-select-cursor-only-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
@@ -221,13 +221,8 @@ fn log_cursor_rejects_revision_selection() -> TestResult {
     git_branch(&dir, "base", "HEAD~12");
     let page1 = grit_json(&dir, &["log", "base..HEAD"]);
     let cursor = page1["next"].as_str().expect("next").to_owned();
-    let out = grit_run(&dir, &["log", &format!("--cursor={cursor}"), "base..HEAD"]);
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("cannot combine `--cursor`"),
-        "stderr: {stderr}"
-    );
+    let page2 = grit_json(&dir, &["log", &format!("--cursor={cursor}")]);
+    assert!(!page2["commits"].as_array().expect("commits").is_empty());
     Ok(())
 }
 

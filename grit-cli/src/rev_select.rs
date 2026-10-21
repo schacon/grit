@@ -139,6 +139,16 @@ impl RevSelectArgs {
         !self.author.is_empty() || !self.committer.is_empty() || !self.grep.is_empty()
     }
 
+    /// True when the caller named revisions or ref sets on the command line (not the command default).
+    #[must_use]
+    pub fn has_explicit_revision_selection(&self) -> bool {
+        !self.revs.is_empty()
+            || self.all
+            || self.branches.is_some()
+            || self.tags.is_some()
+            || self.remotes.is_some()
+    }
+
     /// Convert CLI flags into [`RevWalkListOptions`].
     ///
     /// When `before` carries a deprecated `lw1.` log cursor, it is returned in
@@ -267,6 +277,14 @@ impl RevSelectArgs {
     }
 }
 
+fn push_flag_with_optional_value(parts: &mut Vec<String>, flag: &str, glob: &str) {
+    if glob.is_empty() {
+        parts.push(flag.to_owned());
+    } else {
+        parts.push(format!("{flag}={glob}"));
+    }
+}
+
 /// Whether author/committer mailmap applies for log-style commands (`log.mailmap`, `--no-mailmap`).
 pub(crate) fn log_mailmap_enabled(repo: &Repository, no_mailmap: bool) -> bool {
     if no_mailmap {
@@ -278,14 +296,6 @@ pub(crate) fn log_mailmap_enabled(repo: &Repository, no_mailmap: bool) -> bool {
     match config.get("log.mailmap") {
         None => true,
         Some(v) => parse_bool(&v).unwrap_or(true),
-    }
-}
-
-fn push_flag_with_optional_value(parts: &mut Vec<String>, flag: &str, glob: &str) {
-    if glob.is_empty() {
-        parts.push(flag.to_owned());
-    } else {
-        parts.push(format!("{flag}={glob}"));
     }
 }
 
