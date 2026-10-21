@@ -1413,7 +1413,7 @@ fn traditional_normal_directory_only(
             }
             if is_dir {
                 stack.push(path);
-            } else {
+            } else if !crate::read_dir_kind::entry_is_git_ignored_special(&entry).unwrap_or(true) {
                 any_file = true;
                 let ig = matcher.is_path_ignored(repo, Some(index), &rel_child, false)?;
                 if !ig {

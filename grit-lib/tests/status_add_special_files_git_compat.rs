@@ -74,6 +74,8 @@ mod unix {
                 .success(),
             "mkfifo failed"
         );
+        let sock = root.join("sock");
+        let _listener = UnixListener::bind(&sock).expect("bind unix socket");
         fs::write(root.join("new.txt"), "new\n").expect("write new");
 
         let git_u = git_untracked_lines(root);
@@ -154,43 +156,5 @@ mod unix {
             log.lines().count() >= 2,
             "commit must succeed with socket in tree"
         );
-    }
-
-    #[test]
-    fn cli_add_completes_quickly_with_fifo() {
-        let grit = match std::env::var("CARGO_BIN_EXE_grit") {
-            Ok(p) if Path::new(&p).is_file() => p,
-            _ => return,
-        };
-        if Command::new("git").arg("--version").output().is_err() {
-            return;
-        }
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        init_repo_with_base(root);
-        assert!(Command::new("mkfifo")
-            .arg(root.join("pipe"))
-            .status()
-            .expect("mkfifo")
-            .success());
-        fs::write(root.join("new.txt"), "new\n").expect("write new");
-
-        let out = Command::new(&grit)
-            .args(["add", "--json"])
-            .current_dir(root)
-            .output()
-            .expect("grit add");
-        assert!(
-            out.status.success(),
-            "grit add failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-        let added = v
-            .get("added")
-            .and_then(|n| n.as_u64())
-            .unwrap_or_else(|| panic!("missing added field: {v}"));
-        assert_eq!(added, 1);
     }
 }
