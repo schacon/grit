@@ -197,6 +197,12 @@ impl BitmapIndex {
         self.entry_count
     }
 
+    /// Pack-index or MIDX storage row for bitmap bit `position`.
+    #[must_use]
+    pub(crate) fn pack_index_row_for_bitmap_position(&self, position: u32) -> Option<u32> {
+        self.order.storage_row_for_bitmap_rank(position)
+    }
+
     /// Object id at bitmap bit `position`.
     ///
     /// # Errors

@@ -7,10 +7,10 @@ use anyhow::{bail, Context, Result};
 use grit_lib::diff::{CommitFilesManyInput, CommitFilesManyOptions, DiffOptions};
 use grit_lib::objects::ObjectId;
 use grit_lib::revwalk::group_by::{
-    group_commits_by_author, mailmap_for_grouping, GroupByAuthorOptions,
+    group_commits_by_author, group_commits_by_author_from_rev, mailmap_for_grouping,
+    GroupByAuthorOptions,
 };
 use grit_lib::revwalk::log_walk::{LogWalkCursor, LogWalkQuery};
-use grit_lib::revwalk::rev_list_commits_for_author_group;
 use grit_lib::state::{resolve_head, HeadState};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -330,14 +330,26 @@ pub fn run(
             let use_mailmap = rev_select::log_mailmap_enabled(&repo, rev.no_mailmap);
             let mailmap = mailmap_for_grouping(&repo, use_mailmap)?;
             if display.group_count_only {
-                let oids = if rev.max_count.is_none() {
-                    rev_list_commits_for_author_group(&repo, &token_refs, &fetch_opts)
-                        .context("could not list commits")?
-                } else {
-                    repo.rev_walk()
-                        .commits(&token_refs, &fetch_opts)
-                        .context("could not list commits")?
-                };
+                if rev.max_count.is_none() {
+                    let grouped = group_commits_by_author_from_rev(
+                        &repo,
+                        &token_refs,
+                        &fetch_opts,
+                        mailmap.as_ref(),
+                        GroupByAuthorOptions { count_only: true },
+                    )
+                    .context("could not group commits by author")?;
+                    return build_author_group_outcome_from_groups(
+                        &repo,
+                        grouped,
+                        false,
+                        display,
+                    );
+                }
+                let oids = repo
+                    .rev_walk()
+                    .commits(&token_refs, &fetch_opts)
+                    .context("could not list commits")?;
                 let (oids, truncated) = truncate_oid_list(oids, rev.max_count);
                 let grouped = group_commits_by_author(
                     &repo,
