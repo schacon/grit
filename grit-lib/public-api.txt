@@ -10412,6 +10412,7 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::add::StageMode
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::add::StageMode
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::add::StageMode
 pub struct grit_lib::porcelain::add::StageOptions
+pub grit_lib::porcelain::add::StageOptions::dry_run: bool
 pub grit_lib::porcelain::add::StageOptions::executable_hint: grit_lib::porcelain::index_mode::StageExecutableHint
 pub grit_lib::porcelain::add::StageOptions::mode: grit_lib::porcelain::add::StageMode
 pub grit_lib::porcelain::add::StageOptions::pathspec_sources: alloc::vec::Vec<alloc::string::String>
@@ -10430,9 +10431,9 @@ impl core::marker::UnsafeUnpin for grit_lib::porcelain::add::StageOptions
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::add::StageOptions
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::add::StageOptions
 pub struct grit_lib::porcelain::add::StageOutcome
-pub grit_lib::porcelain::add::StageOutcome::added: usize
-pub grit_lib::porcelain::add::StageOutcome::modified: usize
-pub grit_lib::porcelain::add::StageOutcome::removed: usize
+pub grit_lib::porcelain::add::StageOutcome::added: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::add::StageOutcome::modified: alloc::vec::Vec<alloc::string::String>
+pub grit_lib::porcelain::add::StageOutcome::removed: alloc::vec::Vec<alloc::string::String>
 impl grit_lib::porcelain::add::StageOutcome
 pub fn grit_lib::porcelain::add::StageOutcome::total(&self) -> usize
 impl core::clone::Clone for grit_lib::porcelain::add::StageOutcome
@@ -10444,7 +10445,6 @@ impl core::default::Default for grit_lib::porcelain::add::StageOutcome
 pub fn grit_lib::porcelain::add::StageOutcome::default() -> Self
 impl core::fmt::Debug for grit_lib::porcelain::add::StageOutcome
 pub fn grit_lib::porcelain::add::StageOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for grit_lib::porcelain::add::StageOutcome
 impl core::marker::StructuralPartialEq for grit_lib::porcelain::add::StageOutcome
 impl core::marker::Freeze for grit_lib::porcelain::add::StageOutcome
 impl core::marker::Send for grit_lib::porcelain::add::StageOutcome
@@ -10961,6 +10961,7 @@ pub fn grit_lib::porcelain::pathspec_match::pathspec_matches_known_in_repository
 pub mod grit_lib::porcelain::quote_path
 pub fn grit_lib::porcelain::quote_path::format_diff_path_with_prefix(&str, &str, bool) -> alloc::string::String
 pub fn grit_lib::porcelain::quote_path::quote_c_style(&str, bool) -> alloc::string::String
+pub fn grit_lib::porcelain::quote_path::quote_c_style_bytes(&[u8], bool) -> alloc::string::String
 pub fn grit_lib::porcelain::quote_path::quote_path_for_display(&str, bool) -> alloc::string::String
 pub mod grit_lib::porcelain::rebase
 pub enum grit_lib::porcelain::rebase::FixupMessageMode
@@ -12991,6 +12992,7 @@ pub fn &mut T::start_with_unit(&mut self, grit_lib::progress::ProgressPhase, gri
 pub mod grit_lib::quote_path
 pub fn grit_lib::quote_path::format_diff_path_with_prefix(&str, &str, bool) -> alloc::string::String
 pub fn grit_lib::quote_path::quote_c_style(&str, bool) -> alloc::string::String
+pub fn grit_lib::quote_path::quote_c_style_bytes(&[u8], bool) -> alloc::string::String
 pub fn grit_lib::quote_path::quote_path_for_display(&str, bool) -> alloc::string::String
 pub mod grit_lib::refs
 pub mod grit_lib::refs::branch_tracking
