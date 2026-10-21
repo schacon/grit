@@ -96,6 +96,9 @@ pub struct DiffFormatArgs {
     /// Lines of context around each change (Git `-U`).
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified_context: Option<usize>,
+    /// Expand patch hunks to enclosing function boundaries (Git `-W`).
+    #[arg(short = 'W', long = "function-context")]
+    pub function_context: bool,
 }
 
 impl DiffFormatArgs {
@@ -165,5 +168,6 @@ impl DiffFormatArgs {
         if let Some(n) = self.unified_context {
             diff_options.context_lines = n;
         }
+        diff_options.function_context = self.function_context;
     }
 }

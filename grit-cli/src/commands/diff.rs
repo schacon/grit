@@ -16,7 +16,7 @@
 
 use anyhow::{Context, Result};
 use grit_lib::diff::{
-    apply_rename_detection_to_diff_entries, build_file_diffs, commit_diff_files,
+    apply_diff_filter, apply_rename_detection_to_diff_entries, build_file_diffs, commit_diff_files,
     diff_commits_with_renames_and_policy, diff_index_to_tree_with_renames,
     diff_index_to_worktree_with_renames, diff_trees_with_renames_and_policy, line_change_counts,
     read_submodule_head_oid, read_worktree_side_bytes_for_diff,
@@ -1454,7 +1454,14 @@ fn outcome_from_changes(
         if !ws.ignore_all_space && !ws.ignore_space_change && !ws.ignore_blank_lines {
             return true;
         }
-        !matches!(&f.hunks, Some(h) if h.is_empty() && !f.binary && f.old_path.is_none())
+        if f.old_path.is_some() && matches!(f.status, ChangeStatus::Renamed | ChangeStatus::Copied)
+        {
+            return true;
+        }
+        if f.binary {
+            return f.content_changed;
+        }
+        !matches!(&f.hunks, Some(h) if h.is_empty())
     })
     .collect();
     DiffOutcome {
@@ -1859,6 +1866,7 @@ fn tree_commit_entries(
         thread_policy,
     )
     .context("could not diff commits")?;
+    entries = apply_diff_filter(entries, diff_options.filter);
     sort_entries(&mut entries);
     Ok(entries)
 }

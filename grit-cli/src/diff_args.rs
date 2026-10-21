@@ -77,30 +77,32 @@ impl DiffCompareArgs {
     }
 }
 
-/// Rewrite Git-style attached `-M` thresholds so clap can parse them (`-M30` → `-M=30`).
+/// Rewrite Git-style attached diff flags so clap can parse them (`-M30` → `-M=30`, `-U0` → `-U=0`).
 ///
-/// Only applies to the `diff` subcommand, after global flags and before `--`.
+/// Applies to `diff`, `show`, and `log` after global flags and before `--`.
 #[must_use]
 pub fn normalize_diff_argv(mut args: Vec<String>) -> Vec<String> {
-    let Some(diff_idx) = locate_diff_subcommand(&args) else {
+    let Some(cmd_idx) = locate_porcelain_diff_command(&args) else {
         return args;
     };
     let mut end = args.len();
-    for (i, arg) in args.iter().enumerate().skip(diff_idx + 1) {
+    for (i, arg) in args.iter().enumerate().skip(cmd_idx + 1) {
         if arg == "--" {
             end = i;
             break;
         }
     }
-    for arg in args.iter_mut().take(end).skip(diff_idx + 1) {
+    for arg in args.iter_mut().take(end).skip(cmd_idx + 1) {
         if let Some(replacement) = rewrite_attached_find_renames(arg) {
+            *arg = replacement;
+        } else if let Some(replacement) = rewrite_attached_unified(arg) {
             *arg = replacement;
         }
     }
     args
 }
 
-fn locate_diff_subcommand(args: &[String]) -> Option<usize> {
+fn locate_porcelain_diff_command(args: &[String]) -> Option<usize> {
     let mut i = 1;
     while i < args.len() {
         let token = args[i].as_str();
@@ -108,12 +110,23 @@ fn locate_diff_subcommand(args: &[String]) -> Option<usize> {
             i = skip_global_flag(args, i);
             continue;
         }
-        if token == "diff" {
+        if matches!(token, "diff" | "show" | "log") {
             return Some(i);
         }
         return None;
     }
     None
+}
+
+fn rewrite_attached_unified(token: &str) -> Option<String> {
+    if token == "-U" || token.starts_with("-U=") || token.starts_with("--unified") {
+        return None;
+    }
+    let rest = token.strip_prefix("-U")?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("-U={rest}"))
 }
 
 fn is_leading_global_flag(token: &str) -> bool {

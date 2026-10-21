@@ -3830,6 +3830,7 @@ impl !core::panic::unwind_safe::UnwindSafe for grit_lib::diff::DiffIndexToWorktr
 pub grit_lib::diff::DiffOptions::algorithm: grit_lib::diff::DiffAlgorithm
 pub grit_lib::diff::DiffOptions::context_lines: usize
 pub grit_lib::diff::DiffOptions::filter: core::option::Option<grit_lib::diff::DiffFilter>
+pub grit_lib::diff::DiffOptions::function_context: bool
 pub grit_lib::diff::DiffOptions::indent_heuristic: bool
 pub grit_lib::diff::DiffOptions::inter_hunk_context: usize
 pub grit_lib::diff::DiffOptions::renames: grit_lib::diff::RenameDetection
@@ -9436,7 +9437,7 @@ pub fn grit_lib::objects::ObjectId::fmt(&self, &mut core::fmt::Formatter<'_>) ->
 impl core::fmt::Display for grit_lib::objects::ObjectId
 pub fn grit_lib::objects::ObjectId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for grit_lib::objects::ObjectId
-pub fn grit_lib::objects::ObjectId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+pub fn grit_lib::objects::ObjectId::hash<H: core::hash::Hasher>(&self, &mut H)
 impl core::marker::Copy for grit_lib::objects::ObjectId
 impl core::marker::StructuralPartialEq for grit_lib::objects::ObjectId
 impl core::str::traits::FromStr for grit_lib::objects::ObjectId
@@ -9489,6 +9490,52 @@ impl<'repo> core::marker::Unpin for grit_lib::objects::handle::Objects<'repo>
 impl<'repo> core::marker::UnsafeUnpin for grit_lib::objects::handle::Objects<'repo>
 impl<'repo> !core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::handle::Objects<'repo>
 impl<'repo> !core::panic::unwind_safe::UnwindSafe for grit_lib::objects::handle::Objects<'repo>
+pub struct grit_lib::objects::OidBuildHasher
+impl grit_lib::objects::OidBuildHasher
+pub fn grit_lib::objects::OidBuildHasher::new() -> Self
+impl core::clone::Clone for grit_lib::objects::OidBuildHasher
+pub fn grit_lib::objects::OidBuildHasher::clone(&self) -> Self
+impl core::default::Default for grit_lib::objects::OidBuildHasher
+pub fn grit_lib::objects::OidBuildHasher::default() -> Self
+impl core::fmt::Debug for grit_lib::objects::OidBuildHasher
+pub fn grit_lib::objects::OidBuildHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::BuildHasher for grit_lib::objects::OidBuildHasher
+pub type grit_lib::objects::OidBuildHasher::Hasher = grit_lib::objects::OidHasher
+pub fn grit_lib::objects::OidBuildHasher::build_hasher(&self) -> Self::Hasher
+impl core::marker::Copy for grit_lib::objects::OidBuildHasher
+impl core::marker::Freeze for grit_lib::objects::OidBuildHasher
+impl core::marker::Send for grit_lib::objects::OidBuildHasher
+impl core::marker::Sync for grit_lib::objects::OidBuildHasher
+impl core::marker::Unpin for grit_lib::objects::OidBuildHasher
+impl core::marker::UnsafeUnpin for grit_lib::objects::OidBuildHasher
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::OidBuildHasher
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::OidBuildHasher
+pub struct grit_lib::objects::OidHasher
+impl core::clone::Clone for grit_lib::objects::OidHasher
+pub fn grit_lib::objects::OidHasher::clone(&self) -> Self
+impl core::fmt::Debug for grit_lib::objects::OidHasher
+pub fn grit_lib::objects::OidHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hasher for grit_lib::objects::OidHasher
+pub fn grit_lib::objects::OidHasher::finish(&self) -> u64
+pub fn grit_lib::objects::OidHasher::write(&mut self, &[u8])
+pub fn grit_lib::objects::OidHasher::write_i16(&mut self, i16)
+pub fn grit_lib::objects::OidHasher::write_i32(&mut self, i32)
+pub fn grit_lib::objects::OidHasher::write_i64(&mut self, i64)
+pub fn grit_lib::objects::OidHasher::write_i8(&mut self, i8)
+pub fn grit_lib::objects::OidHasher::write_isize(&mut self, isize)
+pub fn grit_lib::objects::OidHasher::write_u16(&mut self, u16)
+pub fn grit_lib::objects::OidHasher::write_u32(&mut self, u32)
+pub fn grit_lib::objects::OidHasher::write_u64(&mut self, u64)
+pub fn grit_lib::objects::OidHasher::write_u8(&mut self, u8)
+pub fn grit_lib::objects::OidHasher::write_usize(&mut self, usize)
+impl core::marker::Copy for grit_lib::objects::OidHasher
+impl core::marker::Freeze for grit_lib::objects::OidHasher
+impl core::marker::Send for grit_lib::objects::OidHasher
+impl core::marker::Sync for grit_lib::objects::OidHasher
+impl core::marker::Unpin for grit_lib::objects::OidHasher
+impl core::marker::UnsafeUnpin for grit_lib::objects::OidHasher
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::objects::OidHasher
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::objects::OidHasher
 pub struct grit_lib::objects::OsChangeIdGenerator
 impl core::clone::Clone for grit_lib::change_id::OsChangeIdGenerator
 pub fn grit_lib::change_id::OsChangeIdGenerator::clone(&self) -> Self
@@ -9567,10 +9614,19 @@ pub fn grit_lib::objects::ChangeIdGenerator::random_bytes(&self) -> core::result
 impl grit_lib::change_id::ChangeIdGenerator for grit_lib::change_id::OsChangeIdGenerator
 pub fn grit_lib::change_id::OsChangeIdGenerator::random_bytes(&self) -> core::result::Result<[u8; 16], grit_lib::change_id::ChangeIdError>
 pub fn grit_lib::objects::change_id(&grit_lib::objects::CommitData) -> core::option::Option<grit_lib::change_id::ChangeId>
+pub fn grit_lib::objects::empty_object_id_hash_set() -> &'static std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>
+pub fn grit_lib::objects::empty_oid_byte_filter_map() -> &'static grit_lib::objects::OidHashMap<alloc::vec::Vec<u8>>
+pub fn grit_lib::objects::empty_oid_set() -> &'static grit_lib::objects::OidHashSet
 pub fn grit_lib::objects::find_commits_by_change_id_prefix(&grit_lib::repo::Repository, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::change_id::ChangeIdMatch>>
 pub fn grit_lib::objects::find_tree_entry_by_name<'a>(&'a [grit_lib::objects::TreeEntry], &[u8], bool) -> core::option::Option<&'a grit_lib::objects::TreeEntry>
 pub fn grit_lib::objects::find_tree_entry_by_name_dir_or_file<'a>(&'a [grit_lib::objects::TreeEntry], &[u8]) -> core::option::Option<&'a grit_lib::objects::TreeEntry>
 pub fn grit_lib::objects::is_change_id_spec_token(&str) -> bool
+pub fn grit_lib::objects::oid_hash_map<V>() -> grit_lib::objects::OidHashMap<V>
+pub fn grit_lib::objects::oid_hash_map_from<V: core::clone::Clone>(&std::collections::hash::map::HashMap<grit_lib::objects::ObjectId, V>) -> grit_lib::objects::OidHashMap<V>
+pub fn grit_lib::objects::oid_hash_map_with_capacity<V>(usize) -> grit_lib::objects::OidHashMap<V>
+pub fn grit_lib::objects::oid_hash_set() -> grit_lib::objects::OidHashSet
+pub fn grit_lib::objects::oid_hash_set_from(&std::collections::hash::set::HashSet<grit_lib::objects::ObjectId>) -> grit_lib::objects::OidHashSet
+pub fn grit_lib::objects::oid_hash_set_with_capacity(usize) -> grit_lib::objects::OidHashSet
 pub fn grit_lib::objects::parse_commit(&[u8]) -> grit_lib::error::Result<grit_lib::objects::CommitData>
 pub fn grit_lib::objects::parse_tag(&[u8]) -> grit_lib::error::Result<grit_lib::objects::TagData>
 pub fn grit_lib::objects::parse_tree(&[u8]) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::TreeEntry>>
@@ -9585,6 +9641,8 @@ pub fn grit_lib::objects::set_change_id(&mut grit_lib::objects::CommitData, &gri
 pub fn grit_lib::objects::tag_header_field(&[u8], &[u8]) -> core::option::Option<alloc::string::String>
 pub fn grit_lib::objects::tag_object_line_oid(&[u8]) -> core::option::Option<grit_lib::objects::ObjectId>
 pub fn grit_lib::objects::tree_entry_cmp(&[u8], bool, &[u8], bool) -> core::cmp::Ordering
+pub type grit_lib::objects::OidHashMap<V> = hashbrown::map::HashMap<grit_lib::objects::ObjectId, V, grit_lib::objects::OidBuildHasher>
+pub type grit_lib::objects::OidHashSet = hashbrown::set::HashSet<grit_lib::objects::ObjectId, grit_lib::objects::OidBuildHasher>
 pub mod grit_lib::pack_reuse
 pub struct grit_lib::pack_reuse::ReuseWriteStats
 pub grit_lib::pack_reuse::ReuseWriteStats::pack_ofs_fixup_objects: u32
@@ -11854,7 +11912,7 @@ pub fn grit_lib::objects::ObjectId::fmt(&self, &mut core::fmt::Formatter<'_>) ->
 impl core::fmt::Display for grit_lib::objects::ObjectId
 pub fn grit_lib::objects::ObjectId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for grit_lib::objects::ObjectId
-pub fn grit_lib::objects::ObjectId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+pub fn grit_lib::objects::ObjectId::hash<H: core::hash::Hasher>(&self, &mut H)
 impl core::marker::Copy for grit_lib::objects::ObjectId
 impl core::marker::StructuralPartialEq for grit_lib::objects::ObjectId
 impl core::str::traits::FromStr for grit_lib::objects::ObjectId
