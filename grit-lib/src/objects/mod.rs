@@ -31,8 +31,9 @@ pub use oid_hashtable::{
 };
 
 pub use crate::change_id::{
-    change_id, resolved_change_id, set_change_id, ChangeId, ChangeIdError, ChangeIdGenerator,
-    ChangeIdPolicy, OsChangeIdGenerator, ResolvedChangeId,
+    change_id, find_commits_by_change_id_prefix, is_change_id_spec_token,
+    resolve_commit_by_change_id_prefix, resolved_change_id, set_change_id, ChangeId, ChangeIdError,
+    ChangeIdGenerator, ChangeIdMatch, ChangeIdPolicy, OsChangeIdGenerator, ResolvedChangeId,
 };
 
 pub mod odb {
