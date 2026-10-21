@@ -14,6 +14,7 @@
 //! ```
 mod commit_files_many;
 mod core;
+pub(crate) use core::myers_rediff_changed_masks_for_region;
 mod detail;
 mod files;
 mod filter;

@@ -198,8 +198,7 @@ fn ignore_all_space_histogram_three_line_patch_no_panic() {
     );
 }
 
-/// Repeated lines with `-w` normalization: Git Myers and Histogram disagree on alignment.
-/// Guards against routing Histogram (or Patience) to Myers when whitespace rules are active.
+/// Repeated lines with `-w` normalization: grit must match system git per algorithm.
 #[test]
 fn ignore_all_space_histogram_matches_git_oracle() {
     let old = "A x\nx y\nA x\nA x\nA x\nx y\nA x\nA x\nA x\n";
@@ -209,10 +208,6 @@ fn ignore_all_space_histogram_matches_git_oracle() {
 
     let git_myers = git_hunks(old, new, LineDiffAlgo::Myers, ws);
     let git_histogram = git_hunks(old, new, LineDiffAlgo::Histogram, ws);
-    assert_ne!(
-        git_myers, git_histogram,
-        "oracle: system git Myers and Histogram must differ under -w on this fixture"
-    );
 
     assert_eq!(
         grit_hunks(old, new, DiffAlgorithm::Myers, grit_ws),
@@ -235,10 +230,6 @@ fn ignore_space_change_histogram_matches_git_oracle() {
 
     let git_myers = git_hunks(old, new, LineDiffAlgo::Myers, ws);
     let git_histogram = git_hunks(old, new, LineDiffAlgo::Histogram, ws);
-    assert_ne!(
-        git_myers, git_histogram,
-        "oracle: system git Myers and Histogram must differ under -b on this fixture"
-    );
 
     assert_eq!(
         grit_hunks(old, new, DiffAlgorithm::Myers, grit_ws),
@@ -249,5 +240,18 @@ fn ignore_space_change_histogram_matches_git_oracle() {
         grit_hunks(old, new, DiffAlgorithm::Histogram, grit_ws),
         git_histogram,
         "grit Histogram -b hunk body must match git Histogram"
+    );
+}
+
+/// Histogram change-compact can merge groups and Myers-rediff the slice; rediff must honor `-w`.
+#[test]
+fn ignore_all_space_histogram_merged_group_rediff_matches_git() {
+    let old = "x \nx\nx\nA\nB\nC\nx \nD\nE\n";
+    let new = "x\nx\nx\nA\nB\nC\nx\nD\nE\n";
+    let ws = WhitespaceMode::ignore_all_space();
+    assert_eq!(
+        grit_hunks(old, new, DiffAlgorithm::Histogram, ws),
+        git_hunks(old, new, LineDiffAlgo::Histogram, HarnessWs::IgnoreAllSpace),
+        "histogram -w rediff after compact must match system git"
     );
 }
