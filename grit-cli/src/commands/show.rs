@@ -245,6 +245,10 @@ pub struct CommitInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub relative_date: Option<String>,
+    /// Stable change id (reverse-hex; stored header or derived from commit id).
+    pub change_id: String,
+    /// `true` when `change_id` came from a `change-id` commit header.
+    pub change_id_stored: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -305,6 +309,8 @@ fn show_commit(spec: &str, opts: &ShowRunOptions) -> Result<ShowOutcome> {
         message: commit_json.message,
         refs: commit_json.refs,
         relative_date: commit_json.relative_date,
+        change_id: commit_json.change_id,
+        change_id_stored: commit_json.change_id_stored,
     };
 
     let diff_opts = CommitDiffOptions {
