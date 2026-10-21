@@ -179,14 +179,16 @@ impl StatusOutcome {
         Ok(())
     }
 
+    /// Ref name for the `grit pull` hint (`pull` integrates the configured upstream).
     fn pull_update_ref(&self) -> Option<&str> {
-        if self.ahead == Some(0) && self.behind.is_some_and(|b| b > 0) {
-            return self.target.as_deref();
-        }
         if let Some(up) = &self.upstream {
             if up.ahead == Some(0) && up.behind.is_some_and(|b| b > 0) {
                 return Some(up.r#ref.as_str());
             }
+            return None;
+        }
+        if self.ahead == Some(0) && self.behind.is_some_and(|b| b > 0) {
+            return self.target.as_deref();
         }
         None
     }

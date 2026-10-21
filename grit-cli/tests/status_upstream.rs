@@ -229,6 +229,58 @@ fn status_upstream_without_target_branch() -> TestResult {
 }
 
 #[test]
+fn status_pull_hint_follows_upstream_not_target() -> TestResult {
+    let scratch = Scratch::new("pull-hint")?;
+    let clone = setup_topic_vs_main(&scratch);
+    let upstream = scratch.child("w");
+    system_git_ok(&upstream, &["checkout", "-q", "main"]);
+    write_file(&upstream.join("on-main.txt"), "main-only\n");
+    system_git_ok(&upstream, &["add", "on-main.txt"]);
+    system_git_ok(&upstream, &["commit", "-qm", "advance main"]);
+    system_git_ok(&upstream, &["push", "-q", "origin", "HEAD:main"]);
+
+    system_git_ok(&clone, &["fetch", "-q"]);
+    system_git_ok(&clone, &["checkout", "-q", "main"]);
+    system_git_ok(&clone, &["merge", "-q", "--ff-only", "origin/main"]);
+    system_git_ok(&clone, &["checkout", "-q", "topic"]);
+
+    let v = gs_json(&clone, &["status"]);
+    assert_eq!(v["branch"], "topic");
+    assert_eq!(v["target"], "main");
+    assert_eq!(v["upstream"]["ref"], "origin/topic");
+    assert_eq!(v["upstream"]["ahead"], 0);
+    assert_eq!(v["upstream"]["behind"], 0);
+    assert_eq!(v["behind"], 1);
+
+    let human = gs(&clone, &["status"]);
+    assert!(human.status.success());
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        !stdout.contains("grit pull to update from main"),
+        "pull hint must not use target when upstream is distinct and even:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("grit pull to update from origin/main"),
+        "pull hint must not use target remote when upstream is even:\n{stdout}"
+    );
+
+    write_file(&upstream.join("on-topic.txt"), "remote topic\n");
+    system_git_ok(&upstream, &["checkout", "-q", "topic"]);
+    system_git_ok(&upstream, &["add", "on-topic.txt"]);
+    system_git_ok(&upstream, &["commit", "-qm", "advance topic"]);
+    system_git_ok(&upstream, &["push", "-q", "origin", "HEAD:topic"]);
+    system_git_ok(&clone, &["fetch", "-q"]);
+
+    let human = gs(&clone, &["status"]);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains("grit pull to update from origin/topic"),
+        "pull hint should track upstream behind counts:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_ahead_behind_config_false() -> TestResult {
     let scratch = Scratch::new("config")?;
     let clone = setup_topic_vs_main(&scratch);

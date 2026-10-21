@@ -164,7 +164,7 @@ Pass `--json` for stable, scripting-friendly output:
 | `target` | string or null | Target branch, or `null` when none was found. |
 | `ahead` | number or null | Commits on the branch that the target does not have; `null` when ahead/behind counts were skipped. |
 | `behind` | number or null | Commits on the target that the branch does not have; `null` when counts were skipped. |
-| `upstream` | object or null | When upstream tracking differs from `target`: `{ "ref", "ahead", "behind" }` (counts may be `null` when skipped). Omitted or `null` when there is no separate upstream. |
+| `upstream` | object or null | When upstream tracking differs from `target`: `{ "ref", "ahead", "behind" }` (counts may be `null` when skipped). Always present; `null` when there is no separate upstream. |
 | `commits` | array | Newest of those commits, up to ten, each using the shared [`CommitJson`](../README.md#commit-json-object-commitjson) shape (including `change_id` and `change_id_stored`). |
 | `staged` | array | Staged changes with `path` and `status`. |
 | `unstaged` | array | Unstaged changes with `path` and `status`. |
