@@ -594,6 +594,10 @@ pub enum Error {
     #[error("path error: {0}")]
     PathError(String),
 
+    /// `--pathspec-from-file` parse failure.
+    #[error(transparent)]
+    PathspecFromFile(#[from] PathspecFromFileParseError),
+
     /// A tree/index path component is forbidden (`.git`, HFS/NTFS aliases, etc.).
     #[error("invalid path '{0}'")]
     InvalidPath(String),
@@ -681,6 +685,10 @@ pub enum Error {
         /// User-supplied pathspec that matched nothing.
         spec: String,
     },
+
+    /// [`crate::porcelain::commit::CommitScope::Paths`] was used while a merge is in progress.
+    #[error("cannot do a partial commit during a merge")]
+    PartialCommitDuringMerge,
 
     /// Explicit [`crate::porcelain::add::stage`] pathspecs name paths excluded by ignore rules.
     #[error("the following paths are ignored:\n{}", paths.join("\n"))]

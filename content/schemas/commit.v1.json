@@ -1,6 +1,17 @@
 {
   "$id": "https://grit-scm.com/schemas/commit/v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "definitions": {
+    "CommitScopeJson": {
+      "description": "JSON scope label for [`CommitOutcome::scope`].",
+      "enum": [
+        "auto_stage",
+        "staged",
+        "paths"
+      ],
+      "type": "string"
+    }
+  },
   "description": "Result of `grit commit`.",
   "properties": {
     "amended": {
@@ -24,6 +35,9 @@
     "oid": {
       "type": "string"
     },
+    "scope": {
+      "$ref": "#/definitions/CommitScopeJson"
+    },
     "subject": {
       "type": "string"
     }
@@ -33,6 +47,7 @@
     "branch",
     "changes",
     "oid",
+    "scope",
     "subject"
   ],
   "title": "CommitOutcome",
