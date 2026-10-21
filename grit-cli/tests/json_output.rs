@@ -2265,6 +2265,7 @@ fn schema_top_level_keys_are_stable() -> TestResult {
             "change_id",
             "changes",
             "oid",
+            "scope",
             "subject"
         ]
     );
