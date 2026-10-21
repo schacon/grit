@@ -177,6 +177,7 @@ Pass [`--markdown`](../global-options/) for headings, commit metadata, message b
 # Commit `b52cca6`
 
 **Oid:** `92501f188ae0815af09a0cef6e121eddda4113cf`
+**Change:** `yrwyvtvk`
 **Author:** Ada Lovelace <ada@example.com>
 **Date:** 2026-10-07T14:54:02Z
 

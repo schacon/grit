@@ -151,8 +151,13 @@ const CHANGE_ID_DISPLAY_LEN: usize = 8;
 /// Short change-id label for human log/show (`change` + eight reverse-hex digits).
 #[must_use]
 pub fn change_display_segment(change_id: &str) -> String {
-    let short: String = change_id.chars().take(CHANGE_ID_DISPLAY_LEN).collect();
-    format!("change {short}")
+    format!("change {}", change_short_code(change_id))
+}
+
+/// First eight reverse-hex digits of a change id (no `change` prefix).
+#[must_use]
+pub fn change_short_code(change_id: &str) -> String {
+    change_id.chars().take(CHANGE_ID_DISPLAY_LEN).collect()
 }
 
 /// Format commit-list rows (status / shortlog / log) as

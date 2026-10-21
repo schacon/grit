@@ -9893,6 +9893,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::porcelain::log::Decor
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::porcelain::log::DecorationItem
 pub struct grit_lib::porcelain::log::LoadedCommit
 pub grit_lib::porcelain::log::LoadedCommit::author: alloc::string::String
+pub grit_lib::porcelain::log::LoadedCommit::change_id: grit_lib::change_id::ChangeId
+pub grit_lib::porcelain::log::LoadedCommit::change_id_stored: bool
 pub grit_lib::porcelain::log::LoadedCommit::committer: alloc::string::String
 pub grit_lib::porcelain::log::LoadedCommit::message: alloc::string::String
 pub grit_lib::porcelain::log::LoadedCommit::oid: grit_lib::objects::ObjectId

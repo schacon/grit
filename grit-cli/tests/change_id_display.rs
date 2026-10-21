@@ -86,11 +86,30 @@ fn init_with_git_commit(repo: &Path) -> ObjectId {
         .status()
         .expect("grit init");
     fs::write(repo.join("f.txt"), "hello\n").expect("write");
-    Command::new(GRIT)
-        .args(["commit", "-m", "seed"])
+    Command::new("git")
+        .args(["add", "f.txt"])
         .current_dir(repo)
         .status()
-        .expect("grit commit");
+        .expect("git add");
+    Command::new("git")
+        .env("GIT_AUTHOR_NAME", "Test User")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test User")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .env("GIT_AUTHOR_DATE", "1700000000 +0000")
+        .env("GIT_COMMITTER_DATE", "1700000000 +0000")
+        .args([
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "seed",
+        ])
+        .current_dir(repo)
+        .status()
+        .expect("git commit");
     Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(repo)
@@ -102,6 +121,22 @@ fn init_with_git_commit(repo: &Path) -> ObjectId {
         .and_then(|line| std::str::from_utf8(line).ok())
         .and_then(|hex| hex.parse().ok())
         .expect("head oid")
+}
+
+fn git_must(repo: &Path, args: &[&str]) -> TestResult {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .expect("spawn git");
+    assert!(
+        out.status.success(),
+        "git {} failed (cwd {}): {}",
+        args.join(" "),
+        repo.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
 }
 
 fn git_rev_parse(repo: &Path, spec: &str) -> String {
@@ -117,7 +152,7 @@ fn git_rev_parse(repo: &Path, spec: &str) -> String {
     .to_owned()
 }
 
-fn write_stored_change_commit(repo: &Path) -> ObjectId {
+fn write_stored_change_commit(repo: &Path) -> (ObjectId, ChangeId) {
     let parent: ObjectId = git_rev_parse(repo, "HEAD").parse().expect("head oid");
     let tree: ObjectId = git_rev_parse(repo, "HEAD^{tree}")
         .parse()
@@ -161,7 +196,8 @@ fn write_stored_change_commit(repo: &Path) -> ObjectId {
         .trim()
         .parse()
         .expect("oid");
-    oid
+    git_must(repo, &["update-ref", "HEAD", &oid.to_hex()]).expect("point HEAD at stored commit");
+    (oid, stored)
 }
 
 fn assert_derived_fields(commit: &Value) {
@@ -173,15 +209,29 @@ fn assert_derived_fields(commit: &Value) {
     );
 }
 
+fn assert_grit_stored_change_id(commit: &Value) {
+    assert_eq!(commit["change_id_stored"], true);
+    let id = commit["change_id"].as_str().expect("change_id");
+    assert!(id.len() >= 8, "change_id should be non-trivial, got {id}");
+}
+
 #[test]
 fn log_json_has_change_id() -> TestResult {
     let repo = temp_repo("log-json");
     init_with_git_commit(&repo);
     let log = grit_json(&repo, &["log", "--limit", "1"]);
     assert_derived_fields(&log["commits"][0]);
-    let stored_oid = write_stored_change_commit(&repo);
-    let show = grit_json(&repo, &["show", &stored_oid.to_hex()]);
-    assert_eq!(show["commit"]["change_id_stored"], true);
+    let (stored_oid, stored_id) = write_stored_change_commit(&repo);
+    let log = grit_json(&repo, &["log", "--limit", "1"]);
+    assert_eq!(
+        log["commits"][0]["oid"].as_str(),
+        Some(stored_oid.to_hex().as_str())
+    );
+    assert_eq!(log["commits"][0]["change_id_stored"], true);
+    assert_eq!(
+        log["commits"][0]["change_id"].as_str(),
+        Some(stored_id.as_str())
+    );
     Ok(())
 }
 
@@ -204,38 +254,49 @@ fn revs_json_has_change_id() -> TestResult {
 #[test]
 fn status_json_commits_have_change_id() -> TestResult {
     let root = temp_repo("status-json");
-    let bare = root.parent().expect("parent").join("remote.git");
-    Command::new("git")
-        .args(["init", "--bare", "-q", bare.to_str().expect("utf8")])
-        .status()?;
-    Command::new("git")
-        .args(["clone", "-q", bare.to_str().expect("utf8"), "repo"])
-        .current_dir(&root)
-        .status()?;
+    let bare = root.join("remote.git");
+    let bare_s = bare.to_str().expect("utf8");
+    git_must(&root, &["init", "--bare", "-q", bare_s])?;
+    let upstream = root.join("upstream");
+    fs::create_dir_all(&upstream)?;
+    git_must(&upstream, &["clone", "-q", bare_s, "."])?;
+    git_must(&upstream, &["config", "user.name", "Test User"])?;
+    git_must(&upstream, &["config", "user.email", "test@example.com"])?;
+    fs::write(upstream.join("f.txt"), "one\n")?;
+    git_must(&upstream, &["add", "f.txt"])?;
+    git_must(&upstream, &["commit", "-qm", "one"])?;
+    git_must(&upstream, &["branch", "-M", "main"])?;
+    git_must(&upstream, &["push", "-u", "origin", "main"])?;
+
     let repo = root.join("repo");
-    fs::write(repo.join("f.txt"), "one\n")?;
-    let mut first = Command::new(GRIT);
-    grit_env(&mut first);
-    first
-        .args(["commit", "-m", "one"])
-        .current_dir(&repo)
-        .status()?;
-    Command::new("git")
-        .args(["push", "-u", "origin", "main"])
-        .current_dir(&repo)
-        .status()?;
+    git_must(
+        &root,
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "main",
+            bare_s,
+            repo.to_str().expect("utf8"),
+        ],
+    )?;
     fs::write(repo.join("f.txt"), "two\n")?;
     let mut second = Command::new(GRIT);
     grit_env(&mut second);
-    second
+    let commit_out = second
         .args(["commit", "-m", "two"])
         .current_dir(&repo)
-        .status()?;
+        .output()?;
+    assert!(
+        commit_out.status.success(),
+        "grit commit failed: {}",
+        String::from_utf8_lossy(&commit_out.stderr)
+    );
     let status = grit_json(&repo, &["status"]);
     let commits = status["commits"].as_array().expect("commits");
     assert!(!commits.is_empty());
     for row in commits {
-        assert_derived_fields(row);
+        assert_grit_stored_change_id(row);
     }
     Ok(())
 }

@@ -75,8 +75,8 @@ pub struct ScenarioSpec {
 /// Headline scenario on the cooking page (roadmap item 2347).
 pub type HeadlineScenario = ScenarioSpec;
 
-/// The 17 headline scenarios: ids and short names fixed by the performance census roadmap.
-pub const HEADLINE_SCENARIOS: [HeadlineScenario; 17] = [
+/// The 18 headline scenarios: ids and short names fixed by the performance census roadmap.
+pub const HEADLINE_SCENARIOS: [HeadlineScenario; 18] = [
     ScenarioSpec {
         id: "status/clean@synth-10k",
         area: Area::Worktree,

@@ -591,7 +591,7 @@ impl MarkdownRender for ShowOutcome {
         outln!(
             w,
             "**Change:** `{}`",
-            crate::ui::change_display_segment(&self.commit.change_id)
+            crate::ui::change_short_code(&self.commit.change_id)
         );
         if self.commit.parents.len() > 1 {
             let parents: Vec<String> = self

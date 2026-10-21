@@ -114,7 +114,9 @@ Example (listing):
   "commits": [
     {
       "oid": "92501f188ae0815af09a0cef6e121eddda4113cf",
-      "subject": "second"
+      "subject": "second",
+      "change_id": "krrtwksqnwvkpkwuzwkwymqzwxywulrx",
+      "change_id_stored": false
     }
   ],
   "count": null,
