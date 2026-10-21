@@ -10,7 +10,7 @@
       "type": "string"
     },
     "change_id": {
-      "description": "Stored `change-id` header on the new commit, or null when absent.",
+      "description": "Stored `change-id` header on the new commit, or JSON `null` when absent.",
       "type": [
         "string",
         "null"

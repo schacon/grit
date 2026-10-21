@@ -201,6 +201,52 @@ fn merge_json_reports_change_id() {
 }
 
 #[test]
+fn history_reword_json_preserves_derived_change_id_for_headerless_git_commit() {
+    let dir = unique_tmp("commit-change-id-json", "reword-derived");
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["config", "user.name", "T"]);
+    git(&dir, &["config", "user.email", "t@e.com"]);
+    fs::write(dir.join("a.txt"), b"a\n").unwrap();
+    git(&dir, &["add", "a.txt"]);
+    git(&dir, &["commit", "-m", "first"]);
+    fs::write(dir.join("b.txt"), b"b\n").unwrap();
+    git(&dir, &["add", "b.txt"]);
+    git(&dir, &["commit", "-m", "second"]);
+    let target = git(&dir, &["rev-parse", "HEAD~1"]).trim().to_owned();
+    let derived = grit_lib::change_id::ChangeId::derived_from_commit_id(
+        &grit_lib::objects::ObjectId::from_hex(&target).unwrap(),
+    );
+    assert!(change_id_from_cat(&git(&dir, &["cat-file", "-p", &target])).is_none());
+
+    let json = json_stdout(
+        &[
+            "history",
+            "reword",
+            &target,
+            "-m",
+            "first reworded",
+            "--json",
+        ],
+        &dir,
+    );
+    let row = json["rewritten"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|r| r["old"].as_str() == Some(target.as_str()))
+        })
+        .expect("rewritten row");
+    assert_eq!(row["change_id"].as_str(), Some(derived.as_str()));
+    if let Some(new) = row["new"].as_str() {
+        assert_eq!(
+            change_id_from_cat(&git(&dir, &["cat-file", "-p", new])).as_deref(),
+            Some(derived.as_str())
+        );
+    }
+    git(&dir, &["fsck", "--strict"]);
+}
+
+#[test]
 fn history_reword_json_keeps_change_id() {
     let dir = unique_tmp("commit-change-id-json", "reword");
     git(&dir, &["init", "-q", "-b", "main"]);

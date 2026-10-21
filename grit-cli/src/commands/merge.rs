@@ -140,12 +140,17 @@ impl MergeOutcome {
     }
 
     /// `grit pull` on an unborn branch adopting the upstream as the first commit.
-    pub fn set_upstream(branch: &str, upstream: &str, oid: ObjectId) -> Self {
+    pub fn set_upstream(
+        branch: &str,
+        upstream: &str,
+        oid: ObjectId,
+        change_id: Option<String>,
+    ) -> Self {
         Self {
             result: MergeResult::SetUpstream,
             branch: branch.to_owned(),
             oid: Some(oid.to_hex()),
-            change_id: None,
+            change_id,
             upstream: Some(upstream.to_owned()),
             conflicts: None,
             conflict_details: None,
@@ -321,7 +326,7 @@ mod tests {
             ),
             (MergeOutcome::aborted(), "aborted"),
             (
-                MergeOutcome::set_upstream("main", "origin/main", oid),
+                MergeOutcome::set_upstream("main", "origin/main", oid, None),
                 "set_upstream",
             ),
         ];

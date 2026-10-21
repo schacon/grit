@@ -3,16 +3,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Result of `grit revert`.",
   "properties": {
-    "oid": {
-      "description": "The new revert commit on the current branch (full hex oid).",
-      "type": "string"
-    },
     "change_id": {
-      "description": "Stored `change-id` on the new revert commit, or null when absent.",
+      "description": "Stored `change-id` on the new revert commit, or JSON `null` when absent.",
       "type": [
         "string",
         "null"
       ]
+    },
+    "oid": {
+      "description": "The new revert commit on the current branch (full hex oid).",
+      "type": "string"
     },
     "source": {
       "description": "The commit that was reverted (full hex oid).",

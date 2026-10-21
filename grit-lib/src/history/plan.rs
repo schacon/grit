@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::change_id::{
-    change_id, set_change_id, ChangeId, ChangeIdError, ChangeIdGenerator, ChangeIdPolicy,
+    change_id, resolved_change_id, set_change_id, ChangeId, ChangeIdError, ChangeIdGenerator,
+    ChangeIdPolicy,
 };
 use crate::commit::signing::extra_headers_without_commit_signatures;
 use crate::commit_encoding::identity_raw_for_serialized_commit;
@@ -188,7 +189,7 @@ pub fn plan_rewrite(
             rewritten.push(RewrittenCommit {
                 old: old_oid,
                 new: Some(*existing),
-                change_id: stored_change_id_for_commit(repo, *existing)?,
+                change_id: logical_change_id_for_commit(repo, *existing)?,
             });
             continue;
         }
@@ -364,7 +365,7 @@ pub fn plan_rewrite(
             old: old_oid,
             new: new_field,
             change_id: match new_field {
-                Some(oid) => stored_change_id_for_commit(repo, oid)?,
+                Some(oid) => logical_change_id_for_commit(repo, oid)?,
                 None => None,
             },
         });
@@ -467,7 +468,7 @@ pub fn plan_replay_linear_segment(
             Ok(RewrittenCommit {
                 old,
                 new: Some(new),
-                change_id: stored_change_id_for_commit(repo, new)?,
+                change_id: logical_change_id_for_commit(repo, new)?,
             })
         })
         .collect::<Result<Vec<_>, HistoryError>>()?;
@@ -1125,7 +1126,7 @@ fn write_rewritten_commit(
     opts: &RewriteOptions,
     change_ids: &ChangeIdWriteContext,
     template: &CommitData,
-    old_oid: ObjectId,
+    template_oid: ObjectId,
     tree: ObjectId,
     parents: &[ObjectId],
     author: &str,
@@ -1150,27 +1151,8 @@ fn write_rewritten_commit(
     } else {
         identity_raw_for_serialized_commit(&encoding, author, committer)
     };
-    let mut extra_headers = extra_headers_without_commit_signatures(&template.extra_headers);
-    if change_ids.policy.enabled() && change_id(template).is_none() {
-        let mut header_data = CommitData {
-            tree,
-            parents: parents.to_vec(),
-            author: author.to_owned(),
-            committer: committer.to_owned(),
-            author_raw: author_raw.clone(),
-            committer_raw: committer_raw.clone(),
-            encoding: encoding.clone(),
-            message: message.to_owned(),
-            raw_message: raw_message.clone(),
-            extra_headers: extra_headers.clone(),
-        };
-        set_change_id(
-            &mut header_data,
-            &ChangeId::derived_from_commit_id(&old_oid),
-        );
-        extra_headers = header_data.extra_headers;
-    }
-    let data = CommitData {
+    let extra_headers = extra_headers_without_commit_signatures(&template.extra_headers);
+    let mut data = CommitData {
         tree,
         parents: parents.to_vec(),
         author: author.to_owned(),
@@ -1182,7 +1164,23 @@ fn write_rewritten_commit(
         raw_message,
         extra_headers,
     };
+    preserve_logical_change_id(repo, template, template_oid, &mut data)?;
     write_commit_data(repo, opts, &data)
+}
+
+fn preserve_logical_change_id(
+    repo: &Repository,
+    template: &CommitData,
+    template_oid: ObjectId,
+    data: &mut CommitData,
+) -> Result<(), HistoryError> {
+    let config = repo.config().map_err(library_err)?;
+    if !ChangeIdPolicy::from_config(config.as_ref()).enabled() {
+        return Ok(());
+    }
+    let id = change_id(template).unwrap_or_else(|| ChangeId::derived_from_commit_id(&template_oid));
+    set_change_id(data, &id);
+    Ok(())
 }
 
 fn write_commit_data(
@@ -1207,13 +1205,20 @@ fn signing_err(err: Error) -> HistoryError {
     }
 }
 
-fn stored_change_id_for_commit(
+fn logical_change_id_for_commit(
     repo: &Repository,
     oid: ObjectId,
-) -> Result<Option<crate::change_id::ChangeId>, HistoryError> {
+) -> Result<Option<ChangeId>, HistoryError> {
     let obj = repo.odb().read(&oid).map_err(library_err)?;
     let data = parse_commit(&obj.data).map_err(library_err)?;
-    Ok(change_id(&data))
+    if let Some(id) = change_id(&data) {
+        return Ok(Some(id));
+    }
+    let config = repo.config().map_err(library_err)?;
+    if ChangeIdPolicy::from_config(config.as_ref()).enabled() {
+        return Ok(Some(resolved_change_id(&oid, &data).id));
+    }
+    Ok(None)
 }
 
 fn plan_ref_updates(
@@ -1313,7 +1318,7 @@ pub fn plan_fold_range_at_head(
     for &oid in commits {
         mapping.insert(oid, new_oid);
     }
-    let squashed_change_id = stored_change_id_for_commit(repo, new_oid)?;
+    let squashed_change_id = logical_change_id_for_commit(repo, new_oid)?;
     let rewritten: Vec<RewrittenCommit> = commits
         .iter()
         .map(|&old| RewrittenCommit {

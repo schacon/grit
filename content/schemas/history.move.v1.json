@@ -46,15 +46,15 @@
     "RewrittenPair": {
       "description": "One commit OID before and after rewrite.",
       "properties": {
-        "new": {
-          "description": "Replacement commit OID (full hex), or JSON `null` when the commit was dropped.",
+        "change_id": {
+          "description": "Stored `change-id` on the replacement commit, or JSON `null` when dropped or absent.",
           "type": [
             "string",
             "null"
           ]
         },
-        "change_id": {
-          "description": "Stored `change-id` on the replacement commit, or JSON `null` when dropped or absent.",
+        "new": {
+          "description": "Replacement commit OID (full hex), or JSON `null` when the commit was dropped.",
           "type": [
             "string",
             "null"

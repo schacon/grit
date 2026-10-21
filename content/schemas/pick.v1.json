@@ -3,16 +3,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Result of `grit pick`.",
   "properties": {
-    "oid": {
-      "description": "The new commit created on the current branch (full hex oid).",
-      "type": "string"
-    },
     "change_id": {
-      "description": "Stored `change-id` on the new pick commit, or null when absent.",
+      "description": "Stored `change-id` on the new commit, or JSON `null` when absent.",
       "type": [
         "string",
         "null"
       ]
+    },
+    "oid": {
+      "description": "The new commit created on the current branch (full hex oid).",
+      "type": "string"
     },
     "source": {
       "description": "The original commit that was picked (full hex oid).",
