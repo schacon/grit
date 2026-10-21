@@ -28,6 +28,31 @@ cargo test --workspace
 cargo test -p grit-lib --lib --release
 ```
 
+### Release and benchmark binaries
+
+The workspace root [`Cargo.toml`](Cargo.toml) defines two profiles:
+
+| Profile | Used for |
+| --- | --- |
+| **`release`** | Fast workspace **`cargo build --release`** (including **`cargo test --release`**) — **`codegen-units = 16`**, no fat LTO |
+| **`dist`** | Shipped **`grit`**, the GitHub **Release** workflow, and **`make build`** / **`grit-bench`** timings — **`lto = "fat"`**, **`codegen-units = 1`**, **`opt-level = 3`**, **`strip = true`**, **`panic = "unwind"`** (parallel pool in **`grit-lib`** uses **`catch_unwind`**) |
+
+Build the CLI with **`cargo build --profile dist -p grit-cli`** (or **`make build`**). The binary is **`target/dist/grit`**. **`grit-bench`** resolves **`target/dist/grit`** before **`target/release/grit`**.
+
+**Trivial status RSS check** (empty repo, factory VM methodology):
+
+```bash
+cargo build --profile dist -p grit-cli -p grit-utils
+tmpdir=$(mktemp -d)
+git -C "$tmpdir" init -q && git -C "$tmpdir" commit --allow-empty -m init
+export GRIT_BENCH_MEASURE_CMD="$(pwd)/target/dist/grit status"
+./target/release/grit-bench measure-rss --cwd "$tmpdir"
+```
+
+Peak RSS is printed in bytes (Linux **`getrusage(RUSAGE_CHILDREN)`** from the helper). Repeat in a loop or sample **`VmHWM`** from **`/proc/<pid>/status`** for acceptance comparisons. Step **2370** measured **~9.8 MiB** median on **`dist`**; the **8 MiB** goal remains and is tracked under factory **[#2348](https://github.com/gitbutlerapp/grit/issues/2348)**.
+
+**`panic = "unwind"` on `dist`:** Audited **`grit-lib/src/parallel/pool.rs`** ( **`catch_unwind`** / **`resume_unwind`** on worker panics), **`grit-lib/src/hash/parallel.rs`** (tests), and test-only uses elsewhere. **`panic = "abort"`** would break parallel worker panic propagation; **`dist`** keeps **`unwind`**.
+
 ### CLI output snapshots
 
 `grit-cli/tests/output_snapshots.rs` exercises human, `--json`, and `--markdown` output together via [`CliFixture`](grit-test-support/src/cli_fixture.rs) in **`grit-test-support`**. Each scenario runs the built `grit` binary three times and compares stdout, stderr, and exit status against committed [insta](https://insta.rs/) snapshots under `grit-cli/tests/snapshots/`.

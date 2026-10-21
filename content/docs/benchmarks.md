@@ -182,6 +182,8 @@ cargo bench -p grit-lib --bench hash
 
 ### Methodology
 
+- **Build profile:** Command-level numbers use a **`dist`** **`grit`** (**`cargo build --profile dist -p grit-cli`**, or **`make build`**): **`lto = "fat"`**, **`codegen-units = 1`**, **`opt-level = 3`**, **`strip = true`**, **`panic = "unwind"`** (required because **`grit-lib`**'s parallel pool uses **`catch_unwind`** / **`resume_unwind`**). Workspace **`[profile.release]`** stays fast for **`cargo test --release`** (no fat LTO on test binaries). Rebuild **`grit-cli`** before re-running **`grit-bench`**; pass **`--grit target/dist/grit`** or rely on the harness preferring **`target/dist/grit`** over **`target/release/grit`**.
+- **Trivial status RSS:** In an empty repo, peak RSS for **`grit status`** is measured with **`grit-bench measure-rss`** (fresh helper process, **`GRIT_BENCH_MEASURE_CMD='…/target/dist/grit status'`**) and/or **`VmHWM`** from **`/proc/<pid>/status`** over many cold starts (100+). Report median and max in bytes or KiB. **Target remains ≤ 8 MiB (8 388 608 bytes)**; the **`dist`** profile reaches **~9.4–9.8 MiB** on the factory VM (link tuning only). **Follow-up:** factory plan step under **[#2348](https://github.com/gitbutlerapp/grit/issues/2348)** — binary diet (feature-gate or lazy-load HTTP/jaq, reduce static init/relocations, allocator/startup mapping review) without slowing dashboard scenarios.
 - **Fixtures** use synthetic repos at large file counts and deep history, built deterministically in a scratch directory.
 - **Drivers** are CLI invocations of `grit` and `git` with equivalent semantics (not argv-for-argv compatibility). Dashboard scenarios `log-{size}` time a single `grit log --limit 100` against `git log -100 --oneline` on the synthetic history fixture; the production **campaign** matrix still has a separate **`log`** row that deliberately shells through paged `grit log --before=` cursors (census agent may rename that id when refreshing baselines).
 - **Ratios** are **Grit median ÷ Git median** (stored in each scenario’s `ratio` field; hyperfine also records mean and spread). Values below `1.00×` mean Grit is faster; values above `2.00×` are highlighted as regressions worth investigating.
@@ -209,11 +211,13 @@ cargo build --release -p grit-cli -p grit-utils
 Build release binaries, install [hyperfine](https://github.com/sharkdp/hyperfine), then run matching grit-bench scenarios from the repo root (see `grit-utils/README.md` for the current subcommands):
 
 ```bash
-cargo build --release -p grit-cli -p grit-utils
+cargo build --profile dist -p grit-cli -p grit-utils
 
 # Example: hot-path scenarios at L/H tiers (switch, pick, merge)
 ./target/release/grit-bench hot-paths --sizes 10000,100000 --format json --output /tmp/grit-bench-hot-paths.json
 ```
+
+**LTO / dist profile (factory step 2370, factory VM):** Before profile tuning, a default **`release`** **`grit`** had **19 208 934** bytes of `.text` (GNU **`size`**, ~18.3 MiB), **28 642** dynamic relocations, **24 924 840** bytes on disk, **~11.7 MiB** median peak RSS on trivial **`grit status`** (**`measure-rss`**, empty repo), and **~184 s** clean **`cargo build --release -p grit-cli`**. The shipped **`dist`** profile cuts **`.text`** to **17 360 233** bytes (~16.5 MiB), relocations to **17 189**, on-disk size to **17 691 672** bytes, trivial status RSS to **~9.8 MiB** median (**`measure-rss`** **10 233 856** bytes; **`VmHWM`** **9996 KiB**), and clean **`cargo build --profile dist -p grit-cli`** to **~1.4×** the pre-LTO **`release`** build. **`opt-level = "s"`** was slower than **`opt-level = 3`** on every dashboard **10k** scenario on this VM, so **`dist`** uses **`3`**. RSS is still above the **8 MiB** goal; see the follow-up under **[#2348](https://github.com/gitbutlerapp/grit/issues/2348)**.
 
 When roadmap item 2 adds more baseline JSON files on `main`, list their paths under `[benchmarks].baseline` in `content/docs/site.toml` and regenerate the site.
 
@@ -273,6 +277,9 @@ Recorded on the factory VM after stacking pick/merge/stash perf work on `origin/
 Two back-to-back hot-path after runs (`hot-paths-after-run1.json` vs `run2.json`) agree within **10% relative** on every scenario except `merge-100000` and `pick-100000` (~**13–14%** relative spread). The default `grit-bench compare` tolerance is an **absolute** 0.10 on the ratio, which is tighter than ±10% relative for large ratios (e.g. pick-series).
 
 ### Follow-up tracking (step 386)
+
+**Binary diet for trivial status RSS (factory [#2348](https://github.com/gitbutlerapp/grit/issues/2348), after step 2370):** Reach **`grit status`** peak RSS **≤ 8 MiB** (8 388 608 bytes) in an empty repo without regressing any dashboard **10k** scenario. Candidates: feature-gate or lazy-load the HTTP (**`http-ureq`** / TLS) and **`jaq`** stacks, trim static initialization and dynamic relocations further, and review allocator/startup mappings. **Do not** lower the **8 MiB** target; step 2370 accepted **~9.4–9.8 MiB** as the link/profile outcome only.
+
 
 No GitHub issues were filed from this factory run (`file_bug_report` is dogfooding-only). Track these against roadmap item 4:
 
