@@ -8739,7 +8739,6 @@ impl CombineSubState {
 }
 
 #[expect(clippy::too_many_arguments)]
-#[allow(dead_code)]
 fn collect_tree_objects_filtered(
     repo: &Repository,
     tree_oid: ObjectId,
