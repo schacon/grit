@@ -35,6 +35,10 @@ fn build_linear_bare(bare: &Path) {
 }
 
 fn build_linear_bare_with_root_tag(bare: &Path, tag_root: bool) {
+    build_linear_bare_with_tags(bare, tag_root, false, false);
+}
+
+fn build_linear_bare_with_tags(bare: &Path, tag_root: bool, tag_tip: bool, tag_old: bool) {
     let wt = bare.with_extension("wt");
     std::fs::create_dir_all(&wt).unwrap();
     git(&wt, &["init", "-q", "-b", "main", "."]);
@@ -46,7 +50,30 @@ fn build_linear_bare_with_root_tag(bare: &Path, tag_root: bool) {
     if tag_root {
         git(&wt, &["tag", "-a", "root-tag", "-m", "on root", "main~2"]);
     }
+    if tag_tip {
+        git(&wt, &["tag", "-a", "tip-tag", "-m", "on tip"]);
+    }
+    if tag_old {
+        git(&wt, &["tag", "-a", "old-tag", "-m", "on old", "main~1"]);
+    }
     git(&wt, &["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+}
+
+fn local_tag_ref_names(git_dir: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .args(["for-each-ref", "--format=%(refname:short)", "refs/tags/"])
+        .current_dir(git_dir.parent().unwrap())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("for-each-ref tags");
+    assert!(out.status.success());
+    let mut names: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    names
 }
 
 #[test]
@@ -292,6 +319,64 @@ fn shallow_clone_with_root_annotated_tag_matches_git_shallow_file() {
         shallow_entries_are_commits(&outcome.repo, &grit_dest.join(".git")).len(),
         1,
         "expected exactly one commit shallow boundary"
+    );
+
+    git_fsck_strict(&git_dest);
+    git_fsck_strict(&grit_dest);
+}
+
+#[test]
+fn shallow_clone_includes_annotated_tag_on_tip_not_on_old_commit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("remote.git");
+    build_linear_bare_with_tags(&bare, false, true, true);
+
+    let url = format!("file://{}", bare.display());
+
+    let git_dest = tmp.path().join("git-clone");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &url,
+            git_dest.to_str().unwrap(),
+        ],
+    );
+
+    let grit_dest = tmp.path().join("grit-clone");
+    clone_repo(
+        CloneOptions {
+            depth: Some(1),
+            ..CloneOptions::new(url, grit_dest.clone())
+        },
+        &mut NoProgress,
+        None,
+    )
+    .expect("grit shallow clone");
+
+    let git_git = git_dest.join(".git");
+    let grit_git = grit_dest.join(".git");
+
+    assert_eq!(
+        local_tag_ref_names(&git_git),
+        local_tag_ref_names(&grit_git),
+        "tag refs must match git clone --depth=1"
+    );
+    assert_eq!(
+        shallow_file_lines(&grit_git),
+        shallow_file_lines(&git_git),
+        "shallow file must match git"
+    );
+    assert!(
+        local_tag_ref_names(&grit_git).contains(&"tip-tag".to_owned()),
+        "tip annotated tag must be present"
+    );
+    assert!(
+        !local_tag_ref_names(&grit_git).contains(&"old-tag".to_owned()),
+        "tag on unfetched commit must be absent"
     );
 
     git_fsck_strict(&git_dest);

@@ -1306,13 +1306,25 @@ pub fn fetch_remote(
         &mut matched_oids,
         &mut seen_remote_ref,
     );
-    let following_tag_wants =
+    let fetch_commit_oids: HashSet<ObjectId> = matched
+        .iter()
+        .filter(|m| !m.is_tag)
+        .map(|m| m.oid)
+        .collect();
+    let mut following_tag_wants =
         following_tag_wants_with_local_peel(&matched, &following_only, &local_odb);
 
     // The client's current shallow grafts (drives the wire `shallow <oid>` lines
     // and the "this is a shallow request" decisions in the negotiators).
     let local_shallow = crate::shallow::load_shallow_oids(local_git_dir)?;
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
+    if shallow_request {
+        following_tag_wants.extend(following_tag_wants_peel_among_fetched_commits(
+            &matched,
+            &following_only,
+            &fetch_commit_oids,
+        ));
+    }
 
     // 4. Wants. Normally the matched oids that are absent locally. For a
     // deepen/`--unshallow` request the wanted tips may already be present (a prior
@@ -1799,6 +1811,29 @@ pub(crate) fn following_tag_wants_with_local_peel(
     wants
 }
 
+/// On a shallow fetch, annotated tags whose peel is a branch tip being fetched
+/// must be copied even when the peel is not local yet (matches upload-pack
+/// include-tag under depth).
+pub(crate) fn following_tag_wants_peel_among_fetched_commits(
+    matched: &[crate::transfer::MatchedRef],
+    following_only: &HashSet<ObjectId>,
+    fetch_commit_oids: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let mut wants = HashSet::new();
+    for m in matched {
+        if !m.is_tag || !following_only.contains(&m.oid) {
+            continue;
+        }
+        let Some(peel) = m.advertised_peel else {
+            continue;
+        };
+        if peel != m.oid && fetch_commit_oids.contains(&peel) {
+            wants.insert(m.oid);
+        }
+    }
+    wants
+}
+
 /// Drop provisional `Following` tags whose object (or peeled target) did not
 /// arrive in the fetched pack — i.e. is not reachable from the other matched,
 /// non-tag refs we fetched. Matches `git fetch`'s default tag-following: a tag
@@ -2147,6 +2182,30 @@ mod fetch_advertised_ref_tests {
             advertised_peel: Some(commit),
         }];
         let wants = following_tag_wants_with_local_peel(&matched, &following_only, &odb);
+        assert!(wants.contains(&tag_obj));
+    }
+
+    #[test]
+    fn following_tag_wants_peel_among_fetched_commits_before_peel_is_local() {
+        use std::collections::HashSet;
+
+        let tag_obj = ObjectId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let tip = ObjectId::from_hex("cccccccccccccccccccccccccccccccccccccccc").unwrap();
+        let following_only = HashSet::from([tag_obj]);
+        let fetch_commits = HashSet::from([tip]);
+        let matched = vec![crate::transfer::MatchedRef {
+            remote_ref: "refs/tags/v".to_owned(),
+            local_ref: Some("refs/tags/v".to_owned()),
+            oid: tag_obj,
+            force: false,
+            is_tag: true,
+            advertised_peel: Some(tip),
+        }];
+        let wants = following_tag_wants_peel_among_fetched_commits(
+            &matched,
+            &following_only,
+            &fetch_commits,
+        );
         assert!(wants.contains(&tag_obj));
     }
 

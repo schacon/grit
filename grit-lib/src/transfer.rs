@@ -1255,9 +1255,23 @@ pub fn fetch_local_with_progress(
         )?;
     }
 
-    let following_tag_wants =
+    let fetch_commit_oids: HashSet<ObjectId> = matched
+        .iter()
+        .filter(|m| !m.is_tag)
+        .map(|m| m.oid)
+        .collect();
+    let mut following_tag_wants =
         crate::fetch::following_tag_wants_with_local_peel(&matched, &following_only, &local_odb);
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
+    if shallow_request {
+        following_tag_wants.extend(
+            crate::fetch::following_tag_wants_peel_among_fetched_commits(
+                &matched,
+                &following_only,
+                &fetch_commit_oids,
+            ),
+        );
+    }
 
     // 3. Determine wants (matched oids not present locally) and haves (current
     //    local tracking-ref tips) and copy the minimal object set.
