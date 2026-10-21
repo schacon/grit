@@ -1,5 +1,12 @@
 //! Git-compatible pathspec matching (magic tokens and global flags).
 //!
+//! ```rust
+//! use grit_lib::worktree::pathspec::parse_pathspecs_from_source;
+//!
+//! let specs = parse_pathspecs_from_source(b"README.md\n", false).expect("parse");
+//! assert_eq!(specs, ["README.md"]);
+//! ```
+//!
 //! Global flags are read from the same environment variables as Git:
 //! `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`,
 //! `GIT_ICASE_PATHSPECS`. The `grit` binary sets these from CLI flags such as
@@ -10,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use crate::crlf::path_gitattribute_value;
 use crate::crlf::AttrRule;
-use crate::error::{Error, Result as LibResult};
+pub use crate::error::{PathspecFromFileParseError, PathspecResolveError};
 use crate::precompose_config::argv_precompose_enabled;
+use crate::repo::Repository;
 use crate::unicode_normalization::precompose_utf8_path;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 
@@ -39,26 +47,29 @@ pub fn has_glob_chars(s: &str) -> bool {
 /// Read pathspec entries from raw file bytes (stdin or file), matching Git's
 /// `--pathspec-from-file` / `--pathspec-file-nul` rules.
 ///
-/// * **NUL mode:** entries are separated by `NUL`; each segment must not use
-///   C-style quoted lines (Git rejects quoted pathspecs in this mode).
+/// * **NUL mode:** entries are separated by `NUL`; each segment is taken literally
+///   (no trimming or C-style unquoting).
 /// * **Line mode:** entries are separated by `LF`; optional `CR` before `LF`
 ///   is stripped; optional trailing line without a final newline is included;
 ///   double-quoted lines are C-unquoted (including octal escapes).
-pub fn parse_pathspecs_from_source(data: &[u8], nul_terminated: bool) -> LibResult<Vec<String>> {
+pub fn parse_pathspecs_from_source(
+    data: &[u8],
+    nul_terminated: bool,
+) -> Result<Vec<String>, PathspecFromFileParseError> {
     if nul_terminated {
-        let mut out = Vec::new();
-        for chunk in data.split(|b| *b == 0) {
+        let mut chunks: Vec<&[u8]> = data.split(|b| *b == 0).collect();
+        if chunks.last().copied() == Some(&[] as &[u8]) {
+            chunks.pop();
+        }
+        let mut out = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
             if chunk.is_empty() {
+                out.push(String::new());
                 continue;
             }
-            let s = String::from_utf8_lossy(chunk);
-            let t = s.trim();
-            if t.starts_with('"') {
-                return Err(Error::PathError(format!(
-                    "pathspec-from-file: line is not NUL terminated: {t}"
-                )));
-            }
-            out.push(t.to_string());
+            let entry = std::str::from_utf8(chunk)
+                .map_err(|_| PathspecFromFileParseError::InvalidUtf8InNulRecord)?;
+            out.push(entry.to_string());
         }
         return Ok(out);
     }
@@ -68,10 +79,17 @@ pub fn parse_pathspecs_from_source(data: &[u8], nul_terminated: bool) -> LibResu
     for raw in text.split_inclusive('\n') {
         let line = raw.trim_end_matches('\n').trim_end_matches('\r');
         if line.is_empty() {
+            out.push(String::new());
             continue;
         }
-        if line.starts_with('"') && line.ends_with('"') && line.len() >= 2 {
-            out.push(unquote_c_style_pathspec_line(line)?);
+        if line.starts_with('"') {
+            if line.ends_with('"') && line.len() >= 2 {
+                out.push(unquote_c_style_pathspec_line(line)?);
+            } else {
+                return Err(PathspecFromFileParseError::InvalidCStyleQuoting {
+                    line: line.to_string(),
+                });
+            }
         } else {
             out.push(line.to_string());
         }
@@ -80,10 +98,12 @@ pub fn parse_pathspecs_from_source(data: &[u8], nul_terminated: bool) -> LibResu
 }
 
 /// Unquote a single `--pathspec-from-file` line that is wrapped in double quotes.
-fn unquote_c_style_pathspec_line(s: &str) -> LibResult<String> {
+fn unquote_c_style_pathspec_line(s: &str) -> Result<String, PathspecFromFileParseError> {
     let bytes = s.as_bytes();
     if bytes.first() != Some(&b'"') || bytes.last() != Some(&b'"') || bytes.len() < 2 {
-        return Err(Error::PathError(format!("invalid C-style quoting: {s}")));
+        return Err(PathspecFromFileParseError::InvalidCStyleQuoting {
+            line: s.to_string(),
+        });
     }
 
     let inner = &bytes[1..bytes.len() - 1];
@@ -97,9 +117,7 @@ fn unquote_c_style_pathspec_line(s: &str) -> LibResult<String> {
         }
         i += 1;
         if i >= inner.len() {
-            return Err(Error::PathError(
-                "invalid escape at end of string".to_string(),
-            ));
+            return Err(PathspecFromFileParseError::InvalidEscapeAtEnd);
         }
         match inner[i] {
             b'\\' => out.push(b'\\'),
@@ -113,26 +131,170 @@ fn unquote_c_style_pathspec_line(s: &str) -> LibResult<String> {
             b'v' => out.push(11),
             c if c.is_ascii_digit() => {
                 if i + 2 >= inner.len() {
-                    return Err(Error::PathError("truncated octal escape".to_string()));
+                    return Err(PathspecFromFileParseError::TruncatedOctalEscape);
                 }
                 let oct = std::str::from_utf8(&inner[i..i + 3])
-                    .map_err(|_| Error::PathError("invalid octal bytes".to_string()))?;
+                    .map_err(|_| PathspecFromFileParseError::InvalidOctalBytes)?;
                 out.push(
                     u8::from_str_radix(oct, 8)
-                        .map_err(|_| Error::PathError("invalid octal escape value".to_string()))?,
+                        .map_err(|_| PathspecFromFileParseError::InvalidOctalValue)?,
                 );
                 i += 2;
             }
             other => {
-                return Err(Error::PathError(format!(
-                    "invalid escape sequence \\{}",
-                    char::from(other)
-                )));
+                return Err(PathspecFromFileParseError::InvalidEscapeSequence {
+                    escape: char::from(other),
+                });
             }
         }
         i += 1;
     }
-    String::from_utf8(out).map_err(|_| Error::PathError("invalid UTF-8 in quoted pathspec".into()))
+    String::from_utf8(out).map_err(|_| PathspecFromFileParseError::InvalidUtf8InQuotedLine)
+}
+
+/// Raw bytes for [`ResolvedPathspecs::resolve`] from `--pathspec-from-file` (read by the caller).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathspecInput {
+    /// File or stdin contents.
+    pub data: Vec<u8>,
+    /// When true, entries are NUL-separated (`--pathspec-file-nul`).
+    pub nul_terminated: bool,
+}
+
+impl PathspecInput {
+    /// Build input from bytes already read from a file or stdin.
+    #[must_use]
+    pub fn new(data: Vec<u8>, nul_terminated: bool) -> Self {
+        Self {
+            data,
+            nul_terminated,
+        }
+    }
+}
+
+/// Pathspec argv fragments resolved against a repository work tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedPathspecs {
+    /// Work-tree-relative pathspec strings for matching.
+    pub specs: Vec<String>,
+    /// User-facing spellings aligned with `specs` (argv or file lines).
+    pub sources: Vec<String>,
+    /// True when the caller supplied argv paths and/or a from-file (not "whole tree").
+    pub scoped: bool,
+}
+
+impl ResolvedPathspecs {
+    /// Resolve `raw` argv pathspecs and optional `--pathspec-from-file` bytes against `repo`.
+    ///
+    /// `cwd` is the process working directory used for relative pathspec prefixes (never read
+    /// from the environment inside the library).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grit_lib::worktree::pathspec::{PathspecInput, ResolvedPathspecs};
+    /// use grit_lib::repo::{InitOptions, Repository};
+    /// use std::fs;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let dir = tempfile::tempdir()?;
+    /// let repo = Repository::init(dir.path(), &InitOptions::default())?;
+    /// fs::write(dir.path().join("a.txt"), b"x")?;
+    /// let resolved = ResolvedPathspecs::resolve(
+    ///     &repo,
+    ///     dir.path(),
+    ///     &["a.txt".to_string()],
+    ///     None,
+    /// )?;
+    /// assert_eq!(resolved.specs, ["a.txt"]);
+    /// let from_file = PathspecInput::new(b"a.txt\n".to_vec(), false);
+    /// let from_file = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(from_file))?;
+    /// assert_eq!(from_file.specs, ["a.txt"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn resolve(
+        repo: &Repository,
+        cwd: &Path,
+        raw: &[String],
+        from_file: Option<PathspecInput>,
+    ) -> Result<Self, PathspecResolveError> {
+        let work_tree = repo
+            .work_tree()
+            .ok_or(PathspecResolveError::NeedsWorkTree)?;
+        let prefix = pathdiff(cwd, work_tree);
+        let scoped = from_file.is_some() || !raw.is_empty();
+
+        let mut sources = Vec::new();
+        if let Some(input) = from_file {
+            let parsed = parse_pathspecs_from_source(&input.data, input.nul_terminated)?;
+            sources.extend(parsed);
+        }
+        for sel in raw {
+            sources.push(sel.clone());
+        }
+
+        if scoped && sources.is_empty() {
+            return Err(PathspecResolveError::EmptyPathspec);
+        }
+        for sel in &sources {
+            if sel.is_empty() {
+                return Err(PathspecResolveError::EmptyPathspec);
+            }
+        }
+
+        let mut specs = Vec::with_capacity(sources.len());
+        for sel in &sources {
+            let resolved = resolve_pathspec_in_worktree_with_git_dir(
+                sel,
+                sel,
+                work_tree,
+                prefix.as_deref(),
+                Some(repo.git_dir()),
+            )
+            .map_err(|outside| PathspecResolveError::OutsideRepository {
+                elt: outside.elt,
+                path: outside.path,
+                work_tree: outside.work_tree.display().to_string(),
+            })?;
+            specs.push(resolved);
+        }
+
+        Ok(Self {
+            specs,
+            sources,
+            scoped,
+        })
+    }
+
+    /// Whether the invocation targets the entire work tree (no path arguments or from-file).
+    #[must_use]
+    pub fn is_entire_tree(&self) -> bool {
+        !self.scoped
+    }
+
+    /// Consume `self` and return resolved specs and user-facing sources.
+    ///
+    /// When [`Self::is_entire_tree`] is true, both vectors are empty (match legacy
+    /// "stage/remove/clean the whole tree" call sites).
+    #[must_use]
+    pub fn into_pathspec_lists(self) -> (Vec<String>, Vec<String>) {
+        if self.scoped {
+            (self.specs, self.sources)
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    }
+
+    /// Resolved pathspec strings only; empty when the invocation is unscoped.
+    #[must_use]
+    pub fn into_specs(self) -> Vec<String> {
+        if self.scoped {
+            self.specs
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2224,5 +2386,132 @@ mod resolve_pathspec_tests {
             precompose_argv_pathspec(":(glob)*.rs").as_ref(),
             ":(glob)*.rs"
         );
+    }
+}
+
+#[cfg(test)]
+mod resolved_pathspecs_tests {
+    use super::*;
+    use crate::repo::{InitOptions, Repository};
+
+    fn repo_with_tree() -> (tempfile::TempDir, Repository) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(dir.path(), &InitOptions::default()).expect("init");
+        std::fs::write(dir.path().join("top.txt"), b"a").expect("write");
+        std::fs::create_dir_all(dir.path().join("sub")).expect("mkdir");
+        std::fs::write(dir.path().join("sub/inner.txt"), b"b").expect("write");
+        (dir, repo)
+    }
+
+    #[test]
+    fn resolved_pathspecs_subdir_prefix() {
+        let (dir, repo) = repo_with_tree();
+        let sub = dir.path().join("sub");
+        let resolved =
+            ResolvedPathspecs::resolve(&repo, &sub, &["inner.txt".to_string()], None).expect("ok");
+        assert_eq!(resolved.specs, ["sub/inner.txt"]);
+        assert!(resolved.scoped);
+    }
+
+    #[test]
+    fn resolved_pathspecs_top_level_magic() {
+        let (dir, repo) = repo_with_tree();
+        let resolved =
+            ResolvedPathspecs::resolve(&repo, dir.path(), &[":/top.txt".to_string()], None)
+                .expect("ok");
+        assert_eq!(resolved.specs, ["top.txt"]);
+    }
+
+    #[test]
+    fn resolved_pathspecs_parent_outside_repo() {
+        let (dir, repo) = repo_with_tree();
+        let outside = dir.path().parent().expect("parent").join("outside.txt");
+        std::fs::write(&outside, b"x").expect("write outside");
+        let spec = outside.to_string_lossy().into_owned();
+        let err =
+            ResolvedPathspecs::resolve(&repo, dir.path(), &[spec], None).expect_err("outside");
+        assert!(matches!(
+            err,
+            PathspecResolveError::OutsideRepository { .. }
+        ));
+    }
+
+    #[test]
+    fn resolved_pathspecs_empty_argv() {
+        let (dir, repo) = repo_with_tree();
+        let err = ResolvedPathspecs::resolve(&repo, dir.path(), &[String::new()], None)
+            .expect_err("empty");
+        assert_eq!(err, PathspecResolveError::EmptyPathspec);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_lf_and_quoted() {
+        let (dir, repo) = repo_with_tree();
+        let input = PathspecInput::new(b"top.txt\n\"sub/inner.txt\"\n".to_vec(), false);
+        let resolved = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect("ok");
+        assert_eq!(resolved.specs, ["top.txt", "sub/inner.txt"]);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_nul() {
+        let (dir, repo) = repo_with_tree();
+        let input = PathspecInput::new(b"top.txt\0sub/\0".to_vec(), true);
+        let resolved = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect("ok");
+        assert_eq!(resolved.specs, ["top.txt", "sub/"]);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_nul_preserves_literal_bytes() {
+        let (dir, repo) = repo_with_tree();
+        std::fs::write(dir.path().join("  spaced  "), b"x").expect("write");
+        let quoted_dir = dir.path().join("\"double\"");
+        std::fs::create_dir_all(&quoted_dir).expect("mkdir");
+        std::fs::write(quoted_dir.join("f"), b"y").expect("write");
+        let input = PathspecInput::new(b"  spaced  \0\"double\"\0".to_vec(), true);
+        let resolved = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect("ok");
+        assert_eq!(resolved.sources, ["  spaced  ", "\"double\""]);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_blank_line_errors() {
+        let (dir, repo) = repo_with_tree();
+        let input = PathspecInput::new(b"\n".to_vec(), false);
+        let err = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect_err("err");
+        assert_eq!(err, PathspecResolveError::EmptyPathspec);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_nul_empty_record_errors() {
+        let (dir, repo) = repo_with_tree();
+        let input = PathspecInput::new(b"a\0\0b".to_vec(), true);
+        let err = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect_err("err");
+        assert_eq!(err, PathspecResolveError::EmptyPathspec);
+    }
+
+    #[test]
+    fn resolved_pathspecs_from_file_invalid_quote() {
+        let (dir, repo) = repo_with_tree();
+        let input = PathspecInput::new(b"\"bad\\z\"\n".to_vec(), false);
+        let err = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect_err("err");
+        assert!(matches!(
+            err,
+            PathspecResolveError::FromFile(
+                PathspecFromFileParseError::InvalidEscapeSequence { .. }
+            )
+        ));
+        let input = PathspecInput::new(b"\"unterminated\n".to_vec(), false);
+        let err = ResolvedPathspecs::resolve(&repo, dir.path(), &[], Some(input)).expect_err("err");
+        assert!(matches!(
+            err,
+            PathspecResolveError::FromFile(PathspecFromFileParseError::InvalidCStyleQuoting { .. })
+        ));
+    }
+
+    #[test]
+    fn resolved_pathspecs_entire_tree_when_unscoped() {
+        let (dir, repo) = repo_with_tree();
+        let resolved = ResolvedPathspecs::resolve(&repo, dir.path(), &[], None).expect("ok");
+        assert!(resolved.is_entire_tree());
+        assert!(resolved.specs.is_empty());
     }
 }

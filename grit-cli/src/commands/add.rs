@@ -3,13 +3,13 @@
 //! Staging is delegated to [`grit_lib::porcelain::add::stage`] so the CLI stays
 //! a thin wrapper over the library.
 
-use anyhow::{bail, Context, Result};
+use crate::pathspec_args::PathspecArgs;
+use anyhow::{bail, Result};
 use grit_lib::error::Error as LibError;
 use grit_lib::porcelain::add::{stage as stage_paths, StageMode, StageOptions};
 use grit_lib::porcelain::index_mode::StageExecutableHint;
 use grit_lib::progress::NullProgress;
 use grit_lib::repo::Repository;
-use grit_lib::worktree::pathspec::{pathdiff, resolve_pathspec_in_worktree_with_git_dir};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::Write;
@@ -48,17 +48,19 @@ impl MarkdownRender for AddOutcome {
     }
 }
 
-pub fn run(paths: &[String], executable: bool, non_executable: bool) -> Result<AddOutcome> {
+pub fn run(args: &PathspecArgs, executable: bool, non_executable: bool) -> Result<AddOutcome> {
     if executable && non_executable {
         bail!("--executable and --non-executable cannot be used together");
     }
-    if (executable || non_executable) && paths.is_empty() {
+    let repo = context::discover()?;
+    let resolved = args.resolve(&repo)?;
+    if (executable || non_executable) && resolved.is_entire_tree() {
         bail!("--executable and --non-executable require at least one path");
     }
-    let repo = context::discover()?;
+    let no_paths = resolved.is_entire_tree();
     let staged = stage_with_hint(
         &repo,
-        paths,
+        resolved,
         if executable {
             StageExecutableHint::SetExecutable
         } else if non_executable {
@@ -67,42 +69,15 @@ pub fn run(paths: &[String], executable: bool, non_executable: bool) -> Result<A
             StageExecutableHint::None
         },
     )?;
-    Ok(AddOutcome {
-        staged,
-        no_paths: paths.is_empty(),
-    })
+    Ok(AddOutcome { staged, no_paths })
 }
 
 fn stage_with_hint(
     repo: &Repository,
-    selectors: &[String],
+    resolved: grit_lib::worktree::pathspec::ResolvedPathspecs,
     executable_hint: StageExecutableHint,
 ) -> Result<usize> {
-    let work_tree = repo.work_tree().context("grit add needs a working tree")?;
-    let cwd = std::env::current_dir().context("could not read the current directory")?;
-    let prefix = pathdiff(&cwd, work_tree);
-
-    let (pathspecs, pathspec_sources) = if selectors.is_empty() {
-        (Vec::new(), Vec::new())
-    } else {
-        let mut specs = Vec::with_capacity(selectors.len());
-        for sel in selectors {
-            if sel.is_empty() {
-                bail!("invalid path ''");
-            }
-            let resolved = resolve_pathspec_in_worktree_with_git_dir(
-                sel,
-                sel,
-                work_tree,
-                prefix.as_deref(),
-                Some(repo.git_dir()),
-            )
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-            specs.push(resolved);
-        }
-        (specs, selectors.to_vec())
-    };
-
+    let (pathspecs, pathspec_sources) = resolved.into_pathspec_lists();
     let opts = StageOptions {
         pathspecs,
         pathspec_sources,
