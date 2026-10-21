@@ -138,6 +138,9 @@ pub struct FetchOptions {
     pub initial_remote_fetch: bool,
     /// Remote name paired with [`Self::initial_remote_fetch`] (e.g. `"origin"`).
     pub remote_name: Option<String>,
+    /// Source label written into [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion) for
+    /// anonymous URL/path fetches ([`crate::remote::Remote::from_url`] sets this automatically).
+    pub fetch_source: Option<String>,
     /// Clone-only reflog entries for `refs/remotes/{remote}/HEAD` (not remote branches).
     pub clone_reflog: Option<CloneReflog>,
     /// Diagnostic sink for [`crate::diagnostics::Trace::Network`] events.
@@ -173,6 +176,7 @@ impl Default for FetchOptions {
             unshallow: false,
             initial_remote_fetch: false,
             remote_name: None,
+            fetch_source: None,
             clone_reflog: None,
             diagnostics: None,
             network_trace: false,
@@ -209,6 +213,7 @@ impl Clone for FetchOptions {
             unshallow: self.unshallow,
             initial_remote_fetch: self.initial_remote_fetch,
             remote_name: self.remote_name.clone(),
+            fetch_source: self.fetch_source.clone(),
             clone_reflog: self.clone_reflog.clone(),
             diagnostics: self.diagnostics.clone(),
             network_trace: self.network_trace,
@@ -1393,25 +1398,23 @@ pub fn fetch_local_with_progress(
         });
     }
 
-    let remote = opts
-        .remote_name
-        .as_deref()
-        .unwrap_or(crate::remote::DEFAULT_REMOTE);
-    if !opts.dry_run {
-        if let Some(branch) = default_branch.as_deref() {
-            let head_ref = format!("refs/remotes/{remote}/HEAD");
-            if crate::refs::resolve_ref(local_git_dir, &head_ref).is_err() {
-                let target = format!("refs/remotes/{remote}/{branch}");
-                let target_will_exist = store_batch.iter().any(|u| u.name == target)
-                    || crate::refs::resolve_ref(local_git_dir, &target).is_ok();
-                if target_will_exist {
-                    store_batch.push(crate::refs::store::RefUpdate {
-                        name: head_ref,
-                        new_value: Some(crate::refs::store::RawRef::Symbolic(target)),
-                        expected: crate::refs::store::Expected::Any,
-                        reflog: None,
-                        flags: Default::default(),
-                    });
+    if let Some(remote) = opts.remote_name.as_deref() {
+        if !opts.dry_run {
+            if let Some(branch) = default_branch.as_deref() {
+                let head_ref = format!("refs/remotes/{remote}/HEAD");
+                if crate::refs::resolve_ref(local_git_dir, &head_ref).is_err() {
+                    let target = format!("refs/remotes/{remote}/{branch}");
+                    let target_will_exist = store_batch.iter().any(|u| u.name == target)
+                        || crate::refs::resolve_ref(local_git_dir, &target).is_ok();
+                    if target_will_exist {
+                        store_batch.push(crate::refs::store::RefUpdate {
+                            name: head_ref,
+                            new_value: Some(crate::refs::store::RawRef::Symbolic(target)),
+                            expected: crate::refs::store::Expected::Any,
+                            reflog: None,
+                            flags: Default::default(),
+                        });
+                    }
                 }
             }
         }
@@ -1425,11 +1428,20 @@ pub fn fetch_local_with_progress(
         opts,
         default_branch.as_deref(),
     )?;
-    crate::fetch::ensure_remote_tracking_head_symref(
+    if let Some(remote) = opts.remote_name.as_deref() {
+        crate::fetch::ensure_remote_tracking_head_symref(
+            local_git_dir,
+            remote,
+            default_branch.as_deref(),
+            opts.dry_run,
+        )?;
+    }
+    finish_anonymous_url_fetch(
         local_git_dir,
-        remote,
+        opts,
         default_branch.as_deref(),
-        opts.dry_run,
+        &remote_refs,
+        &matched,
     )?;
     let new_shallow = if opts.initial_remote_fetch {
         remote_shallow.iter().copied().collect()
@@ -1959,6 +1971,87 @@ fn config_for_git_dir(git_dir: &Path) -> Option<crate::config::ConfigSet> {
         true,
     )
     .ok()
+}
+
+/// Write [`FETCH_HEAD`](https://git-scm.com/docs/git-fetch#_discussion) for anonymous URL/path fetches.
+pub(crate) fn finish_anonymous_url_fetch(
+    git_dir: &Path,
+    opts: &FetchOptions,
+    default_branch: Option<&str>,
+    remote_refs: &[(String, ObjectId)],
+    matched: &[MatchedRef],
+) -> Result<()> {
+    if opts.dry_run || opts.remote_name.is_some() {
+        return Ok(());
+    }
+    let Some(source) = opts.fetch_source.as_deref() else {
+        return Ok(());
+    };
+    let lines = fetch_head_lines_for_ad_hoc_fetch(
+        matched,
+        remote_refs,
+        &opts.refspecs,
+        default_branch,
+        source,
+    );
+    if lines.is_empty() {
+        return Ok(());
+    }
+    crate::fetch_head::write_fetch_head(git_dir, &lines)
+}
+
+fn fetch_head_lines_for_ad_hoc_fetch(
+    matched: &[MatchedRef],
+    remote_refs: &[(String, ObjectId)],
+    refspecs: &[String],
+    default_branch: Option<&str>,
+    source: &str,
+) -> Vec<crate::fetch_head::FetchHeadLine> {
+    use crate::fetch_head::FetchHeadLine;
+    use crate::remote::Remote;
+
+    let anonymous_only = refspecs.len() == 1
+        && refspecs[0].trim_start_matches('+') == Remote::ANONYMOUS_FETCH_REFSPEC;
+
+    if anonymous_only {
+        if let Some(branch) = default_branch {
+            let head_ref = format!("refs/heads/{branch}");
+            if let Some(m) = matched
+                .iter()
+                .find(|m| m.remote_ref == head_ref && !m.is_tag)
+            {
+                return vec![FetchHeadLine {
+                    oid: m.oid,
+                    for_merge: true,
+                    description: source.to_owned(),
+                }];
+            }
+        }
+        if let Some((_, oid)) = remote_refs.iter().find(|(name, _)| name == "HEAD") {
+            return vec![FetchHeadLine {
+                oid: *oid,
+                for_merge: true,
+                description: source.to_owned(),
+            }];
+        }
+        return Vec::new();
+    }
+
+    matched
+        .iter()
+        .filter(|m| !m.is_tag && m.remote_ref.starts_with("refs/heads/"))
+        .map(|m| {
+            let short = m
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(m.remote_ref.as_str());
+            FetchHeadLine {
+                oid: m.oid,
+                for_merge: true,
+                description: format!("branch '{short}' of {source}"),
+            }
+        })
+        .collect()
 }
 
 /// Match a ref name against the positive refspecs, returning the destination
