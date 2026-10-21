@@ -53,6 +53,56 @@
       ],
       "type": "object"
     },
+    "CommitRefJson": {
+      "description": "Ref decoration attached to a commit in JSON output.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/CommitRefKind"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "CommitRefKind": {
+      "description": "Decoration category in JSON (`--json` contract).",
+      "enum": [
+        "branch",
+        "remote_branch",
+        "tag",
+        "stash",
+        "head",
+        "grafted",
+        "other"
+      ],
+      "type": "string"
+    },
+    "Person": {
+      "description": "A parsed identity line (`Name <email> <epoch> <tz>`) for stable `--json` output.",
+      "properties": {
+        "date": {
+          "description": "Author or committer timestamp in RFC 3339.",
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "email",
+        "name"
+      ],
+      "type": "object"
+    },
     "RevsLeftRightCount": {
       "description": "Left/right counts for a symmetric range (`--left-right --count`).",
       "properties": {
@@ -102,6 +152,17 @@
         }
       ],
       "description": "Left/right counts when `--count` and `--left-right` are set; otherwise `null`."
+    },
+    "next": {
+      "description": "Continuation cursor when the list is resumable; always `null` for `revs` today.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "truncated": {
+      "description": "True when more commits matched than returned (`-n`).",
+      "type": "boolean"
     }
   },
   "required": [
