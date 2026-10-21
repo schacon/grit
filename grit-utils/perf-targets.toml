@@ -51,10 +51,48 @@ owned_by_item_14 = true
 owned_by_item_14 = true
 
 [scenario."revs-count-since-no-graph"]
+documented = "RevWalk --since bounded count on deep-history remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
 owned_by_item_14 = true
 
 [scenario."revs-left-right-count-no-graph"]
+documented = "RevWalk left/right counts on deep-history remain far above 1.1× grit vs git"
+followup = "ROADMAP item 14"
 owned_by_item_14 = true
+
+[scenario."revs-count-author-no-graph"]
+documented = "Author-filtered rev-list --count on deep-history remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."revs-count-author-commit-graph"]
+documented = "Author-filtered rev-list --count with commit-graph remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."revs-author-n50-no-graph"]
+documented = "Author-filtered rev-list -n 50 on deep-history remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."revs-author-n50-commit-graph"]
+documented = "Author-filtered rev-list -n 50 with commit-graph remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."log-author-n50-no-graph"]
+documented = "Author-filtered log -n 50 on deep-history remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."log-author-n50-commit-graph"]
+documented = "Author-filtered log -n 50 with commit-graph remains above 1.1× grit vs git"
+followup = "ROADMAP item 14"
+owned_by_item_14 = true
+
+[scenario."merge-base-pick-fixture"]
+documented = "grit merge-base on 10k-file pick fixture remains far above 1.1× git on factory VM"
+followup = "ROADMAP item 7"
 
 [scenario."git-dot-git/merge-base"]
 documented = "grit merge-base exceeds VM memory on git.git until revwalk item 7 lands"

@@ -672,10 +672,30 @@ pub fn commit_graph_present(repo: &Path) -> bool {
     std::fs::metadata(commit_graph_path(repo)).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
 }
 
+/// Write a reachable commit-graph with system `git commit-graph write`.
+pub fn write_git_commit_graph_reachable(git: &Path, repo: &Path) -> Result<()> {
+    let mut cmd = Command::new(git);
+    cmd.args(["commit-graph", "write", "--reachable"])
+        .current_dir(repo);
+    git_env(&mut cmd);
+    let out = cmd.output().context("git commit-graph write")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "git commit-graph write failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    anyhow::ensure!(
+        commit_graph_present(repo),
+        "git commit-graph write did not create objects/info/commit-graph"
+    );
+    Ok(())
+}
+
 /// Validate the commit-graph chain with system `git commit-graph verify`.
-pub fn verify_git_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
-    let mut cmd = Command::new(&ctx.git);
-    cmd.args(["commit-graph", "verify"]).current_dir(&ctx.repo);
+pub fn verify_git_commit_graph_in_repo(git: &Path, repo: &Path) -> Result<()> {
+    let mut cmd = Command::new(git);
+    cmd.args(["commit-graph", "verify"]).current_dir(repo);
     git_env(&mut cmd);
     let out = cmd.output().context("git commit-graph verify")?;
     if !out.status.success() {
@@ -684,6 +704,21 @@ pub fn verify_git_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    Ok(())
+}
+
+/// Validate the commit-graph chain with system `git commit-graph verify`.
+pub fn verify_git_commit_graph(ctx: &DailyHeadlineContext) -> Result<()> {
+    verify_git_commit_graph_in_repo(&ctx.git, &ctx.repo)
+}
+
+/// Fail when a commit-graph file is present (no-graph benchmark/daily preflight).
+pub fn ensure_commit_graph_absent(repo: &Path) -> Result<()> {
+    anyhow::ensure!(
+        !commit_graph_present(repo),
+        "expected no commit-graph at {}",
+        commit_graph_path(repo).display()
+    );
     Ok(())
 }
 

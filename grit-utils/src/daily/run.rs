@@ -111,8 +111,10 @@ fn baseline_grit_argv(grit_cmd: &BenchArgv, grit: &Path, baseline: &Path) -> Ben
     }
 }
 
-fn select_plans(opts: &DailyRunOptions) -> Vec<DailyHeadlinePlan> {
-    let mut plans = areas::all_daily_plans();
+fn filter_plans(
+    mut plans: Vec<DailyHeadlinePlan>,
+    opts: &DailyRunOptions,
+) -> Vec<DailyHeadlinePlan> {
     if opts.smoke && opts.only.is_none() && opts.areas.is_none() {
         plans.retain(|p| p.spec.headline && !p.pending);
     }
@@ -125,6 +127,10 @@ fn select_plans(opts: &DailyRunOptions) -> Vec<DailyHeadlinePlan> {
         plans.retain(|p| set.contains(p.spec.id));
     }
     plans
+}
+
+fn select_plans(opts: &DailyRunOptions) -> Vec<DailyHeadlinePlan> {
+    filter_plans(areas::all_daily_plans(), opts)
 }
 
 /// Reject `--only` ids that are unknown, filtered out, or registered without an executable plan.
@@ -355,6 +361,49 @@ mod tests {
 
     #[test]
     fn smoke_with_areas_keeps_pending_gap_rows() {
+        use crate::daily::helpers::{prepare_none, setup_small};
+        use crate::daily::plan::{DailyHeadlineContext, DailyHeadlinePlan};
+        use crate::daily::registry::ScenarioSpec;
+        use crate::daily::runner::BenchArgv;
+
+        static PENDING_GAP: ScenarioSpec = ScenarioSpec {
+            id: "test/pending-gap@smoke-fixture",
+            area: Area::Revwalk,
+            headline: false,
+            name: None,
+            description: "Synthetic pending matrix gap row for daily plan filtering tests",
+        };
+        static EXECUTABLE: ScenarioSpec = ScenarioSpec {
+            id: "test/executable@smoke-fixture",
+            area: Area::Revwalk,
+            headline: true,
+            name: None,
+            description: "Synthetic executable revwalk row for daily plan filtering tests",
+        };
+
+        fn noop_argv(_: &DailyHeadlineContext) -> BenchArgv {
+            BenchArgv::new("true", Vec::<&str>::new())
+        }
+
+        let pending_plan = DailyHeadlinePlan {
+            spec: &PENDING_GAP,
+            pending: true,
+            setup: setup_small,
+            prepare: prepare_none,
+            build_git: noop_argv,
+            build_grit: noop_argv,
+            correctness: None,
+        };
+        let executable_plan = DailyHeadlinePlan {
+            spec: &EXECUTABLE,
+            pending: false,
+            setup: setup_small,
+            prepare: prepare_none,
+            build_git: noop_argv,
+            build_grit: noop_argv,
+            correctness: None,
+        };
+
         let opts = DailyRunOptions {
             git: PathBuf::from("/usr/bin/git"),
             grit: PathBuf::from("/usr/bin/grit"),
@@ -366,12 +415,18 @@ mod tests {
             areas: Some(vec![Area::Revwalk]),
             output: None,
         };
-        let plans = select_plans(&opts);
+        let plans = filter_plans(vec![pending_plan, executable_plan], &opts);
         assert!(
             plans
                 .iter()
-                .any(|p| p.spec.id == "log/author@git-git" && p.pending),
+                .any(|p| p.spec.id == PENDING_GAP.id && p.pending),
             "pending gap scenario must remain when --area selects its area"
+        );
+        assert!(
+            plans
+                .iter()
+                .any(|p| p.spec.id == EXECUTABLE.id && !p.pending),
+            "executable scenario in the same area must also remain"
         );
     }
 
