@@ -40,7 +40,7 @@ When the remote has no commits yet (an empty bare repository), grit still create
 
 When the remote advertises a default branch that has no commits yet but other branches (or tags) were fetched, grit configures `HEAD` to that default branch without checking out files — the same situation as `git clone` when `HEAD` on the server points at an unborn branch. Human output prints a **warning** on stderr that the default branch has no commits, lists remote branches that do have commits, and may suggest `grit switch <branch>`. `--json` sets `"no_checkout_reason": "unborn_default_branch"` and `"branches_with_commits"` to those branch names; `"files"` stays `0` until you switch.
 
-Pass `--shallow` to fetch only the tip commit on each branch (the same history as `git clone --depth=1`). Grit writes a `.git/shallow` boundary and later [`grit fetch`](../fetch/) respects it.
+Pass `--shallow` for the same result as `git clone --depth=1`: only the remote's default branch is fetched (single-branch), with a `.git/shallow` boundary at its tip. Other branches are not downloaded until you fetch them explicitly. Later [`grit fetch`](../fetch/) respects the shallow boundary.
 
 You can also clone from a shallow repository (including one created with `git clone --depth`); grit copies the shallow boundary into the new repository so history matches the source.
 
@@ -58,7 +58,7 @@ If a large receive fails with `received pack file missing` pointing at a `pack-r
 | --- | --- |
 | `<url>` | The repository to clone: a URL or a local path. |
 | `<dir>` | The directory to clone into. Defaults to the repository's name. |
-| `--shallow` | Fetch only the tip commit per branch (`git clone --depth=1`). |
+| `--shallow` | Shallow clone of the default branch only (`git clone --depth=1`). |
 
 ## Examples
 

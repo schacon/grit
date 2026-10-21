@@ -1322,7 +1322,11 @@ pub fn fetch_local_with_progress(
         transfer = fetch_transfer;
     }
 
-    if opts.initial_remote_fetch && !remote_shallow.is_empty() && !opts.dry_run {
+    if opts.initial_remote_fetch
+        && !remote_shallow.is_empty()
+        && !opts.has_deepen_request()
+        && !opts.dry_run
+    {
         let remote_shallow_vec: Vec<ObjectId> = remote_shallow.iter().copied().collect();
         crate::shallow::apply_shallow_updates(local_git_dir, &remote_shallow_vec, &[])?;
     }
@@ -1331,7 +1335,8 @@ pub fn fetch_local_with_progress(
     }
 
     if opts.tags == TagMode::Following {
-        crate::fetch::retain_following_tags(&local_odb, &mut matched, &pack_oids, &local_shallow)?;
+        let boundaries = crate::shallow::load_shallow_boundaries(local_git_dir);
+        crate::fetch::retain_following_tags(&local_odb, &mut matched, &pack_oids, &boundaries)?;
     }
 
     // 4. Classify and apply ref updates. Ancestry checks use the local repo,
@@ -1480,7 +1485,9 @@ pub fn fetch_local_with_progress(
         &remote_refs,
         &matched,
     )?;
-    let new_shallow = if opts.initial_remote_fetch {
+    let new_shallow = if opts.has_deepen_request() {
+        shallow_new
+    } else if opts.initial_remote_fetch {
         remote_shallow.iter().copied().collect()
     } else {
         Vec::new()
@@ -1489,7 +1496,7 @@ pub fn fetch_local_with_progress(
         updates,
         default_branch,
         new_shallow,
-        new_unshallow: Vec::new(),
+        new_unshallow: shallow_unshallow,
         transfer,
     })
 }
