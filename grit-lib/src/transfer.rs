@@ -1264,18 +1264,24 @@ pub fn fetch_local_with_progress(
         crate::fetch::following_tag_wants_with_local_peel(&matched, &following_only, &local_odb);
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
     if shallow_request {
+        let peel_set = crate::fetch::following_peel_commit_set_for_shallow(
+            &remote_odb,
+            &fetch_commit_oids,
+            opts.depth,
+            &tag_shallow,
+        );
         following_tag_wants.extend(
             crate::fetch::following_tag_wants_peel_among_fetched_commits(
                 &matched,
                 &following_only,
-                &fetch_commit_oids,
+                &peel_set,
             ),
         );
     }
 
     // 3. Determine wants (matched oids not present locally) and haves (current
     //    local tracking-ref tips) and copy the minimal object set.
-    let wants: Vec<ObjectId> = if shallow_request {
+    let mut wants: Vec<ObjectId> = if shallow_request {
         matched_oids
             .iter()
             .copied()
@@ -1334,6 +1340,39 @@ pub fn fetch_local_with_progress(
         shallow_new = resp.shallow;
         shallow_unshallow = resp.unshallow;
         copy_source_shallow = resp.pack_shallow_grafts;
+        if opts.tags == TagMode::Following {
+            if let Some(depth) = opts.depth.filter(|d| *d > 0) {
+                let mut effective_shallow = tag_shallow.clone();
+                effective_shallow.extend(shallow_new.iter().copied());
+                for oid in &shallow_unshallow {
+                    effective_shallow.remove(oid);
+                }
+                let fetch_commits = crate::fetch::shallow_fetched_commit_oids(
+                    &remote_odb,
+                    &fetch_commit_oids.iter().copied().collect::<Vec<_>>(),
+                    depth,
+                    &effective_shallow,
+                );
+                for m in &matched {
+                    if !m.is_tag || local_odb.exists(&m.oid) || wants.contains(&m.oid) {
+                        continue;
+                    }
+                    let peel = remote_odb
+                        .peel_tags(m.oid)
+                        .ok()
+                        .map(|(p, _)| p)
+                        .unwrap_or(m.oid);
+                    if fetch_commits.contains(&peel) {
+                        wants.push(m.oid);
+                    }
+                }
+            }
+        }
+        for oid in &fetch_commit_oids {
+            if !wants.contains(oid) {
+                wants.push(*oid);
+            }
+        }
     }
     if !wants.is_empty() && !opts.dry_run {
         let remote_cfg = config_for_git_dir(remote_git_dir);

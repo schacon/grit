@@ -1319,10 +1319,17 @@ pub fn fetch_remote(
     let local_shallow = crate::shallow::load_shallow_oids(local_git_dir)?;
     let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
     if shallow_request {
+        let local_shallow_set: HashSet<ObjectId> = local_shallow.iter().copied().collect();
+        let peel_set = following_peel_commit_set_for_shallow(
+            &local_odb,
+            &fetch_commit_oids,
+            opts.depth,
+            &local_shallow_set,
+        );
         following_tag_wants.extend(following_tag_wants_peel_among_fetched_commits(
             &matched,
             &following_only,
-            &fetch_commit_oids,
+            &peel_set,
         ));
     }
 
@@ -1811,6 +1818,85 @@ pub(crate) fn following_tag_wants_with_local_peel(
     wants
 }
 
+/// Commit OIDs reachable within an absolute shallow `depth` from each root,
+/// walking all parents (upload-pack `deepen` shape), stopping at
+/// `shallow_boundaries`.
+pub(crate) fn shallow_fetched_commit_oids(
+    odb: &crate::odb::Odb,
+    roots: &[ObjectId],
+    depth: u32,
+    shallow_boundaries: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    use crate::objects::{parse_commit, ObjectKind};
+    use std::collections::{HashMap, VecDeque};
+
+    if depth == 0 {
+        return HashSet::new();
+    }
+    let max_depth = usize::try_from(depth).unwrap_or(usize::MAX);
+    let mut best_depth: HashMap<ObjectId, usize> = HashMap::new();
+    let mut q: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    for &root in roots {
+        best_depth.insert(root, 1);
+        q.push_back((root, 1));
+    }
+    let mut out = HashSet::new();
+    while let Some((oid, d)) = q.pop_front() {
+        if d > max_depth {
+            continue;
+        }
+        if best_depth.get(&oid).copied() != Some(d) {
+            continue;
+        }
+        out.insert(oid);
+        if d == max_depth {
+            continue;
+        }
+        if shallow_boundaries.contains(&oid) {
+            continue;
+        }
+        if !odb.exists(&oid) {
+            continue;
+        }
+        let Ok(obj) = odb.read(&oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            continue;
+        };
+        for p in c.parents {
+            let nd = d.saturating_add(1);
+            if nd > max_depth {
+                continue;
+            }
+            let prev = best_depth.get(&p).copied().unwrap_or(usize::MAX);
+            if nd < prev {
+                best_depth.insert(p, nd);
+                q.push_back((p, nd));
+            }
+        }
+    }
+    out
+}
+
+/// Commits whose peels count as "fetched" for shallow tag-following: branch tips
+/// when there is no absolute depth, otherwise the depth-limited closure.
+pub(crate) fn following_peel_commit_set_for_shallow(
+    odb: &crate::odb::Odb,
+    commit_tips: &HashSet<ObjectId>,
+    depth: Option<u32>,
+    shallow_boundaries: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let roots: Vec<ObjectId> = commit_tips.iter().copied().collect();
+    match depth.filter(|d| *d > 0) {
+        Some(d) => shallow_fetched_commit_oids(odb, &roots, d, shallow_boundaries),
+        None => commit_tips.clone(),
+    }
+}
+
 /// On a shallow fetch, annotated tags whose peel is a branch tip being fetched
 /// must be copied even when the peel is not local yet (matches upload-pack
 /// include-tag under depth).
@@ -2207,6 +2293,26 @@ mod fetch_advertised_ref_tests {
             &fetch_commits,
         );
         assert!(wants.contains(&tag_obj));
+    }
+
+    #[test]
+    fn shallow_peel_set_includes_parent_at_depth_two_not_tip_only() {
+        use std::collections::HashSet;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let objects = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let odb = crate::odb::Odb::new(objects.as_path());
+        let chain = write_commit_chain(&odb, 3);
+        let tip = *chain.last().expect("tip");
+        let parent = chain[1];
+        let tips = HashSet::from([tip]);
+        let tips_only =
+            following_peel_commit_set_for_shallow(&odb, &tips, Some(1), &HashSet::new());
+        assert!(!tips_only.contains(&parent));
+        let depth_two =
+            following_peel_commit_set_for_shallow(&odb, &tips, Some(2), &HashSet::new());
+        assert!(depth_two.contains(&parent));
     }
 
     /// Writes a linear chain of `n` commits (oldest first) into `odb`.
