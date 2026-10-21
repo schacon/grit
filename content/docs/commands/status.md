@@ -25,6 +25,8 @@ The status screen is your home base. It shows, from top to bottom:
 
 Each change has a label: `new`, `modified`, `deleted`, `renamed`, `copied`, `type changed` or `conflict`.
 
+During a paused merge, human output also lists **Conflicts** grouped by kind (`both modified`, `both added`, …). In `--json`, each conflict is `{ "path", "kind" }` and `operation.next_steps` lists the ordered `grit` commands while a merge is paused (for example `grit diff` then `grit add .` with conflicts, or `grit commit "message"` once conflicts are resolved). Use `operation.alternatives` for cancel paths such as `grit merge --abort` (not part of the ordered sequence). Conflict kinds match Git porcelain v2 unmerged XY codes: `both_modified` (UU), `both_added` (AA), `both_deleted` (DD), `added_by_us` (AU), `added_by_them` (UA), `deleted_by_us` (DU), `deleted_by_them` (UD).
+
 Paths are shown relative to the directory you run `grit` from. Valid UTF-8 file names print as-is in human and `--markdown` output (unlike Git’s default `core.quotepath=true`, which octal-escapes non-ASCII bytes). Names that contain C0 control characters (including ESC and BEL) are still C-quoted so a malicious repository cannot inject terminal escape sequences. Set `core.quotepath=true` in config if you want Git-style octal escaping for all non-ASCII bytes. `--json` path fields are always unquoted UTF-8 strings (JSON escapes controls as `\uXXXX`).
 
 ### The target branch
@@ -116,7 +118,12 @@ On main  ·  merging — resolve conflicts
 Staged
   !  conflict      f
 
-→ resolve conflicts, then grit commit "message"
+Conflicts
+  both modified (1)
+    f
+
+→ grit diff
+→ grit add .
 ```
 
 Check from a script whether the working tree is clean:
@@ -168,9 +175,10 @@ Pass `--json` for stable, scripting-friendly output:
 | `unstaged` | array | Unstaged changes with `path` and `status`. |
 | `untracked` | array | Untracked paths (raw UTF-8; JSON escapes control characters). With default `--untracked normal`, wholly untracked directories appear once (often with a trailing `/`); with `--untracked all`, every file path is listed. |
 | `clean` | boolean | `true` when there is nothing to commit and nothing untracked. |
-| `merging` | boolean | `true` when a merge is in progress (`MERGE_HEAD` exists). |
-| `in_progress` | array | Stable operation ids while work is paused (for example `merge`, `rebase`). Omitted when empty. |
-| `conflicts` | array | Paths with unmerged index stages. Omitted when empty. |
+| `merging` | boolean | **Deprecated.** Prefer `operation`. `true` when a merge is in progress (`MERGE_HEAD` exists). |
+| `in_progress` | array | **Deprecated.** Prefer `operation`. Stable operation ids while work is paused (for example `merge`, `rebase`). Omitted when empty. |
+| `conflicts` | array | Unmerged paths. Each item is `{ "path": "<path>", "kind": "<kind>" }`. Omitted when empty. |
+| `operation` | object or null | Primary paused operation: `{ "kind", "next_steps", "alternatives" }`. `next_steps` is the ordered sequence; `alternatives` lists mutually exclusive options (for example `grit merge --abort`). Omitted when no operation is in progress. |
 
 Example:
 
