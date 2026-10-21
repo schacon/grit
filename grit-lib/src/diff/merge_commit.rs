@@ -145,14 +145,16 @@ pub fn commit_diff_files(
             thread_policy,
         )?;
         let filtered = filter_entries(entries, pathspecs);
-        return build_file_diffs(
+        let mut out = build_file_diffs(
             repo.odb(),
             filtered,
             detail,
             options.clone(),
             config,
             thread_policy,
-        );
+        )?;
+        out.files.sort_by(|a, b| a.path.cmp(&b.path));
+        return Ok(out);
     }
 
     combined_commit_diff_files(
@@ -297,6 +299,7 @@ fn combined_commit_diff_files(
         }
         files.push(file);
     }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
 
     let totals = if detail == DiffDetail::Stat {
         Some(DiffTotals {
