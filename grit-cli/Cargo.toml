@@ -24,7 +24,8 @@ base64.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 grit-lib = { version = "0.5", path = "../grit-lib", features = ["http-ureq", "tracing"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-core = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 time.workspace = true
 serde.workspace = true
 serde_json.workspace = true

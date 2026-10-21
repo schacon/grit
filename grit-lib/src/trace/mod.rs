@@ -8,11 +8,10 @@ pub mod names;
 /// Emit a tracing span for the current scope when feature `tracing` is enabled.
 ///
 /// The span `name` must be a string literal (required by the `tracing` crate).
-#[macro_export]
 macro_rules! trace_span {
     ($name:literal) => {
         #[cfg(feature = "tracing")]
-        let _grit_trace_span_guard = tracing::info_span!(parent: None, $name).entered();
+        let _grit_trace_span_guard = tracing::info_span!($name).entered();
         #[cfg(not(feature = "tracing"))]
         let _grit_trace_span_guard = ();
     };
@@ -23,34 +22,44 @@ pub(crate) use trace_span;
 #[cfg(all(test, feature = "tracing"))]
 mod tests {
     use super::names;
+    use crate::environment::RepositoryOptions;
     use crate::porcelain::status::{status, StatusOptions};
     use crate::progress::NullProgress;
     use crate::repo::{InitOptions, Repository};
     use crate::rev_list::RevListOptions;
-    use crate::environment::RepositoryOptions;
     use std::sync::{Arc, Mutex};
     use tracing_subscriber::layer::Context;
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::Layer;
 
-    struct SpanNameCollector(Arc<Mutex<Vec<&'static str>>>);
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct SpanEnter {
+        name: &'static str,
+        parent: Option<&'static str>,
+    }
 
-    impl<S> Layer<S> for SpanNameCollector
+    struct SpanHierarchyCollector(Arc<Mutex<Vec<SpanEnter>>>);
+
+    impl<S> Layer<S> for SpanHierarchyCollector
     where
         S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
     {
         fn on_enter(&self, id: &tracing::span::Id, ctx: Context<'_, S>) {
-            if let Some(span) = ctx.span(id) {
-                let meta = span.metadata();
-                self.0.lock().unwrap().push(meta.name());
-            }
+            let Some(span) = ctx.span(id) else {
+                return;
+            };
+            let name = span.metadata().name();
+            let parent = span
+                .parent()
+                .map(|parent_span| parent_span.metadata().name());
+            self.0.lock().unwrap().push(SpanEnter { name, parent });
         }
     }
 
     #[test]
     fn trace_spans_emitted() {
-        let names_seen: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
-        let collector = SpanNameCollector(Arc::clone(&names_seen));
+        let events: Arc<Mutex<Vec<SpanEnter>>> = Arc::new(Mutex::new(Vec::new()));
+        let collector = SpanHierarchyCollector(Arc::clone(&events));
         let _guard = tracing_subscriber::registry().with(collector).set_default();
 
         let dir = tempfile::tempdir().unwrap();
@@ -68,31 +77,38 @@ mod tests {
         };
         let _ = crate::porcelain::commit::create_commit(&repo, &req, &mut NullProgress).unwrap();
 
-        let opened =
-            Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
+        let opened = Repository::discover(Some(dir.path()), &RepositoryOptions::default()).unwrap();
         let _ = status(&opened, &StatusOptions::default(), &mut NullProgress).unwrap();
         let _ = opened
             .rev_walk()
             .walk("HEAD", &RevListOptions::default())
             .unwrap();
 
-        let seen = names_seen.lock().unwrap();
+        let seen = events.lock().unwrap();
         assert!(
-            seen.iter().any(|n| *n == names::REPOSITORY_OPEN),
+            seen.iter().any(|e| e.name == names::REPOSITORY_OPEN),
             "expected {} in {:?}",
             names::REPOSITORY_OPEN,
             *seen
         );
         assert!(
-            seen.iter().any(|n| *n == names::STATUS_SCAN),
+            seen.iter().any(|e| e.name == names::STATUS_SCAN),
             "expected {} in {:?}",
             names::STATUS_SCAN,
             *seen
         );
         assert!(
-            seen.iter().any(|n| *n == names::REVWALK_SETUP),
+            seen.iter().any(|e| e.name == names::REVWALK_SETUP),
             "expected {} in {:?}",
             names::REVWALK_SETUP,
+            *seen
+        );
+        assert!(
+            seen.iter()
+                .any(|e| { e.name == names::INDEX_READ && e.parent == Some(names::STATUS_SCAN) }),
+            "expected {} nested under {} in {:?}",
+            names::INDEX_READ,
+            names::STATUS_SCAN,
             *seen
         );
     }

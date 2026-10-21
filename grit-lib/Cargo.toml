@@ -37,7 +37,7 @@ unstable-bench-helpers = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-tracing = { version = "0.1", optional = true }
+tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 thiserror.workspace = true
 sha1 = "0.11"
 sha2 = "0.11"
