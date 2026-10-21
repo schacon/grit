@@ -6,7 +6,6 @@
 use crate::commit::assemble_identity;
 use crate::git_date::tm::date_overflows;
 use crate::objects::{HashAlgo, ObjectKind};
-use thiserror::Error;
 use time::OffsetDateTime;
 
 /// Parsed timestamp from a signature line for display and filtering.
@@ -202,7 +201,7 @@ pub struct AuthorContact {
 }
 
 /// Failure to parse [`parse_author_arg`].
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AuthorArgError {
     /// The string is not a recognized author form.
     #[error("invalid author: expected 'Name <email>' or a bare email address")]
@@ -213,27 +212,9 @@ pub enum AuthorArgError {
     /// Non-whitespace remains after the closing `>`.
     #[error("invalid author: trailing text after '>'")]
     TrailingText,
-    /// Name or email contains control characters or other bytes invalid in a commit header line.
-    #[error("invalid author: name or email contains invalid characters")]
-    InvalidCharacter,
-}
-
-fn author_field_has_invalid_bytes(s: &str) -> bool {
-    s.bytes().any(|b| b < b' ' || b == 127)
-}
-
-fn validate_author_contact(contact: &AuthorContact) -> Result<(), AuthorArgError> {
-    if author_field_has_invalid_bytes(&contact.name)
-        || author_field_has_invalid_bytes(&contact.email)
-    {
-        return Err(AuthorArgError::InvalidCharacter);
-    }
-    Ok(())
 }
 
 /// Parse `git commit --author` values: `Name <email>` or a bare email (no whitespace).
-///
-/// Git's search-existing-authors fallback is not implemented.
 ///
 /// # Errors
 ///
@@ -255,27 +236,21 @@ pub fn parse_author_arg(raw: &str) -> Result<AuthorContact, AuthorArgError> {
             return Err(AuthorArgError::TrailingText);
         }
         let name = s[..lt].trim_end_matches(|c: char| c.is_ascii_whitespace());
-        let contact = AuthorContact {
+        return Ok(AuthorContact {
             name: name.to_owned(),
             email: email.to_owned(),
-        };
-        validate_author_contact(&contact)?;
-        return Ok(contact);
+        });
     }
     if s.contains('@') && !s.chars().any(char::is_whitespace) {
-        let contact = AuthorContact {
+        return Ok(AuthorContact {
             name: String::new(),
             email: s.to_owned(),
-        };
-        validate_author_contact(&contact)?;
-        return Ok(contact);
+        });
     }
     Err(AuthorArgError::InvalidFormat)
 }
 
 /// Build a full author/committer header line from a parsed contact and timestamp inputs.
-///
-/// `date_override` is the raw `GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE` value when set.
 #[must_use]
 pub fn author_identity_line(
     contact: &AuthorContact,
@@ -331,14 +306,6 @@ mod tests {
         assert_eq!(
             parse_author_arg("A <a@b.com> extra"),
             Err(AuthorArgError::TrailingText)
-        );
-    }
-
-    #[test]
-    fn parse_author_arg_rejects_control_characters_in_name() {
-        assert_eq!(
-            parse_author_arg("Bad\nInjected <x@y.example>"),
-            Err(AuthorArgError::InvalidCharacter)
         );
     }
 }

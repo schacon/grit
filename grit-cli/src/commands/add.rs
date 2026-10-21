@@ -116,7 +116,7 @@ pub fn run(
     if (executable || non_executable) && no_paths {
         bail!("--executable and --non-executable require at least one path");
     }
-    if intent_to_add && resolved.is_entire_tree() {
+    if intent_to_add && no_paths {
         bail!("--intent-to-add requires at least one path");
     }
     if intent_to_add && update {
@@ -178,7 +178,7 @@ fn map_add_error(err: LibError) -> anyhow::Error {
                 msg.push('\n');
             }
             msg.push_str("Use --force if you really want to add them.");
-            anyhow::anyhow!(msg)
+            anyhow::anyhow!("{msg}")
         }
         other => json_error::map_lib_error(other),
     }

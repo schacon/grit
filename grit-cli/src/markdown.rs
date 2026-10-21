@@ -453,19 +453,15 @@ pub fn print_commit_outcome(w: &mut dyn Write, outcome: &CommitOutcome) -> anyho
     if outcome.dry_run {
         outln!(
             w,
-            "- **Dry run** — would commit **{}** file(s)",
-            outcome.files.len()
+            "- **Dry run** — would commit on **`{}`**",
+            outcome.branch
         );
-        for file in outcome.files.iter().take(20) {
-            if let Some(ref old) = file.old_path {
-                outln!(w, "  - `{}` `{}` → `{}`", file.status, old, file.path);
-            } else {
-                outln!(w, "  - `{}` `{}`", file.status, file.path);
-            }
-        }
+        outln!(w, "- **Subject:** {}", outcome.subject);
+        outln!(w, "- **Files:** {}", outcome.files.len());
         return Ok(());
     }
-    let short = short_hex(outcome.oid.as_deref().unwrap_or(""));
+    let oid = outcome.oid.as_deref().unwrap_or("");
+    let short = short_hex(oid);
     if outcome.amended {
         outln!(
             w,

@@ -5,6 +5,7 @@ use grit_lib::commit::parse_date_to_git_timestamp;
 use grit_lib::config::ident::{author_identity_line, parse_author_arg};
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::error::Error;
+use grit_lib::ident::{author_identity_line, parse_author_arg};
 use grit_lib::objects::parse_commit;
 use grit_lib::porcelain::add::{stage_for_commit, stage_for_commit_in_memory};
 use grit_lib::porcelain::commit::{
@@ -13,6 +14,7 @@ use grit_lib::porcelain::commit::{
 use grit_lib::progress::NullProgress;
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::HookName;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::io::{self, Read, Write};
@@ -122,13 +124,6 @@ pub fn run(
     message: Option<String>,
     message_file: Option<String>,
     author_override: Option<String>,
-    author_date: Option<String>,
-    trailers: Vec<String>,
-    signoff: bool,
-    reset_author: bool,
-    reuse_message: Option<String>,
-    gpg_sign: bool,
-    no_gpg_sign: bool,
     no_verify: bool,
     dry_run: bool,
     amend: bool,
@@ -148,55 +143,21 @@ pub fn run(
     let scope = resolve_commit_scope(&repo, all, staged, &paths)?;
     let scope_json = scope_json(&scope);
 
-    let reuse_message_from = if let Some(rev) = reuse_message.as_deref() {
-        Some(
-            resolve_revision_as_commit(&repo, rev)
-                .with_context(|| format!("could not resolve reuse-message commit '{rev}'"))?,
-        )
-    } else {
-        None
-    };
-
-    let message = resolve_commit_message(
-        message,
-        message_file,
-        amend,
-        reuse_message_from.is_some(),
-        &scope,
-        &repo,
-        dry_run,
-    )?;
+    let message = resolve_commit_message(message, message_file, amend, &scope, &repo)?;
     let message_text = message.as_deref().unwrap_or("");
 
     let config = repo.config().context("could not load config")?;
     let env = repo.environment();
     let now = crate::context::wall_clock_now(env);
     let committer = context::identity(env, config.as_ref(), IdentRole::Committer, now)?;
-    let author = if reset_author {
-        String::new()
-    } else if let Some(arg) = author_override.as_deref() {
-        let contact = parse_author_arg(arg).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let env_author_date = env.var(IdentRole::Author.env_date_key());
-        let date_override = author_date.as_deref().or(env_author_date.as_deref());
-        author_identity_line(&contact, date_override, now)
-    } else if amend || reuse_message_from.is_some() {
+    let author = if let Some(arg) = author_override {
+        let contact = parse_author_arg(&arg).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let date_override = env.var(IdentRole::Author.env_date_key());
+        author_identity_line(&contact, date_override.as_deref(), now)
+    } else if amend {
         String::new()
     } else {
         context::identity(env, config.as_ref(), IdentRole::Author, now)?
-    };
-
-    let parsed_author_date = author_date.as_deref().map(parse_trailer_date).transpose()?;
-    let parsed_trailers = trailers
-        .iter()
-        .map(|t| parse_trailer_arg(t))
-        .collect::<Result<Vec<_>>>()?;
-
-    let sign_override = if gpg_sign {
-        Some(true)
-    } else if no_gpg_sign {
-        Some(false)
-    } else {
-        None
     };
 
     let hooks = if no_verify {
@@ -205,42 +166,24 @@ pub fn run(
         HookPolicy::Run
     };
 
-    let outcome = commit_with_scope(
-        &repo,
-        &CommitRequest {
-            message: message_text.to_owned(),
-            author,
-            committer,
-            allow_empty,
-            sign_override,
-            amend,
-            hooks,
-            author_date: parsed_author_date,
-            trailers: parsed_trailers,
-            signoff,
-            reset_author,
-            reuse_message_from,
-            dry_run,
-            ..Default::default()
-        },
-        scope,
-        &mut NullProgress,
-    )
-    .map_err(map_commit_error)?;
+    let req = CommitRequest {
+        message: message_text.to_owned(),
+        author,
+        committer,
+        allow_empty,
+        sign_override: None,
+        amend,
+        assume_worktree_synced: false,
+        skip_pre_commit_tree_match: false,
+        staged_change_count: None,
+        hooks,
+        dry_run,
+    };
 
-    let subject = if dry_run && amend && message.as_ref().is_none_or(|m| m.trim().is_empty()) {
-        let head = resolve_head(repo.git_dir()).context("resolve HEAD")?;
-        if let HeadState::Branch { oid: Some(tip), .. } = head {
-            let obj = repo.odb().read(&tip).context("read HEAD commit")?;
-            subject_line(
-                &parse_commit(&obj.data)
-                    .context("parse HEAD commit")?
-                    .message,
-            )
-        } else {
-            subject_line(&format!("{}\n", message_text.trim()))
-        }
-    } else if dry_run {
+    let outcome =
+        commit_with_scope(&repo, &req, scope, &mut NullProgress).map_err(map_commit_error)?;
+
+    let subject = if dry_run {
         subject_line(&format!("{}\n", message_text.trim()))
     } else if let Some(m) = message.as_ref().filter(|m| !m.trim().is_empty()) {
         subject_line(&format!("{}\n", m.trim()))
@@ -282,92 +225,13 @@ pub fn run(
         hooks_run: outcome
             .hooks_run
             .iter()
-            .map(|h| h.as_str().to_owned())
+            .map(|h| hook_name_json(*h))
             .collect(),
     })
 }
 
-fn resolve_commit_message(
-    message: Option<String>,
-    message_file: Option<String>,
-    amend: bool,
-    reuse_message: bool,
-    scope: &CommitScope,
-    repo: &grit_lib::repo::Repository,
-    dry_run: bool,
-) -> Result<Option<String>> {
-    match (message, message_file) {
-        (Some(m), None) => {
-            if m.trim().is_empty() && !amend && !reuse_message {
-                bail!("empty commit message");
-            }
-            Ok(if m.trim().is_empty() { None } else { Some(m) })
-        }
-        (None, Some(path)) => {
-            let contents = read_message_file(&path)?;
-            if contents.trim().is_empty() {
-                if amend || reuse_message {
-                    Ok(None)
-                } else {
-                    bail!("empty commit message");
-                }
-            } else {
-                Ok(Some(contents))
-            }
-        }
-        (None, None) if amend || reuse_message => Ok(None),
-        (None, None) => {
-            if matches!(scope, CommitScope::AutoStage) {
-                if dry_run {
-                    stage_for_commit_in_memory(repo, &mut NullProgress, true)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                } else {
-                    stage_for_commit(repo, &mut NullProgress)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                }
-            }
-            bail!("provide a commit message, e.g. grit commit \"what changed\"");
-        }
-        (Some(_), Some(_)) => unreachable!("clap rejects message and message-file together"),
-    }
-}
-
-fn parse_trailer_arg(raw: &str) -> Result<(String, String)> {
-    let raw = raw.trim();
-    let sep_pos = raw
-        .char_indices()
-        .find(|(_, c)| *c == ':' || *c == '=')
-        .map(|(i, _)| i);
-    let Some(pos) = sep_pos else {
-        bail!("trailer must be key=value or key: value (got '{raw}')");
-    };
-    Ok((
-        raw[..pos].trim().to_owned(),
-        raw[pos + 1..].trim().to_owned(),
-    ))
-}
-
-fn parse_trailer_date(raw: &str) -> Result<String> {
-    let trimmed = raw.trim();
-    if let Some(canonical) = parse_date_to_git_timestamp(trimmed) {
-        return Ok(canonical);
-    }
-    let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
-    if parts.len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit()) {
-        return Ok(trimmed.to_owned());
-    }
-    Err(anyhow::anyhow!("could not parse --date '{raw}'"))
-}
-
-fn read_message_file(path: &str) -> Result<String> {
-    if path == "-" {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("could not read message from stdin")?;
-        return Ok(buf);
-    }
-    std::fs::read_to_string(path).with_context(|| format!("could not read message file '{path}'"))
+fn hook_name_json(hook: HookName) -> String {
+    hook.as_str().to_owned()
 }
 
 fn resolve_commit_scope(
@@ -401,6 +265,38 @@ fn scope_json(scope: &CommitScope) -> CommitScopeJson {
         CommitScope::Staged => CommitScopeJson::Staged,
         CommitScope::Paths(_) => CommitScopeJson::Paths,
     }
+}
+
+fn resolve_commit_message(
+    message: Option<String>,
+    message_file: Option<String>,
+    amend: bool,
+    scope: &CommitScope,
+    repo: &grit_lib::repo::Repository,
+) -> Result<Option<String>> {
+    match (message, message_file) {
+        (Some(m), None) => Ok(Some(m)),
+        (None, Some(path)) => read_message_file(&path).map(Some),
+        (None, None) if amend => Ok(None),
+        (None, None) => {
+            if matches!(scope, CommitScope::AutoStage) {
+                stage_for_commit(repo, &mut NullProgress).map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            bail!("provide a commit message, e.g. grit commit \"what changed\"");
+        }
+        (Some(_), Some(_)) => unreachable!("clap rejects message and message-file together"),
+    }
+}
+
+fn read_message_file(path: &str) -> Result<String> {
+    if path == "-" {
+        let mut buf = String::new();
+        io::stdin()
+            .read_to_string(&mut buf)
+            .context("could not read message from stdin")?;
+        return Ok(buf);
+    }
+    std::fs::read_to_string(path).with_context(|| format!("could not read message file '{path}'"))
 }
 
 fn map_commit_error(err: Error) -> anyhow::Error {
