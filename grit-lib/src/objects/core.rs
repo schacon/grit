@@ -957,6 +957,8 @@ pub struct TagData {
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing or malformed.
 pub fn parse_tag(data: &[u8]) -> Result<TagData> {
+    use super::extra_headers::next_header_block;
+
     #[derive(Clone, Copy)]
     enum Continuation {
         None,
@@ -970,6 +972,7 @@ pub fn parse_tag(data: &[u8]) -> Result<TagData> {
     let mut tagger = None;
     let mut extra_headers = Vec::new();
     let mut cont = Continuation::None;
+    let mut past_tagger = false;
 
     while pos < data.len() {
         let line_start = pos;
@@ -995,6 +998,13 @@ pub fn parse_tag(data: &[u8]) -> Result<TagData> {
                 extra_headers,
                 message,
             });
+        }
+
+        if past_tagger {
+            let (_, block_end, _) = next_header_block(data, line_start);
+            extra_headers.extend_from_slice(&data[line_start..block_end]);
+            pos = block_end;
+            continue;
         }
 
         if line.first() == Some(&b' ') {
@@ -1051,6 +1061,7 @@ pub fn parse_tag(data: &[u8]) -> Result<TagData> {
                         })?
                         .to_owned(),
                 );
+                past_tagger = true;
                 cont = Continuation::None;
             }
             _ => {

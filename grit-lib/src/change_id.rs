@@ -25,24 +25,16 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::config::ConfigSet;
-<<<<<<< New base: cli: render SHA-1 hash collision errors and fsck findings
 use crate::error::{Error, Result};
 use crate::objects::{
-    read_commit_subject_line, serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind,
+    insert_header_before_signature, remove_header_lines, read_commit_subject_line, serialize_commit,
+    CommitData, HashAlgo, ObjectId, ObjectKind,
 };
 use crate::pack::SingleLocalPackReader;
 use crate::parallel::{try_par_map_with_local, ParallelOp};
 use crate::repo::Repository;
 use crate::rev_list::{all_ref_commit_tips_for_walk, walk_closure_ordered, CommitGraph};
 use crate::rev_parse_error::{AmbiguousChangeIdHint, RevParseError};
-||||||| Common ancestor
-use crate::objects::{serialize_commit, CommitData, HashAlgo, ObjectId};
-=======
-use crate::objects::{
-    insert_header_before_signature, remove_header_lines, serialize_commit,
-    CommitData, HashAlgo, ObjectId,
-};
->>>>>>> Current commit: Preserve extra headers on annotated tag objects
 
 const REVERSE_HEX_LEN: usize = 32;
 const CHANGE_ID_KEY: &[u8] = b"change-id";
