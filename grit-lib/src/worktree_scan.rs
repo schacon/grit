@@ -139,6 +139,7 @@ fn symlink_metadata_path(path: &Path) -> io::Result<fs::Metadata> {
     fs::symlink_metadata(path)
 }
 
+#[cfg(windows)]
 fn sparse_stat_policy(sparse: BlobScanSparseMode) -> crate::index::StatMatchPolicy {
     match sparse {
         BlobScanSparseMode::StatusDiff { stat_policy, .. }
