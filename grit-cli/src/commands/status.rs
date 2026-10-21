@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 use grit_lib::diff::DiffEntry;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::status::{
-    status, untracked_mode_from_config, Conflict, StatusOptions, UntrackedMode,
+    status, status_options_from_config, untracked_mode_from_config, Conflict, StatusOptions,
+    UntrackedMode,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::refs::branch_tracking::{
@@ -22,10 +23,80 @@ use crate::markdown;
 use crate::output::{
     change_json, outln, ChangeJson, CommitJson, HumanRender, MarkdownRender, RenderContext,
 };
+use crate::pathspec_args::PathspecArgs;
 use crate::ui::{self, PathDisplayOptions};
+use clap::Args;
 
 /// Maximum number of commits to list in the status shortlog before summarizing.
 const SHORTLOG_LIMIT: usize = 10;
+
+/// Expand Git-style `-u`, `-uno`, `-unormal`, and `-uall` only for status invocations.
+pub fn normalize_status_argv(argv: &mut [String]) {
+    let Some(range) = status_untracked_rewrite_range(argv) else {
+        return;
+    };
+    for arg in argv[range].iter_mut() {
+        let Some(rest) = arg.strip_prefix("-u") else {
+            continue;
+        };
+        if rest.is_empty() {
+            *arg = "--untracked=all".to_owned();
+        } else if matches!(rest, "no" | "normal" | "all") {
+            *arg = format!("--untracked={rest}");
+        }
+    }
+}
+
+fn status_untracked_rewrite_range(argv: &[String]) -> Option<std::ops::Range<usize>> {
+    let mut i = 1;
+    while i < argv.len() {
+        let arg = argv[i].as_str();
+        if arg == "--" {
+            return None;
+        }
+        if let Some(n) = skip_global_flag(argv, i) {
+            i += n;
+            continue;
+        }
+        break;
+    }
+    if i >= argv.len() {
+        return Some(1..1);
+    }
+    let start = match argv[i].as_str() {
+        "status" | "st" => i + 1,
+        cmd if is_grit_subcommand(cmd) => return None,
+        _ => i,
+    };
+    let end = argv[start..]
+        .iter()
+        .position(|token| token == "--")
+        .map_or(argv.len(), |pos| start + pos);
+    Some(start..end)
+}
+
+fn skip_global_flag(argv: &[String], i: usize) -> Option<usize> {
+    match argv[i].as_str() {
+        "--json" | "--markdown" | "-v" | "-V" | "--version" => Some(1),
+        "--filter" | "--threads" => argv.get(i + 1).map(|_| 2).or(Some(1)),
+        s if s.starts_with("--filter=") || s.starts_with("--threads=") => Some(1),
+        _ => None,
+    }
+}
+
+/// Which header line `grit status` shows (drives only the human rendering; the
+/// JSON fields below carry the same information in a flat, stable form).
+#[derive(Clone, Copy)]
+enum HeaderKind {
+    /// On a branch with a base: even with, ahead of, behind or diverged from it.
+    Compared(Standing),
+    NoTarget,
+    Unborn,
+    Detached,
+    Invalid,
+    MergeInProgress,
+    OtherInProgress,
+}
 
 /// One unmerged path in `--json` output.
 #[derive(Serialize, JsonSchema)]
@@ -585,18 +656,39 @@ fn kind_label(kind: grit_lib::porcelain::status::ConflictKind) -> &'static str {
     }
 }
 
-pub fn run(untracked: Option<UntrackedListing>, no_ahead_behind: bool) -> Result<StatusOutcome> {
+/// CLI arguments for `grit status` (also the default when no subcommand is given).
+#[derive(Debug, Clone, Default, Args)]
+pub struct StatusCliArgs {
+    /// How untracked paths are listed: `normal` (default) collapses wholly untracked
+    /// directories; `all` lists every file; `no` omits untracked paths. When omitted,
+    /// uses `status.showUntrackedFiles` from config. Git-style `-u`, `-uno`, `-unormal`,
+    /// and `-uall` are accepted.
+    #[arg(
+        long = "untracked",
+        value_name = "MODE",
+        num_args = 0..=1,
+        default_missing_value = "all"
+    )]
+    pub untracked: Option<UntrackedListing>,
+    /// Skip ahead/behind rev-list walks (also when `status.aheadBehind=false`).
+    #[arg(long = "no-ahead-behind")]
+    pub no_ahead_behind: bool,
+    #[command(flatten)]
+    pub pathspecs: PathspecArgs,
+}
+
+pub fn run(args: &StatusCliArgs) -> Result<StatusOutcome> {
     let repo = context::discover()?;
     let config = repo.config().context("could not load config")?;
-    let untracked_mode = match untracked {
-        Some(mode) => mode.into_lib(),
-        None => untracked_mode_from_config(&config)?,
-    };
-    let show_counts = !no_ahead_behind && status_ahead_behind_enabled(&config);
-    let status_opts = StatusOptions {
-        untracked: untracked_mode,
-        ..StatusOptions::default()
-    };
+    let mut status_opts = status_options_from_config(&config)?;
+    if let Some(mode) = args.untracked {
+        status_opts.untracked = mode.into_lib();
+    }
+    if !args.pathspecs.paths.is_empty() || args.pathspecs.pathspec_from_file.is_some() {
+        let resolved = args.pathspecs.resolve(&repo)?;
+        status_opts.pathspecs = resolved.specs;
+    }
+    let show_counts = !args.no_ahead_behind && status_ahead_behind_enabled(&config);
     let model =
         status(&repo, &status_opts, &mut NullProgress).context("could not compute status")?;
 
