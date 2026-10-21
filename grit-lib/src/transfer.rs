@@ -1235,13 +1235,14 @@ pub fn fetch_local_with_progress(
     let mut tag_shallow = local_shallow.clone();
     tag_shallow.extend(remote_shallow.iter().copied());
 
+    let mut following_only = HashSet::new();
     if matches!(opts.tags, TagMode::All | TagMode::Following) {
         let tags_present = if opts.tags == TagMode::Following {
             crate::fetch::tags_already_local(local_git_dir, &remote_refs)
         } else {
             HashSet::new()
         };
-        apply_tag_mode(
+        following_only = apply_tag_mode(
             opts.tags,
             &remote_refs,
             &remote_odb,
@@ -1254,12 +1255,31 @@ pub fn fetch_local_with_progress(
         )?;
     }
 
+    let following_tag_wants =
+        crate::fetch::following_tag_wants_with_local_peel(&matched, &following_only, &local_odb);
+    let shallow_request = opts.has_deepen_request() || !local_shallow.is_empty();
+
     // 3. Determine wants (matched oids not present locally) and haves (current
     //    local tracking-ref tips) and copy the minimal object set.
-    let wants: Vec<ObjectId> = matched_oids
+    let wants: Vec<ObjectId> = if shallow_request {
+        matched_oids
+            .iter()
+            .copied()
+            .filter(|oid| !following_only.contains(oid) || following_tag_wants.contains(oid))
+            .collect()
+    } else {
+        matched_oids
+            .iter()
+            .copied()
+            .filter(|oid| !local_odb.exists(oid))
+            .collect()
+    };
+
+    let shallow_wants: Vec<ObjectId> = matched
         .iter()
-        .copied()
-        .filter(|oid| !local_odb.exists(oid))
+        .filter(|m| !m.is_tag)
+        .map(|m| m.oid)
+        .filter(|oid| wants.contains(oid))
         .collect();
 
     let mut haves: Vec<ObjectId> = Vec::new();
@@ -1296,7 +1316,7 @@ pub fn fetch_local_with_progress(
             deepen_not: Vec::new(),
             deepen_relative: false,
         };
-        let resp = crate::serve::compute_shallow_response(&remote_repo, &wants, &req)?;
+        let resp = crate::serve::compute_shallow_response(&remote_repo, &shallow_wants, &req)?;
         shallow_new = resp.shallow;
         shallow_unshallow = resp.unshallow;
         copy_source_shallow = resp.pack_shallow_grafts;
@@ -2204,9 +2224,10 @@ pub(crate) fn apply_tag_mode(
     matched: &mut Vec<MatchedRef>,
     matched_oids: &mut HashSet<ObjectId>,
     seen_remote_ref: &mut HashSet<String>,
-) -> Result<()> {
+) -> Result<HashSet<ObjectId>> {
+    let mut following_only = HashSet::new();
     if mode == TagMode::None {
-        return Ok(());
+        return Ok(following_only);
     }
 
     // Tags this call may add, with the object each one peels to (`None` when
@@ -2258,18 +2279,20 @@ pub(crate) fn apply_tag_mode(
             TagMode::None => false,
         };
         if keep && seen_remote_ref.insert(name.clone()) {
-            matched_oids.insert(oid);
+            if matched_oids.insert(oid) && mode == TagMode::Following {
+                following_only.insert(oid);
+            }
             matched.push(MatchedRef {
                 remote_ref: name.clone(),
                 local_ref: Some(name.clone()),
                 oid,
                 force: false,
                 is_tag: true,
-                advertised_peel: None,
+                advertised_peel: peeled,
             });
         }
     }
-    Ok(())
+    Ok(following_only)
 }
 
 /// Whether a tag ref's peeled target (or the oid itself for lightweight tags)

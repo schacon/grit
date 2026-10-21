@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::porcelain::checkout::checkout_between_trees;
 use grit_lib::refs::resolve_ref;
 use grit_lib::remote::clone::{clone as clone_repo, CloneOptions};
@@ -31,6 +31,10 @@ fn git_fsck_clean(work_tree: &Path) {
 }
 
 fn build_linear_bare(bare: &Path) {
+    build_linear_bare_with_root_tag(bare, false);
+}
+
+fn build_linear_bare_with_root_tag(bare: &Path, tag_root: bool) {
     let wt = bare.with_extension("wt");
     std::fs::create_dir_all(&wt).unwrap();
     git(&wt, &["init", "-q", "-b", "main", "."]);
@@ -38,6 +42,9 @@ fn build_linear_bare(bare: &Path) {
         std::fs::write(wt.join("f"), format!("{i}\n")).unwrap();
         git(&wt, &["add", "f"]);
         git(&wt, &["commit", "-q", "-m", &format!("c{i}")]);
+    }
+    if tag_root {
+        git(&wt, &["tag", "-a", "root-tag", "-m", "on root", "main~2"]);
     }
     git(&wt, &["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
 }
@@ -205,4 +212,88 @@ fn shallow_clone_matches_git_single_branch_on_multi_branch_remote() {
 
     git_fsck_clean(&git_dest);
     git_fsck_clean(&grit_dest);
+}
+
+fn git_fsck_strict(work_tree: &Path) {
+    let out = Command::new("git")
+        .current_dir(work_tree)
+        .args(["fsck", "--strict"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git fsck --strict");
+    assert!(
+        out.status.success(),
+        "git fsck --strict failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn shallow_entries_are_commits(repo: &grit_lib::repo::Repository, git_dir: &Path) -> Vec<ObjectId> {
+    let text = std::fs::read_to_string(git_dir.join("shallow")).expect("shallow file");
+    text.lines()
+        .filter_map(|line| {
+            let hex = line.trim();
+            if hex.is_empty() {
+                return None;
+            }
+            let oid = ObjectId::from_hex(hex).expect("shallow line oid");
+            let kind = repo.odb().read(&oid).expect("shallow object").kind;
+            assert_eq!(
+                kind,
+                ObjectKind::Commit,
+                "shallow boundary {} must be a commit, got {:?}",
+                hex,
+                kind
+            );
+            Some(oid)
+        })
+        .collect()
+}
+
+#[test]
+fn shallow_clone_with_root_annotated_tag_matches_git_shallow_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bare = tmp.path().join("remote.git");
+    build_linear_bare_with_root_tag(&bare, true);
+
+    let url = format!("file://{}", bare.display());
+
+    let git_dest = tmp.path().join("git-clone");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            &url,
+            git_dest.to_str().unwrap(),
+        ],
+    );
+
+    let grit_dest = tmp.path().join("grit-clone");
+    let outcome = clone_repo(
+        CloneOptions {
+            depth: Some(1),
+            ..CloneOptions::new(url, grit_dest.clone())
+        },
+        &mut NoProgress,
+        None,
+    )
+    .expect("grit shallow clone");
+
+    assert_eq!(
+        shallow_file_lines(&git_dest.join(".git")),
+        shallow_file_lines(&grit_dest.join(".git")),
+        "shallow file must match git clone --depth=1"
+    );
+    assert_eq!(
+        shallow_entries_are_commits(&outcome.repo, &grit_dest.join(".git")).len(),
+        1,
+        "expected exactly one commit shallow boundary"
+    );
+
+    git_fsck_strict(&git_dest);
+    git_fsck_strict(&grit_dest);
 }
