@@ -543,6 +543,8 @@ enum Command {
         paths: Vec<String>,
         #[command(flatten)]
         format: diff_format::DiffFormatArgs,
+        #[command(flatten)]
+        line_format: diff_args::DiffCompareArgs,
     },
     /// Show information about a commit, tag, or branch (defaults to HEAD).
     Show {
@@ -1175,7 +1177,11 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             commits,
             paths,
             format,
+            line_format,
         } => {
+            if format.patch_text && opts.mode != OutputMode::Human {
+                bail!("`--patch-text` cannot be used with --json or --markdown");
+            }
             let wants_exit_code = exit_code || quiet || no_index;
             let run_opts = commands::diff::DiffRunOptions {
                 no_index,
@@ -1185,6 +1191,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 commits,
                 paths,
                 format,
+                line_format,
                 word_level_inline: matches!(opts.mode, crate::output::OutputMode::Human)
                     && commands::diff::diff_word_level_inline_for_output(),
                 exit_code: wants_exit_code,
@@ -1197,7 +1204,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             };
             match run_result {
                 Ok(outcome) => {
-                    if !quiet {
+                    if !quiet && !format.patch_text {
                         emit(&outcome, opts, ctx)?;
                     }
                     if no_index || wants_exit_code {
