@@ -556,7 +556,7 @@ pub(crate) fn collect_untracked_and_ignored_inner(
         .entries
         .iter()
         .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
-        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .map(|e| crate::repo_relpath::storage_string(&e.path))
         .collect();
 
     let mut untracked = Vec::new();

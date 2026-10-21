@@ -405,15 +405,15 @@ fn stage_tracked_modifications_in_index_body(
         },
     )?;
     visit_blob_lookup_batches(stage_batches, |entry_index, lookup| {
-        let path_stored = crate::repo_relpath::storage_string(&index.entries[entry_index].path);
-        let rel_path = path_stored.as_str();
-        let Some(idx_e) = index.get(rel_path.as_bytes(), 0).cloned() else {
+        let raw_path = index.entries[entry_index].path.clone();
+        let rel_path = crate::repo_relpath::storage_string(&raw_path);
+        let rel_path = rel_path.as_str();
+        let Some(idx_e) = index.get(&raw_path, 0).cloned() else {
             return Ok(());
         };
         if idx_e.stage() != 0 {
             return Ok(());
         }
-        let raw_path = idx_e.path.clone();
         let abs_path =
             abs_path_for_stage_tracked(work_tree, &raw_path, precompose_unicode, ignorecase);
         match lookup {

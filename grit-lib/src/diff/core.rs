@@ -6160,7 +6160,7 @@ pub(crate) fn path_checkout_skip_blob_write_when_up_to_date_with_config(
     if expected_mode != MODE_REGULAR && expected_mode != MODE_EXECUTABLE {
         return Ok(false);
     }
-    let abs_path = work_tree.join(rel_path);
+    let abs_path = crate::repo_relpath::worktree_abs(work_tree, rel_path);
     let meta = match fs::symlink_metadata(&abs_path) {
         Ok(m) => m,
         Err(_) => return Ok(false),

@@ -124,6 +124,33 @@ fn non_utf8_gitlink_added_by_checkout_between_trees() {
 }
 
 #[test]
+fn non_utf8_up_to_date_blob_skipped_on_checkout_between_trees() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("checkout-skip");
+    std::fs::create_dir(&root).expect("mkdir");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["config", "user.email", "t@example.com"]);
+    git(&root, &["config", "user.name", "Test"]);
+    std::fs::write(bad_path(&root), b"payload\n").expect("write bad");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-qm", "with bad"]);
+    let tree_with_bad =
+        ObjectId::from_hex(&git_stdout(&root, &["rev-parse", "HEAD^{tree}"])).expect("tree oid");
+    let empty_tree = ObjectId::from_hex(EMPTY_TREE).expect("empty tree");
+
+    let repo = open_repo(&root);
+    std::fs::remove_file(bad_path(&root)).expect("clear worktree");
+    checkout_between_trees(&repo, Some(&empty_tree), &tree_with_bad)
+        .expect("first checkout creates non-UTF-8 file");
+    checkout_between_trees(&repo, Some(&empty_tree), &tree_with_bad)
+        .expect("second checkout must skip up-to-date non-UTF-8 blob");
+    assert_eq!(
+        std::fs::read(bad_path(&root)).expect("read bad"),
+        b"payload\n"
+    );
+}
+
+#[test]
 fn non_utf8_file_deleted_by_checkout_between_trees() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("checkout-del");

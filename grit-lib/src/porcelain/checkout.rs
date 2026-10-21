@@ -1599,7 +1599,9 @@ fn checkout_tree_changes_with_progress(
                 progress.inc(1);
                 continue;
             }
-            if let Some(existing) = index.get(path.as_bytes(), 0) {
+            let index_path = checkout_stored_index_path_bytes(path);
+            let abs = checkout_stored_worktree_abs(work_tree, path);
+            if let Some(existing) = index.get(&index_path, 0) {
                 if crate::diff::path_checkout_skip_blob_write_when_up_to_date_with_config(
                     repo.odb(),
                     repo.git_dir(),
@@ -1612,11 +1614,10 @@ fn checkout_tree_changes_with_progress(
                     Some(rules.filter_process()),
                     Some(config.as_ref()),
                 )? {
-                    let abs = work_tree.join(path);
                     let meta = fs::symlink_metadata(&abs).map_err(Error::Io)?;
                     plan.push(CheckoutPlanSlot::Ready(entry_from_metadata(
                         &meta,
-                        path.as_bytes(),
+                        &index_path,
                         change.new_oid,
                         mode,
                     )));
