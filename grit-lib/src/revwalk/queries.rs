@@ -259,6 +259,25 @@ pub fn resolve_log_walk_tips_and_hide(
     Ok((include, exclude))
 }
 
+/// Commit OIDs reachable from `tokens`, preferring pack bitmap acceleration when compatible.
+///
+/// Used by author shortlog-style counts where walk order does not matter.
+///
+/// # Errors
+///
+/// Propagates rev-parse and rev-list errors.
+pub fn rev_list_commits_for_author_group(
+    repo: &Repository,
+    tokens: &[&str],
+    walk: &RevWalkListOptions,
+) -> Result<Vec<ObjectId>> {
+    let (parsed, positive, all_refs) = positive_specs_for_walk(repo, tokens, walk)?;
+    let mut opts = rev_list_options_from_walk(repo, walk, &parsed, all_refs, false)?;
+    opts.use_bitmap_index = true;
+    let result = rev_list(repo, &positive, &parsed.negative, &opts)?;
+    Ok(result.commits)
+}
+
 fn positive_specs_for_walk(
     repo: &Repository,
     tokens: &[&str],
