@@ -425,4 +425,3 @@ fn grit_revs_oids(dir: &Path, args: &[&str]) -> Vec<String> {
         .map(|c| c["oid"].as_str().expect("oid").to_owned())
         .collect()
 }
-|||||||

@@ -58,7 +58,7 @@ fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
 /// Rev-list count and merge-base scenarios vs system git.
 pub fn run_revwalk_suite(
     hyperfine: &Path,
-    bench_exe: &Path,
+    _bench_exe: &Path,
     git: &Path,
     grit: &Path,
     cfg: &RunConfig,
@@ -103,7 +103,7 @@ pub fn run_revwalk_suite(
         }
         scenarios.push(run_odb_scenario(
             hyperfine,
-            bench_exe,
+            &bench_exe,
             git,
             &odb_cfg,
             &Scenario {
@@ -129,7 +129,7 @@ pub fn run_revwalk_suite(
         )?);
         scenarios.push(run_odb_scenario(
             hyperfine,
-            bench_exe,
+            &bench_exe,
             git,
             &odb_cfg,
             &Scenario {
@@ -182,7 +182,7 @@ pub fn run_revwalk_suite(
     scenarios.push(run_scenario(
         hyperfine,
         git,
-        bench_exe,
+        &bench_exe,
         cfg,
         &Scenario {
             id: "revs-count-since-no-graph".into(),
@@ -219,7 +219,7 @@ pub fn run_revwalk_suite(
     scenarios.push(run_scenario(
         hyperfine,
         git,
-        bench_exe,
+        &bench_exe,
         cfg,
         &Scenario {
             id: "revs-left-right-count-no-graph".into(),
