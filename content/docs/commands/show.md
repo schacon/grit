@@ -37,6 +37,7 @@ Use `--stat` (or other diff format flags below) instead of the default patch. Li
 | `--shortstat` | Only the summary line (`N files changed, …`). |
 | `--name-only` | Changed paths, one per line. |
 | `--name-status` | Status letter and path(s) per line. |
+| `-p`, `--patch` | Unified patch (default when no other format flag is set). |
 | `-U`, `--unified <n>` | Lines of context around each change in patch mode (bare `-U` means 3). |
 | `-W`, `--function-context` | Expand hunks to enclosing function boundaries (patch mode). |
 | `-p`, `--patch` | Unified patch output (default when no other format flag is set). |

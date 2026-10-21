@@ -513,6 +513,9 @@ enum Command {
     /// Show changes as a diff. No argument: uncommitted changes; with a commit:
     /// the change that commit introduced; with two commits (or `A..B`) diff their trees.
     Diff {
+        /// Compare two filesystem paths outside any repository (like `git diff --no-index`).
+        #[arg(long = "no-index")]
+        no_index: bool,
         /// Staged changes only (index vs HEAD).
         #[arg(short = 'S', long = "staged", visible_aliases = ["cached"])]
         staged: bool,
@@ -522,10 +525,6 @@ enum Command {
         /// Compare the worktree to this ref's tree instead of HEAD (no commit arguments).
         #[arg(long = "against", value_name = "REF")]
         against: Option<String>,
-        /// Compare two filesystem paths outside any repository (Git `--no-index`);
-        /// exits 1 when they differ.
-        #[arg(long = "no-index")]
-        no_index: bool,
         /// Exit with 1 when there are changes (errors exit 2).
         #[arg(long = "exit-code")]
         exit_code: bool,
@@ -536,7 +535,7 @@ enum Command {
         #[arg(value_name = "COMMIT")]
         commits: Vec<String>,
         /// Limit the diff to these paths (after `--`, like `grit log`).
-        #[arg(value_name = "PATH", last = true)]
+        #[arg(value_name = "PATH", last = true, allow_hyphen_values = true)]
         paths: Vec<String>,
         #[command(flatten)]
         format: diff_format::DiffFormatArgs,
@@ -1171,7 +1170,7 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
             format,
         } => {
             let wants_exit_code = exit_code || quiet || no_index;
-            match commands::diff::run(commands::diff::DiffRunOptions {
+            let run_opts = commands::diff::DiffRunOptions {
                 no_index,
                 staged,
                 unstaged,
@@ -1183,19 +1182,25 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                     && commands::diff::diff_word_level_inline_for_output(),
                 exit_code: wants_exit_code,
                 quiet,
-            }) {
+            };
+            let run_result = if no_index {
+                commands::diff::run_no_index(run_opts)
+            } else {
+                commands::diff::run(run_opts)
+            };
+            match run_result {
                 Ok(outcome) => {
                     if !quiet {
                         emit(&outcome, opts, ctx)?;
                     }
-                    if wants_exit_code {
+                    if no_index || wants_exit_code {
                         std::process::exit(commands::diff::exit_code(&outcome));
                     }
                     Ok(())
                 }
                 Err(err) => {
                     output::emit_error(&err, opts);
-                    std::process::exit(if wants_exit_code {
+                    std::process::exit(if no_index || wants_exit_code {
                         commands::diff::DIFF_ERROR_EXIT
                     } else {
                         1

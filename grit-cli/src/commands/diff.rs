@@ -353,6 +353,20 @@ fn attach_path_display(
     outcome
 }
 
+fn finish_no_index_outcome(format: DiffFormatArgs, mut outcome: DiffOutcome) -> DiffOutcome {
+    outcome.changed = !outcome.files.is_empty();
+    if format.detail() == DiffDetail::Stat && outcome.totals.is_none() {
+        let stat = diffstat_from_files(&outcome.files);
+        outcome.totals = Some(DiffTotalsJson {
+            files_changed: stat.files_changed,
+            insertions: stat.insertions,
+            deletions: stat.deletions,
+        });
+    }
+    outcome.format = format;
+    outcome
+}
+
 fn finish_outcome(
     repo: &grit_lib::repo::Repository,
     format: DiffFormatArgs,
@@ -658,6 +672,46 @@ fn outcome_from_entries(
     Ok(outcome_from_lib(output, format, detail))
 }
 
+/// Compare two filesystem paths outside a repository ([`grit_lib::diff::diff_paths`]).
+pub fn run_no_index(opts: DiffRunOptions) -> Result<DiffOutcome> {
+    if opts.staged || opts.unstaged || opts.against.is_some() {
+        anyhow::bail!("--no-index cannot be combined with --staged, --unstaged, or --against");
+    }
+    let mut path_args: Vec<String> = opts.commits;
+    path_args.extend(opts.paths);
+    if path_args.len() != 2 {
+        anyhow::bail!(
+            "--no-index requires exactly two paths (use `--` before paths that start with `-`)"
+        );
+    }
+    let mut diff_options = DiffOptions::default();
+    diff_options.context_lines = CONTEXT_LINES;
+    opts.format.apply_context(&mut diff_options);
+    diff_options.word_level_inline = opts.word_level_inline;
+    let detail = opts.format.detail();
+    let format = opts.format;
+    let files = grit_lib::diff::diff_paths(
+        std::path::Path::new(&path_args[0]),
+        std::path::Path::new(&path_args[1]),
+        &diff_options,
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let cli_files: Vec<FileDiff> = files
+        .into_iter()
+        .map(|f| file_diff_from_lib(f, detail))
+        .collect();
+    Ok(finish_no_index_outcome(
+        format,
+        DiffOutcome {
+            changed: !cli_files.is_empty(),
+            files: cli_files,
+            totals: None,
+            format,
+            path_display: None,
+        },
+    ))
+}
+
 pub fn run(opts: DiffRunOptions) -> Result<DiffOutcome> {
     if opts.no_index {
         return run_no_index(opts);
@@ -939,36 +993,6 @@ pub fn outcome_from_tree_entries(
     ))
 }
 
-/// `grit diff --no-index <path> <path>`: compare two filesystem paths without a repository.
-fn run_no_index(opts: DiffRunOptions) -> Result<DiffOutcome> {
-    if opts.staged || opts.unstaged || opts.against.is_some() {
-        anyhow::bail!("--no-index cannot be combined with repository diff modes");
-    }
-    let mut specs = opts.paths;
-    if specs.len() < 2 {
-        specs.extend(opts.commits);
-    }
-    let [left, right] = specs.as_slice() else {
-        anyhow::bail!("--no-index requires exactly two paths");
-    };
-    let mut diff_options = DiffOptions::default();
-    diff_options.context_lines = CONTEXT_LINES;
-    opts.format.apply_context(&mut diff_options);
-    diff_options.word_level_inline = opts.word_level_inline;
-    let files: Vec<FileDiff> = diff_paths(Path::new(left), Path::new(right), &diff_options)
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .into_iter()
-        .map(file_diff_from_lib)
-        .collect();
-    Ok(DiffOutcome {
-        changed: !files.is_empty(),
-        files,
-        totals: None,
-        format: opts.format,
-        path_display: None,
-    })
-}
-
 fn outcome_from_tree_structured(
     items: Vec<TreeDiffStructured>,
     format: DiffFormatArgs,
@@ -983,6 +1007,85 @@ fn outcome_from_tree_structured(
         totals: None,
         format,
         path_display: None,
+    }
+}
+
+fn file_diff_from_lib(f: grit_lib::diff::FileDiff, detail: DiffDetail) -> FileDiff {
+    let stat = if f.binary {
+        None
+    } else if detail == DiffDetail::Stat {
+        let mut insertions = 0usize;
+        let mut deletions = 0usize;
+        for h in &f.hunks {
+            for l in &h.lines {
+                match l.kind {
+                    StructuredLineKind::Add => insertions += 1,
+                    StructuredLineKind::Del => deletions += 1,
+                    StructuredLineKind::Context => {}
+                }
+            }
+        }
+        Some(LineStatJson {
+            insertions,
+            deletions,
+        })
+    } else {
+        None
+    };
+    let hunks = if detail == DiffDetail::Patch {
+        Some(
+            f.hunks
+                .into_iter()
+                .map(|h| Hunk {
+                    old_start: h.old_start,
+                    new_start: h.new_start,
+                    old_lines: h.old_lines,
+                    new_lines: h.new_lines,
+                    context: h.context,
+                    combined_header: None,
+                    lines: h
+                        .lines
+                        .into_iter()
+                        .map(|l| Line {
+                            kind: match l.kind {
+                                StructuredLineKind::Context => LineKind::Context,
+                                StructuredLineKind::Add => LineKind::Add,
+                                StructuredLineKind::Del => LineKind::Del,
+                            },
+                            old: l.old,
+                            new: l.new,
+                            segments: l
+                                .segments
+                                .into_iter()
+                                .map(|s| Segment {
+                                    text: s.text,
+                                    emphasis: s.emphasis,
+                                })
+                                .collect(),
+                            no_newline_at_eof: l.no_newline_at_eof,
+                            parents: None,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+    FileDiff {
+        path: f.path,
+        old_path: f.old_path,
+        status: f.status.into(),
+        old_mode: f.old_mode,
+        new_mode: f.new_mode,
+        old_encoding_lossy: f.old_encoding_lossy,
+        new_encoding_lossy: f.new_encoding_lossy,
+        binary: f.binary,
+        content_changed: f.content_changed,
+        similarity: None,
+        stat,
+        combined_status: None,
+        hunks,
     }
 }
 
@@ -1019,25 +1122,6 @@ fn file_diff_from_tree_structured(t: TreeDiffStructured) -> FileDiff {
         stat: None,
         combined_status: None,
         hunks: Some(hunks),
-    }
-}
-
-/// A library file diff (e.g. from [`diff_paths`]) as a CLI [`FileDiff`].
-fn file_diff_from_lib(f: grit_lib::diff::FileDiff) -> FileDiff {
-    FileDiff {
-        path: f.path,
-        old_path: f.old_path,
-        status: f.status.into(),
-        old_mode: f.old_mode,
-        new_mode: f.new_mode,
-        old_encoding_lossy: f.old_encoding_lossy,
-        new_encoding_lossy: f.new_encoding_lossy,
-        binary: f.binary,
-        content_changed: f.content_changed,
-        similarity: None,
-        stat: None,
-        combined_status: None,
-        hunks: Some(f.hunks.into_iter().map(hunk_from_structured).collect()),
     }
 }
 
