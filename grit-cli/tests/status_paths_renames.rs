@@ -224,6 +224,36 @@ fn status_u_flag_does_not_consume_pathspec() -> TestResult {
 }
 
 #[test]
+fn status_path_named_uno_after_double_dash_matches_git() -> TestResult {
+    let base = tempfile::tempdir()?;
+    let repo = base.path();
+    fs::write(repo.join("-uno"), b"v1\n")?;
+    init_repo(repo)?;
+    git_ok(repo, &["add", "--", "-uno"]);
+    git_ok(repo, &["commit", "-qm", "seed"]);
+    fs::write(repo.join("-uno"), b"v2\n")?;
+
+    let grit = grit_json(repo, &["status", "--", "-uno"]);
+    assert_eq!(grit["clean"], false);
+    assert_eq!(grit["unstaged"].as_array().unwrap().len(), 1);
+    assert_eq!(grit["unstaged"][0]["path"], "-uno");
+    assert_eq!(grit["unstaged"][0]["status"], "modified");
+
+    let git = git_cmd()
+        .args(["status", "--porcelain=v2", "--", "-uno"])
+        .current_dir(repo)
+        .output()
+        .expect("git status");
+    assert!(git.status.success());
+    let line = String::from_utf8_lossy(&git.stdout);
+    assert!(
+        line.contains("-uno") && line.contains('M'),
+        "git must report modified -uno: {line}"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_u_flag_lists_all_untracked_like_long_form() -> TestResult {
     let base = tempfile::tempdir()?;
     let repo = base.path();

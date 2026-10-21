@@ -5,8 +5,7 @@ use anyhow::{Context, Result};
 use grit_lib::diff::DiffEntry;
 use grit_lib::objects::ObjectId;
 use grit_lib::porcelain::status::{
-    status, status_options_from_config, untracked_mode_from_config, Conflict, StatusOptions,
-    UntrackedMode,
+    status, status_options_from_config, Conflict, UntrackedMode,
 };
 use grit_lib::progress::NullProgress;
 use grit_lib::refs::branch_tracking::{
@@ -114,6 +113,25 @@ mod argv_tests {
         let mut argv2 = vec!["grit".into(), "st".into(), "-uno".into()];
         normalize_status_argv(&mut argv2);
         assert_eq!(argv2[2], "--untracked=no");
+    }
+
+    #[test]
+    fn normalize_does_not_rewrite_pathspecs_after_double_dash() {
+        for path in ["-uno", "-unormal", "-uall", "-u"] {
+            let mut argv = vec!["grit".into(), "status".into(), "--".into(), path.into()];
+            normalize_status_argv(&mut argv);
+            assert_eq!(argv[3], path, "path token after -- must be preserved");
+        }
+        let mut argv = vec![
+            "grit".into(),
+            "status".into(),
+            "-uno".into(),
+            "--".into(),
+            "keep.txt".into(),
+        ];
+        normalize_status_argv(&mut argv);
+        assert_eq!(argv[2], "--untracked=no");
+        assert_eq!(argv[4], "keep.txt");
     }
 }
 
