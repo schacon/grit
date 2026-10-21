@@ -65,6 +65,10 @@ pub enum ShowPathOutcome {
         text: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         data_base64: Option<String>,
+        /// Raw blob bytes for human stdout (same as `git show rev:path`).
+        #[serde(skip)]
+        #[schemars(skip)]
+        raw: Vec<u8>,
     },
     Tree {
         spec: String,
@@ -357,6 +361,7 @@ fn show_rev_path(spec: &str) -> Result<ShowPathOutcome> {
                 binary,
                 text,
                 data_base64,
+                raw: obj.data,
             })
         }
         ObjectKind::Tree => {
@@ -630,7 +635,8 @@ impl MarkdownRender for ShowOutcome {
             print_markdown_message(w, &body)?;
             outln!(w);
         }
-        self.diff.render_markdown_diff(w)?;
+        crate::diff_render::render_markdown_stat(w, &self.stat, None)?;
+        self.diff.render_markdown(w, _ctx)?;
         Ok(())
     }
 }
