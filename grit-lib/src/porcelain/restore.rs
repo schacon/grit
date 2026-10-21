@@ -79,6 +79,7 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
     }
 
     let mut index = repo.load_index()?;
+    let protect = crate::path_validate::ProtectOptions::from_config(&*repo.config()?);
 
     let restore_staged = opts.staged;
     let restore_worktree = opts.worktree || !opts.staged;
@@ -86,12 +87,12 @@ pub fn restore_paths(repo: &Repository, opts: &RestoreOptions) -> Result<Restore
 
     let explicit_source_entries = match opts.source {
         RestoreSource::Index => None,
-        RestoreSource::Tree(oid) => Some(flatten_tree_full(repo.odb(), &oid, "")?),
+        RestoreSource::Tree(oid) => Some(flatten_tree_full(repo.odb(), &oid, "", protect)?),
     };
 
     let head_entries = if needs_head_tree_entries(restore_staged, opts.source) {
         match resolve_head_tree(repo)? {
-            Some(tree) => flatten_tree_full(repo.odb(), &tree, "")?,
+            Some(tree) => flatten_tree_full(repo.odb(), &tree, "", protect)?,
             None => Vec::new(),
         }
     } else {
@@ -364,10 +365,11 @@ fn apply_worktree_restore(ctx: WorktreeRestoreContext<'_>) -> Result<()> {
         outcome,
         index_dirty,
     } = ctx;
-    let mut dir_cache = LeadingDirCache::new();
+    let config = repo.config()?;
+    let protect = crate::path_validate::ProtectOptions::from_config(&config);
+    let mut dir_cache = LeadingDirCache::with_protect(protect);
 
     if !worktree_from_tree {
-        let config = repo.config()?;
         let attr_index = index_out.gitattributes_snapshot();
         let rules = WorktreeRules::from_parts(repo, &attr_index, Arc::clone(&config))?;
         let index_mtime = index_mtime_for_diff(index_out, None);

@@ -110,7 +110,14 @@ fn load_expand_sparse_optional_and_collapse_roundtrip() {
     let mut index =
         Index::load_expand_sparse_optional(&grit.index_handle().path(), &grit.odb()).expect("load");
     index
-        .try_collapse_sparse_directories(&grit.odb(), &head, &patterns, true, true)
+        .try_collapse_sparse_directories(
+            &grit.odb(),
+            &head,
+            &patterns,
+            true,
+            true,
+            grit_lib::path_validate::ProtectOptions::default(),
+        )
         .expect("collapse");
     if index.has_sparse_directory_placeholders() {
         let expanded =

@@ -45,6 +45,8 @@ use crate::merge_trees::{
     TreeMergeConflictPresentation, TreeMergeOutput, WhitespaceMergeOptions,
 };
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
+use crate::path_population::validate_tree_walk_entry;
+use crate::path_validate::ProtectOptions;
 use crate::porcelain::checkout;
 use crate::porcelain::commit::{stamp_change_id_on_new_commit, write_commit_object};
 use crate::porcelain::index_from_tree::{
@@ -76,6 +78,16 @@ pub fn tree_to_index_entries(
     oid: &ObjectId,
     prefix: &str,
 ) -> Result<Vec<IndexEntry>> {
+    let protect = ProtectOptions::from_config(&*repo.config()?);
+    tree_to_index_entries_with_protect(repo, oid, prefix, protect)
+}
+
+fn tree_to_index_entries_with_protect(
+    repo: &Repository,
+    oid: &ObjectId,
+    prefix: &str,
+    protect: ProtectOptions,
+) -> Result<Vec<IndexEntry>> {
     let obj = repo.odb().read(oid)?;
     if obj.kind != ObjectKind::Tree {
         return Err(Error::Message(format!("expected tree, got {}", obj.kind)));
@@ -90,9 +102,10 @@ pub fn tree_to_index_entries(
         } else {
             format!("{prefix}/{name}")
         };
+        validate_tree_walk_entry(prefix.as_bytes(), &te.name, te.mode, protect)?;
 
         if te.mode == 0o040000 {
-            let sub = tree_to_index_entries(repo, &te.oid, &path)?;
+            let sub = tree_to_index_entries_with_protect(repo, &te.oid, &path, protect)?;
             result.extend(sub);
         } else {
             let path_bytes = path.into_bytes();

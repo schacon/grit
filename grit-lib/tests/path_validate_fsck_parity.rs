@@ -3,7 +3,7 @@
 use grit_lib::maintenance::fsck::{fsck_object, FsckObjectOptions};
 use grit_lib::maintenance::{fsck, FsckOptions};
 use grit_lib::objects::{HashAlgo, ObjectKind};
-use grit_lib::path_validate::{validate_path, EntryMode, ProtectOptions};
+use grit_lib::path_validate::{validate_path, EntryMode, PathValidationKind, ProtectOptions};
 use grit_lib::repo::{InitOptions, Repository};
 use grit_test_support::{
     git_fsck, git_hash_object_literally, write_loose_object, HashAlgo as FixtureAlgo, RepoFixture,
@@ -173,7 +173,13 @@ fn validate_path_empty_separators_match_git_update_index_rejection() {
     let opts = ProtectOptions::default();
     for path in ["a/", "/a", "a//b"] {
         assert!(
-            validate_path(path.as_bytes(), EntryMode::new(0o100644), opts).is_err(),
+            validate_path(
+                path.as_bytes(),
+                EntryMode::new(0o100644),
+                opts,
+                PathValidationKind::Worktree,
+            )
+            .is_err(),
             "{path} should be rejected"
         );
         let repo = RepoFixture::init(FixtureAlgo::Sha1).expect("init");
@@ -197,5 +203,11 @@ fn validate_path_empty_separators_match_git_update_index_rejection() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    assert!(validate_path(b"a/b", EntryMode::new(0o100644), opts).is_ok());
+    assert!(validate_path(
+        b"a/b",
+        EntryMode::new(0o100644),
+        opts,
+        PathValidationKind::Worktree,
+    )
+    .is_ok());
 }

@@ -45,6 +45,7 @@ fn exercise_index_public_api(repo: &Repository, index: &mut Index) {
                     &patterns,
                     true,
                     false,
+                    grit_lib::path_validate::ProtectOptions::default(),
                 );
             }
         }

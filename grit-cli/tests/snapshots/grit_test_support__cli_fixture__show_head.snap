@@ -5,7 +5,7 @@ expression: payload
 {
   "human": {
     "exit": 0,
-    "stdout": "branch main\ncommit 83352a61f6715ec3f0a297c6d6150725154fb833\nchange xzyqzyyz\nAuthor: Test <test@example.com>\nDate:   2023-11-14T22:13:20Z\n\n    second\n\n\nsecond.txt\nnew mode 100644\n@@ -0,0 +1 @@\n    1 │ + second file\n\ntracked.txt\n@@ -1 +1 @@\n 1    │ - tracked v1\n    1 │ + tracked v2\n",
+    "stdout": "branch main\ncommit 83352a61f6715ec3f0a297c6d6150725154fb833\nAuthor: Test <test@example.com>\nDate:   2023-11-14T22:13:20Z\n\n    second\n\n\nsecond.txt\nnew mode 100644\n@@ -0,0 +1 @@\n    1 │ + second file\n\ntracked.txt\n@@ -1 +1 @@\n 1    │ - tracked v1\n    1 │ + tracked v2\n",
     "stderr": ""
   },
   "json": {
@@ -15,7 +15,7 @@ expression: payload
   },
   "markdown": {
     "exit": 0,
-    "stdout": "# Branch `main`\n\n# Commit `83352a6`\n\n**Oid:** `83352a61f6715ec3f0a297c6d6150725154fb833`\n**Change:** `xzyqzyyz`\n**Author:** Test <test@example.com>\n**Date:** 2023-11-14T22:13:20Z\n\n## second\n\n## Changes\n\n| File | + | − |\n| --- | ---: | ---: |\n| `second.txt` | 1 | 0 |\n| `tracked.txt` | 1 | 1 |\n\n2 files changed, 2 insertions(+), 1 deletion(-)\n## second.txt\n**status:** added\n**new_mode:** `100644`\n\n```diff\n@@ -0,0 +1,1 @@\n+second file\n```\n\n## tracked.txt\n**status:** modified\n\n```diff\n@@ -1,1 +1,1 @@\n-tracked v1\n+tracked v2\n```\n",
+    "stdout": "# Branch `main`\n\n# Commit `83352a6`\n\n**Oid:** `83352a61f6715ec3f0a297c6d6150725154fb833`\n**Author:** Test <test@example.com>\n**Date:** 2023-11-14T22:13:20Z\n\n## second\n\n## Changes\n\n| File | + | − |\n| --- | ---: | ---: |\n| `second.txt` | 1 | 0 |\n| `tracked.txt` | 1 | 1 |\n\n2 files changed, 2 insertions(+), 1 deletion(-)\n## second.txt\n**status:** added\n**new_mode:** `100644`\n\n```diff\n@@ -0,0 +1,1 @@\n+second file\n```\n\n## tracked.txt\n**status:** modified\n\n```diff\n@@ -1,1 +1,1 @@\n-tracked v1\n+tracked v2\n```\n",
     "stderr": ""
   }
 }

@@ -38,6 +38,16 @@ impl EntryMode {
     }
 }
 
+/// Which Git path rules to apply ([`validate_component`] / [`validate_path`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PathValidationKind {
+    /// Object fsck: all symlink dot-file rules; NTFS spellings when [`ProtectOptions`] say so.
+    Fsck,
+    /// Index population, checkout, and staging (Git `verify_path` on this platform).
+    #[default]
+    Worktree,
+}
+
 /// Whether NTFS and HFS+ spelling protections apply (from `core.protectNTFS` / `core.protectHFS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProtectOptions {
@@ -176,6 +186,7 @@ pub fn validate_component(
     name: &[u8],
     mode: EntryMode,
     opts: ProtectOptions,
+    kind: PathValidationKind,
 ) -> Result<(), PathComponentError> {
     if name.is_empty() {
         return Err(PathComponentError::Empty);
@@ -186,11 +197,18 @@ pub fn validate_component(
     if name.contains(&b'/') {
         return Err(PathComponentError::ContainsSlash);
     }
-    if let Some(err) = validate_component_symlink_dotfile(name, mode, opts) {
+    if let Some(err) = validate_component_symlink_dotfile(name, mode, opts, kind) {
         return Err(err);
     }
-    if opts.protect_ntfs && has_dos_drive_prefix_bytes(name) {
-        return Err(PathComponentError::NtfsDriveOrStream);
+    if opts.protect_ntfs && ntfs_path_syntax_rules_apply() {
+        if has_dos_drive_prefix_bytes(name) {
+            return Err(PathComponentError::NtfsDriveOrStream);
+        }
+        if let Ok(name_str) = std::str::from_utf8(name) {
+            if scan_ntfs_backslash_dot_special(name_str, ntfs_backslash_dotdot_tail) {
+                return Err(PathComponentError::NtfsBackslash);
+            }
+        }
     }
     let audit = audit_tree_entry_name(name, opts);
     if audit.empty {
@@ -223,6 +241,7 @@ pub fn validate_path(
     path: &[u8],
     mode: EntryMode,
     opts: ProtectOptions,
+    kind: PathValidationKind,
 ) -> Result<(), PathComponentError> {
     if path.is_empty() {
         return Err(PathComponentError::Empty);
@@ -234,9 +253,13 @@ pub fn validate_path(
         if component.is_empty() {
             return Err(PathComponentError::Empty);
         }
-        validate_component(component, mode, opts)?;
+        validate_component(component, mode, opts, kind)?;
     }
     Ok(())
+}
+
+fn ntfs_path_syntax_rules_apply() -> bool {
+    cfg!(windows)
 }
 
 /// Populate [`TreeEntryNameAudit`] for a tree object entry name (fsck uses all flags).
@@ -293,7 +316,10 @@ impl TreeEntryNameAudit {
 /// Returns `true` when `name` should trigger fsck `hasDotgit` for a tree entry.
 #[must_use]
 pub fn component_is_dotgit_alias(name: &[u8], opts: ProtectOptions) -> bool {
-    if name.eq_ignore_ascii_case(b".git") || name.eq_ignore_ascii_case(b"git~1") {
+    if name.eq_ignore_ascii_case(b".git") {
+        return true;
+    }
+    if name.eq_ignore_ascii_case(b"git~1") && opts.protect_ntfs {
         return true;
     }
     let Ok(name_str) = std::str::from_utf8(name) else {
@@ -312,12 +338,22 @@ fn validate_component_symlink_dotfile(
     name: &[u8],
     mode: EntryMode,
     opts: ProtectOptions,
+    kind: PathValidationKind,
 ) -> Option<PathComponentError> {
     if !mode.is_symlink() {
         return None;
     }
     if name.eq_ignore_ascii_case(b".gitmodules") {
         return Some(PathComponentError::SymlinkedDotGitmodules);
+    }
+    let Ok(name_str) = std::str::from_utf8(name) else {
+        return None;
+    };
+    if dot_gitmodules_spelling(name_str, opts) {
+        return Some(PathComponentError::SymlinkedDotGitmodules);
+    }
+    if kind == PathValidationKind::Worktree {
+        return None;
     }
     if name.eq_ignore_ascii_case(b".gitattributes") {
         return Some(PathComponentError::SymlinkedDotGitattributes);
@@ -327,12 +363,6 @@ fn validate_component_symlink_dotfile(
     }
     if name.eq_ignore_ascii_case(b".mailmap") {
         return Some(PathComponentError::SymlinkedDotMailmap);
-    }
-    let Ok(name_str) = std::str::from_utf8(name) else {
-        return None;
-    };
-    if dot_gitmodules_spelling(name_str, opts) {
-        return Some(PathComponentError::SymlinkedDotGitmodules);
     }
     if dot_gitattributes_spelling(name_str, opts) {
         return Some(PathComponentError::SymlinkedDotGitattributes);
@@ -387,16 +417,23 @@ fn scan_ntfs_backslash_dotgit(name: &str) -> bool {
     scan_ntfs_backslash_dot_special(name, is_ntfs_dotgit)
 }
 
+fn ntfs_backslash_dotdot_tail(after: &str) -> bool {
+    after == ".." || after.starts_with("..\\") || after.starts_with("../")
+}
+
 fn scan_ntfs_backslash_dot_special(name: &str, mut pred: impl FnMut(&str) -> bool) -> bool {
-    let mut slash_rest = name;
-    while let Some(idx) = slash_rest.find('\\') {
-        let after = &slash_rest[idx + 1..];
-        if pred(after) {
+    if !name.contains('\\') {
+        return false;
+    }
+    let mut rest = name;
+    while let Some(idx) = rest.find('\\') {
+        let segment = &rest[..idx];
+        if !segment.is_empty() && pred(segment) {
             return true;
         }
-        slash_rest = after;
+        rest = &rest[idx + 1..];
     }
-    false
+    !rest.is_empty() && pred(rest)
 }
 
 fn has_dos_drive_prefix_bytes(name: &[u8]) -> bool {
@@ -414,19 +451,21 @@ mod tests {
         protect_ntfs: false,
         protect_hfs: false,
     };
+    const FSCK_KIND: PathValidationKind = PathValidationKind::Fsck;
+    const WT_KIND: PathValidationKind = PathValidationKind::Worktree;
 
     #[test]
     fn empty_dot_and_dotdot_rejected() {
         assert_eq!(
-            validate_component(b"", BLOB, FSCK).unwrap_err(),
+            validate_component(b"", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::Empty
         );
         assert_eq!(
-            validate_component(b".", BLOB, FSCK).unwrap_err(),
+            validate_component(b".", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::Dot
         );
         assert_eq!(
-            validate_component(b"..", BLOB, FSCK).unwrap_err(),
+            validate_component(b"..", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::DotDot
         );
     }
@@ -434,49 +473,51 @@ mod tests {
     #[test]
     fn slash_and_nul_in_component() {
         assert_eq!(
-            validate_component(b"foo/bar", BLOB, FSCK).unwrap_err(),
+            validate_component(b"foo/bar", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::ContainsSlash
         );
         assert_eq!(
-            validate_component(b"foo\0bar", BLOB, FSCK).unwrap_err(),
+            validate_component(b"foo\0bar", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::ContainsNul
         );
     }
 
     #[test]
     fn ascii_dotgit_and_git_tilde_one() {
-        for name in [
-            b".git".as_slice(),
-            b".GIT".as_slice(),
-            b"git~1".as_slice(),
-            b"GIT~1".as_slice(),
-        ] {
+        for name in [b".git".as_slice(), b".GIT".as_slice()] {
             assert_eq!(
-                validate_component(name, BLOB, OFF).unwrap_err(),
+                validate_component(name, BLOB, OFF, FSCK_KIND).unwrap_err(),
                 PathComponentError::DotGit
             );
         }
-        assert!(validate_component(b"git~2", BLOB, OFF).is_ok());
+        for name in [b"git~1".as_slice(), b"GIT~1".as_slice()] {
+            assert_eq!(
+                validate_component(name, BLOB, FSCK, FSCK_KIND).unwrap_err(),
+                PathComponentError::DotGit
+            );
+            assert!(validate_component(name, BLOB, OFF, FSCK_KIND).is_ok());
+        }
+        assert!(validate_component(b"git~2", BLOB, OFF, FSCK_KIND).is_ok());
     }
 
     #[test]
     fn hfs_dotgit_unicode_ignored_codepoints() {
         let name = ".gI\u{200c}T";
         assert_eq!(
-            validate_component(name.as_bytes(), BLOB, FSCK).unwrap_err(),
+            validate_component(name.as_bytes(), BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::HfsDotGit
         );
-        assert!(validate_component(name.as_bytes(), BLOB, OFF).is_ok());
+        assert!(validate_component(name.as_bytes(), BLOB, OFF, FSCK_KIND).is_ok());
     }
 
     #[test]
     fn ntfs_dotgit_trailing_dot_and_spaces() {
         assert_eq!(
-            validate_component(b".git.", BLOB, FSCK).unwrap_err(),
+            validate_component(b".git.", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsDotGit
         );
         assert_eq!(
-            validate_component(b".git ", BLOB, FSCK).unwrap_err(),
+            validate_component(b".git ", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsDotGit
         );
     }
@@ -484,31 +525,52 @@ mod tests {
     #[test]
     fn ntfs_backslash_dotgit_segment() {
         assert_eq!(
-            validate_component(b"foo\\.git", BLOB, FSCK).unwrap_err(),
+            validate_component(b"foo\\.git", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsBackslash
         );
+        for name in [b".git\\config".as_slice(), b".git\\", b".GIT\\config"] {
+            assert_eq!(
+                validate_component(name, BLOB, FSCK, WT_KIND).unwrap_err(),
+                PathComponentError::NtfsBackslash,
+                "reject {name:?}"
+            );
+        }
+        if cfg!(windows) {
+            assert_eq!(
+                validate_component(br"a\..\x", BLOB, FSCK, FSCK_KIND).unwrap_err(),
+                PathComponentError::NtfsBackslash
+            );
+        } else {
+            assert!(validate_component(br"a\..\x", BLOB, FSCK, FSCK_KIND).is_ok());
+        }
+        assert!(validate_component(br"a\..\x", BLOB, OFF, FSCK_KIND).is_ok());
     }
 
     #[test]
     fn ntfs_alternate_stream_dotgit() {
         assert_eq!(
-            validate_component(b".git::$INDEX_ALLOCATION", BLOB, FSCK).unwrap_err(),
+            validate_component(b".git::$INDEX_ALLOCATION", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::NtfsDotGit
         );
     }
 
     #[test]
     fn ntfs_dos_drive_prefix_in_component() {
-        assert_eq!(
-            validate_component(b"C:foo", BLOB, FSCK).unwrap_err(),
-            PathComponentError::NtfsDriveOrStream
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                validate_component(b"C:foo", BLOB, FSCK, FSCK_KIND).unwrap_err(),
+                PathComponentError::NtfsDriveOrStream
+            );
+        } else {
+            assert!(validate_component(b"C:foo", BLOB, FSCK, FSCK_KIND).is_ok());
+            assert!(validate_component(b"C:foo", BLOB, FSCK, WT_KIND).is_ok());
+        }
     }
 
     #[test]
     fn issue_1037_multibyte_at_byte_six_no_panic() {
         for name in ["abcde日.txt", "ab日本.txt", "file0日本.txt"] {
-            assert!(validate_component(name.as_bytes(), BLOB, FSCK).is_ok());
+            assert!(validate_component(name.as_bytes(), BLOB, FSCK, FSCK_KIND).is_ok());
             assert!(!audit_tree_entry_name(name.as_bytes(), FSCK).dotgit);
         }
     }
@@ -516,42 +578,47 @@ mod tests {
     #[test]
     fn symlink_dot_special_files() {
         assert_eq!(
-            validate_component(b".gitmodules", SYMLINK, FSCK).unwrap_err(),
+            validate_component(b".gitmodules", SYMLINK, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotGitmodules
         );
         assert_eq!(
-            validate_component(b".gitattributes", SYMLINK, FSCK).unwrap_err(),
+            validate_component(b".gitattributes", SYMLINK, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotGitattributes
         );
         assert_eq!(
-            validate_component(b".gitignore", SYMLINK, FSCK).unwrap_err(),
+            validate_component(b".gitignore", SYMLINK, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotGitignore
         );
         assert_eq!(
-            validate_component(b".mailmap", SYMLINK, FSCK).unwrap_err(),
+            validate_component(b".mailmap", SYMLINK, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotMailmap
         );
-        assert!(validate_component(b".gitmodules", BLOB, FSCK).is_ok());
+        assert!(validate_component(b".gitmodules", BLOB, FSCK, FSCK_KIND).is_ok());
+        assert!(validate_component(b".gitattributes", SYMLINK, FSCK, WT_KIND).is_ok());
     }
 
     #[test]
     fn symlink_ascii_dot_special_banned_when_protect_flags_off() {
         assert_eq!(
-            validate_component(b".gitmodules", SYMLINK, OFF).unwrap_err(),
+            validate_component(b".gitmodules", SYMLINK, OFF, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotGitmodules
         );
         assert_eq!(
-            validate_component(b".gitignore", SYMLINK, OFF).unwrap_err(),
+            validate_component(b".gitignore", SYMLINK, OFF, FSCK_KIND).unwrap_err(),
             PathComponentError::SymlinkedDotGitignore
         );
     }
 
     #[test]
     fn dos_drive_prefix_on_non_utf8_bytes() {
-        assert_eq!(
-            validate_component(b"C:\xff", BLOB, FSCK).unwrap_err(),
-            PathComponentError::NtfsDriveOrStream
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                validate_component(b"C:\xff", BLOB, FSCK, FSCK_KIND).unwrap_err(),
+                PathComponentError::NtfsDriveOrStream
+            );
+        } else {
+            assert!(validate_component(b"C:\xff", BLOB, FSCK, FSCK_KIND).is_ok());
+        }
     }
 
     #[test]
@@ -563,20 +630,20 @@ mod tests {
             b"//a".as_slice(),
         ] {
             assert_eq!(
-                validate_path(path, BLOB, FSCK).unwrap_err(),
+                validate_path(path, BLOB, FSCK, FSCK_KIND).unwrap_err(),
                 PathComponentError::Empty,
                 "path {:?} should be rejected",
                 path
             );
         }
-        assert!(validate_path(b"a/b", BLOB, FSCK).is_ok());
+        assert!(validate_path(b"a/b", BLOB, FSCK, FSCK_KIND).is_ok());
     }
 
     #[test]
     fn validate_path_splits_on_slash() {
-        assert!(validate_path(b"dir/file.txt", BLOB, FSCK).is_ok());
+        assert!(validate_path(b"dir/file.txt", BLOB, FSCK, FSCK_KIND).is_ok());
         assert_eq!(
-            validate_path(b"dir/.git/file", BLOB, FSCK).unwrap_err(),
+            validate_path(b"dir/.git/file", BLOB, FSCK, FSCK_KIND).unwrap_err(),
             PathComponentError::DotGit
         );
     }

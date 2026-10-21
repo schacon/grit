@@ -4497,6 +4497,9 @@ pub grit_lib::error::Error::IndexUnmerged
 pub grit_lib::error::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::error::Error::InvalidObjectId(alloc::string::String)
 pub grit_lib::error::Error::InvalidPath(alloc::string::String)
+pub grit_lib::error::Error::InvalidPathComponent
+pub grit_lib::error::Error::InvalidPathComponent::path: alloc::string::String
+pub grit_lib::error::Error::InvalidPathComponent::reason: grit_lib::path_validate::PathComponentError
 pub grit_lib::error::Error::InvalidRef(alloc::string::String)
 pub grit_lib::error::Error::InvalidRefStorageFormat
 pub grit_lib::error::Error::InvalidRefStorageFormat::value: alloc::string::String
@@ -4582,6 +4585,7 @@ pub grit_lib::error::Error::WorktreePathRegisteredMissing::path: alloc::string::
 pub grit_lib::error::Error::Zlib(alloc::string::String)
 impl grit_lib::error::Error
 pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::String
+pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
 impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
@@ -5273,7 +5277,7 @@ pub fn grit_lib::index::Index::ensure_canonical_order(&mut self)
 pub fn grit_lib::index::Index::entries(&self) -> &[grit_lib::index::IndexEntry]
 pub fn grit_lib::index::Index::entries_are_sorted(&self) -> bool
 pub fn grit_lib::index::Index::entries_mut(&mut self) -> &mut alloc::vec::Vec<grit_lib::index::IndexEntry>
-pub fn grit_lib::index::Index::expand_sparse_directory_placeholders(&mut self, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::expand_sparse_directory_placeholders(&mut self, &grit_lib::objects::odb::Odb, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::format_cache_tree_dump(&self) -> alloc::string::String
 pub fn grit_lib::index::Index::fsmonitor_validity_changed(&mut self)
 pub fn grit_lib::index::Index::get(&self, &[u8], u8) -> core::option::Option<&grit_lib::index::IndexEntry>
@@ -5289,6 +5293,7 @@ pub fn grit_lib::index::Index::load(&std::path::Path) -> grit_lib::error::Result
 pub fn grit_lib::index::Index::load_expand_sparse(&std::path::Path, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::load_expand_sparse_optional(&std::path::Path, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::load_expand_sparse_optional_with_context(&std::path::Path, &grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::config::ConfigSet>, grit_lib::index::IndexParseContext) -> grit_lib::error::Result<Self>
+pub fn grit_lib::index::Index::load_expand_sparse_with_config(&std::path::Path, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::mark_entries_unsorted(&mut self)
 pub fn grit_lib::index::Index::new() -> Self
 pub fn grit_lib::index::Index::new_from_config(&grit_lib::config::ConfigSet) -> Self
@@ -5309,7 +5314,7 @@ pub fn grit_lib::index::Index::split_index_base_oid(&self) -> core::option::Opti
 pub fn grit_lib::index::Index::stage_file(&mut self, grit_lib::index::IndexEntry)
 pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
-pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
 pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>
@@ -9905,6 +9910,29 @@ impl core::marker::Unpin for grit_lib::path_validate::PathComponentError
 impl core::marker::UnsafeUnpin for grit_lib::path_validate::PathComponentError
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::PathComponentError
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::PathComponentError
+pub enum grit_lib::path_validate::PathValidationKind
+pub grit_lib::path_validate::PathValidationKind::Fsck
+pub grit_lib::path_validate::PathValidationKind::Worktree
+impl core::clone::Clone for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::path_validate::PathValidationKind
+impl core::cmp::PartialEq for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::eq(&self, &Self) -> bool
+impl core::default::Default for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::default() -> Self
+impl core::fmt::Debug for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for grit_lib::path_validate::PathValidationKind
+pub fn grit_lib::path_validate::PathValidationKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for grit_lib::path_validate::PathValidationKind
+impl core::marker::StructuralPartialEq for grit_lib::path_validate::PathValidationKind
+impl core::marker::Freeze for grit_lib::path_validate::PathValidationKind
+impl core::marker::Send for grit_lib::path_validate::PathValidationKind
+impl core::marker::Sync for grit_lib::path_validate::PathValidationKind
+impl core::marker::Unpin for grit_lib::path_validate::PathValidationKind
+impl core::marker::UnsafeUnpin for grit_lib::path_validate::PathValidationKind
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::PathValidationKind
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::PathValidationKind
 pub struct grit_lib::path_validate::EntryMode(_)
 impl grit_lib::path_validate::EntryMode
 pub fn grit_lib::path_validate::EntryMode::is_symlink(self) -> bool
@@ -9984,8 +10012,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::path_validate::TreeEn
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::path_validate::TreeEntryNameAudit
 pub fn grit_lib::path_validate::audit_tree_entry_name(&[u8], grit_lib::path_validate::ProtectOptions) -> grit_lib::path_validate::TreeEntryNameAudit
 pub fn grit_lib::path_validate::component_is_dotgit_alias(&[u8], grit_lib::path_validate::ProtectOptions) -> bool
-pub fn grit_lib::path_validate::validate_component(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
-pub fn grit_lib::path_validate::validate_path(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
+pub fn grit_lib::path_validate::validate_component(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
+pub fn grit_lib::path_validate::validate_path(&[u8], grit_lib::path_validate::EntryMode, grit_lib::path_validate::ProtectOptions, grit_lib::path_validate::PathValidationKind) -> core::result::Result<(), grit_lib::path_validate::PathComponentError>
 pub mod grit_lib::porcelain
 pub mod grit_lib::porcelain::add
 pub enum grit_lib::porcelain::add::StageMode
@@ -10890,7 +10918,7 @@ pub fn grit_lib::porcelain::stash::create_stash(&grit_lib::repo::Repository, &gr
 pub fn grit_lib::porcelain::stash::drop_stash(&grit_lib::repo::Repository, usize, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::porcelain::stash::drop_stash_commit(&std::path::Path, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::porcelain::stash::flat_tree_lookup<'a>(&'a [grit_lib::stash::FlatTreeEntry], &str) -> core::option::Option<&'a grit_lib::stash::FlatTreeEntry>
-pub fn grit_lib::porcelain::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
+pub fn grit_lib::porcelain::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
 pub fn grit_lib::porcelain::stash::list_stashes(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::StashEntry>>
 pub fn grit_lib::porcelain::stash::pop_stash(&grit_lib::repo::Repository, &std::path::Path, usize, bool, &str) -> grit_lib::error::Result<bool>
 pub fn grit_lib::porcelain::stash::push_stash(&grit_lib::repo::Repository, &grit_lib::stash::StashCreateOptions) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>
@@ -11310,6 +11338,9 @@ pub grit_lib::prelude::Error::IndexUnmerged
 pub grit_lib::prelude::Error::InvalidNotesRef(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidObjectId(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidPath(alloc::string::String)
+pub grit_lib::prelude::Error::InvalidPathComponent
+pub grit_lib::prelude::Error::InvalidPathComponent::path: alloc::string::String
+pub grit_lib::prelude::Error::InvalidPathComponent::reason: grit_lib::path_validate::PathComponentError
 pub grit_lib::prelude::Error::InvalidRef(alloc::string::String)
 pub grit_lib::prelude::Error::InvalidRefStorageFormat
 pub grit_lib::prelude::Error::InvalidRefStorageFormat::value: alloc::string::String
@@ -11395,6 +11426,7 @@ pub grit_lib::prelude::Error::WorktreePathRegisteredMissing::path: alloc::string
 pub grit_lib::prelude::Error::Zlib(alloc::string::String)
 impl grit_lib::error::Error
 pub fn grit_lib::error::Error::git_stderr_message(&self) -> alloc::string::String
+pub fn grit_lib::error::Error::invalid_path_component(impl core::convert::Into<alloc::string::String>, grit_lib::path_validate::PathComponentError) -> Self
 pub fn grit_lib::error::Error::wants_fatal_prefix(&self) -> bool
 impl core::convert::From<core::io::error::Error> for grit_lib::error::Error
 pub fn grit_lib::error::Error::from(core::io::error::Error) -> Self
@@ -11841,7 +11873,7 @@ pub fn grit_lib::index::Index::ensure_canonical_order(&mut self)
 pub fn grit_lib::index::Index::entries(&self) -> &[grit_lib::index::IndexEntry]
 pub fn grit_lib::index::Index::entries_are_sorted(&self) -> bool
 pub fn grit_lib::index::Index::entries_mut(&mut self) -> &mut alloc::vec::Vec<grit_lib::index::IndexEntry>
-pub fn grit_lib::index::Index::expand_sparse_directory_placeholders(&mut self, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::expand_sparse_directory_placeholders(&mut self, &grit_lib::objects::odb::Odb, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::format_cache_tree_dump(&self) -> alloc::string::String
 pub fn grit_lib::index::Index::fsmonitor_validity_changed(&mut self)
 pub fn grit_lib::index::Index::get(&self, &[u8], u8) -> core::option::Option<&grit_lib::index::IndexEntry>
@@ -11857,6 +11889,7 @@ pub fn grit_lib::index::Index::load(&std::path::Path) -> grit_lib::error::Result
 pub fn grit_lib::index::Index::load_expand_sparse(&std::path::Path, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::load_expand_sparse_optional(&std::path::Path, &grit_lib::objects::odb::Odb) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::load_expand_sparse_optional_with_context(&std::path::Path, &grit_lib::objects::odb::Odb, core::option::Option<&grit_lib::config::ConfigSet>, grit_lib::index::IndexParseContext) -> grit_lib::error::Result<Self>
+pub fn grit_lib::index::Index::load_expand_sparse_with_config(&std::path::Path, &grit_lib::objects::odb::Odb, &grit_lib::config::ConfigSet) -> grit_lib::error::Result<Self>
 pub fn grit_lib::index::Index::mark_entries_unsorted(&mut self)
 pub fn grit_lib::index::Index::new() -> Self
 pub fn grit_lib::index::Index::new_from_config(&grit_lib::config::ConfigSet) -> Self
@@ -11877,7 +11910,7 @@ pub fn grit_lib::index::Index::split_index_base_oid(&self) -> core::option::Opti
 pub fn grit_lib::index::Index::stage_file(&mut self, grit_lib::index::IndexEntry)
 pub fn grit_lib::index::Index::sync_fsmonitor_dirty_bitmap(&mut self)
 pub fn grit_lib::index::Index::take_resolve_undo_record(&mut self, &[u8]) -> core::option::Option<grit_lib::index::resolve_undo::ResolveUndoRecord>
-pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool) -> grit_lib::error::Result<()>
+pub fn grit_lib::index::Index::try_collapse_sparse_directories(&mut self, &grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &[alloc::string::String], bool, bool, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::unmerge_path_from_resolve_undo(&mut self, &[u8]) -> bool
 pub fn grit_lib::index::Index::write(&mut self, &std::path::Path) -> grit_lib::error::Result<()>
 pub fn grit_lib::index::Index::write_to_path(&mut self, &std::path::Path, bool) -> grit_lib::error::Result<()>
@@ -18494,7 +18527,7 @@ pub fn grit_lib::stash::create_stash(&grit_lib::repo::Repository, &grit_lib::sta
 pub fn grit_lib::stash::drop_stash(&grit_lib::repo::Repository, usize, &str) -> grit_lib::error::Result<()>
 pub fn grit_lib::stash::drop_stash_commit(&std::path::Path, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<bool>
 pub fn grit_lib::stash::flat_tree_lookup<'a>(&'a [grit_lib::stash::FlatTreeEntry], &str) -> core::option::Option<&'a grit_lib::stash::FlatTreeEntry>
-pub fn grit_lib::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
+pub fn grit_lib::stash::flatten_tree_full(&grit_lib::objects::odb::Odb, &grit_lib::objects::ObjectId, &str, grit_lib::path_validate::ProtectOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::FlatTreeEntry>>
 pub fn grit_lib::stash::list_stashes(&grit_lib::repo::Repository) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::stash::StashEntry>>
 pub fn grit_lib::stash::pop_stash(&grit_lib::repo::Repository, &std::path::Path, usize, bool, &str) -> grit_lib::error::Result<bool>
 pub fn grit_lib::stash::push_stash(&grit_lib::repo::Repository, &grit_lib::stash::StashCreateOptions) -> grit_lib::error::Result<core::option::Option<grit_lib::objects::ObjectId>>

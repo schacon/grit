@@ -2259,7 +2259,7 @@ fn schema_top_level_keys_are_stable() -> TestResult {
     let committed = gs_json(&seed, &["commit", "first"]);
     assert_eq!(
         keys(&committed),
-        ["amended", "branch", "changes", "oid", "subject"]
+        ["amended", "branch", "change_id", "changes", "oid", "subject"]
     );
 
     let status = gs_json(&seed, &["status"]);

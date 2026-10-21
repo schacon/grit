@@ -27,8 +27,8 @@ use thiserror::Error;
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{
-    insert_header_before_signature, remove_header_lines, read_commit_subject_line, serialize_commit,
-    CommitData, HashAlgo, ObjectId, ObjectKind,
+    insert_header_before_signature, read_commit_subject_line, remove_header_lines,
+    serialize_commit, CommitData, HashAlgo, ObjectId, ObjectKind,
 };
 use crate::pack::SingleLocalPackReader;
 use crate::parallel::{try_par_map_with_local, ParallelOp};

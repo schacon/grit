@@ -3444,7 +3444,8 @@ pub fn resolve_index_path_entry(repo: &Repository, spec: &str) -> Result<Option<
         repo.index_path()
     };
     use crate::index::Index;
-    let index = Index::load_expand_sparse(&index_path, repo.odb())
+    let config = repo.config()?;
+    let index = Index::load_expand_sparse_with_config(&index_path, repo.odb(), &config)
         .map_err(|_| Error::ObjectNotFound(format!(":{}:{}", colon.stage, path)))?;
     let entry = index
         .get(path.as_bytes(), colon.stage)
@@ -3470,7 +3471,8 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
     } else {
         repo.index_path()
     };
-    let index = Index::load_expand_sparse(&index_path, repo.odb())
+    let config = repo.config()?;
+    let index = Index::load_expand_sparse_with_config(&index_path, repo.odb(), &config)
         .map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
     let lookup_path = if repo.pathspec_precompose_enabled() {
         crate::unicode_normalization::precompose_utf8_path(path).into_owned()

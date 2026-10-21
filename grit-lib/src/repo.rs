@@ -1884,7 +1884,10 @@ impl Repository {
             None
         };
         if let Some(t) = tree_oid {
-            index.try_collapse_sparse_directories(&self.odb, &t, &patterns, cone, sparse_ix)?;
+            let protect = crate::path_validate::ProtectOptions::from_config(cfg.as_ref());
+            index.try_collapse_sparse_directories(
+                &self.odb, &t, &patterns, cone, sparse_ix, protect,
+            )?;
         } else {
             index.sparse_directories = false;
         }

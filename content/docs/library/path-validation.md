@@ -22,22 +22,36 @@ Object fsck always enables both flags via [`ProtectOptions::fsck`](https://docs.
 
 ## Validating components and paths
 
-[`validate_component`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_component.html) checks a single tree/index segment (no `/` inside). Pass the Git mode so symlink-only rules apply to `.gitmodules`, `.gitattributes`, `.gitignore`, and `.mailmap`:
+[`validate_component`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_component.html) checks a single tree/index segment (no `/` inside). Pass the Git mode and a [`PathValidationKind`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/enum.PathValidationKind.html). Worktree population and checkout use **`Worktree`** (Git `verify_path` on this platform: NTFS drive/backslash-dotdot syntax only on Windows; symlink names reject **`.gitmodules`** only). Object fsck uses **`Fsck`** (all four symlink dot-files):
 
 ```rust
-use grit_lib::path_validate::{validate_component, EntryMode, ProtectOptions};
+use grit_lib::path_validate::{validate_component, EntryMode, PathValidationKind, ProtectOptions};
 
 let opts = ProtectOptions::fsck();
-validate_component(b"src", EntryMode::new(0o100644), opts)?;
+validate_component(b"src", EntryMode::new(0o100644), opts, PathValidationKind::Worktree)?;
+```
+
+Fsck checks all symlink dot-files (`.gitmodules`, `.gitattributes`, `.gitignore`, `.mailmap`):
+
+```rust
+use grit_lib::path_validate::{validate_component, EntryMode, PathValidationKind, ProtectOptions};
+
+let opts = ProtectOptions::fsck();
+validate_component(
+    b".gitignore",
+    EntryMode::new(0o120000),
+    opts,
+    PathValidationKind::Fsck,
+)?;
 ```
 
 [`validate_path`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.validate_path.html) splits on `/` and validates each segment. [`audit_tree_entry_name`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/fn.audit_tree_entry_name.html) returns a bitmask-style summary for fsck-style reporting when several rules fire on one name.
 
 ## Errors
 
-[`PathComponentError`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/enum.PathComponentError.html) is a typed, non-exhaustive enum (empty, `.`, `..`, slash/NUL, ASCII and platform `.git` aliases, NTFS backslash/drive/stream spellings, and symlinked dot-files). It carries Grit-owned messages for debugging; the CLI maps failures to [`Error::InvalidPath`](https://docs.rs/grit-lib/latest/grit_lib/error/enum.Error.html) where appropriate.
+[`PathComponentError`](https://docs.rs/grit-lib/latest/grit_lib/path_validate/enum.PathComponentError.html) is a typed, non-exhaustive enum (empty, `.`, `..`, slash/NUL, ASCII and platform `.git` aliases, NTFS backslash/drive/stream spellings, and symlinked dot-files). Checkout and index population return [`Error::InvalidPathComponent`](https://docs.rs/grit-lib/latest/grit_lib/error/enum.Error.html#variant.InvalidPathComponent) with the full path and reason. User-facing `add`/`mv` path arguments use the same typed error; legacy [`Error::InvalidPath`](https://docs.rs/grit-lib/latest/grit_lib/error/enum.Error.html) remains for empty or escaping paths.
 
 ## Related
 
 - Tree object fsck uses the same rules via `grit-lib` maintenance APIs.
-- Step 2 of the path hardening plan will enforce these checks at index population and checkout.
+- Index population, checkout, restore, and `grit add` staging call these validators through `grit_lib::path_population` and `ProtectOptions::from_config`.
